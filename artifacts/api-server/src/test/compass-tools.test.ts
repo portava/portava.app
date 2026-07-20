@@ -373,6 +373,53 @@ describe("G. /compass/ask tool loop", () => {
     assert.ok(!persisted.includes("10.35") && !persisted.includes("123.87"), "no coordinates in persisted tool results");
   });
 
+  it("Phase 5: hydrates model-declared uiBlocks from real tool candidates and drops invented ids", async () => {
+    const db = makeDb({
+      discovery_places: [{ id: PLACE_ID, name: "Lantaw Cafe", category: "cafe", city: "Cebu", rating: 4.6, verified: true, blurb: "views", lat: 10.35, lng: 123.87 }],
+    });
+    const client = makeClient(db);
+    _setTestClient(client, "test-token");
+    _setTestOpenAI(makeToolLoopOpenAI((opts, mainCalls) => {
+      if (mainCalls === 2) {
+        // Final answer declares one real and one invented place id.
+        (opts as any).__final = true;
+      }
+    }));
+    // Replace final-answer content: use a dedicated mock emitting blocks.
+    _setTestOpenAI({
+      chat: { completions: { create: async (opts: any) => {
+        const isClassifier = opts.max_completion_tokens === 60 && opts.temperature === 0;
+        if (isClassifier) {
+          return { choices: [{ message: { content: JSON.stringify({ intent: "recommendation", confidence: 0.9 }), role: "assistant" } }] };
+        }
+        const hasToolMsg = (opts.messages as any[]).some((m: any) => m.role === "tool");
+        if (!hasToolMsg) {
+          return { choices: [{ message: { role: "assistant", content: null,
+            tool_calls: [{ id: "tc_1", type: "function", function: { name: "search_places", arguments: JSON.stringify({ city: "Cebu" }) } }] } }] };
+        }
+        return { choices: [{ message: { role: "assistant", content: JSON.stringify({
+          message: "Try Lantaw Cafe.",
+          payload: { type: "recommendation", picks: [{ title: "Lantaw Cafe" }], primaryPick: 0,
+            blocks: [{ type: "place_cards", placeIds: [PLACE_ID, "invented-place-id"] }] },
+          quickActions: [],
+        }) } }] };
+      } } },
+    } as any);
+
+    const { status, body } = await post("/api/compass/ask", { prompt: "coffee in Cebu?" });
+    assert.equal(status, 200);
+    const uiBlocks = body.uiBlocks as any[];
+    assert.ok(Array.isArray(uiBlocks) && uiBlocks.length === 1, "one validated block expected");
+    assert.equal(uiBlocks[0].type, "place_cards");
+    assert.deepEqual(uiBlocks[0].places.map((p: any) => p.id), [PLACE_ID], "invented id must be dropped");
+    assert.equal(uiBlocks[0].places[0].name, "Lantaw Cafe");
+
+    // Persisted alongside the message payload.
+    const msgs = db.compass_conversation_messages.filter((m) => m.role === "assistant");
+    const payload = msgs[msgs.length - 1].payload as any;
+    assert.ok(Array.isArray(payload.uiBlocks) && payload.uiBlocks.length === 1, "uiBlocks persisted");
+  });
+
   it("surfaces add_to_trip pendingProposals on the response and persists them", async () => {
     const db = makeDb({
       trips: [{ id: TRIP_ID, owner_id: ALICE_ID, title: "Cebu trip", plan_edit_permission: "all_members", status: "upcoming" }],

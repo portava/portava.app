@@ -1,0 +1,373 @@
+/**
+ * CompassChatBlocks — Phase 5 dynamic UI rendering for Compass chat replies.
+ *
+ * Maps server-validated `uiBlocks` (every entity backed by real Phase 4 tool
+ * data — real ids, real handles, real coordinates) plus the itinerary payload
+ * to inline chat interfaces:
+ *
+ *   place_cards → compact place cards   (tap → map focus / search fallback)
+ *   event_cards → compact event cards   (tap → /event/[id])
+ *   person_cards → circle-member cards  (tap → /u/[handle])
+ *   map          → map preview rows     (tap → /map centered on the place)
+ *   comparison   → comparison table     (row tap → the entity's screen)
+ *   itinerary payload → day timeline
+ *
+ * No dead ends: every card and row navigates to a real screen, and place
+ * cards expose "Plan" through the existing PlanPicker flow (user-confirmed;
+ * mutations never fire from a bare tap).
+ */
+import React from 'react';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
+import {
+  MapPin, CalendarClock, ChevronRight, Users, Map as MapIcon, Plus, Star,
+} from 'lucide-react-native';
+import type {
+  CompassUiBlock, CompassUiPlace, CompassUiEvent, CompassUiPerson,
+  CompassComparisonRow, CompassAskPayload,
+} from '../../services/compass.ts';
+import { formatCompassEventChip } from '../../utils/compassFormat.ts';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+
+export interface CompassChatBlocksProps {
+  blocks?: CompassUiBlock[];
+  payload?: CompassAskPayload | null;
+  /** Opens the existing PlanPicker flow for a real place (user confirms the write). */
+  onAddPlaceToPlan?: (place: CompassUiPlace) => void;
+}
+
+export function CompassChatBlocks({ blocks, payload, onAddPlaceToPlan }: CompassChatBlocksProps) {
+  const hasBlocks = (blocks ?? []).length > 0;
+  const hasItinerary = payload?.type === 'itinerary' && (payload.days ?? []).length > 0;
+  if (!hasBlocks && !hasItinerary) return null;
+
+  return (
+    <View style={s.wrap}>
+      {(blocks ?? []).map((b, i) => (
+        <BlockRenderer key={`${b.type}_${i}`} block={b} onAddPlaceToPlan={onAddPlaceToPlan} />
+      ))}
+      {hasItinerary ? <ItineraryBlock payload={payload!} /> : null}
+    </View>
+  );
+}
+
+function BlockRenderer({ block, onAddPlaceToPlan }: {
+  block: CompassUiBlock;
+  onAddPlaceToPlan?: (place: CompassUiPlace) => void;
+}) {
+  switch (block.type) {
+    case 'place_cards':
+      return (
+        <View style={s.stack}>
+          {block.places.map((p) => (
+            <PlaceBlockCard key={p.id} place={p} onAddToPlan={onAddPlaceToPlan} />
+          ))}
+        </View>
+      );
+    case 'event_cards':
+      return (
+        <View style={s.stack}>
+          {block.events.map((e) => <EventBlockCard key={e.id} event={e} />)}
+        </View>
+      );
+    case 'person_cards':
+      return (
+        <View style={s.stack}>
+          {block.people.map((p) => <PersonBlockCard key={p.handle} person={p} />)}
+        </View>
+      );
+    case 'map':
+      return <MapBlock places={block.places} />;
+    case 'comparison':
+      return <ComparisonBlock columns={block.columns} rows={block.rows} />;
+    default:
+      return null;
+  }
+}
+
+// ── Navigation targets (all real screens) ─────────────────────────────────────
+
+function usePlaceNavigation() {
+  const router = useRouter();
+  return (place: CompassUiPlace) => {
+    if (place.lat != null && place.lng != null) {
+      router.push({
+        pathname: '/map',
+        params: {
+          lat: String(place.lat),
+          lng: String(place.lng),
+          focusId: place.id,
+          title: place.name,
+          ...(place.category ? { category: place.category } : {}),
+        },
+      } as any);
+    } else {
+      router.push({ pathname: '/search', params: { q: place.name, type: 'places' } } as any);
+    }
+  };
+}
+
+// ── Place ─────────────────────────────────────────────────────────────────────
+
+function PlaceBlockCard({ place, onAddToPlan }: {
+  place: CompassUiPlace;
+  onAddToPlan?: (place: CompassUiPlace) => void;
+}) {
+  const openPlace = usePlaceNavigation();
+  return (
+    <Pressable
+      style={({ pressed }) => [s.card, pressed && s.pressed]}
+      onPress={() => openPlace(place)}
+      accessibilityRole="button"
+      accessibilityLabel={`View ${place.name}`}
+      testID={`compass-block-place-${place.id}`}
+    >
+      <View style={[s.strip, { backgroundColor: color.signal }]} />
+      <View style={s.cardBody}>
+        <View style={s.titleRow}>
+          <Text style={s.cardTitle} numberOfLines={1}>{place.name}</Text>
+          <ChevronRight size={14} color={color.faint} />
+        </View>
+        <View style={s.metaRow}>
+          {place.category ? <Text style={s.metaChip}>{place.category}</Text> : null}
+          {place.rating != null ? (
+            <View style={s.inlineMeta}>
+              <Star size={10} color="#F59E0B" fill="#F59E0B" />
+              <Text style={s.metaText}>{place.rating.toFixed(1)}</Text>
+            </View>
+          ) : null}
+          {(place.neighborhood || place.city) ? (
+            <View style={s.inlineMeta}>
+              <MapPin size={10} color={color.mute} />
+              <Text style={s.metaText} numberOfLines={1}>{place.neighborhood ?? place.city}</Text>
+            </View>
+          ) : null}
+        </View>
+        {place.blurb ? <Text style={s.blurb} numberOfLines={2}>{place.blurb}</Text> : null}
+        {onAddToPlan ? (
+          <Pressable
+            style={({ pressed }) => [s.planBtn, pressed && s.pressed]}
+            onPress={() => onAddToPlan(place)}
+            hitSlop={6}
+            accessibilityLabel={`Add ${place.name} to plan`}
+            testID={`compass-block-place-plan-${place.id}`}
+          >
+            <Plus size={12} color={color.signal} />
+            <Text style={s.planBtnText}>Plan</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+}
+
+// ── Event ─────────────────────────────────────────────────────────────────────
+
+function EventBlockCard({ event }: { event: CompassUiEvent }) {
+  const router = useRouter();
+  return (
+    <Pressable
+      style={({ pressed }) => [s.card, pressed && s.pressed]}
+      onPress={() => router.push(`/event/${event.id}` as any)}
+      accessibilityRole="button"
+      accessibilityLabel={`View event ${event.title}`}
+      testID={`compass-block-event-${event.id}`}
+    >
+      <View style={[s.strip, { backgroundColor: '#B45309' }]} />
+      <View style={s.cardBody}>
+        <View style={s.titleRow}>
+          <Text style={s.cardTitle} numberOfLines={1}>{event.title}</Text>
+          <ChevronRight size={14} color={color.faint} />
+        </View>
+        <View style={s.metaRow}>
+          <View style={s.inlineMeta}>
+            <CalendarClock size={10} color={color.mute} />
+            <Text style={s.metaText}>{formatCompassEventChip(event.startsAt)}</Text>
+          </View>
+          {event.city ? (
+            <View style={s.inlineMeta}>
+              <MapPin size={10} color={color.mute} />
+              <Text style={s.metaText} numberOfLines={1}>{event.city}</Text>
+            </View>
+          ) : null}
+        </View>
+        {event.description ? <Text style={s.blurb} numberOfLines={2}>{event.description}</Text> : null}
+      </View>
+    </Pressable>
+  );
+}
+
+// ── Person ────────────────────────────────────────────────────────────────────
+
+function PersonBlockCard({ person }: { person: CompassUiPerson }) {
+  const router = useRouter();
+  return (
+    <Pressable
+      style={({ pressed }) => [s.card, pressed && s.pressed]}
+      onPress={() => router.push(`/u/${encodeURIComponent(person.handle)}` as any)}
+      accessibilityRole="button"
+      accessibilityLabel={`View profile @${person.handle}`}
+      testID={`compass-block-person-${person.handle}`}
+    >
+      <View style={[s.strip, { backgroundColor: color.deep }]} />
+      <View style={s.cardBody}>
+        <View style={s.titleRow}>
+          <Text style={s.cardTitle} numberOfLines={1}>@{person.handle}</Text>
+          <ChevronRight size={14} color={color.faint} />
+        </View>
+        {person.circleName ? (
+          <View style={s.inlineMeta}>
+            <Users size={10} color={color.mute} />
+            <Text style={s.metaText} numberOfLines={1}>{person.circleName}</Text>
+          </View>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+}
+
+// ── Map ───────────────────────────────────────────────────────────────────────
+
+function MapBlock({ places }: { places: CompassUiPlace[] }) {
+  const openPlace = usePlaceNavigation();
+  return (
+    <View style={s.mapBlock}>
+      <View style={s.mapHead}>
+        <MapIcon size={12} color={color.signal} />
+        <Text style={s.mapHeadText}>ON THE MAP</Text>
+      </View>
+      {places.map((p) => (
+        <Pressable
+          key={p.id}
+          style={({ pressed }) => [s.mapRow, pressed && s.pressed]}
+          onPress={() => openPlace(p)}
+          accessibilityRole="button"
+          accessibilityLabel={`Show ${p.name} on the map`}
+          testID={`compass-block-map-${p.id}`}
+        >
+          <MapPin size={12} color={color.signal} />
+          <Text style={s.mapRowText} numberOfLines={1}>{p.name}</Text>
+          {p.city ? <Text style={s.metaText}>{p.city}</Text> : null}
+          <ChevronRight size={13} color={color.faint} />
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+// ── Comparison ────────────────────────────────────────────────────────────────
+
+function ComparisonBlock({ columns, rows }: { columns: string[]; rows: CompassComparisonRow[] }) {
+  const router = useRouter();
+  const openPlace = usePlaceNavigation();
+
+  const openRow = (row: CompassComparisonRow) => {
+    if (row.kind === 'event') {
+      router.push(`/event/${row.id}` as any);
+    } else if (row.place) {
+      openPlace(row.place);
+    } else {
+      router.push({ pathname: '/search', params: { q: row.label, type: 'places' } } as any);
+    }
+  };
+
+  return (
+    <View style={s.table}>
+      <View style={[s.tableRow, s.tableHead]}>
+        <Text style={[s.tableHeadCell, s.tableLabelCell]} numberOfLines={1}> </Text>
+        {columns.map((c) => (
+          <Text key={c} style={[s.tableHeadCell, s.tableCell]} numberOfLines={1}>{c}</Text>
+        ))}
+      </View>
+      {rows.map((r) => (
+        <Pressable
+          key={`${r.kind}_${r.id}`}
+          style={({ pressed }) => [s.tableRow, pressed && s.pressed]}
+          onPress={() => openRow(r)}
+          accessibilityRole="button"
+          accessibilityLabel={`Open ${r.label}`}
+          testID={`compass-block-compare-${r.id}`}
+        >
+          <Text style={[s.tableLabelCell, s.tableLabelText]} numberOfLines={2}>{r.label}</Text>
+          {columns.map((_, ci) => (
+            <Text key={ci} style={[s.tableCell, s.tableCellText]} numberOfLines={2}>
+              {r.values[ci] ?? '—'}
+            </Text>
+          ))}
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+// ── Itinerary / timeline ──────────────────────────────────────────────────────
+
+function ItineraryBlock({ payload }: { payload: CompassAskPayload }) {
+  return (
+    <View style={s.itinerary} testID="compass-block-itinerary">
+      {payload.destination ? (
+        <Text style={s.itineraryDest} numberOfLines={1}>{payload.destination}</Text>
+      ) : null}
+      {(payload.days ?? []).map((day, di) => (
+        <View key={`${day.label}_${di}`} style={s.dayRow}>
+          <View style={s.dayRail}>
+            <View style={s.dayDot} />
+            {di < (payload.days ?? []).length - 1 ? <View style={s.dayLine} /> : null}
+          </View>
+          <View style={s.dayBody}>
+            <Text style={s.dayLabel}>{day.label}</Text>
+            {(day.highlights ?? []).map((h, hi) => (
+              <Text key={hi} style={s.dayHighlight}>• {h}</Text>
+            ))}
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const s = StyleSheet.create({
+  wrap:       { gap: space.sm, marginTop: space.sm },
+  stack:      { gap: space.sm },
+  pressed:    { opacity: 0.7 },
+
+  card:       { flexDirection: 'row', backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, overflow: 'hidden' },
+  strip:      { width: 3 },
+  cardBody:   { flex: 1, padding: space.md, gap: 4 },
+  titleRow:   { flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  cardTitle:  { ...t.bodyStrong, color: color.ink, flex: 1, fontSize: 13 },
+  metaRow:    { flexDirection: 'row', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' },
+  metaChip:   { ...t.stamp, fontSize: 10, color: color.signal, backgroundColor: color.signal + '16', paddingHorizontal: space.sm, paddingVertical: 2, borderRadius: radius.pill, textTransform: 'capitalize' },
+  inlineMeta: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  metaText:   { ...t.stamp, fontSize: 10, color: color.mute },
+  blurb:      { ...t.small, fontSize: 11, color: color.mute, lineHeight: 15 },
+  planBtn:    { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-start', backgroundColor: color.haze, paddingHorizontal: space.sm, paddingVertical: 3, borderRadius: radius.sm, marginTop: 2 },
+  planBtnText:{ ...t.stamp, fontSize: 10, fontWeight: '700', color: color.signal },
+
+  mapBlock:   { backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.sm, gap: 2 },
+  mapHead:    { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.xs, paddingBottom: 4 },
+  mapHeadText:{ ...t.stamp, fontFamily: 'Courier', fontSize: 9, color: color.signal, letterSpacing: 1 },
+  mapRow:     { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.sm, paddingHorizontal: space.xs, borderTopWidth: 1, borderTopColor: color.haze },
+  mapRowText: { ...t.small, fontWeight: '600', color: color.ink, flex: 1 },
+
+  table:        { backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, overflow: 'hidden' },
+  tableRow:     { flexDirection: 'row', alignItems: 'center', paddingVertical: space.sm, paddingHorizontal: space.sm, borderTopWidth: 1, borderTopColor: color.haze },
+  tableHead:    { borderTopWidth: 0, backgroundColor: color.haze + '55' },
+  tableHeadCell:{ ...t.stamp, fontSize: 9, fontWeight: '700', color: color.mute, textTransform: 'uppercase', letterSpacing: 0.4 },
+  tableLabelCell:{ flex: 1.2, paddingRight: space.xs },
+  tableCell:    { flex: 1, paddingRight: space.xs },
+  tableLabelText:{ ...t.small, fontSize: 11, fontWeight: '700', color: color.ink },
+  tableCellText:{ ...t.small, fontSize: 11, color: color.mute },
+
+  itinerary:    { backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: 2 },
+  itineraryDest:{ ...t.stamp, fontFamily: 'Courier', fontSize: 10, color: color.signal, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 },
+  dayRow:       { flexDirection: 'row', gap: space.sm },
+  dayRail:      { alignItems: 'center', width: 12 },
+  dayDot:       { width: 8, height: 8, borderRadius: 4, backgroundColor: color.signal, marginTop: 4 },
+  dayLine:      { flex: 1, width: 2, backgroundColor: color.haze, marginTop: 2 },
+  dayBody:      { flex: 1, paddingBottom: space.sm },
+  dayLabel:     { ...t.small, fontWeight: '700', color: color.ink },
+  dayHighlight: { ...t.small, fontSize: 11, color: color.mute, lineHeight: 16 },
+});

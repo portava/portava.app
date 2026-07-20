@@ -11,7 +11,8 @@ import {
   postCompassFrontloadEvent, postCompassAsk,
   confirmCompassProposal, declineCompassProposal,
 } from '../../src/services/compass';
-import type { CompassAskResponse, CompassPendingProposal } from '../../src/services/compass';
+import type { CompassAskResponse, CompassPendingProposal, CompassUiPlace } from '../../src/services/compass';
+import { CompassChatBlocks } from '../../src/components/compass/CompassChatBlocks';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { usePlanPicker } from '../../src/components/PlanPickerController';
@@ -112,6 +113,19 @@ export default function AiChat() {
     scrollToEnd();
   }
 
+  // Phase 5: place cards route trip-adds through the existing PlanPicker flow —
+  // the user confirms the write in the picker; nothing mutates on a bare tap.
+  function addPlaceToPlan(place: CompassUiPlace) {
+    planPicker.open({
+      id:       place.id,
+      type:     'place',
+      title:    place.name,
+      category: place.category ?? 'activity',
+    });
+  }
+
+  // Phase 5: no dead-end quick actions — every whitelisted actionType lands on
+  // a real screen (or continues the conversation).
   function handleAction(rec: CompassAskResponse, kind: string) {
     switch (kind) {
       case 'addTrip':
@@ -126,7 +140,30 @@ export default function AiChat() {
         send(`Build a 3-day itinerary based on: ${rec.message.slice(0, 80)}`);
         break;
       case 'askCommunity':
+      case 'startPoll':
         router.push('/(tabs)/messages');
+        break;
+      case 'explore':
+      case 'viewPlace':
+        router.push('/(tabs)/discovery' as any);
+        break;
+      case 'viewEvent':
+        router.push('/(tabs)/events' as any);
+        break;
+      case 'openMap':
+        router.push('/map' as any);
+        break;
+      case 'viewPassport':
+        router.push('/(tabs)/passport' as any);
+        break;
+      case 'findBuddy':
+        router.push('/(rent-a-buddy)' as any);
+        break;
+      case 'viewTrips':
+        router.push('/(tabs)/trips' as any);
+        break;
+      case 'shareTip':
+        router.push('/create' as any);
         break;
       default:
         break;
@@ -185,6 +222,7 @@ export default function AiChat() {
           }
           return (
             <RecCard
+              onAddPlaceToPlan={addPlaceToPlan}
               key={e.id}
               rec={e.rec}
               proposalStates={resolvedProposals}
@@ -236,11 +274,13 @@ function RecCard({
   onAction,
   onProposal,
   proposalStates,
+  onAddPlaceToPlan,
 }: {
   rec: CompassAskResponse;
   onAction: (kind: string) => void;
   onProposal: (proposal: CompassPendingProposal, decision: 'confirm' | 'decline') => void;
   proposalStates: Record<string, 'confirmed' | 'declined' | 'busy'>;
+  onAddPlaceToPlan: (place: CompassUiPlace) => void;
 }) {
   return (
     <View style={styles.rec}>
@@ -249,6 +289,13 @@ function RecCard({
         <Text style={styles.aiHeadText}>AI BUDDY</Text>
       </View>
       <Text style={styles.recBody}>{rec.message}</Text>
+
+      {/* Phase 5: dynamic UI blocks — server-validated, real tool entities only */}
+      <CompassChatBlocks
+        blocks={rec.uiBlocks}
+        payload={rec.payload}
+        onAddPlaceToPlan={onAddPlaceToPlan}
+      />
 
       {(rec.pendingProposals ?? []).map((p) => {
         const state = proposalStates[p.proposalId];

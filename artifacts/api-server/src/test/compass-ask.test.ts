@@ -225,7 +225,7 @@ describe("A. Conversation persistence", () => {
     assert.equal(status, 200);
     assert.ok(typeof body.conversationId === "string", "should return conversationId");
     assert.ok(typeof body.message === "string", "should return message");
-    assert.ok(body.promptVersion === "compass-v1.0");
+    assert.ok(body.promptVersion === "compass-v1.1");
   });
 
   it("accepts a conversationId and loads its history", async () => {

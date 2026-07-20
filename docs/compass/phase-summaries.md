@@ -115,3 +115,48 @@ State when the standing brief was installed:
   incl. double-resolve rejection and revoked-membership re-auth);
   `compass-ask.test.ts` suite D rewritten for the tool-loop action path.
   Registered in the api-server test suite. Full suites + typecheck green.
+
+## Phase 5 — Dynamic UI Rendering (July 2026)
+
+- Response contract extended: the model (prompt bumped to `compass-v1.1`)
+  may declare a `blocks` array inside its JSON payload — `place_cards`,
+  `event_cards`, `person_cards`, `map`, and `comparison` — each referencing
+  entities strictly by id/handle from tool results in the same turn.
+- New `src/compass/CompassUiBlocks.ts`: builds a candidate index from the
+  executed tool log (`search_places`, `get_place_details`, `search_events`,
+  `get_circle_activity`), validates every block reference against it —
+  invented ids are silently dropped, empty blocks removed (client falls back
+  to plain text) — and hydrates validated entities with the real candidate
+  data. Validated place ids get coordinates re-fetched from the DB
+  server-side (coordinates never pass through the model). Caps: 4 blocks,
+  6 items/block, 4 comparison columns. UGC delimiters unwrapped for display.
+- `POST /api/compass/ask` (streaming and non-streaming) returns `uiBlocks`
+  and persists them in the assistant message payload.
+- Mobile renderer `src/components/compass/CompassChatBlocks.tsx`, wired into
+  the chat screen (`app/(tabs)/ai.tsx` RecCard): place cards (tap →
+  `/map` focused on the real coordinates, or `/search` when coordinate-less;
+  "Plan" routes through the existing PlanPicker confirmation flow — no
+  mutation on tap), event cards (→ `/event/[id]`), person cards
+  (→ `/u/[handle]`), map block (per-place map deep links), comparison table
+  (row tap opens the entity), and an itinerary/timeline rendering of the
+  `itinerary` payload. The map block deliberately avoids importing maplibre
+  (web-split hazard) and deep-links to the real map screen instead.
+- No dead-end quick actions: every whitelisted `actionType` (explore,
+  viewEvent, viewPlace, openMap, viewPassport, findBuddy, viewTrips,
+  startPoll, shareTip, …) now lands on a real screen.
+- Tests: `src/test/compass-ui-blocks.test.ts` (candidate indexing incl. UGC
+  unwrap, invented-id rejection, all-invented block dropping, comparison
+  validation, coordinate hydration + non-fatal DB failure, caps,
+  handle validation) and a route-level test in `compass-tools.test.ts`
+  proving `/compass/ask` returns and persists hydrated `uiBlocks` with
+  invented ids dropped; mobile
+  `CompassChatBlocks.component.test.tsx` (block→component mapping,
+  plain-text fallback, and no-dead-end navigation targets for every card
+  type + the PlanPicker callback). Registered in both suites.
+- Standing eval set: exercised live against the local API (ephemeral
+  signed-in user). The AI proxy is not reachable from this isolated task
+  environment, so every turn exercised the honest-fallback path
+  (`fallback: true`, no fabricated blocks — guardrail holds); the
+  contract itself (v1.1 prompt path, `uiBlocks` validation/hydration) is
+  covered deterministically by the stubbed-model route test above.
+- Mobile + api suites and typechecks green.

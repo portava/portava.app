@@ -13,3 +13,5 @@ description: How to verify auth-gated app flows end-to-end without a human sign-
 
 **Why:** interactive verification tasks ("verify X with a signed-in account") are fully doable at the API level this way; only pixel-level UI interaction remains code-review-only.
 **How to apply:** for any "verify flows end-to-end" task, script the flows in /tmp with node fetch against localhost + admin-created users.
+
+- Compass routes register as `/compass/...` (no extra `/api` prefix), so their dev URL is single-prefix: `http://localhost:80/api/compass/ask`. Check the route registration before assuming the double `/api/api` prefix.

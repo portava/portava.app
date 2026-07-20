@@ -379,6 +379,52 @@ export interface CompassAskPayload {
   days?:        Array<{ label: string; highlights: string[] }>;
 }
 
+// ── Phase 5: dynamic UI blocks — server-validated, hydrated from tool results ──
+
+export interface CompassUiPlace {
+  id:           string;
+  name:         string;
+  category:     string | null;
+  city:         string | null;
+  neighborhood: string | null;
+  rating:       number | null;
+  blurb:        string | null;
+  verified:     boolean;
+  lat:          number | null;
+  lng:          number | null;
+}
+
+export interface CompassUiEvent {
+  id:          string;
+  title:       string;
+  city:        string | null;
+  country:     string | null;
+  startsAt:    string | null;
+  category:    string | null;
+  description: string | null;
+}
+
+export interface CompassUiPerson {
+  handle:     string;
+  circleName: string | null;
+}
+
+export interface CompassComparisonRow {
+  kind:   'place' | 'event';
+  id:     string;
+  label:  string;
+  values: string[];
+  place?: CompassUiPlace;
+  event?: CompassUiEvent;
+}
+
+export type CompassUiBlock =
+  | { type: 'place_cards'; places: CompassUiPlace[] }
+  | { type: 'event_cards'; events: CompassUiEvent[] }
+  | { type: 'person_cards'; people: CompassUiPerson[] }
+  | { type: 'map'; places: CompassUiPlace[] }
+  | { type: 'comparison'; columns: string[]; rows: CompassComparisonRow[] };
+
 /** Phase-4 add_to_trip pending proposal — awaiting explicit user confirmation. */
 export interface CompassPendingProposal {
   proposalId: string;
@@ -399,6 +445,8 @@ export interface CompassAskResponse {
   quickActions:    CompassQuickAction[];
   /** Phase 4: add_to_trip proposals awaiting confirm/decline. */
   pendingProposals?: CompassPendingProposal[];
+  /** Phase 5: server-validated UI blocks — every entity is real tool data. */
+  uiBlocks?:       CompassUiBlock[];
   promptVersion:   string;
   intent?:         { intent: string; confidence: number };
   fallback?:       boolean;

@@ -71,6 +71,7 @@ import {
   passesTripFilter,
   passesPassportFilter,
 } from "../compass/CompassSurfaceFilters.js";
+import { buildUiBlocks } from "../compass/CompassUiBlocks.js";
 import { getOpenAI }                             from "../lib/openai.js";
 import { COMPASS_ASK_PROMPT, COMPASS_ASK_PROMPT_VERSION } from "../lib/prompts/compass-v1.js";
 import {
@@ -1088,19 +1089,22 @@ router.post("/compass/ask", async (req, res) => {
       );
       const { message, payload, quickActions } = _parseModelResponse(finalRaw);
       res.write(`data: ${JSON.stringify({ delta: message })}\n\n`);
+      // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
+      const uiBlocks = await buildUiBlocks(sc, payload, toolLog).catch(() => []);
       const persistedPayload: Record<string, unknown> | undefined =
         payload || toolLog.length > 0 || proposals.length > 0
           ? {
               ...(payload ? { payload } : {}),
               ...(toolLog.length > 0 ? { toolCalls: _boundedToolLog(toolLog) } : {}),
               ...(proposals.length > 0 ? { pendingProposals: proposals } : {}),
+              ...(uiBlocks.length > 0 ? { uiBlocks } : {}),
             }
           : undefined;
       try {
         await appendMessage(sc, conversationId, "assistant", message, persistedPayload, COMPASS_ASK_PROMPT_VERSION);
         await touchConversation(sc, conversationId);
       } catch { /* non-fatal */ }
-      res.write(`data: ${JSON.stringify({ done: true, conversationId, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, intent: intentResult })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true, conversationId, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, intent: intentResult })}\n\n`);
       res.end();
     } catch (err) {
       req.log.error({ err, userId: user.id }, "compass/ask stream failed");
@@ -1116,19 +1120,22 @@ router.post("/compass/ask", async (req, res) => {
       sc, user.id, guardProfile, messages as any, req.log,
     );
     const { message, payload, quickActions } = _parseModelResponse(finalRaw);
+    // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
+    const uiBlocks = await buildUiBlocks(sc, payload, toolLog).catch(() => []);
     const persistedPayload: Record<string, unknown> | undefined =
       payload || toolLog.length > 0 || proposals.length > 0
         ? {
             ...(payload ? { payload } : {}),
             ...(toolLog.length > 0 ? { toolCalls: _boundedToolLog(toolLog) } : {}),
             ...(proposals.length > 0 ? { pendingProposals: proposals } : {}),
+            ...(uiBlocks.length > 0 ? { uiBlocks } : {}),
           }
         : undefined;
     try {
       await appendMessage(sc, conversationId, "assistant", message, persistedPayload, COMPASS_ASK_PROMPT_VERSION);
       await touchConversation(sc, conversationId);
     } catch { /* non-fatal */ }
-    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
+    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
   } catch (err) {
     req.log.error({ err, userId: user.id }, "compass/ask: LLM call failed");
     res.json({
