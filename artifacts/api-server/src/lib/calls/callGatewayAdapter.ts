@@ -84,12 +84,13 @@ export async function getFullCallPreferences(
   userId: string,
 ): Promise<CallPreferences & { incomingCallNotifications: boolean }> {
   try {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("call_preferences")
       .select("who_can_call, allow_rent_a_buddy_calls, allow_video_calls, incoming_call_notifications")
       .eq("user_id", userId)
       .maybeSingle();
-    if (!data) return { ...DEFAULT_CALL_PREFERENCES };
+    if (error) throw error; // caught below → fail closed
+    if (!data) return { ...DEFAULT_CALL_PREFERENCES }; // absent row = new user, use defaults
     const r = data as any;
     return {
       whoCanCall: r.who_can_call ?? "people_i_message",
@@ -97,8 +98,16 @@ export async function getFullCallPreferences(
       allowVideoCalls: r.allow_video_calls ?? true,
       incomingCallNotifications: r.incoming_call_notifications ?? true,
     };
-  } catch {
-    return { ...DEFAULT_CALL_PREFERENCES };
+  } catch (err) {
+    // Fail closed: return a deny-all preferences struct so a DB outage never
+    // silently grants video calls or RAB calls that the user may have disabled.
+    console.warn("[callGateway] getFullCallPreferences failed — failing closed", err);
+    return {
+      whoCanCall: "nobody" as const,
+      allowRentABuddyCalls: false,
+      allowVideoCalls: false,
+      incomingCallNotifications: false,
+    };
   }
 }
 
@@ -256,28 +265,50 @@ export function makeCallGateway(sc: SupabaseClient): CallContextGateway {
     },
 
     async wasRemovedFromCall(callId, userId) {
-      const { data } = await sc
-        .from("call_participants")
-        .select("status")
-        .eq("call_id", callId)
-        .eq("user_id", userId)
-        .maybeSingle();
-      return (data as any)?.status === "removed";
+      try {
+        const { data, error } = await sc
+          .from("call_participants")
+          .select("status")
+          .eq("call_id", callId)
+          .eq("user_id", userId)
+          .maybeSingle();
+        if (error) {
+          // Fail closed: treat as removed so a DB outage never lets a kicked
+          // participant back into a room.
+          console.warn("[callGateway] wasRemovedFromCall query failed — failing closed", error);
+          return true;
+        }
+        return (data as any)?.status === "removed";
+      } catch (err) {
+        console.warn("[callGateway] wasRemovedFromCall threw — failing closed", err);
+        return true;
+      }
     },
 
     async lastDeclineAt(callerId, _calleeId, threadId) {
-      const { data } = await sc
-        .from("call_sessions")
-        .select("ended_at, started_at")
-        .eq("thread_id", threadId)
-        .eq("started_by", callerId)
-        .eq("status", "declined")
-        .order("started_at", { ascending: false })
-        .limit(1);
-      const row = ((data as any[]) ?? [])[0];
-      if (!row) return null;
-      const ms = new Date(row.ended_at ?? row.started_at).getTime();
-      return Number.isFinite(ms) ? ms : null;
+      try {
+        const { data, error } = await sc
+          .from("call_sessions")
+          .select("ended_at, started_at")
+          .eq("thread_id", threadId)
+          .eq("started_by", callerId)
+          .eq("status", "declined")
+          .order("started_at", { ascending: false })
+          .limit(1);
+        if (error) {
+          // Fail closed: treat as if a decline just happened so the caller
+          // must wait out the full cooldown — a DB outage must not lift it.
+          console.warn("[callGateway] lastDeclineAt query failed — failing closed", error);
+          return Date.now();
+        }
+        const row = ((data as any[]) ?? [])[0];
+        if (!row) return null;
+        const ms = new Date(row.ended_at ?? row.started_at).getTime();
+        return Number.isFinite(ms) ? ms : null;
+      } catch (err) {
+        console.warn("[callGateway] lastDeclineAt threw — failing closed", err);
+        return Date.now();
+      }
     },
 
     async startsInLastHour(userId) {

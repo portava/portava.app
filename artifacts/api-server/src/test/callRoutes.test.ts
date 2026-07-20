@@ -1518,6 +1518,95 @@ describe("callGatewayAdapter — startsInLastHour error path", () => {
   });
 });
 
+// ── callGatewayAdapter DB error paths (fail-closed) ──────────────────────────
+
+/**
+ * Builds a Supabase-style fake client whose query chains always resolve to a
+ * DB error at every terminal step (then / maybeSingle / single / limit).
+ * Used to verify that each gateway method denies access rather than granting
+ * it when the database is unavailable.
+ */
+function makeAlwaysErrorClient(message = "simulated DB outage"): any {
+  const errResult = { data: null, error: { message }, count: null };
+  const chain: any = new Proxy(function () {}, {
+    get(_t, prop) {
+      if (prop === "then") return (onF: any) => Promise.resolve(errResult).then(onF);
+      if (prop === "maybeSingle" || prop === "single") return () => Promise.resolve(errResult);
+      if (prop === "limit") return () => Promise.resolve(errResult);
+      return () => chain;
+    },
+    apply() { return chain; },
+  });
+  return { from: () => chain };
+}
+
+describe("callGatewayAdapter — DB error paths (fail-closed)", () => {
+  it("getCallPreferences returns deny-all when the preferences query errors", async () => {
+    const gw = makeCallGateway(makeAlwaysErrorClient());
+    const prefs = await gw.getCallPreferences("any-user-id");
+    assert.equal(prefs.whoCanCall, "nobody",
+      "fail-closed: DB outage must deny all callers, not fall back to permissive defaults");
+    assert.equal(prefs.allowRentABuddyCalls, false,
+      "fail-closed: RAB calls must be denied when preferences cannot be read");
+    assert.equal(prefs.allowVideoCalls, false,
+      "fail-closed: video calls must be denied when preferences cannot be read");
+  });
+
+  it("call start is denied (403 not_allowed_to_call) when the preferences query errors", async () => {
+    // Route-level confirmation: fail-closed preferences → whoCanCall=no_one → deny.
+    wireDeps({
+      getCallPreferences: async () => ({
+        whoCanCall: "nobody" as const,
+        allowRentABuddyCalls: false,
+        allowVideoCalls: false,
+      }),
+    });
+    const r = await req("POST", "/api/calls", startBody);
+    assert.equal(r.status, 403);
+    assert.equal(r.body.reason, "callee_calls_disabled",
+      "fail-closed preferences must cause the engine to deny the start");
+    assert.equal(store.__sessions.size, 0, "no session persisted when denied by fail-closed preferences");
+  });
+
+  it("wasRemovedFromCall returns true (denied) when the query errors", async () => {
+    const gw = makeCallGateway(makeAlwaysErrorClient());
+    const result = await gw.wasRemovedFromCall("call-id", "user-id");
+    assert.equal(result, true,
+      "fail-closed: a kicked participant must not be allowed back in during a DB outage");
+  });
+
+  it("join is denied (removed_from_room) when wasRemovedFromCall errors", async () => {
+    // Route-level: fail-closed wasRemovedFromCall → engine denies rejoin.
+    const id = (await req("POST", "/api/calls", groupStartBody)).body.session.id;
+    wireDepsKeepStore({ wasRemovedFromCall: async () => true });
+    const r = await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+    assert.equal(r.status, 403);
+    assert.equal(r.body.reason, "removed_from_room",
+      "fail-closed wasRemovedFromCall must lock out the user, not let them rejoin silently");
+  });
+
+  it("lastDeclineAt returns a current timestamp (fail-closed) when the query errors", async () => {
+    const before = Date.now();
+    const gw = makeCallGateway(makeAlwaysErrorClient());
+    const result = await gw.lastDeclineAt("caller-id", "callee-id", "thread-id");
+    const after = Date.now();
+    assert.ok(result !== null,
+      "fail-closed: must return a timestamp, not null, so the cooldown is enforced");
+    assert.ok(result! >= before && result! <= after,
+      "fail-closed: timestamp must be current so the caller waits the full cooldown");
+  });
+
+  it("call start is denied (429 redial_cooldown) when the decline-history query errors", async () => {
+    // Route-level: fail-closed lastDeclineAt → cooldown enforced.
+    wireDeps({ lastDeclineAt: async () => Date.now() - 1_000 }); // 1 s ago = within cooldown
+    _resetRateLimit();
+    const r = await req("POST", "/api/calls", startBody);
+    assert.equal(r.status, 429);
+    assert.equal(r.body.reason, "redial_cooldown",
+      "fail-closed lastDeclineAt must impose the cooldown, not allow immediate redial");
+  });
+});
+
 describe("block landing mid-ring", () => {
   beforeEach(() => wireDeps());
 
