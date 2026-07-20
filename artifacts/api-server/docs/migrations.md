@@ -15,6 +15,8 @@ Record every migration here once applied and verified against
 | `0161_friend_requests_responded_at.sql` | 2026-07-20 (response-time auditing for friend requests) | `friend_requests.responded_at` + `updated_at` (timestamptz) verified via `information_schema` |
 | `0162_rent_buddy_availability_blocks.sql` | 2026-07-20 (buddy wizard fix — column defined in legacy 0047/0134 but never applied live) | `rent_buddy_profiles.availability_blocks jsonb NOT NULL DEFAULT '[]'` confirmed via `information_schema.columns` |
 | `0163_write_path_drift_columns.sql` | 2026-07-20 (wizard-write-path drift audit — adds `posts.filter_id`/`filter_intensity`/`media_duration_seconds`, `rent_buddy_bookings.country_code`, `rent_buddy_policy_flags.updated_at`, all written by routes but absent live) | all 5 columns confirmed via `information_schema.columns` |
+| `0164_write_path_drift_columns_2.sql` | 2026-07-20 (second write-path drift batch — found by the maintained checker, see below; adds `highlights.filter_id`/`filter_intensity`/`updated_at`, `message_requests.updated_at`, `message_threads.created_by`, `moderation_actions.metadata`, `plan_attendance_events.metadata`, `reports.notes`, `trip_plan_items.added_by`/`city`/`country`/`description`, `user_friendships.accepted_request_id`) | all 13 columns confirmed via `information_schema.columns` |
+| `20260723_compass_conversations.sql` | 2026-07-20 (compass conversational-AI session tables — applied when the write-path checker flagged `compass_conversations` + `compass_conversation_messages` as written-but-absent) | both tables present with RLS enabled confirmed via `pg_class.relrowsecurity` |
 | `0156` RLS addendum (`ALTER TABLE call_moderation_actions ENABLE ROW LEVEL SECURITY`) | 2026-07-19 (Phase 7 readiness audit — original 0156 omitted RLS on the audit table) | `pg_class.relrowsecurity = true` confirmed live; no policies on purpose (service-role-only table) |
 
 ## Wizard-write-path drift audit — 2026-07-20 (task 1925)
@@ -42,6 +44,32 @@ All drifted columns were migrated live and are now probed by
 `CRITICAL_COLUMNS` in `src/lib/schemaDriftCheck.ts`, along with one
 sentinel column per audited path (guarded by
 `src/test/schemaDriftCheck.test.ts`).
+
+### Maintained write-path column check (task 1939)
+
+The ad-hoc perl extraction above is superseded by a committed, repeatable
+check:
+
+```
+pnpm run check:write-path-columns          # from artifacts/api-server
+pnpm run check:write-path-columns -- --verbose
+```
+
+`src/scripts/checkWritePathColumns.ts` parses `src/routes` + `src/services`
+with the TypeScript AST (no greedy regex — chained calls, multi-line
+payloads, spreads, arrays, and same-scope `const payload = {...}` variables
+are handled), extracts every column written by `.insert()`/`.upsert()`/
+`.update()` on a `.from("<table>")` chain, and diffs them against the live
+`information_schema.columns` via the Supabase Management API
+(`SUPABASE_PROJECT_TOKEN` or `SUPABASE_ACCESS_TOKEN`). Exit 1 lists every
+written column (or table) absent live with the `file:line` of each write
+site; unresolvable sites (dynamic table names, non-static payloads) are
+counted and shown with `--verbose`, never failed. Known-good exceptions go
+in the annotated `ALLOWLIST` in the script.
+
+Run it before release and after any migration wave. Its first full run
+(2026-07-20) found a second batch of 13 drifted columns across 8 tables —
+applied live as `0164_write_path_drift_columns_2.sql` (see table above).
 
 Earlier migrations (`0001`–`0154`) predate this record and are live; see the
 legacy migration reconciliation notes for the history of the legacy directory.
