@@ -192,9 +192,28 @@ function Pulse() {
   );
 
   const forYouFeed = useMemo<PulseFeedItem[]>(() => {
-    const filteredReal = active.includes('All') || active.includes('Posts')
+    // Each quick filter maps to a real item predicate; multiple active
+    // filters are OR'd together. 'All' short-circuits to everything.
+    const matchesFilter = (item: PulseFeedItem, f: PulseFilter): boolean => {
+      switch (f) {
+        case 'Posts': return item.type === 'post';
+        case 'Questions': return item.type === 'question';
+        case 'Plans': return item.type === 'plan';
+        case 'Hidden Gems': return item.type === 'hidden_gem';
+        case 'Itineraries': return item.type === 'itinerary';
+        case 'Circle':
+          return item.type === 'circle_activity'
+            || item.source === 'circle'
+            || item.visibility === 'circle';
+        case 'Fits My Time': return item.availabilityMatch === true;
+        default:
+          // Category-style filters (Food, Nightlife, …) match on tags.
+          return item.tags?.some((t) => t.toLowerCase() === f.toLowerCase()) ?? false;
+      }
+    };
+    const filteredReal = active.includes('All')
       ? realItems
-      : realItems.filter(() => false);
+      : realItems.filter((item) => active.some((f) => matchesFilter(item, f)));
     // Place cards only shown in All / default view (not when a specific type filter is active)
     const showPlaceCards = active.includes('All') && realItems.length < 5;
     return [...filteredReal, ...(showPlaceCards ? pulseFeed.placeCards : [])];
