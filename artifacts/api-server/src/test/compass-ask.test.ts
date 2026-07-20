@@ -102,7 +102,14 @@ function makeClient(state: FakeState = {}, callerUserId: string = ALICE_ID) {
       eq:         (col: string, val: any) => { filtered = filtered.filter(r => r[col] === val); return b; },
       is:         (col: string, val: any) => { filtered = filtered.filter(r => val === null ? r[col] == null : r[col] === val); return b; },
       in:         (col: string, vals: any[]) => { filtered = filtered.filter(r => vals.includes(r[col])); return b; },
-      like:       (_col: string, _pat: string) => b,
+      like:       (col: string, pat: string) => {
+        const re = new RegExp("^" + pat.replace(/%/g, ".*") + "$");
+        filtered = filtered.filter(r => re.test(String(r[col] ?? "")));
+        return b;
+      },
+      or:         () => b,
+      not:        () => b,
+      neq:        (col: string, val: any) => { filtered = filtered.filter(r => r[col] !== val); return b; },
       limit:      (_n: number) => b,
       order:      (_col: string, _opts?: any) => b,
       maybeSingle: () => Promise.resolve({ data: filtered[0] ?? null, error: null }),

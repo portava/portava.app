@@ -29,6 +29,11 @@ import { getCompassProfile } from "../compass/CompassProfileService.js";
 import { logCompassImpression } from "../lib/rankLog.js";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine.js";
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine.js";
+import {
+  buildStructuredCompassContext,
+  formatStructuredContextLines,
+  buildModeWeightingLines,
+} from "../compass/CompassStructuredContext.js";
 import { buildFeed, buildSection, SECTION_NAMES, type SectionName, type FeedPage } from "../compass/CompassFeedBuilder.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { hydrateCompassItems } from "../compass/CompassItemHydrator.js";
@@ -904,6 +909,8 @@ router.post("/compass/ask", async (req, res) => {
   let weatherBrief:          string   | null = null;
   let followedHashtagSlugs:  string[]        = [];
   let topItemsContext:        string[]        = [];
+  let structuredLines:        string[]        = [];
+  let modeWeightingLines:     string[]        = [];
 
   try { locationCtx = await buildLocationCompassContext(auth.client, user.id); } catch { /* */ }
 
@@ -941,6 +948,22 @@ router.post("/compass/ask", async (req, res) => {
     });
   } catch { /* non-fatal — proceed without pipeline items */ }
 
+  // ── Phase 3: structured context (circles, bookings, Passport history) ─────
+  // All sources are privacy-guarded inside buildStructuredCompassContext():
+  // no coordinates are ever selected, blocked/blocker/muted users are
+  // filtered out, and user-generated text is wrapped in <portava:ugc> tags.
+  // Derived UI modes are made explicit for prompt weighting.
+  try {
+    const profile    = await getCompassProfile(sc, user.id);
+    const effProfile = effectiveCity ? { ...profile, currentCity: effectiveCity } : profile;
+    const signals    = defaultSignals(effProfile);
+    const ctx        = buildCompassContext(effProfile, signals);
+    const intentMode = deriveIntentMode(ctx);
+    modeWeightingLines = buildModeWeightingLines(ctx.contextState, intentMode);
+    const structured = await buildStructuredCompassContext(sc, effProfile);
+    structuredLines  = formatStructuredContextLines(structured);
+  } catch { /* non-fatal — proceed without structured context */ }
+
   const locLine = locationCtx?.currentCity
     ? `${locationCtx.currentCity}${locationCtx.currentCountry ? `, ${locationCtx.currentCountry}` : ""}`
     : effectiveCity || "unspecified";
@@ -955,6 +978,8 @@ router.post("/compass/ask", async (req, res) => {
     ctxLines.push(`Weather: ${weatherBrief}`);
   if (topItemsContext.length > 0)
     ctxLines.push(`Verified nearby places:\n${topItemsContext.join("\n")}`);
+  ctxLines.push(...structuredLines);
+  ctxLines.push(...modeWeightingLines);
 
   const userMessageWithContext = `${prompt}\n\n${ctxLines.join("\n")}`;
 
