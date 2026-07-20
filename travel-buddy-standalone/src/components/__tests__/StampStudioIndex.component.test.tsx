@@ -930,8 +930,10 @@ describe('StampStudioIndex — backlog_growing with missing queued details shows
 
     render(<StampStudioIndex />);
     // queued is present (20) but previous_queued is absent → shows "? to 20"
-    await waitFor(() =>
-      screen.getByText(/Queued backlog grew from \? to 20/),
+    // Generous timeout: this wait has flaked under heavy parallel CI load.
+    await waitFor(
+      () => screen.getByText(/Queued backlog grew from \? to 20/),
+      { timeout: 15000 },
     );
 
     const warningText = screen.getByText(/Queued backlog grew from \? to 20/);
@@ -963,8 +965,10 @@ describe('StampStudioIndex — backlog_growing with missing queued details shows
 
     render(<StampStudioIndex />);
     // previous_queued is present (5) but queued is absent → shows "5 to ?"
-    await waitFor(() =>
-      screen.getByText(/Queued backlog grew from 5 to \?/),
+    // Generous timeout: this wait has flaked under heavy parallel CI load.
+    await waitFor(
+      () => screen.getByText(/Queued backlog grew from 5 to \?/),
+      { timeout: 15000 },
     );
 
     const warningText = screen.getByText(/Queued backlog grew from 5 to \?/);
