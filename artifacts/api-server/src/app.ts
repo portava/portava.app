@@ -35,12 +35,34 @@ const ALLOWED_ORIGINS: string[] = _rawOrigins
       return CORS_FALLBACK_ORIGINS;
     })();
 
+// Auto-allow the Replit workspace dev domain and any port-mapped subdomains
+// (e.g. https://<id>.expo.kirk.replit.dev for the Expo web preview).
+// REPLIT_DEV_DOMAIN is only present in the Replit workspace, never in the
+// deployed production environment, so this is a dev-only convenience.
+//
+// REPLIT_DEV_DOMAIN has the form "<repl-id>.kirk.replit.dev". Port-mapped
+// artifact previews use sibling subdomains like "<repl-id>.expo.kirk.replit.dev",
+// so we derive the shared parent ("kirk.replit.dev") and allow any subdomain of it.
+const _replitDevDomain = process.env.REPLIT_DEV_DOMAIN;
+const _replitParentDomain = _replitDevDomain
+  ? _replitDevDomain.split(".").slice(1).join(".")
+  : null;
+
 app.use(
   cors({
     origin: (origin, callback) => {
       // Requests with no Origin (mobile, curl, server) are always permitted.
       if (!origin) return callback(null, true);
       if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+      // Allow the Replit workspace domain and any sibling/child subdomains
+      // (e.g. expo. prefix used by port-mapped artifact previews).
+      if (
+        _replitParentDomain &&
+        (origin === `https://${_replitDevDomain}` ||
+          origin.endsWith(`.${_replitParentDomain}`))
+      ) {
+        return callback(null, true);
+      }
       callback(new Error(`Origin '${origin}' is not allowed by CORS policy`));
     },
     credentials: true,
