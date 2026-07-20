@@ -243,6 +243,7 @@ jest.mock('../../../src/components/primitives', () => ({
   TravelEmptyState: () => null,
 }));
 
+
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ManualCityPicker', () => ({
   ManualCityPicker: () => null,
