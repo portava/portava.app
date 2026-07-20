@@ -246,7 +246,17 @@ router.post("/me/requests/friend_request/:id/accept", async (req, res) => {
     return;
   }
   const [ua, ub] = normalizedFriendshipPair(fr.requester_id, fr.recipient_id);
-  await sc.from("user_friendships").upsert({ user_a: ua, user_b: ub, accepted_request_id: id, created_at: now });
+  // If this upsert fails, the request row is already flipped to accepted but no
+  // friendship row exists. Recovery: report db_error so the client retries; the
+  // retry hits the "already accepted" guard, so the client should re-invoke the
+  // accept — the upsert is idempotent (same normalized pair), so a repaired
+  // retry or the auto-accept path can safely re-create the row.
+  const { error: friendshipErr } = await sc.from("user_friendships").upsert({ user_a: ua, user_b: ub, accepted_request_id: id, created_at: now });
+  if (friendshipErr) {
+    req.log.error({ err: friendshipErr }, "user_friendships upsert failed after accept");
+    sendError(res, "db_error", friendshipErr.message);
+    return;
+  }
 
   res.status(200).json({ status: "friends", requestId: id });
 });

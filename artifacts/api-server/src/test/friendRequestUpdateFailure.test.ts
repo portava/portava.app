@@ -29,6 +29,8 @@ interface State {
   user_friendships: any[];
   /** tables whose update() should fail with a PGRST204-style error */
   failUpdateTables: Set<string>;
+  /** tables whose upsert() should fail with a PGRST204-style error */
+  failUpsertTables: Set<string>;
 }
 
 const ALICE_ID = "aaaaaaaa-0000-0000-0000-000000000001";
@@ -49,6 +51,7 @@ function baseState(): State {
     ],
     user_friendships: [],
     failUpdateTables: new Set(),
+    failUpsertTables: new Set(),
   };
 }
 
@@ -70,6 +73,9 @@ function makeFakeClient(state: State) {
       update(changes: any) { _op = "update"; _updatePayload = changes; return b; },
       delete() { _op = "delete"; return b; },
       upsert(row: any) {
+        if (state.failUpsertTables.has(table)) {
+          return Promise.resolve({ data: null, error: DRIFT_ERROR });
+        }
         let source: any[] = (state as any)[table];
         if (!source) { source = []; (state as any)[table] = source; }
         source.push(row);
@@ -210,6 +216,22 @@ describe("requests.ts friend_request update failure surfaces db_error", () => {
     } finally { await srv.close(); }
   });
 
+  it("accept returns db_error when the user_friendships upsert fails — never reports friends", async () => {
+    const state = baseState();
+    state.friend_requests.push(pendingRequest());
+    state.failUpsertTables.add("user_friendships");
+    const srv = await startServer(state);
+    try {
+      const r = await post(srv.port, `/api/me/requests/friend_request/${FR_ID}/accept`, "alice-tok");
+      assert.equal(r.status, 500, `expected 500, got ${r.status}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body?.error, "db_error");
+      assert.notEqual(r.body?.status, "friends");
+      assert.equal(state.user_friendships.length, 0, "no friendship row on failed upsert");
+      // Half-committed by design: request already accepted, upsert retryable.
+      assert.equal(state.friend_requests[0].status, "accepted");
+    } finally { await srv.close(); }
+  });
+
   it("accept still succeeds when the update succeeds (control)", async () => {
     const state = baseState();
     state.friend_requests.push(pendingRequest());
@@ -256,6 +278,21 @@ describe("friends.ts friend_request update failure surfaces db_error", () => {
     try {
       const r = await post(srv.port, `/api/friend-requests/${FR_ID}/cancel`, "bob-tok");
       assertDbError(r, state);
+    } finally { await srv.close(); }
+  });
+
+  it("accept returns db_error when the user_friendships upsert fails — never reports friends", async () => {
+    const state = baseState();
+    state.friend_requests.push(pendingRequest());
+    state.failUpsertTables.add("user_friendships");
+    const srv = await startServer(state);
+    try {
+      const r = await post(srv.port, `/api/friend-requests/${FR_ID}/accept`, "alice-tok");
+      assert.equal(r.status, 500, `expected 500, got ${r.status}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body?.error, "db_error");
+      assert.notEqual(r.body?.status, "friends");
+      assert.equal(state.user_friendships.length, 0, "no friendship row on failed upsert");
+      assert.equal(state.friend_requests[0].status, "accepted");
     } finally { await srv.close(); }
   });
 

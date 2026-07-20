@@ -129,8 +129,16 @@ router.post("/users/:userId/friend-request", async (req, res) => {
       return;
     }
     const [ua, ub] = normalizedFriendshipPair(user.id, recipientId);
-    await sc.from("user_friendships")
+    // Half-committed recovery: request is already accepted; the upsert is
+    // idempotent on the normalized pair, so surfacing db_error lets a retry
+    // (or a later accept path) safely re-create the friendship row.
+    const { error: autoFriendshipErr } = await sc.from("user_friendships")
       .upsert({ user_a: ua, user_b: ub, accepted_request_id: incoming.id, created_at: now });
+    if (autoFriendshipErr) {
+      req.log.error({ err: autoFriendshipErr }, "user_friendships upsert failed after auto-accept");
+      sendError(res, "db_error", autoFriendshipErr.message);
+      return;
+    }
     res.status(200).json({ requestId: incoming.id, status: "friends", autoAccepted: true });
     return;
   }
@@ -196,8 +204,16 @@ router.post("/friend-requests/:requestId/accept", async (req, res) => {
   }
 
   const [ua, ub] = normalizedFriendshipPair(fr.requester_id, fr.recipient_id);
-  await sc.from("user_friendships")
+  // Half-committed recovery: request is already accepted; the upsert is
+  // idempotent on the normalized pair, so surfacing db_error lets a retry
+  // safely re-create the friendship row.
+  const { error: friendshipErr } = await sc.from("user_friendships")
     .upsert({ user_a: ua, user_b: ub, accepted_request_id: requestId, created_at: now });
+  if (friendshipErr) {
+    req.log.error({ err: friendshipErr }, "user_friendships upsert failed after accept");
+    sendError(res, "db_error", friendshipErr.message);
+    return;
+  }
 
   res.status(200).json({ status: "friends", requestId });
 });
