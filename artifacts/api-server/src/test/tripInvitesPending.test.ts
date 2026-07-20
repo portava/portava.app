@@ -23,8 +23,10 @@ import tripsRouter from "../routes/trips.js";
 
 const ALICE_ID = "aaaaaaaa-0000-0000-0000-000000000001";
 const BOB_ID   = "bbbbbbbb-0000-0000-0000-000000000002";
+const CAROL_ID = "cccccccc-0000-0000-0000-000000000003";
 const TRIP_ID  = "33333333-0000-0000-0000-000000000001";
 const TRIP_ID2 = "33333333-0000-0000-0000-000000000002";
+const TRIP_ID3 = "33333333-0000-0000-0000-000000000003";
 
 // ── Fake state ────────────────────────────────────────────────────────────────
 
@@ -61,6 +63,7 @@ function baseState(): State {
     users: {
       "alice-tok": { id: ALICE_ID },
       "bob-tok":   { id: BOB_ID },
+      "carol-tok": { id: CAROL_ID },
     },
     trips: [
       {
@@ -89,6 +92,22 @@ function baseState(): State {
         cover_url: "https://example.com/cover2.mp4",
         cover_media_type: "video",
         visibility: "private",
+        trip_type: null,
+        show_exact_dates: true,
+        show_destination_city: true,
+      },
+      {
+        // Trip owned by Carol — who has NO profiles row
+        id: TRIP_ID3,
+        owner_id: CAROL_ID,
+        title: "Ghost Trip",
+        destination_city: "Portland",
+        destination_country: "US",
+        start_date: "2026-11-01",
+        end_date: "2026-11-05",
+        cover_url: null,
+        cover_media_type: null,
+        visibility: "invite",
         trip_type: null,
         show_exact_dates: true,
         show_destination_city: true,
@@ -289,6 +308,41 @@ describe("GET /api/me/trip-invites/pending", () => {
     const mediaTypes = r.body.invites.map((inv: any) => inv.coverMediaType);
     assert.ok(mediaTypes.includes("image"), "first trip should have image cover_media_type");
     assert.ok(mediaTypes.includes("video"), "second trip should have video cover_media_type");
+
+    await close();
+  });
+
+  it("6. missing inviter profile row returns 200 with inviter: null — no 500", async () => {
+    const s = baseState();
+    // Bob is invited to TRIP_ID3, which is owned by Carol.
+    // Carol has NO row in profiles — simulates a deleted / orphaned account.
+    s.trip_members.push({
+      trip_id:    TRIP_ID3,
+      user_id:    BOB_ID,
+      role:       "invited",
+      created_at: "2026-10-01T09:00:00Z",
+    });
+    // Carol is the owner member
+    s.trip_members.push({
+      trip_id:    TRIP_ID3,
+      user_id:    CAROL_ID,
+      role:       "owner",
+      created_at: "2026-09-01T08:00:00Z",
+    });
+    // Deliberately NO profile row for Carol in s.profiles
+
+    const { port, close } = await startServer(s);
+    const r = await get(port, "/api/me/trip-invites/pending", "bob-tok");
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.ok(Array.isArray(r.body?.invites), "invites should be an array");
+    assert.equal(r.body.invites.length, 1);
+
+    const invite = r.body.invites[0];
+    assert.equal(invite.tripId, TRIP_ID3, "tripId should match Ghost Trip");
+    assert.equal(invite.tripTitle, "Ghost Trip");
+    assert.equal(invite.destinationCity, "Portland");
+    // inviter must be null — not a 500 — when the owner has no profiles row
+    assert.equal(invite.inviter, null, "inviter should be null when the profile row is missing");
 
     await close();
   });
