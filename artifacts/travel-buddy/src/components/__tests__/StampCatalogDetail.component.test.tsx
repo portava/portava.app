@@ -124,6 +124,15 @@ function detailOkWithCandidate() {
 // ── Suite ──────────────────────────────────────────────────────────────────────
 
 describe('StampCatalogDetail — API error banner', () => {
+  // Reset mock state before each test so that mockResolvedValueOnce queues
+  // from one test cannot leak into the next — critical under maxWorkers: 1
+  // where all files share one worker and in-file tests run sequentially.
+  beforeEach(() => {
+    mockGetEntry.mockReset();
+    mockActivate.mockReset();
+    mockReject.mockReset();
+  });
+
   afterEach(() => {
     jest.clearAllMocks();
   });
@@ -163,10 +172,16 @@ describe('StampCatalogDetail — API error banner', () => {
     const scroll = screen.getByTestId('catalog-detail-scroll');
     expect(scroll.props.refreshControl).toBeTruthy();
 
-    // Pull-to-refresh loads the entry.
-    await act(async () => { scroll.props.refreshControl.props.onRefresh(); });
+    // Pull-to-refresh loads the entry.  The 30 ms window gives the async
+    // load() continuation (await getAdminCatalogEntry → setDetail → setRefreshing)
+    // time to settle inside the act() scope under full-suite memory pressure,
+    // preventing waitFor from polling against an unflushed state tree.
+    await act(async () => {
+      scroll.props.refreshControl.props.onRefresh();
+      await new Promise<void>((r) => setTimeout(r, 30));
+    });
 
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await waitFor(() => screen.getByText('Paris Eiffel'), { timeout: 3000 });
     expect(screen.queryByText('Entry not found')).toBeNull();
   });
 
