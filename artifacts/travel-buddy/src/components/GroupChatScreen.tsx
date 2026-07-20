@@ -135,9 +135,10 @@ function LongPressActionSheet({
   if (!message) return null;
   const text = message.displayBody ?? message.body ?? '';
   const actions: [string, string, React.ComponentType<{ size: number; color: string }>][] = [
+    // 'translate' removed — translations are automatic per language settings;
+    // a menu item that only explained that was a dead end.
     ['reply',     'Reply',         Reply        ],
     ['copy',      'Copy text',     Copy         ],
-    ['translate', 'Translate',     Languages    ],
     ['save',      'Save message',  BookmarkPlus ],
     ['report',    'Report',        Flag         ],
   ];
@@ -211,9 +212,6 @@ function LongPressActionSheet({
               } else if (key === 'save') {
                 onClose();
                 onSave(message);
-              } else if (key === 'translate') {
-                onClose();
-                Alert.alert('Translation', 'Translations are applied automatically based on your language settings.');
               } else {
                 onClose();
                 Alert.alert(label, 'This feature is coming soon.');

@@ -11,7 +11,7 @@
  * payload when available.
  */
 import React from 'react';
-import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Image, Pressable, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
 import {
   X,
@@ -30,6 +30,7 @@ import type { MapEntity } from '../../types/mapTypes.ts';
 import type { BuddyProfile } from '../../services/rentABuddy.ts';
 import type { EventListItem } from '../../services/events.ts';
 import type { HiddenGem } from '../../services/hiddenGems.ts';
+import { openDirectThread } from '../../services/messaging.ts';
 import type { TripRow } from '../../services/trips.ts';
 import type { CircleMemberLocation } from '../../services/map.ts';
 
@@ -249,7 +250,16 @@ function FriendCard({ entity, onClose }: { entity: MapEntity<CircleMemberLocatio
       </View>
       <Pressable
         style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => { onClose(); router.push(`/messages/${loc.userId}` as any); }}
+        onPress={async () => {
+          onClose();
+          // Resolve the direct thread first — /messages/[id] takes a THREAD id, not a user id.
+          const res = await openDirectThread(loc.userId);
+          if (res.ok && res.data?.threadId) {
+            router.push(`/messages/${res.data.threadId}?threadType=direct&otherUserId=${encodeURIComponent(loc.userId)}` as any);
+          } else {
+            Alert.alert('Could not open conversation', 'Please try again.');
+          }
+        }}
       >
         <Text style={s.ctaText}>Message</Text>
         <ArrowRight size={15} color="#fff" />

@@ -21,6 +21,7 @@ import { Compass, MapPin, Bookmark, CalendarPlus, ExternalLink } from 'lucide-re
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { TG } from '../theme/telegraphTokens.ts';
 import { TripWishlistPicker, type AddToTripPayload } from './discovery/TripWishlistPicker.tsx';
+import { toggleSave } from '../services/discoveryBookmarks.ts';
 
 export interface DiscoveryCardPayload {
   sourceId: string;
@@ -159,7 +160,27 @@ export function DiscoveryCardMessage({ body, mine }: Props) {
           <View style={[card.divider, mine && card.dividerMine]} />
           <Pressable
             style={[card.actionBtn, mine && card.actionBtnMine]}
-            onPress={() => Alert.alert('Saved', `"${payload.title}" saved to your Discovery.`)}
+            onPress={async () => {
+              // Real save via discovery bookmarks — no fake success alerts.
+              try {
+                const res = await toggleSave({
+                  id: payload.sourceId,
+                  name: payload.title,
+                  category: payload.category,
+                  type: payload.sourceType ?? null,
+                  address: payload.city ?? null,
+                  savedAt: Date.now(),
+                });
+                Alert.alert(
+                  res.added ? 'Saved' : 'Removed',
+                  res.added
+                    ? `"${payload.title}" was added to your saved places.`
+                    : `"${payload.title}" was removed from your saved places.`,
+                );
+              } catch {
+                Alert.alert('Could not save', 'Please try again.');
+              }
+            }}
           >
             <Bookmark size={11} color={mine ? color.onInk : color.signal} />
             <Text style={[card.actionLabel, mine && card.actionLabelMine]}>Save</Text>
