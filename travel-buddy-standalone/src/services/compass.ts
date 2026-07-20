@@ -928,3 +928,89 @@ export async function setCachedFeed(userId: string, feed: CompassFeedResponse): 
     // ignore storage errors
   }
 }
+
+// ── Phase 6: Compass Remembers — layered memory ───────────────────────────────
+
+export type CompassMemoryScope = 'session' | 'trip' | 'long_term' | 'circle';
+
+export interface CompassMemory {
+  id:             string;
+  userId:         string;
+  scope:          CompassMemoryScope;
+  circleOwnerId:  string | null;
+  tripId:         string | null;
+  conversationId: string | null;
+  category:       string;
+  content:        string;
+  source:         'taught' | 'compressed' | 'inferred';
+  confidence:     number;
+  createdAt:      string;
+  updatedAt:      string;
+}
+
+export async function fetchCompassMemories(
+  scope?: CompassMemoryScope,
+): Promise<{ ok: boolean; data?: CompassMemory[]; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const qs = scope ? `?scope=${encodeURIComponent(scope)}` : '';
+    const r = await authedFetch(`/api/compass/me/memories${qs}`);
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    return { ok: true, data: body.memories ?? [] };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+/** "Teach My Compass": turn an explicit statement into a structured preference. */
+export async function teachCompassMemory(
+  statement: string,
+  opts: { circleOwnerId?: string } = {},
+): Promise<{ ok: boolean; data?: CompassMemory; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const r = await authedFetch('/api/compass/me/memories/teach', {
+      method: 'POST',
+      body:   JSON.stringify({ statement, ...opts }),
+    });
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    return { ok: true, data: body.memory };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+export async function updateCompassMemory(
+  memoryId: string,
+  patch: { content?: string; category?: string },
+): Promise<{ ok: boolean; data?: CompassMemory; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const r = await authedFetch(`/api/compass/me/memories/${encodeURIComponent(memoryId)}`, {
+      method: 'PATCH',
+      body:   JSON.stringify(patch),
+    });
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    return { ok: true, data: body.memory };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+export async function forgetCompassMemory(
+  memoryId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const r = await authedFetch(`/api/compass/me/memories/${encodeURIComponent(memoryId)}`, {
+      method: 'DELETE',
+    });
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}

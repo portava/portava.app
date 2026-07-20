@@ -131,6 +131,7 @@ export default function RootLayout() {
                         <Stack.Screen name="create" />
                         <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
                         <Stack.Screen name="compass-preferences" options={{ presentation: 'card' }} />
+                        <Stack.Screen name="compass-memories" options={{ presentation: 'card' }} />
                       </Stack>
                       {/* Root-level call UI — overlays any screen, survives navigation */}
                       <CallSurface />
