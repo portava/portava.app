@@ -1,107 +1,26 @@
 /**
  * request-buddy.tsx — open-marketplace screen (Mode B only).
  *
- * @legacy Mode A (per-buddy booking) has been retired. All specific-buddy
- * "Book" entry points now route to `/(rent-a-buddy)/checkout` which provides
- * the full booking flow (date/time pickers, duration, group size, meetup zone,
- * safety preferences). Do NOT add new per-buddy routing here.
+ * Opened without `buddyId` from marketplace.tsx. Lets the traveller post an
+ * open request that any eligible buddy can respond to. Submits via
+ * createRequest() → navigates to the offers screen.
  *
- * This file is kept solely for:
- *   Mode B (open marketplace request): opened without `buddyId` from
- *   marketplace.tsx. Lets the traveller post an open request that any eligible
- *   buddy can respond to. Submits via createRequest() → navigates to the
- *   offers screen.
- *
- * The `BookingRequestForm` component below is unreferenced but retained for
- * reference; it will be removed in a future cleanup pass.
+ * Per-buddy booking (Mode A) was retired. All specific-buddy "Book" entry
+ * points now route to `/(rent-a-buddy)/checkout`.
  */
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
-  View, Text, TextInput, Pressable, ScrollView, StyleSheet, Alert, Switch, Modal,
+  View, Text, TextInput, Pressable, ScrollView, StyleSheet, Alert, Switch,
 } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
 import type { Place } from '../../src/lib/location/placeTypes';
-import {
-  ArrowLeft, Send, Users, Clock, Shield, AlertTriangle,
-} from 'lucide-react-native';
+import { ArrowLeft, Send } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { TravelChip } from '../../src/components/primitives';
-import { DatePickerField } from '../../src/components/DatePickerField';
-import { DatePickerField as NativeTimePicker } from '../../src/components/DateTimePickerField';
-import {
-  createRequest, createBooking, getBuddyPackages, getBuddyProfile,
-  type BuddyCategory, type MarketplacePackage, type BuddyProfile,
-} from '../../src/services/rentABuddy';
-
-// ── AsyncStorage helper (lazy-require so module load never crashes) ─────────
-
-type StorageStub = { setItem(k: string, v: string): Promise<void>; getItem(k: string): Promise<string | null> };
-const getStorage = (): StorageStub | null => {
-  try { return require('@react-native-async-storage/async-storage').default; } catch { return null; }
-};
-const TUTORIAL_KEY = 'rab_safety_tutorial_shown';
-
-async function hasSeenTutorial(): Promise<boolean> {
-  const s = getStorage();
-  if (!s) return false;
-  const v = await s.getItem(TUTORIAL_KEY);
-  return v === 'true';
-}
-
-async function markTutorialSeen(): Promise<void> {
-  const s = getStorage();
-  if (!s) return;
-  await s.setItem(TUTORIAL_KEY, 'true');
-}
-
-// ── Safety tutorial modal (first booking only) ────────────────────────────
-
-function SafetyModal({ visible, onAcknowledge }: { visible: boolean; onAcknowledge: () => void }) {
-  return (
-    <Modal visible={visible} transparent animationType="slide">
-      <View style={sm.overlay}>
-        <View style={sm.sheet}>
-          <View style={sm.iconRow}>
-            <Shield size={28} color={color.success} />
-          </View>
-          <Text style={sm.title}>Before you book</Text>
-          <Text style={sm.sub}>Please review these important safety guidelines.</Text>
-
-          <View style={sm.rule}>
-            <AlertTriangle size={14} color={color.warn} />
-            <View style={{ flex: 1 }}>
-              <Text style={sm.ruleTitle}>Not a dating service</Text>
-              <Text style={sm.ruleSub}>Rent a Buddy is a social travel companion service. Romantic or sexual expectations are strictly prohibited.</Text>
-            </View>
-          </View>
-
-          <View style={sm.rule}>
-            <AlertTriangle size={14} color={color.warn} />
-            <View style={{ flex: 1 }}>
-              <Text style={sm.ruleTitle}>Never pay off-app</Text>
-              <Text style={sm.ruleSub}>Only pay via Travel Buddy. Cash should only cover the pre-agreed balance at session end — never upfront.</Text>
-            </View>
-          </View>
-
-          <View style={sm.rule}>
-            <Shield size={14} color={color.success} />
-            <View style={{ flex: 1 }}>
-              <Text style={sm.ruleTitle}>Safe Return is always on</Text>
-              <Text style={sm.ruleSub}>Your session has built-in check-ins. Share your location with your Trusted Circle and use the SOS button if needed.</Text>
-            </View>
-          </View>
-
-          <Pressable style={sm.btn} onPress={onAcknowledge}>
-            <Text style={sm.btnText}>I understand — continue</Text>
-          </Pressable>
-        </View>
-      </View>
-    </Modal>
-  );
-}
+import { createRequest } from '../../src/services/rentABuddy';
 
 // ── Open-request form (Mode B) ─────────────────────────────────────────────
 
@@ -239,219 +158,9 @@ function OpenRequestForm() {
   );
 }
 
-// ── Per-buddy booking request form (Mode A) ────────────────────────────────
-
-function BookingRequestForm({ buddyId, preselectPackageId }: { buddyId: string; preselectPackageId?: string }) {
-  const insets = useSafeAreaInsets();
-
-  const [buddy, setBuddy]                   = useState<BuddyProfile | null>(null);
-  const [packages, setPackages]             = useState<MarketplacePackage[]>([]);
-  const [pkgIdx, setPkgIdx]                 = useState<number | null>(null);
-  const [bookingDate, setBookingDate]       = useState('');
-  const [startTime, setStartTime]           = useState<Date | null>(null);
-  const [groupSize, setGroupSize]           = useState(1);
-  const [city, setCity]                     = useState('');
-  const [cityPickerOpen, setCityPickerOpen] = useState(false);
-  const [notes, setNotes]                   = useState('');
-  const [loading, setLoading]               = useState(false);
-  const [initLoading, setInitLoading]       = useState(true);
-  const [safetyVisible, setSafetyVisible]   = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    Promise.all([getBuddyProfile(buddyId), getBuddyPackages(buddyId)]).then(([bRes, pRes]) => {
-      if (!alive) return;
-      if (bRes.ok && bRes.data.buddy) {
-        setBuddy(bRes.data.buddy);
-        setCity(bRes.data.buddy.city ?? '');
-      }
-      if (pRes.ok) {
-        const active = pRes.data.packages.filter(p => p.isActive);
-        setPackages(active);
-        // Honor the package chosen on the buddy profile ("Book This Package").
-        const pre = preselectPackageId ? active.findIndex(p => p.id === preselectPackageId) : -1;
-        if (pre >= 0) setPkgIdx(pre);
-        else if (active.length > 0) setPkgIdx(0);
-      }
-      setInitLoading(false);
-    }).catch(() => setInitLoading(false));
-    return () => { alive = false; };
-  }, [buddyId]);
-
-  const selectedPkg = pkgIdx != null ? (packages[pkgIdx] ?? null) : null;
-
-  const validate = (): string | null => {
-    if (!bookingDate) return 'Please select a booking date.';
-    if (!city.trim()) return 'Please enter a meeting city or area.';
-    return null;
-  };
-
-  const doSubmit = useCallback(async () => {
-    setLoading(true);
-    const timeStr = startTime
-      ? startTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
-      : undefined;
-    const res = await createBooking({
-      buddyId,
-      packageId: selectedPkg?.id,
-      bookingDate,
-      startTime: timeStr,
-      durationH: selectedPkg?.durationH ?? 2,
-      groupSize,
-      city: city.trim(),
-      category: (selectedPkg?.category as BuddyCategory | undefined) ?? 'city',
-      notes: notes.trim() || undefined,
-      acceptSafety: true,
-    });
-    setLoading(false);
-    if (!res.ok) { Alert.alert('Error', res.error); return; }
-    const bookingId = res.data.booking?.id;
-    if (bookingId) {
-      router.replace({ pathname: '/(rent-a-buddy)/booking/[id]' as any, params: { id: bookingId } });
-    } else {
-      router.back();
-    }
-  }, [buddyId, selectedPkg, bookingDate, startTime, groupSize, city, notes]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const onPressSubmit = async () => {
-    const err = validate();
-    if (err) { Alert.alert('Missing info', err); return; }
-    const seen = await hasSeenTutorial();
-    if (seen) {
-      doSubmit();
-    } else {
-      setSafetyVisible(true);
-    }
-  };
-
-  const handleSafetyAck = async () => {
-    await markTutorialSeen();
-    setSafetyVisible(false);
-    doSubmit();
-  };
-
-  if (initLoading) {
-    return (
-      <View style={[s.root, { paddingTop: insets.top, alignItems: 'center', justifyContent: 'center' }]}>
-        <Text style={{ ...t.body, color: color.mute }}>Loading…</Text>
-      </View>
-    );
-  }
-
-  return (
-    <KeyboardSafeScrollView style={[s.root, { paddingTop: insets.top }]}>
-      <SafetyModal visible={safetyVisible} onAcknowledge={handleSafetyAck} />
-
-      <View style={s.header}>
-        <Pressable onPress={() => router.back()} style={s.backBtn}>
-          <ArrowLeft size={20} color={color.ink} />
-        </Pressable>
-        <View style={{ flex: 1 }}>
-          <Text style={s.title}>Request Booking</Text>
-          {buddy && <Text style={s.subtitle}>{buddy.displayName ?? 'Buddy'} · {buddy.city}</Text>}
-        </View>
-      </View>
-
-      <ScrollView style={s.body} contentContainerStyle={s.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-        <Text style={s.notice}>{POLICY_TEXT}</Text>
-
-        {/* Service / package picker */}
-        {packages.length > 0 && (
-          <>
-            <Text style={s.label}>Select a service *</Text>
-            {packages.map((pkg, i) => (
-              <Pressable key={pkg.id} style={[s.pkgCard, pkgIdx === i && s.pkgCardSel]} onPress={() => setPkgIdx(i)}>
-                <View style={{ flex: 1 }}>
-                  <Text style={s.pkgTitle}>{pkg.title}</Text>
-                  {pkg.description && <Text style={s.pkgDesc} numberOfLines={2}>{pkg.description}</Text>}
-                  <View style={s.pkgMeta}>
-                    <Clock size={11} color={color.mute} />
-                    <Text style={s.pkgMetaText}>{pkg.durationH}h</Text>
-                    <Users size={11} color={color.mute} />
-                    <Text style={s.pkgMetaText}>Up to {pkg.maxGroup}</Text>
-                  </View>
-                </View>
-                <Text style={s.pkgPrice}>${pkg.priceUsd}</Text>
-              </Pressable>
-            ))}
-          </>
-        )}
-
-        {/* Date */}
-        <Text style={s.label}>Booking date *</Text>
-        <DatePickerField value={bookingDate} onChange={setBookingDate} placeholder="Select date" />
-
-        {/* Time */}
-        <Text style={s.label}>Start time (optional)</Text>
-        <NativeTimePicker
-          value={startTime}
-          onChange={setStartTime}
-          onClear={() => setStartTime(null)}
-          placeholder="Pick a start time"
-          mode="time"
-        />
-
-        {/* Group size */}
-        <Text style={s.label}>Group size</Text>
-        <View style={s.row}>
-          {[1, 2, 3, 4, 5, 6].map((n) => (
-            <Pressable key={n} style={[s.numBtn, groupSize === n && s.numBtnSel]} onPress={() => setGroupSize(n)}>
-              <Text style={[s.numLabel, groupSize === n && s.numLabelSel]}>{n < 6 ? String(n) : '6+'}</Text>
-            </Pressable>
-          ))}
-        </View>
-
-        {/* City / meeting area */}
-        <Text style={s.label}>Meeting city / area *</Text>
-        <Pressable onPress={() => setCityPickerOpen(true)}>
-          <Text style={[s.input, !city && { color: color.mute }]} numberOfLines={1}>
-            {city || 'e.g. Cebu City, BGC, Old Town…'}
-          </Text>
-        </Pressable>
-        <GlobalPlacePicker
-          visible={cityPickerOpen}
-          onClose={() => setCityPickerOpen(false)}
-          onSelect={(place: Place) => setCity(place.city && place.type !== 'city' ? `${place.name}, ${place.city}` : (place.city ?? place.name))}
-          title="Meeting city or area"
-          placeholder="City, neighborhood or landmark…"
-          usedFor="buddy_meeting_area"
-        />
-
-
-        {/* Notes */}
-        <Text style={s.label}>Additional notes</Text>
-        <TextInput style={[s.input, s.textarea]} placeholder="Any specific requests or preferences…" placeholderTextColor={color.mute} value={notes} onChangeText={setNotes} multiline numberOfLines={3} textAlignVertical="top" />
-
-        {/* Price preview */}
-        {selectedPkg && (
-          <View style={s.priceBox}>
-            <Text style={s.priceLabel}>Estimated total</Text>
-            <Text style={s.priceVal}>${selectedPkg.priceUsd} USD</Text>
-            {selectedPkg.depositRequired && (
-              <Text style={s.priceSub}>Deposit ({selectedPkg.depositPercent}%) collected at confirmation</Text>
-            )}
-            <Text style={s.priceSub}>Cash balance settled directly with your Buddy at session end.</Text>
-          </View>
-        )}
-
-        <Pressable
-          style={[s.submitBtn, loading && s.submitBtnDisabled]}
-          onPress={onPressSubmit}
-          disabled={loading}
-        >
-          <Send size={16} color="#fff" />
-          <Text style={s.submitBtnLabel}>{loading ? 'Sending…' : 'Send Request'}</Text>
-        </Pressable>
-      </ScrollView>
-    </KeyboardSafeScrollView>
-  );
-}
-
 // ── Entry point ───────────────────────────────────────────────────────────
 
 export default function RequestBuddy() {
-  const { buddyId, packageId } = useLocalSearchParams<{ buddyId?: string; packageId?: string }>();
-  if (buddyId) return <BookingRequestForm buddyId={buddyId} preselectPackageId={typeof packageId === 'string' ? packageId : undefined} />;
   return <OpenRequestForm />;
 }
 
@@ -462,7 +171,6 @@ const s = StyleSheet.create({
   header:            { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.lg, borderBottomWidth: 1, borderBottomColor: color.haze },
   backBtn:           { padding: space.xs },
   title:             { ...t.heading, color: color.ink },
-  subtitle:          { ...t.small, color: color.mute },
   body:              { flex: 1 },
   content:           { padding: space.lg, paddingBottom: 60 },
   notice:            { ...t.small, color: color.mute, backgroundColor: color.haze, padding: space.md, borderRadius: radius.sm, marginBottom: space.lg, lineHeight: 18 },
@@ -481,28 +189,4 @@ const s = StyleSheet.create({
   submitBtn:         { marginTop: space.xl, backgroundColor: color.deep, borderRadius: radius.md, paddingVertical: space.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.sm },
   submitBtnDisabled: { opacity: 0.4 },
   submitBtnLabel:    { ...t.body, color: '#fff', fontWeight: '700' },
-  pkgCard:           { borderRadius: radius.md, borderWidth: 1.5, borderColor: color.haze, padding: space.md, marginBottom: space.sm, flexDirection: 'row', alignItems: 'center', gap: space.md },
-  pkgCardSel:        { borderColor: color.deep, backgroundColor: `${color.deep}08` },
-  pkgTitle:          { ...t.bodyStrong, color: color.ink, marginBottom: 2 },
-  pkgDesc:           { ...t.small, color: color.mute, lineHeight: 16 },
-  pkgMeta:           { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: space.xs },
-  pkgMetaText:       { ...t.small, color: color.mute },
-  pkgPrice:          { ...t.bodyStrong, color: color.signal, fontSize: 16 },
-  priceBox:          { backgroundColor: `${color.success}12`, borderRadius: radius.md, padding: space.md, borderWidth: 1, borderColor: `${color.success}30`, marginTop: space.lg },
-  priceLabel:        { ...t.small, color: color.mute, marginBottom: 2 },
-  priceVal:          { ...t.heading, color: color.ink, marginBottom: 4 },
-  priceSub:          { ...t.small, color: color.mute, lineHeight: 16, marginTop: 2 },
-});
-
-const sm = StyleSheet.create({
-  overlay:   { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', padding: space.xl },
-  sheet:     { backgroundColor: color.paper, borderRadius: radius.lg, padding: space.xl, width: '100%', maxWidth: 380 },
-  iconRow:   { alignItems: 'center', marginBottom: space.md },
-  title:     { ...t.heading, color: color.ink, marginBottom: space.xs, textAlign: 'center' },
-  sub:       { ...t.small, color: color.mute, marginBottom: space.lg, textAlign: 'center' },
-  rule:      { flexDirection: 'row', gap: space.md, marginBottom: space.md, alignItems: 'flex-start' },
-  ruleTitle: { ...t.bodyStrong, color: color.ink, marginBottom: 2 },
-  ruleSub:   { ...t.small, color: color.mute, lineHeight: 16 },
-  btn:       { backgroundColor: color.deep, borderRadius: radius.md, paddingVertical: space.md, alignItems: 'center', marginTop: space.lg },
-  btnText:   { ...t.body, color: '#fff', fontWeight: '700' },
 });

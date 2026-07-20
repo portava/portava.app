@@ -74,7 +74,7 @@ export function BuddyCard({
     if (onBook) {
       onBook();
     } else {
-      router.push({ pathname: '/(rent-a-buddy)/request-buddy' as any, params: { buddyId: buddy.id } });
+      router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: buddy.id } });
     }
   };
 

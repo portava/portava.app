@@ -78,7 +78,7 @@ async function handleAction(
       break;
     case 'request_buddy':
       // item_id is the buddy profile ID; request-buddy screen initiates the booking flow
-      router.push({ pathname: '/(rent-a-buddy)/request-buddy', params: { buddyId: item.item_id } } as any);
+      router.push({ pathname: '/(rent-a-buddy)/checkout', params: { buddyId: item.item_id } } as any);
       break;
     case 'navigate_gem':
       router.push(`/gems/${item.item_id}` as any);
