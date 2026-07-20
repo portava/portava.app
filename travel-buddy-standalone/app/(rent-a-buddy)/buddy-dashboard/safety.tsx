@@ -10,6 +10,10 @@ import {
 } from 'lucide-react-native';
 import { TravelButton, TravelCard } from '../../../src/components/primitives';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import {
+  getMyRequests, reportBooking, endBookingEarly, feelUnsafe, confirmCashBalance,
+  type BuddyBooking,
+} from '../../../src/services/rentABuddy';
 
 const REPORT_REASONS = [
   'Harassment or disrespectful behaviour',
@@ -134,34 +138,79 @@ export default function BuddySafetyTools() {
   const [reportOpen, setReportOpen] = useState(false);
   const [endOpen, setEndOpen] = useState(false);
 
-  function handleReport(reason: string, detail: string) {
-    setReportOpen(false);
-    Alert.alert(
-      'Report submitted',
-      'Thank you for reporting. Our safety team will review this within 24 hours. The booking is now flagged.',
-      [{ text: 'OK' }],
-    );
+  // These tools act on the buddy's live booking — resolve it on mount so every
+  // action below hits the real backend instead of pretending to.
+  const [activeBooking, setActiveBooking] = useState<BuddyBooking | null>(null);
+  React.useEffect(() => {
+    let alive = true;
+    getMyRequests().then((res) => {
+      if (!alive || !res.ok || !res.data) return;
+      const current = res.data.requests.find((b) => b.status === 'in_progress')
+        ?? res.data.requests.find((b) => b.status === 'scheduled')
+        ?? null;
+      setActiveBooking(current);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  function requireBooking(): BuddyBooking | null {
+    if (!activeBooking) {
+      Alert.alert(
+        'No active booking',
+        'These tools work on a live booking. Open the booking itself to use its safety actions, or contact us from Settings.',
+      );
+      return null;
+    }
+    return activeBooking;
   }
 
-  function handleEndBooking(reason: string, detail: string) {
+  async function handleReport(reason: string, detail: string) {
+    setReportOpen(false);
+    const booking = requireBooking();
+    if (!booking) return;
+    const res = await reportBooking(booking.id, { reason, details: detail || undefined });
+    if (res.ok) {
+      Alert.alert('Report submitted', 'Thank you for reporting. Our safety team will review this within 24 hours.');
+    } else {
+      Alert.alert('Could not submit report', res.error ?? 'Please try again.');
+    }
+  }
+
+  async function handleEndBooking(reason: string, detail: string) {
     setEndOpen(false);
-    Alert.alert(
-      'Booking ended early',
-      'The booking has been marked as ended early. Your safety team note has been recorded. No penalties apply when safety is the reason.',
-      [{ text: 'OK', onPress: () => router.back() }],
-    );
+    const booking = requireBooking();
+    if (!booking) return;
+    const res = await endBookingEarly(booking.id, detail ? `${reason}: ${detail}` : reason);
+    if (res.ok) {
+      Alert.alert(
+        'Booking ended early',
+        'The booking has been ended and your note recorded. No penalties apply when safety is the reason.',
+        [{ text: 'OK', onPress: () => router.back() }],
+      );
+    } else {
+      Alert.alert('Could not end booking', res.error ?? 'Please try again.');
+    }
   }
 
   function handleFlagUnpaidCash() {
     Alert.alert(
       'Flag unpaid cash balance',
-      'This will notify the traveller that their cash payment is outstanding. A support ticket will be created if unresolved within 24 hours.',
+      'This marks the cash payment for your current booking as disputed so our team can follow up.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Flag it',
           style: 'destructive',
-          onPress: () => Alert.alert('Flagged', 'The unpaid balance has been flagged. You\'ll receive an update within 24 hours.'),
+          onPress: async () => {
+            const booking = requireBooking();
+            if (!booking) return;
+            const res = await confirmCashBalance(booking.id, false);
+            if (res.ok) {
+              Alert.alert('Flagged', 'The unpaid balance is now marked as disputed. Our team will follow up.');
+            } else {
+              Alert.alert('Could not flag', res.error ?? 'Please try again.');
+            }
+          },
         },
       ],
     );
@@ -170,28 +219,32 @@ export default function BuddySafetyTools() {
   function handleFlagExtraGuest() {
     Alert.alert(
       'Flag unapproved extra guest',
-      'This will record that an unapproved guest was present. The traveller will be notified and asked to pay for the extra person.',
+      'This files a report on the current booking noting an unapproved guest was present.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Flag it',
-          onPress: () => Alert.alert('Flagged', 'The unapproved guest has been flagged. The traveller will be notified.'),
+          onPress: async () => {
+            const booking = requireBooking();
+            if (!booking) return;
+            const res = await reportBooking(booking.id, { reason: 'Unapproved extra guest', details: 'Flagged from Safety Tools.' });
+            if (res.ok) {
+              Alert.alert('Flagged', 'The unapproved guest has been reported on this booking.');
+            } else {
+              Alert.alert('Could not flag', res.error ?? 'Please try again.');
+            }
+          },
         },
       ],
     );
   }
 
   function handleContactSupport() {
+    // Honest routing — there is no ticket system yet, so don't pretend one exists.
     Alert.alert(
       'Contact Support',
-      'Our support team is available 24/7. Would you like to open a support ticket?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Open ticket',
-          onPress: () => Alert.alert('Ticket created', 'A support ticket has been created. You\'ll hear back within 2 hours.'),
-        },
-      ],
+      'For booking problems, use "Report traveller" above — reports go straight to our safety team and are reviewed within 24 hours. For anything else, reach us at support@portava.app.',
+      [{ text: 'OK' }],
     );
   }
 
@@ -204,11 +257,16 @@ export default function BuddySafetyTools() {
         {
           text: 'Notify safety team',
           style: 'destructive',
-          onPress: () =>
-            Alert.alert(
-              'Safety team notified',
-              'Our safety team has been alerted with your last known location from this session. Stay safe.',
-            ),
+          onPress: async () => {
+            const booking = requireBooking();
+            if (!booking) return;
+            const res = await feelUnsafe(booking.id, 'Emergency button pressed from Safety Tools.');
+            if (res.ok) {
+              Alert.alert('Safety team notified', 'Our safety team has been alerted about this booking. Stay safe.');
+            } else {
+              Alert.alert('Could not notify', res.error ?? 'Please call local emergency services if you are in danger.');
+            }
+          },
         },
       ],
     );

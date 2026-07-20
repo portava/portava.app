@@ -236,7 +236,7 @@ function OpenRequestForm() {
 
 // ── Per-buddy booking request form (Mode A) ────────────────────────────────
 
-function BookingRequestForm({ buddyId }: { buddyId: string }) {
+function BookingRequestForm({ buddyId, preselectPackageId }: { buddyId: string; preselectPackageId?: string }) {
   const insets = useSafeAreaInsets();
 
   const [buddy, setBuddy]                   = useState<BuddyProfile | null>(null);
@@ -263,7 +263,10 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
       if (pRes.ok) {
         const active = pRes.data.packages.filter(p => p.isActive);
         setPackages(active);
-        if (active.length > 0) setPkgIdx(0);
+        // Honor the package chosen on the buddy profile ("Book This Package").
+        const pre = preselectPackageId ? active.findIndex(p => p.id === preselectPackageId) : -1;
+        if (pre >= 0) setPkgIdx(pre);
+        else if (active.length > 0) setPkgIdx(0);
       }
       setInitLoading(false);
     }).catch(() => setInitLoading(false));
@@ -442,8 +445,8 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
 // ── Entry point ───────────────────────────────────────────────────────────
 
 export default function RequestBuddy() {
-  const { buddyId } = useLocalSearchParams<{ buddyId?: string }>();
-  if (buddyId) return <BookingRequestForm buddyId={buddyId} />;
+  const { buddyId, packageId } = useLocalSearchParams<{ buddyId?: string; packageId?: string }>();
+  if (buddyId) return <BookingRequestForm buddyId={buddyId} preselectPackageId={typeof packageId === 'string' ? packageId : undefined} />;
   return <OpenRequestForm />;
 }
 

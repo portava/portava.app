@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 import { postCompassFrontloadEvent } from '../../src/services/compass';
 import {
@@ -13,7 +13,7 @@ import EventsTabScreen from './events';
 import { NotificationBell } from '../../src/components/NotificationBell';
 import {
   Plus, Users, CalendarDays, MapPin, CalendarClock,
-  ChevronRight, Check, X, UserCircle, Plane,
+  ChevronRight, Check, X, UserCircle, Plane, Briefcase,
 } from 'lucide-react-native';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
@@ -23,6 +23,7 @@ import { useMyTrips, usePendingTripInvites } from '../../src/hooks/useBackend';
 import { useUnreadCounts } from '../../src/hooks/useMessaging';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import { acceptTripInvite, declineTripInvite, type TripInvite } from '../../src/services/trips';
+import { addEventToTrip } from '../../src/services/events';
 import { classifyInviteAcceptError } from '../../src/lib/inviteCardGoneHandler';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useSnapshotCache } from '../../src/hooks/useSnapshotCache';
@@ -197,6 +198,37 @@ function TripsScreen() {
   const { meetups: meetupCount } = useUnreadCounts();
   const [layoverOpen, setLayoverOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TripsTab>('trips');
+
+  // "Add event to trip" mode — entered when the event detail screen pushes
+  // /trips?addEventId=…; the user picks a trip and we attach the event to it.
+  const { addEventId, addEventTitle } = useLocalSearchParams<{ addEventId?: string; addEventTitle?: string }>();
+  const [addTarget, setAddTarget] = useState<{ id: string; title: string } | null>(null);
+  const [addBusy, setAddBusy] = useState(false);
+  React.useEffect(() => {
+    if (typeof addEventId === 'string' && addEventId.length > 0) {
+      setAddTarget({ id: addEventId, title: typeof addEventTitle === 'string' ? addEventTitle : '' });
+    }
+  }, [addEventId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handlePickTripForEvent = useCallback(async (tripId: string) => {
+    if (!addTarget || addBusy) return;
+    setAddBusy(true);
+    try {
+      const res = await addEventToTrip(addTarget.id, tripId);
+      if (res.ok) {
+        const title = addTarget.title || 'Event';
+        setAddTarget(null);
+        Alert.alert('Added to trip', `“${title}” is now on this trip's plan.`, [
+          { text: 'View trip', onPress: () => router.push(`/trip/${tripId}` as any) },
+          { text: 'Done', style: 'cancel' },
+        ]);
+      } else {
+        Alert.alert('Could not add event', res.message ?? 'Please try again.');
+      }
+    } finally {
+      setAddBusy(false);
+    }
+  }, [addTarget, addBusy]);
   const insets = useSafeAreaInsets();
   const navScrollHandler = useNavBarScrollHandler();
   const { markFirstContent, epoch } = useScreenTiming('Trips');
@@ -297,11 +329,30 @@ function TripsScreen() {
               </Pressable>
 
               {live && <PendingInvitesSection onAccepted={reload} />}
+              {live && addTarget && (
+                <View style={styles.addBanner}>
+                  <Briefcase size={16} color={color.signal} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.addBannerTitle} numberOfLines={1}>
+                      Add {addTarget.title ? `“${addTarget.title}”` : 'this event'} to a trip
+                    </Text>
+                    <Text style={styles.addBannerSub}>Tap one of your trips below to add it.</Text>
+                  </View>
+                  {addBusy
+                    ? <ActivityIndicator size="small" color={color.signal} />
+                    : (
+                      <Pressable onPress={() => setAddTarget(null)} hitSlop={8} accessibilityLabel="Cancel adding event">
+                        <X size={16} color={color.mute} />
+                      </Pressable>
+                    )}
+                </View>
+              )}
               {live ? (
                 <LiveTrips
                   trips={displayTrips}
                   loading={loading && displayTrips.length === 0}
                   error={error}
+                  onPickTrip={addTarget ? handlePickTripForEvent : undefined}
                 />
               ) : (
                 <Pressable style={styles.signInCta} onPress={() => router.push('/(auth)/sign-in' as any)}>
@@ -351,7 +402,7 @@ function TripsScreen() {
   );
 }
 
-function LiveTrips({ trips, loading, error }: { trips: any[]; loading: boolean; error: string | null }) {
+function LiveTrips({ trips, loading, error, onPickTrip }: { trips: any[]; loading: boolean; error: string | null; onPickTrip?: (tripId: string) => void }) {
   if (loading) return <View style={styles.state}><ActivityIndicator color={color.signal} /></View>;
   if (error) return <View style={styles.state}><Text style={styles.stateText}>Couldn't load your trips. Pull to retry.</Text></View>;
   if (!trips.length) {
@@ -366,7 +417,11 @@ function LiveTrips({ trips, loading, error }: { trips: any[]; loading: boolean; 
   return (
     <>
       {trips.map((tr) => (
-        <Pressable key={tr.id} style={styles.card} onPress={() => router.push(`/trip/${tr.id}`)}>
+        <Pressable
+          key={tr.id}
+          style={styles.card}
+          onPress={() => (onPickTrip ? onPickTrip(tr.id) : router.push(`/trip/${tr.id}`))}
+        >
           {tr.coverUrl ? <Image source={{ uri: tr.coverUrl }} style={styles.cover} /> : <View style={[styles.cover, { backgroundColor: color.deep }]} />}
           <View style={styles.body}>
             <View style={styles.stampRow}>
@@ -386,6 +441,21 @@ function LiveTrips({ trips, loading, error }: { trips: any[]; loading: boolean; 
 }
 
 const styles = StyleSheet.create({
+  addBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginHorizontal: space.lg,
+    marginBottom: space.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: color.signal,
+    backgroundColor: color.paperRaised,
+  },
+  addBannerTitle: { ...t.small, fontWeight: '700', color: color.ink },
+  addBannerSub: { ...t.small, color: color.mute },
   signInCta: {
     alignItems: 'center',
     backgroundColor: color.paperRaised,

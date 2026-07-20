@@ -272,10 +272,7 @@ function TripDetailScreen() {
               {chatLoading
                 ? <ActivityIndicator size="small" color={color.signal} />
                 : (
-                  <View style={{ position: 'relative' }}>
-                    <MessageCircle size={15} color={color.signal} />
-                    <View style={styles.unreadDot} />
-                  </View>
+                  <MessageCircle size={15} color={color.signal} />
                 )
               }
               <Text style={[styles.topBtnText, { color: color.signal }]}>Chat</Text>
@@ -296,8 +293,10 @@ function TripDetailScreen() {
               style={styles.topBtn}
               hitSlop={6}
               onPress={() => {
-                const params = new URLSearchParams({ tripId: trip.id });
+                // Buddy search reads city/category/bookingDate — pass what it consumes.
+                const params = new URLSearchParams();
                 if (trip.destinationCity) params.set('city', trip.destinationCity);
+                if (realTrip?.startDate) params.set('bookingDate', realTrip.startDate);
                 router.push(`/(rent-a-buddy)/search?${params.toString()}` as any);
               }}
             >
@@ -606,11 +605,10 @@ function NeedSomeoneLocalSection({
   ] as const;
 
   function handleCategoryPress(category: string) {
-    const params = new URLSearchParams({ city: city ?? '', category, tripId });
-    if (startDate) params.set('startDate', startDate);
-    if (endDate) params.set('endDate', endDate);
-    if (groupSize) params.set('groupSize', groupSize);
-    if (travelerLanguage) params.set('lang', travelerLanguage);
+    // Buddy search consumes city / category / bookingDate — map the trip's
+    // start date onto bookingDate so results match the trip window.
+    const params = new URLSearchParams({ city: city ?? '', category });
+    if (startDate) params.set('bookingDate', startDate);
     router.push(`/(rent-a-buddy)/search?${params.toString()}` as any);
   }
 

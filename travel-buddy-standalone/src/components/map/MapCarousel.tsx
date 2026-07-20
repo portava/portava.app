@@ -59,6 +59,7 @@ import type { BuddyProfile } from '../../services/rentABuddy.ts';
 import type { EventListItem } from '../../services/events.ts';
 import type { HiddenGem } from '../../services/hiddenGems.ts';
 import type { TripRow } from '../../services/trips.ts';
+import { openDirectThread } from '../../services/messaging.ts';
 import type { CircleMemberLocation } from '../../services/map.ts';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -468,7 +469,12 @@ function MapEntityCard({
       }
       case 'friends': {
         const loc = entity.payload as CircleMemberLocation;
-        router.push(`/messages/${loc.userId}` as any);
+        // Resolve the direct thread first — /messages/[id] takes a THREAD id, not a user id.
+        void openDirectThread(loc.userId).then((res) => {
+          if (res.ok && res.data?.threadId) {
+            router.push(`/messages/${res.data.threadId}?threadType=direct&otherUserId=${encodeURIComponent(loc.userId)}` as any);
+          }
+        });
         break;
       }
       case 'stamps':

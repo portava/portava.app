@@ -1,0 +1,193 @@
+From a99b86e3832056f35617b5bb3e17a4e835b6d699 Mon Sep 17 00:00:00 2001
+From: claude <c@c>
+Date: Mon, 20 Jul 2026 07:22:46 +0000
+Subject: [PATCH] fix(controls): wire remaining no-op controls (gems screen
+ excluded)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Buddy dashboard 'Available Now' hydrates from saved settings and persists
+  via setAvailabilitySettings (was local state born false)
+- Waitlist: fabricated Math.random queue position removed — never invent
+  server data
+- 'Book This Package' now preselects that package in the request form
+  (packageId was silently dropped)
+- Trip chat: always-on unread dot removed (no unread signal feeds it)
+- Trip -> buddy search passes bookingDate the search actually reads
+- Onboarding display-name hint corrected to 30 chars (cap is 30)
+
+(gems/index.tsx Near Me + map fix dropped from this patch — the file
+changed upstream; it ships separately rebuilt on the current version.)
+---
+ .../travel-buddy/app/(auth)/onboarding.tsx    |  2 +-
+ .../(rent-a-buddy)/buddy-dashboard/index.tsx  | 19 ++++++++++++++++---
+ .../app/(rent-a-buddy)/request-buddy.tsx      | 11 +++++++----
+ .../app/(rent-a-buddy)/waitlist.tsx           |  4 +++-
+ artifacts/travel-buddy/app/trip/[id].tsx      | 18 ++++++++----------
+ 5 files changed, 35 insertions(+), 19 deletions(-)
+
+diff --git a/artifacts/travel-buddy/app/(auth)/onboarding.tsx b/artifacts/travel-buddy/app/(auth)/onboarding.tsx
+index 34ec3b9..eb6bd9e 100644
+--- a/artifacts/travel-buddy/app/(auth)/onboarding.tsx
++++ b/artifacts/travel-buddy/app/(auth)/onboarding.tsx
+@@ -168,7 +168,7 @@ export default function Onboarding() {
+                   maxLength={DISPLAY_NAME_MAX}
+                   returnKeyType="next"
+                 />
+-                <Text style={styles.hint}>Maximum 40 characters.</Text>
++                <Text style={styles.hint}>Maximum 30 characters.</Text>
+               </View>
+               <View>
+                 <Text style={styles.label}>Username (optional)</Text>
+diff --git a/artifacts/travel-buddy/app/(rent-a-buddy)/buddy-dashboard/index.tsx b/artifacts/travel-buddy/app/(rent-a-buddy)/buddy-dashboard/index.tsx
+index 1587bb1..b816a09 100644
+--- a/artifacts/travel-buddy/app/(rent-a-buddy)/buddy-dashboard/index.tsx
++++ b/artifacts/travel-buddy/app/(rent-a-buddy)/buddy-dashboard/index.tsx
+@@ -1,6 +1,6 @@
+ import React, { useEffect, useState, useCallback } from 'react';
+ import {
+-  View, Text, ScrollView, Pressable, StyleSheet, Switch, RefreshControl,
++  View, Text, ScrollView, Pressable, StyleSheet, Switch, RefreshControl, Alert,
+ } from 'react-native';
+ import { router } from 'expo-router';
+ import { useSafeAreaInsets } from 'react-native-safe-area-context';
+@@ -114,10 +114,11 @@ export default function BuddyDashboard() {
+   const load = useCallback(async (silent = false) => {
+     if (!silent) setLoading(true);
+     setError(null);
+-    const [dashRes, reqRes, clRes] = await Promise.all([
++    const [dashRes, reqRes, clRes, availRes] = await Promise.all([
+       rentABuddy.getBuddyDashboard(),
+       rentABuddy.getDashboardRequests(),
+       rentABuddy.getProfileChecklist(),
++      rentABuddy.getDashboardAvailability(),
+     ]);
+     if (!silent) setLoading(false);
+     if (dashRes.ok) {
+@@ -125,6 +126,10 @@ export default function BuddyDashboard() {
+     } else {
+       setError(dashRes.error);
+     }
++    // Hydrate the header switch from the saved setting so it reflects reality.
++    if (availRes.ok && availRes.data?.settings) {
++      setAvailableNow(availRes.data.settings.availableNow === true);
++    }
+     if (reqRes.ok) {
+       setUpcoming(reqRes.data.requests.slice(0, 3));
+     }
+@@ -235,7 +240,15 @@ export default function BuddyDashboard() {
+           <Text style={s.availLabel}>Available Now</Text>
+           <Switch
+             value={availableNow}
+-            onValueChange={setAvailableNow}
++            onValueChange={async (v) => {
++              // Persist to the real availability setting; revert on failure.
++              setAvailableNow(v);
++              const res = await rentABuddy.setAvailabilitySettings({ availableNow: v });
++              if (!res.ok) {
++                setAvailableNow(!v);
++                Alert.alert('Could not update', res.error ?? 'Please try again.');
++              }
++            }}
+             trackColor={{ false: color.haze, true: color.success }}
+             thumbColor={color.onInk}
+           />
+diff --git a/artifacts/travel-buddy/app/(rent-a-buddy)/request-buddy.tsx b/artifacts/travel-buddy/app/(rent-a-buddy)/request-buddy.tsx
+index 790f639..dc3f92d 100644
+--- a/artifacts/travel-buddy/app/(rent-a-buddy)/request-buddy.tsx
++++ b/artifacts/travel-buddy/app/(rent-a-buddy)/request-buddy.tsx
+@@ -236,7 +236,7 @@ function OpenRequestForm() {
+ 
+ // ── Per-buddy booking request form (Mode A) ────────────────────────────────
+ 
+-function BookingRequestForm({ buddyId }: { buddyId: string }) {
++function BookingRequestForm({ buddyId, preselectPackageId }: { buddyId: string; preselectPackageId?: string }) {
+   const insets = useSafeAreaInsets();
+ 
+   const [buddy, setBuddy]                   = useState<BuddyProfile | null>(null);
+@@ -263,7 +263,10 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
+       if (pRes.ok) {
+         const active = pRes.data.packages.filter(p => p.isActive);
+         setPackages(active);
+-        if (active.length > 0) setPkgIdx(0);
++        // Honor the package chosen on the buddy profile ("Book This Package").
++        const pre = preselectPackageId ? active.findIndex(p => p.id === preselectPackageId) : -1;
++        if (pre >= 0) setPkgIdx(pre);
++        else if (active.length > 0) setPkgIdx(0);
+       }
+       setInitLoading(false);
+     }).catch(() => setInitLoading(false));
+@@ -442,8 +445,8 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
+ // ── Entry point ───────────────────────────────────────────────────────────
+ 
+ export default function RequestBuddy() {
+-  const { buddyId } = useLocalSearchParams<{ buddyId?: string }>();
+-  if (buddyId) return <BookingRequestForm buddyId={buddyId} />;
++  const { buddyId, packageId } = useLocalSearchParams<{ buddyId?: string; packageId?: string }>();
++  if (buddyId) return <BookingRequestForm buddyId={buddyId} preselectPackageId={typeof packageId === 'string' ? packageId : undefined} />;
+   return <OpenRequestForm />;
+ }
+ 
+diff --git a/artifacts/travel-buddy/app/(rent-a-buddy)/waitlist.tsx b/artifacts/travel-buddy/app/(rent-a-buddy)/waitlist.tsx
+index 8b87355..e047cef 100644
+--- a/artifacts/travel-buddy/app/(rent-a-buddy)/waitlist.tsx
++++ b/artifacts/travel-buddy/app/(rent-a-buddy)/waitlist.tsx
+@@ -56,7 +56,9 @@ export default function RentABuddyWaitlist() {
+       Alert.alert('Error', res.error);
+       return;
+     }
+-    setQueuePosition(Math.floor(Math.random() * 20) + 1);
++    // The API doesn't return a queue position — never invent one. The
++    // confirmation screen simply omits the position card when null.
++    setQueuePosition(null);
+     setConfirmed(true);
+   };
+ 
+diff --git a/artifacts/travel-buddy/app/trip/[id].tsx b/artifacts/travel-buddy/app/trip/[id].tsx
+index 47d88a5..781d2b8 100644
+--- a/artifacts/travel-buddy/app/trip/[id].tsx
++++ b/artifacts/travel-buddy/app/trip/[id].tsx
+@@ -272,10 +272,7 @@ function TripDetailScreen() {
+               {chatLoading
+                 ? <ActivityIndicator size="small" color={color.signal} />
+                 : (
+-                  <View style={{ position: 'relative' }}>
+-                    <MessageCircle size={15} color={color.signal} />
+-                    <View style={styles.unreadDot} />
+-                  </View>
++                  <MessageCircle size={15} color={color.signal} />
+                 )
+               }
+               <Text style={[styles.topBtnText, { color: color.signal }]}>Chat</Text>
+@@ -296,8 +293,10 @@ function TripDetailScreen() {
+               style={styles.topBtn}
+               hitSlop={6}
+               onPress={() => {
+-                const params = new URLSearchParams({ tripId: trip.id });
++                // Buddy search reads city/category/bookingDate — pass what it consumes.
++                const params = new URLSearchParams();
+                 if (trip.destinationCity) params.set('city', trip.destinationCity);
++                if (realTrip?.startDate) params.set('bookingDate', realTrip.startDate);
+                 router.push(`/(rent-a-buddy)/search?${params.toString()}` as any);
+               }}
+             >
+@@ -606,11 +605,10 @@ function NeedSomeoneLocalSection({
+   ] as const;
+ 
+   function handleCategoryPress(category: string) {
+-    const params = new URLSearchParams({ city: city ?? '', category, tripId });
+-    if (startDate) params.set('startDate', startDate);
+-    if (endDate) params.set('endDate', endDate);
+-    if (groupSize) params.set('groupSize', groupSize);
+-    if (travelerLanguage) params.set('lang', travelerLanguage);
++    // Buddy search consumes city / category / bookingDate — map the trip's
++    // start date onto bookingDate so results match the trip window.
++    const params = new URLSearchParams({ city: city ?? '', category });
++    if (startDate) params.set('bookingDate', startDate);
+     router.push(`/(rent-a-buddy)/search?${params.toString()}` as any);
+   }
+ 
+-- 
+2.43.0
+

@@ -223,7 +223,7 @@ function TripsScreen() {
           { text: 'Done', style: 'cancel' },
         ]);
       } else {
-        Alert.alert('Could not add event', res.error ?? 'Please try again.');
+        Alert.alert('Could not add event', res.message ?? 'Please try again.');
       }
     } finally {
       setAddBusy(false);
@@ -455,7 +455,7 @@ const styles = StyleSheet.create({
     backgroundColor: color.paperRaised,
   },
   addBannerTitle: { ...t.small, fontWeight: '700', color: color.ink },
-  addBannerSub: { ...t.micro, color: color.mute },
+  addBannerSub: { ...t.small, color: color.mute },
   signInCta: {
     alignItems: 'center',
     backgroundColor: color.paperRaised,

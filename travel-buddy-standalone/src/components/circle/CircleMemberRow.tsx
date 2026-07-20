@@ -4,6 +4,7 @@ import { MessageCircle, User, MoreHorizontal } from 'lucide-react-native';
 import { router } from 'expo-router';
 import type { CircleMember } from '../../services/circle.ts';
 import { blockUser } from '../../services/blocks.ts';
+import { reportContent } from '../../services/reports.ts';
 import { openDirectThread } from '../../services/messaging.ts';
 import { color, radius, type as t } from '../../theme/tokens.ts';
 
@@ -91,17 +92,34 @@ export function CircleMemberRow({ member, isViewerRow = false }: Props) {
     );
   }
 
+  async function submitUserReport(reason: 'harassment' | 'spam' | 'other') {
+    const res = await reportContent({
+      target_type: 'user',
+      target_id: member.userId,
+      reason_code: reason,
+    });
+    if (res.ok) {
+      Alert.alert('Report sent', 'Thanks — our safety team will review it.');
+    } else {
+      Alert.alert('Could not send report', res.error ?? 'Please try again.');
+    }
+  }
+
   function handleOverflow() {
     Alert.alert(member.displayName || member.username, undefined, [
       { text: 'View profile', onPress: handleProfile },
       { text: 'Hide from my Circle', onPress: () => setHidden(true) },
       {
         text: 'Report',
-        onPress: () =>
-          router.push({
-            pathname: '/report',
-            params: { targetUserId: member.userId, targetType: 'user' },
-          } as any),
+        onPress: () => {
+          // Inline reason picker → real moderation report (no /report route exists).
+          Alert.alert('Report this traveler', 'Why are you reporting them?', [
+            { text: 'Harassment', onPress: () => submitUserReport('harassment') },
+            { text: 'Spam', onPress: () => submitUserReport('spam') },
+            { text: 'Something else', onPress: () => submitUserReport('other') },
+            { text: 'Cancel', style: 'cancel' },
+          ]);
+        },
       },
       { text: 'Block', style: 'destructive', onPress: handleBlock },
       { text: 'Cancel', style: 'cancel' },

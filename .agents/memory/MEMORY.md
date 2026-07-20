@@ -29,6 +29,7 @@
 - [Events API field names](events-api-field-names.md) — formatEvent() returns camelCase (startsAt/goingCount/maxAttendees); mapApiEvent must read those, not snake_case. No `source` column on events — use tags for demo labelling.
 - [Unified location context pattern](location-context-unified.md) — resolvedLocation (session → GPS → last-known → home) is the single source of truth; component test mocks must include it or FullScreenMapScreen crashes.
 - [Stale ports after merge waves](stale-port-after-merge-waves.md) — EADDRINUSE / Expo stuck at a Y/n port prompt after merges = orphaned old server; kill pid + restart, don't debug code.
+- [Merge-wave recovery](merge-wave-recovery.md) — drift FAILs can be transient races (re-check + verify direction before --fix-source); always run canonical typecheck post-wave: semantic conflicts pass per-task validation.
 - [LiveKit calling foundation](livekit-calling-foundation.md) — TrackSource enum (not strings) for grants; 0155/0156 applied+verified live; key gateway binding decisions.
 - [Discovery perf: two-level cache + SWR](discovery-perf-cache.md) — L1 (in-memory Map) + L2 (Postgres discovery_cache table) with stale-while-revalidate; baseline cold-miss 5–20s, L2 hit ~15–100ms. Client: AsyncStorage counts cache-first + InteractionManager for buddy strip and MapTiler geocode.
 - [Passport stamps single pipeline](passport-stamps-single-pipeline.md) — owner passport fetches stamps once via /api/stamps/me; legacy shapes derived via toLegacyStamp, never a second endpoint.

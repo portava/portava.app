@@ -58,7 +58,7 @@ export function FitsCard({ ev }: { ev: CityEvent }) {
   const time = new Date(ev.startAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   const joinLabel = (ev.attendeeCount ?? 0) >= (ev.capacity ?? 99) ? 'Full' : ev.kind === 'meetup' ? 'Request to Join' : 'Join Plan';
   return (
-    <Pressable style={styles.card} onPress={() => router.push('/(tabs)/trips')}>
+    <Pressable style={styles.card} onPress={() => router.push(`/event/${ev.id}` as any)}>
       <View style={styles.media}>
         <View style={styles.timePill}><Text style={styles.timeText}>{time}</Text></View>
         <View style={styles.matchPill}><Text style={styles.matchText}>Great match</Text></View>

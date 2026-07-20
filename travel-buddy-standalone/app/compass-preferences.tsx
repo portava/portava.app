@@ -384,7 +384,7 @@ export default function CompassPreferencesScreen() {
           />
           <Pressable
             style={s.linkRow}
-            onPress={() => Alert.alert('Buddy Profile', 'Edit your Buddy profile from the Rent a Buddy section.')}
+            onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard' as any)}
           >
             <Text style={s.linkLabel}>Edit Buddy profile & pricing →</Text>
           </Pressable>

@@ -94,7 +94,7 @@ function TripRow({ trip }: { trip: import('../../src/services/trips.ts').TripRow
   return (
     <Pressable
       style={s.tripRow}
-      onPress={() => router.push(`/(tabs)/trips` as any)}
+      onPress={() => router.push(`/trip/${trip.id}` as any)}
     >
       <View style={s.tripDot} />
       <View style={{ flex: 1 }}>

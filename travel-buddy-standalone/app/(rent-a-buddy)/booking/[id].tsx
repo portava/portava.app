@@ -602,7 +602,8 @@ export default function BookingDetail() {
                   },
                 });
               } else {
-                router.push(`/messages/${booking.buddyId}` as any);
+                // Never push a user id into /messages/[id] (it expects a THREAD id).
+                Alert.alert('Could not open chat', 'Please try again in a moment.');
               }
             }}
           >

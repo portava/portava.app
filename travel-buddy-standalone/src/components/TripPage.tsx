@@ -79,7 +79,7 @@ export function TripHero({ trip }: { trip: TripDetail }) {
         <Action icon={<CalendarPlus size={18} color={color.signal} />} label="Add Plan" onPress={() => router.push('/create')} />
         <Action icon={<UserPlus size={18} color={color.ink} />} label="Invite Buddy" onPress={() => router.push(`/circle?tripId=${encodeURIComponent(trip.id)}` as any)} />
         <Action icon={<Sparkles size={18} color={color.signal} />} label="Ask Compass" onPress={() => router.push('/(tabs)/ai')} />
-        <Action icon={<Settings size={18} color={color.ink} />} label="Trip Settings" onPress={() => router.push('/profile/edit' as any)} />
+        <Action icon={<Settings size={18} color={color.ink} />} label="Trip Settings" onPress={() => router.push({ pathname: '/trip/edit', params: { id: trip.id } } as any)} />
       </View>
 
       <View style={hero.progressCard}>

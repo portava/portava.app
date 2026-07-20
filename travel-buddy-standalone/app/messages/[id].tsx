@@ -226,9 +226,10 @@ function LongPressActionSheet({
               <Text style={las.preview} numberOfLines={2}>{text}</Text>
             )}
             {([
+              // 'translate' removed — translations are automatic per language
+              // settings; a menu item that only explained that was a dead end.
               ['reply',     'Reply',         Reply        ],
               ['copy',      'Copy text',     Copy         ],
-              ['translate', 'Translate',     Languages    ],
               ['save',      'Save message',  BookmarkPlus ],
               ['report',    'Report',        Flag         ],
             ] as [string, string, React.ComponentType<{ size: number; color: string }>][]).map(([key, label, Icon]) => (
@@ -247,9 +248,6 @@ function LongPressActionSheet({
                   } else if (key === 'save') {
                     onClose();
                     onSave(message);
-                  } else if (key === 'translate') {
-                    onClose();
-                    Alert.alert('Translation', 'Translations are applied automatically based on your language settings.');
                   } else {
                     onClose();
                     Alert.alert(label, 'This feature is coming soon.');
@@ -1566,10 +1564,15 @@ export default function TelegraphThread() {
   }, [threadType, contextId]);
 
   const handleViewPlace = useCallback((suggestion: TelegraphSuggestion) => {
+    // Suggestions carry no place id, so show the detail and offer a real
+    // next step into Discovery instead of a dead-end OK.
     Alert.alert(
       suggestion.title,
       suggestion.reason + (suggestion.location_context ? `\n\n📍 ${suggestion.location_context}` : ''),
-      [{ text: 'OK' }],
+      [
+        { text: 'Explore in Discovery', onPress: () => router.push('/(tabs)/discovery' as any) },
+        { text: 'OK', style: 'cancel' },
+      ],
     );
   }, []);
 
@@ -2154,11 +2157,14 @@ export default function TelegraphThread() {
           await leaveThread(id ?? '');
           router.replace('/messages');
         } : undefined}
-        onDeleteForMe={async () => {
+        onDeleteForMe={isDirect ? async () => {
+          // Direct threads only: leaving a DM removes it from your inbox
+          // without affecting the other person. Group threads already have
+          // "Leave group" — a second identical destructive item was misleading.
           await clearTelegraphSuggestionsCache(id ?? '');
           await leaveThread(id ?? '');
           router.replace('/messages');
-        }}
+        } : undefined}
         onReport={async (reason: string) => {
           await reportThread(id ?? '', reason);
         }}
