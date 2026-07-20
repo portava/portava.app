@@ -1,0 +1,1283 @@
+From b261fd99e71904026b014dcd3795a4af2225ea6a Mon Sep 17 00:00:00 2001
+From: claude <c@c>
+Date: Mon, 20 Jul 2026 07:06:19 +0000
+Subject: [PATCH 1/6] fix(nav): repoint every broken or wrong-destination
+ button
+
+- Event detail: remove dead Reminders button (route never existed); comments
+  row now opens the real event chat instead of /event/comments
+- Passport owner menu: About Me -> /profile/edit/about (was user-not-found)
+- Circle member Report -> real moderation report via reportContent (was
+  pushing nonexistent /report route)
+- Destination city page trip row -> /trip/{id} (was generic Trips tab)
+- TripPage 'Trip Settings' -> /trip/edit?id= (was personal profile editor)
+- Pulse FitsCard body tap -> /event/{id} (was Trips tab)
+- Discovery 'Hidden Gems' view-all -> /gems (was /saved); Traveler Picks
+  view-all removed until a picks list exists
+- RaB admin: View Traveler Profile pushed a UUID into the handle-resolving
+  profile route (guaranteed 404) -> now opens the buddy listing
+- Compass prefs: 'Edit Buddy profile & pricing' Alert stub -> buddy dashboard
+---
+ .../app/(rent-a-buddy)/admin/buddies.tsx      |  7 +++--
+ .../travel-buddy/app/compass-preferences.tsx  |  2 +-
+ .../travel-buddy/app/destinations/[city].tsx  |  2 +-
+ artifacts/travel-buddy/app/event/[id].tsx     | 14 ++--------
+ .../src/components/DiscoveryWall.tsx          |  4 +--
+ .../src/components/OwnerActionMenu.tsx        |  2 +-
+ .../travel-buddy/src/components/PulseFits.tsx |  2 +-
+ .../travel-buddy/src/components/TripPage.tsx  |  2 +-
+ .../src/components/circle/CircleMemberRow.tsx | 28 +++++++++++++++----
+ 9 files changed, 38 insertions(+), 25 deletions(-)
+
+diff --git a/artifacts/travel-buddy/app/(rent-a-buddy)/admin/buddies.tsx b/artifacts/travel-buddy/app/(rent-a-buddy)/admin/buddies.tsx
+index cfc9eeb..0f496cd 100644
+--- a/artifacts/travel-buddy/app/(rent-a-buddy)/admin/buddies.tsx
++++ b/artifacts/travel-buddy/app/(rent-a-buddy)/admin/buddies.tsx
+@@ -307,10 +307,13 @@ export default function AdminBuddiesScreen() {
+ 
+                   <Pressable style={detail.profileLink}
+                     onPress={() => {
++                      // /profile/[handle] resolves by @handle, not user id — a raw
++                      // UUID 404s. The buddy's public listing page takes the buddy id.
++                      const buddyId = selected.id;
+                       setSelected(null);
+-                      router.push(`/profile/${selected.userId}` as any);
++                      router.push(`/(rent-a-buddy)/buddy/${buddyId}` as any);
+                     }}>
+-                    <Text style={detail.profileLinkText}>View Traveler Profile →</Text>
++                    <Text style={detail.profileLinkText}>View Buddy Listing →</Text>
+                   </Pressable>
+ 
+                   <View style={detail.actions}>
+diff --git a/artifacts/travel-buddy/app/compass-preferences.tsx b/artifacts/travel-buddy/app/compass-preferences.tsx
+index fa759ce..9e039e4 100644
+--- a/artifacts/travel-buddy/app/compass-preferences.tsx
++++ b/artifacts/travel-buddy/app/compass-preferences.tsx
+@@ -383,7 +383,7 @@ export default function CompassPreferencesScreen() {
+           />
+           <Pressable
+             style={s.linkRow}
+-            onPress={() => Alert.alert('Buddy Profile', 'Edit your Buddy profile from the Rent a Buddy section.')}
++            onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard' as any)}
+           >
+             <Text style={s.linkLabel}>Edit Buddy profile & pricing →</Text>
+           </Pressable>
+diff --git a/artifacts/travel-buddy/app/destinations/[city].tsx b/artifacts/travel-buddy/app/destinations/[city].tsx
+index 8646c04..619ae3c 100644
+--- a/artifacts/travel-buddy/app/destinations/[city].tsx
++++ b/artifacts/travel-buddy/app/destinations/[city].tsx
+@@ -94,7 +94,7 @@ function TripRow({ trip }: { trip: import('../../src/services/trips.ts').TripRow
+   return (
+     <Pressable
+       style={s.tripRow}
+-      onPress={() => router.push(`/(tabs)/trips` as any)}
++      onPress={() => router.push(`/trip/${trip.id}` as any)}
+     >
+       <View style={s.tripDot} />
+       <View style={{ flex: 1 }}>
+diff --git a/artifacts/travel-buddy/app/event/[id].tsx b/artifacts/travel-buddy/app/event/[id].tsx
+index ffcea3d..57a6709 100644
+--- a/artifacts/travel-buddy/app/event/[id].tsx
++++ b/artifacts/travel-buddy/app/event/[id].tsx
+@@ -32,7 +32,7 @@ import {
+   ArrowLeft, MapPin, CalendarClock, Users, Clock, Check,
+   ChevronDown, MessageSquare, Shield, Star, Link, Settings,
+   Bookmark, BookmarkCheck, Share2, MoreVertical, Flag,
+-  Bell, Briefcase, Compass, Map, Lock,
++  Briefcase, Compass, Map, Lock,
+ } from 'lucide-react-native';
+ import {
+   getEvent,
+@@ -696,14 +696,6 @@ export default function EventDetailScreen() {
+                   <Text style={styles.entryBtnText}>Event chat</Text>
+                 </Pressable>
+               )}
+-              {/* Reminders — navigates to reminders screen for this event */}
+-              <Pressable
+-                style={styles.entryBtn}
+-                onPress={() => router.push({ pathname: '/event/reminders', params: { eventId: event.id } } as any)}
+-              >
+-                <Bell size={16} color={color.signal} />
+-                <Text style={styles.entryBtnText}>Reminders</Text>
+-              </Pressable>
+               {/* Add to trip / Add to Itinerary */}
+               {tripIdParam ? (
+                 <Pressable
+@@ -723,7 +715,7 @@ export default function EventDetailScreen() {
+               ) : (
+                 <Pressable
+                   style={styles.entryBtn}
+-                  onPress={() => router.push({ pathname: '/trips', params: { addEventId: event.id } } as any)}
++                  onPress={() => router.push({ pathname: '/trips', params: { addEventId: event.id, addEventTitle: event.title ?? '' } } as any)}
+                 >
+                   <Briefcase size={16} color={color.signal} />
+                   <Text style={styles.entryBtnText}>Add to trip</Text>
+@@ -797,7 +789,7 @@ export default function EventDetailScreen() {
+             {event.chatEnabled && (event.myRsvp === 'going' || event.myRsvp === 'maybe' || isHost) && (
+               <Pressable
+                 style={styles.commentsRow}
+-                onPress={() => router.push({ pathname: '/event/comments', params: { eventId: event.id } } as any)}
++                onPress={handleJoinChat}
+               >
+                 <MessageSquare size={15} color={color.mute} />
+                 <Text style={styles.commentsText}>View event updates & comments</Text>
+diff --git a/artifacts/travel-buddy/src/components/DiscoveryWall.tsx b/artifacts/travel-buddy/src/components/DiscoveryWall.tsx
+index 7d57580..202535a 100644
+--- a/artifacts/travel-buddy/src/components/DiscoveryWall.tsx
++++ b/artifacts/travel-buddy/src/components/DiscoveryWall.tsx
+@@ -375,7 +375,7 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
+ export function HiddenGemsSection({ gems, onAddToRoute }: { gems: DiscoveryItem[]; onAddToRoute?: (draft: RouteStopDraft) => void }) {
+   return (
+     <View>
+-      <TravelSectionHeader title="Hidden Gems (By Travelers)" onAction={() => router.push('/saved')} />
++      <TravelSectionHeader title="Hidden Gems (By Travelers)" onAction={() => router.push('/gems' as any)} />
+       {gems.length === 0 ? (
+         <TravelEmptyState title="No hidden gems yet" sub="Be the first to share a spot travelers should know about." />
+       ) : (
+@@ -496,7 +496,7 @@ export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; o
+ export function TravelerPicksSection({ picks, onAddToRoute }: { picks: TravelerPick[]; onAddToRoute?: (draft: RouteStopDraft) => void }) {
+   return (
+     <View>
+-      <TravelSectionHeader title="Traveler Picks" onAction={() => router.push('/saved')} />
++      <TravelSectionHeader title="Traveler Picks" />
+       {picks.length === 0 ? (
+         <TravelEmptyState title="No traveler picks yet" sub="Recommendations from travelers will show up here." />
+       ) : (
+diff --git a/artifacts/travel-buddy/src/components/OwnerActionMenu.tsx b/artifacts/travel-buddy/src/components/OwnerActionMenu.tsx
+index 7fe1ff7..5458e5e 100644
+--- a/artifacts/travel-buddy/src/components/OwnerActionMenu.tsx
++++ b/artifacts/travel-buddy/src/components/OwnerActionMenu.tsx
+@@ -81,7 +81,7 @@ const ACTIONS = [
+     icon: Info,
+     bg: '#E8F8FB',
+     iconColor: '#1A9CB0',
+-    onPress: (handlers: Props) => { handlers.onClose(); router.push('/profile/about' as any); },
++    onPress: (handlers: Props) => { handlers.onClose(); router.push('/profile/edit/about' as any); },
+   },
+   {
+     label: 'Safety',
+diff --git a/artifacts/travel-buddy/src/components/PulseFits.tsx b/artifacts/travel-buddy/src/components/PulseFits.tsx
+index 7abfea1..44a7bf5 100644
+--- a/artifacts/travel-buddy/src/components/PulseFits.tsx
++++ b/artifacts/travel-buddy/src/components/PulseFits.tsx
+@@ -58,7 +58,7 @@ export function FitsCard({ ev }: { ev: CityEvent }) {
+   const time = new Date(ev.startAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+   const joinLabel = (ev.attendeeCount ?? 0) >= (ev.capacity ?? 99) ? 'Full' : ev.kind === 'meetup' ? 'Request to Join' : 'Join Plan';
+   return (
+-    <Pressable style={styles.card} onPress={() => router.push('/(tabs)/trips')}>
++    <Pressable style={styles.card} onPress={() => router.push(`/event/${ev.id}` as any)}>
+       <View style={styles.media}>
+         <View style={styles.timePill}><Text style={styles.timeText}>{time}</Text></View>
+         <View style={styles.matchPill}><Text style={styles.matchText}>Great match</Text></View>
+diff --git a/artifacts/travel-buddy/src/components/TripPage.tsx b/artifacts/travel-buddy/src/components/TripPage.tsx
+index baf83d7..29a4e85 100644
+--- a/artifacts/travel-buddy/src/components/TripPage.tsx
++++ b/artifacts/travel-buddy/src/components/TripPage.tsx
+@@ -79,7 +79,7 @@ export function TripHero({ trip }: { trip: TripDetail }) {
+         <Action icon={<CalendarPlus size={18} color={color.signal} />} label="Add Plan" onPress={() => router.push('/create')} />
+         <Action icon={<UserPlus size={18} color={color.ink} />} label="Invite Buddy" onPress={() => router.push(`/circle?tripId=${encodeURIComponent(trip.id)}` as any)} />
+         <Action icon={<Sparkles size={18} color={color.signal} />} label="Ask Compass" onPress={() => router.push('/(tabs)/ai')} />
+-        <Action icon={<Settings size={18} color={color.ink} />} label="Trip Settings" onPress={() => router.push('/profile/edit' as any)} />
++        <Action icon={<Settings size={18} color={color.ink} />} label="Trip Settings" onPress={() => router.push({ pathname: '/trip/edit', params: { id: trip.id } } as any)} />
+       </View>
+ 
+       <View style={hero.progressCard}>
+diff --git a/artifacts/travel-buddy/src/components/circle/CircleMemberRow.tsx b/artifacts/travel-buddy/src/components/circle/CircleMemberRow.tsx
+index d13da03..5c9cd9b 100644
+--- a/artifacts/travel-buddy/src/components/circle/CircleMemberRow.tsx
++++ b/artifacts/travel-buddy/src/components/circle/CircleMemberRow.tsx
+@@ -4,6 +4,7 @@ import { MessageCircle, User, MoreHorizontal } from 'lucide-react-native';
+ import { router } from 'expo-router';
+ import type { CircleMember } from '../../services/circle.ts';
+ import { blockUser } from '../../services/blocks.ts';
++import { reportContent } from '../../services/reports.ts';
+ import { openDirectThread } from '../../services/messaging.ts';
+ import { color, radius, type as t } from '../../theme/tokens.ts';
+ 
+@@ -91,17 +92,34 @@ export function CircleMemberRow({ member, isViewerRow = false }: Props) {
+     );
+   }
+ 
++  async function submitUserReport(reason: 'harassment' | 'spam' | 'other') {
++    const res = await reportContent({
++      target_type: 'user',
++      target_id: member.userId,
++      reason_code: reason,
++    });
++    if (res.ok) {
++      Alert.alert('Report sent', 'Thanks — our safety team will review it.');
++    } else {
++      Alert.alert('Could not send report', res.error ?? 'Please try again.');
++    }
++  }
++
+   function handleOverflow() {
+     Alert.alert(member.displayName || member.username, undefined, [
+       { text: 'View profile', onPress: handleProfile },
+       { text: 'Hide from my Circle', onPress: () => setHidden(true) },
+       {
+         text: 'Report',
+-        onPress: () =>
+-          router.push({
+-            pathname: '/report',
+-            params: { targetUserId: member.userId, targetType: 'user' },
+-          } as any),
++        onPress: () => {
++          // Inline reason picker → real moderation report (no /report route exists).
++          Alert.alert('Report this traveler', 'Why are you reporting them?', [
++            { text: 'Harassment', onPress: () => submitUserReport('harassment') },
++            { text: 'Spam', onPress: () => submitUserReport('spam') },
++            { text: 'Something else', onPress: () => submitUserReport('other') },
++            { text: 'Cancel', style: 'cancel' },
++          ]);
++        },
+       },
+       { text: 'Block', style: 'destructive', onPress: handleBlock },
+       { text: 'Cancel', style: 'cancel' },
+-- 
+2.43.0
+
+
+From bb6e66d2060bc4d738c42d59f102b55766e7e6bb Mon Sep 17 00:00:00 2001
+From: claude <c@c>
+Date: Mon, 20 Jul 2026 07:06:34 +0000
+Subject: [PATCH 2/6] fix(pulse): make home quick-filter chips actually filter
+
+Plans / Questions / Hidden Gems / Itineraries / Circle previously matched
+nothing (.filter(() => false)) so every non-All selection showed an empty
+feed. Each chip now maps to a real item predicate (type / source /
+visibility / tags), OR'd across active chips.
+---
+ artifacts/travel-buddy/app/(tabs)/index.tsx | 23 +++++++++++++++++++--
+ 1 file changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/artifacts/travel-buddy/app/(tabs)/index.tsx b/artifacts/travel-buddy/app/(tabs)/index.tsx
+index 54aec28..94c0e4d 100644
+--- a/artifacts/travel-buddy/app/(tabs)/index.tsx
++++ b/artifacts/travel-buddy/app/(tabs)/index.tsx
+@@ -191,9 +191,28 @@ function Pulse() {
+   );
+ 
+   const forYouFeed = useMemo<PulseFeedItem[]>(() => {
+-    const filteredReal = active.includes('All') || active.includes('Posts')
++    // Each quick filter maps to a real item predicate; multiple active
++    // filters are OR'd together. 'All' short-circuits to everything.
++    const matchesFilter = (item: PulseFeedItem, f: PulseFilter): boolean => {
++      switch (f) {
++        case 'Posts': return item.type === 'post';
++        case 'Questions': return item.type === 'question';
++        case 'Plans': return item.type === 'plan';
++        case 'Hidden Gems': return item.type === 'hidden_gem';
++        case 'Itineraries': return item.type === 'itinerary';
++        case 'Circle':
++          return item.type === 'circle_activity'
++            || item.source === 'circle'
++            || item.visibility === 'circle';
++        case 'Fits My Time': return item.availabilityMatch === true;
++        default:
++          // Category-style filters (Food, Nightlife, …) match on tags.
++          return item.tags?.some((t) => t.toLowerCase() === f.toLowerCase()) ?? false;
++      }
++    };
++    const filteredReal = active.includes('All')
+       ? realItems
+-      : realItems.filter(() => false);
++      : realItems.filter((item) => active.some((f) => matchesFilter(item, f)));
+     // Place cards only shown in All / default view (not when a specific type filter is active)
+     const showPlaceCards = active.includes('All') && realItems.length < 5;
+     return [...filteredReal, ...(showPlaceCards ? pulseFeed.placeCards : [])];
+-- 
+2.43.0
+
+
+From 6d3da544337c1fe7a781543735027f3619ffdcb1 Mon Sep 17 00:00:00 2001
+From: claude <c@c>
+Date: Mon, 20 Jul 2026 07:06:34 +0000
+Subject: [PATCH 3/6] feat(trips): finish the 'Add to trip' flow from event
+ detail
+
+The event screen pushed /trips?addEventId=... but the Trips tab never read
+the param, so nothing happened. Trips now enters a pick-a-trip mode with a
+banner; tapping a trip calls addEventToTrip and confirms with a View-trip
+shortcut. Event detail also passes the event title for the banner.
+---
+ artifacts/travel-buddy/app/(tabs)/trips.tsx | 78 +++++++++++++++++++--
+ 1 file changed, 74 insertions(+), 4 deletions(-)
+
+diff --git a/artifacts/travel-buddy/app/(tabs)/trips.tsx b/artifacts/travel-buddy/app/(tabs)/trips.tsx
+index 0139b3e..5d3abba 100644
+--- a/artifacts/travel-buddy/app/(tabs)/trips.tsx
++++ b/artifacts/travel-buddy/app/(tabs)/trips.tsx
+@@ -1,6 +1,6 @@
+ import React, { useState, useCallback } from 'react';
+ import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
+-import { useFocusEffect } from 'expo-router';
++import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+ import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
+ import { postCompassFrontloadEvent } from '../../src/services/compass';
+ import {
+@@ -13,7 +13,7 @@ import EventsTabScreen from './events';
+ import { NotificationBell } from '../../src/components/NotificationBell';
+ import {
+   Plus, Users, CalendarDays, MapPin, CalendarClock,
+-  ChevronRight, Check, X, UserCircle, Plane,
++  ChevronRight, Check, X, UserCircle, Plane, Briefcase,
+ } from 'lucide-react-native';
+ import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
+ import { ScreenHeader } from '../../src/components/ScreenHeader';
+@@ -23,6 +23,7 @@ import { useMyTrips, usePendingTripInvites } from '../../src/hooks/useBackend';
+ import { useUnreadCounts } from '../../src/hooks/useMessaging';
+ import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+ import { acceptTripInvite, declineTripInvite, type TripInvite } from '../../src/services/trips';
++import { addEventToTrip } from '../../src/services/events';
+ import { classifyInviteAcceptError } from '../../src/lib/inviteCardGoneHandler';
+ import { useScreenTiming } from '../../src/hooks/useScreenTiming';
+ import { useSnapshotCache } from '../../src/hooks/useSnapshotCache';
+@@ -197,6 +198,37 @@ function TripsScreen() {
+   const { meetups: meetupCount } = useUnreadCounts();
+   const [layoverOpen, setLayoverOpen] = useState(false);
+   const [activeTab, setActiveTab] = useState<TripsTab>('trips');
++
++  // "Add event to trip" mode — entered when the event detail screen pushes
++  // /trips?addEventId=…; the user picks a trip and we attach the event to it.
++  const { addEventId, addEventTitle } = useLocalSearchParams<{ addEventId?: string; addEventTitle?: string }>();
++  const [addTarget, setAddTarget] = useState<{ id: string; title: string } | null>(null);
++  const [addBusy, setAddBusy] = useState(false);
++  React.useEffect(() => {
++    if (typeof addEventId === 'string' && addEventId.length > 0) {
++      setAddTarget({ id: addEventId, title: typeof addEventTitle === 'string' ? addEventTitle : '' });
++    }
++  }, [addEventId]); // eslint-disable-line react-hooks/exhaustive-deps
++
++  const handlePickTripForEvent = useCallback(async (tripId: string) => {
++    if (!addTarget || addBusy) return;
++    setAddBusy(true);
++    try {
++      const res = await addEventToTrip(addTarget.id, tripId);
++      if (res.ok) {
++        const title = addTarget.title || 'Event';
++        setAddTarget(null);
++        Alert.alert('Added to trip', `“${title}” is now on this trip's plan.`, [
++          { text: 'View trip', onPress: () => router.push(`/trip/${tripId}` as any) },
++          { text: 'Done', style: 'cancel' },
++        ]);
++      } else {
++        Alert.alert('Could not add event', res.error ?? 'Please try again.');
++      }
++    } finally {
++      setAddBusy(false);
++    }
++  }, [addTarget, addBusy]);
+   const insets = useSafeAreaInsets();
+   const navScrollHandler = useNavBarScrollHandler();
+   const { markFirstContent, epoch } = useScreenTiming('Trips');
+@@ -297,11 +329,30 @@ function TripsScreen() {
+               </Pressable>
+ 
+               {live && <PendingInvitesSection onAccepted={reload} />}
++              {live && addTarget && (
++                <View style={styles.addBanner}>
++                  <Briefcase size={16} color={color.signal} />
++                  <View style={{ flex: 1 }}>
++                    <Text style={styles.addBannerTitle} numberOfLines={1}>
++                      Add {addTarget.title ? `“${addTarget.title}”` : 'this event'} to a trip
++                    </Text>
++                    <Text style={styles.addBannerSub}>Tap one of your trips below to add it.</Text>
++                  </View>
++                  {addBusy
++                    ? <ActivityIndicator size="small" color={color.signal} />
++                    : (
++                      <Pressable onPress={() => setAddTarget(null)} hitSlop={8} accessibilityLabel="Cancel adding event">
++                        <X size={16} color={color.mute} />
++                      </Pressable>
++                    )}
++                </View>
++              )}
+               {live ? (
+                 <LiveTrips
+                   trips={displayTrips}
+                   loading={loading && displayTrips.length === 0}
+                   error={error}
++                  onPickTrip={addTarget ? handlePickTripForEvent : undefined}
+                 />
+               ) : (
+                 <Pressable style={styles.signInCta} onPress={() => router.push('/(auth)/sign-in' as any)}>
+@@ -351,7 +402,7 @@ function TripsScreen() {
+   );
+ }
+ 
+-function LiveTrips({ trips, loading, error }: { trips: any[]; loading: boolean; error: string | null }) {
++function LiveTrips({ trips, loading, error, onPickTrip }: { trips: any[]; loading: boolean; error: string | null; onPickTrip?: (tripId: string) => void }) {
+   if (loading) return <View style={styles.state}><ActivityIndicator color={color.signal} /></View>;
+   if (error) return <View style={styles.state}><Text style={styles.stateText}>Couldn't load your trips. Pull to retry.</Text></View>;
+   if (!trips.length) {
+@@ -366,7 +417,11 @@ function LiveTrips({ trips, loading, error }: { trips: any[]; loading: boolean;
+   return (
+     <>
+       {trips.map((tr) => (
+-        <Pressable key={tr.id} style={styles.card} onPress={() => router.push(`/trip/${tr.id}`)}>
++        <Pressable
++          key={tr.id}
++          style={styles.card}
++          onPress={() => (onPickTrip ? onPickTrip(tr.id) : router.push(`/trip/${tr.id}`))}
++        >
+           {tr.coverUrl ? <Image source={{ uri: tr.coverUrl }} style={styles.cover} /> : <View style={[styles.cover, { backgroundColor: color.deep }]} />}
+           <View style={styles.body}>
+             <View style={styles.stampRow}>
+@@ -386,6 +441,21 @@ function LiveTrips({ trips, loading, error }: { trips: any[]; loading: boolean;
+ }
+ 
+ const styles = StyleSheet.create({
++  addBanner: {
++    flexDirection: 'row',
++    alignItems: 'center',
++    gap: space.sm,
++    marginHorizontal: space.lg,
++    marginBottom: space.sm,
++    paddingHorizontal: space.md,
++    paddingVertical: space.sm,
++    borderRadius: radius.md,
++    borderWidth: 1,
++    borderColor: color.signal,
++    backgroundColor: color.paperRaised,
++  },
++  addBannerTitle: { ...t.small, fontWeight: '700', color: color.ink },
++  addBannerSub: { ...t.micro, color: color.mute },
+   signInCta: {
+     alignItems: 'center',
+     backgroundColor: color.paperRaised,
+-- 
+2.43.0
+
+
+From 3b731b8b61276a91d06ee3f823a0fae1cb2f3548 Mon Sep 17 00:00:00 2001
+From: claude <c@c>
+Date: Mon, 20 Jul 2026 07:06:34 +0000
+Subject: [PATCH 4/6] fix(messaging): remove fake actions, resolve real threads
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Long-press 'Translate' removed in DM + group menus (it only showed an
+  informational alert; translations are automatic)
+- 'Delete for me' now offered on direct threads only — for groups it was
+  byte-identical to Leave group while promising view-only removal
+- Discovery card 'Save' persists via discoveryBookmarks.toggleSave (was an
+  Alert pretending success)
+- Telegraph suggestion 'View Ideas' alert gains a real 'Explore in
+  Discovery' action
+- Map friend 'Message' (preview card + carousel) resolved the thread with a
+  USER id — now calls openDirectThread first and pushes the thread id
+- Booking 'Message your Buddy' fallback no longer pushes a user id into
+  /messages/[id]; it reports the failure honestly
+---
+ .../app/(rent-a-buddy)/booking/[id].tsx       |  3 ++-
+ artifacts/travel-buddy/app/messages/[id].tsx  | 20 ++++++++++------
+ .../src/components/DiscoveryCardMessage.tsx   | 23 ++++++++++++++++++-
+ .../src/components/GroupChatScreen.tsx        |  6 ++---
+ .../src/components/map/MapCarousel.tsx        |  8 ++++++-
+ .../components/map/MapEntityPreviewCard.tsx   | 14 +++++++++--
+ 6 files changed, 58 insertions(+), 16 deletions(-)
+
+diff --git a/artifacts/travel-buddy/app/(rent-a-buddy)/booking/[id].tsx b/artifacts/travel-buddy/app/(rent-a-buddy)/booking/[id].tsx
+index 51ccf5e..2cb642a 100644
+--- a/artifacts/travel-buddy/app/(rent-a-buddy)/booking/[id].tsx
++++ b/artifacts/travel-buddy/app/(rent-a-buddy)/booking/[id].tsx
+@@ -600,7 +600,8 @@ export default function BookingDetail() {
+                   },
+                 });
+               } else {
+-                router.push(`/messages/${booking.buddyId}` as any);
++                // Never push a user id into /messages/[id] (it expects a THREAD id).
++                Alert.alert('Could not open chat', 'Please try again in a moment.');
+               }
+             }}
+           >
+diff --git a/artifacts/travel-buddy/app/messages/[id].tsx b/artifacts/travel-buddy/app/messages/[id].tsx
+index 7d34463..62900d6 100644
+--- a/artifacts/travel-buddy/app/messages/[id].tsx
++++ b/artifacts/travel-buddy/app/messages/[id].tsx
+@@ -219,9 +219,10 @@ function LongPressActionSheet({
+               <Text style={las.preview} numberOfLines={2}>{text}</Text>
+             )}
+             {([
++              // 'translate' removed — translations are automatic per language
++              // settings; a menu item that only explained that was a dead end.
+               ['reply',     'Reply',         Reply        ],
+               ['copy',      'Copy text',     Copy         ],
+-              ['translate', 'Translate',     Languages    ],
+               ['save',      'Save message',  BookmarkPlus ],
+               ['report',    'Report',        Flag         ],
+             ] as [string, string, React.ComponentType<{ size: number; color: string }>][]).map(([key, label, Icon]) => (
+@@ -240,9 +241,6 @@ function LongPressActionSheet({
+                   } else if (key === 'save') {
+                     onClose();
+                     onSave(message);
+-                  } else if (key === 'translate') {
+-                    onClose();
+-                    Alert.alert('Translation', 'Translations are applied automatically based on your language settings.');
+                   } else {
+                     onClose();
+                     Alert.alert(label, 'This feature is coming soon.');
+@@ -1494,10 +1492,15 @@ export default function TelegraphThread() {
+   }, [threadType, contextId]);
+ 
+   const handleViewPlace = useCallback((suggestion: TelegraphSuggestion) => {
++    // Suggestions carry no place id, so show the detail and offer a real
++    // next step into Discovery instead of a dead-end OK.
+     Alert.alert(
+       suggestion.title,
+       suggestion.reason + (suggestion.location_context ? `\n\n📍 ${suggestion.location_context}` : ''),
+-      [{ text: 'OK' }],
++      [
++        { text: 'Explore in Discovery', onPress: () => router.push('/(tabs)/discovery' as any) },
++        { text: 'OK', style: 'cancel' },
++      ],
+     );
+   }, []);
+ 
+@@ -2043,11 +2046,14 @@ export default function TelegraphThread() {
+           await leaveThread(id ?? '');
+           router.replace('/messages');
+         } : undefined}
+-        onDeleteForMe={async () => {
++        onDeleteForMe={isDirect ? async () => {
++          // Direct threads only: leaving a DM removes it from your inbox
++          // without affecting the other person. Group threads already have
++          // "Leave group" — a second identical destructive item was misleading.
+           await clearTelegraphSuggestionsCache(id ?? '');
+           await leaveThread(id ?? '');
+           router.replace('/messages');
+-        }}
++        } : undefined}
+         onReport={async (reason: string) => {
+           await reportThread(id ?? '', reason);
+         }}
+diff --git a/artifacts/travel-buddy/src/components/DiscoveryCardMessage.tsx b/artifacts/travel-buddy/src/components/DiscoveryCardMessage.tsx
+index ae2388d..4231553 100644
+--- a/artifacts/travel-buddy/src/components/DiscoveryCardMessage.tsx
++++ b/artifacts/travel-buddy/src/components/DiscoveryCardMessage.tsx
+@@ -21,6 +21,7 @@ import { Compass, MapPin, Bookmark, CalendarPlus, ExternalLink } from 'lucide-re
+ import { color, space, radius, type as t } from '../theme/tokens.ts';
+ import { TG } from '../theme/telegraphTokens.ts';
+ import { TripWishlistPicker, type AddToTripPayload } from './discovery/TripWishlistPicker.tsx';
++import { toggleSave } from '../services/discoveryBookmarks.ts';
+ 
+ export interface DiscoveryCardPayload {
+   sourceId: string;
+@@ -159,7 +160,27 @@ export function DiscoveryCardMessage({ body, mine }: Props) {
+           <View style={[card.divider, mine && card.dividerMine]} />
+           <Pressable
+             style={[card.actionBtn, mine && card.actionBtnMine]}
+-            onPress={() => Alert.alert('Saved', `"${payload.title}" saved to your Discovery.`)}
++            onPress={async () => {
++              // Real save via discovery bookmarks — no fake success alerts.
++              try {
++                const res = await toggleSave({
++                  id: payload.sourceId,
++                  name: payload.title,
++                  category: payload.category,
++                  type: payload.sourceType ?? null,
++                  address: payload.city ?? null,
++                  savedAt: Date.now(),
++                });
++                Alert.alert(
++                  res.added ? 'Saved' : 'Removed',
++                  res.added
++                    ? `"${payload.title}" was added to your saved places.`
++                    : `"${payload.title}" was removed from your saved places.`,
++                );
++              } catch {
++                Alert.alert('Could not save', 'Please try again.');
++              }
++            }}
+           >
+             <Bookmark size={11} color={mine ? color.onInk : color.signal} />
+             <Text style={[card.actionLabel, mine && card.actionLabelMine]}>Save</Text>
+diff --git a/artifacts/travel-buddy/src/components/GroupChatScreen.tsx b/artifacts/travel-buddy/src/components/GroupChatScreen.tsx
+index 1795a3a..c34514c 100644
+--- a/artifacts/travel-buddy/src/components/GroupChatScreen.tsx
++++ b/artifacts/travel-buddy/src/components/GroupChatScreen.tsx
+@@ -135,9 +135,10 @@ function LongPressActionSheet({
+   if (!message) return null;
+   const text = message.displayBody ?? message.body ?? '';
+   const actions: [string, string, React.ComponentType<{ size: number; color: string }>][] = [
++    // 'translate' removed — translations are automatic per language settings;
++    // a menu item that only explained that was a dead end.
+     ['reply',     'Reply',         Reply        ],
+     ['copy',      'Copy text',     Copy         ],
+-    ['translate', 'Translate',     Languages    ],
+     ['save',      'Save message',  BookmarkPlus ],
+     ['report',    'Report',        Flag         ],
+   ];
+@@ -211,9 +212,6 @@ function LongPressActionSheet({
+               } else if (key === 'save') {
+                 onClose();
+                 onSave(message);
+-              } else if (key === 'translate') {
+-                onClose();
+-                Alert.alert('Translation', 'Translations are applied automatically based on your language settings.');
+               } else {
+                 onClose();
+                 Alert.alert(label, 'This feature is coming soon.');
+diff --git a/artifacts/travel-buddy/src/components/map/MapCarousel.tsx b/artifacts/travel-buddy/src/components/map/MapCarousel.tsx
+index 17904d0..4150777 100644
+--- a/artifacts/travel-buddy/src/components/map/MapCarousel.tsx
++++ b/artifacts/travel-buddy/src/components/map/MapCarousel.tsx
+@@ -59,6 +59,7 @@ import type { BuddyProfile } from '../../services/rentABuddy.ts';
+ import type { EventListItem } from '../../services/events.ts';
+ import type { HiddenGem } from '../../services/hiddenGems.ts';
+ import type { TripRow } from '../../services/trips.ts';
++import { openDirectThread } from '../../services/messaging.ts';
+ import type { CircleMemberLocation } from '../../services/map.ts';
+ 
+ // ── Constants ─────────────────────────────────────────────────────────────────
+@@ -468,7 +469,12 @@ function MapEntityCard({
+       }
+       case 'friends': {
+         const loc = entity.payload as CircleMemberLocation;
+-        router.push(`/messages/${loc.userId}` as any);
++        // Resolve the direct thread first — /messages/[id] takes a THREAD id, not a user id.
++        void openDirectThread(loc.userId).then((res) => {
++          if (res.ok && res.data?.threadId) {
++            router.push(`/messages/${res.data.threadId}?threadType=direct&otherUserId=${encodeURIComponent(loc.userId)}` as any);
++          }
++        });
+         break;
+       }
+       case 'stamps':
+diff --git a/artifacts/travel-buddy/src/components/map/MapEntityPreviewCard.tsx b/artifacts/travel-buddy/src/components/map/MapEntityPreviewCard.tsx
+index 8d5b0a4..4e229f7 100644
+--- a/artifacts/travel-buddy/src/components/map/MapEntityPreviewCard.tsx
++++ b/artifacts/travel-buddy/src/components/map/MapEntityPreviewCard.tsx
+@@ -11,7 +11,7 @@
+  * payload when available.
+  */
+ import React from 'react';
+-import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
++import { View, Text, Image, Pressable, StyleSheet, Alert } from 'react-native';
+ import { router } from 'expo-router';
+ import {
+   X,
+@@ -30,6 +30,7 @@ import type { MapEntity } from '../../types/mapTypes.ts';
+ import type { BuddyProfile } from '../../services/rentABuddy.ts';
+ import type { EventListItem } from '../../services/events.ts';
+ import type { HiddenGem } from '../../services/hiddenGems.ts';
++import { openDirectThread } from '../../services/messaging.ts';
+ import type { TripRow } from '../../services/trips.ts';
+ import type { CircleMemberLocation } from '../../services/map.ts';
+ 
+@@ -249,7 +250,16 @@ function FriendCard({ entity, onClose }: { entity: MapEntity<CircleMemberLocatio
+       </View>
+       <Pressable
+         style={[s.cta, { backgroundColor: cfg.color }]}
+-        onPress={() => { onClose(); router.push(`/messages/${loc.userId}` as any); }}
++        onPress={async () => {
++          onClose();
++          // Resolve the direct thread first — /messages/[id] takes a THREAD id, not a user id.
++          const res = await openDirectThread(loc.userId);
++          if (res.ok && res.data?.threadId) {
++            router.push(`/messages/${res.data.threadId}?threadType=direct&otherUserId=${encodeURIComponent(loc.userId)}` as any);
++          } else {
++            Alert.alert('Could not open conversation', 'Please try again.');
++          }
++        }}
+       >
+         <Text style={s.ctaText}>Message</Text>
+         <ArrowRight size={15} color="#fff" />
+-- 
+2.43.0
+
+
+From a20e0d8b7b8db471e1ded39805668745e944fc63 Mon Sep 17 00:00:00 2001
+From: claude <c@c>
+Date: Mon, 20 Jul 2026 07:06:53 +0000
+Subject: [PATCH 5/6] fix(rab-safety): safety tools now hit the real backend
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Every action on the buddy Safety Tools screen fabricated success with
+alerts while calling no service. Now:
+- resolves the live booking on mount (in_progress, else scheduled)
+- Emergency -> feelUnsafe; End booking early -> endBookingEarly;
+  Report traveller -> reportBooking; Flag unpaid cash ->
+  confirmCashBalance(disputed); Flag extra guest -> reportBooking
+- Contact support states the truth (report path + support email) instead
+  of inventing a ticket system
+- With no active booking, actions say so instead of pretending
+- active.tsx: 'Share with Trusted Circle' toggle removed — it flipped local
+  state only; a safety toggle must never silently no-op (re-add when wired
+  to safe-return live share)
+- earnings: 'Flag for review' files a real reportBooking dispute
+---
+ .../app/(rent-a-buddy)/active.tsx             |  16 +--
+ .../buddy-dashboard/earnings.tsx              |  35 +++++-
+ .../(rent-a-buddy)/buddy-dashboard/safety.tsx | 116 +++++++++++++-----
+ 3 files changed, 124 insertions(+), 43 deletions(-)
+
+diff --git a/artifacts/travel-buddy/app/(rent-a-buddy)/active.tsx b/artifacts/travel-buddy/app/(rent-a-buddy)/active.tsx
+index 1c7a234..996a850 100644
+--- a/artifacts/travel-buddy/app/(rent-a-buddy)/active.tsx
++++ b/artifacts/travel-buddy/app/(rent-a-buddy)/active.tsx
+@@ -230,18 +230,10 @@ export default function RentABuddyActive() {
+                 thumbColor={color.paperRaised}
+               />
+             </View>
+-            <View style={[styles.safetyToggleRow, { borderTopWidth: 1, borderTopColor: color.haze }]}>
+-              <View style={{ flex: 1 }}>
+-                <Text style={styles.safetyToggleLabel}>Share with Trusted Circle</Text>
+-                <Text style={styles.safetyToggleSub}>A contact can see your live status</Text>
+-              </View>
+-              <Switch
+-                value={circleShare}
+-                onValueChange={setCircleShare}
+-                trackColor={{ true: color.success, false: color.haze }}
+-                thumbColor={color.paperRaised}
+-              />
+-            </View>
++            {/* "Share with Trusted Circle" toggle removed — it only flipped local
++                state and never started a real share. Re-add once wired to the
++                safe-return live-share API (startLiveShare needs a session +
++                recipient contact). A safety toggle must never silently no-op. */}
+             <Pressable
+               style={styles.unsafeBtn}
+               onPress={() => {
+diff --git a/artifacts/travel-buddy/app/(rent-a-buddy)/buddy-dashboard/earnings.tsx b/artifacts/travel-buddy/app/(rent-a-buddy)/buddy-dashboard/earnings.tsx
+index c8ae594..d64c551 100644
+--- a/artifacts/travel-buddy/app/(rent-a-buddy)/buddy-dashboard/earnings.tsx
++++ b/artifacts/travel-buddy/app/(rent-a-buddy)/buddy-dashboard/earnings.tsx
+@@ -99,7 +99,22 @@ export default function BuddyEarnings() {
+   if (loading) return <TravelLoadingState label="Loading earnings…" />;
+   if (error) return <TravelErrorState title="Couldn't load earnings" sub={error} onRetry={() => load()} />;
+ 
+-  const completed = bookings.filter((b) => b.status === 'completed');
++  // Completed list honors the date-range filter chips (previously a no-op).
++  const filterCutoff = (() => {
++    const now = new Date();
++    switch (filter) {
++      case 'This month': return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
++      case 'Last 3 months': return new Date(now.getFullYear(), now.getMonth() - 3, 1).getTime();
++      case 'This year': return new Date(now.getFullYear(), 0, 1).getTime();
++      default: return 0; // 'All time'
++    }
++  })();
++  const completed = bookings.filter((b) => {
++    if (b.status !== 'completed') return false;
++    if (filterCutoff === 0) return true;
++    const when = Date.parse(b.completedAt ?? b.bookingDate ?? b.updatedAt ?? '');
++    return Number.isFinite(when) ? when >= filterCutoff : true;
++  });
+   const pending = bookings.filter((b) => b.status === 'scheduled' || b.status === 'in_progress');
+   const disputed = bookings.filter((b) => b.status === 'disputed');
+ 
+@@ -232,7 +247,23 @@ export default function BuddyEarnings() {
+             {disputed.map((b) => (
+               <TravelCard key={b.id} style={{ padding: space.md }}>
+                 <BookingRow booking={b} />
+-                <Pressable style={disp.btn} onPress={() => Alert.alert('Dispute', 'Contact support to resolve this dispute.')}>
++                <Pressable
++                  style={disp.btn}
++                  onPress={() => {
++                    // File a real report on the disputed booking — no fake tickets.
++                    Alert.alert('Flag for review', 'Send this disputed booking to our team for review?', [
++                      { text: 'Cancel', style: 'cancel' },
++                      {
++                        text: 'Send',
++                        onPress: async () => {
++                          const res = await rentABuddy.reportBooking(b.id, { reason: 'Earnings dispute', details: 'Flagged from the earnings screen.' });
++                          if (res.ok) Alert.alert('Sent for review', 'Our team will look at this booking and follow up.');
++                          else Alert.alert('Could not send', res.error ?? 'Please try again.');
++                        },
++                      },
++                    ]);
++                  }}
++                >
+                   <Flag size={13} color={color.signal} />
+                   <Text style={disp.btnText}>Flag for review</Text>
+                 </Pressable>
+diff --git a/artifacts/travel-buddy/app/(rent-a-buddy)/buddy-dashboard/safety.tsx b/artifacts/travel-buddy/app/(rent-a-buddy)/buddy-dashboard/safety.tsx
+index 1640a43..23cb3c2 100644
+--- a/artifacts/travel-buddy/app/(rent-a-buddy)/buddy-dashboard/safety.tsx
++++ b/artifacts/travel-buddy/app/(rent-a-buddy)/buddy-dashboard/safety.tsx
+@@ -10,6 +10,10 @@ import {
+ } from 'lucide-react-native';
+ import { TravelButton, TravelCard } from '../../../src/components/primitives';
+ import { color, space, radius, type as t } from '../../../src/theme/tokens';
++import {
++  getMyRequests, reportBooking, endBookingEarly, feelUnsafe, confirmCashBalance,
++  type BuddyBooking,
++} from '../../../src/services/rentABuddy';
+ 
+ const REPORT_REASONS = [
+   'Harassment or disrespectful behaviour',
+@@ -134,34 +138,79 @@ export default function BuddySafetyTools() {
+   const [reportOpen, setReportOpen] = useState(false);
+   const [endOpen, setEndOpen] = useState(false);
+ 
+-  function handleReport(reason: string, detail: string) {
++  // These tools act on the buddy's live booking — resolve it on mount so every
++  // action below hits the real backend instead of pretending to.
++  const [activeBooking, setActiveBooking] = useState<BuddyBooking | null>(null);
++  React.useEffect(() => {
++    let alive = true;
++    getMyRequests().then((res) => {
++      if (!alive || !res.ok || !res.data) return;
++      const current = res.data.requests.find((b) => b.status === 'in_progress')
++        ?? res.data.requests.find((b) => b.status === 'scheduled')
++        ?? null;
++      setActiveBooking(current);
++    }).catch(() => {});
++    return () => { alive = false; };
++  }, []);
++
++  function requireBooking(): BuddyBooking | null {
++    if (!activeBooking) {
++      Alert.alert(
++        'No active booking',
++        'These tools work on a live booking. Open the booking itself to use its safety actions, or contact us from Settings.',
++      );
++      return null;
++    }
++    return activeBooking;
++  }
++
++  async function handleReport(reason: string, detail: string) {
+     setReportOpen(false);
+-    Alert.alert(
+-      'Report submitted',
+-      'Thank you for reporting. Our safety team will review this within 24 hours. The booking is now flagged.',
+-      [{ text: 'OK' }],
+-    );
++    const booking = requireBooking();
++    if (!booking) return;
++    const res = await reportBooking(booking.id, { reason, details: detail || undefined });
++    if (res.ok) {
++      Alert.alert('Report submitted', 'Thank you for reporting. Our safety team will review this within 24 hours.');
++    } else {
++      Alert.alert('Could not submit report', res.error ?? 'Please try again.');
++    }
+   }
+ 
+-  function handleEndBooking(reason: string, detail: string) {
++  async function handleEndBooking(reason: string, detail: string) {
+     setEndOpen(false);
+-    Alert.alert(
+-      'Booking ended early',
+-      'The booking has been marked as ended early. Your safety team note has been recorded. No penalties apply when safety is the reason.',
+-      [{ text: 'OK', onPress: () => router.back() }],
+-    );
++    const booking = requireBooking();
++    if (!booking) return;
++    const res = await endBookingEarly(booking.id, detail ? `${reason}: ${detail}` : reason);
++    if (res.ok) {
++      Alert.alert(
++        'Booking ended early',
++        'The booking has been ended and your note recorded. No penalties apply when safety is the reason.',
++        [{ text: 'OK', onPress: () => router.back() }],
++      );
++    } else {
++      Alert.alert('Could not end booking', res.error ?? 'Please try again.');
++    }
+   }
+ 
+   function handleFlagUnpaidCash() {
+     Alert.alert(
+       'Flag unpaid cash balance',
+-      'This will notify the traveller that their cash payment is outstanding. A support ticket will be created if unresolved within 24 hours.',
++      'This marks the cash payment for your current booking as disputed so our team can follow up.',
+       [
+         { text: 'Cancel', style: 'cancel' },
+         {
+           text: 'Flag it',
+           style: 'destructive',
+-          onPress: () => Alert.alert('Flagged', 'The unpaid balance has been flagged. You\'ll receive an update within 24 hours.'),
++          onPress: async () => {
++            const booking = requireBooking();
++            if (!booking) return;
++            const res = await confirmCashBalance(booking.id, false);
++            if (res.ok) {
++              Alert.alert('Flagged', 'The unpaid balance is now marked as disputed. Our team will follow up.');
++            } else {
++              Alert.alert('Could not flag', res.error ?? 'Please try again.');
++            }
++          },
+         },
+       ],
+     );
+@@ -170,28 +219,32 @@ export default function BuddySafetyTools() {
+   function handleFlagExtraGuest() {
+     Alert.alert(
+       'Flag unapproved extra guest',
+-      'This will record that an unapproved guest was present. The traveller will be notified and asked to pay for the extra person.',
++      'This files a report on the current booking noting an unapproved guest was present.',
+       [
+         { text: 'Cancel', style: 'cancel' },
+         {
+           text: 'Flag it',
+-          onPress: () => Alert.alert('Flagged', 'The unapproved guest has been flagged. The traveller will be notified.'),
++          onPress: async () => {
++            const booking = requireBooking();
++            if (!booking) return;
++            const res = await reportBooking(booking.id, { reason: 'Unapproved extra guest', details: 'Flagged from Safety Tools.' });
++            if (res.ok) {
++              Alert.alert('Flagged', 'The unapproved guest has been reported on this booking.');
++            } else {
++              Alert.alert('Could not flag', res.error ?? 'Please try again.');
++            }
++          },
+         },
+       ],
+     );
+   }
+ 
+   function handleContactSupport() {
++    // Honest routing — there is no ticket system yet, so don't pretend one exists.
+     Alert.alert(
+       'Contact Support',
+-      'Our support team is available 24/7. Would you like to open a support ticket?',
+-      [
+-        { text: 'Cancel', style: 'cancel' },
+-        {
+-          text: 'Open ticket',
+-          onPress: () => Alert.alert('Ticket created', 'A support ticket has been created. You\'ll hear back within 2 hours.'),
+-        },
+-      ],
++      'For booking problems, use "Report traveller" above — reports go straight to our safety team and are reviewed within 24 hours. For anything else, reach us at support@portava.app.',
++      [{ text: 'OK' }],
+     );
+   }
+ 
+@@ -204,11 +257,16 @@ export default function BuddySafetyTools() {
+         {
+           text: 'Notify safety team',
+           style: 'destructive',
+-          onPress: () =>
+-            Alert.alert(
+-              'Safety team notified',
+-              'Our safety team has been alerted with your last known location from this session. Stay safe.',
+-            ),
++          onPress: async () => {
++            const booking = requireBooking();
++            if (!booking) return;
++            const res = await feelUnsafe(booking.id, 'Emergency button pressed from Safety Tools.');
++            if (res.ok) {
++              Alert.alert('Safety team notified', 'Our safety team has been alerted about this booking. Stay safe.');
++            } else {
++              Alert.alert('Could not notify', res.error ?? 'Please call local emergency services if you are in danger.');
++            }
++          },
+         },
+       ],
+     );
+-- 
+2.43.0
+
+
+From 7ae6368109fd5de1a030a8a38e25064fc6674b9a Mon Sep 17 00:00:00 2001
+From: claude <c@c>
+Date: Mon, 20 Jul 2026 07:06:53 +0000
+Subject: [PATCH 6/6] fix(controls): wire every remaining no-op control
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Buddy dashboard 'Available Now' hydrates from saved settings and persists
+  via setAvailabilitySettings (was local state born false)
+- Waitlist: fabricated Math.random queue position removed — never invent
+  server data
+- 'Book This Package' now preselects that package in the request form
+  (packageId was silently dropped)
+- Hidden Gems 'Near Me' does real GPS + 50km distance filter/sort (was a
+  style-only toggle); map toggle opens the real map with the gems layer
+  instead of a static placeholder
+- Trip chat: always-on unread dot removed (no unread signal feeds it)
+- Trip -> buddy search passes bookingDate the search actually reads
+  (was startDate/endDate/groupSize/lang, all dropped)
+- Onboarding display-name hint corrected to 30 chars (cap is 30)
+---
+ .../travel-buddy/app/(auth)/onboarding.tsx    |  2 +-
+ .../(rent-a-buddy)/buddy-dashboard/index.tsx  | 19 +++++-
+ .../app/(rent-a-buddy)/request-buddy.tsx      | 11 ++--
+ .../app/(rent-a-buddy)/waitlist.tsx           |  4 +-
+ artifacts/travel-buddy/app/gems/index.tsx     | 61 ++++++++++++-------
+ artifacts/travel-buddy/app/trip/[id].tsx      | 18 +++---
+ 6 files changed, 73 insertions(+), 42 deletions(-)
+
+diff --git a/artifacts/travel-buddy/app/(auth)/onboarding.tsx b/artifacts/travel-buddy/app/(auth)/onboarding.tsx
+index 34ec3b9..eb6bd9e 100644
+--- a/artifacts/travel-buddy/app/(auth)/onboarding.tsx
++++ b/artifacts/travel-buddy/app/(auth)/onboarding.tsx
+@@ -168,7 +168,7 @@ export default function Onboarding() {
+                   maxLength={DISPLAY_NAME_MAX}
+                   returnKeyType="next"
+                 />
+-                <Text style={styles.hint}>Maximum 40 characters.</Text>
++                <Text style={styles.hint}>Maximum 30 characters.</Text>
+               </View>
+               <View>
+                 <Text style={styles.label}>Username (optional)</Text>
+diff --git a/artifacts/travel-buddy/app/(rent-a-buddy)/buddy-dashboard/index.tsx b/artifacts/travel-buddy/app/(rent-a-buddy)/buddy-dashboard/index.tsx
+index 1587bb1..b816a09 100644
+--- a/artifacts/travel-buddy/app/(rent-a-buddy)/buddy-dashboard/index.tsx
++++ b/artifacts/travel-buddy/app/(rent-a-buddy)/buddy-dashboard/index.tsx
+@@ -1,6 +1,6 @@
+ import React, { useEffect, useState, useCallback } from 'react';
+ import {
+-  View, Text, ScrollView, Pressable, StyleSheet, Switch, RefreshControl,
++  View, Text, ScrollView, Pressable, StyleSheet, Switch, RefreshControl, Alert,
+ } from 'react-native';
+ import { router } from 'expo-router';
+ import { useSafeAreaInsets } from 'react-native-safe-area-context';
+@@ -114,10 +114,11 @@ export default function BuddyDashboard() {
+   const load = useCallback(async (silent = false) => {
+     if (!silent) setLoading(true);
+     setError(null);
+-    const [dashRes, reqRes, clRes] = await Promise.all([
++    const [dashRes, reqRes, clRes, availRes] = await Promise.all([
+       rentABuddy.getBuddyDashboard(),
+       rentABuddy.getDashboardRequests(),
+       rentABuddy.getProfileChecklist(),
++      rentABuddy.getDashboardAvailability(),
+     ]);
+     if (!silent) setLoading(false);
+     if (dashRes.ok) {
+@@ -125,6 +126,10 @@ export default function BuddyDashboard() {
+     } else {
+       setError(dashRes.error);
+     }
++    // Hydrate the header switch from the saved setting so it reflects reality.
++    if (availRes.ok && availRes.data?.settings) {
++      setAvailableNow(availRes.data.settings.availableNow === true);
++    }
+     if (reqRes.ok) {
+       setUpcoming(reqRes.data.requests.slice(0, 3));
+     }
+@@ -235,7 +240,15 @@ export default function BuddyDashboard() {
+           <Text style={s.availLabel}>Available Now</Text>
+           <Switch
+             value={availableNow}
+-            onValueChange={setAvailableNow}
++            onValueChange={async (v) => {
++              // Persist to the real availability setting; revert on failure.
++              setAvailableNow(v);
++              const res = await rentABuddy.setAvailabilitySettings({ availableNow: v });
++              if (!res.ok) {
++                setAvailableNow(!v);
++                Alert.alert('Could not update', res.error ?? 'Please try again.');
++              }
++            }}
+             trackColor={{ false: color.haze, true: color.success }}
+             thumbColor={color.onInk}
+           />
+diff --git a/artifacts/travel-buddy/app/(rent-a-buddy)/request-buddy.tsx b/artifacts/travel-buddy/app/(rent-a-buddy)/request-buddy.tsx
+index 790f639..dc3f92d 100644
+--- a/artifacts/travel-buddy/app/(rent-a-buddy)/request-buddy.tsx
++++ b/artifacts/travel-buddy/app/(rent-a-buddy)/request-buddy.tsx
+@@ -236,7 +236,7 @@ function OpenRequestForm() {
+ 
+ // ── Per-buddy booking request form (Mode A) ────────────────────────────────
+ 
+-function BookingRequestForm({ buddyId }: { buddyId: string }) {
++function BookingRequestForm({ buddyId, preselectPackageId }: { buddyId: string; preselectPackageId?: string }) {
+   const insets = useSafeAreaInsets();
+ 
+   const [buddy, setBuddy]                   = useState<BuddyProfile | null>(null);
+@@ -263,7 +263,10 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
+       if (pRes.ok) {
+         const active = pRes.data.packages.filter(p => p.isActive);
+         setPackages(active);
+-        if (active.length > 0) setPkgIdx(0);
++        // Honor the package chosen on the buddy profile ("Book This Package").
++        const pre = preselectPackageId ? active.findIndex(p => p.id === preselectPackageId) : -1;
++        if (pre >= 0) setPkgIdx(pre);
++        else if (active.length > 0) setPkgIdx(0);
+       }
+       setInitLoading(false);
+     }).catch(() => setInitLoading(false));
+@@ -442,8 +445,8 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
+ // ── Entry point ───────────────────────────────────────────────────────────
+ 
+ export default function RequestBuddy() {
+-  const { buddyId } = useLocalSearchParams<{ buddyId?: string }>();
+-  if (buddyId) return <BookingRequestForm buddyId={buddyId} />;
++  const { buddyId, packageId } = useLocalSearchParams<{ buddyId?: string; packageId?: string }>();
++  if (buddyId) return <BookingRequestForm buddyId={buddyId} preselectPackageId={typeof packageId === 'string' ? packageId : undefined} />;
+   return <OpenRequestForm />;
+ }
+ 
+diff --git a/artifacts/travel-buddy/app/(rent-a-buddy)/waitlist.tsx b/artifacts/travel-buddy/app/(rent-a-buddy)/waitlist.tsx
+index 8b87355..e047cef 100644
+--- a/artifacts/travel-buddy/app/(rent-a-buddy)/waitlist.tsx
++++ b/artifacts/travel-buddy/app/(rent-a-buddy)/waitlist.tsx
+@@ -56,7 +56,9 @@ export default function RentABuddyWaitlist() {
+       Alert.alert('Error', res.error);
+       return;
+     }
+-    setQueuePosition(Math.floor(Math.random() * 20) + 1);
++    // The API doesn't return a queue position — never invent one. The
++    // confirmation screen simply omits the position card when null.
++    setQueuePosition(null);
+     setConfirmed(true);
+   };
+ 
+diff --git a/artifacts/travel-buddy/app/gems/index.tsx b/artifacts/travel-buddy/app/gems/index.tsx
+index e7151d8..a743274 100644
+--- a/artifacts/travel-buddy/app/gems/index.tsx
++++ b/artifacts/travel-buddy/app/gems/index.tsx
+@@ -4,15 +4,16 @@
+  *
+  * Tab bar: Discover · Saved · Layover
+  */
+-import React, { useState, useCallback } from 'react';
++import React, { useState, useCallback, useMemo } from 'react';
+ import {
+   View, Text, StyleSheet, FlatList, TouchableOpacity,
+-  TextInput, ActivityIndicator, RefreshControl, ScrollView,
++  TextInput, ActivityIndicator, RefreshControl, ScrollView, Alert,
+ } from 'react-native';
+ import { useRouter } from 'expo-router';
+ import { Ionicons } from '@expo/vector-icons';
+ import { useGemList, useSavedGems, useLayoverGems } from '../../src/hooks/useHiddenGems';
+ import { verificationBadge, sensitivityLabel, type HiddenGem, type GemCategory } from '../../src/services/hiddenGems';
++import { getCurrentGps } from '../../src/services/location';
+ import { SafeAreaView } from 'react-native-safe-area-context';
+ import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+ 
+@@ -103,12 +104,39 @@ function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
+   const [category, setCategory]   = useState<GemCategory | 'all'>('all');
+   const [appliedCity, setApplied] = useState('');
+   const [nearMe, setNearMe]       = useState(false);
++  const [myCoords, setMyCoords]   = useState<{ lat: number; lng: number } | null>(null);
+ 
+-  const { gems, loading, error, refresh } = useGemList({
++  const { gems: allGems, loading, error, refresh } = useGemList({
+     city:     appliedCity || undefined,
+     category: category === 'all' ? undefined : category,
+   });
+ 
++  // Real "Near Me": fetch device GPS on demand, then filter/sort by distance.
++  const handleNearMe = useCallback(async () => {
++    if (nearMe) { setNearMe(false); return; }
++    const fix = await getCurrentGps();
++    if (!fix.granted || fix.lat == null || fix.lng == null) {
++      Alert.alert('Location unavailable', 'Allow location access to see gems near you.');
++      return;
++    }
++    setMyCoords({ lat: fix.lat, lng: fix.lng });
++    setNearMe(true);
++  }, [nearMe]);
++
++  const gems = useMemo(() => {
++    if (!nearMe || !myCoords) return allGems;
++    const distKm = (lat: number, lng: number) => {
++      const dLat = (lat - myCoords.lat) * Math.PI / 180;
++      const dLng = (lng - myCoords.lng) * Math.PI / 180;
++      const a = Math.sin(dLat / 2) ** 2
++        + Math.cos(myCoords.lat * Math.PI / 180) * Math.cos(lat * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
++      return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
++    };
++    return allGems
++      .filter((g) => g.lat != null && g.lng != null && distKm(g.lat, g.lng) <= 50)
++      .sort((a, b) => distKm(a.lat!, a.lng!) - distKm(b.lat!, b.lng!));
++  }, [allGems, nearMe, myCoords]);
++
+   const applySearch = useCallback(() => { setApplied(city.trim()); }, [city]);
+ 
+   return (
+@@ -142,7 +170,7 @@ function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
+         {/* Near Me chip */}
+         <TouchableOpacity
+           style={[styles.chip, nearMe && styles.chipActive]}
+-          onPress={() => setNearMe((v) => !v)}
++          onPress={handleNearMe}
+         >
+           <Ionicons name="navigate-outline" size={14} color={nearMe ? '#fff' : '#8A9BB5'} />
+           <Text style={[styles.chipText, nearMe && styles.chipTextActive]}>Near Me</Text>
+@@ -165,19 +193,9 @@ function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
+         ))}
+       </ScrollView>
+ 
+-      {/* Map placeholder — shown when map toggle is active */}
+-      {viewMode === 'map' && (
+-        <View style={styles.mapPlaceholder}>
+-          <Ionicons name="map-outline" size={48} color="#4C8BF5" />
+-          <Text style={styles.mapPlaceholderText}>Map view</Text>
+-          <Text style={styles.mapPlaceholderSub}>
+-            {gems.length > 0 ? `${gems.length} gems in this area` : 'No gems to display'}
+-          </Text>
+-        </View>
+-      )}
+-
+-      {/* Gem list — only shown in list mode */}
+-      {viewMode === 'list' && (
++      {/* Static map placeholder removed — the header map button now opens the
++          real map with the gems layer (/map?entityTypes=gems). */}
++      {(
+         loading && gems.length === 0 ? (
+           <View style={styles.center}><ActivityIndicator color="#4C8BF5" /></View>
+         ) : error ? (
+@@ -343,13 +361,10 @@ export default function GemsScreen() {
+           {activeTab === 'Discover' && (
+             <TouchableOpacity
+               style={styles.viewToggle}
+-              onPress={() => setViewMode((m) => m === 'list' ? 'map' : 'list')}
++              onPress={() => router.push('/map?entityTypes=gems' as any)}
++              accessibilityLabel="View gems on the map"
+             >
+-              <Ionicons
+-                name={viewMode === 'list' ? 'map-outline' : 'list-outline'}
+-                size={20}
+-                color="#4C8BF5"
+-              />
++              <Ionicons name="map-outline" size={20} color="#4C8BF5" />
+             </TouchableOpacity>
+           )}
+           <TouchableOpacity
+diff --git a/artifacts/travel-buddy/app/trip/[id].tsx b/artifacts/travel-buddy/app/trip/[id].tsx
+index 47d88a5..781d2b8 100644
+--- a/artifacts/travel-buddy/app/trip/[id].tsx
++++ b/artifacts/travel-buddy/app/trip/[id].tsx
+@@ -272,10 +272,7 @@ function TripDetailScreen() {
+               {chatLoading
+                 ? <ActivityIndicator size="small" color={color.signal} />
+                 : (
+-                  <View style={{ position: 'relative' }}>
+-                    <MessageCircle size={15} color={color.signal} />
+-                    <View style={styles.unreadDot} />
+-                  </View>
++                  <MessageCircle size={15} color={color.signal} />
+                 )
+               }
+               <Text style={[styles.topBtnText, { color: color.signal }]}>Chat</Text>
+@@ -296,8 +293,10 @@ function TripDetailScreen() {
+               style={styles.topBtn}
+               hitSlop={6}
+               onPress={() => {
+-                const params = new URLSearchParams({ tripId: trip.id });
++                // Buddy search reads city/category/bookingDate — pass what it consumes.
++                const params = new URLSearchParams();
+                 if (trip.destinationCity) params.set('city', trip.destinationCity);
++                if (realTrip?.startDate) params.set('bookingDate', realTrip.startDate);
+                 router.push(`/(rent-a-buddy)/search?${params.toString()}` as any);
+               }}
+             >
+@@ -606,11 +605,10 @@ function NeedSomeoneLocalSection({
+   ] as const;
+ 
+   function handleCategoryPress(category: string) {
+-    const params = new URLSearchParams({ city: city ?? '', category, tripId });
+-    if (startDate) params.set('startDate', startDate);
+-    if (endDate) params.set('endDate', endDate);
+-    if (groupSize) params.set('groupSize', groupSize);
+-    if (travelerLanguage) params.set('lang', travelerLanguage);
++    // Buddy search consumes city / category / bookingDate — map the trip's
++    // start date onto bookingDate so results match the trip window.
++    const params = new URLSearchParams({ city: city ?? '', category });
++    if (startDate) params.set('bookingDate', startDate);
+     router.push(`/(rent-a-buddy)/search?${params.toString()}` as any);
+   }
+ 
+-- 
+2.43.0
+
