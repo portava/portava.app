@@ -218,11 +218,6 @@ jest.mock('../../../src/components/primitives', () => ({
 }));
 
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/PostCard', () => ({
-  PostCard: () => null,
-}));
-
-// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ManualCityPicker', () => ({
   ManualCityPicker: () => null,
 }));

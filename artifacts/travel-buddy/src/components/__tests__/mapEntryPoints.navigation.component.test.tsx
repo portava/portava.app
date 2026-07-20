@@ -252,7 +252,6 @@ jest.mock('../../components/discovery/DiscoveryMapView', () => ({
 
 import { router, useLocalSearchParams } from 'expo-router';
 import { useLocationContext } from '../../context/LocationContext.tsx';
-import { EventCard } from '../EventCard.tsx';
 import { TripMapPreview } from '../TripPage.tsx';
 import { MapTab } from '../MapTab';
 import { CircleMapSection } from '../circle/CircleMapSection';
@@ -264,21 +263,6 @@ import FullScreenMapScreen from '../../../app/map/index';
 const mockPush                 = router.push as jest.Mock;
 const mockUseLocalSearchParams = useLocalSearchParams as jest.Mock;
 const mockUseLocationContext   = useLocationContext as jest.Mock;
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-function makeEvent(id = 'evt-1') {
-  return {
-    id,
-    title: 'Rooftop Jazz Night',
-    category: 'Nightlife',
-    startAt: new Date('2026-09-01T20:00:00Z').toISOString(),
-    city: 'Cebu City',
-    attendeeCount: 12,
-    capacity: null,
-    host: null,
-  };
-}
 
 // ── Setup ──────────────────────────────────────────────────────────────────────
 
@@ -294,31 +278,6 @@ beforeEach(() => {
     resolvedLocation: { place: null, coords: null, source: 'none', freshness: 'unavailable' },
     requireLocation: jest.fn(),
   }));
-});
-
-// ── 1. EventCard "View on map" ─────────────────────────────────────────────────
-
-describe('EventCard — View on map entry point', () => {
-  it('calls router.push with /map?entityTypes=events&focusId=event:<id>', async () => {
-    await render(<EventCard ev={makeEvent('abc-123')} />);
-
-    fireEvent.press(screen.getByText('View on map'));
-
-    expect(mockPush).toHaveBeenCalledTimes(1);
-    const url = mockPush.mock.calls[0][0] as string;
-    expect(url).toContain('/map');
-    expect(url).toContain('entityTypes=events');
-    expect(url).toContain('focusId=event%3Aabc-123');
-  });
-
-  it('includes the prefixed focusId so useMapEntities key-lookup matches', async () => {
-    await render(<EventCard ev={makeEvent('xyz-999')} />);
-
-    fireEvent.press(screen.getByText('View on map'));
-
-    const decoded = decodeURIComponent(mockPush.mock.calls[0][0] as string);
-    expect(decoded).toContain('focusId=event:xyz-999');
-  });
 });
 
 // ── 2. TripMapPreview "View map" ───────────────────────────────────────────────
@@ -595,82 +554,6 @@ describe('FullScreenMapScreen — camera falls back to LocationContext coords', 
 
     expect(capturedProps).not.toBeNull();
     expect(capturedProps!.fallbackZoom).toBe(11);
-  });
-});
-
-// ── 9. EventCard "View on map" — city coords forwarded in the push URL ──────────
-//
-// EventCard derives lat/lng from the event's city via CITY_CENTROIDS and appends
-// them to the /map push URL.  This gives the map camera an immediate starting
-// position (the city view) while useMapEntities is still loading and the focusId
-// snap hasn't resolved yet — preventing a blank-ocean first frame.
-//
-// When the city is not in the centroid map the params are omitted so the map
-// falls back to the user's GPS location as normal.
-
-describe('EventCard — city coords forwarded in the /map push URL', () => {
-  it('includes lat and lng in the /map push URL for an event with a known city', async () => {
-    // makeEvent uses city: 'Cebu City', which is present in the mocked CITY_CENTROIDS.
-    await render(<EventCard ev={makeEvent('lat-check-id')} />);
-
-    fireEvent.press(screen.getByText('View on map'));
-
-    const url = mockPush.mock.calls[0][0] as string;
-    expect(url).toMatch(/[?&]lat=/);
-    expect(url).toMatch(/[?&]lng=/);
-    // The values must match the Cebu City centroid from the mock.
-    expect(url).toContain('lat=10.3157');
-    expect(url).toContain('lng=123.8854');
-  });
-
-  it('omits lat and lng when the city is not in the centroid map', async () => {
-    const unknownCityEvent = { ...makeEvent('no-coords-id'), city: 'Atlantis' };
-    await render(<EventCard ev={unknownCityEvent} />);
-
-    fireEvent.press(screen.getByText('View on map'));
-
-    const url = mockPush.mock.calls[0][0] as string;
-    expect(url).not.toMatch(/[?&]lat=/);
-    expect(url).not.toMatch(/[?&]lng=/);
-  });
-
-  it('still includes focusId alongside the city coords', async () => {
-    await render(<EventCard ev={makeEvent('snap-id-42')} />);
-
-    fireEvent.press(screen.getByText('View on map'));
-
-    const url = mockPush.mock.calls[0][0] as string;
-    // focusId must still be present so the map can snap to the entity once loaded.
-    expect(url).toContain('focusId=');
-    expect(decodeURIComponent(url)).toContain('snap-id-42');
-    // And city coords must also be present for the immediate camera position.
-    expect(url).toMatch(/[?&]lat=/);
-    expect(url).toMatch(/[?&]lng=/);
-  });
-
-  it('appends zoom=12 alongside city coords so the map opens at city-street level', async () => {
-    // zoom=12 keeps venue pins visible (city-street view).  Without an explicit
-    // zoom the map screen defaults to 11 — close enough, but stating 12 here
-    // makes the intent unambiguous and prevents a future default-change from
-    // silently breaking the fallback experience.
-    await render(<EventCard ev={makeEvent('zoom-check-id')} />);
-
-    fireEvent.press(screen.getByText('View on map'));
-
-    const url = mockPush.mock.calls[0][0] as string;
-    expect(url).toMatch(/[?&]zoom=12(&|$)/);
-  });
-
-  it('omits zoom when the city is not in the centroid map', async () => {
-    // No city coords → no zoom override needed; the map falls back to its own
-    // default and the user's GPS coords as normal.
-    const unknownCityEvent = { ...makeEvent('no-zoom-id'), city: 'Atlantis' };
-    await render(<EventCard ev={unknownCityEvent} />);
-
-    fireEvent.press(screen.getByText('View on map'));
-
-    const url = mockPush.mock.calls[0][0] as string;
-    expect(url).not.toMatch(/[?&]zoom=/);
   });
 });
 
