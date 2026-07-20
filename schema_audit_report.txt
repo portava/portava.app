@@ -1,0 +1,1 @@
+Scanned 830 source files → 294 tables, 10 RPCs, 2 buckets referenced.
