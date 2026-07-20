@@ -24,7 +24,7 @@ import {
 } from 'lucide-react-native';
 import type {
   CompassUiBlock, CompassUiPlace, CompassUiEvent, CompassUiPerson,
-  CompassComparisonRow, CompassAskPayload,
+  CompassComparisonRow, CompassAskPayload, CompassUiConfidence,
 } from '../../services/compass.ts';
 import { formatCompassEventChip } from '../../utils/compassFormat.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
@@ -107,6 +107,37 @@ function usePlaceNavigation() {
   };
 }
 
+// ── Confidence pill (Phase 8) ─────────────────────────────────────────────────
+//
+// Surfaces the server's data-confidence label honestly:
+//   verified_live → green "Live", community_reported → "Community",
+//   historical → "Historical", ai_inference → "AI".
+
+const CONFIDENCE_STYLE: Record<string, { text: string; fg: string; bg: string }> = {
+  verified_live:      { text: 'Live',       fg: '#047857', bg: '#04785716' },
+  community_reported: { text: 'Community',  fg: '#1D4ED8', bg: '#1D4ED816' },
+  historical:         { text: 'Historical', fg: '#6B7280', bg: '#6B728016' },
+  ai_inference:       { text: 'AI',         fg: '#7C3AED', bg: '#7C3AED16' },
+};
+
+function ConfidencePill({ confidence, testID }: {
+  confidence?: CompassUiConfidence | null;
+  testID: string;
+}) {
+  if (!confidence) return null;
+  const c = CONFIDENCE_STYLE[confidence.sourceClass];
+  if (!c) return null;
+  return (
+    <Text
+      style={[s.confidencePill, { color: c.fg, backgroundColor: c.bg }]}
+      testID={testID}
+      accessibilityLabel={`Data confidence: ${confidence.label}`}
+    >
+      {c.text}
+    </Text>
+  );
+}
+
 // ── Place ─────────────────────────────────────────────────────────────────────
 
 function PlaceBlockCard({ place, onAddToPlan }: {
@@ -130,6 +161,16 @@ function PlaceBlockCard({ place, onAddToPlan }: {
         </View>
         <View style={s.metaRow}>
           {place.category ? <Text style={s.metaChip}>{place.category}</Text> : null}
+          <ConfidencePill confidence={place.confidence} testID={`compass-confidence-${place.id}`} />
+          {place.openNow != null ? (
+            <Text style={[s.confidencePill, place.openNow
+              ? { color: '#047857', backgroundColor: '#04785716' }
+              : { color: '#B91C1C', backgroundColor: '#B91C1C16' }]}
+              testID={`compass-open-now-${place.id}`}
+            >
+              {place.openNow ? 'Open now' : 'Closed now'}
+            </Text>
+          ) : null}
           {place.rating != null ? (
             <View style={s.inlineMeta}>
               <Star size={10} color="#F59E0B" fill="#F59E0B" />
@@ -180,6 +221,7 @@ function EventBlockCard({ event }: { event: CompassUiEvent }) {
           <ChevronRight size={14} color={color.faint} />
         </View>
         <View style={s.metaRow}>
+          <ConfidencePill confidence={event.confidence} testID={`compass-confidence-${event.id}`} />
           <View style={s.inlineMeta}>
             <CalendarClock size={10} color={color.mute} />
             <Text style={s.metaText}>{formatCompassEventChip(event.startsAt)}</Text>
@@ -340,6 +382,7 @@ const s = StyleSheet.create({
   cardTitle:  { ...t.bodyStrong, color: color.ink, flex: 1, fontSize: 13 },
   metaRow:    { flexDirection: 'row', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' },
   metaChip:   { ...t.stamp, fontSize: 10, color: color.signal, backgroundColor: color.signal + '16', paddingHorizontal: space.sm, paddingVertical: 2, borderRadius: radius.pill, textTransform: 'capitalize' },
+  confidencePill: { ...t.stamp, fontSize: 9, fontWeight: '700', paddingHorizontal: space.sm, paddingVertical: 2, borderRadius: radius.pill, overflow: 'hidden' },
   inlineMeta: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   metaText:   { ...t.stamp, fontSize: 10, color: color.mute },
   blurb:      { ...t.small, fontSize: 11, color: color.mute, lineHeight: 15 },
