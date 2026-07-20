@@ -286,10 +286,10 @@ router.get("/me/profile", async (req, res) => {
 
   // Completeness score: parallel stamp + trip existence checks (fail-open)
   const [stampRes, tripRes, followersRes, followingRes] = await Promise.allSettled([
-    sc ? sc.from("stamps").select("id", { count: "exact", head: true }).eq("user_id", user.id).limit(1) : Promise.resolve({ count: 0 }),
+    sc ? sc.from("passport_stamps").select("user_id", { count: "exact", head: true }).eq("user_id", user.id).limit(1) : Promise.resolve({ count: 0 }),
     sc ? sc.from("trips").select("id", { count: "exact", head: true }).eq("owner_id", user.id) : Promise.resolve({ count: 0 }),
-    sc ? sc.from("follows").select("id", { count: "exact", head: true }).eq("following_id", user.id) : Promise.resolve({ count: 0 }),
-    sc ? sc.from("follows").select("id", { count: "exact", head: true }).eq("follower_id", user.id) : Promise.resolve({ count: 0 }),
+    sc ? sc.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("following_id", user.id) : Promise.resolve({ count: 0 }),
+    sc ? sc.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("follower_id", user.id) : Promise.resolve({ count: 0 }),
   ]);
   const hasStamp     = stampRes.status === "fulfilled" && ((stampRes.value as any).count ?? 0) > 0;
   const tripCount    = tripRes.status === "fulfilled" ? ((tripRes.value as any).count ?? 0) : 0;

@@ -744,16 +744,16 @@ router.get("/me/safe-return/trusted-contacts", async (req, res) => {
   // Trusted Circle = mutual follows (following each other) or circle members
   try {
     const { data: following } = await client
-      .from("follows")
-      .select("followee_id, profiles!follows_followee_id_fkey(id, display_name, handle, avatar_url)")
+      .from("user_follows")
+      .select("following_id, profiles!user_follows_following_id_fkey(id, display_name, handle, avatar_url)")
       .eq("follower_id", auth.user.id);
 
     // Universal display-name rule: contacts show @handle unless opted in.
     const rows = ((following as any[]) ?? []);
-    const allowedContactNames = await nameVisibilitySet(db, rows.map((f: any) => f.followee_id));
+    const allowedContactNames = await nameVisibilitySet(db, rows.map((f: any) => f.following_id));
     const contacts = rows.map((f: any) => ({
-      userId:      f.followee_id,
-      displayName: allowedContactNames.has(f.followee_id as string) ? (f.profiles?.display_name ?? null) : null,
+      userId:      f.following_id,
+      displayName: allowedContactNames.has(f.following_id as string) ? (f.profiles?.display_name ?? null) : null,
       handle:      f.profiles?.handle ?? null,
       avatarUrl:   f.profiles?.avatar_url ?? null,
     }));

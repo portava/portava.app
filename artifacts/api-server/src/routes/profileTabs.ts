@@ -196,7 +196,7 @@ router.get("/users/:username/stamps", async (req, res) => {
   const cursor = req.query.cursor as string | undefined;
 
   let query = sc
-    .from("stamps")
+    .from("passport_stamps")
     .select("id, kind, label, sublabel, country, city, first_earned_at, check_in_count, locked")
     .eq("user_id", target.id)
     .eq("locked", false)

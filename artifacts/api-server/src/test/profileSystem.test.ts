@@ -58,7 +58,7 @@ type FakeState = {
   rent_buddy_availability?: any[];
   user_deletion_requests?:  any[];
   posts?:                   any[];
-  stamps?:                  any[];
+  passport_stamps?:         any[];
   trips?:                   any[];
 };
 
@@ -261,7 +261,7 @@ function baseState(): FakeState {
     rent_buddy_availability: [],
     user_deletion_requests: [],
     posts: [],
-    stamps: [],
+    passport_stamps: [],
     trips: [],
   };
 }
@@ -874,7 +874,7 @@ describe("GET /api/users/:username/stamps — profile tab", () => {
 
   it("returns stamps for a public profile", async () => {
     const state = baseState();
-    state.stamps = [
+    state.passport_stamps = [
       { id: "s1", user_id: ALICE, kind: "country", label: "France", locked: false, first_earned_at: "2025-01-01T00:00:00Z" },
       { id: "s2", user_id: ALICE, kind: "city",    label: "Paris",  locked: false, first_earned_at: "2025-01-02T00:00:00Z" },
     ];
@@ -887,7 +887,7 @@ describe("GET /api/users/:username/stamps — profile tab", () => {
 
   it("returns empty items when show_stamps=false", async () => {
     const state = baseState();
-    state.stamps = [{ id: "s1", user_id: ALICE, kind: "country", label: "France", locked: false, first_earned_at: "2025-01-01T00:00:00Z" }];
+    state.passport_stamps = [{ id: "s1", user_id: ALICE, kind: "country", label: "France", locked: false, first_earned_at: "2025-01-01T00:00:00Z" }];
     state.profile_privacy_settings = [{ user_id: ALICE, profile_visibility: "public", show_stamps: false }];
     setup(state);
     const r = await req("/users/alice_user/stamps");
@@ -1052,7 +1052,7 @@ describe("GET /api/users/:username/profile — profile card visibility parity", 
   it("returns full card for a public profile", async () => {
     const state = baseState();
     state.trips  = [{ id: "t1", owner_id: ALICE }];
-    state.stamps = [{ id: "s1", user_id: ALICE, locked: false }];
+    state.passport_stamps = [{ id: "s1", user_id: ALICE, locked: false }];
     setup(state);
     const r = await req("/users/alice_user/profile");
     assert.equal(r.status, 200);

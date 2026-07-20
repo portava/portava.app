@@ -2552,8 +2552,8 @@ router.get("/trips/:tripId", async (req, res) => {
   if (vis === "buddies" && user) {
     // Mutual-follow check: viewer follows owner AND owner follows viewer
     const [{ data: viewerFollowsOwner }, { data: ownerFollowsViewer }] = await Promise.all([
-      sc.from("follows").select("id").eq("follower_id", user.id).eq("following_id", t.owner_id).maybeSingle(),
-      sc.from("follows").select("id").eq("follower_id", t.owner_id).eq("following_id", user.id).maybeSingle(),
+      sc.from("user_follows").select("follower_id").eq("follower_id", user.id).eq("following_id", t.owner_id).maybeSingle(),
+      sc.from("user_follows").select("follower_id").eq("follower_id", t.owner_id).eq("following_id", user.id).maybeSingle(),
     ]);
     if (viewerFollowsOwner && ownerFollowsViewer) {
       res.json(toPublicTrip(t));

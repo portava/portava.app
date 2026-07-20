@@ -110,7 +110,7 @@ router.get("/pulse", async (req, res) => {
   let crewIds: string[] | null = null;
   if (tab === "crew") {
     const { data: followRows } = await client
-      .from("follows")
+      .from("user_follows")
       .select("following_id")
       .eq("follower_id", user.id);
     crewIds = (followRows as any[] ?? []).map((r: any) => r.following_id);
@@ -340,7 +340,7 @@ router.get("/pulse", async (req, res) => {
       let followedIds = new Set<string>();
       try {
         const { data: followRows } = await sc
-          .from("follows")
+          .from("user_follows")
           .select("following_id")
           .eq("follower_id", user.id);
         for (const row of (followRows as any[]) ?? []) {
