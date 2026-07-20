@@ -368,7 +368,7 @@ export default function BuddyProfileScreen() {
               <PackageCard
                 key={pkg.id}
                 pkg={pkg}
-                onBook={() => router.push({ pathname: '/(rent-a-buddy)/request-buddy' as any, params: { buddyId: buddy.id, packageId: pkg.id } })}
+                onBook={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: buddy.id, packageId: pkg.id } })}
               />
             ))}
           </View>
@@ -444,7 +444,7 @@ export default function BuddyProfileScreen() {
         </View>
         <Pressable
           style={({ pressed }) => [styles.bookBtn, pressed && { opacity: layout.pressedOpacity }]}
-          onPress={() => router.push({ pathname: '/(rent-a-buddy)/request-buddy' as any, params: { buddyId: buddy.id } })}
+          onPress={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: buddy.id } })}
         >
           <Text style={styles.bookBtnText}>Book Now</Text>
         </Pressable>
