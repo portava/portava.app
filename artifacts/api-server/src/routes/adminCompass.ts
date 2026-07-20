@@ -232,20 +232,22 @@ router.get("/admin/compass/dashboard", async (req, res) => {
         .select("user_id", { count: "exact", head: true })
         .eq("status", "active"),
 
-      // Verified events that have already started in the last 30 days (completed)
+      // Location-verified event posts created in the last 30 days (completed proxy).
+      // The live posts table has no event start time, so the creation window
+      // stands in for "already started".
       sc.from("posts")
         .select("id", { count: "exact", head: true })
-        .eq("post_type", "event")
-        .eq("is_verified", true)
-        .lte("event_starts_at", now)
-        .gte("event_starts_at", thirtyDaysAgo),
+        .eq("category", "event")
+        .eq("location_verified", true)
+        .lte("created_at", now)
+        .gte("created_at", thirtyDaysAgo),
 
-      // Verified upcoming events (not yet started)
-      sc.from("posts")
+      // Upcoming events (not yet started) — start times live on the events
+      // table, not posts.
+      sc.from("events")
         .select("id", { count: "exact", head: true })
-        .eq("post_type", "event")
-        .eq("is_verified", true)
-        .gt("event_starts_at", now),
+        .gt("starts_at", now)
+        .not("state", "in", "(draft,cancelled,archived)"),
     ]);
 
     // ── Abuse flags ──────────────────────────────────────────────────────────
@@ -479,7 +481,7 @@ router.get("/admin/compass/dashboard", async (req, res) => {
         activeBuddyCount,
       },
 
-      // Event completion — verified events that started vs upcoming (last 30d)
+      // Event completion — location-verified event posts (last 30d) vs upcoming events
       eventCompletion: {
         completedCount:      completedEventCount,
         upcomingCount:       upcomingEventCount,
