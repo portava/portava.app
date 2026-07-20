@@ -3,6 +3,7 @@ import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, Activit
 import { getCommentCountSnapshot, subscribeCommentCount } from '../../src/lib/commentCountStore';
 import { router, useFocusEffect } from 'expo-router';
 import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
+
 import { PulseHeader } from '../../src/components/PulseHeader';
 import { FitsCard, FlexibleStrip } from '../../src/components/PulseFits';
 import { PulseFeedCard } from '../../src/components/PulseFeedCard';

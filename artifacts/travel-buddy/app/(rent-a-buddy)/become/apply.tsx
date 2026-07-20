@@ -247,12 +247,26 @@ export default function ApplyToBeBuddy() {
         // Status check failed — allow submission to proceed (graceful degradation)
       }
 
+      // Convert the availability grid (day → block → bool) to the API array shape.
+      const availabilityBlocks = Object.entries(availability).flatMap(([day, blocks]) =>
+        Object.entries(blocks)
+          .filter(([, on]) => on)
+          .map(([block]) => ({ day, block })),
+      );
+
       const result = await rentABuddy.submitApplication({
         city,
         country: country || undefined,
         categories,
         languages: languages.filter((l) => l.lang.trim()).map((l) => l.lang.trim()),
         motivation: motivation || undefined,
+        displayName: displayName.trim() || undefined,
+        bio: bio.trim() || undefined,
+        hourlyRateUsd: hourlyRate ? parseFloat(hourlyRate) : undefined,
+        availability: availabilityBlocks.length ? availabilityBlocks : undefined,
+        zones: zones.filter((z) => z.trim()).map((z) => z.trim()).length
+          ? zones.filter((z) => z.trim()).map((z) => z.trim())
+          : undefined,
       });
       if (result.ok) {
         setSubmitted(true);

@@ -258,7 +258,7 @@ const BUDDY_PUBLIC_COLUMNS =
   "average_rating, review_count, completed_bookings, completed_count, response_time_h, " +
   "cover_photo_url, gallery_urls, vibe_tags, safety_badges, buddy_level, category_approvals, " +
   "new_buddy_public_only, new_buddy_daytime_only, new_buddy_max_hours, max_group_size, " +
-  "preferred_meetup_zones, meetup_base_lat, meetup_base_lng, featured, available_now, cancel_count, no_show_count, " +
+  "preferred_meetup_zones, availability_blocks, meetup_base_lat, meetup_base_lng, featured, available_now, cancel_count, no_show_count, " +
   "favorites_count, created_at, updated_at";
 
 function mapProfile(row: any) {
@@ -293,6 +293,7 @@ function mapProfile(row: any) {
     newBuddyMaxHours: row.new_buddy_max_hours,
     maxGroupSize: row.max_group_size,
     preferredMeetupZones: row.preferred_meetup_zones ?? [],
+    availabilityBlocks: row.availability_blocks ?? [],
     meetupBaseLat: typeof row.meetup_base_lat === "number" ? row.meetup_base_lat : null,
     meetupBaseLng: typeof row.meetup_base_lng === "number" ? row.meetup_base_lng : null,
     createdAt: row.created_at,
@@ -3105,7 +3106,10 @@ router.post("/api/rent-a-buddy/apply", async (req, res) => {
     return res.status(applyRollout.httpStatus).json({ error: applyRollout.code, message: applyRollout.message });
   }
 
-  const { city, country, categories = [], languages = [], motivation, socialLinks = {} } = req.body ?? {};
+  const {
+    city, country, categories = [], languages = [], motivation, socialLinks = {},
+    displayName, bio, hourlyRateUsd, availability, zones,
+  } = req.body ?? {};
   if (!city) return res.status(400).json({ error: "invalid_payload", message: "city required." });
 
   if (motivation) {
@@ -3113,6 +3117,13 @@ router.post("/api/rent-a-buddy/apply", async (req, res) => {
       sc: serviceClient, text: motivation, sourceType: "profile", flaggedUserId: auth.user.id,
     });
     await applyPolicySeverity({ sc: serviceClient, userId: auth.user.id, matches });
+  }
+
+  if (bio && typeof bio === "string") {
+    const bioMatches = await scanForPolicyViolations({
+      sc: serviceClient, text: bio, sourceType: "profile", flaggedUserId: auth.user.id,
+    });
+    await applyPolicySeverity({ sc: serviceClient, userId: auth.user.id, matches: bioMatches });
   }
 
   const { data, error } = await serviceClient
@@ -3137,6 +3148,28 @@ router.post("/api/rent-a-buddy/apply", async (req, res) => {
     .maybeSingle();
 
   if (error) return sendError(res, "db_error", error.message);
+
+  // Persist wizard-collected profile fields atomically with the application
+  // so admin review has complete data without requiring a separate profile-patch call.
+  const profilePatch: Record<string, any> = {
+    user_id: auth.user.id,
+    city,
+    country: country ?? null,
+    categories,
+    languages,
+    updated_at: new Date().toISOString(),
+  };
+  if (typeof displayName === "string")                              profilePatch.display_name         = displayName;
+  if (typeof bio === "string")                                      profilePatch.bio                  = bio;
+  if (typeof hourlyRateUsd === "number" && Number.isFinite(hourlyRateUsd)) profilePatch.hourly_rate_usd = hourlyRateUsd;
+  if (Array.isArray(availability))                                  profilePatch.availability_blocks  = availability;
+  if (Array.isArray(zones))                                         profilePatch.preferred_meetup_zones = zones;
+
+  const { error: profileError } = await serviceClient
+    .from("rent_buddy_profiles")
+    .upsert(profilePatch, { onConflict: "user_id" });
+
+  if (profileError) return sendError(res, "db_error", profileError.message);
 
   return res.status(201).json({
     application: mapApplication(data),

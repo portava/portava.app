@@ -376,6 +376,14 @@ export async function submitApplication(payload: {
   languages: string[];
   motivation?: string;
   socialLinks?: Record<string, string>;
+  /** Wizard-collected profile fields persisted atomically on submission. */
+  displayName?: string;
+  bio?: string;
+  hourlyRateUsd?: number;
+  /** Weekly availability blocks, e.g. [{ day: 'monday', from: '09:00', to: '18:00' }] */
+  availability?: Array<Record<string, unknown>>;
+  /** Preferred meetup zone names or area slugs. */
+  zones?: string[];
 }): Promise<ApiResult<{ application: BuddyApplication | null; message: string }>> {
   return apiFetch('/api/rent-a-buddy/apply', {
     method: 'POST',
