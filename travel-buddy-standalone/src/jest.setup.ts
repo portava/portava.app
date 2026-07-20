@@ -40,9 +40,11 @@
  * (including actual assertion failures and component errors) are forwarded as
  * usual.
  *
- * Verified 2026-07-18: React 19.1.0 + RNTL 14.0.1 still emit the warning
- * when the suppression is removed.  Re-check once a React 19.x or RNTL
- * 14.x release explicitly fixes the concurrent-scheduler / waitFor race.
+ * Verified 2026-07-20: React 19.1.0 + RNTL 14.0.1 still emit the warning
+ * when the suppression is removed (latest React is 19.2.7; latest RNTL is
+ * 14.0.1 — neither changelog mentions a fix for this race).  Re-check once a
+ * React 19.x or RNTL 14.x release explicitly fixes the concurrent-scheduler /
+ * waitFor race.
  */
 declare global {
   // eslint-disable-next-line no-var
