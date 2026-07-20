@@ -1,6 +1,14 @@
 # Phase 2 — Device Test Gate (1:1 Telegraph Calling)
 
-**Status: DEVICE TEST GATE — READY FOR VERIFICATION**
+**Status: DEVICE TEST GATE — BLOCKED (requires physical hardware)**
+
+> **Not yet executed.** This gate requires two physical devices running an EAS
+> development build. Expo Go and web cannot load `@livekit/react-native`. The
+> gate must be passed before claiming production readiness for calling.
+>
+> **Pre-requisite:** Republish the API server first — every `/api/calls/*` route
+> currently 404s in production (predates the calling system). See
+> `artifacts/api-server/docs/calling-release-readiness.md` §3.
 
 Phases 3–5 (Rent a Buddy entry points, group calls) must NOT start until every
 item below is verified on a **real physical device** running the new EAS
@@ -9,12 +17,28 @@ development build (Expo Go cannot load `@livekit/react-native`).
 ## Setup
 
 1. Build & install an EAS development build on two physical devices (or one
-   device + one secondary account on a second device).
-2. Sign in with two accounts that share an eligible Telegraph DM conversation.
-3. Confirm phone/video icons appear in that DM's header — and do NOT appear in
+   device + one secondary account on a second device):
+   ```bash
+   # from artifacts/travel-buddy
+   npx eas build --profile development --platform ios
+   npx eas build --profile development --platform android
+   ```
+   Owner: `travel-buddy1`, project id: `b4147876-b8f9-4ea2-94f4-dd9f4e9cb65b`
+   (already in `app.json`). See `docs/eas-calling-build.md` for full details.
+
+2. While doing the build, confirm APNs/FCM push credentials are present in EAS:
+   ```bash
+   eas credentials
+   ```
+
+3. Sign in with two accounts that share an eligible Telegraph DM conversation.
+
+4. Confirm phone/video icons appear in that DM's header — and do NOT appear in
    trip/circle threads or DMs where calling is not permitted.
 
 ## Checklist
+
+Record device model + OS version next to each item when checked.
 
 ### Voice basics
 - [ ] Outgoing voice call: Calling → Ringing → Connected; Cancel works while ringing
@@ -57,4 +81,11 @@ development build (Expo Go cannot load `@livekit/react-native`).
 - [ ] Settings → Calling loads and saves; "Nobody" hides the other user's call buttons for you and the server rejects their attempts
 - [ ] "Allow video calls" off → video attempts to you are refused; voice still works
 
-When every box is checked on hardware, the gate is passed and Phase 3 may begin.
+## Completing the gate
+
+When every box is checked on hardware:
+1. Update this file's **Status** line to `PASSED — <date> — iOS <version> / Android <version>`.
+2. Update `artifacts/api-server/docs/calling-release-readiness.md` §7 "Device-test gate" row to PASS and remove it from the Blocking gaps list.
+3. Phase 3 (Rent a Buddy calling entry points) may begin.
+
+If any item fails, update **Status** to `FAILED` and list the blocking items here before filing bug reports.
