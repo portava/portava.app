@@ -25,6 +25,7 @@ import {
   type TranslationStatusValue,
 } from '../services/messageTranslation';
 import { nameVisibilitySet } from '../lib/publicIdentity';
+import { asyncHandler } from '../lib/asyncHandler';
 
 const router = Router();
 
@@ -145,7 +146,7 @@ async function fetchMessagesForThread(
 
 // ── GET /api/trips/:tripId/chat ───────────────────────────────────────────────
 
-router.get('/trips/:tripId/chat', async (req, res) => {
+router.get('/trips/:tripId/chat', asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client: sc, user } = auth;
@@ -202,12 +203,12 @@ router.get('/trips/:tripId/chat', async (req, res) => {
     },
     messages: [...messages].reverse(),
   });
-});
+}));
 
 // ── GET /api/circles/:circleId/chat ──────────────────────────────────────────
 // :circleId is the circle owner's user ID.
 
-router.get('/circles/:circleId/chat', async (req, res) => {
+router.get('/circles/:circleId/chat', asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client: sc, user } = auth;
@@ -264,11 +265,11 @@ router.get('/circles/:circleId/chat', async (req, res) => {
     },
     messages: [...messages].reverse(),
   });
-});
+}));
 
 // ── PATCH /api/messages/:messageId — edit own message ────────────────────────
 
-router.patch('/messages/:messageId', async (req, res) => {
+router.patch('/messages/:messageId', asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client: sc, user } = auth;
@@ -332,11 +333,11 @@ router.patch('/messages/:messageId', async (req, res) => {
     senderPreferredLanguage: senderLanguage,
     logger: req.log,
   }).catch(() => {});
-});
+}));
 
 // ── DELETE /api/messages/:messageId — soft-delete own message ────────────────
 
-router.delete('/messages/:messageId', async (req, res) => {
+router.delete('/messages/:messageId', asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client: sc, user } = auth;
@@ -371,12 +372,12 @@ router.delete('/messages/:messageId', async (req, res) => {
   }
 
   res.status(200).json({ id: messageId, deleted: true });
-});
+}));
 
 // ── POST /api/trips/:tripId/chat/sync — owner-only repair endpoint ────────────
 // Only the trip owner may force a membership re-sync (e.g. after a bulk-remove).
 
-router.post('/trips/:tripId/chat/sync', async (req, res) => {
+router.post('/trips/:tripId/chat/sync', asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client: sc, user } = auth;
@@ -398,12 +399,12 @@ router.post('/trips/:tripId/chat/sync', async (req, res) => {
   if (!threadId) { sendError(res, 'db_error', 'Sync failed'); return; }
 
   res.status(200).json({ status: 'synced', threadId });
-});
+}));
 
 // ── POST /api/circles/:circleId/chat/sync — owner-only repair endpoint ────────
 // Only the circle owner may force a membership re-sync.
 
-router.post('/circles/:circleId/chat/sync', async (req, res) => {
+router.post('/circles/:circleId/chat/sync', asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client: sc, user } = auth;
@@ -419,6 +420,6 @@ router.post('/circles/:circleId/chat/sync', async (req, res) => {
   if (!threadId) { sendError(res, 'db_error', 'Sync failed'); return; }
 
   res.status(200).json({ status: 'synced', threadId });
-});
+}));
 
 export default router;

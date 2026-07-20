@@ -12,6 +12,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
+import { asyncHandler } from "../lib/asyncHandler";
 
 const router = Router();
 
@@ -42,7 +43,7 @@ function toRow(contact: any) {
 
 // ── GET /api/me/emergency-contacts ────────────────────────────────────────────
 
-router.get("/me/emergency-contacts", async (req, res) => {
+router.get("/me/emergency-contacts", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -60,11 +61,11 @@ router.get("/me/emergency-contacts", async (req, res) => {
   if (error) { sendError(res, "db_error", error.message); return; }
 
   res.status(200).json({ contacts: ((data as any[]) ?? []).map(toRow) });
-});
+}));
 
 // ── POST /api/me/emergency-contacts ───────────────────────────────────────────
 
-router.post("/me/emergency-contacts", async (req, res) => {
+router.post("/me/emergency-contacts", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -106,11 +107,11 @@ router.post("/me/emergency-contacts", async (req, res) => {
   if (error || !data) { sendError(res, "db_error", error?.message ?? "Insert failed"); return; }
 
   res.status(201).json({ ok: true, contact: toRow(data as any) });
-});
+}));
 
 // ── PATCH /api/me/emergency-contacts/:id ──────────────────────────────────────
 
-router.patch("/me/emergency-contacts/:id", async (req, res) => {
+router.patch("/me/emergency-contacts/:id", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -144,11 +145,11 @@ router.patch("/me/emergency-contacts/:id", async (req, res) => {
   if (error || !data) { sendError(res, "not_found", "Contact not found"); return; }
 
   res.status(200).json({ ok: true, contact: toRow(data as any) });
-});
+}));
 
 // ── DELETE /api/me/emergency-contacts/:id ─────────────────────────────────────
 
-router.delete("/me/emergency-contacts/:id", async (req, res) => {
+router.delete("/me/emergency-contacts/:id", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -166,6 +167,6 @@ router.delete("/me/emergency-contacts/:id", async (req, res) => {
   if (!count) { sendError(res, "not_found", "Contact not found"); return; }
 
   res.status(200).json({ ok: true });
-});
+}));
 
 export default router;

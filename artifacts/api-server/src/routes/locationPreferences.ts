@@ -9,6 +9,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { LOCATION_MODE_DESCRIPTIONS } from "../services/location/LocationPermissionService";
+import { asyncHandler } from "../lib/asyncHandler";
 
 const router = Router();
 
@@ -27,7 +28,7 @@ const patchSchema = z.object({
 
 // ── GET /api/me/location-preferences ─────────────────────────────────────────
 
-router.get("/me/location-preferences", async (req, res) => {
+router.get("/me/location-preferences", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -73,11 +74,11 @@ router.get("/me/location-preferences", async (req, res) => {
     updatedAt:           data.updated_at ?? null,
     modeDescriptions:    LOCATION_MODE_DESCRIPTIONS,
   });
-});
+}));
 
 // ── PATCH /api/me/location-preferences ───────────────────────────────────────
 
-router.patch("/me/location-preferences", async (req, res) => {
+router.patch("/me/location-preferences", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -116,6 +117,6 @@ router.patch("/me/location-preferences", async (req, res) => {
   }
 
   res.status(200).json({ ok: true });
-});
+}));
 
 export default router;

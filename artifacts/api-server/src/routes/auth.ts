@@ -1,18 +1,58 @@
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import { getServiceClient } from "../lib/supabase";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { logger } from "../lib/logger";
 
 const router = Router();
 
+// ── Rate limiters ─────────────────────────────────────────────────────────────
+
+/**
+ * Per-IP rate limiter for the lookup-username endpoint.
+ * 10 requests per 15 minutes — supplements the intentional 800 ms delay.
+ */
+export const lookupUsernameLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: { code: "RATE_LIMITED", message: "Too many requests. Please try again later." } },
+});
+
+/**
+ * Per-IP rate limiter for the signup endpoint.
+ * 5 requests per hour — tight cap to deter automated account creation.
+ */
+export const signupLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: { code: "RATE_LIMITED", message: "Too many signup attempts. Please try again later." } },
+});
+
+/**
+ * Reset rate-limit stores — for use in tests ONLY.
+ * Clears the in-memory hit counters so each test starts from a clean state.
+ * express-rate-limit exposes `resetKey(ip)` directly on the middleware function.
+ */
+export function _resetAuthRateLimits(): void {
+  // Cover the loopback variants node:http uses on different OSes
+  for (const ip of ["::1", "127.0.0.1", "::ffff:127.0.0.1"]) {
+    (lookupUsernameLimiter as any).resetKey(ip);
+    (signupLimiter as any).resetKey(ip);
+  }
+}
+
 /**
  * POST /api/auth/lookup-username
  * Body: { email: string }
  * Returns the profile handle (@username) associated with the email, if found.
  * Uses the admin API so we can look up by email without the user being signed in.
- * Rate-limited by intentional delay to discourage enumeration.
+ * Rate-limited by intentional delay and per-IP cap to discourage enumeration.
  */
-router.post("/auth/lookup-username", async (req, res) => {
+router.post("/auth/lookup-username", lookupUsernameLimiter, async (req, res) => {
   const { email } = req.body ?? {};
   if (!email || typeof email !== "string" || !email.includes("@")) {
     res.status(400).json({ error: "A valid email address is required." });
@@ -108,7 +148,7 @@ router.get("/auth/signup-status", async (_req, res) => {
  * Uses admin.createUser (service role) so the ECC P-256 JWT rotation that
  * breaks PostgREST RLS does not affect account creation.
  */
-router.post("/auth/signup", async (req, res) => {
+router.post("/auth/signup", signupLimiter, async (req, res) => {
   const { email, password } = req.body ?? {};
 
   if (!email || typeof email !== "string" || !email.includes("@")) {

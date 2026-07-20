@@ -14,6 +14,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
+import { asyncHandler } from "../lib/asyncHandler";
 
 const router = Router();
 
@@ -31,7 +32,7 @@ const outcomeBodySchema = z.object({
   session_id: z.string().regex(UUID_RE, "session_id must be a valid UUID").optional(),
 });
 
-router.post("/rank-events/outcome", async (req, res) => {
+router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -89,6 +90,6 @@ router.post("/rank-events/outcome", async (req, res) => {
   }
 
   res.json({ ok: true });
-});
+}));
 
 export default router;

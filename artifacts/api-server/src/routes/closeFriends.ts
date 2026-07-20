@@ -14,6 +14,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
+import { asyncHandler } from "../lib/asyncHandler.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -21,7 +22,7 @@ function isUuid(s: string) { return UUID_RE.test(s); }
 
 // ── GET /users/me/close-friends ───────────────────────────────────────────────
 
-router.get("/users/me/close-friends", async (req, res) => {
+router.get("/users/me/close-friends", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
@@ -66,7 +67,7 @@ router.get("/users/me/close-friends", async (req, res) => {
   }));
 
   res.status(200).json({ closeFriends });
-});
+}));
 
 // ── POST /users/me/close-friends ──────────────────────────────────────────────
 
@@ -74,7 +75,7 @@ const addCloseFriendSchema = z.object({
   userId: z.string().uuid("userId must be a valid UUID"),
 });
 
-router.post("/users/me/close-friends", async (req, res) => {
+router.post("/users/me/close-friends", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
@@ -132,11 +133,11 @@ router.post("/users/me/close-friends", async (req, res) => {
   }
 
   res.status(200).json({ ok: true, userId: friendId });
-});
+}));
 
 // ── DELETE /users/me/close-friends/:userId ────────────────────────────────────
 
-router.delete("/users/me/close-friends/:userId", async (req, res) => {
+router.delete("/users/me/close-friends/:userId", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
@@ -160,6 +161,6 @@ router.delete("/users/me/close-friends/:userId", async (req, res) => {
   }
 
   res.status(204).send();
-});
+}));
 
 export default router;

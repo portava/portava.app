@@ -33,6 +33,7 @@ import { Router } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
+import { asyncHandler } from "../lib/asyncHandler.js";
 
 const router = Router();
 
@@ -171,7 +172,7 @@ async function getLikerIds(
 
 // ── Main route ─────────────────────────────────────────────────────────────────
 
-router.get("/engagement/likes", async (req, res) => {
+router.get("/engagement/likes", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -325,6 +326,6 @@ router.get("/engagement/likes", async (req, res) => {
   // Note: `total` is intentionally omitted — see module doc comment.
   // Callers should display the count they already hold from the parent entity.
   res.json({ ok: true, users, nextCursor, hasMore });
-});
+}));
 
 export default router;

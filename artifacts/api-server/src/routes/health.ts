@@ -5,6 +5,7 @@ import { getSuggestionSeenStatus } from "../lib/suggestionSeenCleanup.js";
 import { queryPublisherHealth } from "../lib/delayedPostPublisher.js";
 import { callPurgeOldWeatherCache } from "../lib/weatherCacheCleanup.js";
 import { logger } from "../lib/logger.js";
+import { asyncHandler } from "../lib/asyncHandler.js";
 
 const router: IRouter = Router();
 
@@ -13,7 +14,7 @@ router.get("/healthz", (_req, res) => {
   res.json(data);
 });
 
-router.get("/healthz/cleanup", async (_req, res) => {
+router.get("/healthz/cleanup", asyncHandler(async (_req, res) => {
   const inMem = getCleanupStatus();
 
   // DB-backed check: persists across restarts and is the source of truth for
@@ -43,9 +44,9 @@ router.get("/healthz/cleanup", async (_req, res) => {
     lastSeenDeletedCount: seen.lastDeletedCount,
   });
   res.json(data);
-});
+}));
 
-router.get("/healthz/delayed-publish", async (_req, res) => {
+router.get("/healthz/delayed-publish", asyncHandler(async (_req, res) => {
   const { publisherStatus, lastRunAt } = await queryPublisherHealth();
 
   if (publisherStatus === "critical") {
@@ -61,7 +62,7 @@ router.get("/healthz/delayed-publish", async (_req, res) => {
   }
 
   res.json({ publisherStatus, lastRunAt });
-});
+}));
 
 /**
  * POST /admin/cleanup/weather-cache
@@ -70,7 +71,7 @@ router.get("/healthz/delayed-publish", async (_req, res) => {
  * the number of rows deleted. No external auth required; intended for
  * server-side or scheduled invocation only (not exposed to mobile clients).
  */
-router.post("/admin/cleanup/weather-cache", async (req, res) => {
+router.post("/admin/cleanup/weather-cache", asyncHandler(async (req, res) => {
   const secret = process.env.CLEANUP_ADMIN_SECRET;
   if (!secret) {
     logger.error("admin/cleanup/weather-cache: CLEANUP_ADMIN_SECRET is not configured — refusing to run");
@@ -89,6 +90,6 @@ router.post("/admin/cleanup/weather-cache", async (req, res) => {
     return;
   }
   res.json({ deleted: deleted ?? 0 });
-});
+}));
 
 export default router;

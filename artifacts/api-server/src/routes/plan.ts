@@ -7,6 +7,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, isAcceptedTripMember, canEditPlan, sendError } from "../lib/http.js";
+import { asyncHandler } from "../lib/asyncHandler.js";
 
 const router = Router();
 
@@ -18,7 +19,7 @@ const AddMeetupSchema = z.object({
   tripId: z.string().regex(UUID, "tripId must be a valid UUID"),
 });
 
-router.post("/meetups/:meetupId/add-to-trip-plan", async (req, res) => {
+router.post("/meetups/:meetupId/add-to-trip-plan", asyncHandler(async (req, res) => {
   const ctx = await requireUser(req, res);
   if (!ctx) return;
   const { client, user } = ctx;
@@ -77,7 +78,7 @@ router.post("/meetups/:meetupId/add-to-trip-plan", async (req, res) => {
   if (error) { req.log.error({ err: error }, "add meetup to plan"); sendError(res, "db_error", error.message); return; }
 
   res.status(201).json(toCamel(item));
-});
+}));
 
 // ── POST /places/:placeId/add-to-trip-plan ───────────────────────────────────
 
@@ -87,7 +88,7 @@ const AddPlaceSchema = z.object({
   startsAt: z.string().optional(),
 });
 
-router.post("/places/:placeId/add-to-trip-plan", async (req, res) => {
+router.post("/places/:placeId/add-to-trip-plan", asyncHandler(async (req, res) => {
   const ctx = await requireUser(req, res);
   if (!ctx) return;
   const { client, user } = ctx;
@@ -146,7 +147,7 @@ router.post("/places/:placeId/add-to-trip-plan", async (req, res) => {
   if (error) { req.log.error({ err: error }, "add place to plan"); sendError(res, "db_error", error.message); return; }
 
   res.status(201).json(toCamel(item));
-});
+}));
 
 // ── Viewer-based privacy filter ───────────────────────────────────────────────
 
