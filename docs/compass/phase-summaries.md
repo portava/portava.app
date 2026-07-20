@@ -160,3 +160,57 @@ State when the standing brief was installed:
   contract itself (v1.1 prompt path, `uiBlocks` validation/hydration) is
   covered deterministically by the stubbed-model route test above.
 - Mobile + api suites and typechecks green.
+
+## Phase 6 — Layered Compass Memory (July 2026)
+
+- Migration `20260724_compass_memories.sql` (applied live): `compass_memories`
+  table — structured durable insight records, one per fact, scoped
+  `session` (tied to a conversation), `trip`, `long_term` (durable personal
+  preference), and `circle` (group fact bound to `circle_owner_id`, CHECK
+  enforced). Source is `taught` / `compressed` / `inferred` with a
+  confidence score. Also adds `compass_conversations.compressed_message_count`
+  so compression runs on a bounded cadence instead of every turn.
+- New `src/compass/CompassMemoryService.ts`:
+  - `scrubMemoryText` privacy guard — strips coordinate pairs, emails, and
+    phone-like digit runs, caps content at 280 chars — applied before every
+    persist, so raw PII never reaches storage or prompts.
+  - `buildMemoryPromptBlock` injects memories into `/compass/ask` context
+    under a hard `MEMORY_PROMPT_BUDGET_CHARS` (1200) budget with
+    `<portava:ugc>` delimiters (memory is data, never instructions).
+    Layer order: long-term → trip → session → circle. Circle memories are
+    injected ONLY when the ask names a `circleOwnerId` AND
+    `isCircleMember` verifies live membership — personal asks never see
+    group facts, and group facts never cross circles.
+  - `compressConversationIfDue` — fire-and-forget after each persisted ask
+    turn; when ≥8 new messages accumulate, the model distills ≤3 durable
+    insights (`source='compressed'`), the cadence counter advances, and a
+    model failure is a deterministic no-op (never blocks the reply).
+    Long-term memories cap at 50 with oldest-first eviction; identical
+    content per scope dedupes.
+- Routes (`routes/compass.ts`): `GET /compass/me/memories` (optional
+  `?scope=`), `POST /compass/me/memories/teach` ("Teach My Compass" —
+  explicit statement → structured `{category, content}` preference via the
+  model, deterministic raw-statement fallback; circle teaching requires
+  membership, 403 otherwise), `PATCH`/`DELETE /compass/me/memories/:id`
+  (edit / forget, ownership-scoped, 404 for foreign rows). `askBodySchema`
+  gains optional `circleOwnerId`; both streaming and non-streaming ask paths
+  inject the memory block and trigger compression.
+- Mobile: `app/compass-memories.tsx` ("Compass Remembers") — view memories
+  grouped with scope/category/source labels, inline edit, confirm-to-forget,
+  and a "Teach My Compass" input — linked from Compass Preferences → Memory;
+  presentational core in `src/components/compass/CompassRemembers.tsx`;
+  service functions `fetchCompassMemories` / `teachCompassMemory` /
+  `updateCompassMemory` / `forgetCompassMemory`.
+- Tests: `src/test/compass-memory.test.ts` (13 cases) — teach→list
+  persistence and fresh-session prompt injection, model-down fallback,
+  edit/forget taking effect in both list and prompt block, cross-circle
+  isolation (circle A fact never in circle B/no-circle context; non-member
+  exclusion; foreign-circle teach rejected with no row written),
+  prompt-size bound under 40 oversized memories, PII scrubbing
+  (coordinates/email/phone) and length cap, and compression cadence
+  (below-threshold no-op, threshold distillation, counter advance, no
+  duplicate work). Mobile component tests cover the Remembers surface
+  (labels, empty state, forget wiring) and the teach interaction.
+- Out of scope honored: no ranking changes (memory informs context only),
+  no proactive notifications.
+- API + mobile suites and typechecks green.

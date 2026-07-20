@@ -72,6 +72,17 @@ import {
   passesPassportFilter,
 } from "../compass/CompassSurfaceFilters.js";
 import { buildUiBlocks } from "../compass/CompassUiBlocks.js";
+import {
+  listMemories,
+  teachMemory,
+  updateMemory,
+  forgetMemory,
+  isCircleMember,
+  buildMemoryPromptBlock,
+  compressConversationIfDue,
+  MEMORY_SCOPES,
+  type MemoryScope,
+} from "../compass/CompassMemoryService.js";
 import { getOpenAI }                             from "../lib/openai.js";
 import { COMPASS_ASK_PROMPT, COMPASS_ASK_PROMPT_VERSION } from "../lib/prompts/compass-v1.js";
 import {
@@ -767,6 +778,9 @@ const askBodySchema = z.object({
   prompt:              z.string().min(1).max(1000),
   city:                z.string().max(80).optional(),
   conversationId:      z.string().uuid().optional(),
+  /** Phase 6: circle context — circle memories are only injected when this is
+   *  set AND the caller is a verified member of that circle. */
+  circleOwnerId:       z.string().uuid().optional(),
   /** @deprecated accepted but ignored when conversationId is present */
   conversationContext: z.string().max(600).optional(),
   stream:              z.boolean().default(false),
@@ -909,7 +923,7 @@ router.post("/compass/ask", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid request");
     return;
   }
-  const { prompt, city, conversationId: incomingConvId, stream } = parsed.data;
+  const { prompt, city, conversationId: incomingConvId, circleOwnerId, stream } = parsed.data;
 
   // ── Conversation resolve ──────────────────────────────────────────────────
   let conversationId: string;
@@ -1049,6 +1063,17 @@ router.post("/compass/ask", async (req, res) => {
   ctxLines.push(...structuredLines);
   ctxLines.push(...modeWeightingLines);
 
+  // ── Phase 6: layered memory injection (bounded, structured insights only) ─
+  // Circle memories require verified membership of the named circle; group
+  // facts never cross circles. Never fatal.
+  try {
+    const memoryLines = await buildMemoryPromptBlock(sc, user.id, {
+      conversationId,
+      circleOwnerId: circleOwnerId ?? null,
+    });
+    ctxLines.push(...memoryLines);
+  } catch { /* non-fatal — proceed without memory */ }
+
   const userMessageWithContext = `${prompt}\n\n${ctxLines.join("\n")}`;
 
   // ── Build messages array ──────────────────────────────────────────────────
@@ -1104,6 +1129,8 @@ router.post("/compass/ask", async (req, res) => {
         await appendMessage(sc, conversationId, "assistant", message, persistedPayload, COMPASS_ASK_PROMPT_VERSION);
         await touchConversation(sc, conversationId);
       } catch { /* non-fatal */ }
+      // Phase 6: bounded-cadence memory compression (fire-and-forget)
+      compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
       res.write(`data: ${JSON.stringify({ done: true, conversationId, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, intent: intentResult })}\n\n`);
       res.end();
     } catch (err) {
@@ -1135,6 +1162,8 @@ router.post("/compass/ask", async (req, res) => {
       await appendMessage(sc, conversationId, "assistant", message, persistedPayload, COMPASS_ASK_PROMPT_VERSION);
       await touchConversation(sc, conversationId);
     } catch { /* non-fatal */ }
+    // Phase 6: bounded-cadence memory compression (fire-and-forget)
+    compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
     res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
   } catch (err) {
     req.log.error({ err, userId: user.id }, "compass/ask: LLM call failed");
@@ -1470,6 +1499,114 @@ router.patch("/compass/me/preferences", async (req, res) => {
     .maybeSingle();
 
   res.json({ preferences: updated ?? { user_id: user.id, ...parsed.data } });
+});
+
+// ── Phase 6: Compass Remembers — layered memory CRUD ──────────────────────────
+// GET    /compass/me/memories            — list (optional ?scope=)
+// POST   /compass/me/memories/teach      — "Teach My Compass": statement → structured preference
+// PATCH  /compass/me/memories/:memoryId  — edit content/category
+// DELETE /compass/me/memories/:memoryId  — forget
+// All ownership-scoped to the caller; circle memories always carry their circle.
+
+router.get("/compass/me/memories", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const scopeRaw = typeof req.query.scope === "string" ? req.query.scope : undefined;
+  if (scopeRaw && !MEMORY_SCOPES.includes(scopeRaw as MemoryScope)) {
+    sendError(res, "invalid_payload", "Invalid scope");
+    return;
+  }
+  try {
+    const memories = await listMemories(sc, auth.user.id, scopeRaw as MemoryScope | undefined);
+    res.json({ memories });
+  } catch (err) {
+    req.log.error({ err, userId: auth.user.id }, "compass/me/memories: list failed");
+    sendError(res, "db_error", "Could not load memories");
+  }
+});
+
+const teachMemorySchema = z.object({
+  statement:     z.string().min(1).max(600),
+  circleOwnerId: z.string().uuid().optional(),
+});
+
+router.post("/compass/me/memories/teach", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const parsed = teachMemorySchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
+    return;
+  }
+  const { statement, circleOwnerId } = parsed.data;
+
+  // Circle-scoped teaching requires verified membership of that circle.
+  if (circleOwnerId) {
+    const member = await isCircleMember(sc, auth.user.id, circleOwnerId).catch(() => false);
+    if (!member) {
+      sendError(res, "forbidden", "Not a member of that circle");
+      return;
+    }
+  }
+
+  try {
+    const memory = await teachMemory(sc, auth.user.id, statement, { circleOwnerId: circleOwnerId ?? null });
+    if (!memory) { sendError(res, "invalid_payload", "Nothing to remember from that statement"); return; }
+    res.status(201).json({ memory });
+  } catch (err) {
+    req.log.error({ err, userId: auth.user.id }, "compass/me/memories/teach failed");
+    sendError(res, "db_error", "Could not save that memory");
+  }
+});
+
+const patchMemorySchema = z.object({
+  content:  z.string().min(1).max(600).optional(),
+  category: z.string().max(40).optional(),
+}).refine((b) => b.content !== undefined || b.category !== undefined, {
+  message: "Provide content or category",
+});
+
+router.patch("/compass/me/memories/:memoryId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const parsed = patchMemorySchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
+    return;
+  }
+  try {
+    const memory = await updateMemory(sc, auth.user.id, req.params.memoryId, parsed.data);
+    if (!memory) { sendError(res, "not_found", "Memory not found"); return; }
+    res.json({ memory });
+  } catch (err) {
+    req.log.error({ err, userId: auth.user.id }, "compass/me/memories: patch failed");
+    sendError(res, "db_error", "Could not update memory");
+  }
+});
+
+router.delete("/compass/me/memories/:memoryId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  try {
+    const removed = await forgetMemory(sc, auth.user.id, req.params.memoryId);
+    if (!removed) { sendError(res, "not_found", "Memory not found"); return; }
+    res.json({ forgotten: true });
+  } catch (err) {
+    req.log.error({ err, userId: auth.user.id }, "compass/me/memories: delete failed");
+    sendError(res, "db_error", "Could not forget memory");
+  }
 });
 
 // ── GET /api/compass/me/active-reward ─────────────────────────────────────────

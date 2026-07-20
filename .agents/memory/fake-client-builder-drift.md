@@ -9,3 +9,5 @@ Routes gaining new builder calls (`maybeSingle`, `gte/lte`, `order`, `contains`)
 **How to apply:** when adding a builder method to a shared auth/route path, grep `src/test/` fakes for the affected table; when a validation test 500s, check the fake's chain methods before suspecting the route. Triage record: `artifacts/api-server/docs/test-triage-2026-07.md`.
 
 - Flags loading uses `.like("flag", "COMPASS_%")` — a fake client missing `like` makes `isCompassEnabled` silently return false ("compass_disabled" fallback), which looks like a feature-flag bug, not a fake-client gap.
+
+- Compass flags loader (`compass/flags.ts`) reads feature_flags via `.like("flag", "COMPASS_%")` — any hand-written fake client missing `.like` makes ALL Compass routes silently take the disabled/fallback path (model never called, no error). Include `like` in new fakes.

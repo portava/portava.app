@@ -435,6 +435,23 @@ export default function CompassPreferencesScreen() {
           )}
         </Section>
 
+        {/* ── Compass Remembers (Phase 6) ── */}
+        <Section title="Memory" Icon={Sparkles}>
+          <Pressable
+            style={s.expandRow}
+            testID="compass-remembers-link"
+            onPress={() => router.push('/compass-memories')}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={s.fieldLabel}>Compass Remembers</Text>
+              <Text style={{ ...t.small, color: color.mute }}>
+                View, edit, or forget what Compass has learned — and teach it new preferences.
+              </Text>
+            </View>
+            <ChevronDown size={16} color={color.mute} style={{ transform: [{ rotate: '-90deg' }] }} />
+          </Pressable>
+        </Section>
+
         <PlainBottomFiller />
 
       </ScrollView>
