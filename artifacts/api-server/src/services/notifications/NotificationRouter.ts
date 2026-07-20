@@ -195,11 +195,18 @@ export class NotificationRouter {
       const pushPriority: "high" | undefined =
         notification.eventType === "call.incoming" ? "high" : undefined;
 
+      // Incoming-call notifications must target the "incoming_calls" Android
+      // notification channel (registered in app.json with importance: max) so
+      // FCM surfaces the notification as a heads-up overlay on Android 8+.
+      const pushChannelId: string | undefined =
+        notification.eventType === "call.incoming" ? "incoming_calls" : undefined;
+
       const pushPayload = {
         title:    strippedPayload.title,
         body:     strippedPayload.body,
         data:     strippedPayload.data ?? {},
-        ...(pushPriority !== undefined ? { priority: pushPriority } : {}),
+        ...(pushPriority   !== undefined ? { priority:  pushPriority  } : {}),
+        ...(pushChannelId  !== undefined ? { channelId: pushChannelId } : {}),
       };
 
       const pushResult = await sendPushNotification(tokens, pushPayload);

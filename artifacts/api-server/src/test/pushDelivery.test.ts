@@ -1018,6 +1018,11 @@ describe("NotificationRouter — call.incoming push priority", () => {
       "high",
       "call.incoming push must carry priority:\"high\" so FCM wakes a backgrounded device",
     );
+    assert.equal(
+      capturedMessages[0].channelId,
+      "incoming_calls",
+      "call.incoming push must carry channelId:\"incoming_calls\" so Android delivers it as a heads-up overlay",
+    );
     assert.equal(capturedMessages[0].sound, "default", "sound must be set for audible ring");
     assert.equal(capturedMessages[0].to, "ExponentPushToken[callDevice]");
   });
