@@ -12,6 +12,7 @@ import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import { coarsenPosition, effectiveDiscoveryVisibility } from "../lib/mapTravelers.js";
 import { reverseGeocode } from "../services/geocodingService";
 import { checkAndRecordSnapshot, getUserTrustLevel, checkIpCityMismatch } from "../services/location/LocationSafetyService";
 import { createStamp } from "../services/passport/PassportStampService.js";
@@ -453,13 +454,13 @@ router.get("/me/circle-locations", async (req, res) => {
     return;
   }
 
-  // 2. Identify members who explicitly opted out.
-  //    Schema default for trusted_circle_share is true, so a missing prefs row = consented.
-  const { data: optedOutRows, error: prefErr } = await sc
+  // 2. Identify members who explicitly opted out; also capture visibility prefs
+  //    for coarsening. Schema default for trusted_circle_share is true, so a
+  //    missing prefs row = consented.
+  const { data: prefsRows, error: prefErr } = await sc
     .from("location_preferences")
-    .select("user_id")
-    .in("user_id", memberIds)
-    .eq("trusted_circle_share", false);
+    .select("user_id, trusted_circle_share, location_mode, sharing_paused, discovery_visibility")
+    .in("user_id", memberIds);
 
   if (prefErr) {
     req.log.error({ err: prefErr }, "circle-locations: prefs lookup failed");
@@ -467,7 +468,13 @@ router.get("/me/circle-locations", async (req, res) => {
     return;
   }
 
-  const optedOut = new Set((optedOutRows ?? []).map((r: any) => r.user_id as string));
+  const optedOut = new Set<string>();
+  const prefsByMemberId = new Map<string, { location_mode?: string | null; sharing_paused?: boolean | null; discovery_visibility?: string | null }>();
+  for (const r of prefsRows ?? []) {
+    const row = r as any;
+    if (row.trusted_circle_share === false) optedOut.add(row.user_id as string);
+    prefsByMemberId.set(row.user_id as string, row);
+  }
   const visibleIds = memberIds.filter(id => !optedOut.has(id));
 
   if (visibleIds.length === 0) {
@@ -504,12 +511,26 @@ router.get("/me/circle-locations", async (req, res) => {
     const profile = profileMap.get(row.user_id as string);
     const uid = row.user_id as string;
     const nameOk = uid === user.id || allowedLocNames.has(uid);
+
+    // Raw coordinates must never leave the server — every entry is coarsened,
+    // including the caller's own row if it appears in the circle.
+    // Mirrors the same contract as listMapTravelers.
+    let lat: number | null = row.lat != null ? Number(row.lat) : null;
+    let lng: number | null = row.lng != null ? Number(row.lng) : null;
+    if (lat != null && lng != null) {
+      const prefs = prefsByMemberId.get(uid) ?? null;
+      const vis = effectiveDiscoveryVisibility(prefs) ?? "city_only";
+      const coarsened = coarsenPosition(uid, lat, lng, vis);
+      lat = coarsened.lat;
+      lng = coarsened.lng;
+    }
+
     return {
       userId:    uid,
       name:      nameOk ? ((profile?.name as string | null) ?? null) : null,
       avatarUrl: (profile?.avatar_url as string | null) ?? null,
-      lat:       row.lat != null ? Number(row.lat) : null,
-      lng:       row.lng != null ? Number(row.lng) : null,
+      lat,
+      lng,
       city:      (row.city as string | null) ?? null,
       country:   (row.country as string | null) ?? null,
       updatedAt: (row.updated_at as string | null) ?? null,

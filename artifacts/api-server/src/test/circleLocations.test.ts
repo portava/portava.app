@@ -13,6 +13,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import locationRouter from "../routes/location.js";
+import { coarsenPosition, effectiveDiscoveryVisibility } from "../lib/mapTravelers.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
 
@@ -61,7 +62,13 @@ function req(
 
 interface FakeState {
   circleMemberships: Array<{ owner_id: string; member_id: string }>;
-  locationPreferences: Array<{ user_id: string; trusted_circle_share: boolean }>;
+  locationPreferences: Array<{
+    user_id: string;
+    trusted_circle_share: boolean;
+    location_mode?: string | null;
+    sharing_paused?: boolean | null;
+    discovery_visibility?: string | null;
+  }>;
   locationState: Array<{
     user_id: string;
     lat: number | null;
@@ -160,11 +167,13 @@ describe("GET /api/me/circle-locations", () => {
   });
 
   it("returns location for a circle member with no prefs row (default = consented)", async () => {
+    const RAW_LAT = 48.8566;
+    const RAW_LNG = 2.3522;
     const client = makeClient({
       circleMemberships: [{ owner_id: USER_ID, member_id: MEMBER_A }],
       locationPreferences: [],
       locationState: [
-        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522, city: "Paris", country: "FR", updated_at: "2026-07-01T10:00:00Z" },
+        { user_id: MEMBER_A, lat: RAW_LAT, lng: RAW_LNG, city: "Paris", country: "FR", updated_at: "2026-07-01T10:00:00Z" },
       ],
       profiles: [{ id: MEMBER_A, name: "Alice", avatar_url: null }],
     });
@@ -178,8 +187,13 @@ describe("GET /api/me/circle-locations", () => {
     // Universal display-name rule: real name is redacted (null) unless the
     // member opted in via profile_privacy_settings.show_real_name.
     assert.equal(loc.name, null);
-    assert.equal(loc.lat, 48.8566);
-    assert.equal(loc.lng, 2.3522);
+    // No prefs row → effectiveDiscoveryVisibility(null) → "city_only" grid.
+    // Raw coordinates must be coarsened; exact values must not appear.
+    const expected = coarsenPosition(MEMBER_A, RAW_LAT, RAW_LNG, effectiveDiscoveryVisibility(null) ?? "city_only");
+    assert.equal(loc.lat, expected.lat);
+    assert.equal(loc.lng, expected.lng);
+    assert.notEqual(loc.lat, RAW_LAT, "raw lat must not be returned for a non-self member");
+    assert.notEqual(loc.lng, RAW_LNG, "raw lng must not be returned for a non-self member");
     assert.equal(loc.city, "Paris");
     assert.equal(loc.country, "FR");
   });
@@ -297,5 +311,64 @@ describe("GET /api/me/circle-locations", () => {
     const r = await req("/me/circle-locations");
     assert.equal(r.status, 200);
     assert.deepEqual(r.body.locations, []);
+  });
+
+  it("coarsens member coordinates — raw lat/lng never appear in the response", async () => {
+    const RAW_LAT = 35.6762;
+    const RAW_LNG = 139.6503;
+    const client = makeClient({
+      circleMemberships: [{ owner_id: USER_ID, member_id: MEMBER_B }],
+      locationPreferences: [
+        { user_id: MEMBER_B, trusted_circle_share: true, location_mode: "nearby", discovery_visibility: "neighborhood" },
+      ],
+      locationState: [
+        { user_id: MEMBER_B, lat: RAW_LAT, lng: RAW_LNG, city: "Tokyo", country: "JP", updated_at: "2026-07-01T08:00:00Z" },
+      ],
+      profiles: [{ id: MEMBER_B, name: "Bob", avatar_url: null }],
+    });
+    _setTestClient(client as any, true);
+
+    const r = await req("/me/circle-locations");
+    assert.equal(r.status, 200);
+    assert.equal(r.body.locations.length, 1);
+    const loc = r.body.locations[0];
+
+    // Raw coords must not appear in the response
+    assert.notEqual(loc.lat, RAW_LAT, "raw lat must not be returned for a non-self member");
+    assert.notEqual(loc.lng, RAW_LNG, "raw lng must not be returned for a non-self member");
+
+    // Returned coords must match the deterministic coarsenPosition output
+    const prefs = { location_mode: "nearby", sharing_paused: undefined, discovery_visibility: "neighborhood" };
+    const vis = effectiveDiscoveryVisibility(prefs) ?? "city_only";
+    const expected = coarsenPosition(MEMBER_B, RAW_LAT, RAW_LNG, vis);
+    assert.equal(loc.lat, expected.lat, "lat should equal the coarsened value");
+    assert.equal(loc.lng, expected.lng, "lng should equal the coarsened value");
+  });
+
+  it("caller's own entry is also coarsened — raw coordinates never leave the server", async () => {
+    const OWN_LAT = 40.7128;
+    const OWN_LNG = -74.0060;
+    // The caller (USER_ID) appears in their own circle_memberships as a member
+    const client = makeClient({
+      circleMemberships: [{ owner_id: USER_ID, member_id: USER_ID }],
+      locationPreferences: [],
+      locationState: [
+        { user_id: USER_ID, lat: OWN_LAT, lng: OWN_LNG, city: "New York", country: "US", updated_at: "2026-07-01T12:00:00Z" },
+      ],
+      profiles: [{ id: USER_ID, name: "Owner", avatar_url: null }],
+    });
+    _setTestClient(client as any, true);
+
+    const r = await req("/me/circle-locations");
+    assert.equal(r.status, 200);
+    assert.equal(r.body.locations.length, 1);
+    const loc = r.body.locations[0];
+    assert.equal(loc.userId, USER_ID);
+    // Invariant: raw coordinates must never appear in any response row, even self.
+    assert.notEqual(loc.lat, OWN_LAT, "caller's own raw lat must not be returned");
+    assert.notEqual(loc.lng, OWN_LNG, "caller's own raw lng must not be returned");
+    const expected = coarsenPosition(USER_ID, OWN_LAT, OWN_LNG, effectiveDiscoveryVisibility(null) ?? "city_only");
+    assert.equal(loc.lat, expected.lat);
+    assert.equal(loc.lng, expected.lng);
   });
 });
