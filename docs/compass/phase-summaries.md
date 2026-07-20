@@ -382,3 +382,47 @@ State when the standing brief was installed:
   social alerts (Phase 11) — chat answers only.
 - Full API suite (4,489 tests incl. Phase 9) + typecheck green; mobile
   untouched.
+
+## Phase 10 — Compass Home (2026-07-20)
+
+- New `GET /api/compass/home` (`src/routes/compassHome.ts`) — context-aware
+  home payload assembled server-side from real signals only:
+  - `bestNextMove` — top item from the Phase 7 pipeline (`buildSection`
+    "for_you" over hydrated candidates), flattened with explanationKey.
+  - `circleActivity` — Phase 9 `getWhosAround` (every target consent-gated;
+    approximate area / explicit-check-in venue only, hidden users filtered).
+  - `startingSoon` — public events starting within 6 hours (same
+    visibility/state guards as the `search_events` tool, hidden hosts
+    filtered, city-scoped when the profile has a current city).
+  - `tonightVibe` — assembled only in evening/night hours from real events
+    within 12 hours, summarised by dominant category; null when nothing is on.
+  - `weatherWindow` — tomorrow's Open-Meteo forecast for the current city
+    with an honest indoor/outdoor headline; null without a city or forecast.
+  - Time-awareness: `timeOfDay` bucket (morning/afternoon/evening/night,
+    `_setTestHourUtc` test hook) drives which sections can appear; payloads
+    provably differ morning vs night.
+  - Honesty rules: every section is real-data-or-null — no template cards.
+    COMPASS_ENABLED off → `{ compassEnabled: false, fallback: true }`.
+- Mobile: `src/components/compass/CompassHome.tsx` replaces the blank-chat
+  empty state in `app/(tabs)/ai.tsx`. Card stack (best next move → circle →
+  starting soon → tonight's vibe → weather window) renders only sections the
+  server returned; taps lead somewhere real (event/gem/post/profile screens,
+  discovery) or into chat with a prefilled intent. Six core actions —
+  What should I do right now / Tonight / Meet People / Build My Day /
+  Surprise Me / My Trip — each prefill a grounded intent into the existing
+  `send()` chat flow, so Ask Compass stays one tap away (input bar unchanged).
+  `fetchCompassHome` + types added to `services/compass.ts`.
+- Tests: `src/test/compass-home.test.ts` (8 tests — auth, disabled-flag
+  fallback, honest empty sections, morning-vs-night divergence, 6-hour
+  starting-soon window with cancelled/private exclusion, no-template-cards
+  at night, bestNextMove backed by seeded data only) and mobile
+  `CompassHome.component.test.tsx` (5 tests — six actions render + prefill
+  via onAsk, all real-data sections render, null sections hide, event row
+  navigates to the real event screen, fallback renders no data cards).
+- E2E against the local API with an ephemeral signed-in user: 200 with
+  `timeOfDay: night`, a real DB-backed event as bestNextMove, all empty
+  sections honestly null; unauthenticated → 401. (AI proxy not needed —
+  the home surface is deterministic; the standing eval set's chat flows are
+  unchanged and remain covered by the Phase 5–9 fallback precedent.)
+- Out of scope honored: no proactive notifications (Phase 11), no live
+  session mode (Phase 12).

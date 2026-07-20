@@ -16,6 +16,7 @@ import { CompassChatBlocks } from '../../src/components/compass/CompassChatBlock
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { usePlanPicker } from '../../src/components/PlanPickerController';
+import { CompassHome } from '../../src/components/compass/CompassHome';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 
 type ChatEntry =
@@ -180,15 +181,8 @@ export default function AiChat() {
         scrollEventThrottle={16}
       >
         {entries.length === 0 ? (
-          <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32, gap: 8 }}>
-            <Text style={{ fontSize: 32 }}>🧭</Text>
-            <Text style={{ fontSize: 16, fontWeight: '700', color: color.ink, textAlign: 'center' }}>
-              Ask Compass anything
-            </Text>
-            <Text style={{ fontSize: 13, color: color.mute, textAlign: 'center', lineHeight: 19 }}>
-              "What should I do tonight?" · "Hidden gems near me" · "Plan my layover"
-            </Text>
-          </View>
+          // Phase 10: context-aware Compass Home replaces the blank-chat state.
+          <CompassHome onAsk={(prompt) => send(prompt)} />
         ) : null}
         {entries.map((e) => {
           if (e.kind === 'user') {
