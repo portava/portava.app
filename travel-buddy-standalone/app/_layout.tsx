@@ -21,7 +21,7 @@ import { CompassProvider } from '../src/context/CompassContext';
 import { color } from '../src/theme/tokens';
 import { NotificationToastProvider } from '../src/components/NotificationToast';
 import { StampEarnedToastProvider } from '../src/components/stamps/StampEarnedToast';
-import { setNotificationHandler } from '../src/lib/safeNotifications';
+import { setNotificationHandler, setNotificationChannelAsync } from '../src/lib/safeNotifications';
 import { BlockedIdsProvider } from '../src/context/BlockedIdsContext';
 import { CallProvider } from '../src/context/CallContext';
 import { CallRealtimeBinding } from '../src/components/calls/CallRealtimeBinding';
@@ -72,6 +72,21 @@ function PushSetup() {
         shouldSetBadge: false,
         shouldShowList: true,
       }),
+    });
+
+    // Register the Android notification channel for incoming calls.
+    // This must be done at runtime — app.json registers the channel in the
+    // compiled manifest, but expo-notifications also requires the JS-side
+    // setNotificationChannelAsync call so the OS actually creates the channel
+    // with the correct importance before the first FCM message arrives.
+    // AndroidImportance.MAX = 5 (heads-up overlay on Android 8+).
+    void setNotificationChannelAsync('incoming_calls', {
+      name: 'Incoming calls',
+      importance: 5, // AndroidImportance.MAX
+      sound: true,
+      vibrationPattern: [0, 250, 250, 250],
+      enableLights: true,
+      bypassDnd: false,
     });
   }, []);
 

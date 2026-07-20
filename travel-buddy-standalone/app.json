@@ -36,6 +36,15 @@
     "android": {
       "package": "com.passporttravelbuddy.app",
       "versionCode": 2,
+      "notificationChannels": [
+        {
+          "name": "incoming_calls",
+          "importance": "max",
+          "sound": true,
+          "vibrate": true,
+          "enableLights": true
+        }
+      ],
       "permissions": [
         "android.permission.READ_CALENDAR",
         "android.permission.WRITE_CALENDAR",

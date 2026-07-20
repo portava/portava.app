@@ -144,3 +144,33 @@ export async function cancelScheduledNotification(identifier: string | null | un
     /* already fired or unavailable */
   }
 }
+
+/**
+ * Register an Android notification channel.
+ * Safe no-op on iOS and web (those platforms ignore notification channels).
+ * Must be called before a push with a matching channelId can surface as a
+ * heads-up overlay on Android 8+.
+ *
+ * @param channelId  Unique channel identifier (e.g. "incoming_calls")
+ * @param options    Channel configuration forwarded to expo-notifications
+ */
+export async function setNotificationChannelAsync(
+  channelId: string,
+  options: {
+    name: string;
+    importance: number;
+    sound?: boolean;
+    vibrationPattern?: number[];
+    enableLights?: boolean;
+    lightColor?: string;
+    bypassDnd?: boolean;
+    lockscreenVisibility?: number;
+  },
+): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  try {
+    await getModule()?.setNotificationChannelAsync(channelId, options);
+  } catch (e) {
+    if (__DEV__) console.warn('[safeNotifications] setNotificationChannelAsync failed', e);
+  }
+}
