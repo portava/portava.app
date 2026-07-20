@@ -169,15 +169,35 @@ export async function fetchCompassSection(
 
 // ── Why ───────────────────────────────────────────────────────────────────────
 
+export interface CompassWhyFactor {
+  key:     string;
+  label:   string;
+  weight:  number;
+  detail?: string;
+}
+
 export async function fetchCompassWhy(
   recommendationId: string,
-): Promise<{ ok: boolean; explanation?: string; error?: string }> {
+): Promise<{
+  ok: boolean;
+  explanation?: string;
+  factors?: CompassWhyFactor[];
+  compassMatch?: number | null;
+  communityScore?: number | null;
+  error?: string;
+}> {
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();
   try {
     const r = await authedFetch(`/api/compass/why/${encodeURIComponent(recommendationId)}`);
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     const body = await r.json();
-    return { ok: true, explanation: body.explanation ?? 'Based on your travel preferences.' };
+    return {
+      ok: true,
+      explanation:    body.explanation ?? 'Based on your travel preferences.',
+      factors:        Array.isArray(body.factors) ? body.factors : [],
+      compassMatch:   typeof body.compassMatch   === 'number' ? body.compassMatch   : null,
+      communityScore: typeof body.communityScore === 'number' ? body.communityScore : null,
+    };
   } catch {
     return { ok: false, error: 'network_error' };
   }

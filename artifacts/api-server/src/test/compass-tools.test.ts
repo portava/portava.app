@@ -178,6 +178,39 @@ describe("B. search_places", () => {
     assert.deepEqual(result.candidates, []);
     assert.ok(String(result.info).toLowerCase().includes("no matching"), "must say honestly that nothing was found");
   });
+
+  it("Phase 7: candidates are pipeline-ranked and carry compassMatch/communityScore/whyThis", async () => {
+    const db = makeDb({
+      discovery_places: [
+        // Misfit: wrong city, no interest overlap
+        { id: "p-misfit", name: "Golf Club", category: "golf", city: "Oslo", rating: 3.0, saved_count: 0 },
+        // Fit: matches interests + current city
+        { id: "p-fit", name: "Reef Dive Shop", category: "diving", city: "Cebu", rating: 4.5, saved_count: 40 },
+      ],
+    });
+    const profile = profileFor({ travelStyles: ["diving"], currentCity: "Cebu" } as any);
+    const result: any = await executeCompassTool(makeClient(db), ALICE_ID, profile, "search_places", {});
+    assert.equal(result.ranked, true, "search must report engine ranking");
+    assert.equal(result.candidates.length, 2);
+    assert.equal(result.candidates[0].id, "p-fit", "personal-fit candidate must be ranked first by the engine");
+    const top = result.candidates[0];
+    assert.equal(typeof top.compassMatch, "number");
+    assert.equal(typeof top.communityScore, "number");
+    assert.ok(typeof top.whyThis === "string" && top.whyThis.length > 0, "whyThis must be grounded text");
+    assert.ok(top.compassMatch > result.candidates[1].compassMatch, "fit item has higher Compass Match");
+  });
+
+  it("Phase 7: when the pipeline gates out ALL candidates (kill-switch) the tool returns empty — never the raw list", async () => {
+    const db = makeDb({
+      feature_flags: [{ flag: "COMPASS_SUGGESTION_SAFETY_BLOCK", enabled: true }],
+      discovery_places: [
+        { id: "p-1", name: "Lantaw Cafe", category: "cafe", city: "Cebu", rating: 4.6 },
+        { id: "p-2", name: "Reef Dive Shop", category: "diving", city: "Cebu", rating: 4.5 },
+      ],
+    });
+    const result: any = await executeCompassTool(makeClient(db), ALICE_ID, profileFor(), "search_places", { city: "Cebu" });
+    assert.deepEqual(result.candidates, [], "gated-out candidates must NOT fall back to the raw DB list");
+  });
 });
 
 describe("C. search_events", () => {
@@ -194,6 +227,22 @@ describe("C. search_events", () => {
     assert.equal(result.candidates.length, 1);
     assert.equal(result.candidates[0].id, "ev2");
     assert.ok(!("host_id" in result.candidates[0]), "host_id must not reach the model");
+  });
+
+  it("Phase 7: event candidates are pipeline-ranked with both scores attached", async () => {
+    const future = new Date(Date.now() + 86400_000).toISOString();
+    const db = makeDb({
+      events: [
+        { id: "ev-misfit", title: "Chess night", city: "Oslo", country: "NO", starts_at: future, category: "games", host_id: "h1", state: "published", visibility: "public" },
+        { id: "ev-fit", title: "Street food crawl", city: "Cebu", country: "PH", starts_at: future, category: "food", host_id: "h2", state: "published", visibility: "public" },
+      ],
+    });
+    const profile = profileFor({ travelStyles: ["food"], currentCity: "Cebu" } as any);
+    const result: any = await executeCompassTool(makeClient(db), ALICE_ID, profile, "search_events", {});
+    assert.equal(result.ranked, true);
+    assert.equal(result.candidates[0].id, "ev-fit", "engine must rank the fitting event first");
+    assert.equal(typeof result.candidates[0].compassMatch, "number");
+    assert.equal(typeof result.candidates[0].communityScore, "number");
   });
 });
 

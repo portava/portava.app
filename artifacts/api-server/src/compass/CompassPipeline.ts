@@ -20,6 +20,11 @@ import { runSafetyFilter } from "./CompassSafetyFilter.js";
 import { runEligibilityCheck } from "./CompassEligibilityEngine.js";
 import { sanitizeItem } from "./CompassPrivacyGuard.js";
 import { scoreItem, type ScoreResult } from "./CompassScoringEngine.js";
+import {
+  annotateCandidate,
+  loadMemoryPreferenceTags,
+  type RankingFactor,
+} from "./CompassRecommendationEngine.js";
 
 export interface PipelineResult {
   item:             CompassItem;
@@ -27,6 +32,12 @@ export interface PipelineResult {
   safetyPassed:     true;
   eligiblePassed:   true;
   privacySanitized: true;
+  /** Phase 7 — personal-fit score (0–100), independent of popularity. */
+  compassMatch:     number;
+  /** Phase 7 — community popularity score (0–100), viewer-independent. */
+  communityScore:   number;
+  /** Phase 7 — grounded factors that produced this ranking. */
+  rankingFactors:   RankingFactor[];
 }
 
 export interface PipelineSummary {
@@ -98,6 +109,9 @@ export async function runPipeline(
   // Pre-load feature flags once for the whole batch
   const flags = await loadFlags(db);
 
+  // Phase 7 — load memory-derived preference tags once per pipeline call
+  const memoryTags = await loadMemoryPreferenceTags(db, profile.userId);
+
   const safetyFn     = _testOverrides?.safetyFilter     ?? runSafetyFilter;
   const eligibilityFn = _testOverrides?.eligibilityCheck ?? runEligibilityCheck;
   const scoreFn      = _testOverrides?.scoreItem         ?? scoreItem;
@@ -127,12 +141,20 @@ export async function runPipeline(
     // Gate 4: Scoring Engine
     const scored = scoreFn(sanitized, profile, context, db);
 
+    // Phase 7 — Compass Match / Community Score / grounded ranking factors.
+    // The memory-derived preference boost is bounded (0–5) so memories can
+    // nudge but never dominate the rank.
+    const annotation = annotateCandidate(sanitized, profile, memoryTags);
+
     results.push({
       item:             sanitized,
-      finalScore:       scored.finalScore,
+      finalScore:       scored.finalScore + annotation.memoryBoost,
       safetyPassed:     true,
       eligiblePassed:   true,
       privacySanitized: true,
+      compassMatch:     annotation.compassMatch,
+      communityScore:   annotation.communityScore,
+      rankingFactors:   annotation.factors,
     });
   }
 

@@ -214,3 +214,63 @@ State when the standing brief was installed:
 - Out of scope honored: no ranking changes (memory informs context only),
   no proactive notifications.
 - API + mobile suites and typechecks green.
+
+## Phase 7 — Formal Recommendation Engine (July 2026)
+
+- New `src/compass/CompassRecommendationEngine.ts` — the formal ranking
+  authority's scoring core, computing two INDEPENDENT 0–100 signals per
+  candidate:
+  - **Community Score** (`computeCommunityScore`) — viewer-independent
+    popularity: quality/rating, saved count, event attendance, author trust,
+    with report/spam penalties. Deterministic per item; never reads a profile.
+  - **Compass Match** (`computeCompassMatch`) — personal fit: interest
+    overlap, current-city match, feedback history (category weights), budget,
+    distance, language, Phase 6 memory-derived preferences, social signals,
+    safety preference, open-now, availability, and time relevance. Contains
+    zero popularity signals, so fit and popularity move independently
+    (verified both directions in tests).
+  - Every contributing signal is recorded as a grounded `RankingFactor`
+    (`key`, `label`, `weight`, `detail` citing the actual matched value);
+    `buildWhyThisText` renders "Why this?" text ONLY from these factors —
+    sensitive/moderation keys are excluded and never surface.
+- `CompassPipeline.runPipeline` is the single candidate-ranking authority:
+  it loads long-term memory preference tags once per call (non-fatal),
+  annotates every `PipelineResult` with `compassMatch`, `communityScore`,
+  and `rankingFactors`, and applies a bounded (≤5-point) memory boost to
+  `finalScore`. Tests prove pipeline output is a strict subset of its input —
+  the model can never inject candidates.
+- Phase 4 chat tools ranked through the same pipeline: `search_places` and
+  `search_events` run their DB-backed rows through `runPipeline`
+  (`rankToolCandidates`/`applyToolRanking`), returning candidates in engine
+  order with `compassMatch`/`communityScore`/`whyThis` attached and
+  `ranked: true`; gate-dropped items are excluded. If ranking fails the tools
+  fall back honestly to the raw DB list (never empty due to ranker failure).
+  The tools prompt addendum instructs the model to preserve pre-ranked order
+  and never invent scores.
+- Migration `20260726_compass_ranking_factors.sql` (applied live):
+  `compass_served_recommendations.ranking_factors` JSONB. Feed and section
+  routes store the `{compassMatch, communityScore, factors}` snapshot per
+  served recommendation; `GET /compass/why/:id` now returns the
+  factor-grounded explanation plus `factors`, `compassMatch`, and
+  `communityScore` — sensitive explanation keys keep the generic template
+  and expose nothing. Feed API items also carry both scores + factors.
+- Mobile: `CompassWhySheet` renders the two score pills (Compass Match vs
+  Community Score, visually separate signals) and the grounded factor list
+  under the explanation; `fetchCompassWhy`/`useCompassWhyExplanation`
+  updated accordingly.
+- Tests: new `src/test/compass-recommendation-engine.test.ts` (score
+  independence in both directions, factors grounded in nonzero signals,
+  popularity never moves Compass Match, memory-tag boost bounded ≤5,
+  whyThis grounding + sensitive-factor exclusion, pipeline output ⊆ input);
+  `compass-tools.test.ts` extended (fit item ranked first with scores +
+  whyThis on places and events); `compass-hardening.test.ts` extended
+  (/why returns grounded factors + both scores; sensitive keys leak
+  nothing; snapshot-less rows fall back to templates).
+- Standing eval set (9 queries) run E2E against the local API with an
+  ephemeral signed-in user: AI proxy unreachable from this environment, so
+  every turn exercised the honest-fallback path (`fallback: true`, no
+  fabricated candidates — guardrail holds), matching Phase 5/6 precedent;
+  ranking/tool behavior is covered deterministically by the suites above.
+- Out of scope honored: no live external data (Phase 8), no outcome-chain
+  learning (Phase 14) — history signals use existing feedback weights only.
+- API + mobile suites and typechecks green.

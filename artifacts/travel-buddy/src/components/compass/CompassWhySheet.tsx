@@ -19,7 +19,9 @@ interface Props {
 }
 
 export function CompassWhySheet({ visible, recommendationId, onClose }: Props) {
-  const { explanation, loading, fetch, clear } = useCompassWhyExplanation();
+  const {
+    explanation, factors, compassMatch, communityScore, loading, fetch, clear,
+  } = useCompassWhyExplanation();
 
   useEffect(() => {
     if (visible && recommendationId) {
@@ -61,6 +63,40 @@ export function CompassWhySheet({ visible, recommendationId, onClose }: Props) {
               <Text style={styles.explanation}>
                 {explanation ?? 'Based on your travel preferences and recent activity.'}
               </Text>
+
+              {/* Phase 7 — two independent signals */}
+              {(compassMatch != null || communityScore != null) && (
+                <View style={styles.scoresRow}>
+                  {compassMatch != null && (
+                    <View style={styles.scorePill} testID="compass-match-pill">
+                      <Text style={styles.scoreValue}>{compassMatch}</Text>
+                      <Text style={styles.scoreLabel}>Compass Match</Text>
+                    </View>
+                  )}
+                  {communityScore != null && (
+                    <View style={styles.scorePill} testID="community-score-pill">
+                      <Text style={styles.scoreValue}>{communityScore}</Text>
+                      <Text style={styles.scoreLabel}>Community Score</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* Phase 7 — grounded ranking factors */}
+              {factors.length > 0 && (
+                <View style={styles.factorList}>
+                  {factors.map((f) => (
+                    <View key={f.key} style={styles.factorRow} testID={`why-factor-${f.key}`}>
+                      <View style={styles.factorDot} />
+                      <Text style={styles.factorText}>
+                        {f.label}
+                        {f.detail ? ` — ${f.detail}` : ''}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+
               <Text style={styles.sub}>
                 Tap "Show more like this" or "Show less like this" from the ⋯ menu to
                 teach Compass what you prefer.
@@ -132,6 +168,48 @@ const styles = StyleSheet.create({
     ...t.small,
     color: color.mute,
     lineHeight: 18,
+  },
+  scoresRow: {
+    flexDirection: 'row',
+    gap: space.sm,
+  },
+  scorePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: color.haze,
+    borderRadius: radius.md,
+    paddingHorizontal: space.md,
+    paddingVertical: 8,
+  },
+  scoreValue: {
+    ...t.bodyStrong,
+    color: color.signal,
+    fontSize: 15,
+  },
+  scoreLabel: {
+    ...t.small,
+    color: color.ink,
+  },
+  factorList: {
+    gap: 6,
+  },
+  factorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  factorDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: color.signal,
+  },
+  factorText: {
+    ...t.small,
+    color: color.ink,
+    lineHeight: 18,
+    flex: 1,
   },
   dismissBtn: {
     backgroundColor: color.signal,

@@ -33,6 +33,7 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import compassRouter from "../routes/compass.js";
 import { runSafetyFilter } from "../compass/CompassSafetyFilter.js";
+import { encodeRecommendationToken } from "../compass/CompassExplanationEngine.js";
 import { runPipeline } from "../compass/CompassPipeline.js";
 import type { CompassItem, CompassProfile, CompassContext } from "../compass/types.js";
 
@@ -529,6 +530,115 @@ describe("Admin debug endpoint (Tests 15–16)", () => {
     const r = await apiReq("GET", "/compass/debug/recommendations", undefined, ADMIN_TOKEN);
     assert.equal(r.status, 200);
     assert.ok(Array.isArray(r.body.recommendations));
+  });
+});
+
+describe("Phase 7 — /compass/why factor-grounded explanations", () => {
+  function tokenFor(explanationKey: string) {
+    return encodeRecommendationToken({
+      userId:      USER_ID,
+      itemId:      "item-p7",
+      itemType:    "suggestion",
+      sectionName: "for_you",
+      explanationKey,
+    });
+  }
+
+  it("returns grounded factors + both scores when the served row has a ranking snapshot", async () => {
+    const recId = tokenFor("for_you:suggestion");
+    const store: TableStore = {
+      compass_served_recommendations: [
+        {
+          recommendation_id: recId,
+          user_id:           USER_ID,
+          explanation_key:   "for_you:suggestion",
+          ranking_factors: {
+            compassMatch:   72,
+            communityScore: 41,
+            factors: [
+              { key: "interest_match", label: "Matches your interests", weight: 0.8, detail: "food" },
+              { key: "city_match",     label: "In your current city",   weight: 1,   detail: "Cebu" },
+            ],
+          },
+        },
+      ],
+    };
+    setupFakeClients(store);
+
+    const r = await apiReq("GET", `/compass/why/${encodeURIComponent(recId)}`);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.compassMatch, 72);
+    assert.equal(r.body.communityScore, 41);
+    assert.equal(r.body.factors.length, 2);
+    assert.ok(String(r.body.explanation).includes("Cebu"), "explanation must be grounded in stored factor details");
+  });
+
+  it("sensitive explanation keys expose no factors or scores", async () => {
+    const recId = tokenFor("for_you:suggestion:safety_downrank");
+    const store: TableStore = {
+      compass_served_recommendations: [
+        {
+          recommendation_id: recId,
+          user_id:           USER_ID,
+          explanation_key:   "for_you:suggestion:safety_downrank",
+          ranking_factors: {
+            compassMatch: 10, communityScore: 5,
+            factors: [{ key: "interest_match", label: "Matches your interests", weight: 0.8 }],
+          },
+        },
+      ],
+    };
+    setupFakeClients(store);
+
+    const r = await apiReq("GET", `/compass/why/${encodeURIComponent(recId)}`);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.factors, undefined, "sensitive keys must not leak factors");
+    assert.equal(r.body.compassMatch, undefined);
+    assert.ok(typeof r.body.explanation === "string" && r.body.explanation.length > 0);
+  });
+
+  it("sensitive FACTOR keys inside a snapshot are stripped from the JSON payload", async () => {
+    const recId = tokenFor("for_you:suggestion");
+    const store: TableStore = {
+      compass_served_recommendations: [
+        {
+          recommendation_id: recId,
+          user_id:           USER_ID,
+          explanation_key:   "for_you:suggestion",
+          ranking_factors: {
+            compassMatch: 60, communityScore: 30,
+            factors: [
+              { key: "interest_match", label: "Matches your interests", weight: 0.8, detail: "food" },
+              { key: "moderation", label: "Moderation downrank", weight: 0.9, detail: "reported" },
+              { key: "spam", label: "Spam penalty", weight: 0.7 },
+              { key: "city_match", label: "In your current city", weight: 0, detail: "zero-weight" },
+            ],
+          },
+        },
+      ],
+    };
+    setupFakeClients(store);
+
+    const r = await apiReq("GET", `/compass/why/${encodeURIComponent(recId)}`);
+    assert.equal(r.status, 200);
+    const keys = (r.body.factors as any[]).map((f) => f.key);
+    assert.deepEqual(keys, ["interest_match"], "sensitive and zero-weight factors must be stripped from the payload");
+    assert.ok(!JSON.stringify(r.body).includes("reported"), "sensitive factor details must never appear anywhere in the response");
+  });
+
+  it("rows without a snapshot fall back to the template explanation only", async () => {
+    const recId = tokenFor("for_you:suggestion");
+    const store: TableStore = {
+      compass_served_recommendations: [
+        { recommendation_id: recId, user_id: USER_ID, explanation_key: "for_you:suggestion", ranking_factors: null },
+      ],
+    };
+    setupFakeClients(store);
+
+    const r = await apiReq("GET", `/compass/why/${encodeURIComponent(recId)}`);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.factors, undefined);
+    assert.ok(typeof r.body.explanation === "string" && r.body.explanation.length > 0);
   });
 });
 

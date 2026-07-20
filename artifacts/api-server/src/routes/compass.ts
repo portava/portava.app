@@ -47,9 +47,11 @@ import {
 import { getCachedFeed, setCachedFeed } from "../compass/CompassCacheEngine.js";
 import {
   resolveExplanation,
+  isSensitiveKey,
   decodeRecommendationToken,
   encodeRecommendationToken,
 } from "../compass/CompassExplanationEngine.js";
+import { buildWhyThisText, presentableFactors } from "../compass/CompassRecommendationEngine.js";
 import {
   processFeedback,
   FEEDBACK_ACTIONS,
@@ -119,6 +121,22 @@ interface RecommendationRow {
   item_id:           string;
   item_type:         string;
   section_name:      string;
+  /** Phase 7 — grounded ranking snapshot { compassMatch, communityScore, factors } */
+  ranking_factors:   Record<string, unknown> | null;
+}
+
+/** Build the Phase 7 ranking snapshot stored alongside a served recommendation. */
+function rankingSnapshot(item: {
+  compassMatch?: number;
+  communityScore?: number;
+  rankingFactors?: unknown[];
+}): Record<string, unknown> | null {
+  if (typeof item.compassMatch !== "number" && typeof item.communityScore !== "number") return null;
+  return {
+    compassMatch:   item.compassMatch   ?? null,
+    communityScore: item.communityScore ?? null,
+    factors:        Array.isArray(item.rankingFactors) ? item.rankingFactors.slice(0, 8) : [],
+  };
 }
 
 function enrichFeedWithRecommendationIds(
@@ -144,6 +162,7 @@ function enrichFeedWithRecommendationIds(
         item_id:           String(item.item.id ?? ""),
         item_type:         String(item.item.type ?? ""),
         section_name:      item.section,
+        ranking_factors:   rankingSnapshot(item),
       });
       return { ...item, recommendationId: token };
     }),
@@ -477,6 +496,7 @@ router.get("/compass/feed/section/:section", async (req, res) => {
         item_id:           String(item.item?.id ?? item.id ?? ""),
         item_type:         String(item.item?.type ?? item.type ?? ""),
         section_name:      sectionParam,
+        ranking_factors:   rankingSnapshot(item),
       });
       return { ...item, recommendationId: token };
     });
@@ -717,7 +737,7 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
     // If the row doesn't exist, the recommendation was never served to this user.
     const { data: row } = await sc
       .from("compass_served_recommendations")
-      .select("explanation_key")
+      .select("explanation_key, ranking_factors")
       .eq("recommendation_id", recommendationId)
       .eq("user_id", user.id)
       .maybeSingle();
@@ -741,8 +761,33 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
     const profile = await getCompassProfile(sc, user.id).catch(() => null);
     const city = profile?.currentCity ?? null;
 
-    const explanation = await resolveExplanation(explanationKey, sc, city);
-    res.json({ explanation });
+    const templateExplanation = await resolveExplanation(explanationKey, sc, city);
+
+    // Phase 7 — factor-grounded explanation. When the served row carries a
+    // ranking snapshot, the "Why this?" text is generated from the ACTUAL
+    // ranking factors (never model-invented). Sensitive explanation keys stay
+    // on the generic template and expose no factors (privacy rule).
+    if (!isSensitiveKey(explanationKey)) {
+      const snapshot = (row as any).ranking_factors as {
+        compassMatch?: number | null;
+        communityScore?: number | null;
+        factors?: { key: string; label: string; weight: number; detail?: string }[];
+      } | null;
+      if (snapshot && Array.isArray(snapshot.factors)) {
+        const grounded = buildWhyThisText(snapshot.factors as any);
+        res.json({
+          explanation:    grounded ?? templateExplanation,
+          // Same sensitive-key policy as the sentence: never leak
+          // moderation/safety factors through the raw payload.
+          factors:        presentableFactors(snapshot.factors as any).slice(0, 5),
+          compassMatch:   snapshot.compassMatch   ?? null,
+          communityScore: snapshot.communityScore ?? null,
+        });
+        return;
+      }
+    }
+
+    res.json({ explanation: templateExplanation });
   } catch (err) {
     req.log.error({ err }, "compass/why: resolution failed");
     res.json({ explanation: "Based on your travel preferences and recent activity." });
