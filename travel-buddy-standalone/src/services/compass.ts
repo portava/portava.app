@@ -1054,3 +1054,68 @@ export async function forgetCompassMemory(
     return { ok: false, error: 'network_error' };
   }
 }
+
+// ── Compass Home (Phase 10) ───────────────────────────────────────────────────
+
+export interface CompassHomeEvent {
+  id:       string;
+  title:    string;
+  city:     string | null;
+  country:  string | null;
+  startsAt: string | null;
+  category: string | null;
+}
+
+export interface CompassHomePerson {
+  label:           string;
+  handle:          string | null;
+  status:          string;
+  statusLabel:     string | null;
+  approximateArea: string | null;
+  venue:           string | null;
+  context:         { type: string; title: string } | null;
+}
+
+export interface CompassHomeResponse {
+  compassEnabled: boolean;
+  fallback:       boolean;
+  timeOfDay?:     'morning' | 'afternoon' | 'evening' | 'night';
+  contextState?:  string;
+  city?:          string | null;
+  bestNextMove?:  {
+    id:             string;
+    type:           string;
+    title:          string | null;
+    category:       string | null;
+    city:           string | null;
+    data:           Record<string, unknown> | null;
+    explanationKey: string | null;
+  } | null;
+  circleActivity?: { people: CompassHomePerson[] } | null;
+  startingSoon?:   CompassHomeEvent[] | null;
+  tonightVibe?:    { headline: string; events: CompassHomeEvent[] } | null;
+  weatherWindow?:  {
+    city:     string;
+    date:     string;
+    summary:  string;
+    maxTempC: number;
+    minTempC: number;
+    precipMm: number;
+    headline: string;
+  } | null;
+}
+
+export async function fetchCompassHome(): Promise<{
+  ok: boolean;
+  data?: CompassHomeResponse;
+  error?: string;
+}> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const r = await authedFetch('/api/compass/home');
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    return { ok: true, data: await r.json() };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
