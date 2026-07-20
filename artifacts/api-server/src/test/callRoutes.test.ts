@@ -1605,6 +1605,48 @@ describe("callGatewayAdapter — DB error paths (fail-closed)", () => {
     assert.equal(r.body.reason, "redial_cooldown",
       "fail-closed lastDeclineAt must impose the cooldown, not allow immediate redial");
   });
+
+  it("isActiveCrewMember returns false (denied) when requireTripMember throws", async () => {
+    const throwingClient: any = {
+      from: () => { throw new Error("simulated DB outage"); },
+    };
+    const gw = makeCallGateway(throwingClient);
+    const result = await gw.isActiveCrewMember("trip-id", "user-id");
+    assert.equal(result, false,
+      "fail-closed: a DB outage must never silently grant crew membership");
+  });
+
+  it("group start is denied (403 not_crew_member) when isActiveCrewMember errors", async () => {
+    // Route-level: fail-closed isActiveCrewMember → engine returns not_crew_member.
+    wireDeps({ isActiveCrewMember: async () => false });
+    const r = await req("POST", "/api/calls", {
+      contextType: "trip_crew", callType: "group_voice", contextId: "trip-1",
+    });
+    assert.equal(r.status, 403);
+    assert.equal(r.body.reason, "not_crew_member",
+      "fail-closed isActiveCrewMember must deny the group start, not let it proceed");
+    assert.equal(store.__sessions.size, 0, "no session persisted when denied by fail-closed crew check");
+  });
+
+  it("eventRoomIneligibility returns 'not_event_eligible' (denied) when an event query throws", async () => {
+    const throwingClient: any = {
+      from: () => { throw new Error("simulated DB outage"); },
+    };
+    const gw = makeCallGateway(throwingClient);
+    const result = await gw.eventRoomIneligibility("event-id", "user-id");
+    assert.equal(result, "not_event_eligible",
+      "fail-closed: a DB outage must never silently grant event room access");
+  });
+
+  it("event room join is denied (403 not_event_eligible) when eventRoomIneligibility errors", async () => {
+    // Route-level: fail-closed eventRoomIneligibility → engine denies join.
+    const id = await startEventRoom();
+    wireDepsKeepStore({ eventRoomIneligibility: async () => "not_event_eligible" });
+    const r = await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+    assert.equal(r.status, 403);
+    assert.equal(r.body.reason, "not_event_eligible",
+      "fail-closed eventRoomIneligibility must deny the join, not let it proceed silently");
+  });
 });
 
 describe("block landing mid-ring", () => {

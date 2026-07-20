@@ -188,43 +188,55 @@ export function makeCallGateway(sc: SupabaseClient): CallContextGateway {
     },
 
     async isActiveCrewMember(tripId, userId) {
-      const member = await requireTripMember(sc, tripId, userId, { status: "accepted" });
-      return member != null;
+      try {
+        const member = await requireTripMember(sc, tripId, userId, { status: "accepted" });
+        return member != null;
+      } catch (err) {
+        // Fail closed: a DB outage must never silently grant crew membership.
+        console.warn("[callGateway] isActiveCrewMember failed — failing closed", err);
+        return false;
+      }
     },
 
     async eventRoomIneligibility(eventId, userId) {
-      const { data: ev } = await sc.from("events").select("*").eq("id", eventId).maybeSingle();
-      if (!ev) return "not_event_eligible";
+      try {
+        const { data: ev } = await sc.from("events").select("*").eq("id", eventId).maybeSingle();
+        if (!ev) return "not_event_eligible";
 
-      // Delegate to the canonical event participation gates (block/ban/
-      // verified/trust/age). Map the failure onto the engine's stable reasons.
-      const elig = await checkEventEligibility(sc, ev as any, userId);
-      if (!elig.ok) {
-        const m = elig.message.toLowerCase();
-        if (m.includes("trust score")) return "trust_ineligible";
-        if (m.includes("age") || m.includes("at least") || m.includes("up to")) return "age_ineligible";
+        // Delegate to the canonical event participation gates (block/ban/
+        // verified/trust/age). Map the failure onto the engine's stable reasons.
+        const elig = await checkEventEligibility(sc, ev as any, userId);
+        if (!elig.ok) {
+          const m = elig.message.toLowerCase();
+          if (m.includes("trust score")) return "trust_ineligible";
+          if (m.includes("age") || m.includes("at least") || m.includes("up to")) return "age_ineligible";
+          return "not_event_eligible";
+        }
+
+        // Attendance: host and staff always eligible; everyone else must have
+        // an RSVP (going/maybe) on the event.
+        if (userId === (ev as any).host_id) return null;
+        const { data: staff } = await sc
+          .from("event_roles")
+          .select("role")
+          .eq("event_id", eventId)
+          .eq("user_id", userId)
+          .in("role", ["co_host", "moderator"])
+          .maybeSingle();
+        if (staff) return null;
+        const { data: rsvp } = await sc
+          .from("event_rsvps")
+          .select("status")
+          .eq("event_id", eventId)
+          .eq("user_id", userId)
+          .maybeSingle();
+        const s = (rsvp as any)?.status;
+        return s === "going" || s === "maybe" ? null : "not_event_eligible";
+      } catch (err) {
+        // Fail closed: a DB outage must never silently grant event room access.
+        console.warn("[callGateway] eventRoomIneligibility failed — failing closed", err);
         return "not_event_eligible";
       }
-
-      // Attendance: host and staff always eligible; everyone else must have
-      // an RSVP (going/maybe) on the event.
-      if (userId === (ev as any).host_id) return null;
-      const { data: staff } = await sc
-        .from("event_roles")
-        .select("role")
-        .eq("event_id", eventId)
-        .eq("user_id", userId)
-        .in("role", ["co_host", "moderator"])
-        .maybeSingle();
-      if (staff) return null;
-      const { data: rsvp } = await sc
-        .from("event_rsvps")
-        .select("status")
-        .eq("event_id", eventId)
-        .eq("user_id", userId)
-        .maybeSingle();
-      const s = (rsvp as any)?.status;
-      return s === "going" || s === "maybe" ? null : "not_event_eligible";
     },
 
     async eventStaffRole(eventId, userId) {
