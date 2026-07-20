@@ -1,15 +1,22 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  View, Text, ScrollView, Pressable, StyleSheet, Alert, Modal, Switch, Linking,
+  View, Text, ScrollView, Pressable, StyleSheet, Alert, Modal, Switch, Linking, ActivityIndicator,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import {
   ArrowLeft, Shield, AlertTriangle, MapPin, Phone,
-  Flag, CheckCircle, Plus, X, Zap,
+  Flag, CheckCircle, Plus, X, Zap, Users,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState } from '../../src/components/primitives';
 import { getBooking, addExtraTime, reportBooking, safetyCheckin, feelUnsafe, endBookingEarly, type BuddyBooking } from '../../src/services/rentABuddy';
+import {
+  getActiveSession,
+  startLiveShare,
+  stopLiveShare,
+  getSessionContacts,
+  type SessionContact,
+} from '../../src/services/safeReturn';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useStickyBarInset } from '../../src/hooks/useBottomInset';
 
@@ -21,6 +28,58 @@ function formatElapsed(seconds: number) {
   const s = seconds % 60;
   if (h > 0) return `${pad(h)}:${pad(m)}:${pad(s)}`;
   return `${pad(m)}:${pad(s)}`;
+}
+
+function ContactPickerModal({
+  visible, contacts, onClose, onSelect, loading,
+}: {
+  visible: boolean;
+  contacts: SessionContact[];
+  onClose: () => void;
+  onSelect: (contact: SessionContact) => void;
+  loading: boolean;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide">
+      <View style={modal.overlay}>
+        <View style={modal.sheet}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: space.xs }}>
+            <Users size={18} color={color.success} />
+            <Text style={modal.title}>Share with…</Text>
+          </View>
+          <Text style={modal.sub}>Select a trusted contact to receive your live location.</Text>
+          {loading ? (
+            <ActivityIndicator color={color.success} style={{ marginVertical: space.lg }} />
+          ) : contacts.length === 0 ? (
+            <Text style={[modal.sub, { color: color.mute, marginTop: space.md }]}>
+              No eligible contacts found. Add trusted contacts with live location access to your Safe Return session.
+            </Text>
+          ) : (
+            <View style={{ gap: space.sm, marginTop: space.sm }}>
+              {contacts.map((c) => (
+                <Pressable
+                  key={c.id}
+                  style={({ pressed }) => [picker.contactRow, pressed && { opacity: layout.pressedOpacity }]}
+                  onPress={() => onSelect(c)}
+                >
+                  <View style={picker.avatar}>
+                    <Text style={picker.avatarText}>{(c.contactName ?? 'C')[0].toUpperCase()}</Text>
+                  </View>
+                  <Text style={picker.contactName}>{c.contactName ?? 'Trusted contact'}</Text>
+                  <View style={picker.livePill}>
+                    <Text style={picker.livePillText}>LIVE</Text>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          )}
+          <Pressable style={[modal.cancelBtn, { marginTop: space.md }]} onPress={onClose}>
+            <Text style={modal.cancelBtnText}>Cancel</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  );
 }
 
 function AddTimeModal({ visible, onClose, onAdd }: { visible: boolean; onClose: () => void; onAdd: (h: number) => void }) {
@@ -89,6 +148,12 @@ export default function RentABuddyActive() {
   const [addedH, setAddedH] = useState(0);
   const [safeReturn, setSafeReturn] = useState(false);
   const [circleShare, setCircleShare] = useState(false);
+  const [circleShareLoading, setCircleShareLoading] = useState(false);
+  const [shareId, setShareId] = useState<string | null>(null);
+  const [safeReturnSessionId, setSafeReturnSessionId] = useState<string | null>(null);
+  const [contactPickerVisible, setContactPickerVisible] = useState(false);
+  const [contactPickerLoading, setContactPickerLoading] = useState(false);
+  const [sessionContacts, setSessionContacts] = useState<SessionContact[]>([]);
   const [addTimeVisible, setAddTimeVisible] = useState(false);
   const [endVisible, setEndVisible] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -108,6 +173,75 @@ export default function RentABuddyActive() {
     timerRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, []);
+
+  // Fetch the active safe-return session so we can wire live-share to it.
+  useEffect(() => {
+    getActiveSession().then(({ session }) => {
+      if (session && session.liveShareEnabled) {
+        setSafeReturnSessionId(session.id);
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleCircleShareToggle = useCallback(async (value: boolean) => {
+    if (value) {
+      // Toggle ON ─ require an active Safe Return session with live share enabled.
+      if (!safeReturnSessionId) {
+        Alert.alert(
+          'Safe Return required',
+          'Start a Safe Return session with live share enabled first, then you can share your location with a trusted contact.',
+        );
+        return; // Leave toggle OFF.
+      }
+      setCircleShareLoading(true);
+      setContactPickerLoading(true);
+      setContactPickerVisible(true);
+      try {
+        const contacts = await getSessionContacts(safeReturnSessionId);
+        setSessionContacts(contacts.filter(c => c.canReceiveLiveLocation));
+      } catch {
+        setSessionContacts([]);
+      } finally {
+        setContactPickerLoading(false);
+        setCircleShareLoading(false);
+      }
+    } else {
+      // Toggle OFF ─ stop the active share.
+      if (!shareId || !safeReturnSessionId) {
+        setCircleShare(false);
+        setShareId(null);
+        return;
+      }
+      setCircleShareLoading(true);
+      const res = await stopLiveShare(safeReturnSessionId, shareId);
+      setCircleShareLoading(false);
+      if (res.ok) {
+        setShareId(null);
+        setCircleShare(false);
+      } else {
+        Alert.alert('Error', res.error ?? 'Could not stop live share. Please try again.');
+        // Revert: keep toggle ON since the share is still active.
+      }
+    }
+  }, [safeReturnSessionId, shareId]);
+
+  const handleContactSelected = useCallback(async (contact: SessionContact) => {
+    setContactPickerVisible(false);
+    if (!safeReturnSessionId) return;
+    setCircleShareLoading(true);
+    const res = await startLiveShare(safeReturnSessionId, { recipientContactId: contact.id, durationMinutes: 60 });
+    setCircleShareLoading(false);
+    if (res.ok && res.share) {
+      setShareId(res.share.id);
+      setCircleShare(true);
+    } else {
+      // Show error and leave toggle OFF.
+      Alert.alert(
+        'Could not start live share',
+        res.error ?? 'Please check your Safe Return session settings and try again.',
+      );
+    }
+  }, [safeReturnSessionId]);
 
   const totalDurationS = ((booking?.durationH ?? 1) + addedH) * 3600;
   const remaining = Math.max(0, totalDurationS - elapsed);
@@ -232,10 +366,26 @@ export default function RentABuddyActive() {
                 thumbColor={color.paperRaised}
               />
             </View>
-            {/* "Share with Trusted Circle" toggle removed — it only flipped local
-                state and never started a real share. Re-add once wired to the
-                safe-return live-share API (startLiveShare needs a session +
-                recipient contact). A safety toggle must never silently no-op. */}
+            <View style={[styles.safetyToggleRow, { borderTopWidth: 1, borderTopColor: color.haze }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.safetyToggleLabel}>Share location with Trusted Circle</Text>
+                <Text style={styles.safetyToggleSub}>
+                  {circleShare && shareId
+                    ? 'Live share active — contact can see your location'
+                    : 'Share real-time location with a trusted contact during this session'}
+                </Text>
+              </View>
+              {circleShareLoading ? (
+                <ActivityIndicator color={color.success} size="small" />
+              ) : (
+                <Switch
+                  value={circleShare}
+                  onValueChange={handleCircleShareToggle}
+                  trackColor={{ true: color.success, false: color.haze }}
+                  thumbColor={color.paperRaised}
+                />
+              )}
+            </View>
             <Pressable
               style={styles.unsafeBtn}
               onPress={() => {
@@ -333,6 +483,16 @@ export default function RentABuddyActive() {
         else Alert.alert('Error', res.error ?? 'Could not add time');
       }} />
       <EndModal visible={endVisible} onClose={() => setEndVisible(false)} onEnd={handleEnd} />
+      <ContactPickerModal
+        visible={contactPickerVisible}
+        contacts={sessionContacts}
+        loading={contactPickerLoading}
+        onClose={() => {
+          setContactPickerVisible(false);
+          setCircleShareLoading(false);
+        }}
+        onSelect={handleContactSelected}
+      />
     </View>
   );
 }
@@ -444,4 +604,24 @@ const modal = StyleSheet.create({
   cancelBtnText: { ...t.bodyStrong, color: color.ink },
   addBtn: { flex: 1, borderRadius: radius.md, backgroundColor: color.ink, padding: space.md, alignItems: 'center' },
   addBtnText: { ...t.bodyStrong, color: color.onInk },
+});
+
+const picker = StyleSheet.create({
+  contactRow: {
+    flexDirection: 'row', alignItems: 'center', gap: space.md,
+    backgroundColor: color.paperRaised, borderRadius: radius.md,
+    borderWidth: 1, borderColor: color.haze,
+    padding: space.md,
+  },
+  avatar: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center',
+  },
+  avatarText: { fontSize: 15, fontWeight: '700', color: color.onInk },
+  contactName: { ...t.bodyStrong, color: color.ink, flex: 1 },
+  livePill: {
+    backgroundColor: '#EEF8F3', borderRadius: 999,
+    paddingHorizontal: space.sm, paddingVertical: 3,
+  },
+  livePillText: { fontSize: 9, fontWeight: '800', color: color.success, fontFamily: 'Courier', letterSpacing: 1 },
 });
