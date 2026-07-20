@@ -36,6 +36,21 @@ const STATUS_COLORS: Record<string, string> = {
   rejected: '#EF4444',
 };
 
+function formatAvailability(blocks: Array<Record<string, unknown>> | null | undefined): string {
+  if (!blocks || blocks.length === 0) return '—';
+  return blocks
+    .map((b) => {
+      const day = typeof b.day === 'string' ? b.day.charAt(0).toUpperCase() + b.day.slice(1) : null;
+      const from = typeof b.from === 'string' ? b.from : null;
+      const to = typeof b.to === 'string' ? b.to : null;
+      if (day && from && to) return `${day} ${from}–${to}`;
+      if (day) return day;
+      return null;
+    })
+    .filter(Boolean)
+    .join('\n') || '—';
+}
+
 function ApplicationRow({
   item,
   onAction,
@@ -283,6 +298,16 @@ export default function AdminApplicationsScreen() {
                 <Text style={detail.value}>{selected.languages.join(', ') || '—'}</Text>
                 <Text style={detail.label}>MOTIVATION</Text>
                 <Text style={detail.value}>{selected.motivation || '—'}</Text>
+                <Text style={detail.label}>DISPLAY NAME</Text>
+                <Text style={detail.value}>{selected.displayName || '—'}</Text>
+                <Text style={detail.label}>BIO</Text>
+                <Text style={detail.value}>{selected.bio || '—'}</Text>
+                <Text style={detail.label}>HOURLY RATE</Text>
+                <Text style={detail.value}>{selected.hourlyRateUsd != null ? `${selected.hourlyRateUsd}/hr` : '—'}</Text>
+                <Text style={detail.label}>AVAILABILITY</Text>
+                <Text style={detail.value}>{formatAvailability(selected.availability)}</Text>
+                <Text style={detail.label}>MEETUP ZONES</Text>
+                <Text style={detail.value}>{(selected.zones ?? []).join(', ') || '—'}</Text>
                 <Text style={detail.label}>POLICY ACCEPTED</Text>
                 <Text style={[detail.value, { color: selected.policyAccepted ? '#10B981' : '#EF4444' }]}>
                   {selected.policyAccepted ? '✓ Yes' : '✗ No'}
