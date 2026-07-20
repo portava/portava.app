@@ -35,7 +35,7 @@ export interface AgeEligibilityResult {
 }
 
 /** Platform minimum age — rejects setups with min_age below this. */
-export const PLATFORM_MIN_AGE = 13;
+export const PLATFORM_MIN_AGE = 18;
 /** Platform maximum age cap. */
 export const PLATFORM_MAX_AGE = 100;
 

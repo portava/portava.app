@@ -210,7 +210,7 @@ describe("validateAgeRange", () => {
 
   it("rejects min below platform minimum", () => {
     const err = validateAgeRange(10, null);
-    assert.ok(err?.includes("at least 13"));
+    assert.ok(err?.includes("at least 18"));
   });
 
   it("rejects max above platform maximum", () => {
