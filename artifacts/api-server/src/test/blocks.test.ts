@@ -62,6 +62,7 @@ interface FakeState {
   blocks?: Record<string, any>[];
   profiles?: Record<string, any>[];
   user_account_states?: Record<string, any>[];
+  profile_privacy_settings?: Record<string, any>[];
 }
 
 function makeFakeClient(state: FakeState = {}) {
@@ -71,6 +72,7 @@ function makeFakeClient(state: FakeState = {}) {
     if (table === "blocks")              return (state.blocks ?? []).map((r) => ({ ...r }));
     if (table === "profiles")            return (state.profiles ?? []).map((r) => ({ ...r }));
     if (table === "user_account_states") return (state.user_account_states ?? []).map((r) => ({ ...r }));
+    if (table === "profile_privacy_settings") return (state.profile_privacy_settings ?? []).map((r) => ({ ...r }));
     return [];
   }
 
@@ -273,6 +275,8 @@ describe("blocks routes", () => {
       setClients(makeFakeClient({
         blocks:   [{ blocker_id: USER_ID, blocked_id: TARGET_ID, created_at: blockedAt }],
         profiles: [{ id: TARGET_ID, handle: "target_user", name: "Target User", avatar_url: null }],
+        // target_user opted in to real-name visibility so the name is not redacted.
+        profile_privacy_settings: [{ user_id: TARGET_ID, show_real_name: true }],
       }));
       const r = await req("GET", "/me/blocks");
       assert.equal(r.status, 200);

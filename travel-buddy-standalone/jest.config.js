@@ -1,6 +1,9 @@
 'use strict';
 
 module.exports = {
+  // CI validation runs suites in parallel with heavy load; the 5s default
+  // produced spurious one-off timeouts in otherwise-green files.
+  testTimeout: 20000,
   preset: 'jest-expo',
   testMatch: [
     '<rootDir>/src/**/*.test.{ts,tsx}',

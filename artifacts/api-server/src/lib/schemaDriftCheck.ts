@@ -87,6 +87,36 @@ export const CRITICAL_COLUMNS: ColumnProbe[] = [
   },
   {
     table: "rent_buddy_profiles",
+    column: "availability_blocks",
+    migration: "0162_rent_buddy_availability_blocks.sql",
+    impact: "buddy wizard submits fail AND buddy browse/search/profile reads fail (column is written by apply and is in the public select list)",
+  },
+  {
+    table: "rent_buddy_profiles",
+    column: "display_name",
+    migration: "migrations/0134_rent_buddy_schema_rebuild.sql (legacy)",
+    impact: "buddy wizard submits fail (column is written by apply and is in the public select list)",
+  },
+  {
+    table: "rent_buddy_profiles",
+    column: "bio",
+    migration: "migrations/0134_rent_buddy_schema_rebuild.sql (legacy)",
+    impact: "buddy wizard submits fail (column is written by apply and is in the public select list)",
+  },
+  {
+    table: "rent_buddy_profiles",
+    column: "hourly_rate_usd",
+    migration: "migrations/0134_rent_buddy_schema_rebuild.sql (legacy)",
+    impact: "buddy wizard submits fail (column is written by apply and is in the public select list)",
+  },
+  {
+    table: "rent_buddy_profiles",
+    column: "preferred_meetup_zones",
+    migration: "migrations/0134_rent_buddy_schema_rebuild.sql (legacy)",
+    impact: "buddy wizard submits fail (column is written by apply and is in the public select list)",
+  },
+  {
+    table: "rent_buddy_profiles",
     column: "meetup_base_lat",
     migration: "0135_rent_buddy_meetup_base_coords.sql",
     impact: "buddy search fails entirely (column is in the public select list)",

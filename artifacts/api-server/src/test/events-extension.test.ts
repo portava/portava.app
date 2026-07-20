@@ -76,7 +76,7 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
     message_thread_members: tables.message_thread_members ?? { rows: [] },
     collections:           tables.collections            ?? { rows: [] },
     collection_items:      tables.collection_items       ?? { rows: [] },
-    circle_members:        tables.circle_members         ?? { rows: [] },
+    circle_memberships:    tables.circle_memberships     ?? { rows: [] },
     trip_members:          tables.trip_members           ?? { rows: [] },
     trip_plan_items:       tables.trip_plan_items        ?? { rows: [] },
   };
@@ -1566,8 +1566,8 @@ describe("POST /api/events/:id/link-circle — membership gates", () => {
       blocks:             { rows: [] },
       user_friendships:   { rows: [] },
       event_rsvps:        { rows: [] },
-      circle_members:     { rows: opts.circleMember
-        ? [{ circle_id: CIRCLE_ID, user_id: ID.user1 }]
+      circle_memberships: { rows: opts.circleMember
+        ? [{ user_id: CIRCLE_ID, other_id: ID.user1 }]
         : [] },
       event_activity_log: { rows: [] },
     });
@@ -2771,14 +2771,14 @@ describe("circle/trip visibility enforcement — join + rsvp gated on membership
     assert.equal(status, 403, `Non-member (no circle linked) must get 403, got ${status}`);
   });
 
-  it("circle event: non-member cannot join (no circle_members row → 403)", async () => {
+  it("circle event: non-member cannot join (no circle_memberships row → 403)", async () => {
     const circleId = "cccccccc-1111-0000-0000-000000000001";
     _setTestClient(makeFakeClient({
       events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "circle" as any, circle_id: circleId }) ] },
       event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
       event_rsvps: { rows: [] },
       blocks: { rows: [] },
-      circle_members: { rows: [] },
+      circle_memberships: { rows: [] },
     }), true);
     ({ port, close } = await startServer());
     const { status } = await req(port, "POST", `/api/events/${ID.ev1}/join`, {}, ID.user1);
@@ -2793,7 +2793,7 @@ describe("circle/trip visibility enforcement — join + rsvp gated on membership
       event_rsvps: { rows: [] },
       event_attendees: { rows: [] },
       blocks: { rows: [] },
-      circle_members: { rows: [{ circle_id: circleId, user_id: ID.user1 }] },
+      circle_memberships: { rows: [{ user_id: circleId, other_id: ID.user1 }] },
     }), true);
     ({ port, close } = await startServer());
     const { status } = await req(port, "POST", `/api/events/${ID.ev1}/join`, {}, ID.user1);
@@ -2848,7 +2848,7 @@ describe("circle/trip visibility enforcement — join + rsvp gated on membership
       event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
       event_rsvps: { rows: [] },
       blocks: { rows: [] },
-      circle_members: { rows: [] },
+      circle_memberships: { rows: [] },
     }), true);
     ({ port, close } = await startServer());
     const { status } = await req(port, "POST", `/api/events/${ID.ev1}/rsvp`, { status: "going" }, ID.user1);
@@ -2861,7 +2861,7 @@ describe("circle/trip visibility enforcement — join + rsvp gated on membership
       events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "circle" as any, circle_id: circleId }) ] },
       event_roles: { rows: [] },
       event_rsvps: { rows: [] },
-      circle_members: { rows: [] },
+      circle_memberships: { rows: [] },
     }), true);
     ({ port, close } = await startServer());
     const { status } = await req(port, "GET", `/api/events/${ID.ev1}`, null, ID.user1);

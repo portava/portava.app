@@ -126,8 +126,11 @@ describe("POST /api/profile/ensure", () => {
     const res = await post("/api/profile/ensure", { email: "alice@example.com" }, NEW_TOK);
     assert.ok([200, 201].includes(res.status), `expected 200/201, got ${res.status}: ${JSON.stringify(res.body)}`);
 
-    assert.equal(client.__upserted.length, 1, "should have exactly one upsert");
-    const row = client.__upserted[0].row;
+    // ensure also upserts location_preferences defaults; assert the profiles
+    // upsert specifically rather than a global count.
+    const profileUpserts = client.__upserted.filter((u: any) => u.table === "profiles");
+    assert.equal(profileUpserts.length, 1, "should have exactly one profiles upsert");
+    const row = profileUpserts[0].row;
     assert.ok(row.name,         "upserted row must have name");
     assert.ok(row.display_name, "upserted row must have display_name");
     assert.equal(row.display_name, row.name, "display_name must equal name on creation");
@@ -138,7 +141,7 @@ describe("POST /api/profile/ensure", () => {
     const res = await post("/api/profile/ensure", { email: "b@example.com", name: "Beatriz" }, NEW_TOK);
     assert.ok([200, 201].includes(res.status), `got ${res.status}`);
 
-    const row = client.__upserted[0].row;
+    const row = client.__upserted.filter((u: any) => u.table === "profiles")[0].row;
     assert.equal(row.name, "Beatriz");
     assert.equal(row.display_name, "Beatriz");
   });
@@ -148,7 +151,7 @@ describe("POST /api/profile/ensure", () => {
     const res = await post("/api/profile/ensure", {}, NEW_TOK);
     assert.ok([200, 201].includes(res.status), `got ${res.status}`);
 
-    const row = client.__upserted[0].row;
+    const row = client.__upserted.filter((u: any) => u.table === "profiles")[0].row;
     assert.equal(row.name, "Traveler");
     assert.equal(row.display_name, "Traveler");
   });
@@ -161,7 +164,7 @@ describe("POST /api/profile/ensure", () => {
   it("handle is derived from email local-part", async () => {
     client.__upserted.length = 0;
     await post("/api/profile/ensure", { email: "jsmith@example.com" }, NEW_TOK);
-    const row = client.__upserted[0]?.row;
+    const row = client.__upserted.filter((u: any) => u.table === "profiles")[0]?.row;
     assert.ok(row?.handle?.startsWith("jsmith"), `expected handle starting with 'jsmith', got: ${row?.handle}`);
   });
 });

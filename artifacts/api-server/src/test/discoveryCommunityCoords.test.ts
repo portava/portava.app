@@ -64,7 +64,10 @@ function makeFakeClient() {
       select()               { return obj; },
       insert(payload: any)   { lastInsertPayload = payload; return obj; },
       eq()                   { return obj; },
+      ilike()                { return obj; },
+      limit()                { return obj; },
       single()               { _singleMode = true; return obj; },
+      maybeSingle()          { return Promise.resolve({ data: null, error: null }); },
       then(onF: any, onR: any) { return resolve().then(onF, onR); },
     };
 

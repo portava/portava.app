@@ -326,6 +326,10 @@ const baseState: FakeState = {
   user_follows: [],
   stamps: [],
   trips: [],
+  // alice_public opted in to showing her real name; me_user did not.
+  profile_privacy_settings: [
+    { user_id: ALICE, show_real_name: true },
+  ],
 };
 
 // ── Test server ───────────────────────────────────────────────────────────────
@@ -369,9 +373,19 @@ describe("GET /users/:username/profile", () => {
     const r = await req(server, "GET", "/users/alice_public/profile");
     assert.equal(r.status, 200, "should be 200");
     assert.equal(r.body.username, "alice_public");
-    assert.ok(r.body.displayName, "should have displayName");
+    // alice_public opted in to real-name visibility (show_real_name: true).
+    assert.equal(r.body.displayName, "Alice", "opted-in user shows real display name");
     assert.ok(typeof r.body.tripCount === "number", "should have tripCount");
     assert.ok(typeof r.body.stampCount === "number", "should have stampCount");
+    assert.equal(r.body.visibility, "public");
+  });
+
+  it("hides real name for a public user without the name-visibility opt-in", async () => {
+    // me_user has no profile_privacy_settings row → show_real_name defaults false.
+    const r = await req(server, "GET", "/users/me_user/profile");
+    assert.equal(r.status, 200, "should be 200");
+    assert.equal(r.body.username, "me_user");
+    assert.equal(r.body.displayName, null, "non-opted-in user hides real display name");
     assert.equal(r.body.visibility, "public");
   });
 

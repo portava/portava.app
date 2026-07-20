@@ -158,6 +158,11 @@ function makeClient(state: FakeState = {}, callerUserId: string = ALICE_ID) {
         return b;
       },
       lt: (_col: string, _val: any) => b,
+      lte: (_col: string, _val: any) => b,
+      gt: (_col: string, _val: any) => b,
+      gte: (_col: string, _val: any) => b,
+      contains: (_col: string, _val: any) => b,
+      overlaps: (_col: string, _val: any) => b,
       or: (_filter: string) => b,
       order: (_col: string, _opts?: any) => b,
       limit: (_n: number) => b,

@@ -22,7 +22,7 @@
  * Run:
  *   node --import tsx/esm --test src/test/adminPhase12.test.ts
  */
-import { describe, it, before, after } from "node:test";
+import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
@@ -31,7 +31,7 @@ import { _setTestServiceClient } from "../lib/supabase.js";
 import adminRouter from "../routes/admin.js";
 import postsRouter from "../routes/posts.js";
 import messagingRouter from "../routes/messaging.js";
-import authRouter from "../routes/auth.js";
+import authRouter, { _resetAuthRateLimits } from "../routes/auth.js";
 import { checkRentBuddyAccess, invalidateGcCache } from "../routes/rentABuddyRollout.js";
 
 // ── Server ─────────────────────────────────────────────────────────────────────
@@ -681,6 +681,11 @@ describe("Kill switch: disable_signups + invite_only_beta (GET /auth/signup-stat
 });
 
 describe("Kill switch: disable_signups (POST /auth/signup)", () => {
+  // The signup endpoint is guarded by a per-IP express-rate-limit middleware.
+  // Reset its hit counters before each test so repeated signup POSTs from the
+  // same loopback IP don't trip the limiter and return 429 RATE_LIMITED.
+  beforeEach(() => { _resetAuthRateLimits(); });
+
   it("returns 403 feature_disabled when disable_signups = true", async () => {
     const fc = makeSignupFakeClient({ disableSignups: true });
     _setTestServiceClient(fc);

@@ -64,7 +64,7 @@ interface FakeState {
 /** Build a fake client. tableErrors: set of table names that return a DB error. */
 function makeFakeClient(state: FakeState, tableErrors: Set<string> = new Set()) {
   const errorBuilder: any = {};
-  const errorFns = ["select","eq","neq","in","not","is","ilike","or","order","limit","range","maybeSingle"];
+  const errorFns = ["select","eq","neq","in","not","is","ilike","or","gte","lt","order","limit","range","maybeSingle"];
   for (const fn of errorFns) {
     errorBuilder[fn] = () => errorBuilder;
   }
@@ -129,6 +129,14 @@ function makeFakeClient(state: FakeState, tableErrors: Set<string> = new Set()) 
               return false;
             }),
           );
+          return builder;
+        },
+        gte(col: string, val: any) {
+          filters.push((r) => r[col] != null && r[col] >= val);
+          return builder;
+        },
+        lt(col: string, val: any) {
+          filters.push((r) => r[col] != null && r[col] < val);
           return builder;
         },
         order()  { return builder; },
@@ -305,7 +313,14 @@ describe("GET /api/discovery/search — block exclusion (travelers)", () => {
         { blocker_id: ME,   blocked_id: BOB  },
         { blocker_id: CARL, blocked_id: ME   },
       ],
-      profile_privacy_settings: [],
+      // All three opted in to real-name visibility + discovery so the broad
+      // "paris" query (which matches only their real names) still surfaces them,
+      // keeping the block-exclusion behavior under test exercised.
+      profile_privacy_settings: [
+        { user_id: ALICE, show_real_name: true },
+        { user_id: BOB,   show_real_name: true },
+        { user_id: CARL,  show_real_name: true },
+      ],
       user_follows: [],
     });
   });
@@ -375,7 +390,8 @@ describe("GET /api/discovery/search — private accounts excluded entirely", () 
         { id: ALICE,   handle: "alice", name: "Alice Travel",   avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
       ],
       blocks: [],
-      profile_privacy_settings: [],
+      // ALICE opted in so the "travel" query (matching only her real name) surfaces her.
+      profile_privacy_settings: [{ user_id: ALICE, show_real_name: true }],
       user_follows: [],
     });
 
@@ -413,7 +429,8 @@ describe("GET /api/discovery/search — normalized result shape (travelers)", ()
         { id: ALICE, handle: "alice_t", name: "Alice Traveler", avatar_url: "https://cdn/a.jpg", is_private: false, home_city: "Tokyo", home_country: "Japan", account_status: "active" },
       ],
       blocks: [],
-      profile_privacy_settings: [],
+      // ALICE opted in to real-name visibility so title/initials reflect her real name.
+      profile_privacy_settings: [{ user_id: ALICE, show_real_name: true }],
       user_follows: [{ follower_id: ME, following_id: ALICE }],
     });
   });
@@ -495,7 +512,7 @@ describe("GET /api/discovery/search — normalized result shape (events)", () =>
         {
           id: EVT_ID, title: "Paris Jazz Festival",
           description: "Annual jazz in Paris",
-          host_id: ALICE, cover_image_url: "https://cdn/evt.jpg",
+          host_id: ALICE, cover_url: "https://cdn/evt.jpg",
           city: "Paris", country: "France",
           starts_at: "2026-08-10T18:00:00Z",
           visibility: "public", status: "published",
@@ -529,7 +546,7 @@ describe("GET /api/discovery/search — normalized result shape (events)", () =>
         { id: ALICE, handle: "alice", name: "Alice", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
       ],
       blocks: [],
-      events: [{ id: EVT_ID, title: "Paris Jazz Festival", description: "Jazz", host_id: ALICE, city: "Paris", country: "France", starts_at: null, visibility: "public", status: "published", created_at: "2026-07-01T00:00:00Z" }],
+      events: [{ id: EVT_ID, title: "Paris Jazz Festival", description: "Jazz", host_id: ALICE, city: "Paris", country: "France", starts_at: "2026-08-10T18:00:00Z", visibility: "public", status: "published", created_at: "2026-07-01T00:00:00Z" }],
       event_rsvps: [],
       profile_privacy_settings: [],
     });
@@ -671,7 +688,7 @@ describe("GET /api/discovery/search — cursor pagination", () => {
       id: `tt00000${i}-0000-4000-a000-000000000000`,
       title: `Tokyo Trip ${i}`, destination_city: "Tokyo",
       destination_country: "Japan", owner_id: ALICE,
-      cover_image_url: null, start_date: "2026-09-01",
+      cover_url: null, start_date: "2026-09-01",
       status: "planning", visibility: "public",
       created_at: "2026-01-01T00:00:00Z",
     }));
@@ -696,7 +713,7 @@ describe("GET /api/discovery/search — cursor pagination", () => {
       id: `tt10000${i}-0000-4000-a000-000000000000`,
       title: `Tokyo Trip ${i}`, destination_city: "Tokyo",
       destination_country: "Japan", owner_id: ALICE,
-      cover_image_url: null, start_date: "2026-09-01",
+      cover_url: null, start_date: "2026-09-01",
       status: "planning", visibility: "public",
       created_at: "2026-01-01T00:00:00Z",
     }));
@@ -720,7 +737,7 @@ describe("GET /api/discovery/search — cursor pagination", () => {
       id: "tt-susp-0000-4000-a000-000000000099",
       title: "Tokyo Adventure", destination_city: "Tokyo",
       destination_country: "Japan", owner_id: SUSPENDED,
-      cover_image_url: null, start_date: "2026-09-01",
+      cover_url: null, start_date: "2026-09-01",
       status: "planning", visibility: "public",
       created_at: "2026-01-01T00:00:00Z",
     }];
@@ -773,12 +790,13 @@ describe("GET /api/discovery/search — type=all fan-out", () => {
       ],
       blocks: [],
       events: [
-        { id: "evt-1", title: "Travel Expo", description: "Expo", host_id: ALICE, city: null, country: null, starts_at: null, visibility: "public", status: "published", created_at: "2026-01-01T00:00:00Z" },
+        { id: "evt-1", title: "Travel Expo", description: "Expo", host_id: ALICE, city: null, country: null, starts_at: "2026-08-10T18:00:00Z", visibility: "public", status: "published", created_at: "2026-01-01T00:00:00Z" },
       ],
       hashtags: [
         { id: "ht-1", slug: "travellife", name: "travellife", usage_count: 100, is_blocked: false, created_at: "2026-01-01T00:00:00Z" },
       ],
-      profile_privacy_settings: [],
+      // ALICE opted in so the "travel" query matches her real name in the travelers bucket.
+      profile_privacy_settings: [{ user_id: ALICE, show_real_name: true }],
       user_follows: [],
       event_rsvps: [],
     });
@@ -825,7 +843,7 @@ describe("GET /api/discovery/search — type=all fan-out", () => {
   it("interleaves round-robin so no single type dominates the top results", async () => {
     const manyEvents = Array.from({ length: 8 }, (_, i) => ({
       id: `evt-${i}`, title: `Travel Event ${i}`, description: "desc",
-      host_id: ALICE, city: null, country: null, starts_at: null,
+      host_id: ALICE, city: null, country: null, starts_at: "2026-08-10T18:00:00Z",
       visibility: "public", status: "published",
       created_at: "2026-01-01T00:00:00Z",
     }));
@@ -835,7 +853,8 @@ describe("GET /api/discovery/search — type=all fan-out", () => {
       ],
       blocks: [],
       events: manyEvents,
-      profile_privacy_settings: [],
+      // ALICE opted in so the "travel" query surfaces her in the travelers bucket.
+      profile_privacy_settings: [{ user_id: ALICE, show_real_name: true }],
       user_follows: [],
       event_rsvps: [],
     });
@@ -891,7 +910,9 @@ describe("GET /api/discovery/search — age-restricted content exclusion", () =>
         },
       ],
       blocks: [],
-      profile_privacy_settings: [],
+      // ALICE opted in so the "travel" query matches her real name; DAVE is
+      // excluded by age-restriction regardless of name visibility.
+      profile_privacy_settings: [{ user_id: ALICE, show_real_name: true }],
       user_follows: [],
       user_privacy_settings: [
         { user_id: AGE_DAVE, age_restriction_enabled: true },
@@ -924,12 +945,12 @@ describe("GET /api/discovery/search — age-restricted content exclusion", () =>
       events: [
         {
           id: EVT_AGE, title: "Night Travel Fest", host_id: AGE_DAVE,
-          city: "Manila", country: null, starts_at: null, cover_image_url: null,
+          city: "Manila", country: null, starts_at: "2026-09-01T18:00:00Z", cover_url: null,
           description: null, visibility: "public", status: "upcoming", created_at: "2026-09-01T00:00:00Z",
         },
         {
           id: "ee000000-0000-4000-a000-000000000022", title: "Day Travel Fair", host_id: ALICE,
-          city: "Cebu", country: null, starts_at: null, cover_image_url: null,
+          city: "Cebu", country: null, starts_at: "2026-09-02T18:00:00Z", cover_url: null,
           description: null, visibility: "public", status: "upcoming", created_at: "2026-09-02T00:00:00Z",
         },
       ],

@@ -35,4 +35,6 @@
 - [Discovery perf: two-level cache + SWR](discovery-perf-cache.md) — L1 (in-memory Map) + L2 (Postgres discovery_cache table) with stale-while-revalidate; baseline cold-miss 5–20s, L2 hit ~15–100ms. Client: AsyncStorage counts cache-first + InteractionManager for buddy strip and MapTiler geocode.
 - [Passport stamps single pipeline](passport-stamps-single-pipeline.md) — owner passport fetches stamps once via /api/stamps/me; legacy shapes derived via toLegacyStamp, never a second endpoint.
 - [MapLibre web splits](maplibre-web-splits.md) — any route-reachable maplibre import needs a .web.tsx sibling or the whole web app crashes at startup; full typecheck includes the import-extension guard, bare tsc doesn't.
+- [Fake-client builder drift](fake-client-builder-drift.md) — new route builder calls (maybeSingle/gte/order) silently break hand-written test fakes; grep fakes when touching shared query paths.
+- Background `&`/nohup processes die when a ShellExec call ends — run server + client probes inside ONE grouped command `{ ...; }`.
 - [RNTL React 19 renderer budget](rntl-react19-renderer-budget.md) — per-file press budget, one press-commit, post-press-flush poison, prop-capture escape hatch; structure component tests around it.

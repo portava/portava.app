@@ -96,6 +96,8 @@ function req(
 interface FakeState {
   /** Whether to simulate a successful stamp insert (true = new award) */
   awardSucceeds: boolean;
+  /** Whether the stamp_system_v2_enabled feature flag is enabled (default true) */
+  featureEnabled?: boolean;
   /** Capture all inserts by table name */
   inserted: Record<string, any[]>;
 }
@@ -179,8 +181,14 @@ function makeFakeClient(state: FakeState, tokenMap: Record<string, string>) {
         };
       }
 
-      if (table === "user_stamps")   { return { data: null, error: null }; }
-      if (table === "feature_flags") { return { data: null, error: null }; }
+      if (table === "user_stamps")   {
+        // When the award already exists (awardSucceeds:false), the idempotency
+        // path re-reads user_stamps to confirm the passport row is present.
+        // Return an existing stamp so the engine reports already_awarded rather
+        // than trying to heal a "missing" row and re-awarding.
+        return { data: state.awardSucceeds ? null : { id: STAMP_ID }, error: null };
+      }
+      if (table === "feature_flags") { return { data: { enabled: state.featureEnabled !== false }, error: null }; }
 
       if (table === "profiles") {
         const id = getEq("id");
@@ -487,6 +495,47 @@ describe("POST /api/admin/stamps/award — already awarded skips notification", 
   });
 
   it("does NOT insert a notification row for duplicate award", async () => {
+    await new Promise((r) => setTimeout(r, 200));
+    const rows = state.inserted["notifications"] ?? [];
+    assert.equal(rows.length, 0, `unexpected notification rows: ${rows.length}`);
+  });
+});
+
+// ── Suite 6: Feature flag disabled — award gated with 503, no notification ────
+
+describe("POST /api/stamps/award — feature flag disabled fails closed", () => {
+  let server: http.Server;
+  let state: FakeState;
+
+  before(async () => {
+    process.env.INTERNAL_API_SECRET = INT_SECRET;
+    state = { awardSucceeds: true, featureEnabled: false, inserted: {} };
+    server = await makeServer(state, "stamps");
+  });
+
+  after(() => {
+    server.close();
+    delete process.env.INTERNAL_API_SECRET;
+  });
+
+  it("responds 503 feature_not_available when the flag is disabled", async () => {
+    const res = await req(
+      server,
+      "POST",
+      "/api/stamps/award",
+      {
+        userId:         USER_ID,
+        definitionSlug: "first-trip",
+        sourceType:     "system",
+        city:           "Tokyo",
+      },
+      { "x-internal-secret": INT_SECRET },
+    );
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+    assert.equal(res.body.error, "feature_not_available");
+  });
+
+  it("does NOT insert a notification row when gated", async () => {
     await new Promise((r) => setTimeout(r, 200));
     const rows = state.inserted["notifications"] ?? [];
     assert.equal(rows.length, 0, `unexpected notification rows: ${rows.length}`);

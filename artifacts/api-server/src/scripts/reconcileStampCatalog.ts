@@ -7,27 +7,24 @@
  *
  * Idempotent — safe to re-run.
  *
+ * Auditability: every execution writes exactly ONE run-summary row to
+ * `stamp_reconciliation_log` (source_table = "reconciliation_run",
+ * needs_admin_review = false, counts JSON in review_reason) — including
+ * zero-work runs, and best-effort on fatal errors — so "did it run" is
+ * answerable from the table. Admin-review queries filter
+ * needs_admin_review = true and are unaffected.
+ *
  * Usage:
  *   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... npx tsx src/scripts/reconcileStampCatalog.ts
  */
 
+import { randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import { canonicalLocationKeyFromStrings } from "../lib/stamps/locationKey.js";
 import { resolveOrEnqueueForDefinition } from "../lib/stamps/StampCatalogService.js";
 import { resolveCountry } from "../lib/stamps/countryLookup.js";
 import { STYLE_VERSION } from "../lib/stamps/artDirection.js";
-
-const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.EXPO_PUBLIC_SUPABASE_URL ?? "";
-const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-
-if (!SUPABASE_URL || !SERVICE_KEY) {
-  console.error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required");
-  process.exit(1);
-}
-
-const sc = createClient(SUPABASE_URL, SERVICE_KEY, {
-  auth: { persistSession: false },
-});
 
 interface LocationCombo {
   stamp_type:            string;
@@ -39,16 +36,74 @@ interface LocationCombo {
   userStampDefIds:       string[];
 }
 
-interface ReconcileStats {
+export interface ReconcileStats {
   resolved:  number;
   flagged:   number;
   skipped:   number;
   enqueued:  number;
+  combos:    number;
 }
 
-async function main() {
+/** Marker value used in stamp_reconciliation_log.source_table for run summaries. */
+export const RUN_SUMMARY_SOURCE_TABLE = "reconciliation_run";
+
+/**
+ * Writes the single run-summary row for a reconciliation execution.
+ * Best-effort: failures are logged but never thrown.
+ */
+async function writeRunSummary(
+  sc: any,
+  runId: string,
+  stats: ReconcileStats,
+  fatalError: string | null,
+): Promise<void> {
+  try {
+    const { error } = await sc.from("stamp_reconciliation_log").insert({
+      source_table:       RUN_SUMMARY_SOURCE_TABLE,
+      source_id:          runId,
+      raw_country:        null,
+      raw_city:           null,
+      stamp_type:         null,
+      canonical_key:      null,
+      needs_admin_review: false,
+      review_reason:      JSON.stringify({
+        resolved: stats.resolved,
+        flagged:  stats.flagged,
+        skipped:  stats.skipped,
+        enqueued: stats.enqueued,
+        combos:   stats.combos,
+        ...(fatalError ? { fatal_error: fatalError } : {}),
+      }),
+    });
+    if (error) console.warn("[reconcile] Failed to write run summary:", error.message);
+  } catch (e: any) {
+    console.warn("[reconcile] Failed to write run summary:", e?.message);
+  }
+}
+
+/**
+ * Runs the full reconciliation against the given supabase client.
+ * Always attempts to write exactly one run-summary row: on completion for
+ * successful runs (including zero-work runs), and best-effort before
+ * rethrowing on fatal errors.
+ */
+export async function runReconciliation(sc: any): Promise<ReconcileStats> {
+  const runId = randomUUID();
+  const stats: ReconcileStats = { resolved: 0, flagged: 0, skipped: 0, enqueued: 0, combos: 0 };
+
+  try {
+    await reconcile(sc, stats);
+  } catch (e: any) {
+    await writeRunSummary(sc, runId, stats, e?.message ?? String(e));
+    throw e;
+  }
+
+  await writeRunSummary(sc, runId, stats, null);
+  return stats;
+}
+
+async function reconcile(sc: any, stats: ReconcileStats): Promise<void> {
   console.log("[reconcile] Starting stamp catalog reconciliation…");
-  const stats: ReconcileStats = { resolved: 0, flagged: 0, skipped: 0, enqueued: 0 };
 
   // Collect distinct combos from both tables
   const combos = new Map<string, LocationCombo>();
@@ -62,7 +117,7 @@ async function main() {
     .select("stamp_definition_id, country, city, stamp_definitions!stamp_definition_id(stamp_type)")
     .or("country.not.is.null,city.not.is.null");
 
-  if (usErr) { console.error("[reconcile] Failed to read user_stamps:", usErr.message); process.exit(1); }
+  if (usErr) throw new Error(`Failed to read user_stamps: ${usErr.message}`);
 
   for (const row of (userStamps ?? []) as any[]) {
     const stampType: string = (row.stamp_definitions as any)?.stamp_type ?? "city";
@@ -107,6 +162,7 @@ async function main() {
   }
 
   console.log(`[reconcile] Found ${combos.size} distinct location combinations`);
+  stats.combos = combos.size;
 
   const newCatalogIds: string[] = [];
 
@@ -378,7 +434,29 @@ async function main() {
   console.log(`  Enqueued:  ${stats.enqueued}`);
 }
 
-main().catch((e) => {
-  console.error("[reconcile] Fatal error:", e);
-  process.exit(1);
-});
+async function main() {
+  const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.EXPO_PUBLIC_SUPABASE_URL ?? "";
+  const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+  if (!SUPABASE_URL || !SERVICE_KEY) {
+    console.error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required");
+    process.exit(1);
+  }
+
+  const sc = createClient(SUPABASE_URL, SERVICE_KEY, {
+    auth: { persistSession: false },
+  });
+
+  await runReconciliation(sc);
+}
+
+// Only run when executed directly as a script — never on import (tests).
+const isDirectRun =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isDirectRun) {
+  main().catch((e) => {
+    console.error("[reconcile] Fatal error:", e);
+    process.exit(1);
+  });
+}

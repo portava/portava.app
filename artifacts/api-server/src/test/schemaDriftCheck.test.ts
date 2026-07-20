@@ -168,4 +168,24 @@ describe("runSchemaDriftCheck", () => {
       assert.match(p.table, /^[a-z_]+$/);
     }
   });
+
+  it("covers all five buddy-wizard columns on rent_buddy_profiles", () => {
+    // Regression guard for the availability_blocks incident: the wizard writes
+    // these five columns via one upsert and BUDDY_PUBLIC_COLUMNS selects them,
+    // so a single missing live column fails every wizard submit AND all buddy
+    // browse/search/profile reads. The startup drift check must keep probing
+    // every one of them.
+    const probed = new Set(
+      CRITICAL_COLUMNS.filter((p) => p.table === "rent_buddy_profiles").map((p) => p.column),
+    );
+    for (const col of [
+      "display_name",
+      "bio",
+      "hourly_rate_usd",
+      "availability_blocks",
+      "preferred_meetup_zones",
+    ]) {
+      assert.ok(probed.has(col), `rent_buddy_profiles.${col} must be in CRITICAL_COLUMNS`);
+    }
+  });
 });

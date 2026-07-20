@@ -26,9 +26,9 @@ type Row = Record<string, any>;
 function makeFakeClient(rows: Row[]) {
   function chain(tableRows: Row[]) {
     const filters: Array<(r: Row) => boolean> = [];
-    let _orderCol: string | null = null;
-    let _orderAsc = true;
-    let _orderNullsFirst = true;
+    // Supabase applies multiple .order() calls as a stable multi-key sort:
+    // the first .order() is the primary key, each subsequent one is a tiebreaker.
+    const orderKeys: Array<{ col: string; asc: boolean; nullsFirst: boolean }> = [];
     let _limitN: number | null = null;
 
     const obj: any = {
@@ -44,35 +44,47 @@ function makeFakeClient(rows: Row[]) {
       },
       or()        { return obj; },
       order(col: string, opts?: { ascending?: boolean; nullsFirst?: boolean }) {
-        _orderCol = col;
-        _orderAsc = opts?.ascending !== false;
-        _orderNullsFirst = opts?.nullsFirst !== false;
+        orderKeys.push({
+          col,
+          asc: opts?.ascending !== false,
+          nullsFirst: opts?.nullsFirst !== false,
+        });
         return obj;
       },
       limit(n: number) { _limitN = n; return obj; },
       then(onF: any, onR: any) { return resolve().then(onF, onR); },
     };
 
+    function compareOne(a: Row, b: Row, key: { col: string; asc: boolean; nullsFirst: boolean }): number {
+      const av = a[key.col] ?? null;
+      const bv = b[key.col] ?? null;
+
+      if (av === null && bv === null) return 0;
+      if (av === null) return key.nullsFirst ? -1 : 1;
+      if (bv === null) return key.nullsFirst ? 1 : -1;
+
+      if (av < bv) return key.asc ? -1 : 1;
+      if (av > bv) return key.asc ? 1 : -1;
+      return 0;
+    }
+
     async function resolve(): Promise<{ data: Row[]; error: null }> {
       let result = tableRows.filter((r) => filters.every((f) => f(r)));
 
-      if (_orderCol) {
-        const col = _orderCol;
-        const asc = _orderAsc;
-        const nullsFirst = _orderNullsFirst;
-
-        result = [...result].sort((a, b) => {
-          const av = a[col] ?? null;
-          const bv = b[col] ?? null;
-
-          if (av === null && bv === null) return 0;
-          if (av === null) return nullsFirst ? -1 : 1;
-          if (bv === null) return nullsFirst ? 1 : -1;
-
-          if (av < bv) return asc ? -1 : 1;
-          if (av > bv) return asc ? 1 : -1;
-          return 0;
-        });
+      if (orderKeys.length > 0) {
+        // Stable multi-key sort: apply keys in order, using each subsequent key
+        // only as a tiebreaker for the previous ones.
+        result = [...result]
+          .map((row, idx) => ({ row, idx }))
+          .sort((a, b) => {
+            for (const key of orderKeys) {
+              const cmp = compareOne(a.row, b.row, key);
+              if (cmp !== 0) return cmp;
+            }
+            // Stable: preserve original relative order when fully tied.
+            return a.idx - b.idx;
+          })
+          .map((x) => x.row);
       }
 
       if (_limitN !== null) result = result.slice(0, _limitN);

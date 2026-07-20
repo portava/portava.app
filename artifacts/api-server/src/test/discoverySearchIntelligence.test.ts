@@ -425,6 +425,7 @@ function makeFakeClient(state: FakeState) {
           limit() { return this; },
           range() { return this; },
           in() { return this; },
+          maybeSingle() { return Promise.resolve({ data: null, error: null }); },
           upsert() { return Promise.resolve({ error: null }); },
           delete() { return this; },
           then(onF: any) { return Promise.resolve({ data: [], error: null }).then(onF); },
