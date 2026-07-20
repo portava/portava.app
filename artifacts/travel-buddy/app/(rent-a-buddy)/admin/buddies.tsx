@@ -307,10 +307,13 @@ export default function AdminBuddiesScreen() {
 
                   <Pressable style={detail.profileLink}
                     onPress={() => {
+                      // /profile/[handle] resolves by @handle, not user id — a raw
+                      // UUID 404s. The buddy's public listing page takes the buddy id.
+                      const buddyId = selected.id;
                       setSelected(null);
-                      router.push(`/profile/${selected.userId}` as any);
+                      router.push(`/(rent-a-buddy)/buddy/${buddyId}` as any);
                     }}>
-                    <Text style={detail.profileLinkText}>View Traveler Profile →</Text>
+                    <Text style={detail.profileLinkText}>View Buddy Listing →</Text>
                   </Pressable>
 
                   <View style={detail.actions}>

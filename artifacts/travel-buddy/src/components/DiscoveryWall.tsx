@@ -375,7 +375,7 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
 export function HiddenGemsSection({ gems, onAddToRoute }: { gems: DiscoveryItem[]; onAddToRoute?: (draft: RouteStopDraft) => void }) {
   return (
     <View>
-      <TravelSectionHeader title="Hidden Gems (By Travelers)" onAction={() => router.push('/saved')} />
+      <TravelSectionHeader title="Hidden Gems (By Travelers)" onAction={() => router.push('/gems' as any)} />
       {gems.length === 0 ? (
         <TravelEmptyState title="No hidden gems yet" sub="Be the first to share a spot travelers should know about." />
       ) : (
@@ -496,7 +496,7 @@ export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; o
 export function TravelerPicksSection({ picks, onAddToRoute }: { picks: TravelerPick[]; onAddToRoute?: (draft: RouteStopDraft) => void }) {
   return (
     <View>
-      <TravelSectionHeader title="Traveler Picks" onAction={() => router.push('/saved')} />
+      <TravelSectionHeader title="Traveler Picks" />
       {picks.length === 0 ? (
         <TravelEmptyState title="No traveler picks yet" sub="Recommendations from travelers will show up here." />
       ) : (
