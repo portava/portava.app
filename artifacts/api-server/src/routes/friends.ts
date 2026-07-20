@@ -61,7 +61,12 @@ router.post("/users/:userId/friend-request", async (req, res) => {
   // Permission engine — fail-closed block + restriction gate before any DB write
   try {
     const perms = await resolveInteractionPermissions(sc, user.id, recipientId);
-    if (!perms.canAddFriend) {
+    // Mutual-pending case: the target already sent us a pending request.
+    // canAddFriend is false then (hasIncomingFriendReq), but sending a request
+    // back should auto-accept — canAcceptFriendRequest covers exactly that case
+    // (incoming pending + viewer not suspended; blocked users hit the ALL_FALSE
+    // early return so both flags are false).
+    if (!perms.canAddFriend && !perms.canAcceptFriendRequest) {
       const isBlocked = perms.reasonCodes.includes("blocked");
       sendError(res, isBlocked ? "forbidden" : "invalid_payload",
         isBlocked ? "Cannot send a friend request to this user" : "Friend request not allowed");

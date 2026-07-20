@@ -272,8 +272,36 @@ describe("friends.ts friend_request update failure surfaces db_error", () => {
     } finally { await srv.close(); }
   });
 
-  // NOTE: the auto-accept branch of POST /users/:userId/friend-request cannot be
-  // reached through HTTP — the permission engine rejects canAddFriend whenever an
-  // incoming pending request exists (hasIncomingFriendReq), returning 400 before
-  // the update runs. Its update error is still checked in code; no HTTP test possible.
+  // The auto-accept branch of POST /users/:userId/friend-request is reachable now:
+  // the route lets the mutual-pending case through via canAcceptFriendRequest.
+
+  it("send: mutual-pending auto-accepts and creates a friendship", async () => {
+    const state = baseState();
+    // Bob already sent Alice a pending request; Alice now sends one to Bob.
+    state.friend_requests.push(pendingRequest());
+    const srv = await startServer(state);
+    try {
+      const r = await post(srv.port, `/api/users/${BOB_ID}/friend-request`, "alice-tok");
+      assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body?.status, "friends");
+      assert.equal(r.body?.autoAccepted, true);
+      assert.equal(r.body?.requestId, FR_ID);
+      assert.equal(state.friend_requests[0].status, "accepted");
+      assert.equal(state.user_friendships.length, 1, "friendship row created on auto-accept");
+    } finally { await srv.close(); }
+  });
+
+  it("send: mutual-pending auto-accept returns db_error when the update fails", async () => {
+    const state = baseState();
+    state.friend_requests.push(pendingRequest());
+    state.failUpdateTables.add("friend_requests");
+    const srv = await startServer(state);
+    try {
+      const r = await post(srv.port, `/api/users/${BOB_ID}/friend-request`, "alice-tok");
+      assert.equal(r.status, 500, `expected 500, got ${r.status}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body?.error, "db_error");
+      assert.equal(state.friend_requests[0].status, "pending", "row unchanged on failed auto-accept");
+      assert.equal(state.user_friendships.length, 0, "no friendship row on failed auto-accept");
+    } finally { await srv.close(); }
+  });
 });
