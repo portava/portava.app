@@ -54,16 +54,16 @@ export let _publishCallCount = 0;
 // ── Push notification helpers ─────────────────────────────────────────────────
 
 async function fetchPushToken(db: any, userId: string): Promise<string | null> {
-  try {
-    const { data } = await db
-      .from("profiles")
-      .select("expo_push_token")
-      .eq("id", userId)
-      .maybeSingle();
-    return (data?.expo_push_token as string | null) ?? null;
-  } catch {
+  const { data, error } = await db
+    .from("profiles")
+    .select("expo_push_token")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) {
+    logger.warn({ err: error, userId }, "delayedPostPublisher: push token lookup failed");
     return null;
   }
+  return (data?.expo_push_token as string | null) ?? null;
 }
 
 function buildNotificationBody(post: any): string {
@@ -116,14 +116,17 @@ async function publishPost(db: any, post: any): Promise<boolean> {
   }
 
   // Append published event (non-fatal)
-  try {
-    await db.from("delayed_post_location_events").insert({
+  {
+    const { error: evtError } = await db.from("delayed_post_location_events").insert({
       post_id: post.id,
       user_id: post.author_id,
       event_type: "published",
       metadata: { trigger: post.post_status, worker: true },
     });
-  } catch { /* non-fatal */ }
+    if (evtError) {
+      logger.warn({ err: evtError, postId: post.id }, "delayedPostPublisher: published event write failed (non-fatal)");
+    }
+  }
 
   logger.info({ postId: post.id, mode: post.location_privacy_mode }, "delayedPostPublisher: post published");
   return true;
@@ -134,18 +137,19 @@ async function publishPost(db: any, post: any): Promise<boolean> {
  * If so, the post is held until Safe Return completes or expires.
  */
 async function hasActiveSafeReturn(db: any, userId: string): Promise<boolean> {
-  try {
-    const { data } = await db
-      .from("safe_return_sessions")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("status", "active")
-      .limit(1)
-      .maybeSingle();
-    return !!data;
-  } catch {
-    return false; // fail open — don't hold post forever on a DB error
+  const { data, error } = await db
+    .from("safe_return_sessions")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    // fail open — don't hold post forever on a DB error
+    logger.warn({ err: error, userId }, "delayedPostPublisher: Safe Return check failed — failing open");
+    return false;
   }
+  return !!data;
 }
 
 /**
@@ -193,13 +197,16 @@ export async function runDelayedPostPublisher(opts?: { client?: any }): Promise<
         logger.info({ postId: post.id }, "delayedPostPublisher: holding — Safe Return active");
         skipped++;
 
-        // Log worker_skipped event so operators can see holds
-        await db.from("delayed_post_location_events").insert({
+        // Log worker_skipped event so operators can see holds (non-fatal)
+        const { error: skipEvtError } = await db.from("delayed_post_location_events").insert({
           post_id: post.id,
           user_id: post.author_id,
           event_type: "worker_skipped",
           metadata: { reason: "safe_return_active" },
-        }).catch(() => {});
+        });
+        if (skipEvtError) {
+          logger.warn({ err: skipEvtError, postId: post.id }, "delayedPostPublisher: worker_skipped event write failed (non-fatal)");
+        }
 
         continue;
       }
@@ -234,15 +241,14 @@ export async function runDelayedPostPublisher(opts?: { client?: any }): Promise<
 }
 
 async function persistJobHealth(db: any, runAt: string): Promise<void> {
-  try {
-    await db
-      .from("job_health")
-      .upsert(
-        { job: "delayed_post_publisher", last_run_at: runAt, updated_at: runAt },
-        { onConflict: "job" },
-      );
-  } catch (err) {
-    logger.warn({ err }, "delayedPostPublisher: could not persist job health");
+  const { error } = await db
+    .from("job_health")
+    .upsert(
+      { job: "delayed_post_publisher", last_run_at: runAt, updated_at: runAt },
+      { onConflict: "job" },
+    );
+  if (error) {
+    logger.warn({ err: error }, "delayedPostPublisher: could not persist job health");
   }
 }
 

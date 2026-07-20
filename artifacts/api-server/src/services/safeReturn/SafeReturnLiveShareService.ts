@@ -92,15 +92,16 @@ export async function startShare(
 
     if (error || !data) { logger.warn({ err: error }, "startShare: insert failed"); return null; }
 
-    // Write event on the session
-    try {
-      await db.from("safe_return_events").insert({
+    // Write event on the session (non-fatal)
+    {
+      const { error: evtError } = await db.from("safe_return_events").insert({
         session_id: sessionId,
         user_id: userId,
         event_type: "live_share_started",
         metadata: { shareId: (data as any).id, recipientUserId, durationMinutes },
       });
-    } catch { /* non-fatal */ }
+      if (evtError) logger.warn({ err: evtError, sessionId }, "live_share_started event write failed (non-fatal)");
+    }
 
     return mapShare(data);
   } catch (err) {
@@ -130,14 +131,15 @@ export async function stopShare(
 
     if (error || !data) { logger.warn({ err: error }, "stopShare: update failed"); return null; }
 
-    try {
-      await db.from("safe_return_events").insert({
+    {
+      const { error: evtError } = await db.from("safe_return_events").insert({
         session_id: (data as any).session_id,
         user_id: userId,
         event_type: "live_share_stopped",
         metadata: { shareId },
       });
-    } catch { /* non-fatal */ }
+      if (evtError) logger.warn({ err: evtError, shareId }, "live_share_stopped event write failed (non-fatal)");
+    }
 
     return mapShare(data);
   } catch (err) {
@@ -166,14 +168,15 @@ export async function expireShare(
 
     if (error || !data) return null;
 
-    try {
-      await db.from("safe_return_events").insert({
+    {
+      const { error: evtError } = await db.from("safe_return_events").insert({
         session_id: (data as any).session_id,
         user_id: (data as any).user_id,
         event_type: "live_share_expired",
         metadata: { shareId },
       });
-    } catch { /* non-fatal */ }
+      if (evtError) logger.warn({ err: evtError, shareId }, "live_share_expired event write failed (non-fatal)");
+    }
 
     return mapShare(data);
   } catch (err) {

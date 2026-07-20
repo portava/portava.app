@@ -5,6 +5,9 @@
  * (active → completed / cancelled / expired) and emits layover_events rows.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "LayoverSessionService" });
 
 export interface LayoverSessionInput {
   userId: string;
@@ -95,16 +98,14 @@ async function emitEvent(
   eventType: string,
   metadata: Record<string, unknown> = {},
 ): Promise<void> {
-  try {
-    await db.from("layover_events").insert({
-      session_id: sessionId,
-      user_id:    userId,
-      event_type: eventType,
-      metadata,
-    });
-  } catch {
-    // non-fatal
-  }
+  // non-fatal
+  const { error } = await db.from("layover_events").insert({
+    session_id: sessionId,
+    user_id:    userId,
+    event_type: eventType,
+    metadata,
+  });
+  if (error) logger.warn({ err: error, sessionId, eventType }, "layover event write failed (non-fatal)");
 }
 
 export async function createSession(

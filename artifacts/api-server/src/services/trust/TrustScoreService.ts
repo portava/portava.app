@@ -11,6 +11,9 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TrustCategory } from "./TrustEventService.js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "TrustScoreService" });
 
 export type PublicTrustLevel =
   | "new_traveler"
@@ -63,8 +66,12 @@ const DEFAULT_SETTINGS: Settings = {
 };
 
 async function loadSettings(db: SupabaseClient): Promise<Settings> {
-  try {
-    const { data } = await db.from("trust_settings").select("*").eq("id", 1).maybeSingle();
+  {
+    const { data, error } = await db.from("trust_settings").select("*").eq("id", 1).maybeSingle();
+    if (error) {
+      logger.warn({ err: error }, "loadSettings failed — using defaults");
+      return DEFAULT_SETTINGS;
+    }
     if (!data) return DEFAULT_SETTINGS;
     return {
       weight_plan_attendance:  Number((data as any).weight_plan_attendance)  || 0.180,
@@ -83,8 +90,6 @@ async function loadSettings(db: SupabaseClient): Promise<Settings> {
       level_highly_trusted:    Number((data as any).level_highly_trusted)    || 78,
       level_city_trusted:      Number((data as any).level_city_trusted)      || 90,
     };
-  } catch {
-    return DEFAULT_SETTINGS;
   }
 }
 
@@ -97,17 +102,17 @@ function decayWeight(createdAt: string, halfLifeDays: number): number {
 /** Load applied+confirmed events for a user from the last year */
 async function loadEvents(db: SupabaseClient, userId: string): Promise<any[]> {
   const since = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
-  try {
-    const { data } = await db
-      .from("trust_events")
-      .select("category, delta, severity, status, created_at")
-      .eq("user_id", userId)
-      .in("status", ["applied", "confirmed"])
-      .gt("created_at", since);
-    return (data as any[]) ?? [];
-  } catch {
+  const { data, error } = await db
+    .from("trust_events")
+    .select("category, delta, severity, status, created_at")
+    .eq("user_id", userId)
+    .in("status", ["applied", "confirmed"])
+    .gt("created_at", since);
+  if (error) {
+    logger.warn({ err: error, userId }, "loadEvents failed — treating as no events");
     return [];
   }
+  return (data as any[]) ?? [];
 }
 
 /** Load active caps for a user */
@@ -115,23 +120,23 @@ async function loadCaps(
   db: SupabaseClient,
   userId: string,
 ): Promise<Record<string, number>> {
-  try {
-    const now = new Date().toISOString();
-    const { data } = await db
-      .from("trust_caps")
-      .select("category, ceiling_score")
-      .eq("user_id", userId)
-      .is("lifted_at", null)
-      .or(`expires_at.is.null,expires_at.gt.${now}`);
-    const caps: Record<string, number> = {};
-    for (const row of (data as any[]) ?? []) {
-      const cur = caps[row.category];
-      caps[row.category] = cur !== undefined ? Math.min(cur, row.ceiling_score) : row.ceiling_score;
-    }
-    return caps;
-  } catch {
+  const now = new Date().toISOString();
+  const { data, error } = await db
+    .from("trust_caps")
+    .select("category, ceiling_score")
+    .eq("user_id", userId)
+    .is("lifted_at", null)
+    .or(`expires_at.is.null,expires_at.gt.${now}`);
+  if (error) {
+    logger.warn({ err: error, userId }, "loadCaps failed — treating as no caps");
     return {};
   }
+  const caps: Record<string, number> = {};
+  for (const row of (data as any[]) ?? []) {
+    const cur = caps[row.category];
+    caps[row.category] = cur !== undefined ? Math.min(cur, row.ceiling_score) : row.ceiling_score;
+  }
+  return caps;
 }
 
 /** Compute score for one category from events, applying decay */
@@ -212,9 +217,9 @@ export async function recalculateTrustScore(
 
   const public_level = scoreToLevel(overall, settings);
 
-  // Persist
-  try {
-    await db.from("trust_profiles").upsert({
+  // Persist (non-fatal — return computed result even if persist fails)
+  {
+    const { error: upsertError } = await db.from("trust_profiles").upsert({
       user_id:               userId,
       overall_score:         overall,
       plan_attendance:       categories.plan_attendance,
@@ -230,8 +235,7 @@ export async function recalculateTrustScore(
       last_recalculated_at:  new Date().toISOString(),
       updated_at:            new Date().toISOString(),
     }, { onConflict: "user_id" });
-  } catch {
-    // Non-fatal — return computed result even if persist fails
+    if (upsertError) logger.warn({ err: upsertError, userId }, "trust_profiles persist failed (non-fatal)");
   }
 
   return {

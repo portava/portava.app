@@ -1,6 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
+import { logger as rootLogger } from "../lib/logger";
 import { enrichSpans } from "../lib/enrichSpans";
+
+const postsLogger = rootLogger.child({ route: "posts" });
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import {
@@ -641,16 +644,17 @@ async function logDelayedEvent(
   eventType: string,
   extra?: { lat?: number; lng?: number; metadata?: Record<string, unknown> },
 ): Promise<void> {
-  try {
-    await db.from("delayed_post_location_events").insert({
-      post_id: postId,
-      user_id: userId,
-      event_type: eventType,
-      lat: extra?.lat ?? null,
-      lng: extra?.lng ?? null,
-      metadata: extra?.metadata ?? null,
-    });
-  } catch { /* non-fatal */ }
+  const { error } = await db.from("delayed_post_location_events").insert({
+    post_id: postId,
+    user_id: userId,
+    event_type: eventType,
+    lat: extra?.lat ?? null,
+    lng: extra?.lng ?? null,
+    metadata: extra?.metadata ?? null,
+  });
+  if (error) {
+    postsLogger.warn({ err: error, postId, eventType }, "delayed post event write failed (non-fatal)");
+  }
 }
 
 /**

@@ -9,7 +9,10 @@
  */
 import { Router } from "express";
 import { z } from "zod";
+import { logger as rootLogger } from "../lib/logger.js";
 import { requireUser, sendError } from "../lib/http.js";
+
+const fbLogger = rootLogger.child({ route: "telegraphFeedback" });
 import { applyEvent, defaultExplicit, defaultInferred, type FeedbackSignal } from "../lib/preferenceLearning.js";
 
 const router = Router();
@@ -36,7 +39,11 @@ async function getOrCreateInferred(client: any, userId: string) {
   }
   // Create blank profile with full defaults so scoreRecommendation is always safe.
   const blank = { user_id: userId, explicit_preferences_json: JSON.stringify(defaultExplicit()), inferred_preferences_json: JSON.stringify(defaultInferred()) };
-  try { await client.from("user_preference_profiles").insert(blank); } catch { /* best-effort */ }
+  // best-effort
+  const { error: blankError } = await client.from("user_preference_profiles").insert(blank);
+  if (blankError && blankError.code !== "23505") {
+    fbLogger.warn({ err: blankError, userId }, "blank preference profile insert failed (best-effort)");
+  }
   return defaultInferred();
 }
 
@@ -59,9 +66,9 @@ router.post("/telegraph/recommendations/:id/feedback", async (req, res) => {
   const { category, signal, tripId } = parsed.data;
   const now = new Date().toISOString();
 
-  // Record preference event
-  try {
-    await client.from("user_preference_events").insert({
+  // Record preference event (best-effort)
+  {
+    const { error: evtError } = await client.from("user_preference_events").insert({
       user_id:           user.id,
       recommendation_id: recommendationId,
       category,
@@ -69,7 +76,8 @@ router.post("/telegraph/recommendations/:id/feedback", async (req, res) => {
       trip_id:           tripId ?? null,
       created_at:        now,
     });
-  } catch { /* best-effort */ }
+    if (evtError) fbLogger.warn({ err: evtError, recommendationId }, "feedback preference event insert failed (best-effort)");
+  }
 
   // Update inferred profile
   const inferred = await getOrCreateInferred(client, user.id);

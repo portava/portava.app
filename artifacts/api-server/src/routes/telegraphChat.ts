@@ -23,6 +23,9 @@
 
 import { Router } from "express";
 import { z } from "zod";
+import { logger as rootLogger } from "../lib/logger.js";
+
+const chatLogger = rootLogger.child({ route: "telegraphChat" });
 import { requireUser, sendError } from "../lib/http.js";
 import { detectIntent } from "../services/telegraphIntent.js";
 import {
@@ -180,15 +183,14 @@ router.post(
     // Write preference event so the learning system can down-rank this category
     // and the 24-hour cooldown suppresses the same category from resurfacing (best-effort).
     if (suggestion) {
-      try {
-        await client.from("user_preference_events").insert({
-          user_id:           user.id,
-          recommendation_id: suggestionId,
-          category:          (suggestion as any).category ?? "unknown",
-          signal:            "dismiss",
-          created_at:        new Date().toISOString(),
-        });
-      } catch { /* best-effort */ }
+      const { error: evtError } = await client.from("user_preference_events").insert({
+        user_id:           user.id,
+        recommendation_id: suggestionId,
+        category:          (suggestion as any).category ?? "unknown",
+        signal:            "dismiss",
+        created_at:        new Date().toISOString(),
+      });
+      if (evtError) chatLogger.warn({ err: evtError, suggestionId }, "dismiss preference event insert failed (best-effort)");
     }
 
     res.status(200).json({ ok: true });

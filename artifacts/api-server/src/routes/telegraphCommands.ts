@@ -15,7 +15,10 @@
  */
 import { Router } from "express";
 import { z } from "zod";
+import { logger as rootLogger } from "../lib/logger.js";
 import { requireUser, sendError, isAcceptedTripMember } from "../lib/http.js";
+
+const cmdLogger = rootLogger.child({ route: "telegraphCommands" });
 import { resolveContext } from "../lib/privacyResolver.js";
 import { getNearbyVenues, formatDistance, type NearbyVenue } from "../lib/venuesService.js";
 
@@ -410,9 +413,9 @@ router.post("/telegraph/commands/:commandId/confirm-action", async (req, res) =>
 
   // Write a positive preference event so the learner boosts this category in future briefs.
   // Best-effort — never block the confirm response.
-  try {
+  {
     const category = (action.params.category as string | undefined) ?? INTENT_CATEGORY[stored.intent] ?? "unknown";
-    await client.from("user_preference_events").insert({
+    const { error: evtError } = await client.from("user_preference_events").insert({
       user_id:           user.id,
       recommendation_id: `${commandId}:${actionId}`,
       category,
@@ -420,7 +423,8 @@ router.post("/telegraph/commands/:commandId/confirm-action", async (req, res) =>
       trip_id:           stored.tripId ?? null,
       created_at:        new Date().toISOString(),
     });
-  } catch { /* best-effort */ }
+    if (evtError) cmdLogger.warn({ err: evtError, commandId }, "confirm preference event insert failed (best-effort)");
+  }
 
   res.json({
     ok: true,

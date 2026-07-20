@@ -27,7 +27,10 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger as rootLogger } from "../lib/logger.js";
 import { computeActiveUserScore } from "./CompassActiveUserRewardEngine.js";
+
+const logger = rootLogger.child({ service: "CompassAbuseDefenseEngine" });
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -82,18 +85,18 @@ async function applyReachReduction(
 
   const nowMs = Date.now();
   const endsAt = new Date(nowMs + hours * 60 * 60 * 1_000).toISOString();
-  try {
-    await db.from("compass_visibility_cooldowns").upsert(
-      {
-        author_id:    userId,
-        cooldown_type: "reach_reduction",
-        reason:       `abuse_defense:${severity}`,
-        ends_at:      endsAt,
-        updated_at:   new Date(nowMs).toISOString(),
-      },
-      { onConflict: "author_id,cooldown_type" },
-    );
-  } catch { /* non-fatal */ }
+  // non-fatal
+  const { error } = await db.from("compass_visibility_cooldowns").upsert(
+    {
+      author_id:    userId,
+      cooldown_type: "reach_reduction",
+      reason:       `abuse_defense:${severity}`,
+      ends_at:      endsAt,
+      updated_at:   new Date(nowMs).toISOString(),
+    },
+    { onConflict: "author_id,cooldown_type" },
+  );
+  if (error) logger.warn({ err: error, userId }, "visibility cooldown upsert failed (non-fatal)");
 }
 
 // ── Suspension-request trigger for severe patterns ────────────────────────────
@@ -109,14 +112,14 @@ async function requestSuspension(
   userId: string,
   reason: string,
 ): Promise<void> {
-  try {
-    await db.from("compass_suspension_requests").insert({
-      user_id:    userId,
-      reason:     `severe_abuse:${reason}`,
-      status:     "pending_review",
-      created_at: new Date().toISOString(),
-    });
-  } catch { /* non-fatal */ }
+  // non-fatal
+  const { error } = await db.from("compass_suspension_requests").insert({
+    user_id:    userId,
+    reason:     `severe_abuse:${reason}`,
+    status:     "pending_review",
+    created_at: new Date().toISOString(),
+  });
+  if (error) logger.warn({ err: error, userId }, "suspension request insert failed (non-fatal)");
 }
 
 // ── Reward zeroing for severe patterns ────────────────────────────────────────
@@ -131,21 +134,24 @@ async function zeroActiveUserReward(
   userId: string,
 ): Promise<void> {
   try {
-    // Recompute with severe flag override
+    // Recompute with severe flag override (may throw — not a bare supabase call)
     await computeActiveUserScore(db, userId, { hasSevereSafetyFlag: true });
+  } catch (err) {
+    logger.warn({ err, userId }, "active user score recompute failed (non-fatal)");
+  }
 
-    // Direct upsert for immediate effect (in case recompute is slow)
-    await db.from("compass_active_user_scores").upsert(
-      {
-        user_id:           userId,
-        active_user_score: 0,
-        trust_multiplier:  0,
-        boost_eligible:    false,
-        last_computed_at:  new Date().toISOString(),
-      },
-      { onConflict: "user_id" },
-    );
-  } catch { /* non-fatal */ }
+  // Direct upsert for immediate effect (in case recompute is slow) — non-fatal
+  const { error } = await db.from("compass_active_user_scores").upsert(
+    {
+      user_id:           userId,
+      active_user_score: 0,
+      trust_multiplier:  0,
+      boost_eligible:    false,
+      last_computed_at:  new Date().toISOString(),
+    },
+    { onConflict: "user_id" },
+  );
+  if (error) logger.warn({ err: error, userId }, "active user score zeroing upsert failed (non-fatal)");
 }
 
 // ── Flag writer ───────────────────────────────────────────────────────────────
@@ -154,16 +160,16 @@ async function writeFlag(
   db:   SupabaseClient,
   flag: AbuseFlag,
 ): Promise<void> {
-  try {
-    await db.from("compass_abuse_flags").insert({
-      pattern_type:   flag.patternType,
-      involved_users: flag.involvedUsers,
-      severity:       flag.severity,
-      evidence:       flag.evidence,
-      // severe patterns are auto-confirmed; others are pending admin review
-      status:         flag.severity === "severe" ? "confirmed" : "pending",
-    });
-  } catch { /* non-fatal */ }
+  // non-fatal
+  const { error } = await db.from("compass_abuse_flags").insert({
+    pattern_type:   flag.patternType,
+    involved_users: flag.involvedUsers,
+    severity:       flag.severity,
+    evidence:       flag.evidence,
+    // severe patterns are auto-confirmed; others are pending admin review
+    status:         flag.severity === "severe" ? "confirmed" : "pending",
+  });
+  if (error) logger.warn({ err: error, patternType: flag.patternType }, "abuse flag insert failed (non-fatal)");
 }
 
 // ── Post-detection action dispatcher ─────────────────────────────────────────

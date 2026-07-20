@@ -10,6 +10,9 @@
  *  3. Rapid score jumps inconsistent with event history
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "TrustGamingDetectionService" });
 
 interface GamingSettings {
   gaming_checkin_cluster_limit: number;
@@ -18,29 +21,29 @@ interface GamingSettings {
 }
 
 async function loadGamingSettings(db: SupabaseClient): Promise<GamingSettings> {
-  try {
-    const { data } = await db.from("trust_settings").select("*").eq("id", 1).maybeSingle();
-    return {
-      gaming_checkin_cluster_limit:  Number((data as any)?.gaming_checkin_cluster_limit)  || 5,
-      gaming_mutual_rate_threshold:  Number((data as any)?.gaming_mutual_rate_threshold)  || 0.80,
-      gaming_rapid_jump_points:      Number((data as any)?.gaming_rapid_jump_points)      || 20,
-    };
-  } catch {
+  const { data, error } = await db.from("trust_settings").select("*").eq("id", 1).maybeSingle();
+  if (error) {
+    logger.warn({ err: error }, "loadGamingSettings failed — using defaults");
     return { gaming_checkin_cluster_limit: 5, gaming_mutual_rate_threshold: 0.80, gaming_rapid_jump_points: 20 };
   }
+  return {
+    gaming_checkin_cluster_limit:  Number((data as any)?.gaming_checkin_cluster_limit)  || 5,
+    gaming_mutual_rate_threshold:  Number((data as any)?.gaming_mutual_rate_threshold)  || 0.80,
+    gaming_rapid_jump_points:      Number((data as any)?.gaming_rapid_jump_points)      || 20,
+  };
 }
 
 async function isGamingDetectionEnabled(db: SupabaseClient): Promise<boolean> {
-  try {
-    const { data } = await db
-      .from("feature_flags")
-      .select("enabled")
-      .eq("key", "trust_gaming_detection_enabled")
-      .maybeSingle();
-    return Boolean((data as any)?.enabled);
-  } catch {
+  const { data, error } = await db
+    .from("feature_flags")
+    .select("enabled")
+    .eq("key", "trust_gaming_detection_enabled")
+    .maybeSingle();
+  if (error) {
+    logger.warn({ err: error }, "isGamingDetectionEnabled flag read failed — treating as disabled");
     return false;
   }
+  return Boolean((data as any)?.enabled);
 }
 
 async function createGamingReview(
@@ -48,26 +51,27 @@ async function createGamingReview(
   userId: string,
   metadata: Record<string, unknown>,
 ): Promise<void> {
-  try {
-    // Only create if no open gaming review already exists for this user
-    const { data: existing } = await db
-      .from("trust_reviews")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("review_type", "gaming_suspected")
-      .in("status", ["open", "in_progress"])
-      .maybeSingle();
-    if (existing) return;
-
-    await db.from("trust_reviews").insert({
-      user_id:     userId,
-      review_type: "gaming_suspected",
-      status:      "open",
-      metadata,
-    });
-  } catch {
-    // non-fatal
+  // Only create if no open gaming review already exists for this user (non-fatal)
+  const { data: existing, error: readError } = await db
+    .from("trust_reviews")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("review_type", "gaming_suspected")
+    .in("status", ["open", "in_progress"])
+    .maybeSingle();
+  if (readError) {
+    logger.warn({ err: readError, userId }, "createGamingReview existing-check failed (non-fatal)");
+    return;
   }
+  if (existing) return;
+
+  const { error: insError } = await db.from("trust_reviews").insert({
+    user_id:     userId,
+    review_type: "gaming_suspected",
+    status:      "open",
+    metadata,
+  });
+  if (insError) logger.warn({ err: insError, userId }, "createGamingReview insert failed (non-fatal)");
 }
 
 /**
@@ -82,12 +86,16 @@ async function detectCheckinClusters(
   let flagged = 0;
   try {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const { data } = await db
+    const { data, error } = await db
       .from("plan_attendance_events")
       .select("user_id, geofence_id")
       .gt("created_at", since)
       .eq("event_type", "checked_in");
 
+    if (error) {
+      logger.warn({ err: error }, "detectCheckinClusters query failed");
+      return 0;
+    }
     if (!data) return 0;
     const rows = data as any[];
 
@@ -127,13 +135,17 @@ async function detectMutualRings(
   let flagged = 0;
   try {
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const { data } = await db
+    const { data, error } = await db
       .from("trust_events")
       .select("user_id, source_type, source_id")
       .gt("created_at", since)
       .gt("delta", 0)
       .eq("source_type", "user_action");
 
+    if (error) {
+      logger.warn({ err: error }, "detectMutualRings query failed");
+      return 0;
+    }
     if (!data) return 0;
     const rows = data as any[];
 
@@ -189,12 +201,16 @@ async function detectRapidJumps(
   let flagged = 0;
   try {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const { data } = await db
+    const { data, error } = await db
       .from("trust_events")
       .select("user_id, delta, created_at")
       .gt("created_at", since)
       .in("status", ["applied", "confirmed"]);
 
+    if (error) {
+      logger.warn({ err: error }, "detectRapidJumps query failed");
+      return 0;
+    }
     if (!data) return 0;
     const rows = data as any[];
 

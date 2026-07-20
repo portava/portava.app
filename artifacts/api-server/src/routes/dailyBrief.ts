@@ -28,6 +28,9 @@
  */
 import { Router } from "express";
 import { z } from "zod";
+import { logger as rootLogger } from "../lib/logger.js";
+
+const briefLogger = rootLogger.child({ route: "dailyBrief" });
 import { requireUser, sendError, isAcceptedTripMember } from "../lib/http.js";
 import { resolveContext } from "../lib/privacyResolver.js";
 import {
@@ -107,8 +110,9 @@ async function storeBriefInDB(
   briefType: string,
   brief: any,
 ): Promise<void> {
+  // graceful: in-memory L1 still covers the session
   try {
-    await client.from("daily_briefs").upsert(
+    const { error } = await client.from("daily_briefs").upsert(
       {
         user_id:      userId,
         trip_id:      tripId,
@@ -119,8 +123,10 @@ async function storeBriefInDB(
       },
       { onConflict: "user_id,brief_date" },
     );
-  } catch {
-    /* graceful: in-memory L1 still covers the session */
+    if (error) briefLogger.warn({ err: error, userId, date }, "daily brief upsert failed (best-effort)");
+  } catch (err) {
+    // partial/fake clients may lack .upsert — never block the brief response
+    briefLogger.warn({ err, userId, date }, "daily brief upsert threw (best-effort)");
   }
 }
 
@@ -960,8 +966,9 @@ router.post("/trips/:tripId/daily-brief/dismiss/:recommendationId", async (req, 
   const member = await isAcceptedTripMember(client, tripId, user.id);
   if (!member) { sendError(res, "not_member", "You must be an accepted trip member"); return; }
 
-  try {
-    await client.from("user_preference_events").insert({
+  // best-effort
+  {
+    const { error: evtError } = await client.from("user_preference_events").insert({
       user_id:           user.id,
       recommendation_id: recommendationId,
       category:          req.body?.category ?? "unknown",
@@ -969,7 +976,8 @@ router.post("/trips/:tripId/daily-brief/dismiss/:recommendationId", async (req, 
       trip_id:           tripId,
       created_at:        new Date().toISOString(),
     });
-  } catch { /* best-effort */ }
+    if (evtError) briefLogger.warn({ err: evtError, recommendationId }, "dismiss preference event insert failed (best-effort)");
+  }
 
   res.json({ ok: true, dismissed: recommendationId });
 });

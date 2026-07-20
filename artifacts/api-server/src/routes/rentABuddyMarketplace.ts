@@ -135,18 +135,17 @@ async function emitAnalyticsEvent(
     metadata?: Record<string, unknown>;
   },
 ) {
-  try {
-    await svc.from("rent_buddy_marketplace_analytics_events").insert({
-      event_type: eventType,
-      user_id: payload.userId ?? null,
-      buddy_id: payload.buddyId ?? null,
-      city: payload.city ?? null,
-      category: payload.category ?? null,
-      amount_usd: payload.amountUsd ?? null,
-      metadata: payload.metadata ?? {},
-    });
-  } catch (err) {
-    logger.error({ err, eventType }, "analytics event emit failed");
+  const { error } = await svc.from("rent_buddy_marketplace_analytics_events").insert({
+    event_type: eventType,
+    user_id: payload.userId ?? null,
+    buddy_id: payload.buddyId ?? null,
+    city: payload.city ?? null,
+    category: payload.category ?? null,
+    amount_usd: payload.amountUsd ?? null,
+    metadata: payload.metadata ?? {},
+  });
+  if (error) {
+    logger.error({ err: error, eventType }, "analytics event emit failed");
   }
 }
 

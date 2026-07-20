@@ -125,10 +125,9 @@ async function writeEvent(
   eventType: string,
   metadata: Record<string, unknown> = {},
 ): Promise<void> {
-  try {
-    await db.from("safe_return_events").insert({ session_id: sessionId, user_id: userId, event_type: eventType, metadata });
-  } catch (err) {
-    logger.warn({ err, sessionId, eventType }, "SafeReturnService: event write failed (non-fatal)");
+  const { error } = await db.from("safe_return_events").insert({ session_id: sessionId, user_id: userId, event_type: eventType, metadata });
+  if (error) {
+    logger.warn({ err: error, sessionId, eventType }, "SafeReturnService: event write failed (non-fatal)");
   }
 }
 

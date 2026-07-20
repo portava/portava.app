@@ -6,6 +6,9 @@
  * Produces layover_recommendations rows. Respects LayoverPrivacyGuard rules.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "LayoverRecommendationService" });
 import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js";
 import { assess, type SafetyRating } from "./LayoverSafetyEngine.js";
@@ -303,23 +306,27 @@ export async function generateRecommendations(
     rows.push(row);
   }
 
-  // Delete old recs for this session and insert fresh ones
-  try {
-    await db.from("layover_recommendations").delete().eq("session_id", session.id);
-    if (rows.length > 0) {
-      await db.from("layover_recommendations").insert(rows);
+  // Delete old recs for this session and insert fresh ones (non-fatal)
+  {
+    const { error: delError } = await db.from("layover_recommendations").delete().eq("session_id", session.id);
+    if (delError) {
+      logger.warn({ err: delError, sessionId: session.id }, "recommendation delete failed (non-fatal)");
+    } else if (rows.length > 0) {
+      const { error: insError } = await db.from("layover_recommendations").insert(rows);
+      if (insError) logger.warn({ err: insError, sessionId: session.id }, "recommendation insert failed (non-fatal)");
     }
-  } catch { /* non-fatal */ }
+  }
 
-  // Emit event
-  try {
-    await db.from("layover_events").insert({
+  // Emit event (non-fatal)
+  {
+    const { error: evtError } = await db.from("layover_events").insert({
       session_id: session.id,
       user_id:    session.userId,
       event_type: "recommendation_generated",
       metadata:   { count: rows.length },
     });
-  } catch { /* non-fatal */ }
+    if (evtError) logger.warn({ err: evtError, sessionId: session.id }, "recommendation_generated event failed (non-fatal)");
+  }
 
   // Return privacy-safe view
   return rows.map((row, idx) => sanitizeRecommendation({

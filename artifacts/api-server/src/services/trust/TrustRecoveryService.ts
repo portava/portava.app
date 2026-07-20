@@ -8,7 +8,10 @@
  * current lowest category scores and active caps.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger as rootLogger } from "../../lib/logger.js";
 import { getActiveCaps } from "./TrustCapService.js";
+
+const logger = rootLogger.child({ service: "TrustRecoveryService" });
 import { getTrustProfile } from "./TrustScoreService.js";
 
 export interface RecoveryStep {
@@ -133,14 +136,12 @@ export async function setProbation(
   onProbation: boolean,
   probationEndsAt?: string | null,
 ): Promise<void> {
-  try {
-    await db.from("trust_profiles").upsert({
-      user_id: userId,
-      on_probation: onProbation,
-      probation_ends_at: probationEndsAt ?? null,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "user_id" });
-  } catch {
-    // non-fatal
-  }
+  // non-fatal
+  const { error } = await db.from("trust_profiles").upsert({
+    user_id: userId,
+    on_probation: onProbation,
+    probation_ends_at: probationEndsAt ?? null,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "user_id" });
+  if (error) logger.warn({ err: error, userId }, "setProbation upsert failed (non-fatal)");
 }

@@ -8,6 +8,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getUserTrustLevel, checkAndRecordSnapshot } from "../location/LocationSafetyService.js";
 import { recordTrustEvent } from "../trust/TrustEventService.js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "HiddenGemVerificationService" });
 
 const GPS_PROXIMITY_THRESHOLD_M = 200; // within 200 m → valid check-in
 const COMMUNITY_CONFIRMATIONS_NEEDED = 5; // upgrades unverified → community
@@ -115,8 +118,8 @@ export async function recordGpsCheckin(
       dedupWindowHours: 24,
     });
     // Record GPS verification event (ignore duplicate constraint)
-    try {
-      await db
+    {
+      const { error: insError } = await db
         .from("hidden_gem_verifications")
         .insert({
           gem_id: gemId,
@@ -127,7 +130,10 @@ export async function recordGpsCheckin(
         })
         .select("id")
         .single();
-    } catch { /* ignore duplicate constraint */ }
+      if (insError && insError.code !== "23505") {
+        logger.warn({ err: insError, gemId, userId }, "gps verification insert failed");
+      }
+    }
 
     // Check if gem should be upgraded to community level
     const currentLevel = (gem as any).verification_level;
@@ -147,16 +153,21 @@ export async function recordGpsCheckin(
       }
     }
 
-    // Increment visit_count — direct UPDATE, no RPC dependency
-    try {
-      const { data: cur } = await db.from("hidden_gems").select("visit_count").eq("id", gemId).maybeSingle();
-      const next = ((cur as any)?.visit_count ?? 0) + 1;
-      await db.from("hidden_gems").update({ visit_count: next }).eq("id", gemId);
-    } catch { /* non-fatal counter drift */ }
+    // Increment visit_count — direct UPDATE, no RPC dependency (non-fatal counter drift)
+    {
+      const { data: cur, error: readError } = await db.from("hidden_gems").select("visit_count").eq("id", gemId).maybeSingle();
+      if (readError) {
+        logger.warn({ err: readError, gemId }, "visit_count read failed (non-fatal)");
+      } else {
+        const next = ((cur as any)?.visit_count ?? 0) + 1;
+        const { error: updError } = await db.from("hidden_gems").update({ visit_count: next }).eq("id", gemId);
+        if (updError) logger.warn({ err: updError, gemId }, "visit_count update failed (non-fatal)");
+      }
+    }
   } else {
     // Write manual_review trust event
-    try {
-      await db
+    {
+      const { error: insError } = await db
         .from("hidden_gem_verifications")
         .insert({
           gem_id: gemId,
@@ -168,7 +179,10 @@ export async function recordGpsCheckin(
         })
         .select("id")
         .single();
-    } catch { /* ignore */ }
+      if (insError && insError.code !== "23505") {
+        logger.warn({ err: insError, gemId, userId }, "suspicious verification insert failed");
+      }
+    }
   }
 
   return { ok: true, visitId, distanceM, withinRange, trustLevel, isSuspicious, verificationUpgraded };

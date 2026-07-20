@@ -39,16 +39,14 @@ async function logEvent(
   eventType: string,
   metadata: Record<string, unknown> = {},
 ): Promise<void> {
-  try {
-    await db.from("trip_crew_location_events").insert({
-      trip_id: tripId,
-      user_id: userId,
-      event_type: eventType,
-      metadata,
-    });
-  } catch {
-    // best-effort
-  }
+  // best-effort
+  const { error } = await db.from("trip_crew_location_events").insert({
+    trip_id: tripId,
+    user_id: userId,
+    event_type: eventType,
+    metadata,
+  });
+  if (error) logger.warn({ err: error, tripId, eventType }, "trip crew event write failed (non-fatal)");
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────

@@ -201,7 +201,7 @@ async function writeAuditEvent(
   },
 ): Promise<void> {
   try {
-    await sc.from("circle_audit_events").insert({
+    const { error } = await sc.from("circle_audit_events").insert({
       actor_user_id:  opts.actorUserId  ?? null,
       target_user_id: opts.targetUserId ?? null,
       context_type:   opts.contextType  ?? null,
@@ -209,7 +209,10 @@ async function writeAuditEvent(
       event_type:     opts.eventType,
       metadata:       opts.metadata     ?? null,
     });
-  } catch {}
+    if (error) console.warn("circle audit insert failed (non-fatal):", error.message ?? error);
+  } catch (err) {
+    console.warn("circle audit insert threw (non-fatal):", err);
+  }
 }
 
 /**

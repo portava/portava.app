@@ -346,38 +346,45 @@ router.post("/me/recent-places", async (req, res) => {
     return;
   }
 
-  try {
-    // Remove existing entry for this place_id, then insert fresh (keeps it sorted)
-    await db
-      .from("user_recent_places")
-      .delete()
-      .eq("user_id", user.id)
-      .eq("place_snapshot->>id", place.id as string);
-
-    await db.from("user_recent_places").insert({
-      user_id: user.id,
-      place_snapshot: place,
-      used_for: usedFor ?? null,
-      used_at: new Date().toISOString(),
-    });
-
-    // Trim to 10
-    const { data: all } = await db
-      .from("user_recent_places")
-      .select("id")
-      .eq("user_id", user.id)
-      .order("used_at", { ascending: false });
-
-    if (all && all.length > 10) {
-      const toDelete = (all as { id: string }[]).slice(10).map((r) => r.id);
-      await db.from("user_recent_places").delete().in("id", toDelete);
-    }
-
-    res.json({ ok: true });
-  } catch (err) {
-    logger.warn({ err }, "failed to save recent place");
+  // Remove existing entry for this place_id, then insert fresh (keeps it sorted)
+  const { error: delError } = await db
+    .from("user_recent_places")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("place_snapshot->>id", place.id as string);
+  if (delError) {
+    logger.warn({ err: delError }, "failed to save recent place (delete)");
     sendError(res, "db_error", "Failed to save recent place");
+    return;
   }
+
+  const { error: insError } = await db.from("user_recent_places").insert({
+    user_id: user.id,
+    place_snapshot: place,
+    used_for: usedFor ?? null,
+    used_at: new Date().toISOString(),
+  });
+  if (insError) {
+    logger.warn({ err: insError }, "failed to save recent place (insert)");
+    sendError(res, "db_error", "Failed to save recent place");
+    return;
+  }
+
+  // Trim to 10 (non-fatal — the insert already succeeded)
+  const { data: all, error: listError } = await db
+    .from("user_recent_places")
+    .select("id")
+    .eq("user_id", user.id)
+    .order("used_at", { ascending: false });
+  if (listError) {
+    logger.warn({ err: listError }, "recent-places trim list failed (non-fatal)");
+  } else if (all && all.length > 10) {
+    const toDelete = (all as { id: string }[]).slice(10).map((r) => r.id);
+    const { error: trimError } = await db.from("user_recent_places").delete().in("id", toDelete);
+    if (trimError) logger.warn({ err: trimError }, "recent-places trim delete failed (non-fatal)");
+  }
+
+  res.json({ ok: true });
 });
 
 export default router;

@@ -11,7 +11,10 @@
  */
 import { Router } from "express";
 import { z } from "zod";
+import { logger as rootLogger } from "../lib/logger.js";
 import { requireUser, sendError } from "../lib/http.js";
+
+const prefsLogger = rootLogger.child({ route: "preferences" });
 import {
   defaultExplicit,
   defaultInferred,
@@ -227,15 +230,17 @@ router.post("/me/preferences/mute-category", async (req, res) => {
   const category = typeof req.body?.category === "string" ? req.body.category.trim().toLowerCase() : "";
   if (!category) { sendError(res, "invalid_payload", "category is required"); return; }
 
-  try {
-    await client.from("user_preference_events").insert({
+  // best-effort — table may not exist in all environments
+  {
+    const { error } = await client.from("user_preference_events").insert({
       user_id:           user.id,
       recommendation_id: null,
       category,
       signal:            "mute",
       created_at:        new Date().toISOString(),
     });
-  } catch { /* best-effort — table may not exist in all environments */ }
+    if (error) prefsLogger.warn({ err: error, category }, "mute preference event insert failed (best-effort)");
+  }
 
   res.status(200).json({ ok: true, muted: true, category });
 });

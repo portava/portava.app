@@ -22,3 +22,6 @@ description: How to run api-server tests without timeouts, and fake-client pitfa
 
 ## Cross-test rate-limit bleed
 `checkRateLimit` in `lib/rateLimit` keeps module-global buckets; call-start tests that POST /api/calls many times as the same fake user hit the 30/hr cap and later suites fail mysteriously. Call `_resetRateLimit()` in each suite's wiring/beforeEach.
+
+## Supabase error-return refactors vs partial fakes
+When replacing the try/catch anti-pattern (supabase-js never throws; check `{ error }` instead), any-typed clients exercised by test fakes need care: partial fake clients (e.g. intelligence.test.ts) implement only some builder methods — calling a missing one (`.upsert`) throws a real TypeError. For `client: any` params, keep a narrow try/catch AND the explicit `if (error)` check; for typed `SupabaseClient` params, drop the try/catch entirely.

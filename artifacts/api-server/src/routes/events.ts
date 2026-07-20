@@ -3670,15 +3670,18 @@ async function logEventActivity(
   action: string,
   metadata: Record<string, unknown> = {},
 ): Promise<void> {
+  // non-fatal — activity log failures never block the main operation
   try {
-    await sc.from("event_activity_log").insert({
+    const { error } = await sc.from("event_activity_log").insert({
       event_id: eventId,
       actor_id: actorId,
       action,
       metadata,
     });
-  } catch {
-    // non-fatal — activity log failures never block the main operation
+    if (error) console.warn("logEventActivity insert failed (non-fatal):", error.message ?? error);
+  } catch (err) {
+    // partial/fake clients may throw on missing methods
+    console.warn("logEventActivity threw (non-fatal):", err);
   }
 }
 
@@ -5552,17 +5555,23 @@ async function sendEventNotification(
 
 async function addUserToChatThread(sc: any, threadId: string, userId: string): Promise<void> {
   try {
-    await sc.from("message_thread_members").upsert(
+    const { error } = await sc.from("message_thread_members").upsert(
       { thread_id: threadId, user_id: userId },
       { onConflict: "thread_id,user_id", ignoreDuplicates: true },
     );
-  } catch {}
+    if (error) console.warn("addUserToChatThread upsert failed (non-fatal):", error.message ?? error);
+  } catch (err) {
+    console.warn("addUserToChatThread threw (non-fatal):", err);
+  }
 }
 
 async function removeUserFromChatThread(sc: any, threadId: string, userId: string): Promise<void> {
   try {
-    await sc.from("message_thread_members").delete().eq("thread_id", threadId).eq("user_id", userId);
-  } catch {}
+    const { error } = await sc.from("message_thread_members").delete().eq("thread_id", threadId).eq("user_id", userId);
+    if (error) console.warn("removeUserFromChatThread delete failed (non-fatal):", error.message ?? error);
+  } catch (err) {
+    console.warn("removeUserFromChatThread threw (non-fatal):", err);
+  }
 }
 
 export default router;

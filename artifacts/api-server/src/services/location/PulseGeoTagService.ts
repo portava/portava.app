@@ -20,6 +20,9 @@ import {
   type PulseVisibility,
 } from "./LocationPermissionService";
 import { isNearPrivateStay } from "./GeoZoneService";
+import { logger as rootLogger } from "../../lib/logger";
+
+const logger = rootLogger.child({ service: "PulseGeoTagService" });
 
 export interface PulseGeoTagInput {
   postId: string;
@@ -76,12 +79,13 @@ export async function writePulseGeoTag(
     // 2. If sharing is off (mode=off or paused), write a no_location stub and return.
     //    This means the post exists but carries no discoverable location context.
     if (!isSharingActive(prefs)) {
-      await db.from("pulse_geo_tags").insert({
+      const { error: stubError } = await db.from("pulse_geo_tags").insert({
         post_id:             postId,
         user_id:             userId,
         location_visibility: "no_location",
         hotel_blur_applied:  false,
       });
+      if (stubError) logger.warn({ err: stubError, postId }, "no_location stub insert failed (non-fatal)");
       return;
     }
 
@@ -111,7 +115,7 @@ export async function writePulseGeoTag(
     }
 
     // 5. Write the tag — only public text labels, never coordinates.
-    await db.from("pulse_geo_tags").insert({
+    const { error: tagError } = await db.from("pulse_geo_tags").insert({
       post_id:             postId,
       user_id:             userId,
       location_visibility: visibility,
@@ -122,7 +126,9 @@ export async function writePulseGeoTag(
       venue_name:          venueName        ?? null,
       hotel_blur_applied:  hotelBlurApplied,
     });
-  } catch {
+    if (tagError) logger.warn({ err: tagError, postId }, "pulse_geo_tag insert failed (non-fatal)");
+  } catch (err) {
     // Non-fatal — pulse_geo_tag failure must never corrupt the post
+    logger.warn({ err, postId }, "writePulseGeoTag threw (non-fatal)");
   }
 }

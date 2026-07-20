@@ -117,16 +117,15 @@ export async function checkAndRecordSnapshot(
   }
 
   // Store fresh snapshot (short TTL enforced by DB default)
-  try {
-    await db.from("location_snapshots").insert({
+  {
+    const { error: snapError } = await db.from("location_snapshots").insert({
       user_id:     userId,
       lat,
       lng,
       source:      "gps",
       captured_at: new Date(nowMs).toISOString(),
     });
-  } catch (err) {
-    logger.warn({ err }, "snapshot insert failed — non-fatal");
+    if (snapError) logger.warn({ err: snapError }, "snapshot insert failed — non-fatal");
   }
 
   return { trusted: true };

@@ -258,15 +258,16 @@ router.post("/trips/:tripId/crew/ghost-mode/enable", async (req, res) => {
   const result = await setGhostMode(sc, tripId, user.id, true);
   if (!result.ok) { sendError(res, "db_error", result.error); return; }
 
-  // Write audit event
-  try {
-    await sc.from("trip_crew_location_events").insert({
+  // Write audit event (best-effort)
+  {
+    const { error: evtError } = await sc.from("trip_crew_location_events").insert({
       trip_id: tripId,
       user_id: user.id,
       event_type: "ghost_mode_on",
       metadata: {},
     });
-  } catch { /* best-effort */ }
+    if (evtError) req.log.warn({ err: evtError, tripId }, "ghost_mode_on event insert failed (best-effort)");
+  }
 
   res.status(200).json({ ok: true });
 });
@@ -293,14 +294,16 @@ router.post("/trips/:tripId/crew/ghost-mode/disable", async (req, res) => {
   const result = await setGhostMode(sc, tripId, user.id, false);
   if (!result.ok) { sendError(res, "db_error", result.error); return; }
 
-  try {
-    await sc.from("trip_crew_location_events").insert({
+  // best-effort
+  {
+    const { error: evtError } = await sc.from("trip_crew_location_events").insert({
       trip_id: tripId,
       user_id: user.id,
       event_type: "ghost_mode_off",
       metadata: {},
     });
-  } catch { /* best-effort */ }
+    if (evtError) req.log.warn({ err: evtError, tripId }, "ghost_mode_off event insert failed (best-effort)");
+  }
 
   res.status(200).json({ ok: true });
 });

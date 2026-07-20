@@ -267,16 +267,15 @@ router.post("/meetups", async (req, res) => {
     const auditSc = getServiceClient();
     if (auditSc) {
       void (async () => {
-        try {
-          await auditSc.from("age_limit_audit_log").insert({
-            actor_user_id: user.id,
-            target_type:   "meetup",
-            target_id:     meetupId,
-            action:        "age_limit_set",
-            new_min_age:   b.minAge ?? null,
-            new_max_age:   b.maxAge ?? null,
-          });
-        } catch {}
+        const { error: auditError } = await auditSc.from("age_limit_audit_log").insert({
+          actor_user_id: user.id,
+          target_type:   "meetup",
+          target_id:     meetupId,
+          action:        "age_limit_set",
+          new_min_age:   b.minAge ?? null,
+          new_max_age:   b.maxAge ?? null,
+        });
+        if (auditError) req.log.warn({ err: auditError }, "age limit audit insert failed (best-effort)");
       })();
     }
   }
@@ -495,16 +494,15 @@ router.patch("/meetups/:meetupId", async (req, res) => {
     const auditSc = getServiceClient();
     if (auditSc) {
       void (async () => {
-        try {
-          await auditSc.from("age_limit_audit_log").insert({
-            actor_user_id: user.id,
-            target_type:   "meetup",
-            target_id:     meetupId,
-            action:        b.ageLimitEnabled ? "age_limit_updated" : "age_limit_removed",
-            new_min_age:   b.ageLimitEnabled ? (b.minAge ?? null) : null,
-            new_max_age:   b.ageLimitEnabled ? (b.maxAge ?? null) : null,
-          });
-        } catch {}
+        const { error: auditError } = await auditSc.from("age_limit_audit_log").insert({
+          actor_user_id: user.id,
+          target_type:   "meetup",
+          target_id:     meetupId,
+          action:        b.ageLimitEnabled ? "age_limit_updated" : "age_limit_removed",
+          new_min_age:   b.ageLimitEnabled ? (b.minAge ?? null) : null,
+          new_max_age:   b.ageLimitEnabled ? (b.maxAge ?? null) : null,
+        });
+        if (auditError) req.log.warn({ err: auditError }, "age limit audit insert failed (best-effort)");
       })();
     }
   }
@@ -709,15 +707,14 @@ router.post("/meetups/:meetupId/rsvp", async (req, res) => {
       if (!eligibility.eligible) {
         // Write audit log (best-effort)
         void (async () => {
-          try {
-            await sc.from("age_limit_audit_log").insert({
-              actor_user_id: user.id,
-              target_type:   "meetup",
-              target_id:     meetupId,
-              action:        "rsvp_blocked",
-              reason:        eligibility.reason,
-            });
-          } catch {}
+          const { error: auditError } = await sc.from("age_limit_audit_log").insert({
+            actor_user_id: user.id,
+            target_type:   "meetup",
+            target_id:     meetupId,
+            action:        "rsvp_blocked",
+            reason:        eligibility.reason,
+          });
+          if (auditError) req.log.warn({ err: auditError }, "age limit audit insert failed (best-effort)");
         })();
         res.status(403).json({
           error: "age_not_eligible",

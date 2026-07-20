@@ -30,7 +30,10 @@
  *   ✗ Never includes content the user is no longer authorised to see
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger as rootLogger } from "../lib/logger.js";
 import type { CompassProfile } from "./types.js";
+
+const logger = rootLogger.child({ service: "CompassFrontLoadEngine" });
 import { buildFeed } from "./CompassFeedBuilder.js";
 import { buildCompassContext, defaultSignals } from "./CompassContextEngine.js";
 import { hydrateCompassItems } from "./CompassItemHydrator.js";
@@ -645,42 +648,50 @@ export async function recordNavigationEvent(
   occurredAt: Date,
 ): Promise<void> {
   if (!db) return;
-  try {
-    // 1. Append raw event
-    await db.from("compass_preload_events").insert({
-      user_id:    userId,
-      screen_name: screenName,
-      occurred_at: occurredAt.toISOString(),
-    });
+  // 1. Append raw event (non-fatal)
+  const { error: evtError } = await db.from("compass_preload_events").insert({
+    user_id:    userId,
+    screen_name: screenName,
+    occurred_at: occurredAt.toISOString(),
+  });
+  if (evtError) {
+    logger.warn({ err: evtError, userId, screenName }, "compass preload event insert failed (non-fatal)");
+  }
 
-    // 2. Update aggregated pattern — read-then-increment because PostgREST
-    // does not support `col = col + 1` in upserts. A race between two
-    // simultaneous events may lose one count, which is acceptable for ranking.
-    const { data: existing } = await db
-      .from("compass_user_navigation_patterns")
-      .select("transition_count")
-      .eq("user_id", userId)
-      .eq("from_screen", "app")
-      .eq("to_screen", screenName)
-      .maybeSingle();
+  // 2. Update aggregated pattern — read-then-increment because PostgREST
+  // does not support `col = col + 1` in upserts. A race between two
+  // simultaneous events may lose one count, which is acceptable for ranking.
+  const { data: existing, error: readError } = await db
+    .from("compass_user_navigation_patterns")
+    .select("transition_count")
+    .eq("user_id", userId)
+    .eq("from_screen", "app")
+    .eq("to_screen", screenName)
+    .maybeSingle();
+  if (readError) {
+    logger.warn({ err: readError, userId, screenName }, "navigation pattern read failed (non-fatal)");
+    return;
+  }
 
-    const newCount = ((existing as any)?.transition_count ?? 0) + 1;
+  const newCount = ((existing as any)?.transition_count ?? 0) + 1;
 
-    await db
-      .from("compass_user_navigation_patterns")
-      .upsert(
-        {
-          user_id:          userId,
-          from_screen:      "app",
-          to_screen:        screenName,
-          transition_count: newCount,
-          last_seen_at:     occurredAt.toISOString(),
-          updated_at:       new Date().toISOString(),
-        },
-        {
-          onConflict:       "user_id,from_screen,to_screen",
-          ignoreDuplicates: false,
-        },
-      );
-  } catch { /* non-fatal */ }
+  const { error: upsertError } = await db
+    .from("compass_user_navigation_patterns")
+    .upsert(
+      {
+        user_id:          userId,
+        from_screen:      "app",
+        to_screen:        screenName,
+        transition_count: newCount,
+        last_seen_at:     occurredAt.toISOString(),
+        updated_at:       new Date().toISOString(),
+      },
+      {
+        onConflict:       "user_id,from_screen,to_screen",
+        ignoreDuplicates: false,
+      },
+    );
+  if (upsertError) {
+    logger.warn({ err: upsertError, userId, screenName }, "navigation pattern upsert failed (non-fatal)");
+  }
 }

@@ -62,44 +62,38 @@ function isFresh(entry: CacheEntry): boolean {
 async function dbGet(destination: string, dateKey: string): Promise<CacheEntry | null> {
   const client = getServiceClient();
   if (!client) return null;
-  try {
-    const { data, error } = await client
-      .from('weather_cache')
-      .select('brief_summary, forecasts_json, fetched_at')
-      .eq('destination', destination.toLowerCase())
-      .eq('date_key', dateKey)
-      .single();
-    if (error || !data) return null;
-    const cachedAt = new Date(data.fetched_at as string).getTime();
-    if (Date.now() - cachedAt >= CACHE_TTL_MS) return null;
-    const context: WeatherContext = {
-      destination,
-      forecasts: data.forecasts_json as DailyWeather[],
-      briefSummary: data.brief_summary as string,
-    };
-    return { context, cachedAt };
-  } catch {
-    return null;
-  }
+  const { data, error } = await client
+    .from('weather_cache')
+    .select('brief_summary, forecasts_json, fetched_at')
+    .eq('destination', destination.toLowerCase())
+    .eq('date_key', dateKey)
+    .single();
+  if (error || !data) return null; // PGRST116 (no rows) is the normal miss path
+  const cachedAt = new Date(data.fetched_at as string).getTime();
+  if (Date.now() - cachedAt >= CACHE_TTL_MS) return null;
+  const context: WeatherContext = {
+    destination,
+    forecasts: data.forecasts_json as DailyWeather[],
+    briefSummary: data.brief_summary as string,
+  };
+  return { context, cachedAt };
 }
 
 async function dbSet(destination: string, dateKey: string, entry: CacheEntry): Promise<void> {
   const client = getServiceClient();
   if (!client) return;
-  try {
-    await client.from('weather_cache').upsert(
-      {
-        destination: destination.toLowerCase(),
-        date_key: dateKey,
-        brief_summary: entry.context.briefSummary,
-        forecasts_json: entry.context.forecasts,
-        fetched_at: new Date(entry.cachedAt).toISOString(),
-      },
-      { onConflict: 'destination,date_key' },
-    );
-  } catch {
-    // best-effort — never block the response
-  }
+  // best-effort — never block the response
+  const { error } = await client.from('weather_cache').upsert(
+    {
+      destination: destination.toLowerCase(),
+      date_key: dateKey,
+      brief_summary: entry.context.briefSummary,
+      forecasts_json: entry.context.forecasts,
+      fetched_at: new Date(entry.cachedAt).toISOString(),
+    },
+    { onConflict: 'destination,date_key' },
+  );
+  if (error) console.warn('weatherCache: dbSet upsert failed (best-effort):', error.message);
 }
 
 /* ── Utility ──────────────────────────────────────────────────────────────── */

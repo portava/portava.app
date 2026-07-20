@@ -1,8 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
+import { logger as rootLogger } from "../lib/logger.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { patchOsmSavedCount } from "./discovery.js";
+
+const wishlistLogger = rootLogger.child({ route: "wishlist" });
 
 const router = Router();
 
@@ -32,70 +35,83 @@ export async function trackOsmPlaceSave(
   const svc = getServiceClient();
   if (!svc) return;
 
-  try {
-    const name       = typeof placeData["name"]     === "string" ? placeData["name"]     : osmId;
-    const category   = typeof placeData["category"] === "string" ? placeData["category"] : "places";
-    const placeType  = typeof placeData["type"]     === "string" ? placeData["type"]     : null;
-    const lat        = typeof placeData["lat"]       === "number" ? placeData["lat"]       : null;
-    const lng        = typeof placeData["lng"]       === "number" ? placeData["lng"]       : null;
+  // Non-blocking — wishlist save already committed; failures are logged, never thrown.
+  const name       = typeof placeData["name"]     === "string" ? placeData["name"]     : osmId;
+  const category   = typeof placeData["category"] === "string" ? placeData["category"] : "places";
+  const placeType  = typeof placeData["type"]     === "string" ? placeData["type"]     : null;
+  const lat        = typeof placeData["lat"]       === "number" ? placeData["lat"]       : null;
+  const lng        = typeof placeData["lng"]       === "number" ? placeData["lng"]       : null;
 
-    // Step 1: Ensure a discovery_places row exists for this OSM place.
-    // ignoreDuplicates: true = INSERT ... ON CONFLICT DO NOTHING, so existing
-    // rows (with their accumulated saved_count) are never overwritten.
-    await svc
+  // Step 1: Ensure a discovery_places row exists for this OSM place.
+  // ignoreDuplicates: true = INSERT ... ON CONFLICT DO NOTHING, so existing
+  // rows (with their accumulated saved_count) are never overwritten.
+  const { error: upsertError } = await svc
+    .from("discovery_places")
+    .upsert(
+      {
+        osm_id:     osmId,
+        name,
+        city:       "",           // OSM rows track popularity only; city="" keeps them out of city-filtered queries
+        place_type: placeType ?? "place",
+        category,
+        source:     "osm",
+        status:     "active",
+        saved_count: 0,
+        lat,
+        lng,
+      },
+      { onConflict: "osm_id", ignoreDuplicates: true },
+    );
+  if (upsertError) {
+    wishlistLogger.warn({ err: upsertError, osmId }, "trackOsmPlaceSave: discovery_places upsert failed (non-blocking)");
+    return;
+  }
+
+  // Step 2: Look up the UUID assigned to this OSM place.
+  const { data: dpRow, error: lookupError } = await svc
+    .from("discovery_places")
+    .select("id, saved_count")
+    .eq("osm_id", osmId)
+    .maybeSingle();
+
+  if (lookupError) {
+    wishlistLogger.warn({ err: lookupError, osmId }, "trackOsmPlaceSave: discovery_places lookup failed (non-blocking)");
+    return;
+  }
+  if (!dpRow) return;
+
+  // Step 3 (atomic): Record the per-user save.  The INSERT ... ON CONFLICT
+  // DO NOTHING is evaluated atomically by PostgreSQL — exactly one of any
+  // concurrent requests for the same (user_id, place_id) pair will see a
+  // non-empty return; all others receive an empty array.  We only increment
+  // saved_count when our INSERT actually created a new row, eliminating the
+  // SELECT-then-INSERT race that could double-count concurrent saves.
+  const { data: newSaveRows, error: saveError } = await svc
+    .from("discovery_place_saves")
+    .upsert(
+      { user_id: userId, place_id: (dpRow as any).id },
+      { onConflict: "user_id,place_id", ignoreDuplicates: true },
+    )
+    .select("place_id");
+  if (saveError) {
+    wishlistLogger.warn({ err: saveError, osmId }, "trackOsmPlaceSave: save record upsert failed (non-blocking)");
+    return;
+  }
+
+  if (newSaveRows && newSaveRows.length > 0) {
+    // A brand-new row was inserted — safe to increment.
+    const newCount = ((dpRow as any).saved_count ?? 0) + 1;
+    const { error: countError } = await svc
       .from("discovery_places")
-      .upsert(
-        {
-          osm_id:     osmId,
-          name,
-          city:       "",           // OSM rows track popularity only; city="" keeps them out of city-filtered queries
-          place_type: placeType ?? "place",
-          category,
-          source:     "osm",
-          status:     "active",
-          saved_count: 0,
-          lat,
-          lng,
-        },
-        { onConflict: "osm_id", ignoreDuplicates: true },
-      );
-
-    // Step 2: Look up the UUID assigned to this OSM place.
-    const { data: dpRow } = await svc
-      .from("discovery_places")
-      .select("id, saved_count")
-      .eq("osm_id", osmId)
-      .maybeSingle();
-
-    if (!dpRow) return;
-
-    // Step 3 (atomic): Record the per-user save.  The INSERT ... ON CONFLICT
-    // DO NOTHING is evaluated atomically by PostgreSQL — exactly one of any
-    // concurrent requests for the same (user_id, place_id) pair will see a
-    // non-empty return; all others receive an empty array.  We only increment
-    // saved_count when our INSERT actually created a new row, eliminating the
-    // SELECT-then-INSERT race that could double-count concurrent saves.
-    const { data: newSaveRows } = await svc
-      .from("discovery_place_saves")
-      .upsert(
-        { user_id: userId, place_id: (dpRow as any).id },
-        { onConflict: "user_id,place_id", ignoreDuplicates: true },
-      )
-      .select("place_id");
-
-    if (newSaveRows && newSaveRows.length > 0) {
-      // A brand-new row was inserted — safe to increment.
-      const newCount = ((dpRow as any).saved_count ?? 0) + 1;
-      await svc
-        .from("discovery_places")
-        .update({ saved_count: newCount })
-        .eq("id", (dpRow as any).id);
-      // Patch the in-memory discovery cache so the popular sort reflects the
-      // new count on the very next request without waiting for the 2-hour TTL.
-      patchOsmSavedCount(osmId, newCount);
+      .update({ saved_count: newCount })
+      .eq("id", (dpRow as any).id);
+    if (countError) {
+      wishlistLogger.warn({ err: countError, osmId }, "trackOsmPlaceSave: saved_count update failed (non-blocking)");
+      return;
     }
-  } catch {
-    // Non-blocking — wishlist save already committed
+    // Patch the in-memory discovery cache so the popular sort reflects the
+    // new count on the very next request without waiting for the 2-hour TTL.
+    patchOsmSavedCount(osmId, newCount);
   }
 }
 
@@ -120,26 +136,35 @@ export async function trackOsmPlaceUnsave(
   const svc = getServiceClient();
   if (!svc) return;
 
-  try {
+  // Non-blocking — failures are logged, never thrown.
+  {
     // Step 1: Look up the discovery_places row.  If it doesn't exist the
     // place was never saved via the tracking path — nothing to decrement.
-    const { data: dpRow } = await svc
+    const { data: dpRow, error: lookupError } = await svc
       .from("discovery_places")
       .select("id, saved_count")
       .eq("osm_id", osmId)
       .maybeSingle();
+    if (lookupError) {
+      wishlistLogger.warn({ err: lookupError, osmId }, "trackOsmPlaceUnsave: discovery_places lookup failed (non-blocking)");
+      return;
+    }
     if (!dpRow) return;
 
     // Step 2: Check whether any other wishlist entries remain for this user
     // and place (the DELETE route already removed the targeted list entry).
     // If other lists/trips still hold the place, the user still wants it
     // saved — no decrement yet.
-    const { data: remaining } = await svc
+    const { data: remaining, error: remainingError } = await svc
       .from("wishlist_places")
       .select("place_id")
       .eq("user_id", userId)
       .eq("place_id", osmId)
       .limit(1);
+    if (remainingError) {
+      wishlistLogger.warn({ err: remainingError, osmId }, "trackOsmPlaceUnsave: remaining-entries check failed (non-blocking)");
+      return;
+    }
     if (Array.isArray(remaining) && remaining.length > 0) return;
 
     // Step 3 (atomic): Delete the per-user save record and return the deleted
@@ -153,12 +178,16 @@ export async function trackOsmPlaceUnsave(
     // If the user never saved this place (no save record exists), the DELETE
     // returns empty — safely guarding against count manipulation without a
     // separate pre-flight SELECT.
-    const { data: deletedRows } = await svc
+    const { data: deletedRows, error: deleteError } = await svc
       .from("discovery_place_saves")
       .delete()
       .eq("user_id", userId)
       .eq("place_id", (dpRow as any).id)
       .select("place_id");
+    if (deleteError) {
+      wishlistLogger.warn({ err: deleteError, osmId }, "trackOsmPlaceUnsave: save record delete failed (non-blocking)");
+      return;
+    }
 
     if (deletedRows && deletedRows.length > 0) {
       // Atomically decrement saved_count using a DB function that evaluates
@@ -167,10 +196,13 @@ export async function trackOsmPlaceUnsave(
       // an absolute value, this form is immune to the stale-snapshot race
       // where two concurrent different-user unsaves both read the same
       // saved_count and both overwrite the DB with snapshot-1.
-      const { data: newCount } = await svc.rpc(
+      const { data: newCount, error: rpcError } = await svc.rpc(
         "decrement_discovery_place_saved_count",
         { p_id: (dpRow as any).id },
       );
+      if (rpcError) {
+        wishlistLogger.warn({ err: rpcError, osmId }, "trackOsmPlaceUnsave: decrement rpc failed (non-blocking)");
+      }
       // Patch the in-memory discovery cache so the popular sort reflects the
       // decremented count immediately.  Prefer the value returned by the RPC;
       // fall back to a best-effort approximation if it is not numeric.
@@ -181,8 +213,6 @@ export async function trackOsmPlaceUnsave(
           : Math.max(0, ((dpRow as any).saved_count ?? 1) - 1),
       );
     }
-  } catch {
-    // Non-blocking
   }
 }
 

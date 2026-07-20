@@ -3,6 +3,9 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordTrustEvent } from "../trust/TrustEventService.js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "HiddenGemService" });
 
 const GEM_SELECT_COLS = `
   id, name, category, city, country, neighborhood,
@@ -230,16 +233,20 @@ export async function saveGem(
     .insert({ gem_id: gemId, user_id: userId });
   if (error) throw error;
 
-  // Increment save_count — direct UPDATE, no RPC dependency
-  try {
-    await db.rpc("increment_counter" as any, {
-      table_name: "hidden_gems", column_name: "save_count", row_id: gemId,
-    });
-  } catch {
+  // Increment save_count — supabase-js returns { error }, it never throws
+  const { error: rpcError } = await db.rpc("increment_counter" as any, {
+    table_name: "hidden_gems", column_name: "save_count", row_id: gemId,
+  });
+  if (rpcError) {
     // Fallback: manual increment
-    const { data: cur } = await db.from("hidden_gems").select("save_count").eq("id", gemId).maybeSingle();
-    const next = ((cur as any)?.save_count ?? 0) + 1;
-    await db.from("hidden_gems").update({ save_count: next }).eq("id", gemId);
+    const { data: cur, error: readError } = await db.from("hidden_gems").select("save_count").eq("id", gemId).maybeSingle();
+    if (readError) {
+      logger.warn({ err: readError, gemId }, "saveGem: save_count fallback read failed");
+    } else {
+      const next = ((cur as any)?.save_count ?? 0) + 1;
+      const { error: updError } = await db.from("hidden_gems").update({ save_count: next }).eq("id", gemId);
+      if (updError) logger.warn({ err: updError, gemId }, "saveGem: save_count fallback update failed");
+    }
   }
 
   // Feed into Trust Engine (fire-and-forget; flag-gated internally)

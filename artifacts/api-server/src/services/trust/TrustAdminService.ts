@@ -5,6 +5,9 @@
  * Every write creates a row in trust_admin_actions for full audit trail.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "TrustAdminService" });
 import { recalculateTrustScore } from "./TrustScoreService.js";
 import { createCap, liftCap } from "./TrustCapService.js";
 import { applyRestriction, liftRestriction, type RestrictionType } from "./TrustRestrictionService.js";
@@ -26,18 +29,16 @@ async function logAdminAction(
   metadata: Record<string, unknown> = {},
   sourceId?: string,
 ): Promise<void> {
-  try {
-    await db.from("trust_admin_actions").insert({
-      admin_id:    adminId,
-      target_user: targetUser,
-      action_type: actionType,
-      reason,
-      source_id:   sourceId ?? null,
-      metadata,
-    });
-  } catch {
-    // Non-fatal — audit log failure should not block the action
-  }
+  // Non-fatal — audit log failure should not block the action
+  const { error } = await db.from("trust_admin_actions").insert({
+    admin_id:    adminId,
+    target_user: targetUser,
+    action_type: actionType,
+    reason,
+    source_id:   sourceId ?? null,
+    metadata,
+  });
+  if (error) logger.warn({ err: error, adminId, actionType }, "audit log insert failed (non-fatal)");
 }
 
 /** Confirm a pending_review event → 'confirmed', trigger caps + recalc */
@@ -167,13 +168,14 @@ export async function adminOverrideScore(
     reasonCode: "admin_override",
   });
 
-  // Also upsert the trust_profiles row directly for immediate effect
-  try {
-    await db.from("trust_profiles").upsert(
+  // Also upsert the trust_profiles row directly for immediate effect (non-fatal)
+  {
+    const { error } = await db.from("trust_profiles").upsert(
       { user_id: targetUserId, [category]: newScore, updated_at: new Date().toISOString() },
       { onConflict: "user_id" },
     );
-  } catch { /* non-fatal */ }
+    if (error) logger.warn({ err: error, targetUserId, category }, "score override upsert failed (non-fatal)");
+  }
 
   await recalculateTrustScore(db, targetUserId).catch(() => {});
   await logAdminAction(db, adminId, targetUserId, "score_override", reason,

@@ -33,21 +33,23 @@ async function runSweep(): Promise<void> {
     }
 
     // Record successful sweep in job_health table
-    await db.from("job_health").upsert(
+    const { error: healthError } = await db.from("job_health").upsert(
       { job: JOB_KEY, last_run_at: ranAt },
       { onConflict: "job" },
     );
+    if (healthError) {
+      logger.warn({ err: healthError }, "tripCrewLiveShareScheduler: could not persist job health");
+    }
   } catch (err) {
     logger.error({ err }, "tripCrewLiveShareScheduler: sweep failed");
 
-    // Still record the attempt time so health check can detect stalled jobs
-    try {
-      await db.from("job_health").upsert(
-        { job: JOB_KEY, last_run_at: ranAt },
-        { onConflict: "job" },
-      );
-    } catch {
-      // swallow — best effort
+    // Still record the attempt time so health check can detect stalled jobs (best effort)
+    const { error: healthError } = await db.from("job_health").upsert(
+      { job: JOB_KEY, last_run_at: ranAt },
+      { onConflict: "job" },
+    );
+    if (healthError) {
+      logger.warn({ err: healthError }, "tripCrewLiveShareScheduler: could not persist job health after failure");
     }
   }
 }

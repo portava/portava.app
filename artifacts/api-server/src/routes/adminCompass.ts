@@ -77,14 +77,18 @@ async function logAdminAction(
   targetId?:  string | null,
   payload?:   Record<string, unknown>,
 ): Promise<void> {
+  // non-fatal
   try {
-    await sc.from("compass_admin_actions").insert({
+    const { error } = await sc.from("compass_admin_actions").insert({
       admin_id:    adminId,
       action_type: actionType,
       target_id:   targetId ?? null,
       payload:     payload ?? null,
     });
-  } catch { /* non-fatal */ }
+    if (error) console.warn("compass admin action log failed (non-fatal):", error.message ?? error);
+  } catch (err) {
+    console.warn("compass admin action log threw (non-fatal):", err);
+  }
 }
 
 // ── Global cache invalidation helper ─────────────────────────────────────────

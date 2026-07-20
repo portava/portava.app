@@ -5,6 +5,9 @@
  * Safe Return for risky layover contexts.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "LayoverNotificationService" });
 import type { LayoverSession } from "./LayoverSessionService.js";
 import type { AirportProfile } from "./AirportProfileService.js";
 import { computeBuffer } from "./LayoverSafetyEngine.js";
@@ -107,12 +110,12 @@ export async function suggestSafeReturn(
   session: LayoverSession,
   reasons: string[],
 ): Promise<void> {
-  try {
-    await db.from("layover_events").insert({
-      session_id: session.id,
-      user_id:    session.userId,
-      event_type: "safe_return_suggested",
-      metadata:   { reasons },
-    });
-  } catch { /* non-fatal */ }
+  // non-fatal
+  const { error } = await db.from("layover_events").insert({
+    session_id: session.id,
+    user_id:    session.userId,
+    event_type: "safe_return_suggested",
+    metadata:   { reasons },
+  });
+  if (error) logger.warn({ err: error, sessionId: session.id }, "safe_return_suggested event failed (non-fatal)");
 }

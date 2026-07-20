@@ -229,36 +229,43 @@ export function makeCallStore(sc: SupabaseClient): CallStoreEx {
         try {
           const threadId = await resolveTripThreadId(sc, session.contextId);
           if (!threadId) return;
-          const { count } = await sc
+          const { count, error: countError } = await sc
             .from("call_participants")
             .select("user_id", { count: "exact", head: true })
             .eq("call_id", session.id)
             .not("joined_at", "is", null);
-          await sc.from("messages").insert({
+          if (countError) {
+            console.warn("call history participant count failed (non-critical):", countError.message ?? countError);
+          }
+          const { error: insError } = await sc.from("messages").insert({
             thread_id: threadId,
             sender_id: session.startedBy,
             body: groupCallEndLine(session, count ?? 0),
             msg_type: "system",
             subtype: "call_ended",
           });
-        } catch {
+          if (insError) {
+            console.warn("call history write failed (non-critical):", insError.message ?? insError);
+          }
+        } catch (err) {
           /* non-critical — never fail room teardown on a history write */
+          console.warn("call history write threw (non-critical):", err);
         }
         return;
       }
       // Contextual history lives in the Telegraph conversation; sessions
       // without a thread (e.g. event rooms) simply have no history line.
       if (!session.threadId) return;
-      try {
-        await sc.from("messages").insert({
-          thread_id: session.threadId,
-          sender_id: session.startedBy,
-          body: callHistoryLine(session),
-          msg_type: "system",
-          subtype: `call_${session.status}`,
-        });
-      } catch {
+      const { error: histError } = await sc.from("messages").insert({
+        thread_id: session.threadId,
+        sender_id: session.startedBy,
+        body: callHistoryLine(session),
+        msg_type: "system",
+        subtype: `call_${session.status}`,
+      });
+      if (histError) {
         /* non-critical — never fail call teardown on a history write */
+        console.warn("call history write failed (non-critical):", histError.message ?? histError);
       }
     },
 

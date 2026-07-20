@@ -389,15 +389,14 @@ router.post("/me/requests/circle_invite/:id/accept", async (req, res) => {
       if (!eligibility.eligible) {
         // Write audit log (best-effort)
         void (async () => {
-          try {
-            await serviceClient.from("age_limit_audit_log").insert({
-              actor_user_id: user.id,
-              target_type:   "circle",
-              target_id:     inv.owner_id,
-              action:        "circle_invite_accept_blocked",
-              reason:        eligibility.reason,
-            });
-          } catch {}
+          const { error: auditError } = await serviceClient.from("age_limit_audit_log").insert({
+            actor_user_id: user.id,
+            target_type:   "circle",
+            target_id:     inv.owner_id,
+            action:        "circle_invite_accept_blocked",
+            reason:        eligibility.reason,
+          });
+          if (auditError) req.log.warn({ err: auditError }, "age limit audit insert failed (best-effort)");
         })();
         res.status(403).json({
           error: "age_not_eligible",

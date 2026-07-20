@@ -4,6 +4,9 @@
  * Report intake, mark-sensitive, hide, merge-duplicate, admin review queue.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "HiddenGemModerationService" });
 
 /** Submit a report for a gem. */
 export async function reportGem(
@@ -33,12 +36,17 @@ export async function reportGem(
 
   if (error) throw error;
 
-  // Increment report_count — direct UPDATE, no RPC dependency
-  try {
-    const { data: cur } = await db.from("hidden_gems").select("report_count").eq("id", gemId).maybeSingle();
-    const next = ((cur as any)?.report_count ?? 0) + 1;
-    await db.from("hidden_gems").update({ report_count: next }).eq("id", gemId);
-  } catch { /* non-fatal */ }
+  // Increment report_count — direct UPDATE, no RPC dependency (non-fatal)
+  {
+    const { data: cur, error: readError } = await db.from("hidden_gems").select("report_count").eq("id", gemId).maybeSingle();
+    if (readError) {
+      logger.warn({ err: readError, gemId }, "report_count read failed (non-fatal)");
+    } else {
+      const next = ((cur as any)?.report_count ?? 0) + 1;
+      const { error: updError } = await db.from("hidden_gems").update({ report_count: next }).eq("id", gemId);
+      if (updError) logger.warn({ err: updError, gemId }, "report_count update failed (non-fatal)");
+    }
+  }
 
   return { ok: true, alreadyReported: false };
 }

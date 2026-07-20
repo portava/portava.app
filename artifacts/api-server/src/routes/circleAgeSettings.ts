@@ -121,16 +121,15 @@ router.put("/circle-age-settings", async (req, res) => {
 
   // Audit log: circle age limit saved (fire-and-forget)
   void (async () => {
-    try {
-      await sc.from("age_limit_audit_log").insert({
-        actor_user_id: user.id,
-        target_type:   "circle",
-        target_id:     user.id,
-        action:        b.ageLimitEnabled ? "age_limit_set" : "age_limit_removed",
-        new_min_age:   b.ageLimitEnabled ? minAge : null,
-        new_max_age:   b.ageLimitEnabled ? maxAge : null,
-      });
-    } catch {}
+    const { error: auditError } = await sc.from("age_limit_audit_log").insert({
+      actor_user_id: user.id,
+      target_type:   "circle",
+      target_id:     user.id,
+      action:        b.ageLimitEnabled ? "age_limit_set" : "age_limit_removed",
+      new_min_age:   b.ageLimitEnabled ? minAge : null,
+      new_max_age:   b.ageLimitEnabled ? maxAge : null,
+    });
+    if (auditError) req.log.warn({ err: auditError }, "age limit audit insert failed (best-effort)");
   })();
 
   res.json({
