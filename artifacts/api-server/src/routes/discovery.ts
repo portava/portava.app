@@ -1052,7 +1052,7 @@ router.get("/discovery", async (req, res) => {
       if (rankSc) {
         try {
           const { data: followRows } = await rankSc
-            .from("follows")
+            .from("user_follows")
             .select("following_id")
             .eq("follower_id", callerUserId);
           for (const row of (followRows as any[]) ?? []) followedIds.add(row.following_id as string);

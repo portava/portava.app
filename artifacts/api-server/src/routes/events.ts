@@ -825,7 +825,7 @@ router.get("/events", async (req, res) => {
   let followedIds = new Set<string>();
   try {
     const { data: followRows } = await sc
-      .from("follows")
+      .from("user_follows")
       .select("following_id")
       .eq("follower_id", user.id);
     for (const row of (followRows as any[]) ?? []) followedIds.add(row.following_id as string);
@@ -1182,18 +1182,19 @@ router.get("/events/circles", async (req, res) => {
   const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
   const cursor = (req.query.cursor as string) ?? null;
 
-  // Step 1 — Fetch all circle IDs the viewer belongs to (member or owner)
+  // Step 1 — Fetch all circle IDs the viewer belongs to (member or owner).
+  // Live table is circle_memberships(user_id = circle owner, other_id = member,
+  // status, created_at); a circle's id is its owner's user id.
   const { data: memberRows } = await sc
-    .from("circle_members")
-    .select("circle_id")
-    .eq("user_id", user.id);
+    .from("circle_memberships")
+    .select("user_id")
+    .eq("other_id", user.id);
 
-  const circleIds = ((memberRows as any[]) ?? []).map((r: any) => r.circle_id as string);
-
-  if (circleIds.length === 0) {
-    res.json({ events: [], cursor: null });
-    return;
-  }
+  // The viewer always belongs to their own circle (owner has no self-membership row).
+  const circleIds = [...new Set([
+    user.id,
+    ...(((memberRows as any[]) ?? []).map((r: any) => r.user_id as string)),
+  ])];
 
   // Step 2 — Fetch candidate events linked to these circles
   let query = sc
@@ -3380,13 +3381,16 @@ async function checkDuplicateEvent(
   return Array.isArray(data) && data.length > 0;
 }
 
-/** Check if userId is an active member of circle circleId (accepted/active status). */
+/** Check if userId is an active member of circle circleId (accepted/active status).
+ *  Live table is circle_memberships(user_id = circle owner, other_id = member);
+ *  a circle's id is its owner's user id, so the owner is always a member. */
 async function isCircleMember(sc: any, circleId: string, userId: string): Promise<boolean> {
+  if (circleId === userId) return true;
   const { data } = await sc
-    .from("circle_members")
-    .select("user_id")
-    .eq("circle_id", circleId)
-    .eq("user_id", userId)
+    .from("circle_memberships")
+    .select("other_id")
+    .eq("user_id", circleId)
+    .eq("other_id", userId)
     .maybeSingle();
   return !!data;
 }

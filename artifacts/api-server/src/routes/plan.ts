@@ -105,11 +105,12 @@ router.post("/places/:placeId/add-to-trip-plan", asyncHandler(async (req, res) =
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
   if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; }
 
-  // Fetch place row — public-safe columns only (name, category, location_name)
-  // NOTE: approximate_lat / approximate_lng are intentionally NOT fetched.
+  // Fetch place row — public-safe columns only (name, category, city)
+  // NOTE: exact coordinates are intentionally NOT fetched.
+  // Repointed from non-existent "places" to the live "discovery_places" table.
   const { data: place } = await client
-    .from("places")
-    .select("id, name, category, location_name")
+    .from("discovery_places")
+    .select("id, name, category, city")
     .eq("id", placeId)
     .maybeSingle();
   if (!place) { sendError(res, "not_found", "Place not found"); return; }
@@ -137,7 +138,7 @@ router.post("/places/:placeId/add-to-trip-plan", asyncHandler(async (req, res) =
       source_id: placeId,
       day_date: dayDate ?? null,
       starts_at: startsAt ?? null,
-      location_name: (place as any).location_name ?? null,
+      location_name: (place as any).city ?? null,
       sort_order: 0,
       visibility: "members",
     })

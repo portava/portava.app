@@ -4,6 +4,7 @@
 - [Explore page performance fixes](explore-perf-fixes.md) — 6 targeted fixes for Discover tab cold-start; geocode dedup, batch counts endpoint, client cache, FlatList virtualisation, community cache, deferred PlaceCard fetches.
 - [Scroll-collapse animation gotchas](scroll-collapse-gotchas.md) — size collapse rows from token lineHeight (fontSize overrides don't shrink it); animate height on a View clip wrapper, never on Text (RN web).
 - [Legacy migration reconciliation](legacy-migration-reconciliation.md) — CREATE TABLE/INDEX IF NOT EXISTS traps, live column renames, and apply-time SQL transforms for the legacy dir.
+- [Social-graph live tables](social-graph-live-tables.md) — user_follows/user_friendships/circle_memberships(user_id=owner, other_id=member) exist live; follows/places/stamps/circle_members/friend_connections do not.
 - [DB column-drift trap](db-column-drift.md) — verify columns against the LIVE schema (generated types drift both ways); PGRST204 = one unknown column fails the whole insert, even null.
 - [Standalone tree = mirror](standalone-fork-parity.md) — artifacts/travel-buddy is canonical; standalone auto-syncs post-merge. ONLY `STANDALONE_OWNED_FILES` ledger entries need manual two-tree porting.
 - [Compass item hydration](compass-item-hydration.md) — top-level `title`/`category` must be set in the hydrator; shared `compassFormat.ts` utility resolves real names and event metadata across feed and recommendation surfaces.

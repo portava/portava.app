@@ -13,6 +13,16 @@ import { syncCircleChatMembers } from "../lib/chatSync";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity";
 
+// NOTE (Section A table-name audit, 2026-07-20): the product spec is
+// follow-only (no friends system) and the original plan called for removing
+// these routes. However, the live database DOES contain the
+// `user_friendships` and `friend_requests` tables (verified against the
+// production schema), so these routes are functional — only the
+// `friend_connections` table referenced elsewhere was an orphan (repointed in
+// passportStamps.ts). Decision recorded: KEEP the friends system for now.
+// TODO: friends system not in spec — if it is dropped, unregister this router
+// in routes/index.ts and remove user_friendships/friend_requests references
+// across the codebase.
 const router = Router();
 
 const PROFILE_PUBLIC = "id, handle, name, avatar_url";

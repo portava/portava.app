@@ -655,7 +655,7 @@ router.get("/users/:username/profile", async (req, res) => {
 
   const [tripResult, stampResult] = await Promise.all([
     sc.from("trips").select("id", { count: "exact", head: true }).eq("owner_id", profile.id),
-    sc.from("stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id).eq("locked", false),
+    sc.from("passport_stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id).eq("locked", false),
   ]);
   const tripCount = tripResult.count;
   const stampCount = (stampResult as any).error?.code === "PGRST205" ? 0 : stampResult.count;
@@ -1094,7 +1094,7 @@ router.get("/users/:username/og-image.png", async (req, res) => {
 
     const [tripResult, stampResult] = await Promise.all([
       sc.from("trips").select("id", { count: "exact", head: true }).eq("owner_id", profile.id),
-      sc.from("stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id).eq("locked", false),
+      sc.from("passport_stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id).eq("locked", false),
     ]);
 
     const avatarDataUri = profile.avatar_url ? await fetchImageAsDataUri(profile.avatar_url) : null;
@@ -1131,7 +1131,7 @@ router.get("/me/stamps", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   const { data, error } = await sc
-    .from("stamps")
+    .from("passport_stamps")
     .select("id, kind, label, sublabel, first_earned_at, last_earned_at, check_in_count, locked")
     .eq("user_id", user.id)
     .order("first_earned_at", { ascending: false });

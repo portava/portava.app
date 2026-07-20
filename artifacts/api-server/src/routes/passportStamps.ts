@@ -22,6 +22,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
+import { normalizedFriendshipPair } from "../lib/friendDecisions.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
   createStamp,
@@ -636,13 +637,16 @@ router.get("/users/:username/passport/memories", async (req, res) => {
     const { data: authData } = await sc.auth.getUser(token);
     const callerId = authData?.user?.id;
     if (callerId && callerId !== (profile as any).id) {
-      // Check circle membership
+      // Check friendship (grants "circle" visibility context).
+      // TODO: friends system not in spec (follow-only) — repointed from the
+      // non-existent friend_connections table to the live user_friendships
+      // table; remove if the friends system is dropped.
+      const [ua, ub] = normalizedFriendshipPair(callerId, (profile as any).id);
       const { data: circleRow } = await sc
-        .from("friend_connections")
-        .select("id")
-        .eq("user_a_id", callerId)
-        .eq("user_b_id", (profile as any).id)
-        .eq("status", "connected")
+        .from("user_friendships")
+        .select("user_a")
+        .eq("user_a", ua)
+        .eq("user_b", ub)
         .maybeSingle();
       if (circleRow) callerCtx = "circle";
     }
@@ -711,12 +715,15 @@ router.get("/users/:username/passport/stamps", async (req, res) => {
     if (callerId2 === (profile as any).id) {
       callerCtx = "owner";
     } else if (callerId2) {
+      // TODO: friends system not in spec (follow-only) — repointed from the
+      // non-existent friend_connections table to the live user_friendships
+      // table; remove if the friends system is dropped.
+      const [ua2, ub2] = normalizedFriendshipPair(callerId2, (profile as any).id);
       const { data: circleRow2 } = await sc
-        .from("friend_connections")
-        .select("id")
-        .eq("user_a_id", callerId2)
-        .eq("user_b_id", (profile as any).id)
-        .eq("status", "connected")
+        .from("user_friendships")
+        .select("user_a")
+        .eq("user_a", ua2)
+        .eq("user_b", ub2)
         .maybeSingle();
       if (circleRow2) callerCtx = "circle";
     }
