@@ -16,7 +16,7 @@
  * Setting it once here makes every RNTL act() save true → restore true, so
  * synchronous act-queue scheduling stays active for the whole test run.
  *
- * NOTE: Verified 2026-07-18 — jest-expo 56.0.5 (installed) and 57.0.2
+ * NOTE: Verified 2026-07-20 — jest-expo 56.0.5 (installed) and 57.0.2
  * (latest) do not set IS_REACT_ACT_ENVIRONMENT in any of their preset setup
  * files.  Remove the declare-global block and the assignment below once a
  * jest-expo release adds native support (grep its src/preset/setup.js for
