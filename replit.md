@@ -115,6 +115,26 @@ Users sign in with Supabase Auth (email/password) to create and manage trips (de
 - Feature-flag routes in `routes/*.ts` use paths without the `/api` prefix (the router is mounted at `app.use("/api", router)`).
 - `rent_buddy_city_rollouts`: when the table has no rows at `public_mvp` or `beta_testing` status, all city-specific calls return `city_not_available`. Apply migration `0092_seed_rent_buddy_launch_cities.sql` (seeds Cebu, Manila, Davao City at `public_mvp`) or add rows via `POST /api/admin/rent-buddy/rollout/cities`. The `db-triggers` pre-release check now verifies at least one live city exists.
 
+## Stamp catalog reconciliation
+
+`POST /admin/stamps/reconcile` (requires admin role) runs the stamp catalog reconciliation: it reads every distinct `(stamp_type, country, city)` combination from `user_stamps` and `passport_stamps`, resolves or creates the matching `universal_stamp_catalog` entry, and writes `catalog_id` back onto any rows where it is `null`. The endpoint is idempotent and returns `{ ok: true, stats: { resolved, flagged, skipped, enqueued } }`.
+
+**When to trigger**
+
+| Trigger | How |
+|---------|-----|
+| After every deploy | Add `curl -s -X POST $API_URL/api/admin/stamps/reconcile -H "Authorization: Bearer $ADMIN_TOKEN"` as the final step in your CI/CD release job |
+| Nightly cron | Schedule the same `curl` command via your cron provider (e.g. GitHub Actions `schedule`, Render cron job, or `pg_cron` on Supabase) |
+| Manual one-off | Run the CLI script: `SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... npx tsx src/scripts/reconcileStampCatalog.ts` from `artifacts/api-server/` |
+
+The shared logic lives in `artifacts/api-server/src/lib/stamps/reconcileStampCatalog.ts` and is called by both the API route and the CLI script.
+
+**Stats meaning**
+- `resolved` — combos that were successfully linked to a catalog entry (new or existing)
+- `flagged` — combos that failed to resolve or insert; rows logged to `stamp_reconciliation_log` for admin review
+- `skipped` — combos with neither a country nor a city (cannot build a canonical key)
+- `enqueued` — new catalog entries that had artwork generation jobs queued
+
 ## Reference docs
 
 - [docs/migrations.md](docs/migrations.md) — full applied migration log

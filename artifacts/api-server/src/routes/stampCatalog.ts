@@ -19,6 +19,7 @@
  *   POST   /admin/stamps/catalog/:id/upload          — multipart upload replacement image
  *   POST   /admin/stamps/catalog/:id/merge-into/:targetId — merge duplicate into canonical
  *   GET    /admin/stamps/catalog/:id/earners         — paginated earner list
+ *   POST   /admin/stamps/reconcile                   — run catalog reconciliation (idempotent)
  */
 
 import { Router } from "express";
@@ -29,6 +30,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { randomUUID } from "crypto";
 import { invalidateCatalogCache } from "../lib/stamps/StampCatalogService.js";
 import { STYLE_VERSION } from "../lib/stamps/artDirection.js";
+import { runReconciliation } from "../lib/stamps/reconcileStampCatalog.js";
 
 const router = Router();
 
@@ -1105,6 +1107,44 @@ router.post("/admin/stamps/catalog/:id/merge-into/:targetId", asyncHandler(async
   });
 
   res.json({ ok: true, mergedIntoId: targetId });
+}));
+
+// ── POST /admin/stamps/reconcile ─────────────────────────────────────────────
+// Runs the stamp catalog reconciliation idempotently.
+// Resolves every distinct (stamp_type, country, city) combo in user_stamps and
+// passport_stamps to a universal_stamp_catalog entry and writes back catalog_id.
+// Safe to call from CI post-deploy hooks or a nightly cron job.
+
+router.post("/admin/stamps/reconcile", asyncHandler(async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { userId: adminId, sc } = admin;
+
+  console.log(JSON.stringify({
+    event:    "stamp.reconcile.started",
+    admin_id: adminId,
+  }));
+
+  let stats: { resolved: number; flagged: number; skipped: number; enqueued: number };
+  try {
+    stats = await runReconciliation(sc);
+  } catch (err: any) {
+    console.error("[stamp-reconcile] reconciliation failed:", err?.message ?? String(err));
+    sendError(res, "db_error", err?.message ?? "Reconciliation failed");
+    return;
+  }
+
+  console.log(JSON.stringify({
+    event:    "stamp.reconcile.complete",
+    admin_id: adminId,
+    ...stats,
+  }));
+
+  await writeAuditLog(sc, adminId, "reconcile", {
+    notes: `Reconciliation complete — resolved:${stats.resolved} flagged:${stats.flagged} skipped:${stats.skipped} enqueued:${stats.enqueued}`,
+  });
+
+  res.json({ ok: true, stats });
 }));
 
 export default router;

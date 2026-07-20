@@ -86,6 +86,11 @@ const gem = {
   safetyNotes: null, localEtiquette: null,
 };
 
+// Validation runs multiple full jest suites concurrently; the default 5s
+// per-test budget flakes under that load (observed repeatedly). Local runs
+// finish in <1s — this only widens headroom, it does not mask regressions.
+jest.setTimeout(20000);
+
 describe('Gem detail share modal', () => {
   it('shares to a Telegraph thread via the modal with a required thread ID', async () => {
     (useGemDetail as jest.Mock).mockReturnValue({
