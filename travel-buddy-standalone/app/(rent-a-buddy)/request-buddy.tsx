@@ -1,14 +1,19 @@
 /**
- * request-buddy.tsx — dual-mode screen.
+ * request-buddy.tsx — open-marketplace screen (Mode B only).
  *
- * Mode A (per-buddy booking request): opened with `buddyId` param from a
- * buddy detail screen. Shows package picker, date/time pickers, duration,
- * group size, city/meeting area, notes, price preview, and a first-booking-only
- * safety tutorial modal. Submits via createBooking() → navigates to booking/[id].
+ * @legacy Mode A (per-buddy booking) has been retired. All specific-buddy
+ * "Book" entry points now route to `/(rent-a-buddy)/checkout` which provides
+ * the full booking flow (date/time pickers, duration, group size, meetup zone,
+ * safety preferences). Do NOT add new per-buddy routing here.
  *
- * Mode B (open marketplace request): opened without `buddyId`. Lets the
- * traveller post an open request that any eligible buddy can respond to.
- * Submits via createRequest() → navigates to the offers screen.
+ * This file is kept solely for:
+ *   Mode B (open marketplace request): opened without `buddyId` from
+ *   marketplace.tsx. Lets the traveller post an open request that any eligible
+ *   buddy can respond to. Submits via createRequest() → navigates to the
+ *   offers screen.
+ *
+ * The `BookingRequestForm` component below is unreferenced but retained for
+ * reference; it will be removed in a future cleanup pass.
  */
 import React, { useState, useCallback, useEffect } from 'react';
 import {

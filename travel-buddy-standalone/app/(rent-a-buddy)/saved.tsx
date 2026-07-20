@@ -160,8 +160,8 @@ export default function RentABuddySaved() {
           renderItem={({ item }) => (
             <SavedBuddyRow
               buddy={item}
-              onBook={() => router.push({ pathname: '/(rent-a-buddy)/request-buddy' as any, params: { buddyId: item.id } })}
-              onCustom={() => router.push({ pathname: '/(rent-a-buddy)/request-buddy' as any, params: { buddyId: item.id } })}
+              onBook={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: item.id } })}
+              onCustom={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: item.id } })}
               onViewHistory={() => router.push(`/(rent-a-buddy)/buddy/${item.id}` as any)}
               onRemove={() => handleRemove(item)}
             />

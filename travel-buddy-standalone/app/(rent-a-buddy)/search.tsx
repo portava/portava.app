@@ -390,7 +390,7 @@ export default function RentABuddySearch() {
                   buddy={item.buddy}
                   compatibilityScore={item.score}
                   whyMatched={item.why}
-                  onBook={() => router.push({ pathname: '/(rent-a-buddy)/request-buddy' as any, params: { buddyId: item.buddy.id } })}
+                  onBook={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: item.buddy.id } })}
                 />
               )}
               refreshControl={
