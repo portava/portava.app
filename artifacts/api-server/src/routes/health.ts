@@ -3,7 +3,7 @@ import { HealthCheckResponse, CleanupHealthCheckResponse } from "@workspace/api-
 import { getCleanupStatus, queryCleanupHealth } from "../lib/dailyBriefCleanup.js";
 import { getSuggestionSeenStatus } from "../lib/suggestionSeenCleanup.js";
 import { queryPublisherHealth } from "../lib/delayedPostPublisher.js";
-import { purgeOldWeatherCache } from "../lib/weatherCacheCleanup.js";
+import { callPurgeOldWeatherCache } from "../lib/weatherCacheCleanup.js";
 import { logger } from "../lib/logger.js";
 
 const router: IRouter = Router();
@@ -72,14 +72,17 @@ router.get("/healthz/delayed-publish", async (_req, res) => {
  */
 router.post("/admin/cleanup/weather-cache", async (req, res) => {
   const secret = process.env.CLEANUP_ADMIN_SECRET;
-  if (secret) {
-    const provided = req.headers["x-cleanup-secret"];
-    if (provided !== secret) {
-      res.status(401).json({ error: "unauthorized" });
-      return;
-    }
+  if (!secret) {
+    logger.error("admin/cleanup/weather-cache: CLEANUP_ADMIN_SECRET is not configured — refusing to run");
+    res.status(500).json({ error: "cleanup_secret_not_configured" });
+    return;
   }
-  const { deleted, error } = await purgeOldWeatherCache();
+  const provided = req.headers["x-cleanup-secret"];
+  if (provided !== secret) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const { deleted, error } = await callPurgeOldWeatherCache();
   if (error) {
     logger.error({ err: error }, "admin/cleanup/weather-cache: purge failed");
     res.status(500).json({ error: "purge_failed" });

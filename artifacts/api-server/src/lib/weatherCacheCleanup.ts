@@ -32,6 +32,25 @@ export const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 /** Initial delay before the first run (ms). Slightly after the brief cleanup. */
 export const STARTUP_DELAY_MS = 35 * 1_000;
 
+// ---------------------------------------------------------------------------
+// Test-only purge override — lets unit tests verify the route guard without
+// hitting a real Supabase connection.  Never set in production.
+// ---------------------------------------------------------------------------
+let _testPurgeImpl: (() => Promise<{ deleted: number | null; error: unknown }>) | null = null;
+
+/** Inject a fake purge implementation for unit tests. Pass null to clear. */
+export function _setTestPurgeImpl(
+  impl: (() => Promise<{ deleted: number | null; error: unknown }>) | null,
+): void {
+  _testPurgeImpl = impl;
+}
+
+/** Invoke purgeOldWeatherCache, honouring any test-injected override. */
+export function callPurgeOldWeatherCache(): Promise<{ deleted: number | null; error: unknown }> {
+  if (_testPurgeImpl) return _testPurgeImpl();
+  return purgeOldWeatherCache();
+}
+
 // ─── Purge logic ─────────────────────────────────────────────────────────────
 
 /**
