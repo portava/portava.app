@@ -286,3 +286,89 @@ describe("auth rate limits — POST /auth/signup", () => {
     assert.ok(hasHeader, `response must include a rate-limit or retry-after header; got: ${JSON.stringify(over.headers)}`);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite 4 — Auth rate limits — POST /auth/lookup-username
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("auth rate limits — POST /auth/lookup-username", () => {
+  let server: http.Server;
+
+  // Helper — POST /api/auth/lookup-username with an invalid email (no "@") so
+  // the handler returns 400 immediately, before the intentional 800 ms delay.
+  // The rate-limit middleware still counts the request against the per-IP window
+  // because 400 / 503 responses are treated the same as 200 — what matters is
+  // whether the middleware fires a 429 before the handler runs at all.
+  async function postLookup(n: number) {
+    return rawRequest({
+      server,
+      method: "POST",
+      path: "/api/auth/lookup-username",
+      body: { email: `no-at-sign-${n}` },
+    });
+  }
+
+  before(async () => {
+    const { default: authRouter } = await import("../routes/auth.js");
+
+    const app = express();
+    app.use(express.json());
+    app.use((req: any, _res: any, next: any) => {
+      req.log = { error: () => {}, info: () => {}, warn: () => {}, debug: () => {} };
+      next();
+    });
+    app.use("/api", authRouter);
+
+    // Service client null — handler would return 503 if it ever got past
+    // validation, but the missing "@" short-circuits to 400 first anyway.
+    _setTestServiceClient(null as any);
+
+    server = await startServer(app);
+  });
+
+  after(async () => {
+    _setTestServiceClient(null as any);
+    _resetAuthRateLimits();
+    await stopServer(server);
+  });
+
+  // Each test gets a clean rate-limit counter
+  beforeEach(() => { _resetAuthRateLimits(); });
+
+  it("allows requests under the per-IP limit", async () => {
+    const r = await postLookup(1);
+    assert.notEqual(r.status, 429, `first request must not be rate-limited, got ${r.status}`);
+  });
+
+  it("returns 429 after exceeding 10 requests per 15 minutes", async () => {
+    // Drain the window (10 allowed)
+    for (let i = 0; i < 10; i++) {
+      const r = await postLookup(i);
+      assert.notEqual(r.status, 429, `request ${i + 1} should not be rate-limited yet`);
+    }
+    // 11th request must be rejected
+    const over = await postLookup(10);
+    assert.equal(over.status, 429, `expected 429 on request 11, got ${over.status}: ${JSON.stringify(over.body)}`);
+  });
+
+  it("429 body uses the standard { error: { code, message } } envelope", async () => {
+    for (let i = 0; i < 10; i++) await postLookup(i);
+    const over = await postLookup(10);
+    assert.equal(over.status, 429);
+    assert.ok(over.body?.error, "response must have an 'error' key");
+    assert.equal(over.body.error.code, "RATE_LIMITED");
+    assert.ok(typeof over.body.error.message === "string" && over.body.error.message.length > 0,
+      "message must be a non-empty string");
+  });
+
+  it("429 includes a rate-limit or Retry-After header (draft-7 standard headers)", async () => {
+    for (let i = 0; i < 10; i++) await postLookup(i);
+    const over = await postLookup(10);
+    assert.equal(over.status, 429);
+    const hasHeader =
+      "ratelimit-limit"     in over.headers ||
+      "ratelimit-remaining" in over.headers ||
+      "retry-after"         in over.headers;
+    assert.ok(hasHeader, `response must include a rate-limit or retry-after header; got: ${JSON.stringify(over.headers)}`);
+  });
+});
