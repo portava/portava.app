@@ -52,7 +52,7 @@
  */
 
 import React from 'react';
-import { act, render, screen, fireEvent } from '@testing-library/react-native';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { CreateMemoryModal } from '../MemoriesTab.tsx';
 import { uploadMedia } from '../../services/media.ts';
 import { createPassportMemory } from '../../services/passportStamps.ts';
@@ -229,15 +229,10 @@ describe('CreateMemoryModal — upload failure', () => {
       fireEvent.press(screen.getByText('Add photo or video'));
       await new Promise<void>((r) => setTimeout(r, 30));
     });
-    // Under parallel-suite load a single 30 ms window can be too short for the
-    // ImagePicker awaits to resolve; flush in extra act() ticks until the
-    // 'Change' label commits (no waitFor — see act()/screen discipline above).
-    for (let i = 0; i < 20 && screen.queryByText('Change') === null; i++) {
-      await act(async () => {
-        await new Promise<void>((r) => setTimeout(r, 30));
-      });
-    }
-    screen.getByText('Change'); // confirmation that setPhotoUri committed
+    // Under full-suite load the MediaSourceSheet stub's useEffect
+    // (visible → launchImageLibraryAsync → onResult → setPhotoUri) can settle
+    // after the 30 ms act() window.  Poll instead of asserting synchronously.
+    await waitFor(() => screen.getByText('Change'), { timeout: 3000 });
 
     // Save press: 30 ms gives the mockResolvedValue microtask time to fire so
     // handleSave's error branch runs before act() exits.
