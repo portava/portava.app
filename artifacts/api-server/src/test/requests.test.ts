@@ -24,7 +24,7 @@ import requestsRouter from "../routes/requests.js";
 
 // ── Fake state ────────────────────────────────────────────────────────────────
 
-interface FR { id: string; requester_id: string; recipient_id: string; status: string; created_at: string }
+interface FR { id: string; requester_id: string; recipient_id: string; status: string; created_at: string; responded_at?: string | null; updated_at?: string | null }
 interface CI { id: string; owner_id: string; recipient_id: string; status: string; created_at: string }
 interface TM { trip_id: string; user_id: string; role: string; created_at: string }
 interface Trip { id: string; title: string }
@@ -410,6 +410,8 @@ describe("POST /me/requests/friend_request/:id/accept", () => {
       assert.equal(r.status, 200);
       assert.equal(r.body.status, "friends");
       assert.equal(state.friend_requests[0].status, "accepted", "status mutated in state");
+      assert.ok(state.friend_requests[0].responded_at, "responded_at recorded on accept");
+      assert.ok(state.friend_requests[0].updated_at, "updated_at recorded on accept");
       assert.equal(state.user_friendships.length, 1, "friendship row created");
       assert.equal(state.user_friendships[0].accepted_request_id, FR_ID);
     } finally { await srv.close(); }
@@ -450,6 +452,8 @@ describe("POST /me/requests/friend_request/:id/decline", () => {
       assert.equal(r.status, 200);
       assert.equal(r.body.status, "declined");
       assert.equal(state.friend_requests[0].status, "declined");
+      assert.ok(state.friend_requests[0].responded_at, "responded_at recorded on decline");
+      assert.ok(state.friend_requests[0].updated_at, "updated_at recorded on decline");
     } finally { await srv.close(); }
   });
 
@@ -477,6 +481,8 @@ describe("POST /me/requests/friend_request/:id/cancel", () => {
       assert.equal(r.status, 200);
       assert.equal(r.body.status, "cancelled");
       assert.equal(state.friend_requests[0].status, "cancelled");
+      assert.ok(state.friend_requests[0].responded_at, "responded_at recorded on cancel");
+      assert.ok(state.friend_requests[0].updated_at, "updated_at recorded on cancel");
     } finally { await srv.close(); }
   });
 
