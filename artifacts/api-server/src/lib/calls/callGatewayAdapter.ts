@@ -20,6 +20,7 @@ import { requireTripMember } from "../http";
 import { checkEventEligibility } from "../../routes/events";
 import { isTerminal } from "./callStateMachine";
 import type { CallStatus } from "./callTypes";
+import { CALL_CONFIG } from "./callTypes";
 import type { CallContextGateway, CallPreferences } from "./callPermissionEngine";
 
 export const DEFAULT_CALL_PREFERENCES: CallPreferences & { incomingCallNotifications: boolean } = {
@@ -286,7 +287,12 @@ export function makeCallGateway(sc: SupabaseClient): CallContextGateway {
         .select("id", { count: "exact", head: true })
         .eq("started_by", userId)
         .gte("started_at", sinceIso);
-      if (error) return 0;
+      if (error) {
+        // Fail closed: returning the ceiling denies new starts during a DB
+        // outage rather than lifting the spam guard entirely.
+        console.error("[callGateway] startsInLastHour count query failed — failing closed", error);
+        return CALL_CONFIG.MAX_STARTS_PER_HOUR;
+      }
       return count ?? 0;
     },
   };

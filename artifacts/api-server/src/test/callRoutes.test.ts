@@ -21,6 +21,7 @@ import { _setTestPushDeps, deliverIncomingCallPush } from "../lib/calls/callSign
 import type { CallParticipant } from "../lib/calls/callTypes.js";
 import { CALL_CONFIG } from "../lib/calls/callTypes.js";
 import { _resetRateLimit } from "../lib/rateLimit.js";
+import { makeCallGateway } from "../lib/calls/callGatewayAdapter.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
 
@@ -1482,6 +1483,38 @@ describe("direct-call double-tap dedupe", () => {
     const again = await req("POST", "/api/calls", startBody);
     assert.equal(again.status, 201);
     assert.notEqual(again.body.session.id, first.body.session.id);
+  });
+});
+
+describe("callGatewayAdapter — startsInLastHour error path", () => {
+  it("returns MAX_STARTS_PER_HOUR (fail-closed) when the count query errors", async () => {
+    // Simulate a DB outage: the count query returns an error.
+    const errorClient: any = {
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            gte: () => Promise.resolve({ count: null, error: { message: "connection refused" } }),
+          }),
+        }),
+      }),
+    };
+    const gw = makeCallGateway(errorClient);
+    const result = await gw.startsInLastHour("any-user-id");
+    assert.equal(
+      result,
+      CALL_CONFIG.MAX_STARTS_PER_HOUR,
+      "fail-closed: must return the ceiling so callers deny the start, not 0",
+    );
+  });
+
+  it("call start is denied 429 when the DB count query errors (fail-closed end-to-end)", async () => {
+    // Gateway throws the ceiling value when the count errors — route must deny.
+    wireDeps({ startsInLastHour: async () => CALL_CONFIG.MAX_STARTS_PER_HOUR });
+    _resetRateLimit(); // fresh instance: no in-memory history
+    const r = await req("POST", "/api/calls", startBody);
+    assert.equal(r.status, 429);
+    assert.equal(r.body.reason, "rate_limited");
+    assert.equal(store.__sessions.size, 0, "no session created when ceiling is hit via fail-closed");
   });
 });
 
