@@ -22,6 +22,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { extractColumnRefs, lineOf } from "./helpers/schemaColumnExtractor.ts";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const SOURCE_PATH = join(__dir, "..", "routes", "adminCompass.ts");
@@ -58,83 +59,6 @@ const LIVE_EVENTS_COLUMNS = new Set([
   "ticket_url", "title", "trip_id", "trust_score_min", "updated_at",
   "verified_only", "visibility", "waitlist_count", "waitlist_enabled",
 ]);
-
-// ── Static extraction ─────────────────────────────────────────────────────────
-
-// Chained builder methods whose FIRST string argument is a column name.
-const COLUMN_ARG_METHODS = new Set([
-  "eq", "neq", "gt", "gte", "lt", "lte", "like", "ilike", "is", "in",
-  "contains", "containedBy", "not", "order", "textSearch", "match", "filter",
-]);
-
-type ColumnRef = { column: string; method: string; index: number };
-
-/**
- * Extract the query chain that starts at each `.from("<table>")` call and
- * runs through the subsequent chained method calls, collecting every column
- * name referenced.
- *
- * The chain ends when we hit a token that is not another chained `.method(`
- * call (e.g. a comma ending the Promise.allSettled entry, a semicolon, or a
- * closing bracket).
- */
-function extractColumnRefs(source: string, table: string): ColumnRef[] {
-  const refs: ColumnRef[] = [];
-  const fromRe = new RegExp(`\\.from\\(\\s*["'\`]${table}["'\`]\\s*\\)`, "g");
-  let m: RegExpExecArray | null;
-  while ((m = fromRe.exec(source)) !== null) {
-    let pos = m.index + m[0].length;
-    // Walk chained `.method( ... )` calls.
-    for (;;) {
-      // Skip whitespace and comments between chained calls.
-      const rest = source.slice(pos);
-      const link = /^(\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*\.\s*([A-Za-z_$][\w$]*)\s*\(/.exec(rest);
-      if (!link) break;
-      const method = link[2]!;
-      const argStart = pos + link[0].length;
-      // Find the matching close paren (handles nested parens and strings).
-      let depth = 1;
-      let i = argStart;
-      let inStr: string | null = null;
-      while (i < source.length && depth > 0) {
-        const ch = source[i]!;
-        if (inStr) {
-          if (ch === "\\") i++;
-          else if (ch === inStr) inStr = null;
-        } else if (ch === '"' || ch === "'" || ch === "`") {
-          inStr = ch;
-        } else if (ch === "(") depth++;
-        else if (ch === ")") depth--;
-        i++;
-      }
-      const argText = source.slice(argStart, i - 1);
-
-      if (method === "select") {
-        // First string literal argument is the column list.
-        const lit = /["'`]([^"'`]*)["'`]/.exec(argText);
-        if (lit) {
-          for (const raw of lit[1]!.split(",")) {
-            const col = raw.trim();
-            if (!col || col === "*") continue;
-            // Strip aliases / embedded resources / aggregates: take the bare
-            // leading identifier (e.g. "id" from "id:renamed" or "id.count()").
-            const bare = /^[A-Za-z_][\w]*/.exec(col)?.[0];
-            if (bare) refs.push({ column: bare, method, index: m.index });
-          }
-        }
-      } else if (COLUMN_ARG_METHODS.has(method)) {
-        const lit = /^\s*["'`]([^"'`]+)["'`]/.exec(argText);
-        if (lit) refs.push({ column: lit[1]!, method, index: m.index });
-      }
-      pos = i;
-    }
-  }
-  return refs;
-}
-
-function lineOf(source: string, index: number): number {
-  return source.slice(0, index).split("\n").length;
-}
 
 const source = readFileSync(SOURCE_PATH, "utf8");
 
