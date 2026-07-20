@@ -61,6 +61,10 @@ export interface BuddyPackage {
   priceUsd: number;
   maxGroup: number;
   isActive: boolean;
+  /** Included stops shown to travelers. */
+  stops?: string[];
+  /** Meetup instructions/rules shown after booking. */
+  meetupRules?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -344,7 +348,14 @@ export async function cancelBooking(
 
 export async function submitReview(
   bookingId: string,
-  payload: { rating: number; body?: string; photos?: string[]; isPublic?: boolean },
+  payload: {
+    rating: number; body?: string; photos?: string[]; isPublic?: boolean;
+    /** Per-category star ratings keyed by category id. */
+    categoryRatings?: Record<string, number>;
+    /** Admin-only safety note — never shown publicly. */
+    privateNote?: string;
+    safetyScore?: number; communicationScore?: number; punctualityScore?: number;
+  },
 ): Promise<ApiResult<{ review: BuddyReview | null }>> {
   return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/review`, {
     method: 'POST',
@@ -428,12 +439,17 @@ export async function joinWaitlist(
   city: string,
   category?: string,
   coords?: CoordPair,
+  extras?: { desiredDate?: string; desiredTime?: string; budgetUsd?: number; notes?: string },
 ): Promise<ApiResult<{ ok: boolean }>> {
   return apiFetch('/api/rent-a-buddy/waitlist', {
     method: 'POST',
     body: JSON.stringify({
       city, category,
       ...cityCoordSpread(coords),
+      desiredDate: extras?.desiredDate || undefined,
+      desiredTime: extras?.desiredTime || undefined,
+      budgetUsd: typeof extras?.budgetUsd === 'number' && Number.isFinite(extras.budgetUsd) ? extras.budgetUsd : undefined,
+      notes: extras?.notes || undefined,
     }),
   });
 }
@@ -543,8 +559,11 @@ export async function acceptBooking(bookingId: string): Promise<ApiResult<{ ok: 
   return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/accept`, { method: 'POST' });
 }
 
-export async function declineBooking(bookingId: string): Promise<ApiResult<{ ok: boolean }>> {
-  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/decline`, { method: 'POST' });
+export async function declineBooking(bookingId: string, reason?: string): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/decline`, {
+    method: 'POST',
+    body: JSON.stringify({ decline_reason: reason ?? null }),
+  });
 }
 
 export async function suggestChanges(bookingId: string, payload: {

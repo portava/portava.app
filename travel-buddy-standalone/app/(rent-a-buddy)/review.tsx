@@ -60,10 +60,20 @@ export default function RentABuddyReview() {
     submitLockRef.current = true;
     setSubmitting(true);
     try {
+      // Send everything the form collects — category stars, the private
+      // safety note (admin-only), and the three server-native scores.
+      const ratedCategories = Object.fromEntries(
+        Object.entries(categoryRatings).filter(([, v]) => v > 0),
+      );
       const res = await submitReview(bookingId, {
         rating: overallRating,
         body: publicBody || undefined,
         isPublic,
+        categoryRatings: Object.keys(ratedCategories).length ? ratedCategories : undefined,
+        privateNote: privateNote.trim() || undefined,
+        safetyScore: categoryRatings.safety || undefined,
+        communicationScore: categoryRatings.communication || undefined,
+        punctualityScore: categoryRatings.onTime || undefined,
       });
       if (!res.ok) {
         Alert.alert('Error', res.error);

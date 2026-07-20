@@ -19,6 +19,7 @@ import {
 } from '../src/services/appeals';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 import { PlainBottomFiller } from '../src/hooks/useBottomInset';
+import { KeyboardSafeView } from '../src/components/ui/KeyboardSafeView';
 
 // ── State badge ───────────────────────────────────────────────────────────────
 
@@ -131,7 +132,11 @@ export default function AppealsScreen() {
   };
 
   return (
-    <ScrollView style={s.container} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" onScroll={navBarScrollHandler} scrollEventThrottle={16}>
+    <KeyboardSafeView
+      style={s.container}
+      contentContainerStyle={s.content}
+      scrollViewProps={{ onScroll: navBarScrollHandler, scrollEventThrottle: 16 }}
+    >
 
       {/* Header */}
       <View style={s.header}>
@@ -220,7 +225,7 @@ export default function AppealsScreen() {
 
       <PlainBottomFiller />
 
-    </ScrollView>
+    </KeyboardSafeView>
   );
 }
 

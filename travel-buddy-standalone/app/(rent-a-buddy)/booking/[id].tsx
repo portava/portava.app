@@ -9,6 +9,7 @@ import {
   CheckCircle, AlertTriangle, Star, Flag, ChevronDown, ChevronUp,
   X, Users, Calendar, Plus, Route, Info,
 } from 'lucide-react-native';
+import { KeyboardSafeScrollView } from '../../../src/components/ui/KeyboardSafeView';
 import { color, space, radius, type as t, shadow, layout } from '../../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState, TravelCard } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
@@ -150,6 +151,7 @@ function AddTimeModal({ visible, onClose, onAdd }: { visible: boolean; onClose: 
   const [hours, setHours] = useState(1);
   return (
     <Modal visible={visible} transparent animationType="slide">
+      <KeyboardSafeScrollView>
       <View style={modal.overlay}>
         <View style={modal.sheet}>
           <Text style={modal.title}>Add more time?</Text>
@@ -173,6 +175,7 @@ function AddTimeModal({ visible, onClose, onAdd }: { visible: boolean; onClose: 
           </View>
         </View>
       </View>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }
@@ -205,6 +208,7 @@ function RebookModal({ visible, onClose, onRebook, disabledDates }: { visible: b
   const timeLabel = time ? (() => { const d = fromHHmm(time); return d ? formatDisplayTime(d) : time; })() : null;
   return (
     <Modal visible={visible} transparent animationType="slide">
+      <KeyboardSafeScrollView>
       <View style={modal.overlay}>
         <View style={modal.sheet}>
           <Text style={modal.title}>Book again?</Text>
@@ -258,6 +262,7 @@ function RebookModal({ visible, onClose, onRebook, disabledDates }: { visible: b
           </View>
         </View>
       </View>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }
@@ -266,6 +271,7 @@ function CancelModal({ visible, onClose, onConfirm }: { visible: boolean; onClos
   const [reason, setReason] = useState('');
   return (
     <Modal visible={visible} transparent animationType="slide">
+      <KeyboardSafeScrollView>
       <View style={modal.overlay}>
         <View style={modal.sheet}>
           <Text style={modal.title}>Cancel booking?</Text>
@@ -288,6 +294,7 @@ function CancelModal({ visible, onClose, onConfirm }: { visible: boolean; onClos
           </View>
         </View>
       </View>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }
@@ -310,6 +317,7 @@ function DisputeModal({ visible, submitting, onClose, onConfirm }: {
   const [reason, setReason] = useState<DisputeReason | null>(null);
   return (
     <Modal visible={visible} transparent animationType="slide">
+      <KeyboardSafeScrollView>
       <View style={modal.overlay}>
         <View style={modal.sheet}>
           <Text style={modal.title}>Open a dispute?</Text>
@@ -338,6 +346,7 @@ function DisputeModal({ visible, submitting, onClose, onConfirm }: {
           </View>
         </View>
       </View>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

@@ -10,6 +10,7 @@ import {
   TravelButton, TravelCard, TravelLoadingState,
   TravelErrorState, TravelEmptyState,
 } from '../../../src/components/primitives';
+import { KeyboardSafeView } from '../../../src/components/ui/KeyboardSafeView';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyAddon } from '../../../src/services/rentABuddy';
@@ -59,9 +60,9 @@ function EditSheet({
             <X size={20} color={color.mute} />
           </Pressable>
         </View>
-        <ScrollView
+        <KeyboardSafeView
+          offset={insets.top}
           contentContainerStyle={{ padding: space.lg, paddingBottom: insets.bottom + 120 }}
-          keyboardShouldPersistTaps="handled"
         >
           {/* Preset picker (only for new items) */}
           {!form.isCustom && (
@@ -133,7 +134,7 @@ function EditSheet({
               thumbColor={color.onInk}
             />
           </View>
-        </ScrollView>
+        </KeyboardSafeView>
         <View style={[sh.footer, { paddingBottom: insets.bottom + space.md }]}>
           <TravelButton
             label="Save add-on"

@@ -11,6 +11,7 @@ import {
   TravelErrorState, TravelEmptyState,
 } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
+import { KeyboardSafeView } from '../../../src/components/ui/KeyboardSafeView';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyPackage, BuddyCategory } from '../../../src/services/rentABuddy';
@@ -81,9 +82,9 @@ function EditSheet({
             <X size={20} color={color.mute} />
           </Pressable>
         </View>
-        <ScrollView
+        <KeyboardSafeView
+          offset={insets.top}
           contentContainerStyle={{ padding: space.lg, paddingBottom: insets.bottom + 120 }}
-          keyboardShouldPersistTaps="handled"
         >
           {/* Title */}
           <FieldLabel label="Package title" />
@@ -181,7 +182,7 @@ function EditSheet({
             </View>
             <Switch value={form.isActive} onValueChange={(v) => update({ isActive: v })} trackColor={{ false: color.haze, true: color.success }} thumbColor={color.onInk} />
           </View>
-        </ScrollView>
+        </KeyboardSafeView>
 
         <View style={[sh.footer, { paddingBottom: insets.bottom + space.md }]}>
           <TravelButton
@@ -265,6 +266,8 @@ export default function BuddyPackages() {
       priceUsd: form.priceUsd,
       maxGroup: form.maxGroup,
       isActive: form.isActive,
+      stops: form.stops.map((s) => s.trim()).filter(Boolean),
+      meetupRules: form.meetupRules.trim() || null,
     };
     try {
       if (editing.pkg) {
@@ -327,8 +330,8 @@ export default function BuddyPackages() {
                 durationH: item.durationH,
                 priceUsd: item.priceUsd,
                 maxGroup: item.maxGroup,
-                stops: [''],
-                meetupRules: '',
+                stops: item.stops?.length ? item.stops : [''],
+                meetupRules: item.meetupRules ?? '',
                 isActive: item.isActive,
               },
             })}
