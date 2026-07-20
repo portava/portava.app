@@ -702,13 +702,10 @@ export default function EventDetailScreen() {
                   <Text style={styles.entryBtnText}>Event chat</Text>
                 </Pressable>
               )}
-              {/* Reminders — navigates to reminders screen for this event */}
-              <Pressable
-                style={styles.entryBtn}
-                onPress={() => router.push({ pathname: '/event/reminders', params: { eventId: event.id } } as any)}
-              >
-                <Bell size={16} color={color.signal} />
-                <Text style={styles.entryBtnText}>Reminders</Text>
+              {/* Reminders — not yet built; shown as disabled coming-soon button */}
+              <Pressable style={[styles.entryBtn, styles.entryBtnDisabled]} disabled>
+                <Bell size={16} color={color.faint} />
+                <Text style={[styles.entryBtnText, styles.entryBtnTextDisabled]}>Reminders</Text>
               </Pressable>
               {/* Add to trip / Add to Itinerary */}
               {tripIdParam ? (
@@ -799,16 +796,12 @@ export default function EventDetailScreen() {
               </View>
             )}
 
-            {/* Comments / event updates — visible to attendees and host */}
+            {/* Comments / event updates — not yet built; shown as disabled coming-soon row */}
             {event.chatEnabled && (event.myRsvp === 'going' || event.myRsvp === 'maybe' || isHost) && (
-              <Pressable
-                style={styles.commentsRow}
-                onPress={() => router.push({ pathname: '/event/comments', params: { eventId: event.id } } as any)}
-              >
-                <MessageSquare size={15} color={color.mute} />
-                <Text style={styles.commentsText}>View event updates & comments</Text>
-                <ChevronDown size={13} color={color.mute} style={{ transform: [{ rotate: '-90deg' }] }} />
-              </Pressable>
+              <View style={[styles.commentsRow, styles.commentsRowDisabled]}>
+                <MessageSquare size={15} color={color.faint} />
+                <Text style={[styles.commentsText, styles.commentsTextDisabled]}>Event updates & comments — coming soon</Text>
+              </View>
             )}
 
             {/* Report link */}
@@ -1040,9 +1033,13 @@ const styles = StyleSheet.create({
   entryRow:           { flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' },
   entryBtn:           { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.md, paddingVertical: 8, backgroundColor: color.paperRaised, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze },
   entryBtnText:       { ...t.small, color: color.signal, fontWeight: '600' },
+  entryBtnDisabled:   { opacity: 0.45 },
+  entryBtnTextDisabled: { color: color.faint },
 
   commentsRow:        { flexDirection: 'row', alignItems: 'center', gap: 8, padding: space.md, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze },
   commentsText:       { ...t.body, color: color.mute, flex: 1 },
+  commentsRowDisabled: { opacity: 0.45 },
+  commentsTextDisabled: { color: color.faint },
 
   findBuddySection:   { gap: space.sm },
   findBuddyCta:       { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#F0F9FF', borderRadius: radius.md, borderWidth: 1, borderColor: '#BAE6FD', paddingHorizontal: space.md, paddingVertical: 12 },
