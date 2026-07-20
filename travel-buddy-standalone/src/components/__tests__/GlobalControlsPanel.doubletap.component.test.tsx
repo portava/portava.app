@@ -148,7 +148,7 @@ describe('GlobalControlsPanel duplicate-save guard', () => {
     await act(async () => {
       fireEvent(screen.getAllByRole('switch')[0], 'valueChange', true);
     });
-    await act(async () => { await pressAlertButton(alertSpy, 'Confirm'); });
+    pressAlertButton(alertSpy, 'Confirm');
 
     // Second flip while the PATCH is in flight — toggle() should return early.
     const callsBefore = alertSpy.mock.calls.length;
