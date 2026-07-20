@@ -93,7 +93,7 @@ function makeFakeClient(state: FakeState) {
             return chain(recipientFollowsSender ? { follower_id: B } : null);
           }
           if (table === 'trip_members') return tripChain(tripRows);
-          if (table === 'circle_memberships') return chain(sharedCircle ? { owner_id: B } : null);
+          if (table === 'circle_memberships') return chain(sharedCircle ? { user_id: B } : null);
           return chain(null);
         },
       };

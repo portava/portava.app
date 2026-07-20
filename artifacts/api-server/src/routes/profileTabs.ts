@@ -195,16 +195,17 @@ router.get("/users/:username/stamps", async (req, res) => {
   const limit = parseLimit(req.query.limit);
   const cursor = req.query.cursor as string | undefined;
 
+  // Live passport_stamps columns: stamp_type / city / country / awarded_at
+  // (no kind/label/sublabel/first_earned_at/check_in_count/locked).
   let query = sc
     .from("passport_stamps")
-    .select("id, kind, label, sublabel, country, city, first_earned_at, check_in_count, locked")
+    .select("id, stamp_type, country, city, awarded_at")
     .eq("user_id", target.id)
-    .eq("locked", false)
-    .order("first_earned_at", { ascending: false })
+    .order("awarded_at", { ascending: false })
     .limit(limit + 1);
 
   if (cursor) {
-    query = query.lt("first_earned_at", cursor);
+    query = query.lt("awarded_at", cursor);
   }
 
   const { data, error } = await query;
@@ -221,15 +222,15 @@ router.get("/users/:username/stamps", async (req, res) => {
   const rows = data ?? [];
   const items = rows.slice(0, limit).map((r: any) => ({
     id: r.id,
-    kind: r.kind,
-    label: r.label,
-    sublabel: r.sublabel ?? null,
+    kind: r.stamp_type,
+    label: r.city ?? r.country ?? r.stamp_type,
+    sublabel: r.city ? (r.country ?? null) : null,
     country: r.country ?? null,
     city: r.city ?? null,
-    earnedAt: r.first_earned_at,
-    checkInCount: r.check_in_count ?? 1,
+    earnedAt: r.awarded_at,
+    checkInCount: 1,
   }));
-  const nextCursor = rows.length > limit ? rows[limit - 1]?.first_earned_at ?? null : null;
+  const nextCursor = rows.length > limit ? rows[limit - 1]?.awarded_at ?? null : null;
 
   res.status(200).json({ items, nextCursor });
 });
@@ -455,8 +456,8 @@ router.get("/users/:username/circles", async (req, res) => {
 
   let query = sc
     .from("circle_memberships")
-    .select("owner_id, created_at, owner:profiles!circle_memberships_owner_id_fkey(id, handle, username, display_name, name, avatar_url)")
-    .eq("member_id", target.id)
+    .select("user_id, created_at, owner:profiles!circle_memberships_user_id_fkey(id, handle, username, display_name, name, avatar_url)")
+    .eq("other_id", target.id)
     .order("created_at", { ascending: false })
     .limit(limit + 1);
 
@@ -477,12 +478,12 @@ router.get("/users/:username/circles", async (req, res) => {
 
   const rows = data ?? [];
   // Universal display-name rule: circle owners show @handle unless opted in.
-  const allowedOwnerNames = await nameVisibilitySet(sc, rows.map((r: any) => r.owner_id));
+  const allowedOwnerNames = await nameVisibilitySet(sc, rows.map((r: any) => r.user_id));
   const items = rows.slice(0, limit).map((r: any) => {
     const owner = r.owner ?? {};
-    const nameOk = r.owner_id === viewerId || allowedOwnerNames.has(r.owner_id as string);
+    const nameOk = r.user_id === viewerId || allowedOwnerNames.has(r.user_id as string);
     return {
-      circleOwnerId: r.owner_id,
+      circleOwnerId: r.user_id,
       ownerHandle: owner.handle ?? owner.username ?? null,
       ownerDisplayName: nameOk ? (owner.display_name ?? owner.name ?? null) : null,
       ownerAvatarUrl: owner.avatar_url ?? null,

@@ -421,22 +421,22 @@ router.get("/circles/:circleOwnerId/members", async (req, res) => {
   if (!isOwner) {
     const { data: mem } = await sc
       .from("circle_memberships")
-      .select("member_id")
-      .eq("owner_id", circleOwnerId)
-      .eq("member_id", user.id)
+      .select("other_id")
+      .eq("user_id", circleOwnerId)
+      .eq("other_id", user.id)
       .maybeSingle();
     if (!mem) { sendError(res, "forbidden", "Not a circle member"); return; }
   }
 
   const { data: memberships, error: memErr } = await sc
     .from("circle_memberships")
-    .select("member_id")
-    .eq("owner_id", circleOwnerId);
+    .select("other_id")
+    .eq("user_id", circleOwnerId);
 
   if (memErr) { sendError(res, "db_error", memErr.message); return; }
 
   const memberIds = (memberships ?? [])
-    .map((m: any) => m.member_id as string)
+    .map((m: any) => m.other_id as string)
     .concat(!isOwner ? [circleOwnerId] : [])
     .filter((id) => id !== user.id);
 
@@ -484,13 +484,13 @@ router.get("/circles/:circleOwnerId/invitable-users", async (req, res) => {
   const isOwner = user.id === circleOwnerId;
   if (!isOwner) {
     const { data: mem } = await sc
-      .from("circle_memberships").select("member_id")
-      .eq("owner_id", circleOwnerId).eq("member_id", user.id).maybeSingle();
+      .from("circle_memberships").select("other_id")
+      .eq("user_id", circleOwnerId).eq("other_id", user.id).maybeSingle();
     if (!mem) { sendError(res, "forbidden", "Not a circle member"); return; }
   }
 
   const [{ data: memberships }, { data: friendsAsA }, { data: friendsAsB }, blockResult] = await Promise.all([
-    sc.from("circle_memberships").select("member_id").eq("owner_id", circleOwnerId),
+    sc.from("circle_memberships").select("other_id").eq("user_id", circleOwnerId),
     sc.from("user_friendships").select("user_b").eq("user_a", user.id),
     sc.from("user_friendships").select("user_a").eq("user_b", user.id),
     sc.from("blocks").select("blocker_id, blocked_id").or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`),
@@ -503,7 +503,7 @@ router.get("/circles/:circleOwnerId/invitable-users", async (req, res) => {
   }
 
   const groupMemberIds = (memberships ?? [])
-    .map((m: any) => m.member_id as string)
+    .map((m: any) => m.other_id as string)
     .concat(!isOwner ? [circleOwnerId] : [])
     .filter((id) => id !== user.id && !blockedSet.has(id));
 
@@ -659,7 +659,7 @@ router.post("/circle-invites/:inviteId/accept", async (req, res) => {
   // Explicit membership creation — the ONLY path that writes to circle_memberships.
   const { error: cmErr } = await sc
     .from("circle_memberships")
-    .upsert({ owner_id: (inv as any).owner_id, member_id: user.id, created_at: now });
+    .upsert({ user_id: (inv as any).owner_id, other_id: user.id, created_at: now });
 
   if (cmErr) req.log.error({ err: cmErr }, "circle_memberships upsert failed after invite accept");
 
@@ -721,14 +721,14 @@ router.delete("/circles/:circleOwnerId/members/:memberId", async (req, res) => {
 
   const { data: membership } = await sc
     .from("circle_memberships")
-    .select("member_id")
-    .eq("owner_id", circleOwnerId)
-    .eq("member_id", memberId)
+    .select("other_id")
+    .eq("user_id", circleOwnerId)
+    .eq("other_id", memberId)
     .maybeSingle();
 
   if (!membership) { sendError(res, "not_found", "Membership not found"); return; }
 
-  await sc.from("circle_memberships").delete().eq("owner_id", circleOwnerId).eq("member_id", memberId);
+  await sc.from("circle_memberships").delete().eq("user_id", circleOwnerId).eq("other_id", memberId);
 
   res.status(200).json({ status: "removed", memberId });
 

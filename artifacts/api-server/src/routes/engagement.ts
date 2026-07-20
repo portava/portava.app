@@ -98,23 +98,23 @@ async function checkAccess(
     case "highlight_like": {
       const { data: hl } = await sc
         .from("highlights")
-        .select("id, user_id, visibility")
+        .select("id, owner_id, visibility")
         .eq("id", targetId)
         .maybeSingle();
       if (!hl) return false;
       const v = hl as any;
-      return v.user_id === viewerId || v.visibility === "public";
+      return v.owner_id === viewerId || v.visibility === "public";
     }
 
     case "memory_like": {
       const { data: mem } = await sc
         .from("memories")
-        .select("id, user_id, visibility")
+        .select("id, owner_id, visibility")
         .eq("id", targetId)
         .maybeSingle();
       if (!mem) return false;
       const v = mem as any;
-      return v.user_id === viewerId || v.visibility === "public";
+      return v.owner_id === viewerId || v.visibility === "public";
     }
 
     default:

@@ -197,8 +197,8 @@ router.get("/admin/compass/dashboard", async (req, res) => {
 
       // User location state — city supply/demand breakdown
       sc.from("user_location_state")
-        .select("resolved_city, resolved_country")
-        .not("resolved_city", "is", null)
+        .select("city, country")
+        .not("city", "is", null)
         .limit(500),
 
       // Delayed posts not yet published (pending publish)
@@ -230,7 +230,7 @@ router.get("/admin/compass/dashboard", async (req, res) => {
       // Active buddy profiles (rent_a_buddy section supply)
       sc.from("rent_buddy_profiles")
         .select("user_id", { count: "exact", head: true })
-        .eq("is_active", true),
+        .eq("status", "active"),
 
       // Verified events that have already started in the last 30 days (completed)
       sc.from("posts")
@@ -327,7 +327,7 @@ router.get("/admin/compass/dashboard", async (req, res) => {
       ? ((locationRes.value as any).data as any[] ?? []) : [];
     const cityDemand: Record<string, number> = {};
     for (const r of locationRows) {
-      const key = r.resolved_city as string;
+      const key = r.city as string;
       cityDemand[key] = (cityDemand[key] ?? 0) + 1;
     }
     // Top 10 cities by demand
@@ -994,7 +994,7 @@ router.get("/admin/compass/active-rewards", async (req, res) => {
   try {
     const { data, error } = await sc
       .from("compass_active_user_scores")
-      .select("user_id, active_user_score, trust_multiplier, boost_eligible, boost_visibility_enabled, updated_at")
+      .select("user_id, active_user_score, trust_multiplier, boost_eligible, boost_visibility_enabled, last_computed_at")
       .order("active_user_score", { ascending: false })
       .limit(limit);
 

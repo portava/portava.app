@@ -259,7 +259,7 @@ async function searchTravelers(
       .order("name", { ascending: true })
       .range(offset, offset + fetchLimit - 1);
 
-    if (isBuddy) query = query.eq("is_buddy", true);
+    if (isBuddy) query = query.not("buddy_verified_at", "is", null);
 
     const { data, error } = await query;
     if (error || !data) return [];
@@ -355,12 +355,12 @@ async function searchEvents(
     const pat = sqlPattern(q);
     let evQ: any = sc
       .from("events")
-      .select("id, title, description, host_id, cover_image_url, city, country, starts_at, visibility, status, created_at")
+      .select("id, title, description, host_id, cover_url, city, country, starts_at, visibility, state, created_at")
       .or(`title.ilike.${pat},description.ilike.${pat},city.ilike.${pat}`)
       .eq("visibility", "public")
-      .neq("status", "cancelled")
-      .neq("status", "deleted")
-      .neq("status", "banned")
+      .neq("state", "cancelled")
+      .neq("state", "deleted")
+      .neq("state", "banned")
       .order("starts_at", { ascending: true });
 
     if (ctx?.startsAfter || ctx?.startsBefore) {
@@ -403,7 +403,7 @@ async function searchEvents(
       title: (e.title as string) ?? "",
       subtitle: (e.city as string | null) ?? null,
       avatarUrl: null,
-      imageUrl: (e.cover_image_url as string | null) ?? null,
+      imageUrl: (e.cover_url as string | null) ?? null,
       fallbackInitials: initials((e.title as string) ?? ""),
       locationPreview: [(e.city as string | null), (e.country as string | null)].filter(Boolean).join(", ") || null,
       matchedReason: null,
@@ -411,7 +411,7 @@ async function searchEvents(
       privacyState: { isPublic: true },
       accessState: { canAccess: true },
       destinationRoute: `/event/${e.id as string}`,
-      metadata: { hostId: e.host_id, status: e.status },
+      metadata: { hostId: e.host_id, status: e.state },
       createdAt: (e.created_at as string | null) ?? null,
       startsAt: (e.starts_at as string | null) ?? null,
     }));
@@ -436,7 +436,7 @@ async function searchTrips(
     const pat = sqlPattern(q);
     let trQ: any = sc
       .from("trips")
-      .select("id, title, destination_city, destination_country, owner_id, cover_image_url, start_date, status, visibility, created_at")
+      .select("id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at")
       .or(`title.ilike.${pat},destination_city.ilike.${pat},destination_country.ilike.${pat}`)
       .eq("visibility", "public")
       .neq("status", "cancelled")
@@ -466,7 +466,7 @@ async function searchTrips(
         title: (t.title as string) ?? (t.destination_city as string) ?? "",
         subtitle: [(t.destination_city as string | null), (t.destination_country as string | null)].filter(Boolean).join(", ") || null,
         avatarUrl: null,
-        imageUrl: (t.cover_image_url as string | null) ?? null,
+        imageUrl: (t.cover_url as string | null) ?? null,
         fallbackInitials: initials((t.title as string) ?? ""),
         locationPreview: [(t.destination_city as string | null), (t.destination_country as string | null)].filter(Boolean).join(", ") || null,
         matchedReason: null,

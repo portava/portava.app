@@ -155,14 +155,13 @@ async function loadAuthorTrustData(
   try {
     const { data } = await db
       .from("profiles")
-      .select("trust_score, safety_flags")
+      .select("trust_score, safety_flags_count")
       .eq("id", userId)
       .maybeSingle();
-    const trustScore        = (data as any)?.trust_score ?? null;
-    const safetyFlags       = (data as any)?.safety_flags ?? [];
-    const hasSevereSafetyFlag =
-      Array.isArray(safetyFlags) &&
-      (safetyFlags as string[]).some((f) => f.startsWith("severe_"));
+    const trustScore = (data as any)?.trust_score ?? null;
+    // profiles stores safety_flags_count (a number), not a flag list — severity
+    // granularity is unavailable, so any flag is treated as severe (fail-safe).
+    const hasSevereSafetyFlag = ((data as any)?.safety_flags_count ?? 0) > 0;
     return { trustScore, hasSevereSafetyFlag };
   } catch {
     return { trustScore: null, hasSevereSafetyFlag: false };

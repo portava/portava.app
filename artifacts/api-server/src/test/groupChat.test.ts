@@ -43,7 +43,7 @@ interface State {
   message_thread_members: Array<{ thread_id: string; user_id: string; joined_at: string; left_at: string | null; role: string }>;
   messages:           Array<{ id: string; thread_id: string; sender_id: string; body: string | null; deleted_at: string | null; created_at: string; edited_at: string | null; original_language: string | null }>;
   message_translations: any[];
-  circle_memberships: Array<{ owner_id: string; member_id: string; created_at: string }>;
+  circle_memberships: Array<{ user_id: string; other_id: string; created_at: string }>;
   circle_invites:     Array<{ id: string; owner_id: string; recipient_id: string; status: string }>;
   profiles:           Array<{ id: string; handle: string; name: string; avatar_url: string | null; preferred_message_language?: string }>;
   inserted:           any[];
@@ -68,7 +68,7 @@ function baseState(): State {
     message_thread_members: [],
     messages:           [],
     message_translations: [],
-    circle_memberships: [{ owner_id: ALICE_ID, member_id: BOB_ID, created_at: '2026-01-01T00:00:00Z' }],
+    circle_memberships: [{ user_id: ALICE_ID, other_id: BOB_ID, created_at: '2026-01-01T00:00:00Z' }],
     circle_invites:     [{ id: '00000000-0000-0000-0000-000000000001', owner_id: ALICE_ID, recipient_id: CAROL_ID, status: 'pending' }],
     profiles: [
       { id: ALICE_ID, handle: 'alice', name: 'Alice', avatar_url: null },

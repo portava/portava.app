@@ -458,9 +458,9 @@ router.patch("/circles/:circleId/availability", async (req, res) => {
   if (!isOwner) {
     const { data: mem } = await client
       .from("circle_memberships")
-      .select("member_id")
-      .eq("owner_id", circleId)
-      .eq("member_id", user.id)
+      .select("other_id")
+      .eq("user_id", circleId)
+      .eq("other_id", user.id)
       .maybeSingle();
     if (!mem) { sendError(res, "forbidden", "Not a circle member"); return; }
   }
@@ -569,9 +569,9 @@ router.get("/circles/:circleId/availability", async (req, res) => {
   if (!isOwner) {
     const { data: mem } = await client
       .from("circle_memberships")
-      .select("member_id")
-      .eq("owner_id", circleId)
-      .eq("member_id", user.id)
+      .select("other_id")
+      .eq("user_id", circleId)
+      .eq("other_id", user.id)
       .maybeSingle();
     if (!mem) { sendError(res, "forbidden", "Not a circle member"); return; }
   }
@@ -579,10 +579,10 @@ router.get("/circles/:circleId/availability", async (req, res) => {
   // Get all circle members (owner + members)
   const { data: memRows } = await client
     .from("circle_memberships")
-    .select("member_id")
-    .eq("owner_id", circleId);
+    .select("other_id")
+    .eq("user_id", circleId);
 
-  const memberIds = [circleId, ...((memRows ?? []).map((r: any) => r.member_id as string))];
+  const memberIds = [circleId, ...((memRows ?? []).map((r: any) => r.other_id as string))];
 
   const [{ data: avRows }, { data: qsRows }, { data: profiles }] = await Promise.all([
     client.from("user_availability").select("user_id, weekly_days, open_to_meet").in("user_id", memberIds),

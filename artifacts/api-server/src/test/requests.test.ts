@@ -30,7 +30,7 @@ interface TM { trip_id: string; user_id: string; role: string; created_at: strin
 interface Trip { id: string; title: string }
 interface Profile { id: string; handle: string; name: string; avatar_url: string | null }
 interface UF { user_a: string; user_b: string; accepted_request_id: string; created_at: string }
-interface CM { owner_id: string; member_id: string; created_at: string }
+interface CM { user_id: string; other_id: string; created_at: string }
 
 interface State {
   users: Record<string, { id: string } | null>;
@@ -506,8 +506,8 @@ describe("POST /me/requests/circle_invite/:id/accept", () => {
       assert.equal(r.body.ownerId, BOB_ID);
       assert.equal(state.circle_invites[0].status, "accepted");
       assert.equal(state.circle_memberships.length, 1, "membership created");
-      assert.equal(state.circle_memberships[0].owner_id,  BOB_ID);
-      assert.equal(state.circle_memberships[0].member_id, ALICE_ID);
+      assert.equal(state.circle_memberships[0].user_id,  BOB_ID);
+      assert.equal(state.circle_memberships[0].other_id, ALICE_ID);
     } finally { await srv.close(); }
   });
 

@@ -35,7 +35,7 @@ const CIRCLE_ID = "00000000-0000-0000-0000-000000000002";
 interface AvailRow { user_id: string; weekly_days: Record<string, string[]>; open_to_meet: boolean; strict_mode?: boolean; updated_at?: string }
 interface QuickRow { user_id: string; status: string; expires_at: string | null; updated_at?: string }
 interface TripMember { trip_id: string; user_id: string; role: string }
-interface CircleMember { owner_id: string; member_id: string }
+interface CircleMember { user_id: string; other_id: string }
 interface Profile { id: string; handle: string; name: string; avatar_url: string | null }
 
 interface TripAvRow { trip_id: string; user_id: string; open_days: Record<string, string[]>; updated_at?: string }
@@ -446,7 +446,7 @@ describe("PATCH /api/circles/:circleId/availability", () => {
 
   it("updates and returns own availability when circle member", async () => {
     const state = baseState();
-    state.circle_memberships.push({ owner_id: CIRCLE_ID, member_id: ALICE_ID });
+    state.circle_memberships.push({ user_id: CIRCLE_ID, other_id: ALICE_ID });
     const s = await startServer(state);
     try {
       const r = await patch(s.port, `/api/circles/${CIRCLE_ID}/availability`, "alice-tok", {
@@ -537,8 +537,8 @@ describe("GET /api/circles/:circleId/availability", () => {
   it("returns member availability for circle owner", async () => {
     const state = baseState();
     // alice is circle owner (by convention circleId == ownerId), bob is member
-    state.circle_memberships.push({ owner_id: CIRCLE_ID, member_id: ALICE_ID });
-    state.circle_memberships.push({ owner_id: CIRCLE_ID, member_id: BOB_ID });
+    state.circle_memberships.push({ user_id: CIRCLE_ID, other_id: ALICE_ID });
+    state.circle_memberships.push({ user_id: CIRCLE_ID, other_id: BOB_ID });
     const s = await startServer(state);
     try {
       // use CIRCLE_ID == ALICE_ID equivalent — route checks membership

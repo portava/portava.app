@@ -35,7 +35,7 @@ type FakeState = {
   blocks:            { blocker_id: string; blocked_id: string }[];
   user_follows?:     { follower_id: string; following_id: string }[];
   user_friendships?: ({ user_a: string; user_b: string })[];
-  circle_memberships?: { owner_id: string; member_id: string }[];
+  circle_memberships?: { user_id: string; other_id: string }[];
   trip_members?:     { trip_id: string; user_id: string; role: string }[];
 };
 
@@ -246,8 +246,8 @@ describe("GET /api/circles/:id/invitable-users — block exclusion", () => {
       ],
       blocks: [{ blocker_id: ME, blocked_id: BOB }],
       circle_memberships: [
-        { owner_id: ME, member_id: ALICE },
-        { owner_id: ME, member_id: BOB  },
+        { user_id: ME, other_id: ALICE },
+        { user_id: ME, other_id: BOB  },
       ],
       user_friendships: [],
     });
@@ -268,8 +268,8 @@ describe("GET /api/circles/:id/invitable-users — block exclusion", () => {
       ],
       blocks: [{ blocker_id: CARL, blocked_id: ME }],
       circle_memberships: [
-        { owner_id: ME, member_id: ALICE },
-        { owner_id: ME, member_id: CARL  },
+        { user_id: ME, other_id: ALICE },
+        { user_id: ME, other_id: CARL  },
       ],
       user_friendships: [],
     });

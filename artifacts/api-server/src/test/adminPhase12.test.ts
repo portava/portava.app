@@ -100,7 +100,7 @@ function makeAdminFakeClient(opts: {
     accountStates = [],
     reports = [],
     modActions = [],
-    posts = [{ id: POST_ID, post_status: "published", user_id: TARGET_ID }],
+    posts = [{ id: POST_ID, post_status: "published", author_id: TARGET_ID }],
     compassAnalytics = [],
   } = opts;
 
@@ -613,7 +613,7 @@ describe("Admin reports: hide-content", () => {
     const report = { id: REPORT_ID, target_type: "post", target_id: POST_ID, status: "open" };
     const admin = makeAdminFakeClient({
       reports: [report],
-      posts:   [{ id: POST_ID, post_status: "published", user_id: TARGET_ID }],
+      posts:   [{ id: POST_ID, post_status: "published", author_id: TARGET_ID }],
     });
     _setTestClient(admin, true);
     _setTestServiceClient(admin);
@@ -621,6 +621,36 @@ describe("Admin reports: hide-content", () => {
     assert.ok([200, 201].includes(r.status), `expected 200/201, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.equal(r.body?.contentHidden, true);
     assert.equal(r.body?.status, "in_review");
+  });
+
+  it("audits the moderation action against the post OWNER, not the admin", async () => {
+    const report = { id: REPORT_ID, target_type: "post", target_id: POST_ID, status: "open" };
+    const admin = makeAdminFakeClient({
+      reports: [report],
+      // posts.author_id is the live owner column — the audit row's
+      // target_user_id must resolve to it, not fall back to the admin.
+      posts:   [{ id: POST_ID, post_status: "published", author_id: TARGET_ID }],
+    });
+    const auditInserts: any[] = [];
+    const origFrom = admin.from.bind(admin);
+    admin.from = (table: string) => {
+      const b = origFrom(table);
+      if (table === "moderation_actions") {
+        const origInsert = b.insert?.bind(b);
+        b.insert = (data: any) => {
+          auditInserts.push(...(Array.isArray(data) ? data : [data]));
+          return origInsert ? origInsert(data) : b;
+        };
+      }
+      return b;
+    };
+    _setTestClient(admin, true);
+    _setTestServiceClient(admin);
+    const r = await req("POST", `/admin/reports/${REPORT_ID}/hide-content`, { reason: "Violation" });
+    assert.ok([200, 201].includes(r.status), `expected 200/201, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.ok(auditInserts.length > 0, "expected a moderation_actions audit insert");
+    assert.equal(auditInserts[0].target_user_id, TARGET_ID, "audit must attribute the post owner, not the admin");
+    assert.notEqual(auditInserts[0].target_user_id, ADMIN_ID);
   });
 });
 

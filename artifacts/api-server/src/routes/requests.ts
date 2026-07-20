@@ -396,7 +396,7 @@ router.post("/me/requests/circle_invite/:id/accept", async (req, res) => {
 
   const now = new Date().toISOString();
   await sc.from("circle_invites").update({ status: "accepted", responded_at: now }).eq("id", id);
-  await sc.from("circle_memberships").upsert({ owner_id: inv.owner_id, member_id: user.id, created_at: now });
+  await sc.from("circle_memberships").upsert({ user_id: inv.owner_id, other_id: user.id, created_at: now });
 
   res.status(200).json({ status: "accepted", ownerId: inv.owner_id });
 });

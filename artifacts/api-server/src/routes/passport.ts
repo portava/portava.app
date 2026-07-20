@@ -280,12 +280,11 @@ router.get("/users/:username/passport", async (req, res) => {
       .maybeSingle();
 
     if (bp) {
-      const today = new Date().toISOString().slice(0, 10);
+      // available_now lives on rent_buddy_profiles itself (not rent_buddy_availability)
       const { data: avail } = await sc
-        .from("rent_buddy_availability")
+        .from("rent_buddy_profiles")
         .select("available_now")
-        .eq("buddy_id", (bp as any).id)
-        .eq("date", today)
+        .eq("id", (bp as any).id)
         .maybeSingle();
 
       buddyProvider = {

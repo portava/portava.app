@@ -9,7 +9,7 @@
  *
  * syncCircleChatMembers(circleOwnerId, sc)
  *   • Ensures a 'circle' thread exists for the circle owner (create if absent).
- *   • Reads accepted members from circle_memberships (owner_id = circleOwnerId).
+ *   • Reads accepted members from circle_memberships (user_id = circle owner, other_id = member).
  *   • Upserts circle owner + accepted members as thread members.
  *   • Sets left_at = now() for members no longer in the accepted set.
  *
@@ -168,10 +168,10 @@ export async function syncCircleChatMembers(
   // 2. Read accepted circle members (owner + members of owner's circle).
   const { data: memberRows } = await sc
     .from('circle_memberships')
-    .select('member_id')
-    .eq('owner_id', circleOwnerId);
+    .select('other_id')
+    .eq('user_id', circleOwnerId);
 
-  const memberIds = ((memberRows ?? []) as any[]).map((r) => r.member_id);
+  const memberIds = ((memberRows ?? []) as any[]).map((r) => r.other_id);
 
   const acceptedSet = new Set([circleOwnerId, ...memberIds]);
   const allAccepted = [

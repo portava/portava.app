@@ -430,18 +430,18 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
         } else if (type === "post") {
           const { data } = await sc
             .from("posts")
-            .select("id, title, caption")
+            .select("id, content")
             .in("id", ids);
           for (const r of (data ?? []) as any[]) {
-            previewMap[r.id] = { title: r.title ?? r.caption ?? "Post", coverUrl: null };
+            previewMap[r.id] = { title: r.content ?? "Post", coverUrl: null };
           }
         } else if (type === "trip") {
           const { data } = await sc
             .from("trips")
-            .select("id, destination, cover_url")
+            .select("id, destination_city, cover_url")
             .in("id", ids);
           for (const r of (data ?? []) as any[]) {
-            previewMap[r.id] = { title: r.destination ?? "Trip", coverUrl: r.cover_url ?? null };
+            previewMap[r.id] = { title: r.destination_city ?? "Trip", coverUrl: r.cover_url ?? null };
           }
         } else if (type === "event") {
           const { data } = await sc
@@ -478,12 +478,12 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
         } else if (type === "highlight") {
           const { data } = await sc
             .from("highlights")
-            .select("id, caption, media_thumbnail_url, media_url")
+            .select("id, caption, media_url")
             .in("id", ids);
           for (const r of (data ?? []) as any[]) {
             previewMap[r.id] = {
               title: (r.caption as string | null) ?? "Highlight",
-              coverUrl: (r.media_thumbnail_url as string | null) ?? (r.media_url as string | null) ?? null,
+              coverUrl: (r.media_url as string | null) ?? null,
             };
           }
         }

@@ -664,14 +664,14 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
       const viewerTripIds = new Set((memberRows ?? []).map((r: any) => r.trip_id as string));
 
       const { data: trips } = await sc
-        .from('trips').select('id, name, destination, status, owner_id, visibility').in('id', sourceIds);
+        .from('trips').select('id, title, destination_city, status, owner_id, visibility').in('id', sourceIds);
       const items = (trips ?? [])
         .filter((t: any) =>
           !feedBlockedSet.has(t.owner_id) &&
           (t.visibility === 'public' || t.owner_id === user.id || viewerTripIds.has(t.id))
         )
         .map((t: any) => ({
-          id: t.id, type: 'trip', name: t.name, destination: t.destination ?? null, status: t.status,
+          id: t.id, type: 'trip', name: t.title, destination: t.destination_city ?? null, status: t.status,
         }));
       res.status(200).json({ items, posts: [], hasMore: items.length === limit, nextCursor, tab, scope });
     } catch { res.status(200).json({ items: [], posts: [], hasMore: false, nextCursor: null, tab, scope }); }
@@ -697,12 +697,12 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
     try {
       // Events are public by nature; filter out those by blocked organizers
       const { data: events } = await sc
-        .from('events').select('id, name, location, start_at, end_at, organizer_id').in('id', sourceIds);
+        .from('events').select('id, title, location_name, starts_at, ends_at, host_id').in('id', sourceIds);
       const items = (events ?? [])
-        .filter((e: any) => !feedBlockedSet.has(e.organizer_id))
+        .filter((e: any) => !feedBlockedSet.has(e.host_id))
         .map((e: any) => ({
-          id: e.id, type: 'event', name: e.name, location: e.location ?? null,
-          startAt: e.start_at ?? null, endAt: e.end_at ?? null,
+          id: e.id, type: 'event', name: e.title, location: e.location_name ?? null,
+          startAt: e.starts_at ?? null, endAt: e.ends_at ?? null,
         }));
       res.status(200).json({ items, posts: [], hasMore: items.length === limit, nextCursor, tab, scope });
     } catch { res.status(200).json({ items: [], posts: [], hasMore: false, nextCursor: null, tab, scope }); }

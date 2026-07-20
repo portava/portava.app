@@ -10,7 +10,7 @@
  *   3. User's active bookings    — confirmed/active rent-a-buddy bookings
  *   4. Recent Telegraph threads  — most recent message threads the user participates in
  *   5. Saved/upcoming trips      — trips user joined (not owned)
- *   6. Verified safe events      — city-scoped events with is_verified = true
+ *   6. Verified safe events      — city-scoped event posts with location_verified = true
  *   7. Admin-approved city guide — verified discovery_places for the user's city
  *   8. Popular public posts      — highest-liked posts excluding delayed/unpublished
  *   9. Passport summary          — user's own passport stamps
@@ -415,11 +415,13 @@ async function fetchVerifiedEvents(
     const { data } = await db
       .from("posts")
       .select("id, author_id, content, created_at, location_city")
-      .eq("post_type", "event")
-      .eq("is_verified", true)
+      // posts.category (not post_type); location_verified is the verified
+      // signal on posts (is_verified does not exist). posts carry no
+      // event_starts_at column, so no upcoming filter is possible here.
+      .eq("category", "event")
+      .eq("location_verified", true)
       .eq("location_city", city)
       .not("post_status", "eq", "delayed_post")
-      .gt("event_starts_at", now)
       .limit(5);
     return ((data as any[]) ?? [])
       .filter((r: any) => !blockedIds.has(r.author_id as string))
@@ -501,9 +503,9 @@ async function fetchPassportSummary(
   try {
     const { data } = await db
       .from("passport_stamps")
-      .select("id, stamp_type, country, city, unlocked_at")
+      .select("id, stamp_type, country, city, awarded_at")
       .eq("user_id", userId)
-      .order("unlocked_at", { ascending: false })
+      .order("awarded_at", { ascending: false })
       .limit(5);
     return ((data as any[]) ?? []).map((r: any): FallbackItem => ({
       id:       r.id as string,

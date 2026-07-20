@@ -1027,36 +1027,26 @@ router.get("/admin/users", async (req, res) => {
   let profileData: any = null;
 
   if (email) {
-    // Try profiles.email column first (fast path when the column exists)
-    const { data: profileByEmail, error: emailErr } = await sc
-      .from("profiles")
-      .select("id, handle, username, name, display_name, bio, avatar_url, role, verified, account_status, created_at")
-      .eq("email", email)
-      .maybeSingle();
-
-    if (!emailErr && profileByEmail) {
-      profileData = profileByEmail;
-    } else {
-      // Fall back: paginate auth.admin.listUsers until we find the matching email.
-      // perPage=1000 keeps round trips low for small beta apps.
-      let authUserId: string | null = null;
-      let page = 1;
-      while (!authUserId) {
-        const { data: authPage, error: authErr } = await sc.auth.admin.listUsers({ page, perPage: 1000 });
-        if (authErr || !authPage?.users?.length) break;
-        const match = authPage.users.find((u: any) => u.email?.toLowerCase() === email);
-        if (match) { authUserId = match.id; break; }
-        if (authPage.users.length < 1000) break; // last page — not found
-        page++;
-      }
-      if (authUserId) {
-        const { data: pById } = await sc
-          .from("profiles")
-          .select("id, handle, username, name, display_name, bio, avatar_url, role, verified, account_status, created_at")
-          .eq("id", authUserId)
-          .maybeSingle();
-        profileData = pById ?? null;
-      }
+    // profiles has no email column — resolve email → user id via the Supabase
+    // auth admin API, then load the profile by id.
+    // perPage=1000 keeps round trips low for small beta apps.
+    let authUserId: string | null = null;
+    let page = 1;
+    while (!authUserId) {
+      const { data: authPage, error: authErr } = await sc.auth.admin.listUsers({ page, perPage: 1000 });
+      if (authErr || !authPage?.users?.length) break;
+      const match = authPage.users.find((u: any) => u.email?.toLowerCase() === email);
+      if (match) { authUserId = match.id; break; }
+      if (authPage.users.length < 1000) break; // last page — not found
+      page++;
+    }
+    if (authUserId) {
+      const { data: pById } = await sc
+        .from("profiles")
+        .select("id, handle, username, name, display_name, bio, avatar_url, role, verified, account_status, created_at")
+        .eq("id", authUserId)
+        .maybeSingle();
+      profileData = pById ?? null;
     }
   } else if (handle) {
     const { data, error } = await sc
@@ -1648,11 +1638,11 @@ router.post("/admin/reports/:id/hide-content", async (req, res) => {
   // Fall back to adminUserId (always a valid profile) when the owner cannot be found.
   let ownerUserId: string = adminUserId;
   if (target_type === "post") {
-    const { data: pr } = await sc.from("posts").select("user_id").eq("id", target_id).maybeSingle();
-    if ((pr as any)?.user_id) ownerUserId = (pr as any).user_id;
+    const { data: pr } = await sc.from("posts").select("author_id").eq("id", target_id).maybeSingle();
+    if ((pr as any)?.author_id) ownerUserId = (pr as any).author_id;
   } else if (target_type === "trip") {
-    const { data: tr } = await sc.from("trips").select("user_id").eq("id", target_id).maybeSingle();
-    if ((tr as any)?.user_id) ownerUserId = (tr as any).user_id;
+    const { data: tr } = await sc.from("trips").select("owner_id").eq("id", target_id).maybeSingle();
+    if ((tr as any)?.owner_id) ownerUserId = (tr as any).owner_id;
   } else if (target_type === "event") {
     const { data: er } = await sc.from("events").select("host_id").eq("id", target_id).maybeSingle();
     if ((er as any)?.host_id) ownerUserId = (er as any).host_id;

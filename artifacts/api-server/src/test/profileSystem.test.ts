@@ -398,8 +398,8 @@ describe("GET /api/users/:username/passport — viewer state", () => {
       id: "bp-001", user_id: EVE, status: "active", admin_status: "active",
       categories: ["city_guide"], languages: ["en"], average_rating: 4.8,
       review_count: 12, response_time_h: 2, hourly_rate_usd: 50, city: "Paris",
+      available_now: true, // available_now lives on rent_buddy_profiles
     }];
-    state.rent_buddy_availability = [{ buddy_id: "bp-001", date: new Date().toISOString().slice(0, 10), available_now: true }];
     setup(state);
     const r = await req("/users/eve_user/passport");
     assert.equal(r.status, 200);
@@ -874,20 +874,24 @@ describe("GET /api/users/:username/stamps — profile tab", () => {
 
   it("returns stamps for a public profile", async () => {
     const state = baseState();
+    // Live passport_stamps shape: stamp_type / country / city / awarded_at
     state.passport_stamps = [
-      { id: "s1", user_id: ALICE, kind: "country", label: "France", locked: false, first_earned_at: "2025-01-01T00:00:00Z" },
-      { id: "s2", user_id: ALICE, kind: "city",    label: "Paris",  locked: false, first_earned_at: "2025-01-02T00:00:00Z" },
+      { id: "s1", user_id: ALICE, stamp_type: "country", country: "France", city: null,    awarded_at: "2025-01-01T00:00:00Z" },
+      { id: "s2", user_id: ALICE, stamp_type: "city",    country: "France", city: "Paris", awarded_at: "2025-01-02T00:00:00Z" },
     ];
     setup(state);
     const r = await req("/users/alice_user/stamps");
     assert.equal(r.status, 200);
     const body = await r.json() as any;
     assert.equal(body.items.length, 2);
+    const kinds = body.items.map((i: any) => i.kind).sort();
+    assert.deepEqual(kinds, ["city", "country"]);
+    assert.ok(body.items.every((i: any) => typeof i.earnedAt === "string"));
   });
 
   it("returns empty items when show_stamps=false", async () => {
     const state = baseState();
-    state.passport_stamps = [{ id: "s1", user_id: ALICE, kind: "country", label: "France", locked: false, first_earned_at: "2025-01-01T00:00:00Z" }];
+    state.passport_stamps = [{ id: "s1", user_id: ALICE, stamp_type: "country", country: "France", city: null, awarded_at: "2025-01-01T00:00:00Z" }];
     state.profile_privacy_settings = [{ user_id: ALICE, profile_visibility: "public", show_stamps: false }];
     setup(state);
     const r = await req("/users/alice_user/stamps");
@@ -1013,7 +1017,7 @@ describe("GET /api/users/:username/circles — profile tab", () => {
     const state = baseState();
     state.circle_memberships = [
       {
-        owner_id: DAN, member_id: ALICE, created_at: "2025-01-01T00:00:00Z",
+        user_id: DAN, other_id: ALICE, created_at: "2025-01-01T00:00:00Z",
         owner: { id: DAN, handle: "dan_user", username: "dan_user", display_name: "Dan", name: "Dan", avatar_url: null },
       },
     ];

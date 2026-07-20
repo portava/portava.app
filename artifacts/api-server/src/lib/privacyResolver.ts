@@ -106,9 +106,9 @@ async function resolveCircleMembership(
     // Check if userId is a member of the owner's circle
     const { data: membership } = await client
       .from("circle_memberships")
-      .select("member_id")
-      .eq("owner_id", ownerId)
-      .eq("member_id", userId)
+      .select("other_id")
+      .eq("user_id", ownerId)
+      .eq("other_id", userId)
       .maybeSingle();
 
     return membership !== null;

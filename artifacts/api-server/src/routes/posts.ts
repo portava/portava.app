@@ -1945,7 +1945,7 @@ router.post("/posts/:postId/comments", async (req, res) => {
     }
     if (commentsSetting === "circle") {
       const { data: mem } = await sc
-        .from("circle_memberships").select("member_id").eq("owner_id", authorId).eq("member_id", callerId).maybeSingle();
+        .from("circle_memberships").select("other_id").eq("user_id", authorId).eq("other_id", callerId).maybeSingle();
       if (!mem) { sendError(res, "comments_limited", "Only circle members can comment on this post"); return; }
     }
     if (commentsSetting === "trip_crew") {
@@ -1956,8 +1956,8 @@ router.post("/posts/:postId/comments", async (req, res) => {
       }
     }
     if (commentsSetting === "verified") {
-      const { data: profile } = await sc.from("profiles").select("is_verified").eq("id", callerId).maybeSingle();
-      if (!(profile as any)?.is_verified) { sendError(res, "comments_limited", "Only verified accounts can comment on this post"); return; }
+      const { data: profile } = await sc.from("profiles").select("verified").eq("id", callerId).maybeSingle();
+      if (!(profile as any)?.verified) { sendError(res, "comments_limited", "Only verified accounts can comment on this post"); return; }
     }
   }
 
@@ -2569,7 +2569,7 @@ router.post("/posts/:postId/comments/:commentId/replies", async (req, res) => {
       if (!fr) { sendError(res, "comments_limited", "Only friends can comment on this post"); return; }
     }
     if (commentsSetting === "circle") {
-      const { data: mem } = await sc.from("circle_memberships").select("member_id").eq("owner_id", authorId).eq("member_id", callerId).maybeSingle();
+      const { data: mem } = await sc.from("circle_memberships").select("other_id").eq("user_id", authorId).eq("other_id", callerId).maybeSingle();
       if (!mem) { sendError(res, "comments_limited", "Only circle members can comment on this post"); return; }
     }
     if (commentsSetting === "trip_crew") {
@@ -2577,8 +2577,8 @@ router.post("/posts/:postId/comments/:commentId/replies", async (req, res) => {
       if (!tripId || !(await isAcceptedTripMember(client, tripId, callerId))) { sendError(res, "comments_limited", "Only trip crew can comment on this post"); return; }
     }
     if (commentsSetting === "verified") {
-      const { data: profile } = await sc.from("profiles").select("is_verified").eq("id", callerId).maybeSingle();
-      if (!(profile as any)?.is_verified) { sendError(res, "comments_limited", "Only verified accounts can comment on this post"); return; }
+      const { data: profile } = await sc.from("profiles").select("verified").eq("id", callerId).maybeSingle();
+      if (!(profile as any)?.verified) { sendError(res, "comments_limited", "Only verified accounts can comment on this post"); return; }
     }
   }
 

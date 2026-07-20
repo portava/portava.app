@@ -718,10 +718,11 @@ router.patch("/trips/:tripId", async (req, res) => {
               }),
             ),
           );
-          const { data: devices } = await sc.from("notification_devices").select("user_id, expo_push_token").in("user_id", memberIds);
+          // Push tokens live on profiles.expo_push_token (notification_devices is empty)
+          const { data: devices } = await sc.from("profiles").select("id, expo_push_token").in("id", memberIds);
           const tokensByUser = new Map<string, (string | null | undefined)[]>();
           for (const d of (devices as any[]) ?? []) {
-            const uid = d.user_id as string;
+            const uid = d.id as string;
             if (!tokensByUser.has(uid)) tokensByUser.set(uid, []);
             tokensByUser.get(uid)!.push(d.expo_push_token);
           }

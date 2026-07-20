@@ -152,12 +152,11 @@ router.post("/highlights", async (req, res) => {
       location_country: d.locationCountry ?? null,
       visibility: d.visibility,
       expires_at: expiresAt,
-      filter_id: d.filterId ?? 'original',
-      filter_intensity: d.filterIntensity ?? 100,
-      media_thumbnail_url: d.mediaThumbnailUrl ?? null,
-      media_duration_seconds: d.mediaDurationSeconds ?? null,
+      // filter_id / filter_intensity / media_thumbnail_url / media_duration_seconds
+      // do not exist on the live highlights table — accepted in the payload for
+      // client compatibility but not persisted.
     })
-    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at, filter_id, filter_intensity, media_thumbnail_url, media_duration_seconds")
+    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
     .single();
 
   if (error) {
@@ -869,7 +868,7 @@ router.get("/highlights/following-feed", async (req, res) => {
   // 3. Fetch active (non-expired, non-deleted, non-private) highlights from followed users
   const { data: rows, error } = await sc
     .from("highlights")
-    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at, filter_id, filter_intensity, media_thumbnail_url, media_duration_seconds")
+    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
     .in("owner_id", eligibleIds)
     .is("deleted_at", null)
     .gt("expires_at", new Date().toISOString())

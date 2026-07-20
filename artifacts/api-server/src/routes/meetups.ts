@@ -81,9 +81,9 @@ async function canAccessMeetup(
     if (userId === ownerId) return { ok: true, meetup };
     const { data: mem } = await client
       .from("circle_memberships")
-      .select("member_id")
-      .eq("owner_id", ownerId)
-      .eq("member_id", userId)
+      .select("other_id")
+      .eq("user_id", ownerId)
+      .eq("other_id", userId)
       .maybeSingle();
     if (mem) return { ok: true, meetup };
   }
@@ -149,9 +149,9 @@ router.post("/meetups", async (req, res) => {
     if (!isOwner) {
       const { data: mem } = await client
         .from("circle_memberships")
-        .select("member_id")
-        .eq("owner_id", b.circleOwnerId)
-        .eq("member_id", user.id)
+        .select("other_id")
+        .eq("user_id", b.circleOwnerId)
+        .eq("other_id", user.id)
         .maybeSingle();
       if (!mem) { sendError(res, "forbidden", "Must be circle member to create a circle meetup"); return; }
     }
@@ -213,12 +213,12 @@ router.post("/meetups", async (req, res) => {
     if (b.circleOwnerId && !b.tripId && candidateIds.length > 0) {
       const { data: circleMemberRows } = await client
         .from("circle_memberships")
-        .select("member_id")
-        .eq("owner_id", b.circleOwnerId)
-        .in("member_id", candidateIds);
+        .select("other_id")
+        .eq("user_id", b.circleOwnerId)
+        .in("other_id", candidateIds);
       const eligible = new Set([
         b.circleOwnerId,
-        ...((circleMemberRows ?? []).map((r: any) => r.member_id as string)),
+        ...((circleMemberRows ?? []).map((r: any) => r.other_id as string)),
       ]);
       candidateIds = candidateIds.filter((id) => eligible.has(id));
     }
@@ -596,12 +596,12 @@ router.post("/meetups/:meetupId/invites", async (req, res) => {
     // Only circle members (+ owner) may be invited to a circle-scoped meetup
     const { data: circleMembers } = await client
       .from("circle_memberships")
-      .select("member_id")
-      .eq("owner_id", circleOwnerId)
-      .in("member_id", candidateIds);
+      .select("other_id")
+      .eq("user_id", circleOwnerId)
+      .in("other_id", candidateIds);
     const eligibleSet = new Set([
       circleOwnerId,
-      ...((circleMembers ?? []).map((r: any) => r.member_id as string)),
+      ...((circleMembers ?? []).map((r: any) => r.other_id as string)),
     ]);
     ineligible = candidateIds.filter((id) => !eligibleSet.has(id));
     candidateIds = candidateIds.filter((id) => eligibleSet.has(id));

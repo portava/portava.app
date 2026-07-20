@@ -42,9 +42,9 @@ async function isAcceptedCircleMember(
   if (userId === circleOwnerId) return true;
   const { data } = await sc
     .from('circle_memberships')
-    .select('member_id')
-    .eq('owner_id', circleOwnerId)
-    .eq('member_id', userId)
+    .select('other_id')
+    .eq('user_id', circleOwnerId)
+    .eq('other_id', userId)
     .maybeSingle();
   return Boolean(data);
 }

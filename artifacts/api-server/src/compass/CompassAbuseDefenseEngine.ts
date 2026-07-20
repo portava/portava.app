@@ -200,7 +200,7 @@ async function detectMutualReviewRings(
   try {
     const since = new Date(Date.now() - RING_WINDOW_DAYS * 24 * 60 * 60 * 1_000).toISOString();
     const q = db
-      .from("reviews")
+      .from("rent_buddy_reviews")
       .select("reviewer_id, reviewee_id, rating, created_at")
       .eq("rating", 5)
       .gte("created_at", since);
@@ -259,11 +259,13 @@ async function detectBookingLoops(
   const flags: AbuseFlag[] = [];
   try {
     const since = new Date(Date.now() - BOOKING_LOOP_WINDOW_DAYS * 24 * 60 * 60 * 1_000).toISOString();
+    // rent_buddy_bookings has no rating column — ratings live on
+    // rent_buddy_reviews (keyed by booking_id). Fetch bookings and 5★
+    // reviews separately, then count only bookings with a 5★ review.
     const q = db
       .from("rent_buddy_bookings")
-      .select("traveler_id, buddy_id, status, rating, created_at")
+      .select("id, traveler_id, buddy_id, status, created_at")
       .in("status", ["completed", "confirmed"])
-      .eq("rating", 5)
       .gte("created_at", since);
 
     if (userId) q.or(`traveler_id.eq.${userId},buddy_id.eq.${userId}`);
@@ -271,10 +273,19 @@ async function detectBookingLoops(
     const { data } = await q;
     const rows = (data as any[]) ?? [];
 
+    const { data: reviewRows } = await db
+      .from("rent_buddy_reviews")
+      .select("booking_id, rating")
+      .eq("rating", 5)
+      .gte("created_at", since);
+    const fiveStarBookingIds = new Set(
+      ((reviewRows as any[]) ?? []).map((r) => r.booking_id as string),
+    );
+
     // Count 5★ bookings per pair
     const pairCounts = new Map<string, number>();
     for (const r of rows) {
-      if (r.rating !== 5) continue; // ensure 5★ (belt-and-suspenders)
+      if (!fiveStarBookingIds.has(r.id as string)) continue; // ensure 5★
       const key = [r.traveler_id, r.buddy_id].sort().join("|");
       pairCounts.set(key, (pairCounts.get(key) ?? 0) + 1);
     }
@@ -301,15 +312,10 @@ async function detectReferralFarms(
 ): Promise<AbuseFlag[]> {
   const flags: AbuseFlag[] = [];
   try {
-    // Find users who referred many others (profiles.referred_by)
-    // Scope: if userId provided, check whether they are a heavy referrer
-    const q = db
-      .from("profiles")
-      .select("id, referred_by")
-      .not("referred_by", "is", null);
-
-    const { data } = await q;
-    const rows = (data as any[]) ?? [];
+    // STUB: profiles has no referred_by column in the live schema, so referral
+    // farms cannot be detected until a referral source is tracked. Return no
+    // flags rather than silently failing the whole scan.
+    const rows: any[] = [];
 
     // Count referrals per referrer
     const referralCounts = new Map<string, string[]>(); // referrerId → referred user IDs
@@ -383,12 +389,12 @@ async function detectCommentPods(
     const postIds = [...new Set(commentRows.map((c: any) => c.post_id as string))].slice(0, 100);
     const { data: posts } = await db
       .from("posts")
-      .select("id, user_id")
+      .select("id, author_id")
       .in("id", postIds);
 
     const postAuthorMap = new Map<string, string>();
     for (const p of (posts as any[] ?? [])) {
-      postAuthorMap.set(p.id as string, p.user_id as string);
+      postAuthorMap.set(p.id as string, p.author_id as string);
     }
 
     // Build DIRECTED commenter → post_author pairs.
@@ -464,11 +470,11 @@ async function detectHashtagSpam(
     if (postSourceIds.length > 0) {
       const { data: posts } = await db
         .from("posts")
-        .select("id, user_id")
+        .select("id, author_id")
         .in("id", postSourceIds);
 
       for (const p of (posts as any[] ?? [])) {
-        postAuthorMap.set(p.id as string, p.user_id as string);
+        postAuthorMap.set(p.id as string, p.author_id as string);
       }
     }
 

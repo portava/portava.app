@@ -61,7 +61,7 @@ function req(
 // ── Fake client builder ───────────────────────────────────────────────────────
 
 interface FakeState {
-  circleMemberships: Array<{ owner_id: string; member_id: string }>;
+  circleMemberships: Array<{ user_id: string; other_id: string }>;
   locationPreferences: Array<{
     user_id: string;
     trusted_circle_share: boolean;
@@ -170,7 +170,7 @@ describe("GET /api/me/circle-locations", () => {
     const RAW_LAT = 48.8566;
     const RAW_LNG = 2.3522;
     const client = makeClient({
-      circleMemberships: [{ owner_id: USER_ID, member_id: MEMBER_A }],
+      circleMemberships: [{ user_id: USER_ID, other_id: MEMBER_A }],
       locationPreferences: [],
       locationState: [
         { user_id: MEMBER_A, lat: RAW_LAT, lng: RAW_LNG, city: "Paris", country: "FR", updated_at: "2026-07-01T10:00:00Z" },
@@ -200,7 +200,7 @@ describe("GET /api/me/circle-locations", () => {
 
   it("returns location for a circle member with trusted_circle_share = true", async () => {
     const client = makeClient({
-      circleMemberships: [{ owner_id: USER_ID, member_id: MEMBER_B }],
+      circleMemberships: [{ user_id: USER_ID, other_id: MEMBER_B }],
       locationPreferences: [{ user_id: MEMBER_B, trusted_circle_share: true }],
       locationState: [
         { user_id: MEMBER_B, lat: 35.6762, lng: 139.6503, city: "Tokyo", country: "JP", updated_at: "2026-07-01T08:00:00Z" },
@@ -220,7 +220,7 @@ describe("GET /api/me/circle-locations", () => {
 
   it("excludes a circle member who opted out (trusted_circle_share = false)", async () => {
     const client = makeClient({
-      circleMemberships: [{ owner_id: USER_ID, member_id: MEMBER_C }],
+      circleMemberships: [{ user_id: USER_ID, other_id: MEMBER_C }],
       locationPreferences: [{ user_id: MEMBER_C, trusted_circle_share: false }],
       locationState: [
         { user_id: MEMBER_C, lat: 51.5074, lng: -0.1278, city: "London", country: "GB", updated_at: "2026-07-01T09:00:00Z" },
@@ -237,9 +237,9 @@ describe("GET /api/me/circle-locations", () => {
   it("returns only consenting members when circle has mixed consent", async () => {
     const client = makeClient({
       circleMemberships: [
-        { owner_id: USER_ID, member_id: MEMBER_A },
-        { owner_id: USER_ID, member_id: MEMBER_B },
-        { owner_id: USER_ID, member_id: MEMBER_C },
+        { user_id: USER_ID, other_id: MEMBER_A },
+        { user_id: USER_ID, other_id: MEMBER_B },
+        { user_id: USER_ID, other_id: MEMBER_C },
       ],
       locationPreferences: [
         { user_id: MEMBER_B, trusted_circle_share: true },
@@ -267,8 +267,8 @@ describe("GET /api/me/circle-locations", () => {
   it("omits members who have no user_location_state row", async () => {
     const client = makeClient({
       circleMemberships: [
-        { owner_id: USER_ID, member_id: MEMBER_A },
-        { owner_id: USER_ID, member_id: MEMBER_B },
+        { user_id: USER_ID, other_id: MEMBER_A },
+        { user_id: USER_ID, other_id: MEMBER_B },
       ],
       locationPreferences: [],
       locationState: [
@@ -290,8 +290,8 @@ describe("GET /api/me/circle-locations", () => {
   it("returns 200 with empty locations when all members opted out", async () => {
     const client = makeClient({
       circleMemberships: [
-        { owner_id: USER_ID, member_id: MEMBER_A },
-        { owner_id: USER_ID, member_id: MEMBER_B },
+        { user_id: USER_ID, other_id: MEMBER_A },
+        { user_id: USER_ID, other_id: MEMBER_B },
       ],
       locationPreferences: [
         { user_id: MEMBER_A, trusted_circle_share: false },
@@ -317,7 +317,7 @@ describe("GET /api/me/circle-locations", () => {
     const RAW_LAT = 35.6762;
     const RAW_LNG = 139.6503;
     const client = makeClient({
-      circleMemberships: [{ owner_id: USER_ID, member_id: MEMBER_B }],
+      circleMemberships: [{ user_id: USER_ID, other_id: MEMBER_B }],
       locationPreferences: [
         { user_id: MEMBER_B, trusted_circle_share: true, location_mode: "nearby", discovery_visibility: "neighborhood" },
       ],
@@ -350,7 +350,7 @@ describe("GET /api/me/circle-locations", () => {
     const OWN_LNG = -74.0060;
     // The caller (USER_ID) appears in their own circle_memberships as a member
     const client = makeClient({
-      circleMemberships: [{ owner_id: USER_ID, member_id: USER_ID }],
+      circleMemberships: [{ user_id: USER_ID, other_id: USER_ID }],
       locationPreferences: [],
       locationState: [
         { user_id: USER_ID, lat: OWN_LAT, lng: OWN_LNG, city: "New York", country: "US", updated_at: "2026-07-01T12:00:00Z" },

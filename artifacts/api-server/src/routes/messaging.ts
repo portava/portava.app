@@ -2120,9 +2120,9 @@ router.get('/circles/:circleOwnerId/chat', async (req, res) => {
   if (!isOwner) {
     const { data: circleMembership } = await sc
       .from('circle_memberships')
-      .select('member_id')
-      .eq('owner_id', circleOwnerId)
-      .eq('member_id', user.id)
+      .select('other_id')
+      .eq('user_id', circleOwnerId)
+      .eq('other_id', user.id)
       .maybeSingle();
 
     if (!circleMembership) {

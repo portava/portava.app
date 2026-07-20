@@ -438,8 +438,8 @@ router.get("/me/circle-locations", async (req, res) => {
   // 1. Resolve caller's circle members
   const { data: memberRows, error: memberErr } = await sc
     .from("circle_memberships")
-    .select("member_id")
-    .eq("owner_id", user.id);
+    .select("other_id")
+    .eq("user_id", user.id);
 
   if (memberErr) {
     req.log.error({ err: memberErr }, "circle-locations: circle lookup failed");
@@ -447,7 +447,7 @@ router.get("/me/circle-locations", async (req, res) => {
     return;
   }
 
-  const memberIds: string[] = (memberRows ?? []).map((r: any) => r.member_id as string);
+  const memberIds: string[] = (memberRows ?? []).map((r: any) => r.other_id as string);
 
   if (memberIds.length === 0) {
     res.status(200).json({ ok: true, locations: [] });

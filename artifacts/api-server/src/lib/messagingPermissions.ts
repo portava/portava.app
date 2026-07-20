@@ -165,8 +165,8 @@ export async function canMessage(
     // Shared circle: sender is in recipient's circle OR recipient is in sender's circle.
     sc
       .from('circle_memberships')
-      .select('owner_id')
-      .or(`and(owner_id.eq.${recipientId},member_id.eq.${senderId}),and(owner_id.eq.${senderId},member_id.eq.${recipientId})`)
+      .select('user_id')
+      .or(`and(user_id.eq.${recipientId},other_id.eq.${senderId}),and(user_id.eq.${senderId},other_id.eq.${recipientId})`)
       .limit(1)
       .maybeSingle(),
   ]);

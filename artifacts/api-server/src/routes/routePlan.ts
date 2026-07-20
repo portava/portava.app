@@ -521,15 +521,15 @@ async function fetchFullPlan(client: ReturnType<typeof import("../lib/supabase.j
   if (tripId) {
     const { data: accommodationItem } = await (client as any)
       .from("trip_plan_items")
-      .select("title, structured_location")
+      .select("title, location_name, lat, lng")
       .eq("trip_id", tripId)
-      .eq("item_type", "accommodation")
-      .order("planned_start_date", { ascending: true })
+      .eq("category", "accommodation")
+      .order("day_date", { ascending: true })
       .limit(1)
       .maybeSingle();
 
-    if (accommodationItem?.structured_location) {
-      const sl = accommodationItem.structured_location as Record<string, unknown>;
+    if (accommodationItem?.lat != null && accommodationItem?.lng != null) {
+      const sl = { lat: accommodationItem.lat, lng: accommodationItem.lng, label: accommodationItem.location_name ?? accommodationItem.title } as Record<string, unknown>;
       if (sl.lat != null && sl.lng != null) {
         tripAccommodationLocation = {
           lat:   sl.lat as number,

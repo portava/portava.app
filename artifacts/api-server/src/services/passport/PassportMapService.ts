@@ -39,10 +39,10 @@ export async function buildMapPayload(
 ): Promise<PassportMapPayload> {
   const { data, error } = await db
     .from("passport_stamps")
-    .select("id, stamp_type, country, city, neighborhood, place_id, plan_id, trip_id, source_type, verification_level, visibility, earned_at, created_at")
+    .select("id, stamp_type, country, city, neighborhood, place_id, plan_id, trip_id, source_type, verification_level, visibility, earned_at:awarded_at, created_at")
     .eq("user_id", userId)
     .not("city", "is", null)
-    .order("earned_at", { ascending: false })
+    .order("awarded_at", { ascending: false })
     .limit(500);
 
   if (error || !data) {

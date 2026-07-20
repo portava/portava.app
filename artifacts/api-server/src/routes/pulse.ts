@@ -388,7 +388,7 @@ router.get("/pulse", async (req, res) => {
       const todayStart = nowIso.slice(0, 10);
       let planQ = sc
         .from("trips")
-        .select("id, owner_id, title, destination_city, start_date, visibility, member_count, max_members")
+        .select("id, owner_id, title, destination_city, start_date, visibility, max_members, trip_members(count)")
         .in("status", ["planning", "upcoming"])
         .gte("start_date", todayStart)
         .lte("start_date", tomorrowEnd)
@@ -399,8 +399,11 @@ router.get("/pulse", async (req, res) => {
       // Buddies: approved, city-scoped, excluding viewer.
       let bQ = sc
         .from("rent_buddy_profiles")
-        .select("id, user_id, city, trust_score")
-        .in("moderation_status", ["approved", "auto_approved"])
+        // trust_score lives on rent_buddy_profiles as trust_score_override
+        // (profiles.trust_score is the base score; the override wins for buddies).
+        // Approved buddies are gated by admin_status = 'active'.
+        .select("id, user_id, city, trust_score_override")
+        .eq("admin_status", "active")
         .neq("user_id", user.id)
         .limit(10);
       if (viewerCity) bQ = bQ.ilike("city", `%${viewerCity}%`);
@@ -420,7 +423,10 @@ router.get("/pulse", async (req, res) => {
       if (planResult.status === "fulfilled") {
         for (const plan of ((planResult.value as any).data as any[]) ?? []) {
           if (blockedSet.size > 0 && blockedSet.has(plan.owner_id as string)) continue;
-          const memberCount = (plan.member_count as number | null) ?? 0;
+          // member_count is not a trips column — derive it from the embedded
+          // trip_members aggregate (select "trip_members(count)").
+          const memberCount = ((plan.trip_members as any[])?.[0]?.count as number | null) ?? 0;
+          plan.member_count = memberCount;
           const maxMembers = plan.max_members as number | null;
           if (maxMembers === null || memberCount < maxMembers) rawPlans.push(plan);
         }
@@ -524,7 +530,7 @@ router.get("/pulse", async (req, res) => {
         id: b.user_id as string,
         kind: "buddy" as const,
         authorId: (b.user_id as string | null) ?? null,
-        authorTrustScore: b.trust_score != null ? (b.trust_score as number) : null,
+        authorTrustScore: b.trust_score_override != null ? (b.trust_score_override as number) : null,
         city: b.city ? (b.city as string).toLowerCase() : null,
         __buddy: {
           id: b.id,
@@ -1158,11 +1164,11 @@ router.get("/pulse/live", async (req, res) => {
         .select("id, buddy_id, booking_date, city, status")
         .eq("traveler_id", user.id)
         .eq("status", "requested"),
-      // rent_buddy_profiles is the correct table; gate on approved moderation_status
+      // rent_buddy_profiles is the correct table; gate on admin_status = 'active'
       sc.from("rent_buddy_profiles")
         .select("id")
         .eq("user_id", user.id)
-        .in("moderation_status", ["approved", "auto_approved"])
+        .eq("admin_status", "active")
         .maybeSingle(),
     ]);
 
@@ -1368,7 +1374,7 @@ router.get("/pulse/live", async (req, res) => {
       const { data: availableBuddies } = await sc
         .from("rent_buddy_profiles")
         .select("id, user_id, city, bio")
-        .in("moderation_status", ["approved", "auto_approved"])
+        .eq("admin_status", "active")
         .ilike("city", `%${buddyCity}%`)
         .neq("user_id", user.id)
         .limit(3);
