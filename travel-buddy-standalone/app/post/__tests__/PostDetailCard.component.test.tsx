@@ -194,7 +194,7 @@ describe('PostDetailCard media rendering', () => {
   it('renders SharedVideoPlayer for a video post', async () => {
     mockGetPostById.mockResolvedValue(postOk(makePost({ media: [{ url: 'https://example.com/video.mp4', media_type: 'video', thumbnail_url: null, stamp_overlay: null }] })));
 
-    render(<PostDetail />);
+    await render(<PostDetail />);
 
     await waitFor(() =>
       expect(screen.getByTestId('shared-video-player')).toBeTruthy(),
@@ -218,7 +218,7 @@ describe('PostDetailCard media rendering', () => {
       ),
     );
 
-    render(<PostDetail />);
+    await render(<PostDetail />);
 
     // The image branch renders MediaStampOverlay alongside the Image component.
     // Waiting for stamp-overlay confirms the image path was taken.
@@ -241,7 +241,7 @@ describe('PostDetailCard media rendering', () => {
       ),
     );
 
-    render(<PostDetail />);
+    await render(<PostDetail />);
 
     // The placeholder branch renders the city label as uppercased text.
     await waitFor(() =>
@@ -274,7 +274,7 @@ describe('PostDetailCard media rendering', () => {
       ),
     );
 
-    render(<PostDetail />);
+    await render(<PostDetail />);
 
     await waitFor(() =>
       expect(screen.getByTestId('shared-video-player')).toBeTruthy(),

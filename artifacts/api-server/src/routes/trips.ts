@@ -710,9 +710,11 @@ router.patch("/trips/:tripId", async (req, res) => {
             memberIds.map((uid) =>
               sc.from("notifications").insert({
                 user_id: uid, actor_id: user.id,
-                notification_type: "review_prompt",
-                content: { entityType: "trip", entityId: tripId, entityName: tripTitle },
-                read: false,
+                event_type: "trip.review_prompt",
+                category: "trips",
+                title: "How was the trip?",
+                body: `Leave a review for "${tripTitle}" — your feedback helps the community.`,
+                metadata: { entityType: "trip", entityId: tripId, entityName: tripTitle },
               }),
             ),
           );

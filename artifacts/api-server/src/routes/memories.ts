@@ -213,9 +213,11 @@ async function notifyTagged(sc: any, memory: any, taggedUserId: string): Promise
     await sc.from("notifications").insert({
       user_id: taggedUserId,
       actor_id: memory.owner_id,
-      notification_type: "memory_tag",
-      content: { memoryId: memory.id, memoryTitle: memory.title },
-      read: false,
+      event_type: "trip.memory_tagged",
+      category: "trips",
+      title: "You were tagged in a Memory",
+      body: "Tap to approve or remove the tag.",
+      metadata: { memoryId: memory.id, memoryTitle: memory.title },
     }).then(() => {}).catch(() => {});
   } catch {
     // Non-fatal
