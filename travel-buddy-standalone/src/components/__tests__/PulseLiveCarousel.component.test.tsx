@@ -13,7 +13,11 @@
  */
 
 import React from 'react';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
+import { render, screen, fireEvent, act, waitFor, configure } from '@testing-library/react-native';
+
+// Full-suite parallel runs can starve async updates past the default 1 s
+// async-util timeout; give these tests generous headroom.
+configure({ asyncUtilTimeout: 10000 });
 import { PulseLiveCarousel } from '../PulseLiveCarousel.tsx';
 import type { CityEvent } from '../../types/models.ts';
 

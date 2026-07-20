@@ -32,7 +32,11 @@
  */
 
 import React from 'react';
-import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
+import { render, act, waitFor, screen, fireEvent, configure } from '@testing-library/react-native';
+
+// Full-suite parallel runs can starve the 350 ms search debounce + fetch chain
+// past the default 1 s async-util timeout; give these tests generous headroom.
+configure({ asyncUtilTimeout: 10000 });
 import StampQueueScreen from '../../../app/admin/stamps/queue.tsx';
 import { getAdminStampCatalog } from '../../services/adminStamps.ts';
 
