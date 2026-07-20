@@ -320,3 +320,65 @@ State when the standing brief was installed:
   explicit can't-verify with zero fabricated fields and no fetch attempted,
   UI-block carry-through incl. forged-confidence rejection.
 - API + mobile suites and typechecks green.
+
+## Phase 9 — Social Intelligence (2026-07-20)
+
+- New `src/compass/CompassSocialEngine.ts` — privacy-first social layer:
+  - `getWhosAround()` — surfaces circle presence from the user's active
+    trips/upcoming events, gating EVERY target through
+    `canViewCirclePresence` (the same guard the Circle UI uses: consent,
+    global toggle, per-context defaults, overrides, pauses, mutual blocks,
+    banned/suspended, staleness). Output is approximate-only: status,
+    approximate_label (approximate_area mode) or venue_label (only on
+    explicit check-in in venue_checkin mode). No coordinates, no
+    needs_help, no data beyond what each person chose to share.
+    Hidden users (blocked / blocker / muted) are removed before any
+    presence lookup; names follow the @handle-default rule via
+    `nameVisibilitySet`.
+  - `computeTravelCompatibility()` — deterministic 0–100 score from
+    interests / travel styles / budget adjacency / pace / languages that
+    reveals ONLY the overlap, never the other person's full preferences.
+  - Group aggregation: `aggregateGroupPreferences` (shared interests,
+    interest union by frequency, most-restrictive concrete budget,
+    all-verified flag, youngest known age — computed server-side from DOB,
+    which never leaves), `buildGroupRankingProfile` (block union: anyone
+    blocked by ANY member is excluded for the whole group; youngest age
+    drives age-gated eligibility), `eventSatisfiesGroup` (capacity for the
+    whole group, age_min fail-closed when any age is unknown,
+    verified_only requires every member verified).
+- Three new Compass tools in `CompassTools.ts`:
+  - `get_whos_around` — honest empty answers for no contexts / nobody
+    sharing.
+  - `get_travel_compatibility` — relationship-gated (must share a Circle
+    or accepted trip, fail-closed) + trust floor (score < 20 not
+    surfaced). Adversarial-uniform: strangers, blocked users, and
+    nonexistent handles all get the identical "not available" answer, so
+    account existence and block state are unprobeable.
+  - `get_group_recommendation` — group = named Circle (membership
+    verified; non-member circles indistinguishable from nonexistent ones)
+    or current-trip members; candidates ranked through the Phase 7
+    pipeline with the group profile and post-filtered by group
+    constraints, reporting which constraints removed candidates.
+- Tools prompt addendum gained SOCIAL RULES: people only from tool
+  results; approximate location only, never inferred/implied precise
+  location; @handle labels; non-appearance means "not shared", never
+  speculate.
+- Tests: new `src/test/compass-social.test.ts` (20 tests) — compatibility
+  determinism + overlap-only reveal, group aggregation + every event
+  constraint (incl. fail-closed unknown age), who's-around approximate
+  granularity / venue-mode gating / sharing-off exclusion / DB-level
+  mutual-block defense-in-depth / no coordinate or needs_help leak, and
+  adversarial leak tests: blocked-user injection (presence row exists but
+  never surfaces), precise-location probing (venue string never leaks
+  outside explicit check-in), cross-circle probing, DOB/real-name leak
+  checks.
+- Standing eval set ("Find my circle", "I'm traveling alone tonight")
+  run E2E against the local API with an ephemeral signed-in user: AI proxy
+  unreachable from this environment, so both turns exercised the honest
+  fallback (`fallback: true`, no fabricated people/candidates), matching
+  Phase 5–8 precedent; social behavior is covered deterministically by the
+  suite above.
+- Out of scope honored: no Compass Home surfaces (Phase 10), no proactive
+  social alerts (Phase 11) — chat answers only.
+- Full API suite (4,489 tests incl. Phase 9) + typecheck green; mobile
+  untouched.
