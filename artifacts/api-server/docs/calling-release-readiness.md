@@ -35,7 +35,7 @@ build.
 | --- | --- | --- |
 | `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` in production env | PASS | presence-only check via secrets manager (values never read) |
 | LiveKit credentials valid | PASS | read-only `listRooms()` probe succeeded (0 open rooms) |
-| Expo push (server side) | PASS | Expo Push HTTP API needs no server credential; `EXPO_TOKEN` present for EAS; push send path parses per-token errors (`lib/push.ts`) |
+| Expo push (server side) | PASS | Expo Push HTTP API needs no server credential; `EXPO_TOKEN` present for EAS; push send path parses per-token errors (`lib/push.ts`); `call.incoming` push carries `priority:"high"` so FCM wakes backgrounded Android devices and APNs delivers at priority 10 — verified by `pushDelivery.test.ts` §14 |
 | APNs/FCM push credentials on the EAS project | MANUAL | managed in EAS credentials store; not inspectable from this workspace — verify once via `eas credentials` before store submission |
 | Client never receives LiveKit secrets | PASS | no `LIVEKIT*`/`EXPO_PUBLIC_LIVEKIT*` reference in the mobile tree; client gets only `livekitUrl` + short-TTL token from the grant response |
 

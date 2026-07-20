@@ -20,6 +20,17 @@ export interface PushPayload {
   title: string;
   body: string;
   data?: Record<string, unknown>;
+  /**
+   * Delivery priority forwarded verbatim to the Expo Push API.
+   * - "high"    → FCM high priority (wakes a backgrounded Android device) /
+   *               APNs priority 10 (immediate delivery on iOS).
+   * - "normal"  → FCM normal priority (device decides when to deliver) /
+   *               APNs priority 5.
+   * - "default" → Expo chooses; effectively "high" for iOS, "normal" for
+   *               Android when no explicit value is set.
+   * Use "high" for time-sensitive alerts such as incoming calls.
+   */
+  priority?: "default" | "normal" | "high";
 }
 
 export interface PushTicket {
@@ -83,6 +94,10 @@ export async function sendPushNotification(
     body: payload.body,
     data: payload.data ?? {},
     sound: "default",
+    // Forward the caller's priority so time-sensitive pushes (e.g. incoming
+    // calls) use FCM high-priority delivery and APNs priority 10, which wakes
+    // a backgrounded device. Omitting the field lets Expo choose its default.
+    ...(payload.priority !== undefined ? { priority: payload.priority } : {}),
   }));
 
   const doFetch = opts?.fetchImpl ?? _testFetch ?? fetch;

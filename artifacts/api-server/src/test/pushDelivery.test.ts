@@ -19,6 +19,8 @@
  *  11. NotificationRouter.route — sendPushNotification called with tokens from DB
  *  12. NotificationRouter.route — falls back to profiles.expo_push_token when no device rows
  *  13. NotificationRouter.route — suppresses push when no tokens exist (logs suppressed)
+ *  14. NotificationRouter.route — call.incoming push uses priority "high" (background wake)
+ *  15. NotificationRouter.route — non-call pushes do NOT set priority "high"
  *
  * Run: node --import tsx/esm --test src/test/pushDelivery.test.ts
  */
@@ -960,5 +962,101 @@ describe("POST /api/me/devices — stale token cleanup on re-registration", () =
     assert.ok(deletedTokens.includes(EXISTING_FCM),  "old FCM token on same platform must be deleted");
     assert.ok(!deletedTokens.includes(EXISTING_EXPO), "expo token on a different platform must NOT be deleted");
     assert.ok(!deletedTokens.includes(NEW_FCM),       "the newly registered FCM token must not be deleted");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 14. NotificationRouter — call.incoming push carries priority "high"
+//
+// Without priority:"high", Android/FCM delivers the message at normal priority
+// and will not wake a backgrounded device.  APNs also uses priority 10
+// (immediate) only when the push carries a sound + high priority; omitting it
+// falls back to priority 5 (opportunistic).  This test proves the HTTP body
+// that reaches the Expo Push API always includes priority:"high" for incoming
+// calls so backgrounded devices actually ring.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("NotificationRouter — call.incoming push priority", () => {
+  it("outgoing Expo HTTP body carries priority:\"high\" for call.incoming", async () => {
+    const capturedMessages: any[] = [];
+
+    _setTestFetch(async (_url, init) => {
+      const body = JSON.parse((init?.body as string) ?? "null") as any[];
+      capturedMessages.push(...body);
+      return new Response(
+        JSON.stringify({ data: body.map(() => ({ status: "ok", id: "r" })) }),
+        { status: 200 },
+      );
+    });
+
+    const state: FakeState = {
+      profiles: [{ id: USER_ID, role: "user", expo_push_token: null }],
+      notificationDevices: [
+        { id: "dev-call", user_id: USER_ID, push_token: "ExponentPushToken[callDevice]", platform: "expo" },
+      ],
+      notificationPreferences: basePrefs(),
+      notificationCategoryPreferences: [],
+      notificationDeliveryAttempts: [],
+      locationPreferences: [],
+      featureFlags: { notifications_enabled: true, push_notifications_enabled: true },
+    };
+    const client = makeFakeClient(state);
+
+    const router = new NotificationRouter(client);
+    await router.route(
+      makeNotification({
+        eventType: "call.incoming",
+        category: "telegraph",
+        priority: "important",
+        title: "@bob is calling you",
+        body: "Incoming call",
+      }) as any,
+    );
+
+    assert.equal(capturedMessages.length, 1, "exactly one push message sent");
+    assert.equal(
+      capturedMessages[0].priority,
+      "high",
+      "call.incoming push must carry priority:\"high\" so FCM wakes a backgrounded device",
+    );
+    assert.equal(capturedMessages[0].sound, "default", "sound must be set for audible ring");
+    assert.equal(capturedMessages[0].to, "ExponentPushToken[callDevice]");
+  });
+
+  it("non-call pushes do NOT carry priority:\"high\" in the Expo HTTP body", async () => {
+    const capturedMessages: any[] = [];
+
+    _setTestFetch(async (_url, init) => {
+      const body = JSON.parse((init?.body as string) ?? "null") as any[];
+      capturedMessages.push(...body);
+      return new Response(
+        JSON.stringify({ data: body.map(() => ({ status: "ok", id: "r" })) }),
+        { status: 200 },
+      );
+    });
+
+    const state: FakeState = {
+      profiles: [{ id: USER_ID, role: "user", expo_push_token: null }],
+      notificationDevices: [
+        { id: "dev-trip", user_id: USER_ID, push_token: "ExponentPushToken[tripDevice]", platform: "expo" },
+      ],
+      notificationPreferences: basePrefs(),
+      notificationCategoryPreferences: [],
+      notificationDeliveryAttempts: [],
+      locationPreferences: [],
+      featureFlags: { notifications_enabled: true, push_notifications_enabled: true },
+    };
+    const client = makeFakeClient(state);
+
+    const router = new NotificationRouter(client);
+    // trip.invite_accepted is "important" priority in the template but is NOT
+    // an incoming call — it must NOT get priority:"high" in the push payload.
+    await router.route(makeNotification() as any); // default: trip.invite_accepted
+
+    assert.equal(capturedMessages.length, 1, "exactly one push message sent");
+    assert.notEqual(
+      capturedMessages[0].priority,
+      "high",
+      "non-call notifications must not consume FCM high-priority quota",
+    );
   });
 });

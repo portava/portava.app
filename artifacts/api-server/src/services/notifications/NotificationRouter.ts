@@ -187,10 +187,19 @@ export class NotificationRouter {
 
       // Use the stripped payload (private location redacted from body/data)
       const { strippedPayload } = decision;
+
+      // Incoming-call notifications must use "high" priority so FCM wakes a
+      // backgrounded Android device and APNs delivers immediately on iOS.
+      // Other "important"-priority events keep the Expo default so we don't
+      // over-use high-priority quota (FCM limits aggressive callers).
+      const pushPriority: "high" | undefined =
+        notification.eventType === "call.incoming" ? "high" : undefined;
+
       const pushPayload = {
-        title: strippedPayload.title,
-        body:  strippedPayload.body,
-        data:  strippedPayload.data ?? {},
+        title:    strippedPayload.title,
+        body:     strippedPayload.body,
+        data:     strippedPayload.data ?? {},
+        ...(pushPriority !== undefined ? { priority: pushPriority } : {}),
       };
 
       const pushResult = await sendPushNotification(tokens, pushPayload);
