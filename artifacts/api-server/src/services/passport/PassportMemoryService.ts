@@ -12,6 +12,9 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { VisibilityTier } from "./PassportPrivacyGuard.js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "PassportMemoryService" });
 
 export interface CreateSuggestedMemoryInput {
   userId: string;
@@ -79,7 +82,10 @@ export async function createSuggestedMemory(
     .select("id")
     .single();
 
-  if (error) return null;
+  if (error) {
+    logger.error({ table: "passport_memories", op: "insert", message: error.message }, "createSuggestedMemory failed");
+    return null;
+  }
   return (data as any).id;
 }
 
@@ -116,7 +122,10 @@ export async function createMemory(
     .select("id")
     .single();
 
-  if (error) return null;
+  if (error) {
+    logger.error({ table: "passport_memories", op: "insert", message: error.message }, "createMemory failed");
+    return null;
+  }
   return (data as any).id;
 }
 
@@ -146,7 +155,10 @@ export async function acceptSuggestedMemory(
     .eq("status", "suggested")
     .select("id");
 
-  if (error) return false;
+  if (error) {
+    logger.error({ table: "passport_memories", op: "update", message: error.message }, "acceptSuggestedMemory failed");
+    return false;
+  }
   return Array.isArray(data) && data.length > 0;
 }
 
@@ -166,7 +178,10 @@ export async function dismissSuggestedMemory(
     .eq("status", "suggested")
     .select("id");
 
-  if (error) return false;
+  if (error) {
+    logger.error({ table: "passport_memories", op: "update", message: error.message }, "dismissSuggestedMemory failed");
+    return false;
+  }
   return Array.isArray(data) && data.length > 0;
 }
 
@@ -198,7 +213,10 @@ export async function updateMemory(
     .eq("status", "active")
     .select("id");
 
-  if (error) return false;
+  if (error) {
+    logger.error({ table: "passport_memories", op: "update", message: error.message }, "updateMemory failed");
+    return false;
+  }
   return Array.isArray(data) && data.length > 0;
 }
 
@@ -217,7 +235,10 @@ export async function loadMemories(
     .order("earned_at", { ascending: false })
     .limit(100);
 
-  if (error) return [];
+  if (error) {
+    logger.error({ table: "passport_memories", op: "select", message: error.message }, "loadMemories failed");
+    return [];
+  }
   return data ?? [];
 }
 
@@ -236,6 +257,9 @@ export async function loadSuggestions(
     .order("earned_at", { ascending: false })
     .limit(50);
 
-  if (error) return [];
+  if (error) {
+    logger.error({ table: "passport_memories", op: "select", message: error.message }, "loadSuggestions failed");
+    return [];
+  }
   return data ?? [];
 }

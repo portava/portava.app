@@ -10,6 +10,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { VisibilityTier } from "./PassportPrivacyGuard.js";
 import { recordTrustEvent } from "../trust/TrustEventService.js";
 import { resolveOrEnqueue } from "../../lib/stamps/StampCatalogService.js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "PassportStampService" });
 
 export type StampType =
   | "city"
@@ -75,13 +78,17 @@ export async function createStamp(
   } else {
     // Look up user's default stamp visibility preference
     try {
-      const { data: prefRow } = await db
+      const { data: prefRow, error: prefError } = await db
         .from("passport_visibility_preferences")
         .select("default_stamp_visibility")
         .eq("user_id", userId)
         .maybeSingle();
+      if (prefError) {
+        logger.error({ table: "passport_visibility_preferences", op: "select", message: prefError.message }, "createStamp visibility-preference lookup failed — falling back to public");
+      }
       visibility = ((prefRow as any)?.default_stamp_visibility as VisibilityTier) ?? "public";
-    } catch {
+    } catch (err) {
+      logger.error({ table: "passport_visibility_preferences", op: "select", message: err instanceof Error ? err.message : String(err) }, "createStamp visibility-preference lookup threw — falling back to public");
       visibility = "public";
     }
   }
@@ -129,7 +136,10 @@ export async function createStamp(
     .select("id")
     .single();
 
-  if (error) return null;
+  if (error) {
+    logger.error({ table: "passport_stamps", op: "insert", message: error.message }, "createStamp failed");
+    return null;
+  }
   const stampId = (data as any).id;
 
   // Fire-and-forget: resolve universal catalog entry for v1 passport_stamps path
@@ -191,7 +201,10 @@ export async function updateStampVisibility(
     .eq("user_id", userId)
     .select("id");
 
-  if (error) return false;
+  if (error) {
+    logger.error({ table: "passport_stamps", op: "update", message: error.message }, "updateStampVisibility failed");
+    return false;
+  }
   return Array.isArray(data) && data.length > 0;
 }
 
@@ -230,6 +243,9 @@ export async function loadStamps(
   if (filters.visibility) query = (query as any).eq("visibility", filters.visibility);
 
   const { data, error } = await query;
-  if (error) return [];
+  if (error) {
+    logger.error({ table: "passport_stamps", op: "select", message: error.message }, "loadStamps failed");
+    return [];
+  }
   return data ?? [];
 }

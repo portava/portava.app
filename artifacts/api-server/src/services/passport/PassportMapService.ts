@@ -10,6 +10,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CallerContext } from "./PassportPrivacyGuard.js";
 import { filterStamps } from "./PassportPrivacyGuard.js";
 import type { StampRow } from "./PassportPrivacyGuard.js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "PassportMapService" });
 
 export interface MapMarker {
   country: string;
@@ -46,6 +49,9 @@ export async function buildMapPayload(
     .limit(500);
 
   if (error || !data) {
+    if (error) {
+      logger.error({ table: "passport_stamps", op: "select", message: error.message }, "buildMapPayload failed");
+    }
     return { markers: [], countries: [], cities: [] };
   }
 
@@ -116,6 +122,9 @@ export async function buildStats(
     .eq("user_id", userId);
 
   if (error || !data) {
+    if (error) {
+      logger.error({ table: "passport_stamps", op: "select", message: error.message }, "buildStats failed");
+    }
     return {
       countries: 0, cities: 0, neighborhoods: 0,
       planStamps: 0, hostStamps: 0, hiddenGemStamps: 0,
