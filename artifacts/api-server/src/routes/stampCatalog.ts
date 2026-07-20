@@ -20,6 +20,7 @@
  *   POST   /admin/stamps/catalog/:id/merge-into/:targetId — merge duplicate into canonical
  *   GET    /admin/stamps/catalog/:id/earners         — paginated earner list
  *   POST   /admin/stamps/reconcile                   — run catalog reconciliation (idempotent)
+ *   GET    /admin/stamps/reconcile/runs              — recent reconciler run history (parsed counts)
  */
 
 import { Router } from "express";
@@ -30,7 +31,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { randomUUID } from "crypto";
 import { invalidateCatalogCache } from "../lib/stamps/StampCatalogService.js";
 import { STYLE_VERSION } from "../lib/stamps/artDirection.js";
-import { runReconciliation } from "../lib/stamps/reconcileStampCatalog.js";
+import { runReconciliation, RUN_SUMMARY_SOURCE_TABLE } from "../lib/stamps/reconcileStampCatalog.js";
 
 const router = Router();
 
@@ -1145,6 +1146,57 @@ router.post("/admin/stamps/reconcile", asyncHandler(async (req, res) => {
   });
 
   res.json({ ok: true, stats });
+}));
+
+// ── GET /admin/stamps/reconcile/runs ─────────────────────────────────────────
+// Recent reconciler run history — reads the run-summary rows the reconciler
+// writes to stamp_reconciliation_log (source_table = "reconciliation_run",
+// counts JSON in review_reason) so "did it run?" is answerable in-app.
+
+router.get("/admin/stamps/reconcile/runs", asyncHandler(async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+
+  const { data, error } = await sc
+    .from("stamp_reconciliation_log")
+    .select("id, source_id, review_reason, created_at")
+    .eq("source_table", RUN_SUMMARY_SOURCE_TABLE)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+
+  const runs = ((data ?? []) as any[]).map((row) => {
+    let counts: Record<string, unknown> = {};
+    let parseError = false;
+    try {
+      const parsed = JSON.parse(row.review_reason ?? "");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) counts = parsed;
+      else parseError = true;
+    } catch {
+      parseError = true;
+    }
+    const fatalError =
+      typeof counts.fatal_error === "string" ? (counts.fatal_error as string) : null;
+    return {
+      id:         row.id ?? null,
+      runId:      row.source_id ?? null,
+      ranAt:      row.created_at ?? null,
+      resolved:   Number(counts.resolved ?? 0),
+      flagged:    Number(counts.flagged ?? 0),
+      skipped:    Number(counts.skipped ?? 0),
+      enqueued:   Number(counts.enqueued ?? 0),
+      combos:     Number(counts.combos ?? 0),
+      fatalError,
+      ok:         !parseError && !fatalError,
+      ...(parseError ? { parseError: true } : {}),
+    };
+  });
+
+  res.json({ runs, total: runs.length });
 }));
 
 export default router;
