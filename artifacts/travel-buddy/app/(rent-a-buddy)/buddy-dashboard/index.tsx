@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  View, Text, ScrollView, Pressable, StyleSheet, Switch, RefreshControl,
+  View, Text, ScrollView, Pressable, StyleSheet, Switch, RefreshControl, Alert,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -114,16 +114,21 @@ export default function BuddyDashboard() {
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     setError(null);
-    const [dashRes, reqRes, clRes] = await Promise.all([
+    const [dashRes, reqRes, clRes, availRes] = await Promise.all([
       rentABuddy.getBuddyDashboard(),
       rentABuddy.getDashboardRequests(),
       rentABuddy.getProfileChecklist(),
+      rentABuddy.getDashboardAvailability(),
     ]);
     if (!silent) setLoading(false);
     if (dashRes.ok) {
       setSummary(dashRes.data);
     } else {
       setError(dashRes.error);
+    }
+    // Hydrate the header switch from the saved setting so it reflects reality.
+    if (availRes.ok && availRes.data?.settings) {
+      setAvailableNow(availRes.data.settings.availableNow === true);
     }
     if (reqRes.ok) {
       setUpcoming(reqRes.data.requests.slice(0, 3));
@@ -235,7 +240,15 @@ export default function BuddyDashboard() {
           <Text style={s.availLabel}>Available Now</Text>
           <Switch
             value={availableNow}
-            onValueChange={setAvailableNow}
+            onValueChange={async (v) => {
+              // Persist to the real availability setting; revert on failure.
+              setAvailableNow(v);
+              const res = await rentABuddy.setAvailabilitySettings({ availableNow: v });
+              if (!res.ok) {
+                setAvailableNow(!v);
+                Alert.alert('Could not update', res.error ?? 'Please try again.');
+              }
+            }}
             trackColor={{ false: color.haze, true: color.success }}
             thumbColor={color.onInk}
           />

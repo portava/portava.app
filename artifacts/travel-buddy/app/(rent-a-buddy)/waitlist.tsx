@@ -56,7 +56,9 @@ export default function RentABuddyWaitlist() {
       Alert.alert('Error', res.error);
       return;
     }
-    setQueuePosition(Math.floor(Math.random() * 20) + 1);
+    // The API doesn't return a queue position — never invent one. The
+    // confirmation screen simply omits the position card when null.
+    setQueuePosition(null);
     setConfirmed(true);
   };
 

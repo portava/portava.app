@@ -170,7 +170,7 @@ export default function Onboarding() {
                   maxLength={DISPLAY_NAME_MAX}
                   returnKeyType="next"
                 />
-                <Text style={styles.hint}>Maximum 40 characters.</Text>
+                <Text style={styles.hint}>Maximum 30 characters.</Text>
               </View>
               <View>
                 <Text style={styles.label}>Username (optional)</Text>
