@@ -99,7 +99,22 @@ export default function BuddyEarnings() {
   if (loading) return <TravelLoadingState label="Loading earnings…" />;
   if (error) return <TravelErrorState title="Couldn't load earnings" sub={error} onRetry={() => load()} />;
 
-  const completed = bookings.filter((b) => b.status === 'completed');
+  // Completed list honors the date-range filter chips (previously a no-op).
+  const filterCutoff = (() => {
+    const now = new Date();
+    switch (filter) {
+      case 'This month': return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+      case 'Last 3 months': return new Date(now.getFullYear(), now.getMonth() - 3, 1).getTime();
+      case 'This year': return new Date(now.getFullYear(), 0, 1).getTime();
+      default: return 0; // 'All time'
+    }
+  })();
+  const completed = bookings.filter((b) => {
+    if (b.status !== 'completed') return false;
+    if (filterCutoff === 0) return true;
+    const when = Date.parse(b.completedAt ?? b.bookingDate ?? b.updatedAt ?? '');
+    return Number.isFinite(when) ? when >= filterCutoff : true;
+  });
   const pending = bookings.filter((b) => b.status === 'scheduled' || b.status === 'in_progress');
   const disputed = bookings.filter((b) => b.status === 'disputed');
 
@@ -232,7 +247,23 @@ export default function BuddyEarnings() {
             {disputed.map((b) => (
               <TravelCard key={b.id} style={{ padding: space.md }}>
                 <BookingRow booking={b} />
-                <Pressable style={disp.btn} onPress={() => Alert.alert('Dispute', 'Contact support to resolve this dispute.')}>
+                <Pressable
+                  style={disp.btn}
+                  onPress={() => {
+                    // File a real report on the disputed booking — no fake tickets.
+                    Alert.alert('Flag for review', 'Send this disputed booking to our team for review?', [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Send',
+                        onPress: async () => {
+                          const res = await rentABuddy.reportBooking(b.id, { reason: 'Earnings dispute', details: 'Flagged from the earnings screen.' });
+                          if (res.ok) Alert.alert('Sent for review', 'Our team will look at this booking and follow up.');
+                          else Alert.alert('Could not send', res.error ?? 'Please try again.');
+                        },
+                      },
+                    ]);
+                  }}
+                >
                   <Flag size={13} color={color.signal} />
                   <Text style={disp.btnText}>Flag for review</Text>
                 </Pressable>

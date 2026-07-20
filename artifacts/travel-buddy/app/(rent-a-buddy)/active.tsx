@@ -232,18 +232,10 @@ export default function RentABuddyActive() {
                 thumbColor={color.paperRaised}
               />
             </View>
-            <View style={[styles.safetyToggleRow, { borderTopWidth: 1, borderTopColor: color.haze }]}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.safetyToggleLabel}>Share with Trusted Circle</Text>
-                <Text style={styles.safetyToggleSub}>A contact can see your live status</Text>
-              </View>
-              <Switch
-                value={circleShare}
-                onValueChange={setCircleShare}
-                trackColor={{ true: color.success, false: color.haze }}
-                thumbColor={color.paperRaised}
-              />
-            </View>
+            {/* "Share with Trusted Circle" toggle removed — it only flipped local
+                state and never started a real share. Re-add once wired to the
+                safe-return live-share API (startLiveShare needs a session +
+                recipient contact). A safety toggle must never silently no-op. */}
             <Pressable
               style={styles.unsafeBtn}
               onPress={() => {
