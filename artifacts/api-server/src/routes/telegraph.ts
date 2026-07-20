@@ -17,6 +17,7 @@ import { openai } from "../lib/openai";
 import { getWeatherContext } from "../lib/weatherCache.js";
 import { buildCompassContext } from "../services/location/CompassLocationContext";
 import type { SpanHashtag, SpanTag } from "../lib/enrichSpans";
+import { makeConfidence } from "../lib/liveIntelligence.js";
 
 const router = Router();
 
@@ -49,6 +50,9 @@ function sanitizeRec(r: any, idx: number) {
     estimatedTime: typeof r.estimatedTime === "string" ? r.estimatedTime.slice(0, 60) : "",
     priceLevel: VALID_PRICES.has(r.priceLevel) ? r.priceLevel : "$",
     imageUrl: typeof r.imageUrl === "string" ? r.imageUrl : null,
+    // Phase 8 — Telegraph recommendations are model-generated, not verified
+    // against a live source: label them honestly as AI inference.
+    confidence: makeConfidence("ai_inference"),
   };
 }
 

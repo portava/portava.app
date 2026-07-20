@@ -24,6 +24,35 @@ import type { ToolExecution } from "./CompassTools.js";
 
 // ── Wire types (shared shape with the mobile client) ──────────────────────────
 
+/** Phase 8 — confidence source class, carried from tool result to the client. */
+export type UiSourceClass =
+  | "verified_live"
+  | "community_reported"
+  | "historical"
+  | "ai_inference";
+
+export interface UiConfidence {
+  sourceClass: UiSourceClass;
+  label: string;
+  checkedAt?: string;
+  dataNote?: string;
+}
+
+const VALID_SOURCE_CLASSES = new Set<UiSourceClass>([
+  "verified_live", "community_reported", "historical", "ai_inference",
+]);
+
+/** Validate + copy a confidence object from a tool result; null when absent/invalid. */
+function pickConfidence(c: any): UiConfidence | null {
+  if (!c || typeof c !== "object" || !VALID_SOURCE_CLASSES.has(c.sourceClass)) return null;
+  return {
+    sourceClass: c.sourceClass,
+    label: typeof c.label === "string" ? c.label : c.sourceClass,
+    ...(typeof c.checkedAt === "string" ? { checkedAt: c.checkedAt } : {}),
+    ...(typeof c.dataNote === "string" ? { dataNote: c.dataNote } : {}),
+  };
+}
+
 export interface UiPlace {
   id: string;
   name: string;
@@ -35,6 +64,10 @@ export interface UiPlace {
   verified: boolean;
   lat: number | null;
   lng: number | null;
+  /** Phase 8 — confidence label for this place's data. */
+  confidence: UiConfidence | null;
+  /** Phase 8 — live open-now status; null when the live source couldn't verify. */
+  openNow: boolean | null;
 }
 
 export interface UiEvent {
@@ -45,6 +78,8 @@ export interface UiEvent {
   startsAt: string | null;
   category: string | null;
   description: string | null;
+  /** Phase 8 — confidence label for this event's data. */
+  confidence: UiConfidence | null;
 }
 
 export interface UiPerson {
@@ -107,6 +142,15 @@ export function collectToolCandidates(toolLog: ToolExecution[]): ToolCandidateIn
       verified: Boolean(p.verified),
       lat: null,
       lng: null,
+      confidence:
+        // A verified-live open-now datum upgrades the card's label honestly;
+        // an unavailable live source leaves the underlying catalog label.
+        (p.liveStatus?.available === true ? pickConfidence(p.liveStatus.confidence) : null)
+        ?? pickConfidence(p.confidence),
+      openNow:
+        p.liveStatus?.available === true && typeof p.liveStatus.openNow === "boolean"
+          ? p.liveStatus.openNow
+          : null,
     });
   };
 
@@ -120,6 +164,7 @@ export function collectToolCandidates(toolLog: ToolExecution[]): ToolCandidateIn
       startsAt: e.startsAt ?? e.starts_at ?? null,
       category: e.category ?? null,
       description: e.description ? unwrapUgc(e.description) : null,
+      confidence: pickConfidence(e.confidence),
     });
   };
 

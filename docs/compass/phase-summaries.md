@@ -274,3 +274,49 @@ State when the standing brief was installed:
 - Out of scope honored: no live external data (Phase 8), no outcome-chain
   learning (Phase 14) — history signals use existing feedback weights only.
 - API + mobile suites and typechecks green.
+
+## Phase 8 — Live Intelligence (2026-07-20)
+
+- New `src/lib/liveIntelligence.ts`: central confidence system + tool-time
+  live lookups, modeled on the weather-cache pattern (short in-memory TTL,
+  strict timeout, graceful degradation, never fabricate).
+  - `SourceClass` = `verified_live` / `community_reported` / `historical` /
+    `ai_inference`; `makeConfidence()` attaches a human label, `checkedAt`,
+    and an optional honest `dataNote` (named to survive the tool-result
+    private-key sanitizer, which strips `note`).
+  - `getLiveVenueStatus(name, city)` — live open-now via Foursquare
+    (`hours.open_now`, falling back to `closed_bucket`), 2.5s timeout,
+    10-minute in-memory cache incl. confirmed-miss caching. Returns `null`
+    on any failure (no key, HTTP error, timeout, venue not found) so callers
+    must degrade honestly.
+  - Test-only outage simulation: `_setSimulatedOutage("places_live", true)`
+    makes live lookups behave exactly like a source outage (no fetch).
+- Compass tools now carry confidence end to end:
+  - `search_places` candidates → `community_reported` (verified catalog) or
+    `historical` (unverified); `search_events` → `community_reported`;
+  - `get_place_details` attempts a live open-now check at tool time and
+    attaches `liveStatus`: on success `{available: true, openNow, source,
+    checkedAt, confidence: verified_live}`; on failure `{available: false,
+    openNow: null, dataNote: "Live status can't be verified right now…",
+    confidence: historical}` — zero fabricated fields.
+  - Tools prompt addendum gained a CONFIDENCE RULE: only claim open/closed
+    *now* on verified_live data; say so when live status is unverifiable;
+    never invent live status, wait times, or conditions.
+- UI blocks (`CompassUiBlocks.ts`): `UiPlace`/`UiEvent` carry a validated
+  `confidence` object (forged/unknown source classes are dropped) plus
+  `openNow` on places; a successful live check honestly upgrades the card
+  label to Verified live, a degraded one never does.
+- Mobile: `CompassChatBlocks.tsx` renders a confidence pill on place and
+  event cards (Live / Community / Historical / AI) plus an Open now /
+  Closed now pill when — and only when — live-verified; types added in
+  `services/compass.ts`.
+- Other volatile surfaces labeled honestly: Telegraph AI recommendations →
+  `confidence: ai_inference`; route-plan legs → `timingConfidence`
+  (`historical` with an "estimated timing" note for approximated legs — no
+  live routing source is configured, per the no-new-paid-APIs rule).
+- Tests: new `src/test/compass-live-intel.test.ts` (13 tests): live fetch on
+  demand + TTL cache dedup, per-source-class label correctness through the
+  tool dispatcher, sanitizer keeps confidence/dataNote, simulated outage →
+  explicit can't-verify with zero fabricated fields and no fetch attempted,
+  UI-block carry-through incl. forged-confidence rejection.
+- API + mobile suites and typechecks green.

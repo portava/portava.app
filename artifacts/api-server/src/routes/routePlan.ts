@@ -15,6 +15,7 @@ import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { optimizeRoute, type RouteStyle, type CandidateStop } from "../services/routeOptimizer.js";
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine.js";
 import type { CompassContext } from "../compass/types.js";
+import { makeConfidence } from "../lib/liveIntelligence.js";
 
 const router = Router();
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -546,7 +547,17 @@ async function fetchFullPlan(client: ReturnType<typeof import("../lib/supabase.j
       tripAccommodationLocation,
     },
     stops: (stopsResult.data ?? []).map((s: Record<string, unknown>) => toCamel(s)),
-    legs: (legsResult.data ?? []).map((l: Record<string, unknown>) => toCamel(l)),
+    // Phase 8 — route timing is approximated (no live routing source is
+    // configured): label each leg's timing honestly as historical estimate.
+    legs: (legsResult.data ?? []).map((l: Record<string, unknown>) => ({
+      ...toCamel(l),
+      timingConfidence: makeConfidence(
+        (l.provider as string) === "approximated" ? "historical" : "verified_live",
+        (l.provider as string) === "approximated"
+          ? "Estimated timing — not verified against live traffic or transit data."
+          : undefined,
+      ),
+    })),
   };
 }
 

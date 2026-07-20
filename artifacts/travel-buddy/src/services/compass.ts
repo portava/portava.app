@@ -401,6 +401,20 @@ export interface CompassAskPayload {
 
 // ── Phase 5: dynamic UI blocks — server-validated, hydrated from tool results ──
 
+/** Phase 8 — confidence source class carried end-to-end (API → UI). */
+export type CompassSourceClass =
+  | 'verified_live'
+  | 'community_reported'
+  | 'historical'
+  | 'ai_inference';
+
+export interface CompassUiConfidence {
+  sourceClass: CompassSourceClass;
+  label:       string;
+  checkedAt?:  string;
+  dataNote?:   string;
+}
+
 export interface CompassUiPlace {
   id:           string;
   name:         string;
@@ -412,6 +426,10 @@ export interface CompassUiPlace {
   verified:     boolean;
   lat:          number | null;
   lng:          number | null;
+  /** Phase 8 — data confidence label; absent on older server payloads. */
+  confidence?:  CompassUiConfidence | null;
+  /** Phase 8 — live open-now status; null/absent when not verifiable. */
+  openNow?:     boolean | null;
 }
 
 export interface CompassUiEvent {
@@ -422,6 +440,8 @@ export interface CompassUiEvent {
   startsAt:    string | null;
   category:    string | null;
   description: string | null;
+  /** Phase 8 — data confidence label; absent on older server payloads. */
+  confidence?: CompassUiConfidence | null;
 }
 
 export interface CompassUiPerson {
