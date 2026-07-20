@@ -52,12 +52,14 @@ function validateUsername(u: string): { valid: boolean; reason?: string } {
 }
 
 const PROFILE_COLUMNS =
-  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language, verification_level, id_verified_at, selfie_verified_at, home_country_verified_at, safety_flags_count, host_verified_at, buddy_verified_at, passport_section_order, passport_tab_order";
+  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language, verification_level, id_verified_at, selfie_verified_at, home_country_verified_at, safety_flags_count, host_verified_at, buddy_verified_at, passport_section_order, passport_tab_order, date_of_birth";
 
 /**
  * Fallback column list for older DB schemas that may not have the full set of columns
- * in PROFILE_COLUMNS. Must not include sensitive columns (date_of_birth, dob_verified,
+ * in PROFILE_COLUMNS. Must not include sensitive columns (dob_verified,
  * or any internal/admin-only field). Triggered only on error codes 42703 / PGRST204.
+ * date_of_birth is fetched for server-side ageGateRequired computation only — it is
+ * never returned to the client directly.
  */
 const PROFILE_COLUMNS_FALLBACK =
   "id, handle, name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, username_updated_at, created_at";
@@ -297,7 +299,18 @@ router.get("/me/profile", async (req, res) => {
 
   const completeness = computeCompleteness(data, hasStamp, hasTrip);
 
-  res.status(200).json({ ...mapProfile(data), completeness, tripCount, followersCount, followingCount });
+  const ageGateRequired = (() => {
+    const dob = (data as any).date_of_birth as string | null | undefined;
+    if (!dob) return true;
+    const birth = new Date(dob + 'T00:00:00');
+    if (isNaN(birth.getTime())) return true;
+    const now = new Date();
+    let age = now.getFullYear() - birth.getFullYear();
+    const m = now.getMonth() - birth.getMonth();
+    if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age--;
+    return age < 18;
+  })();
+  res.status(200).json({ ...mapProfile(data), ageGateRequired, completeness, tripCount, followersCount, followingCount });
 });
 
 /* ===========================================================================
@@ -407,8 +420,8 @@ router.patch("/me/profile", async (req, res) => {
       const ageYears = now.getFullYear() - dob.getFullYear() - (
         now.getMonth() < dob.getMonth() || (now.getMonth() === dob.getMonth() && now.getDate() < dob.getDate()) ? 1 : 0
       );
-      if (ageYears < 13) {
-        sendError(res, "invalid_payload", "You must be at least 13 years old");
+      if (ageYears < 18) {
+        res.status(403).json({ error: "forbidden", message: "Users under 18 are not permitted" });
         return;
       }
     }

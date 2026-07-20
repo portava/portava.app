@@ -28,6 +28,7 @@ import { CallRealtimeBinding } from '../src/components/calls/CallRealtimeBinding
 import { CallSurface } from '../src/components/calls/CallSurface';
 import { createLiveKitBridge } from '../src/services/livekitBridge';
 import { AccountStatusGate } from '../src/components/AccountStatusGate';
+import { AgeGate } from '../src/components/AgeGate';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { reportCrash } from '@/src/lib/crashReporter';
 
@@ -112,6 +113,7 @@ export default function RootLayout() {
                 <StampEarnedToastProvider>
                   <RootCrashHandler>
                     <AccountStatusGate>
+                      <AgeGate>
                       <CallProvider bridge={livekitBridge}>
                       <CallRealtimeBinding />
                       <PushSetup />
@@ -133,6 +135,7 @@ export default function RootLayout() {
                       {/* Root-level call UI — overlays any screen, survives navigation */}
                       <CallSurface />
                       </CallProvider>
+                      </AgeGate>
                     </AccountStatusGate>
                   </RootCrashHandler>
                 </StampEarnedToastProvider>
