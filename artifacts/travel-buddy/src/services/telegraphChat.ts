@@ -181,6 +181,11 @@ export async function startTimePoll(
   return { ok: res.ok, messageId: res.data?.messageId, error: res.error };
 }
 
+export async function getTelegraphChatSettings(): Promise<TelegraphChatSettings | null> {
+  const res = await apiGet<{ settings: TelegraphChatSettings }>('/api/me/telegraph-chat-settings');
+  return res.ok && res.data ? res.data.settings : null;
+}
+
 export async function updateTelegraphChatSettings(
   settings: Partial<TelegraphChatSettings>,
 ): Promise<boolean> {

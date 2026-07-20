@@ -7,6 +7,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Star, X, Check, Edit2, AlertCircle } from 'lucide-react-native';
 import { GlobalPlacePicker } from '../../../src/components/selectors/GlobalPlacePicker';
+import { KeyboardSafeView } from '../../../src/components/ui/KeyboardSafeView';
 import type { Place } from '../../../src/lib/location/placeTypes';
 import {
   TravelButton, TravelCard, TravelLoadingState,
@@ -49,7 +50,7 @@ function DeclineSheet({
             <X size={20} color={color.mute} />
           </Pressable>
         </View>
-        <ScrollView showsVerticalScrollIndicator={false}>
+        <KeyboardSafeView offset={insets.top}>
           <Text style={modal.sub}>Help us improve by sharing why you're declining.</Text>
           {DECLINE_REASONS.map((r) => (
             <Pressable
@@ -82,7 +83,7 @@ function DeclineSheet({
               onConfirm(reason === 'Other' ? (custom || reason) : reason);
             }}
           />
-        </ScrollView>
+        </KeyboardSafeView>
       </View>
     </Modal>
   );
@@ -155,7 +156,7 @@ function SuggestSheet({
             <X size={20} color={color.mute} />
           </Pressable>
         </View>
-        <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        <KeyboardSafeView offset={insets.top}>
           <Text style={modal.sub}>Propose alternative details. The traveller can accept or decline your suggestion.</Text>
 
           <Text style={modal.fieldLabel}>Proposed date</Text>
@@ -239,7 +240,7 @@ function SuggestSheet({
               });
             }}
           />
-        </ScrollView>
+        </KeyboardSafeView>
       </View>
     </Modal>
   );
@@ -416,7 +417,7 @@ export default function BuddyRequests() {
     setDeclineId(null);
     setActing(id);
     try {
-      const res = await rentABuddy.declineBooking(id);
+      const res = await rentABuddy.declineBooking(id, reason || undefined);
       if (!res.ok) {
         Alert.alert('Error', res.error ?? 'Could not decline booking.');
         return;

@@ -6,6 +6,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Send, Plus, X } from 'lucide-react-native';
 import { TravelButton, TravelCard, TravelChip } from '../../../src/components/primitives';
+import { KeyboardSafeView } from '../../../src/components/ui/KeyboardSafeView';
 import { DatePickerField } from '../../../src/components/DatePickerField';
 import { DatePickerField as TimePickerField } from '../../../src/components/DateTimePickerField';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
@@ -129,10 +130,8 @@ export default function BuddyOffer() {
         <Text style={s.headerTitle}>Create Offer</Text>
       </View>
 
-      <ScrollView
+      <KeyboardSafeView
         contentContainerStyle={{ padding: space.lg, paddingBottom: insets.bottom + 120 }}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
       >
         <Text style={s.intro}>
           Send a custom offer in response to a traveller enquiry.
@@ -265,7 +264,7 @@ export default function BuddyOffer() {
             This offer is subject to traveller acceptance.
           </Text>
         </TravelCard>
-      </ScrollView>
+      </KeyboardSafeView>
 
       <View style={[s.footer, { paddingBottom: insets.bottom + space.md }]}>
         <TravelButton

@@ -2485,7 +2485,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/review", async (req, res) => 
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
-  const { rating, body: reviewBody, safetyScore, communicationScore, punctualityScore, photos = [] } = req.body ?? {};
+  const { rating, body: reviewBody, safetyScore, communicationScore, punctualityScore, photos = [], categoryRatings, privateNote } = req.body ?? {};
   if (!rating) return res.status(400).json({ error: "invalid_payload", message: "rating required." });
 
   const { data: booking } = await serviceClient
@@ -2532,6 +2532,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/review", async (req, res) => 
       safety_score: safetyScore ?? null,
       communication_score: communicationScore ?? null,
       punctuality_score: punctualityScore ?? null,
+      category_ratings: categoryRatings && typeof categoryRatings === "object" ? categoryRatings : null,
       body: reviewBody ?? null,
       photos,
       is_public: false,
@@ -2545,6 +2546,15 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/review", async (req, res) => 
   if (error) return sendError(res, "db_error", error.message);
 
   // Compass activity ingestion — reviewer earns review_posted credit
+  if (typeof privateNote === "string" && privateNote.trim()) {
+    void serviceClient.from("rent_buddy_review_notes").insert({
+      review_id: (review as any)?.id ?? null,
+      booking_id: bookingId,
+      author_id: auth.user.id,
+      note: privateNote.trim().slice(0, 4000),
+    });
+  }
+
   recordActivityEvent(serviceClient, auth.user.id, "review_posted", { category: "buddy_session" });
 
   // Unblind if both sides have submitted — lift the inter-party blind only.
@@ -3317,7 +3327,7 @@ router.post("/api/rent-a-buddy/waitlist", async (req, res) => {
   const serviceClient = sc(auth.client);
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const { city, category, lat, lng } = req.body ?? {};
+  const { city, category, lat, lng, desiredDate, desiredTime, budgetUsd, notes } = req.body ?? {};
   if (!city) return res.status(400).json({ error: "invalid_payload", message: "city required." });
 
   const latPresent = typeof lat === "number" && Number.isFinite(lat);
@@ -3339,6 +3349,10 @@ router.post("/api/rent-a-buddy/waitlist", async (req, res) => {
       user_id: auth.user.id, city, category: category ?? null,
       lat: typeof lat === "number" && Number.isFinite(lat) ? lat : null,
       lng: typeof lng === "number" && Number.isFinite(lng) ? lng : null,
+      desired_date: typeof desiredDate === "string" && desiredDate ? desiredDate.slice(0, 32) : null,
+      desired_time: typeof desiredTime === "string" && desiredTime ? desiredTime.slice(0, 32) : null,
+      budget_usd: typeof budgetUsd === "number" && Number.isFinite(budgetUsd) ? budgetUsd : null,
+      notes: typeof notes === "string" && notes ? notes.slice(0, 2000) : null,
     },
     { onConflict: "user_id,city" },
   );
@@ -3602,7 +3616,7 @@ router.post("/api/rent-a-buddy/dashboard/packages", async (req, res) => {
   const pkgCreateRollout = await checkRentBuddyAccess({ sc: serviceClient, userId: auth.user.id, action: "read" });
   if (!pkgCreateRollout.allowed) return res.status(pkgCreateRollout.httpStatus).json({ error: pkgCreateRollout.code, message: pkgCreateRollout.message });
 
-  const { title, description, category, durationH, priceUsd, maxGroup = 1 } = req.body ?? {};
+  const { title, description, category, durationH, priceUsd, maxGroup = 1, stops, meetupRules } = req.body ?? {};
   if (!title || !category || !durationH || !priceUsd) {
     return res.status(400).json({ error: "invalid_payload", message: "title, category, durationH, priceUsd required." });
   }
@@ -3610,6 +3624,8 @@ router.post("/api/rent-a-buddy/dashboard/packages", async (req, res) => {
   const { data, error } = await serviceClient.from("rent_buddy_packages").insert({
     buddy_id: (bp as any).id, title, description: description ?? null, category,
     duration_h: durationH, price_usd: priceUsd, max_group: maxGroup, is_active: true,
+    stops: Array.isArray(stops) ? stops.filter((s: unknown) => typeof s === "string" && s).slice(0, 20) : [],
+    meetup_rules: typeof meetupRules === "string" && meetupRules ? meetupRules.slice(0, 2000) : null,
     updated_at: new Date().toISOString(),
   }).select().maybeSingle();
   if (error) return sendError(res, "db_error", error.message);
@@ -3634,6 +3650,8 @@ router.patch("/api/rent-a-buddy/dashboard/packages/:packageId", async (req, res)
   if (body.priceUsd !== undefined)    patch.price_usd   = body.priceUsd;
   if (body.maxGroup !== undefined)    patch.max_group   = body.maxGroup;
   if (body.isActive !== undefined)    patch.is_active   = body.isActive;
+  if (body.stops !== undefined)       patch.stops       = Array.isArray(body.stops) ? body.stops.filter((s: unknown) => typeof s === "string" && s).slice(0, 20) : [];
+  if (body.meetupRules !== undefined) patch.meetup_rules = typeof body.meetupRules === "string" && body.meetupRules ? body.meetupRules.slice(0, 2000) : null;
 
   await serviceClient.from("rent_buddy_packages").update(patch).eq("id", req.params.packageId).eq("buddy_id", (bp as any).id);
   return res.json({ ok: true });

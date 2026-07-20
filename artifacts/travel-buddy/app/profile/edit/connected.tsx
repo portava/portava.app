@@ -25,7 +25,7 @@ import {
 } from '../../../src/components/settings/SettingsUI';
 import { PP } from '../../../src/theme/passportTokens';
 import { space, radius, type as t } from '../../../src/theme/tokens';
-import { updateTelegraphChatSettings } from '../../../src/services/telegraphChat';
+import { updateTelegraphChatSettings, getTelegraphChatSettings } from '../../../src/services/telegraphChat';
 import {
   getTagPermission, updateTagPermission,
   type TagPermission, TAG_PERMISSION_OPTIONS,
@@ -79,11 +79,20 @@ export default function ConnectedFeaturesScreen() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [driftReport, setDriftReport] = useState<SchemaDriftReport | null>(null);
 
-  // Telegraph toggles — initialize to true, matching settings/index (no getter).
+  // Telegraph toggles — hydrated from the server so displayed state matches
+  // what's actually saved (previously they always rendered ON).
   const [telegraphDM, setTelegraphDM] = useState(true);
   const [telegraphTrip, setTelegraphTrip] = useState(true);
   const [telegraphCircle, setTelegraphCircle] = useState(true);
   const [telegraphBusy, setTelegraphBusy] = useState<string | null>(null);
+  useEffect(() => {
+    getTelegraphChatSettings().then((s) => {
+      if (!s) return;
+      if (typeof s.show_telegraph_dm === 'boolean') setTelegraphDM(s.show_telegraph_dm);
+      if (typeof s.show_telegraph_trip === 'boolean') setTelegraphTrip(s.show_telegraph_trip);
+      if (typeof s.show_telegraph_circle === 'boolean') setTelegraphCircle(s.show_telegraph_circle);
+    }).catch(() => {});
+  }, []);
 
   // Tag permission
   const [tagPermission, setTagPermission] = useState<TagPermission>('anyone');

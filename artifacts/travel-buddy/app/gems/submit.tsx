@@ -13,6 +13,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { submitGem, type GemCategory, type GemSensitivity } from '../../src/services/hiddenGems';
+import { KeyboardSafeView } from '../../src/components/ui/KeyboardSafeView';
 import { GpsLocationCapture } from '../../src/components/location/GpsLocationCapture';
 import type { Place } from '../../src/lib/location/placeTypes';
 import { canNext as wizardCanNext, buildSubmitPayload } from '../../src/lib/gems/submitMachine';
@@ -95,7 +96,7 @@ function LocationStep({ form, update }: { form: FormState; update: (k: keyof For
   }, [update]);
 
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.stepContent}>
+    <KeyboardSafeView style={{ flex: 1 }} contentContainerStyle={styles.stepContent}>
       <Text style={styles.stepHeading}>Where is it?</Text>
       <Text style={styles.stepSub}>Tell us where the gem is located</Text>
 
@@ -135,13 +136,13 @@ function LocationStep({ form, update }: { form: FormState; update: (k: keyof For
           initialLabel={form.gpsLabel}
         />
       </Field>
-    </ScrollView>
+    </KeyboardSafeView>
   );
 }
 
 function DetailsStep({ form, update }: { form: FormState; update: (k: keyof FormState, v: any) => void }) {
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.stepContent}>
+    <KeyboardSafeView style={{ flex: 1 }} contentContainerStyle={styles.stepContent}>
       <Text style={styles.stepHeading}>Tell us about it</Text>
       <Text style={styles.stepSub}>The more detail, the more helpful it is for others</Text>
 
@@ -255,13 +256,13 @@ function DetailsStep({ form, update }: { form: FormState; update: (k: keyof Form
           />
         </View>
       </Field>
-    </ScrollView>
+    </KeyboardSafeView>
   );
 }
 
 function PrivacyStep({ form, update }: { form: FormState; update: (k: keyof FormState, v: any) => void }) {
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.stepContent}>
+    <KeyboardSafeView style={{ flex: 1 }} contentContainerStyle={styles.stepContent}>
       <Text style={styles.stepHeading}>Who can see the location?</Text>
       <Text style={styles.stepSub}>
         You can control exactly how much location detail is shared with others
@@ -285,7 +286,7 @@ function PrivacyStep({ form, update }: { form: FormState; update: (k: keyof Form
           </View>
         </TouchableOpacity>
       ))}
-    </ScrollView>
+    </KeyboardSafeView>
   );
 }
 
@@ -293,7 +294,7 @@ function ReviewStep({ form }: { form: FormState }) {
   const hasCoords = form.gpsLat != null && form.gpsLng != null;
 
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.stepContent}>
+    <KeyboardSafeView style={{ flex: 1 }} contentContainerStyle={styles.stepContent}>
       <Text style={styles.stepHeading}>Review your gem</Text>
       <Text style={styles.stepSub}>Double-check everything before submitting</Text>
 
@@ -330,7 +331,7 @@ function ReviewStep({ form }: { form: FormState }) {
           Your gem will be submitted for review. Once approved it'll appear for the community.
         </Text>
       </View>
-    </ScrollView>
+    </KeyboardSafeView>
   );
 }
 

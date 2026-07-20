@@ -50,7 +50,12 @@ export default function RentABuddyWaitlist() {
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSubmitting(true);
-    const res = await joinWaitlist(city.trim(), selectedCategory ?? undefined, cityCoords ?? undefined);
+    const res = await joinWaitlist(city.trim(), selectedCategory ?? undefined, cityCoords ?? undefined, {
+      desiredDate: desiredDate || undefined,
+      desiredTime: desiredTime || undefined,
+      budgetUsd: budget ? Number.parseFloat(budget) : undefined,
+      notes: notes.trim() || undefined,
+    });
     setSubmitting(false);
     if (!res.ok) {
       Alert.alert('Error', res.error);

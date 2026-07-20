@@ -424,6 +424,22 @@ router.post(
   },
 );
 
+router.get("/me/telegraph-chat-settings", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+  const { data, error } = await client
+    .from("profiles")
+    .select("show_telegraph_dm, show_telegraph_trip, show_telegraph_circle")
+    .eq("id", user.id)
+    .maybeSingle();
+  if (error || !data) {
+    sendError(res, "db_error", "Failed to load Telegraph settings");
+    return;
+  }
+  res.status(200).json({ ok: true, settings: data });
+});
+
 // ── PATCH /api/me/telegraph-chat-settings ────────────────────────────────────
 
 const SettingsSchema = z.object({

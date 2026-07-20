@@ -6,7 +6,7 @@ import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { useSession } from '../../src/context/SessionContext';
 import { supabase } from '../../src/lib/supabase';
 import { color, space, type as t, radius, layout } from '../../src/theme/tokens';
-import { updateTelegraphChatSettings } from '../../src/services/telegraphChat';
+import { updateTelegraphChatSettings, getTelegraphChatSettings } from '../../src/services/telegraphChat';
 import { fetchPreferences, patchPreferences, resetLearnedPreferences } from '../../src/services/intelligence';
 import { deactivateAccount, requestAccountDeletion, reactivateAccount } from '../../src/services/profile';
 import { resolveAccountButton, applyReactivateResult } from './settings.machine';
@@ -62,6 +62,14 @@ export default function Settings() {
   const [telegraphDM, setTelegraphDM] = useState(true);
   const [telegraphTrip, setTelegraphTrip] = useState(true);
   const [telegraphCircle, setTelegraphCircle] = useState(true);
+  useEffect(() => {
+    getTelegraphChatSettings().then((s) => {
+      if (!s) return;
+      if (typeof s.show_telegraph_dm === 'boolean') setTelegraphDM(s.show_telegraph_dm);
+      if (typeof s.show_telegraph_trip === 'boolean') setTelegraphTrip(s.show_telegraph_trip);
+      if (typeof s.show_telegraph_circle === 'boolean') setTelegraphCircle(s.show_telegraph_circle);
+    }).catch(() => {});
+  }, []);
 
   const { preferredLanguage } = useLanguagePreference();
 
