@@ -29,7 +29,7 @@ interface BuddyCardProps {
   whyMatched?: string;
   compact?: boolean;
   availableNow?: boolean;
-  /** If passed, used as the primary booking CTA handler; if omitted, navigates to request-buddy with buddyId. */
+  /** If passed, used as the primary booking CTA handler; if omitted, navigates directly to checkout with buddyId. */
   onBook?: () => void;
   onPress?: () => void;
   onDismiss?: () => void;
