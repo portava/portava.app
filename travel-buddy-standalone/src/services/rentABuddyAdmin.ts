@@ -38,6 +38,11 @@ export interface AdminApplication {
   categories: string[];
   languages: string[];
   motivation: string | null;
+  displayName: string | null;
+  bio: string | null;
+  hourlyRateUsd: number | null;
+  availability: Array<Record<string, unknown>>;
+  zones: string[];
   socialLinks: Record<string, string>;
   policyAccepted: boolean;
   reviewNotes: string | null;
