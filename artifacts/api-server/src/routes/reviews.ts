@@ -15,6 +15,7 @@
  */
 
 import { Router } from "express";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import { z } from "zod";
 import { requireUser, optionalUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
@@ -116,7 +117,7 @@ async function checkEligibility(
 // plus the full review payload so the composer can pre-fill for editing.
 // Query params: entityType (trip|rent_buddy_booking), entityId (uuid)
 
-router.get("/reviews/my-review", async (req, res) => {
+router.get("/reviews/my-review", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
 
@@ -157,7 +158,7 @@ router.get("/reviews/my-review", async (req, res) => {
     tags:      (data as any).tags ?? [],
     anonymous: (data as any).visibility === "anonymous",
   });
-});
+}));
 
 // ── POST /api/reviews ─────────────────────────────────────────────────────────
 
@@ -170,7 +171,7 @@ const CreateReviewSchema = z.object({
   anonymous:   z.boolean().optional().default(false),
 });
 
-router.post("/reviews", async (req, res) => {
+router.post("/reviews", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
 
@@ -235,11 +236,11 @@ router.post("/reviews", async (req, res) => {
     anonymous,
     createdAt:  (review as any).created_at,
   });
-});
+}));
 
 // ── GET /api/trips/:id/reviews ────────────────────────────────────────────────
 
-router.get("/trips/:id/reviews", async (req, res) => {
+router.get("/trips/:id/reviews", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
 
@@ -309,12 +310,12 @@ router.get("/trips/:id/reviews", async (req, res) => {
     page,
     limit,
   });
-});
+}));
 
 // ── GET /api/places/:id/reviews ────────────────────────────────────────────────
 // Public read — auth is optional; unauthenticated callers still see published reviews.
 
-router.get("/places/:id/reviews", async (req, res) => {
+router.get("/places/:id/reviews", asyncHandler(async (req, res) => {
   // optionalUser: if a Bearer token is present it is verified; missing token is fine.
   const viewer = await optionalUser(req);
   const viewerId = viewer?.user.id ?? null;
@@ -384,12 +385,12 @@ router.get("/places/:id/reviews", async (req, res) => {
     page,
     limit,
   });
-});
+}));
 
 // ── GET /api/users/:id/reviews ────────────────────────────────────────────────
 // Aggregate hosting rating + recent public reviews where this user is the host
 
-router.get("/users/:id/reviews", async (req, res) => {
+router.get("/users/:id/reviews", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
 
@@ -516,7 +517,7 @@ router.get("/users/:id/reviews", async (req, res) => {
     reviewCount,
     reviews: merged,
   });
-});
+}));
 
 // ── PATCH /api/reviews/:id ────────────────────────────────────────────────────
 // Author updates their own review (rating, body, tags, anonymous)
@@ -528,7 +529,7 @@ const UpdateReviewSchema = z.object({
   anonymous: z.boolean().optional(),
 });
 
-router.patch("/reviews/:id", async (req, res) => {
+router.patch("/reviews/:id", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
 
@@ -586,12 +587,12 @@ router.patch("/reviews/:id", async (req, res) => {
     anonymous: (updated as any).visibility === "anonymous",
     updatedAt: (updated as any).updated_at,
   });
-});
+}));
 
 // ── DELETE /api/reviews/:id ───────────────────────────────────────────────────
 // Admin removes or author retracts their own review
 
-router.delete("/reviews/:id", async (req, res) => {
+router.delete("/reviews/:id", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
 
@@ -635,12 +636,12 @@ router.delete("/reviews/:id", async (req, res) => {
   if (error) { req.log.error({ err: error }, "delete review"); sendError(res, "db_error", error.message); return; }
 
   res.json({ ok: true, state: newState });
-});
+}));
 
 // ── POST /api/reviews/:id/report ──────────────────────────────────────────────
 // Routes to the unified reports system with target_type=review
 
-router.post("/reviews/:id/report", async (req, res) => {
+router.post("/reviews/:id/report", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
 
@@ -693,6 +694,6 @@ router.post("/reviews/:id/report", async (req, res) => {
   }
 
   res.status(201).json({ ok: true });
-});
+}));
 
 export default router;

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { findBlockingAvailabilityException, sendBuddyUnavailable } from "./rentABuddy.js";
@@ -28,7 +29,7 @@ async function requireAdminCtx(req: any, res: any) {
 
 // ── buddy_services ─────────────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/buddies/:buddyId/services", async (req, res) => {
+router.get("/api/rent-a-buddy/buddies/:buddyId/services", asyncHandler(async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ services: [] });
 
@@ -43,9 +44,9 @@ router.get("/api/rent-a-buddy/buddies/:buddyId/services", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ services: data ?? [] });
-});
+}));
 
-router.get("/api/rent-a-buddy/buddies/:buddyId/availability-exceptions", async (req, res) => {
+router.get("/api/rent-a-buddy/buddies/:buddyId/availability-exceptions", asyncHandler(async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ exceptions: [] });
 
@@ -61,9 +62,9 @@ router.get("/api/rent-a-buddy/buddies/:buddyId/availability-exceptions", async (
   const { data, error } = await query;
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ exceptions: data ?? [] });
-});
+}));
 
-router.get("/api/me/buddy-services", async (req, res) => {
+router.get("/api/me/buddy-services", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -83,9 +84,9 @@ router.get("/api/me/buddy-services", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ services: data ?? [] });
-});
+}));
 
-router.post("/api/me/buddy-services", async (req, res) => {
+router.post("/api/me/buddy-services", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -126,9 +127,9 @@ router.post("/api/me/buddy-services", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.status(201).json({ service: data });
-});
+}));
 
-router.patch("/api/me/buddy-services/:serviceId", async (req, res) => {
+router.patch("/api/me/buddy-services/:serviceId", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -174,9 +175,9 @@ router.patch("/api/me/buddy-services/:serviceId", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ service: data });
-});
+}));
 
-router.delete("/api/me/buddy-services/:serviceId", async (req, res) => {
+router.delete("/api/me/buddy-services/:serviceId", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -196,9 +197,9 @@ router.delete("/api/me/buddy-services/:serviceId", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ ok: true });
-});
+}));
 
-router.post("/api/admin/rent-a-buddy/services/:serviceId/approve", async (req, res) => {
+router.post("/api/admin/rent-a-buddy/services/:serviceId/approve", asyncHandler(async (req, res) => {
   const adminCtx = await requireAdminCtx(req, res);
   if (!adminCtx) return;
   const { serviceClient } = adminCtx;
@@ -213,9 +214,9 @@ router.post("/api/admin/rent-a-buddy/services/:serviceId/approve", async (req, r
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ service: data });
-});
+}));
 
-router.post("/api/admin/rent-a-buddy/services/:serviceId/disable", async (req, res) => {
+router.post("/api/admin/rent-a-buddy/services/:serviceId/disable", asyncHandler(async (req, res) => {
   const adminCtx = await requireAdminCtx(req, res);
   if (!adminCtx) return;
   const { serviceClient } = adminCtx;
@@ -230,11 +231,11 @@ router.post("/api/admin/rent-a-buddy/services/:serviceId/disable", async (req, r
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ ok: true, service: data });
-});
+}));
 
 // ── buddy_availability_exceptions ──────────────────────────────────────────────
 
-router.get("/api/me/buddy-availability-exceptions", async (req, res) => {
+router.get("/api/me/buddy-availability-exceptions", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -258,9 +259,9 @@ router.get("/api/me/buddy-availability-exceptions", async (req, res) => {
   const { data, error } = await query;
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ exceptions: data ?? [] });
-});
+}));
 
-router.post("/api/me/buddy-availability-exceptions", async (req, res) => {
+router.post("/api/me/buddy-availability-exceptions", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -296,9 +297,9 @@ router.post("/api/me/buddy-availability-exceptions", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.status(201).json({ exception: data });
-});
+}));
 
-router.patch("/api/me/buddy-availability-exceptions/:exceptionId", async (req, res) => {
+router.patch("/api/me/buddy-availability-exceptions/:exceptionId", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -331,9 +332,9 @@ router.patch("/api/me/buddy-availability-exceptions/:exceptionId", async (req, r
   if (error) return sendError(res, "db_error", error.message);
   if (!data) return res.status(404).json({ error: "not_found" });
   return res.json({ exception: data });
-});
+}));
 
-router.delete("/api/me/buddy-availability-exceptions/:exceptionId", async (req, res) => {
+router.delete("/api/me/buddy-availability-exceptions/:exceptionId", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -353,12 +354,12 @@ router.delete("/api/me/buddy-availability-exceptions/:exceptionId", async (req, 
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ ok: true });
-});
+}));
 
 // ── buddy_booking_events read ──────────────────────────────────────────────────
 // Also accessible at /api/buddy-bookings/:id/events via URL alias in app.ts
 
-router.get("/api/rent-a-buddy/bookings/:bookingId/events", async (req, res) => {
+router.get("/api/rent-a-buddy/bookings/:bookingId/events", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -389,13 +390,13 @@ router.get("/api/rent-a-buddy/bookings/:bookingId/events", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ events: data ?? [] });
-});
+}));
 
 // ── booking request shorthand ──────────────────────────────────────────────────
 
 // POST /api/rent-a-buddy/buddies/:buddyId/request — create a booking targeting a specific buddy
 // Also accessible at /api/buddies/:buddyId/request via app.ts URL alias
-router.post("/api/rent-a-buddy/buddies/:buddyId/request", async (req, res) => {
+router.post("/api/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -498,13 +499,13 @@ router.post("/api/rent-a-buddy/buddies/:buddyId/request", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.status(201).json({ booking: data });
-});
+}));
 
 // ── safety check-in ────────────────────────────────────────────────────────────
 
 // POST /api/rent-a-buddy/bookings/:bookingId/check-in
 // Also accessible at /api/buddy-bookings/:bookingId/check-in via URL alias
-router.post("/api/rent-a-buddy/bookings/:bookingId/check-in", async (req, res) => {
+router.post("/api/rent-a-buddy/bookings/:bookingId/check-in", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -555,13 +556,13 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/check-in", async (req, res) =
 
   if (error) return sendError(res, "db_error", error.message);
   return res.status(201).json({ checkin: data });
-});
+}));
 
 // GET /api/rent-a-buddy/bookings/:bookingId/safety-checkins
 // Also accessible at /api/buddy-bookings/:bookingId/safety-checkins via URL alias
 // Returns the full check-in history for a booking. Only the traveler and the
 // buddy on the booking may access this data; all other callers receive 403.
-router.get("/api/rent-a-buddy/bookings/:bookingId/safety-checkins", async (req, res) => {
+router.get("/api/rent-a-buddy/bookings/:bookingId/safety-checkins", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -592,13 +593,13 @@ router.get("/api/rent-a-buddy/bookings/:bookingId/safety-checkins", async (req, 
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ checkins: data ?? [] });
-});
+}));
 
 // GET /api/rent-a-buddy/bookings/:bookingId/safety-events
 // Also accessible at /api/buddy-bookings/:bookingId/safety-events via URL alias
 // Returns the safety event history for a booking. Only the traveler and the
 // buddy on the booking may access this data; all other callers receive 403.
-router.get("/api/rent-a-buddy/bookings/:bookingId/safety-events", async (req, res) => {
+router.get("/api/rent-a-buddy/bookings/:bookingId/safety-events", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -629,13 +630,13 @@ router.get("/api/rent-a-buddy/bookings/:bookingId/safety-events", async (req, re
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ safetyEvents: data ?? [] });
-});
+}));
 
 // ── report no-show ─────────────────────────────────────────────────────────────
 
 // POST /api/rent-a-buddy/bookings/:bookingId/report-no-show
 // Also accessible at /api/buddy-bookings/:bookingId/report-no-show via URL alias
-router.post("/api/rent-a-buddy/bookings/:bookingId/report-no-show", async (req, res) => {
+router.post("/api/rent-a-buddy/bookings/:bookingId/report-no-show", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -718,7 +719,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/report-no-show", async (req, 
   if (updateError) return sendError(res, "db_error", updateError.message);
 
   return res.status(201).json({ safetyEvent: data, gracePeriodExpiresAt: graceExpiry });
-});
+}));
 
 // NOTE: change-request, respond-change-request, and rebook were removed from
 // this file. The canonical implementations live in rentABuddy.ts at
@@ -730,7 +731,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/report-no-show", async (req, 
 // ── me/buddy-bookings explicit (also covered by app.ts URL alias) ──────────────
 
 // GET /api/me/buddy-bookings — traveler's own bookings list (explicit route)
-router.get("/api/me/buddy-bookings", async (req, res) => {
+router.get("/api/me/buddy-bookings", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -752,14 +753,14 @@ router.get("/api/me/buddy-bookings", async (req, res) => {
   const { data, error, count } = await query;
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ bookings: data ?? [], total: count ?? 0, page: pageNum, pageSize });
-});
+}));
 
 // ── admin spec routes ───────────────────────────────────────────────────────────
 
 // GET /api/rent-a-buddy/admin/buddies/pending
 // Also accessible at /api/admin/buddies/pending via URL alias
 // Must be registered before the parameterized /:buddyId routes in this router.
-router.get("/api/rent-a-buddy/admin/buddies/pending", async (req, res) => {
+router.get("/api/rent-a-buddy/admin/buddies/pending", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -785,11 +786,11 @@ router.get("/api/rent-a-buddy/admin/buddies/pending", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ buddies: data ?? [], total: count ?? 0, page: pageNum, pageSize });
-});
+}));
 
 // POST /api/rent-a-buddy/admin/buddies/:buddyId/approve
 // Also accessible at /api/admin/buddies/:buddyId/approve via URL alias
-router.post("/api/rent-a-buddy/admin/buddies/:buddyId/approve", async (req, res) => {
+router.post("/api/rent-a-buddy/admin/buddies/:buddyId/approve", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -822,11 +823,11 @@ router.post("/api/rent-a-buddy/admin/buddies/:buddyId/approve", async (req, res)
   });
 
   return res.json({ buddy: data });
-});
+}));
 
 // POST /api/rent-a-buddy/admin/buddies/:buddyId/reject
 // Also accessible at /api/admin/buddies/:buddyId/reject via URL alias
-router.post("/api/rent-a-buddy/admin/buddies/:buddyId/reject", async (req, res) => {
+router.post("/api/rent-a-buddy/admin/buddies/:buddyId/reject", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -859,12 +860,12 @@ router.post("/api/rent-a-buddy/admin/buddies/:buddyId/reject", async (req, res) 
   });
 
   return res.json({ buddy: data });
-});
+}));
 
 // POST /api/rent-a-buddy/admin/buddies/:buddyId/unsuspend
 // Also accessible at /api/admin/buddies/:buddyId/unsuspend via URL alias
 // Semantic alias for reactivate (both set admin_status → active).
-router.post("/api/rent-a-buddy/admin/buddies/:buddyId/unsuspend", async (req, res) => {
+router.post("/api/rent-a-buddy/admin/buddies/:buddyId/unsuspend", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -897,13 +898,13 @@ router.post("/api/rent-a-buddy/admin/buddies/:buddyId/unsuspend", async (req, re
   });
 
   return res.json({ buddy: data });
-});
+}));
 
 // ── favorite / unfavorite ──────────────────────────────────────────────────────
 
 // POST /api/rent-a-buddy/buddies/:buddyId/favorite
 // Also accessible at /api/buddies/:buddyId/favorite via app.ts URL alias
-router.post("/api/rent-a-buddy/buddies/:buddyId/favorite", async (req, res) => {
+router.post("/api/rent-a-buddy/buddies/:buddyId/favorite", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -915,12 +916,12 @@ router.post("/api/rent-a-buddy/buddies/:buddyId/favorite", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.status(201).json({ saved: true, buddyId });
-});
+}));
 
 // POST /api/rent-a-buddy/buddies/:buddyId/unfavorite — POST method alias for clients that
 // cannot issue DELETE requests (e.g. some mobile HTTP stacks).
 // Also accessible at /api/buddies/:buddyId/unfavorite via app.ts URL alias
-router.post("/api/rent-a-buddy/buddies/:buddyId/unfavorite", async (req, res) => {
+router.post("/api/rent-a-buddy/buddies/:buddyId/unfavorite", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -932,11 +933,11 @@ router.post("/api/rent-a-buddy/buddies/:buddyId/unfavorite", async (req, res) =>
     .eq("buddy_id", buddyId);
   if (error) return sendError(res, "db_error", error.message);
   return res.status(200).json({ saved: false, buddyId });
-});
+}));
 
 // DELETE /api/rent-a-buddy/buddies/:buddyId/unfavorite
 // Also accessible at /api/buddies/:buddyId/unfavorite via app.ts URL alias
-router.delete("/api/rent-a-buddy/buddies/:buddyId/unfavorite", async (req, res) => {
+router.delete("/api/rent-a-buddy/buddies/:buddyId/unfavorite", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -950,7 +951,7 @@ router.delete("/api/rent-a-buddy/buddies/:buddyId/unfavorite", async (req, res) 
 
   if (error) return sendError(res, "db_error", error.message);
   return res.status(200).json({ saved: false, buddyId });
-});
+}));
 
 // ── buddy profile lifecycle (me) ───────────────────────────────────────────────
 
@@ -963,7 +964,7 @@ router.delete("/api/rent-a-buddy/buddies/:buddyId/unfavorite", async (req, res) 
 //
 // "verification" item is only present (and blocks allComplete) when one or more
 // of the buddy's categories requires ID verification to go live.
-router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
+router.get("/api/rent-a-buddy/me/profile/checklist", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1124,7 +1125,7 @@ router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
   fields.verification = needsVerification ? isVerified : true;
 
   return res.json({ checklist, allComplete, fields });
-});
+}));
 
 // POST /api/rent-a-buddy/me/profile/submit — finalize and submit profile for review
 // Also accessible at /api/me/buddy-profile/submit via app.ts URL alias
@@ -1137,7 +1138,7 @@ router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
 // are empty. All fields must be filled before the profile can enter review.
 // Returns 422 { error: "verification_required", verification_status } if a
 // restricted category (e.g. nightlife) requires ID verification first.
-router.post("/api/rent-a-buddy/me/profile/submit", async (req, res) => {
+router.post("/api/rent-a-buddy/me/profile/submit", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1259,11 +1260,11 @@ router.post("/api/rent-a-buddy/me/profile/submit", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ profile: data });
-});
+}));
 
 // POST /api/rent-a-buddy/me/profile/pause — pause an active buddy profile
 // Also accessible at /api/me/buddy-profile/pause via app.ts URL alias
-router.post("/api/rent-a-buddy/me/profile/pause", async (req, res) => {
+router.post("/api/rent-a-buddy/me/profile/pause", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1290,11 +1291,11 @@ router.post("/api/rent-a-buddy/me/profile/pause", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ profile: data });
-});
+}));
 
 // POST /api/rent-a-buddy/me/profile/resume — resume a paused buddy profile
 // Also accessible at /api/me/buddy-profile/resume via app.ts URL alias
-router.post("/api/rent-a-buddy/me/profile/resume", async (req, res) => {
+router.post("/api/rent-a-buddy/me/profile/resume", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1324,14 +1325,14 @@ router.post("/api/rent-a-buddy/me/profile/resume", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ profile: data });
-});
+}));
 
 // ── admin kill-switch ──────────────────────────────────────────────────────────
 
 // POST /api/rent-a-buddy/admin/kill-switch
 // Also accessible at /api/admin/rent-a-buddy/kill-switch via app.ts URL alias
 // Toggles or sets the global rent-a-buddy kill switch (disables all bookings globally).
-router.post("/api/rent-a-buddy/admin/kill-switch", async (req, res) => {
+router.post("/api/rent-a-buddy/admin/kill-switch", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1372,13 +1373,13 @@ router.post("/api/rent-a-buddy/admin/kill-switch", async (req, res) => {
   });
 
   return res.json({ killSwitch: { enabled, record: data } });
-});
+}));
 
 // ── admin city-status ──────────────────────────────────────────────────────────
 
 // GET /api/rent-a-buddy/admin/city-status
 // Also accessible at /api/admin/rent-a-buddy/city-status via app.ts URL alias
-router.get("/api/rent-a-buddy/admin/city-status", async (req, res) => {
+router.get("/api/rent-a-buddy/admin/city-status", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1393,11 +1394,11 @@ router.get("/api/rent-a-buddy/admin/city-status", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ cities: data ?? [] });
-});
+}));
 
 // PATCH /api/rent-a-buddy/admin/city-status/:city
 // Also accessible at /api/admin/rent-a-buddy/city-status/:city via app.ts URL alias
-router.patch("/api/rent-a-buddy/admin/city-status/:city", async (req, res) => {
+router.patch("/api/rent-a-buddy/admin/city-status/:city", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1435,13 +1436,13 @@ router.patch("/api/rent-a-buddy/admin/city-status/:city", async (req, res) => {
   });
 
   return res.json({ city: data });
-});
+}));
 
 // ── admin category-status ──────────────────────────────────────────────────────
 
 // GET /api/rent-a-buddy/admin/category-status
 // Also accessible at /api/admin/rent-a-buddy/category-status via app.ts URL alias
-router.get("/api/rent-a-buddy/admin/category-status", async (req, res) => {
+router.get("/api/rent-a-buddy/admin/category-status", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1458,11 +1459,11 @@ router.get("/api/rent-a-buddy/admin/category-status", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ categories: data ?? [] });
-});
+}));
 
 // PATCH /api/rent-a-buddy/admin/category-status/:category
 // Also accessible at /api/admin/rent-a-buddy/category-status/:category via app.ts URL alias
-router.patch("/api/rent-a-buddy/admin/category-status/:category", async (req, res) => {
+router.patch("/api/rent-a-buddy/admin/category-status/:category", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1503,13 +1504,13 @@ router.patch("/api/rent-a-buddy/admin/category-status/:category", async (req, re
   });
 
   return res.json({ category: data });
-});
+}));
 
 // ── admin dispute resolution ───────────────────────────────────────────────────
 
 // POST /api/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute
 // Also accessible at /api/admin/buddy-bookings/:bookingId/resolve-dispute via app.ts URL alias
-router.post("/api/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", async (req, res) => {
+router.post("/api/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1586,14 +1587,14 @@ router.post("/api/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", async
   }
 
   return res.json({ dispute, resolution, bookingStatus: newBookingStatus });
-});
+}));
 
 // ── me/buddy-profile — create (initial profile setup) ─────────────────────────
 
 // POST /api/rent-a-buddy/me/profile — create (or upsert) the caller's buddy profile.
 // Spec route: POST /api/me/buddy-profile → rewritten by app.ts alias to this path.
 // Separate from /submit (which transitions an existing draft to pending_review).
-router.post("/api/rent-a-buddy/me/profile", async (req, res) => {
+router.post("/api/rent-a-buddy/me/profile", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1631,13 +1632,13 @@ router.post("/api/rent-a-buddy/me/profile", async (req, res) => {
     .single();
   if (error) return sendError(res, "db_error", error.message);
   return res.status(201).json({ profile: data });
-});
+}));
 
 // ── me/buddy-requests — list booking requests for me-as-buddy ──────────────────
 
 // GET /api/me/buddy-requests — list all booking requests where the caller is the buddy.
 // Also accessible at /api/rent-a-buddy/me/buddy-requests via app.ts alias.
-router.get("/api/me/buddy-requests", async (req, res) => {
+router.get("/api/me/buddy-requests", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1662,13 +1663,13 @@ router.get("/api/me/buddy-requests", async (req, res) => {
   const { data, error } = await query;
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ requests: data ?? [] });
-});
+}));
 
 // ── me/buddy-availability — update my availability schedule ───────────────────
 
 // PATCH /api/me/buddy-availability — update (upsert) availability rows for the caller's buddy profile.
 // Also accessible at /api/rent-a-buddy/me/availability via app.ts alias.
-router.patch("/api/me/buddy-availability", async (req, res) => {
+router.patch("/api/me/buddy-availability", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1699,13 +1700,13 @@ router.patch("/api/me/buddy-availability", async (req, res) => {
     .select();
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ slots: data });
-});
+}));
 
 // ── me/buddy-availability-exceptions — collection-level PATCH ─────────────────
 
 // PATCH /api/me/buddy-availability-exceptions — bulk-upsert availability exceptions.
 // (Item-level PATCH /:exceptionId already exists above.)
-router.patch("/api/me/buddy-availability-exceptions", async (req, res) => {
+router.patch("/api/me/buddy-availability-exceptions", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1740,13 +1741,13 @@ router.patch("/api/me/buddy-availability-exceptions", async (req, res) => {
     .select();
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ exceptions: data });
-});
+}));
 
 // ── admin buddy-reports ────────────────────────────────────────────────────────
 
 // GET /api/admin/buddy-reports — list buddy safety/support reports for admin review.
 // Also accessible at /api/rent-a-buddy/admin/buddy-reports via app.ts alias.
-router.get("/api/rent-a-buddy/admin/buddy-reports", async (req, res) => {
+router.get("/api/rent-a-buddy/admin/buddy-reports", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1765,14 +1766,14 @@ router.get("/api/rent-a-buddy/admin/buddy-reports", async (req, res) => {
   const { data, error } = await query;
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ reports: data ?? [] });
-});
+}));
 
 // ── admin city-status POST (collection-level, city in body) ───────────────────
 
 // POST /api/rent-a-buddy/admin/city-status — collection-level city status update.
 // Accepts { city, status, notes, buddyCap } in the request body.
 // Also accessible at /api/admin/rent-a-buddy/city-status via app.ts URL alias.
-router.post("/api/rent-a-buddy/admin/city-status", async (req, res) => {
+router.post("/api/rent-a-buddy/admin/city-status", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1804,14 +1805,14 @@ router.post("/api/rent-a-buddy/admin/city-status", async (req, res) => {
     action: `city_status_set_${status}`, notes: notes ?? null,
   });
   return res.json({ city: data });
-});
+}));
 
 // ── admin category-status POST (collection-level, category in body) ────────────
 
 // POST /api/rent-a-buddy/admin/category-status — collection-level category status update.
 // Accepts { category, enabled, notes } in the request body.
 // Also accessible at /api/admin/rent-a-buddy/category-status via app.ts URL alias.
-router.post("/api/rent-a-buddy/admin/category-status", async (req, res) => {
+router.post("/api/rent-a-buddy/admin/category-status", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1838,14 +1839,14 @@ router.post("/api/rent-a-buddy/admin/category-status", async (req, res) => {
     action: enabled ? "category_enabled" : "category_disabled", notes: notes ?? null,
   });
   return res.json({ category: data });
-});
+}));
 
 // ── admin city-status POST variant ────────────────────────────────────────────
 
 // POST /api/rent-a-buddy/admin/city-status/:city
 // POST alias required by spec in addition to PATCH variant.
 // Also accessible at /api/admin/rent-a-buddy/city-status/:city via app.ts URL alias
-router.post("/api/rent-a-buddy/admin/city-status/:city", async (req, res) => {
+router.post("/api/rent-a-buddy/admin/city-status/:city", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1876,14 +1877,14 @@ router.post("/api/rent-a-buddy/admin/city-status/:city", async (req, res) => {
     action: `city_status_set_${status}`, notes: notes ?? null,
   });
   return res.json({ city: data });
-});
+}));
 
 // ── admin category-status POST variant ────────────────────────────────────────
 
 // POST /api/rent-a-buddy/admin/category-status/:category
 // POST alias required by spec in addition to PATCH variant.
 // Also accessible at /api/admin/rent-a-buddy/category-status/:category via app.ts URL alias
-router.post("/api/rent-a-buddy/admin/category-status/:category", async (req, res) => {
+router.post("/api/rent-a-buddy/admin/category-status/:category", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1911,13 +1912,13 @@ router.post("/api/rent-a-buddy/admin/category-status/:category", async (req, res
     action: enabled ? "category_enabled" : "category_disabled", notes: notes ?? null,
   });
   return res.json({ category: data });
-});
+}));
 
 // ── admin payout hold / release ────────────────────────────────────────────────
 
 // POST /api/rent-a-buddy/admin/payouts/:payoutId/hold
 // Also accessible at /api/admin/buddy-payouts/:payoutId/hold via app.ts URL alias
-router.post("/api/rent-a-buddy/admin/payouts/:payoutId/hold", async (req, res) => {
+router.post("/api/rent-a-buddy/admin/payouts/:payoutId/hold", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1951,11 +1952,11 @@ router.post("/api/rent-a-buddy/admin/payouts/:payoutId/hold", async (req, res) =
   });
 
   return res.json({ payout: data });
-});
+}));
 
 // POST /api/rent-a-buddy/admin/payouts/:payoutId/release
 // Also accessible at /api/admin/buddy-payouts/:payoutId/release via app.ts URL alias
-router.post("/api/rent-a-buddy/admin/payouts/:payoutId/release", async (req, res) => {
+router.post("/api/rent-a-buddy/admin/payouts/:payoutId/release", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1988,6 +1989,6 @@ router.post("/api/rent-a-buddy/admin/payouts/:payoutId/release", async (req, res
   });
 
   return res.json({ payout: data });
-});
+}));
 
 export default router;

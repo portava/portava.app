@@ -22,6 +22,7 @@
  */
 
 import { Router } from "express";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
@@ -96,7 +97,7 @@ async function writeAuditLog(
 
 // ── GET /stamps/catalog/batch (POST for bulk) ─────────────────────────────────
 
-router.post("/stamps/catalog/batch", async (req, res) => {
+router.post("/stamps/catalog/batch", asyncHandler(async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
@@ -122,11 +123,11 @@ router.post("/stamps/catalog/batch", async (req, res) => {
 
   const entries = ((data ?? []) as any[]).map(shapePublicEntry);
   res.json({ entries });
-});
+}));
 
 // ── GET /stamps/catalog/:canonicalKeyOrId ─────────────────────────────────────
 
-router.get("/stamps/catalog/:canonicalKeyOrId", async (req, res) => {
+router.get("/stamps/catalog/:canonicalKeyOrId", asyncHandler(async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
@@ -153,7 +154,7 @@ router.get("/stamps/catalog/:canonicalKeyOrId", async (req, res) => {
   if (!data) { sendError(res, "not_found", "Catalog entry not found"); return; }
 
   res.json({ entry: shapePublicEntry(data as any) });
-});
+}));
 
 function shapePublicEntry(row: any) {
   const activeVersion = Array.isArray(row.stamp_artwork_versions)
@@ -183,7 +184,7 @@ function shapePublicEntry(row: any) {
 
 // ── GET /admin/stamps/catalog ─────────────────────────────────────────────────
 
-router.get("/admin/stamps/catalog", async (req, res) => {
+router.get("/admin/stamps/catalog", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
@@ -292,11 +293,11 @@ router.get("/admin/stamps/catalog", async (req, res) => {
     page,
     statusCounts,
   });
-});
+}));
 
 // ── GET /admin/stamps/queue ───────────────────────────────────────────────────
 
-router.get("/admin/stamps/queue", async (req, res) => {
+router.get("/admin/stamps/queue", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
@@ -328,11 +329,11 @@ router.get("/admin/stamps/queue", async (req, res) => {
   if (error) { sendError(res, "db_error", error.message); return; }
 
   res.json({ jobs: data ?? [], total: count ?? 0, page });
-});
+}));
 
 // ── GET /admin/stamps/duplicates ──────────────────────────────────────────────
 
-router.get("/admin/stamps/duplicates", async (req, res) => {
+router.get("/admin/stamps/duplicates", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
@@ -378,11 +379,11 @@ router.get("/admin/stamps/duplicates", async (req, res) => {
   }
 
   res.json({ duplicates: duplicates.slice(0, 100) });
-});
+}));
 
 // ── GET /admin/stamps/catalog/:id ─────────────────────────────────────────────
 
-router.get("/admin/stamps/catalog/:id", async (req, res) => {
+router.get("/admin/stamps/catalog/:id", asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid catalog id"); return; }
 
@@ -427,11 +428,11 @@ router.get("/admin/stamps/catalog/:id", async (req, res) => {
     audit:    auditRes.data ?? [],
     earnSample: earnRes.data ?? [],
   });
-});
+}));
 
 // ── GET /admin/stamps/catalog/:id/earners ─────────────────────────────────────
 
-router.get("/admin/stamps/catalog/:id/earners", async (req, res) => {
+router.get("/admin/stamps/catalog/:id/earners", asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid catalog id"); return; }
 
@@ -451,7 +452,7 @@ router.get("/admin/stamps/catalog/:id/earners", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
   res.json({ earners: data ?? [], total: count ?? 0, page });
-});
+}));
 
 // ── POST /admin/stamps/catalog ─────────────────────────────────────────────────
 
@@ -468,7 +469,7 @@ const createCatalogSchema = z.object({
   lng:                  z.number().optional(),
 });
 
-router.post("/admin/stamps/catalog", async (req, res) => {
+router.post("/admin/stamps/catalog", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { userId: adminId, sc } = admin;
@@ -507,7 +508,7 @@ router.post("/admin/stamps/catalog", async (req, res) => {
   });
 
   res.status(201).json({ entry: data });
-});
+}));
 
 // ── PATCH /admin/stamps/catalog/:id/activate-version ─────────────────────────
 
@@ -516,7 +517,7 @@ const activateVersionSchema = z.object({
   notes:     z.string().optional(),
 });
 
-router.patch("/admin/stamps/catalog/:id/activate-version", async (req, res) => {
+router.patch("/admin/stamps/catalog/:id/activate-version", asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid catalog id"); return; }
 
@@ -629,7 +630,7 @@ router.patch("/admin/stamps/catalog/:id/activate-version", async (req, res) => {
   console.log(JSON.stringify({ event: "stamp.admin.approved", catalog_id: id, version_id: versionId, admin_id: adminId }));
 
   res.json({ entry: catalogRow, version: versionRow });
-});
+}));
 
 // ── PATCH /admin/stamps/catalog/:id/reject ────────────────────────────────────
 
@@ -637,7 +638,7 @@ const rejectCatalogSchema = z.object({
   reason: z.string().min(1).max(500),
 });
 
-router.patch("/admin/stamps/catalog/:id/reject", async (req, res) => {
+router.patch("/admin/stamps/catalog/:id/reject", asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid catalog id"); return; }
 
@@ -691,11 +692,11 @@ router.patch("/admin/stamps/catalog/:id/reject", async (req, res) => {
   });
 
   res.json({ entry: data });
-});
+}));
 
 // ── POST /admin/stamps/catalog/:id/regenerate ─────────────────────────────────
 
-router.post("/admin/stamps/catalog/:id/regenerate", async (req, res) => {
+router.post("/admin/stamps/catalog/:id/regenerate", asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid catalog id"); return; }
 
@@ -855,13 +856,13 @@ router.post("/admin/stamps/catalog/:id/regenerate", async (req, res) => {
   }
 
   res.json({ ok: true });
-});
+}));
 
 // ── POST /admin/stamps/queue/:jobId/requeue ───────────────────────────────────
 // Re-queue a generation job stuck in retryable_failed or permanently_failed
 // (resets attempts and the auto-requeue round counter to 0).
 
-router.post("/admin/stamps/queue/:jobId/requeue", async (req, res) => {
+router.post("/admin/stamps/queue/:jobId/requeue", asyncHandler(async (req, res) => {
   const { jobId } = req.params;
   if (!isUuid(jobId)) { sendError(res, "invalid_payload", "Invalid job id"); return; }
 
@@ -908,14 +909,14 @@ router.post("/admin/stamps/queue/:jobId/requeue", async (req, res) => {
   }));
 
   res.json({ job: data });
-});
+}));
 
 // ── POST /admin/stamps/queue/:jobId/clear-cleanup-error ───────────────────────
 // Lets operators dismiss the orphaned-files warning after manually removing
 // the files from the stamp-artwork bucket. Nulls out cleanup_error and
 // cleanup_error_paths on the queue row so the badge clears in the UI.
 
-router.post("/admin/stamps/queue/:jobId/clear-cleanup-error", async (req, res) => {
+router.post("/admin/stamps/queue/:jobId/clear-cleanup-error", asyncHandler(async (req, res) => {
   const { jobId } = req.params;
   if (!isUuid(jobId)) { sendError(res, "invalid_payload", "Invalid job id"); return; }
 
@@ -966,11 +967,11 @@ router.post("/admin/stamps/queue/:jobId/clear-cleanup-error", async (req, res) =
   }));
 
   res.json({ job: data });
-});
+}));
 
 // ── POST /admin/stamps/catalog/:id/upload ─────────────────────────────────────
 
-router.post("/admin/stamps/catalog/:id/upload", async (req, res) => {
+router.post("/admin/stamps/catalog/:id/upload", asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid catalog id"); return; }
 
@@ -1044,11 +1045,11 @@ router.post("/admin/stamps/catalog/:id/upload", async (req, res) => {
   });
 
   res.status(201).json({ version: versionRow });
-});
+}));
 
 // ── POST /admin/stamps/catalog/:id/merge-into/:targetId ──────────────────────
 
-router.post("/admin/stamps/catalog/:id/merge-into/:targetId", async (req, res) => {
+router.post("/admin/stamps/catalog/:id/merge-into/:targetId", asyncHandler(async (req, res) => {
   const { id: sourceId, targetId } = req.params;
   if (!isUuid(sourceId) || !isUuid(targetId)) {
     sendError(res, "invalid_payload", "Invalid catalog ids");
@@ -1104,6 +1105,6 @@ router.post("/admin/stamps/catalog/:id/merge-into/:targetId", async (req, res) =
   });
 
   res.json({ ok: true, mergedIntoId: targetId });
-});
+}));
 
 export default router;

@@ -13,6 +13,7 @@
  */
 
 import { Router } from "express";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 
@@ -472,7 +473,7 @@ function nextStatus(current: CityRolloutStatus): CityRolloutStatus | null {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/admin/rent-buddy/rollout/cities
-router.get("/api/admin/rent-buddy/rollout/cities", async (req, res) => {
+router.get("/api/admin/rent-buddy/rollout/cities", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -483,10 +484,10 @@ router.get("/api/admin/rent-buddy/rollout/cities", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ cities: data ?? [] });
-});
+}));
 
 // POST /api/admin/rent-buddy/rollout/cities
-router.post("/api/admin/rent-buddy/rollout/cities", async (req, res) => {
+router.post("/api/admin/rent-buddy/rollout/cities", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -524,10 +525,10 @@ router.post("/api/admin/rent-buddy/rollout/cities", async (req, res) => {
   });
 
   return res.status(201).json({ city: data });
-});
+}));
 
 // GET /api/admin/rent-buddy/rollout/cities/:id
-router.get("/api/admin/rent-buddy/rollout/cities/:id", async (req, res) => {
+router.get("/api/admin/rent-buddy/rollout/cities/:id", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -540,10 +541,10 @@ router.get("/api/admin/rent-buddy/rollout/cities/:id", async (req, res) => {
   if (error) return sendError(res, "db_error", error.message);
   if (!data) return sendError(res, "not_found", "City rollout not found");
   return res.json({ city: data });
-});
+}));
 
 // PATCH /api/admin/rent-buddy/rollout/cities/:id
-router.patch("/api/admin/rent-buddy/rollout/cities/:id", async (req, res) => {
+router.patch("/api/admin/rent-buddy/rollout/cities/:id", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -569,10 +570,10 @@ router.patch("/api/admin/rent-buddy/rollout/cities/:id", async (req, res) => {
   });
 
   return res.json({ ok: true });
-});
+}));
 
 // POST /api/admin/rent-buddy/rollout/cities/:id/advance-status
-router.post("/api/admin/rent-buddy/rollout/cities/:id/advance-status", async (req, res) => {
+router.post("/api/admin/rent-buddy/rollout/cities/:id/advance-status", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -645,10 +646,10 @@ router.post("/api/admin/rent-buddy/rollout/cities/:id/advance-status", async (re
   });
 
   return res.json({ ok: true, fromStatus: current, toStatus: next });
-});
+}));
 
 // POST /api/admin/rent-buddy/rollout/cities/:id/pause
-router.post("/api/admin/rent-buddy/rollout/cities/:id/pause", async (req, res) => {
+router.post("/api/admin/rent-buddy/rollout/cities/:id/pause", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -679,10 +680,10 @@ router.post("/api/admin/rent-buddy/rollout/cities/:id/pause", async (req, res) =
   });
 
   return res.json({ ok: true, fromStatus: current, toStatus: "paused" });
-});
+}));
 
 // POST /api/admin/rent-buddy/rollout/cities/:id/resume
-router.post("/api/admin/rent-buddy/rollout/cities/:id/resume", async (req, res) => {
+router.post("/api/admin/rent-buddy/rollout/cities/:id/resume", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -717,10 +718,10 @@ router.post("/api/admin/rent-buddy/rollout/cities/:id/resume", async (req, res) 
   });
 
   return res.json({ ok: true, fromStatus: current, toStatus: target });
-});
+}));
 
 // GET /api/admin/rent-buddy/rollout/cities/:id/metrics
-router.get("/api/admin/rent-buddy/rollout/cities/:id/metrics", async (req, res) => {
+router.get("/api/admin/rent-buddy/rollout/cities/:id/metrics", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -828,14 +829,14 @@ router.get("/api/admin/rent-buddy/rollout/cities/:id/metrics", async (req, res) 
     graduationChecklist,
     graduationReady,
   });
-});
+}));
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ADMIN — Beta Access Endpoints
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/admin/rent-buddy/beta-access
-router.get("/api/admin/rent-buddy/beta-access", async (req, res) => {
+router.get("/api/admin/rent-buddy/beta-access", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -852,10 +853,10 @@ router.get("/api/admin/rent-buddy/beta-access", async (req, res) => {
   const { data, error } = await query;
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ betaAccess: data ?? [] });
-});
+}));
 
 // POST /api/admin/rent-buddy/beta-access
-router.post("/api/admin/rent-buddy/beta-access", async (req, res) => {
+router.post("/api/admin/rent-buddy/beta-access", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -889,10 +890,10 @@ router.post("/api/admin/rent-buddy/beta-access", async (req, res) => {
   });
 
   return res.status(201).json({ betaAccess: data });
-});
+}));
 
 // PATCH /api/admin/rent-buddy/beta-access/:id
-router.patch("/api/admin/rent-buddy/beta-access/:id", async (req, res) => {
+router.patch("/api/admin/rent-buddy/beta-access/:id", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -908,10 +909,10 @@ router.patch("/api/admin/rent-buddy/beta-access/:id", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ ok: true });
-});
+}));
 
 // POST /api/admin/rent-buddy/beta-access/:id/revoke
-router.post("/api/admin/rent-buddy/beta-access/:id/revoke", async (req, res) => {
+router.post("/api/admin/rent-buddy/beta-access/:id/revoke", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -936,14 +937,14 @@ router.post("/api/admin/rent-buddy/beta-access/:id/revoke", async (req, res) => 
   });
 
   return res.json({ ok: true });
-});
+}));
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ADMIN — QA Checklist Endpoints
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/admin/rent-buddy/qa/checklists
-router.get("/api/admin/rent-buddy/qa/checklists", async (req, res) => {
+router.get("/api/admin/rent-buddy/qa/checklists", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -954,10 +955,10 @@ router.get("/api/admin/rent-buddy/qa/checklists", async (req, res) => {
   const { data, error } = await query;
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ checklists: data ?? [] });
-});
+}));
 
 // POST /api/admin/rent-buddy/qa/checklists
-router.post("/api/admin/rent-buddy/qa/checklists", async (req, res) => {
+router.post("/api/admin/rent-buddy/qa/checklists", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -975,10 +976,10 @@ router.post("/api/admin/rent-buddy/qa/checklists", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.status(201).json({ checklist: data });
-});
+}));
 
 // PATCH /api/admin/rent-buddy/qa/checklists/:id
-router.patch("/api/admin/rent-buddy/qa/checklists/:id", async (req, res) => {
+router.patch("/api/admin/rent-buddy/qa/checklists/:id", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -1000,10 +1001,10 @@ router.patch("/api/admin/rent-buddy/qa/checklists/:id", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ ok: true });
-});
+}));
 
 // POST /api/admin/rent-buddy/qa/checklists/:id/mark-passed
-router.post("/api/admin/rent-buddy/qa/checklists/:id/mark-passed", async (req, res) => {
+router.post("/api/admin/rent-buddy/qa/checklists/:id/mark-passed", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -1031,10 +1032,10 @@ router.post("/api/admin/rent-buddy/qa/checklists/:id/mark-passed", async (req, r
   });
 
   return res.json({ ok: true });
-});
+}));
 
 // POST /api/admin/rent-buddy/qa/checklists/:id/mark-failed
-router.post("/api/admin/rent-buddy/qa/checklists/:id/mark-failed", async (req, res) => {
+router.post("/api/admin/rent-buddy/qa/checklists/:id/mark-failed", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -1062,23 +1063,23 @@ router.post("/api/admin/rent-buddy/qa/checklists/:id/mark-failed", async (req, r
   });
 
   return res.json({ ok: true });
-});
+}));
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ADMIN — Global Controls
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/admin/rent-buddy/global-controls
-router.get("/api/admin/rent-buddy/global-controls", async (req, res) => {
+router.get("/api/admin/rent-buddy/global-controls", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const controls = await getGlobalControls(admin.sc);
   return res.json({ controls });
-});
+}));
 
 // PATCH /api/admin/rent-buddy/global-controls
-router.patch("/api/admin/rent-buddy/global-controls", async (req, res) => {
+router.patch("/api/admin/rent-buddy/global-controls", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -1109,14 +1110,14 @@ router.patch("/api/admin/rent-buddy/global-controls", async (req, res) => {
   });
 
   return res.json({ ok: true });
-});
+}));
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ADMIN — Launch Audit Log
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/admin/rent-buddy/audit-log
-router.get("/api/admin/rent-buddy/audit-log", async (req, res) => {
+router.get("/api/admin/rent-buddy/audit-log", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -1137,14 +1138,14 @@ router.get("/api/admin/rent-buddy/audit-log", async (req, res) => {
   const { data, count, error } = await query;
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ logs: data ?? [], total: count ?? 0, page: pageNum, perPage: perPageNum });
-});
+}));
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // USER — Launch Status
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/rent-buddy/launch-status
-router.get("/api/rent-buddy/launch-status", async (req, res) => {
+router.get("/api/rent-buddy/launch-status", asyncHandler(async (req, res) => {
   const sc = getServiceClient();
   if (!sc) {
     return res.json({ available: false, status: "unknown", message: "Service temporarily unavailable." });
@@ -1189,7 +1190,7 @@ router.get("/api/rent-buddy/launch-status", async (req, res) => {
     waitlistOpen: status !== "disabled" && status !== "suspended",
     applicationsOpen: status === "buddy_applications_open" || status === "internal_testing" || status === "beta_testing" || status === "public_mvp",
   });
-});
+}));
 
 function statusToMessage(status: CityRolloutStatus, city: string): string {
   switch (status) {
@@ -1211,7 +1212,7 @@ function statusToMessage(status: CityRolloutStatus, city: string): string {
 
 // POST /api/rent-buddy/waitlist
 // Rollout-aware waitlist join — respects feature flag, city status, and global controls.
-router.post("/api/rent-buddy/waitlist", async (req, res) => {
+router.post("/api/rent-buddy/waitlist", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
 
@@ -1232,10 +1233,10 @@ router.post("/api/rent-buddy/waitlist", async (req, res) => {
     .upsert({ user_id: auth.user.id, city, category: category ?? null }, { onConflict: "user_id,city" });
 
   return res.status(201).json({ ok: true, city, inWaitlist: true });
-});
+}));
 
 // GET /api/rent-buddy/me/beta-status
-router.get("/api/rent-buddy/me/beta-status", async (req, res) => {
+router.get("/api/rent-buddy/me/beta-status", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
 
@@ -1256,6 +1257,6 @@ router.get("/api/rent-buddy/me/beta-status", async (req, res) => {
     hasBetaAccess: (data ?? []).length > 0,
     access:        data ?? [],
   });
-});
+}));
 
 export default router;

@@ -7,6 +7,7 @@
  *   DELETE /api/route-plans/:id           — delete plan
  */
 import { Router } from "express";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import { z } from "zod";
 import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
@@ -67,7 +68,7 @@ function toCamel(obj: Record<string, unknown>): Record<string, unknown> {
 
 // ── POST /api/route-plans ─────────────────────────────────────────────────────
 
-router.post("/route-plans", async (req, res) => {
+router.post("/route-plans", asyncHandler(async (req, res) => {
   const ctx = await requireUser(req, res);
   if (!ctx) return;
   const { client, user } = ctx;
@@ -231,11 +232,11 @@ router.post("/route-plans", async (req, res) => {
     totalDistanceMeters: optimized.totalDistanceMeters,
     totalDurationSeconds: optimized.totalDurationSeconds,
   });
-});
+}));
 
 // ── GET /api/route-plans/:id ──────────────────────────────────────────────────
 
-router.get("/route-plans/:id", async (req, res) => {
+router.get("/route-plans/:id", asyncHandler(async (req, res) => {
   const ctx = await requireUser(req, res);
   if (!ctx) return;
   const { client, user } = ctx;
@@ -257,11 +258,11 @@ router.get("/route-plans/:id", async (req, res) => {
   }
 
   res.json(fullPlan);
-});
+}));
 
 // ── PATCH /api/route-plans/:id/stops/:stopId ──────────────────────────────────
 
-router.patch("/route-plans/:id/stops/:stopId", async (req, res) => {
+router.patch("/route-plans/:id/stops/:stopId", asyncHandler(async (req, res) => {
   const ctx = await requireUser(req, res);
   if (!ctx) return;
   const { client, user } = ctx;
@@ -322,12 +323,12 @@ router.patch("/route-plans/:id/stops/:stopId", async (req, res) => {
   }
 
   res.json(toCamel(updated as Record<string, unknown>));
-});
+}));
 
 // ── GET /api/route-plans/:id/members ─────────────────────────────────────────
 // Returns route_plan_members (who has explicitly joined) + shared checkpoint progress.
 
-router.get("/route-plans/:id/members", async (req, res) => {
+router.get("/route-plans/:id/members", asyncHandler(async (req, res) => {
   const ctx = await requireUser(req, res);
   if (!ctx) return;
   const { client, user } = ctx;
@@ -390,11 +391,11 @@ router.get("/route-plans/:id/members", async (req, res) => {
   }));
 
   res.json({ members: result, totalStops, arrivedCount });
-});
+}));
 
 // ── POST /api/route-plans/:id/members — join ──────────────────────────────────
 
-router.post("/route-plans/:id/members", async (req, res) => {
+router.post("/route-plans/:id/members", asyncHandler(async (req, res) => {
   const ctx = await requireUser(req, res);
   if (!ctx) return;
   const { client, user } = ctx;
@@ -435,11 +436,11 @@ router.post("/route-plans/:id/members", async (req, res) => {
   }
 
   res.status(201).json({ joined: true });
-});
+}));
 
 // ── DELETE /api/route-plans/:id/members — leave ───────────────────────────────
 
-router.delete("/route-plans/:id/members", async (req, res) => {
+router.delete("/route-plans/:id/members", asyncHandler(async (req, res) => {
   const ctx = await requireUser(req, res);
   if (!ctx) return;
   const { client, user } = ctx;
@@ -459,11 +460,11 @@ router.delete("/route-plans/:id/members", async (req, res) => {
   }
 
   res.status(204).send();
-});
+}));
 
 // ── DELETE /api/route-plans/:id ───────────────────────────────────────────────
 
-router.delete("/route-plans/:id", async (req, res) => {
+router.delete("/route-plans/:id", asyncHandler(async (req, res) => {
   const ctx = await requireUser(req, res);
   if (!ctx) return;
   const { client, user } = ctx;
@@ -486,7 +487,7 @@ router.delete("/route-plans/:id", async (req, res) => {
   if (error) { sendError(res, "db_error", error.message); return; }
 
   res.status(204).send();
-});
+}));
 
 // ── Helper: fetch full plan ───────────────────────────────────────────────────
 

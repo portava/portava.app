@@ -19,6 +19,7 @@
  */
 
 import { Router } from "express";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 
@@ -44,7 +45,7 @@ async function requireAdmin(req: any, res: any): Promise<{ sc: any } | null> {
   return { sc };
 }
 
-router.get("/admin/ranking/metrics", async (req, res) => {
+router.get("/admin/ranking/metrics", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
@@ -120,6 +121,6 @@ router.get("/admin/ranking/metrics", async (req, res) => {
     },
     by_surface: surfaceMap,
   });
-});
+}));
 
 export default router;

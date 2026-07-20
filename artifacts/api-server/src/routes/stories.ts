@@ -12,6 +12,7 @@
  */
 
 import { Router } from "express";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
@@ -134,7 +135,7 @@ const createStorySchema = z.object({
   hideViewerList: z.boolean().optional().default(false),
 });
 
-router.post("/stories", async (req, res) => {
+router.post("/stories", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
@@ -181,11 +182,11 @@ router.post("/stories", async (req, res) => {
   }
 
   res.status(201).json({ ...(data as any), viewCount: 0 });
-});
+}));
 
 // ── GET /stories/feed — active stories feed ───────────────────────────────────
 
-router.get("/stories/feed", async (req, res) => {
+router.get("/stories/feed", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -319,11 +320,11 @@ router.get("/stories/feed", async (req, res) => {
   });
 
   res.status(200).json({ users });
-});
+}));
 
 // ── GET /stories/:id — get single story ──────────────────────────────────────
 
-router.get("/stories/:id", async (req, res) => {
+router.get("/stories/:id", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -365,11 +366,11 @@ router.get("/stories/:id", async (req, res) => {
   const viewedByMe = user.id !== (story as any).owner_id;
 
   res.status(200).json({ ...(story as any), viewCount, viewedByMe });
-});
+}));
 
 // ── DELETE /stories/:id — soft-delete ────────────────────────────────────────
 
-router.delete("/stories/:id", async (req, res) => {
+router.delete("/stories/:id", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
@@ -395,7 +396,7 @@ router.delete("/stories/:id", async (req, res) => {
   if (error) { req.log.error({ err: error }, "Failed to delete story"); sendError(res, "db_error", error.message); return; }
 
   res.status(204).send();
-});
+}));
 
 // ── POST /stories/:id/react — upsert emoji reaction ──────────────────────────
 
@@ -403,7 +404,7 @@ const reactSchema = z.object({
   emoji: z.string().min(1).max(10),
 });
 
-router.post("/stories/:id/react", async (req, res) => {
+router.post("/stories/:id/react", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
@@ -432,7 +433,7 @@ router.post("/stories/:id/react", async (req, res) => {
   if (error) { req.log.error({ err: error }, "Failed to upsert story reaction"); sendError(res, "db_error", error.message); return; }
 
   res.status(200).json({ ok: true });
-});
+}));
 
 // ── POST /stories/:id/reply — private reply ───────────────────────────────────
 
@@ -440,7 +441,7 @@ const replySchema = z.object({
   message: z.string().min(1).max(1000),
 });
 
-router.post("/stories/:id/reply", async (req, res) => {
+router.post("/stories/:id/reply", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
@@ -471,11 +472,11 @@ router.post("/stories/:id/reply", async (req, res) => {
   if (error) { req.log.error({ err: error }, "Failed to insert story reply"); sendError(res, "db_error", error.message); return; }
 
   res.status(201).json(data);
-});
+}));
 
 // ── GET /stories/:id/viewers — owner-only viewer list ────────────────────────
 
-router.get("/stories/:id/viewers", async (req, res) => {
+router.get("/stories/:id/viewers", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
@@ -540,11 +541,11 @@ router.get("/stories/:id/viewers", async (req, res) => {
   })).filter((v) => v.handle);
 
   res.status(200).json({ viewers, hidden: false });
-});
+}));
 
 // ── POST /stories/:id/save-to-highlight — owner-only ─────────────────────────
 
-router.post("/stories/:id/save-to-highlight", async (req, res) => {
+router.post("/stories/:id/save-to-highlight", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
@@ -597,7 +598,7 @@ router.post("/stories/:id/save-to-highlight", async (req, res) => {
     .eq("owner_id", user.id);
 
   res.status(201).json({ highlightId: (highlight as any).id });
-});
+}));
 
 // ── Expiry sweeper (called by health/cleanup cron) ────────────────────────────
 

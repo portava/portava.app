@@ -11,6 +11,7 @@
  */
 
 import { Router } from "express";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
@@ -62,7 +63,7 @@ const CreateAppealSchema = z.object({
   evidenceUrl: z.string().url().optional(),
 });
 
-router.post("/appeals", async (req, res) => {
+router.post("/appeals", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
 
@@ -107,11 +108,11 @@ router.post("/appeals", async (req, res) => {
     state:      (appeal as any).state,
     createdAt:  (appeal as any).created_at,
   });
-});
+}));
 
 // ── GET /api/appeals/me ───────────────────────────────────────────────────────
 
-router.get("/appeals/me", async (req, res) => {
+router.get("/appeals/me", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
 
@@ -146,12 +147,12 @@ router.get("/appeals/me", async (req, res) => {
     page,
     limit,
   });
-});
+}));
 
 // ── GET /api/appeals ──────────────────────────────────────────────────────────
 // Admin-only — full queue with optional state filter
 
-router.get("/appeals", async (req, res) => {
+router.get("/appeals", asyncHandler(async (req, res) => {
   const admin = await requireAdminGuard(req, res);
   if (!admin) return;
   const { sc } = admin;
@@ -199,7 +200,7 @@ router.get("/appeals", async (req, res) => {
     page,
     limit,
   });
-});
+}));
 
 // ── PATCH /api/appeals/:id ────────────────────────────────────────────────────
 // Admin-only — transition state + add resolution note
@@ -209,7 +210,7 @@ const UpdateAppealSchema = z.object({
   resolutionNote: z.string().max(2000).optional(),
 });
 
-router.patch("/appeals/:id", async (req, res) => {
+router.patch("/appeals/:id", asyncHandler(async (req, res) => {
   const admin = await requireAdminGuard(req, res);
   if (!admin) return;
   const { userId: adminId, sc } = admin;
@@ -328,6 +329,6 @@ router.patch("/appeals/:id", async (req, res) => {
     resolutionNote: (updated as any).resolution_note ?? null,
     updatedAt:      (updated as any).updated_at,
   });
-});
+}));
 
 export default router;

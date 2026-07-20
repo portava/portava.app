@@ -122,13 +122,14 @@ describe('GlobalControlsPanel duplicate-save guard', () => {
     });
     expect(alertSpy).toHaveBeenCalled();
 
-    // Confirm once — this starts the PATCH (which takes 20 ms).
-    await act(async () => { await pressAlertButton(alertSpy, 'Confirm'); });
+    // Fire both confirms in the same synchronous frame so the guard fires before
+    // act() can drain the in-flight timer.  Wrapping either call in await act()
+    // would flush the 20 ms PATCH timer between the two confirms, resetting
+    // savingRef.current to false and letting the second PATCH through.
+    pressAlertButton(alertSpy, 'Confirm'); // starts PATCH; savingRef.current = true
+    pressAlertButton(alertSpy, 'Confirm'); // guard fires → returns early
 
-    // Immediately confirm again (simulating a stacked alert or a second tap).
-    await act(async () => { await pressAlertButton(alertSpy, 'Confirm'); });
-
-    // Wait for the PATCH to settle.
+    // Flush React state + let the in-flight PATCH settle.
     await act(async () => { await new Promise(r => setTimeout(r, 40)); });
 
     const patches = fetchMock.mock.calls.filter(

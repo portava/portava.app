@@ -13,6 +13,7 @@
  */
 
 import { Router } from "express";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
@@ -51,7 +52,7 @@ async function requireAdmin(
 
 // ── GET /admin/geocode-cache ──────────────────────────────────────────────────
 
-router.get("/admin/geocode-cache", async (req, res) => {
+router.get("/admin/geocode-cache", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
@@ -74,11 +75,11 @@ router.get("/admin/geocode-cache", async (req, res) => {
   if (error) return sendError(res, "db_error", error.message);
 
   res.json({ rows: data ?? [] });
-});
+}));
 
 // ── DELETE /admin/geocode-cache/:city_key ─────────────────────────────────────
 
-router.delete("/admin/geocode-cache/:city_key", async (req, res) => {
+router.delete("/admin/geocode-cache/:city_key", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
@@ -136,7 +137,7 @@ router.delete("/admin/geocode-cache/:city_key", async (req, res) => {
     ...(repairStats !== undefined ? { repair: repairStats } : {}),
     ...(xxEntriesPending !== undefined ? { xx_entries_pending: xxEntriesPending } : {}),
   });
-});
+}));
 
 // ── PUT /admin/geocode-cache/:city_key ────────────────────────────────────────
 
@@ -148,7 +149,7 @@ const PutBodySchema = z.object({
   repair_catalog: z.boolean().optional(),
 });
 
-router.put("/admin/geocode-cache/:city_key", async (req, res) => {
+router.put("/admin/geocode-cache/:city_key", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
@@ -215,7 +216,7 @@ router.put("/admin/geocode-cache/:city_key", async (req, res) => {
     ...(repairStats !== undefined ? { repair: repairStats } : {}),
     ...(xxEntriesPending !== undefined ? { xx_entries_pending: xxEntriesPending } : {}),
   });
-});
+}));
 
 // ── PUT /admin/repair_catalog ─────────────────────────────────────────────────
 
@@ -250,7 +251,7 @@ function transliterateStrokedKey(raw: string): string {
  *
  * Returns { rekeyed: number, entries: [{ old_key, new_key }] }.
  */
-router.put("/admin/repair_catalog", async (req, res) => {
+router.put("/admin/repair_catalog", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
@@ -307,6 +308,6 @@ router.put("/admin/repair_catalog", async (req, res) => {
   }
 
   res.json({ rekeyed: rekeyed.length, entries: rekeyed });
-});
+}));
 
 export default router;
