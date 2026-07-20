@@ -987,7 +987,7 @@ router.post("/admin/hidden-gems/:id/verify", async (req, res) => {
   // Fetch gem's submitter before recording the verification (needed for stamp award).
   const { data: gemRow } = await sc
     .from("hidden_gems")
-    .select("submitted_by, location_city, location_country")
+    .select("submitted_by, city, country")
     .eq("id", req.params.id)
     .maybeSingle();
 
@@ -1010,8 +1010,8 @@ router.post("/admin/hidden-gems/:id/verify", async (req, res) => {
           definitionSlug: "hidden_gem_explorer",
           sourceType:    "hidden_gems",
           sourceId:      req.params.id,
-          city:          (gemRow as any).location_city   ?? undefined,
-          country:       (gemRow as any).location_country ?? undefined,
+          city:          (gemRow as any).city    ?? undefined,
+          country:       (gemRow as any).country ?? undefined,
         });
         if (result.awarded) {
           const { NotificationService } = await import("../services/notifications/NotificationService.js");
@@ -1023,7 +1023,7 @@ router.post("/admin/hidden-gems/:id/verify", async (req, res) => {
             eventType:  "passport.stamp_earned",
             sourceType: "hidden_gems",
             sourceId:   req.params.id,
-            params:     { location: (gemRow as any).location_city ?? (gemRow as any).location_country ?? "hidden gem" },
+            params:     { location: (gemRow as any).city ?? (gemRow as any).country ?? "hidden gem" },
           });
           if (row) await notifRouter.route(row);
         }

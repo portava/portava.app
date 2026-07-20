@@ -1698,13 +1698,16 @@ router.get("/admin/deletion-requests", async (req, res) => {
 
   const { data, error } = await sc
     .from("user_deletion_requests")
-    .select("id, user_id, requested_at, scheduled_at, status")
+    .select("user_id, requested_at, scheduled_at, status")
     .eq("status", "pending")
     .order("scheduled_at", { ascending: true })
     .limit(limit);
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ requests: data ?? [], total: (data ?? []).length });
+  // Table is keyed by user_id (no surrogate id column); expose it as `id`
+  // so existing admin clients keep working.
+  const rows = (data ?? []).map((r: any) => ({ id: r.user_id, ...r }));
+  res.json({ requests: rows, total: rows.length });
 });
 
 /** POST /admin/deletion-requests/:id/execute — anonymize user data and mark completed */
@@ -1715,8 +1718,8 @@ router.post("/admin/deletion-requests/:id/execute", async (req, res) => {
 
   const { data: reqRow, error: reqErr } = await sc
     .from("user_deletion_requests")
-    .select("id, user_id, status")
-    .eq("id", req.params.id)
+    .select("user_id, status")
+    .eq("user_id", req.params.id)
     .eq("status", "pending")
     .maybeSingle();
 
@@ -1776,8 +1779,8 @@ router.post("/admin/deletion-requests/:id/execute", async (req, res) => {
   // Mark deletion request completed
   const { error: updateErr } = await sc
     .from("user_deletion_requests")
-    .update({ status: "completed", executed_at: now, executed_by: adminUserId })
-    .eq("id", req.params.id);
+    .update({ status: "completed", executed_at: now })
+    .eq("user_id", userId);
 
   if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
 

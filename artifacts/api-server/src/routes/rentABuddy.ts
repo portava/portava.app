@@ -5977,7 +5977,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/change-request", async (req, 
 
   const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
-    .select("traveler_id, buddy_id, status, booking_date, start_time, duration_h, service_id, total_usd")
+    .select("traveler_id, buddy_id, status, booking_date, start_time, duration_h, package_id, total_usd")
     .eq("id", bookingId)
     .maybeSingle();
   if (!booking) return res.status(404).json({ error: "not_found" });
@@ -6024,7 +6024,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/change-request", async (req, 
     date: { date: (booking as any).booking_date },
     start_time: { start_time: (booking as any).start_time },
     duration_h: { duration_h: (booking as any).duration_h },
-    service: { service_id: (booking as any).service_id },
+    service: { service_id: (booking as any).package_id },
     price_usd: { price_usd: (booking as any).total_usd },
   };
   const currentValue = currentValueMap[changeField] ?? {};
@@ -6130,7 +6130,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/respond-change-request", asyn
     if (field === "date" && proposed.date) bookingPatch.booking_date = proposed.date;
     if (field === "start_time" && proposed.start_time) bookingPatch.start_time = proposed.start_time;
     if (field === "duration_h" && proposed.duration_h !== undefined) bookingPatch.duration_h = proposed.duration_h;
-    if (field === "service" && proposed.service_id) bookingPatch.service_id = proposed.service_id;
+    if (field === "service" && proposed.service_id) bookingPatch.package_id = proposed.service_id;
     if (field === "price_usd" && proposed.price_usd !== undefined) bookingPatch.total_usd = proposed.price_usd;
 
     await serviceClient.from("rent_buddy_bookings").update(bookingPatch).eq("id", bookingId);

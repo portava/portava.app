@@ -239,7 +239,7 @@ router.post("/me/requests/friend_request/:id/accept", async (req, res) => {
   }
 
   const now = new Date().toISOString();
-  await sc.from("friend_requests").update({ status: "accepted", responded_at: now, updated_at: now }).eq("id", id);
+  await sc.from("friend_requests").update({ status: "accepted" }).eq("id", id);
   const [ua, ub] = normalizedFriendshipPair(fr.requester_id, fr.recipient_id);
   await sc.from("user_friendships").upsert({ user_a: ua, user_b: ub, accepted_request_id: id, created_at: now });
 
@@ -281,7 +281,7 @@ router.post("/me/requests/friend_request/:id/decline", async (req, res) => {
 
   const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
-  await sc.from("friend_requests").update({ status: "declined", responded_at: now, updated_at: now }).eq("id", id);
+  await sc.from("friend_requests").update({ status: "declined" }).eq("id", id);
 
   // Anti-retaliation cooldown: requester cannot re-send for 24 hours after a decline
   const cooldownExpiry = new Date(nowMs + 24 * 60 * 60 * 1000).toISOString();
@@ -329,7 +329,7 @@ router.post("/me/requests/friend_request/:id/cancel", async (req, res) => {
   }
 
   const now = new Date().toISOString();
-  await sc.from("friend_requests").update({ status: "cancelled", updated_at: now }).eq("id", id);
+  await sc.from("friend_requests").update({ status: "cancelled" }).eq("id", id);
   res.status(200).json({ status: "cancelled", requestId: id });
 });
 

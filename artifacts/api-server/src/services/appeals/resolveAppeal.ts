@@ -68,7 +68,6 @@ export async function resolveAppeal(
         .update({
           status:      "dismissed",
           reviewed_by: null,
-          updated_at:  new Date().toISOString(),
         })
         .eq("id", target_id)
         .eq("user_id", appellant_id);
@@ -96,7 +95,8 @@ export async function resolveAppeal(
       const { error } = await sc
         .from("event_attendee_states")
         .update({ no_show_at: null, no_show_by: null, updated_at: new Date().toISOString() })
-        .eq("id", target_id);
+        .eq("event_id", target_id)
+        .eq("user_id", appellant_id);
       if (error) {
         // Fallback: try filtering by user_id + event_id encoded as target_id
         return { ok: false, action: "noop", reason: `no_show clear failed: ${error.message}` };
@@ -121,7 +121,7 @@ export async function resolveAppeal(
       // Restore removed trip member
       const { error } = await sc
         .from("trip_members")
-        .update({ role: "member", updated_at: new Date().toISOString() })
+        .update({ role: "member" })
         .eq("trip_id", target_id)
         .eq("user_id", appellant_id);
       if (error) return { ok: false, action: "noop", reason: `trip member restore failed: ${error.message}` };
