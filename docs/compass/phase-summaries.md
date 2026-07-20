@@ -71,3 +71,47 @@ State when the standing brief was installed:
 - Full api suite + typecheck green. Standing eval set exercised against the
   assembled context (context references resolve from real DB-backed data;
   "Find my circle" now has real circle context to reference).
+
+## Phase 4 — Tool/Function Calling (July 2026)
+
+- New `src/compass/CompassTools.ts`: eight native OpenAI function tools —
+  `get_user_profile`, `get_current_trip`, `search_places` (over
+  `discovery_places`; live Foursquare deferred to Phase 8), `search_events`,
+  `get_place_details`, `get_circle_activity` (permission-gated via the
+  Phase 3 structured-context builder), `check_trip_conflicts`, and
+  `add_to_trip` (propose-only).
+- Candidate/explanation separation enforced: a tools prompt addendum
+  (`COMPASS_TOOLS_PROMPT_ADDENDUM`) states the candidate rule (recommendable
+  places/events MUST come from tool results; honest "no results" otherwise),
+  and all candidates are DB-backed rows.
+- Privacy guards on every tool result: safe column lists (coordinates never
+  selected), `sanitizeToolResult()` recursively strips coordinate-shaped and
+  private keys (email/phone/address/notes/host_id/…) as defense-in-depth,
+  blocked/blocker/muted hosts and members filtered, UGC text wrapped in
+  `<portava:ugc>` delimiters, tool results framed as data-not-instructions.
+- Calling loop in `POST /api/compass/ask` (`runToolCallingLoop`): model
+  requests tools → server executes → results feed back → iterate (max 5
+  rounds, then a forced final answer without tools). Streaming requests run
+  the loop non-streamed and emit the final answer as a single SSE delta —
+  same event contract.
+- The Phase-1 "action intent" short-circuit was removed: action prompts now
+  flow through the tool loop so the model can PROPOSE via `add_to_trip`.
+  Propose-never-auto-execute holds: the tool returns a `pending_confirmation`
+  proposal and writes nothing.
+- Confirmation flow: proposals persist in the assistant message payload and
+  surface as `pendingProposals` on the response; the mobile chat
+  (`app/(tabs)/ai.tsx`) shows a minimal Confirm/Decline affordance (rich
+  cards are Phase 5). `POST /api/compass/proposals/:id/confirm` re-authorizes
+  (trip membership + plan-edit permission at execution time), applies the
+  duplicate guard, executes the `trip_plan_items` insert, and records the
+  resolution so a proposal can execute at most once; `/decline` records only.
+- Persistence: every assistant turn stores `toolCalls` (name, arguments,
+  size-bounded result) and any `pendingProposals` in the structured
+  `payload` JSONB column of `compass_conversation_messages`.
+- Tests: `compass-tools.test.ts` (17 tests — sanitizer, DB-backed candidates
+  with coordinate-free output, block filtering, circle permission gate,
+  conflicts, propose-only add_to_trip incl. fabricated-placeId rejection,
+  route-level tool loop with payload persistence, confirm/decline lifecycle
+  incl. double-resolve rejection and revoked-membership re-auth);
+  `compass-ask.test.ts` suite D rewritten for the tool-loop action path.
+  Registered in the api-server test suite. Full suites + typecheck green.

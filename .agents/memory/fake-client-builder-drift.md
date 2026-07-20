@@ -7,3 +7,5 @@ Routes gaining new builder calls (`maybeSingle`, `gte/lte`, `order`, `contains`)
 **Why:** fakes are per-file and hand-written; a route change compiles clean but only fails when the fake is executed — and only curated files run in CI.
 
 **How to apply:** when adding a builder method to a shared auth/route path, grep `src/test/` fakes for the affected table; when a validation test 500s, check the fake's chain methods before suspecting the route. Triage record: `artifacts/api-server/docs/test-triage-2026-07.md`.
+
+- Flags loading uses `.like("flag", "COMPASS_%")` — a fake client missing `like` makes `isCompassEnabled` silently return false ("compass_disabled" fallback), which looks like a feature-flag bug, not a fake-client gap.

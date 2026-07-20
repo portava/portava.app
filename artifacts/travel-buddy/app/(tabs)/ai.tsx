@@ -7,8 +7,11 @@ import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView
 import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 import { Sparkles, Send, Plane, MessageCircle, Map, PlusCircle } from 'lucide-react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { postCompassFrontloadEvent, postCompassAsk } from '../../src/services/compass';
-import type { CompassAskResponse } from '../../src/services/compass';
+import {
+  postCompassFrontloadEvent, postCompassAsk,
+  confirmCompassProposal, declineCompassProposal,
+} from '../../src/services/compass';
+import type { CompassAskResponse, CompassPendingProposal } from '../../src/services/compass';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { usePlanPicker } from '../../src/components/PlanPickerController';
@@ -71,6 +74,41 @@ export default function AiChat() {
       return [...without, { kind: 'rec', id: 'rec_' + Date.now(), rec: result.data }];
     });
     setLoading(false);
+    scrollToEnd();
+  }
+
+  // Phase 4: confirm/decline an add_to_trip proposal. Nothing is written to a
+  // trip until confirm succeeds server-side.
+  const [resolvedProposals, setResolvedProposals] = useState<Record<string, 'confirmed' | 'declined' | 'busy'>>({});
+
+  async function resolveProposal(
+    rec: CompassAskResponse,
+    proposal: CompassPendingProposal,
+    decision: 'confirm' | 'decline',
+  ) {
+    if (!rec.conversationId || resolvedProposals[proposal.proposalId]) return;
+    setResolvedProposals((p) => ({ ...p, [proposal.proposalId]: 'busy' }));
+    const fn = decision === 'confirm' ? confirmCompassProposal : declineCompassProposal;
+    const result = await fn(proposal.proposalId, rec.conversationId);
+    if (!result.ok) {
+      setResolvedProposals((p) => {
+        const next = { ...p };
+        delete next[proposal.proposalId];
+        return next;
+      });
+      setEntries((prev) => [...prev, {
+        kind: 'ai_text', id: 'perr_' + Date.now(),
+        text: "Couldn't update that proposal — try again in a moment.",
+      }]);
+      return;
+    }
+    setResolvedProposals((p) => ({ ...p, [proposal.proposalId]: decision === 'confirm' ? 'confirmed' : 'declined' }));
+    setEntries((prev) => [...prev, {
+      kind: 'ai_text', id: 'pok_' + Date.now(),
+      text: decision === 'confirm'
+        ? `Added "${proposal.title}" to your trip.`
+        : `Okay — I won't add "${proposal.title}".`,
+    }]);
     scrollToEnd();
   }
 
@@ -149,6 +187,8 @@ export default function AiChat() {
             <RecCard
               key={e.id}
               rec={e.rec}
+              proposalStates={resolvedProposals}
+              onProposal={(proposal, decision) => resolveProposal(e.rec, proposal, decision)}
               onAction={(kind) => handleAction(e.rec, kind)}
             />
           );
@@ -194,9 +234,13 @@ const ACTION_ICONS: Record<string, React.ReactNode> = {
 function RecCard({
   rec,
   onAction,
+  onProposal,
+  proposalStates,
 }: {
   rec: CompassAskResponse;
   onAction: (kind: string) => void;
+  onProposal: (proposal: CompassPendingProposal, decision: 'confirm' | 'decline') => void;
+  proposalStates: Record<string, 'confirmed' | 'declined' | 'busy'>;
 }) {
   return (
     <View style={styles.rec}>
@@ -205,6 +249,39 @@ function RecCard({
         <Text style={styles.aiHeadText}>AI BUDDY</Text>
       </View>
       <Text style={styles.recBody}>{rec.message}</Text>
+
+      {(rec.pendingProposals ?? []).map((p) => {
+        const state = proposalStates[p.proposalId];
+        return (
+          <View key={p.proposalId} style={styles.proposal}>
+            <Text style={styles.proposalTitle}>
+              Add "{p.title}" to {p.tripTitle ?? 'your trip'}?
+            </Text>
+            {state === 'confirmed' ? (
+              <Text style={styles.proposalDone}>Added ✓</Text>
+            ) : state === 'declined' ? (
+              <Text style={styles.proposalDone}>Declined</Text>
+            ) : (
+              <View style={styles.actions}>
+                <Pressable
+                  style={[styles.actionBtn, state === 'busy' && styles.sendBtnDisabled]}
+                  disabled={state === 'busy'}
+                  onPress={() => onProposal(p, 'confirm')}
+                >
+                  <Text style={styles.actionText}>Confirm</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.declineBtn, state === 'busy' && styles.sendBtnDisabled]}
+                  disabled={state === 'busy'}
+                  onPress={() => onProposal(p, 'decline')}
+                >
+                  <Text style={styles.declineText}>Decline</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
+        );
+      })}
 
       {(rec.quickActions ?? []).length > 0 ? (
         <View style={styles.actions}>
@@ -240,6 +317,11 @@ const styles = StyleSheet.create({
   usedRow:       { flexDirection: 'row', marginTop: space.md },
   actions:       { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.md },
   actionBtn:     { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill, backgroundColor: color.ink },
+  proposal:      { marginTop: space.md, padding: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper, gap: 6 },
+  proposalTitle: { ...t.small, fontWeight: '700', color: color.ink },
+  proposalDone:  { ...t.small, color: color.mute },
+  declineBtn:    { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
+  declineText:   { ...t.small, fontWeight: '700', color: color.ink },
   actionText:    { ...t.small, fontWeight: '700', color: color.onInk },
   inputBar:      { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.md, borderTopWidth: 1, borderTopColor: color.haze, backgroundColor: color.paper },
   input:         { flex: 1, ...t.body, color: color.ink, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill, paddingHorizontal: space.lg, paddingVertical: space.md },

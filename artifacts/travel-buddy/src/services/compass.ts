@@ -379,12 +379,26 @@ export interface CompassAskPayload {
   days?:        Array<{ label: string; highlights: string[] }>;
 }
 
+/** Phase-4 add_to_trip pending proposal — awaiting explicit user confirmation. */
+export interface CompassPendingProposal {
+  proposalId: string;
+  tripId:     string;
+  tripTitle:  string | null;
+  placeId:    string | null;
+  title:      string;
+  category:   string;
+  dayDate:    string | null;
+  status:     'pending_confirmation';
+}
+
 /** Phase-1 response shape from POST /api/compass/ask. */
 export interface CompassAskResponse {
   conversationId:  string | null;
   message:         string;
   payload:         CompassAskPayload | null;
   quickActions:    CompassQuickAction[];
+  /** Phase 4: add_to_trip proposals awaiting confirm/decline. */
+  pendingProposals?: CompassPendingProposal[];
   promptVersion:   string;
   intent?:         { intent: string; confidence: number };
   fallback?:       boolean;
@@ -415,6 +429,42 @@ export async function postCompassAsk(
     });
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     return { ok: true, data: await r.json() };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+/** Confirm a pending add_to_trip proposal — this is the ONLY path that executes the write. */
+export async function confirmCompassProposal(
+  proposalId: string,
+  conversationId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const r = await authedFetch(`/api/compass/proposals/${encodeURIComponent(proposalId)}/confirm`, {
+      method: 'POST',
+      body:   JSON.stringify({ conversationId }),
+    });
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+/** Decline a pending add_to_trip proposal. */
+export async function declineCompassProposal(
+  proposalId: string,
+  conversationId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const r = await authedFetch(`/api/compass/proposals/${encodeURIComponent(proposalId)}/decline`, {
+      method: 'POST',
+      body:   JSON.stringify({ conversationId }),
+    });
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    return { ok: true };
   } catch {
     return { ok: false, error: 'network_error' };
   }

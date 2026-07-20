@@ -377,24 +377,35 @@ describe("C. Classifier JSON contract", () => {
 
 // ── D. Action intent graceful failure ────────────────────────────────────────
 
-describe("D. Action intent graceful failure", () => {
-  it("returns a plain explanation when action intent detected — not a hallucinated success", async () => {
+describe("D. Action intent — Phase 4 tool loop, propose-never-execute", () => {
+  it("routes action prompts through the tool loop; add_to_trip never writes and unauthorized trips yield no proposal", async () => {
     const client = makeClient();
     _setTestClient(client, "test-token");
 
-    // First call: classifier returns action; second call (if any) is the main LLM
-    let callCount = 0;
+    // Classifier says "action"; main LLM requests the add_to_trip tool, then
+    // answers honestly after seeing the tool's authorization error.
+    let mainCalls = 0;
     _setTestOpenAI({
       chat: {
         completions: {
           create: async (opts: any) => {
-            callCount++;
             const isClassifierCall = opts.max_completion_tokens === 60 && opts.temperature === 0;
             if (isClassifierCall) {
               return { choices: [{ message: { content: JSON.stringify({ intent: "action", confidence: 0.95 }), role: "assistant" } }] };
             }
-            // Should not reach here — action intent short-circuits before main LLM
-            return { choices: [{ message: { content: JSON.stringify({ message: "Added!", payload: null, quickActions: [] }), role: "assistant" } }] };
+            mainCalls++;
+            if (mainCalls === 1) {
+              return { choices: [{ message: {
+                role: "assistant",
+                content: null,
+                tool_calls: [{ id: "tc_1", type: "function", function: { name: "add_to_trip", arguments: JSON.stringify({ tripId: "eeee0000-eeee-eeee-eeee-000000000001", title: "Beach day" }) } }],
+              } }] };
+            }
+            // Tool result must have reported an error (not a member of that trip).
+            const toolMsg = (opts.messages as any[]).find((m) => m.role === "tool");
+            assert.ok(toolMsg, "tool result should be fed back to the model");
+            assert.ok(String(toolMsg.content).includes("not an accepted member"), `tool result should carry the auth error, got: ${toolMsg.content}`);
+            return { choices: [{ message: { content: JSON.stringify({ message: "I couldn't propose that — you're not a member of that trip.", payload: null, quickActions: [] }), role: "assistant" } }] };
           },
         },
       },
@@ -402,17 +413,12 @@ describe("D. Action intent graceful failure", () => {
 
     const { status, body } = await ask({ prompt: "Add the second place to my trip" });
     assert.equal(status, 200);
-    assert.ok(typeof body.message === "string");
-    // Must explain what it can't do — not say "Added!" or similar hallucinated success
-    assert.ok(
-      (body.message as string).toLowerCase().includes("can't") ||
-      (body.message as string).toLowerCase().includes("cannot") ||
-      (body.message as string).toLowerCase().includes("directly") ||
-      (body.message as string).toLowerCase().includes("trip"),
-      `action reply should explain limitation, got: "${body.message}"`,
-    );
-    // payload must be null — no fake card saying the action succeeded
+    assert.equal(mainCalls, 2, "tool loop should iterate: tool round + final answer");
     assert.equal(body.payload, null);
+    // No proposal for an unauthorized trip, and absolutely nothing written.
+    assert.deepEqual(body.pendingProposals ?? [], []);
+    const inserts = (client as any)._getInserts();
+    assert.equal((inserts["trip_plan_items"] ?? []).length, 0, "add_to_trip must never insert plan items");
   });
 });
 

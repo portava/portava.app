@@ -20,7 +20,7 @@
  */
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http.js";
+import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { isCompassEnabled, isEnabled } from "../compass/flags.js";
@@ -81,6 +81,13 @@ import {
 }                                                from "../services/compass/CompassConversationService.js";
 import { classify as classifyIntent, type IntentClassification } from "../services/compass/CompassIntentClassifier.js";
 import { getWeatherContext as getWeatherForAsk }  from "../lib/weatherCache.js";
+import {
+  COMPASS_TOOL_DEFINITIONS,
+  COMPASS_TOOLS_PROMPT_ADDENDUM,
+  executeCompassTool,
+  type AddToTripProposal,
+  type ToolExecution,
+} from "../compass/CompassTools.js";
 import { buildCompassContext as buildLocationCompassContext } from "../services/location/CompassLocationContext.js";
 
 const router = Router();
@@ -797,6 +804,81 @@ function _parseModelResponse(raw: string): {
   }
 }
 
+// ── Phase 4: tool-calling loop ────────────────────────────────────────────────
+// The model requests tools, the server executes them (privacy-guarded), the
+// result is fed back, and the loop iterates until the model produces a final
+// answer or the round budget is exhausted. Candidates stay tool-sourced.
+
+const MAX_TOOL_ROUNDS = 5;
+
+interface ToolLoopOutcome {
+  finalRaw:  string;
+  toolLog:   ToolExecution[];
+  proposals: AddToTripProposal[];
+}
+
+async function runToolCallingLoop(
+  sc:       SupabaseClient,
+  userId:   string,
+  profile:  Awaited<ReturnType<typeof getCompassProfile>> | null,
+  messages: Array<Record<string, unknown>>,
+  log:      { info: (o: object, m: string) => void; warn: (o: object, m: string) => void },
+): Promise<ToolLoopOutcome> {
+  const convo: any[] = [...messages];
+  const toolLog: ToolExecution[] = [];
+  const proposals: AddToTripProposal[] = [];
+
+  for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+    const forceFinal = round === MAX_TOOL_ROUNDS;
+    const completion = await getOpenAI().chat.completions.create({
+      model: "gpt-5-mini",
+      max_completion_tokens: 1200,
+      messages: convo,
+      ...(forceFinal
+        ? {}
+        : { tools: COMPASS_TOOL_DEFINITIONS as any, tool_choice: "auto" as const }),
+    } as any);
+
+    const msg = (completion as any).choices?.[0]?.message;
+    const toolCalls: any[] = msg?.tool_calls ?? [];
+
+    if (!toolCalls.length || forceFinal) {
+      return { finalRaw: String(msg?.content ?? ""), toolLog, proposals };
+    }
+
+    convo.push(msg);
+    for (const tc of toolCalls) {
+      const name = tc?.function?.name ?? "unknown";
+      let args: Record<string, unknown> = {};
+      try { args = JSON.parse(tc?.function?.arguments ?? "{}"); } catch { /* empty args */ }
+
+      const result = await executeCompassTool(sc, userId, profile as any, name, args);
+      toolLog.push({ name, arguments: args, result });
+      const proposal = (result as any)?.proposal;
+      if (name === "add_to_trip" && proposal?.proposalId) proposals.push(proposal as AddToTripProposal);
+
+      log.info({ userId, tool: name }, "compass/ask: tool executed");
+      convo.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result) });
+    }
+  }
+  // Unreachable, but keeps TS happy.
+  return { finalRaw: "", toolLog, proposals };
+}
+
+/** Truncate tool results so the persisted payload stays bounded. */
+function _boundedToolLog(toolLog: ToolExecution[]): Array<Record<string, unknown>> {
+  return toolLog.map((t) => {
+    let resultJson = "";
+    try { resultJson = JSON.stringify(t.result); } catch { resultJson = "\"<unserializable>\""; }
+    const truncated = resultJson.length > 4000;
+    return {
+      name:      t.name,
+      arguments: t.arguments,
+      result:    truncated ? { truncated: true, preview: resultJson.slice(0, 4000) } : t.result,
+    };
+  });
+}
+
 router.post("/compass/ask", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -881,27 +963,10 @@ router.post("/compass/ask", async (req, res) => {
     }
   } catch { /* non-fatal */ }
 
-  // ── Action intent gate ────────────────────────────────────────────────────
-  if (intentResult && intentResult.confidence >= 0.6 && intentResult.intent === "action") {
-    const actionReply =
-      "I can suggest actions but can\u2019t execute them directly. " +
-      "To add a place to your trip use the Trips tab, to save a spot tap the bookmark on any place card, " +
-      "and to connect with someone visit their profile.";
-    try {
-      await appendMessage(sc, conversationId, "user",      prompt);
-      await appendMessage(sc, conversationId, "assistant", actionReply, undefined, COMPASS_ASK_PROMPT_VERSION);
-      await touchConversation(sc, conversationId);
-    } catch { /* non-fatal */ }
-    res.json({
-      conversationId,
-      message:       actionReply,
-      payload:       null,
-      quickActions:  [{ label: "View Trips", actionType: "addTrip" }],
-      promptVersion: COMPASS_ASK_PROMPT_VERSION,
-      intent:        intentResult,
-    });
-    return;
-  }
+  // ── Action intent (Phase 4) ───────────────────────────────────────────────
+  // Actions no longer short-circuit: the tool-calling loop lets the model
+  // PROPOSE actions via add_to_trip (never execute — the user must confirm).
+  // The classified intent is still logged and returned for observability.
 
   // ── Build context block ───────────────────────────────────────────────────
   const effectiveCity = city ?? "";
@@ -953,9 +1018,11 @@ router.post("/compass/ask", async (req, res) => {
   // no coordinates are ever selected, blocked/blocker/muted users are
   // filtered out, and user-generated text is wrapped in <portava:ugc> tags.
   // Derived UI modes are made explicit for prompt weighting.
+  let guardProfile: Awaited<ReturnType<typeof getCompassProfile>> | null = null;
   try {
     const profile    = await getCompassProfile(sc, user.id);
     const effProfile = effectiveCity ? { ...profile, currentCity: effectiveCity } : profile;
+    guardProfile     = effProfile;
     const signals    = defaultSignals(effProfile);
     const ctx        = buildCompassContext(effProfile, signals);
     const intentMode = deriveIntentMode(ctx);
@@ -986,6 +1053,7 @@ router.post("/compass/ask", async (req, res) => {
   // ── Build messages array ──────────────────────────────────────────────────
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: COMPASS_ASK_PROMPT },
+    { role: "system", content: COMPASS_TOOLS_PROMPT_ADDENDUM },
     ...history.map((h) => ({ role: h.role as "user" | "assistant", content: h.content })),
     { role: "user",   content: userMessageWithContext },
   ];
@@ -1012,20 +1080,27 @@ router.post("/compass/ask", async (req, res) => {
     res.setHeader("Connection",    "keep-alive");
     res.flushHeaders();
     try {
-      const streamResp = await (getOpenAI() as any).chat.completions.create({
-        model: "gpt-5-mini", max_completion_tokens: 1200, messages, stream: true,
-      });
-      let full = "";
-      for await (const chunk of streamResp as any) {
-        const delta: string = chunk.choices?.[0]?.delta?.content ?? "";
-        if (delta) { full += delta; res.write(`data: ${JSON.stringify({ delta })}\n\n`); }
-      }
-      const { message, payload, quickActions } = _parseModelResponse(full);
+      // Phase 4: the tool-calling loop runs non-streamed (tool rounds cannot be
+      // usefully streamed); the final answer is emitted as a single delta so
+      // the SSE contract is unchanged for clients.
+      const { finalRaw, toolLog, proposals } = await runToolCallingLoop(
+        sc, user.id, guardProfile, messages as any, req.log,
+      );
+      const { message, payload, quickActions } = _parseModelResponse(finalRaw);
+      res.write(`data: ${JSON.stringify({ delta: message })}\n\n`);
+      const persistedPayload: Record<string, unknown> | undefined =
+        payload || toolLog.length > 0 || proposals.length > 0
+          ? {
+              ...(payload ? { payload } : {}),
+              ...(toolLog.length > 0 ? { toolCalls: _boundedToolLog(toolLog) } : {}),
+              ...(proposals.length > 0 ? { pendingProposals: proposals } : {}),
+            }
+          : undefined;
       try {
-        await appendMessage(sc, conversationId, "assistant", message, payload ? { payload } : undefined, COMPASS_ASK_PROMPT_VERSION);
+        await appendMessage(sc, conversationId, "assistant", message, persistedPayload, COMPASS_ASK_PROMPT_VERSION);
         await touchConversation(sc, conversationId);
       } catch { /* non-fatal */ }
-      res.write(`data: ${JSON.stringify({ done: true, conversationId, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, intent: intentResult })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true, conversationId, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, intent: intentResult })}\n\n`);
       res.end();
     } catch (err) {
       req.log.error({ err, userId: user.id }, "compass/ask stream failed");
@@ -1037,16 +1112,23 @@ router.post("/compass/ask", async (req, res) => {
 
   // ── Non-streaming (default) ───────────────────────────────────────────────
   try {
-    const completion = await getOpenAI().chat.completions.create({
-      model: "gpt-5-mini", max_completion_tokens: 1200, messages,
-    });
-    const raw = completion.choices[0]?.message?.content ?? "";
-    const { message, payload, quickActions } = _parseModelResponse(raw);
+    const { finalRaw, toolLog, proposals } = await runToolCallingLoop(
+      sc, user.id, guardProfile, messages as any, req.log,
+    );
+    const { message, payload, quickActions } = _parseModelResponse(finalRaw);
+    const persistedPayload: Record<string, unknown> | undefined =
+      payload || toolLog.length > 0 || proposals.length > 0
+        ? {
+            ...(payload ? { payload } : {}),
+            ...(toolLog.length > 0 ? { toolCalls: _boundedToolLog(toolLog) } : {}),
+            ...(proposals.length > 0 ? { pendingProposals: proposals } : {}),
+          }
+        : undefined;
     try {
-      await appendMessage(sc, conversationId, "assistant", message, payload ? { payload } : undefined, COMPASS_ASK_PROMPT_VERSION);
+      await appendMessage(sc, conversationId, "assistant", message, persistedPayload, COMPASS_ASK_PROMPT_VERSION);
       await touchConversation(sc, conversationId);
     } catch { /* non-fatal */ }
-    res.json({ conversationId, message, payload: payload ?? null, quickActions, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
+    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
   } catch (err) {
     req.log.error({ err, userId: user.id }, "compass/ask: LLM call failed");
     res.json({
@@ -1059,6 +1141,166 @@ router.post("/compass/ask", async (req, res) => {
       fallbackReason: "ai_error",
     });
   }
+});
+
+// ── Phase 4: add_to_trip proposal confirmation flow ──────────────────────────
+// The model can only PROPOSE trip additions (add_to_trip tool). The proposal
+// lives in the assistant message payload. Execution happens exclusively here,
+// after an explicit user confirmation, with full server-side re-authorization.
+
+const proposalActionSchema = z.object({
+  conversationId: z.string().uuid(),
+});
+
+interface FoundProposal {
+  proposal: AddToTripProposal;
+}
+
+async function findPendingProposal(
+  sc: SupabaseClient,
+  userId: string,
+  conversationId: string,
+  proposalId: string,
+): Promise<FoundProposal | { error: "not_found" | "already_resolved" }> {
+  // Conversation must belong to the caller.
+  const { data: conv } = await sc
+    .from("compass_conversations")
+    .select("id")
+    .eq("id", conversationId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (!conv) return { error: "not_found" };
+
+  const { data: msgs } = await sc
+    .from("compass_conversation_messages")
+    .select("payload")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  let proposal: AddToTripProposal | null = null;
+  for (const m of (msgs ?? []) as any[]) {
+    const p = m.payload as Record<string, unknown> | null;
+    if (!p) continue;
+    const resolved = Array.isArray(p.resolvedProposals) ? (p.resolvedProposals as string[]) : [];
+    if (resolved.includes(proposalId)) return { error: "already_resolved" };
+    if (!proposal && Array.isArray(p.pendingProposals)) {
+      const hit = (p.pendingProposals as any[]).find((pr) => pr?.proposalId === proposalId);
+      if (hit) proposal = hit as AddToTripProposal;
+    }
+  }
+  if (!proposal) return { error: "not_found" };
+  return { proposal };
+}
+
+router.post("/compass/proposals/:proposalId/confirm", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const parsed = proposalActionSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", "conversationId is required"); return; }
+  const { conversationId } = parsed.data;
+  const { proposalId } = req.params;
+
+  const found = await findPendingProposal(sc, user.id, conversationId, proposalId);
+  if ("error" in found) {
+    if (found.error === "already_resolved") { sendError(res, "conflict", "This proposal was already confirmed or declined"); return; }
+    sendError(res, "not_found", "Proposal not found");
+    return;
+  }
+  const { proposal } = found;
+
+  // Re-authorize at execution time — membership/permissions may have changed.
+  const member = await isAcceptedTripMember(sc, proposal.tripId, user.id);
+  if (!member) { sendError(res, "not_member", "You must be an accepted trip member to add items"); return; }
+  const permitted = await canEditPlan(sc, proposal.tripId, user.id);
+  if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; }
+
+  // Duplicate guard for catalog places (same rule as the plan route).
+  if (proposal.placeId) {
+    const { data: existing } = await sc
+      .from("trip_plan_items")
+      .select("id")
+      .eq("trip_id", proposal.tripId)
+      .eq("source_type", "place")
+      .eq("source_id", proposal.placeId)
+      .is("removed_at", null)
+      .maybeSingle();
+    if (existing) { sendError(res, "conflict", "This place is already in your trip plan"); return; }
+  }
+
+  const { data: item, error } = await sc
+    .from("trip_plan_items")
+    .insert({
+      trip_id:       proposal.tripId,
+      creator_id:    user.id,
+      title:         proposal.title,
+      category:      proposal.category || "activity",
+      status:        "tentative",
+      source_type:   proposal.placeId ? "place" : "compass",
+      source_id:     proposal.placeId ?? proposal.proposalId,
+      day_date:      proposal.dayDate ?? null,
+      sort_order:    0,
+      visibility:    "members",
+    })
+    .select("*")
+    .single();
+  if (error) {
+    req.log.error({ err: error }, "compass/proposals confirm: insert failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  // Record resolution so the proposal cannot be executed twice.
+  try {
+    await appendMessage(
+      sc, conversationId, "assistant",
+      `Added "${proposal.title}" to your trip.`,
+      { resolvedProposals: [proposalId], proposalOutcome: { proposalId, status: "confirmed", itemId: (item as any)?.id ?? null } },
+      COMPASS_ASK_PROMPT_VERSION,
+    );
+    await touchConversation(sc, conversationId);
+  } catch { /* non-fatal */ }
+
+  res.status(201).json({ status: "confirmed", proposalId, item });
+});
+
+router.post("/compass/proposals/:proposalId/decline", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const parsed = proposalActionSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", "conversationId is required"); return; }
+  const { conversationId } = parsed.data;
+  const { proposalId } = req.params;
+
+  const found = await findPendingProposal(sc, user.id, conversationId, proposalId);
+  if ("error" in found) {
+    if (found.error === "already_resolved") { sendError(res, "conflict", "This proposal was already confirmed or declined"); return; }
+    sendError(res, "not_found", "Proposal not found");
+    return;
+  }
+
+  try {
+    await appendMessage(
+      sc, conversationId, "assistant",
+      "Okay — I won't add that to your trip.",
+      { resolvedProposals: [proposalId], proposalOutcome: { proposalId, status: "declined" } },
+      COMPASS_ASK_PROMPT_VERSION,
+    );
+    await touchConversation(sc, conversationId);
+  } catch { /* non-fatal */ }
+
+  res.json({ status: "declined", proposalId });
 });
 
 // ── POST /api/compass/feedback ────────────────────────────────────────────────
