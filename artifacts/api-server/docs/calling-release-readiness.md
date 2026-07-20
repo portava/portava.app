@@ -36,8 +36,30 @@ build.
 | `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` in production env | PASS | presence-only check via secrets manager (values never read) |
 | LiveKit credentials valid | PASS | read-only `listRooms()` probe succeeded (0 open rooms) |
 | Expo push (server side) | PASS | Expo Push HTTP API needs no server credential; `EXPO_TOKEN` present for EAS; push send path parses per-token errors (`lib/push.ts`); `call.incoming` push carries `priority:"high"` so FCM wakes backgrounded Android devices and APNs delivers at priority 10 — verified by `pushDelivery.test.ts` §14 |
-| APNs/FCM push credentials on the EAS project | MANUAL | managed in EAS credentials store; not inspectable from this workspace — verify once via `eas credentials` before store submission |
+| APNs/FCM push credentials on the EAS project | MANUAL | managed in EAS credentials store; `eas credentials` requires interactive TTY + EAS project owner login and cannot be driven from this workspace — see verification steps below |
 | Client never receives LiveKit secrets | PASS | no `LIVEKIT*`/`EXPO_PUBLIC_LIVEKIT*` reference in the mobile tree; client gets only `livekitUrl` + short-TTL token from the grant response |
+
+### §2 APNs/FCM manual verification steps
+
+The `eas credentials` command requires an interactive terminal session authenticated as
+the EAS project owner (`travel-buddy1`, project id `b4147876-b8f9-4ea2-94f4-dd9f4e9cb65b`).
+It cannot be driven from this workspace. A human with EAS access must run:
+
+```bash
+# from artifacts/travel-buddy
+eas credentials -p ios
+# Navigate: production build profile → iOS Distribution Certificate + Push Notification Key.
+# Both must show "Configured". If missing, run: eas credentials --platform ios
+# and follow the prompts to generate/upload an APNs key (Auth Key recommended over cert).
+
+eas credentials -p android
+# Navigate: production build profile → FCM V1 Service Account Key (or legacy FCM API key).
+# Must show "Configured". If missing, run: eas credentials --platform android
+# and upload the Google Services JSON or FCM V1 service-account key.
+```
+
+Once both show "Configured", update the APNs/FCM row status above from **MANUAL** → **PASS**
+and record the date and EAS build number here.
 
 ## 3. Webhook endpoint & registration
 
