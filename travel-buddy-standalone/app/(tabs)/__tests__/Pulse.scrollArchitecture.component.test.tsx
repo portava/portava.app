@@ -171,8 +171,6 @@ jest.mock('../../../src/components/PulseCreate',             () => ({ PulseFilte
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/primitives',              () => ({ TravelEmptyState:        () => null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/PostCard',                () => ({ PostCard:                () => null }));
-// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/LocationPermissionPrompt',() => ({ LocationPermissionPrompt: () => null }));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ManualCityPicker',        () => ({ ManualCityPicker:        () => null }));

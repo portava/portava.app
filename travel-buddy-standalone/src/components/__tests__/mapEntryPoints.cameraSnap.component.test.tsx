@@ -165,8 +165,7 @@ jest.mock('../../components/HighlightViewer', () => ({
 jest.mock('../../lib/countryCentroids', () => ({ COUNTRY_CENTROIDS: {} }));
 // NOTE: intentionally exhaustive — CITY_CENTROIDS is a plain static record with
 // no re-exported logic; requireActual would import the full city list and make
-// the test sensitive to which cities are present.  A trimmed fixture containing
-// only 'Cebu City' (the city used in makeEvent) is deliberately minimal.
+// the test sensitive to which cities are present.  A trimmed fixture is used.
 jest.mock('../../lib/cityCentroids', () => ({
   getCityCentroid: (city: string) => ({ 'Cebu City': [10.3157, 123.8854] })[city],
   CITY_CENTROIDS: { 'Cebu City': [10.3157, 123.8854] },
@@ -253,7 +252,6 @@ jest.mock('../../components/discovery/DiscoveryMapView', () => ({
 
 import { router, useLocalSearchParams } from 'expo-router';
 import { useLocationContext } from '../../context/LocationContext.tsx';
-import { EventCard } from '../EventCard.tsx';
 import { TripMapPreview } from '../TripPage.tsx';
 import { MapTab } from '../MapTab';
 import { CircleMapSection } from '../circle/CircleMapSection';
@@ -265,21 +263,6 @@ import FullScreenMapScreen from '../../../app/map/index';
 const mockPush                 = router.push as jest.Mock;
 const mockUseLocalSearchParams = useLocalSearchParams as jest.Mock;
 const mockUseLocationContext   = useLocationContext as jest.Mock;
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-function makeEvent(id = 'evt-1') {
-  return {
-    id,
-    title: 'Rooftop Jazz Night',
-    category: 'Nightlife',
-    startAt: new Date('2026-09-01T20:00:00Z').toISOString(),
-    city: 'Cebu City',
-    attendeeCount: 12,
-    capacity: null,
-    host: null,
-  };
-}
 
 // ── Setup ──────────────────────────────────────────────────────────────────────
 
