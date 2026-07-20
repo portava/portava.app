@@ -92,9 +92,14 @@ router.post("/users/:userId/friend-request", async (req, res) => {
     }
     // Re-activate declined/cancelled
     const now = new Date().toISOString();
-    await sc.from("friend_requests")
+    const { error: reactivateErr } = await sc.from("friend_requests")
       .update({ status: "pending", responded_at: null, updated_at: now })
       .eq("id", existing.id);
+    if (reactivateErr) {
+      req.log.error({ err: reactivateErr }, "friend request reactivation update failed");
+      sendError(res, "db_error", reactivateErr.message);
+      return;
+    }
     res.status(200).json({ requestId: existing.id, status: "outgoing_pending", reactivated: true });
     return;
   }
@@ -110,9 +115,14 @@ router.post("/users/:userId/friend-request", async (req, res) => {
 
   if (incoming) {
     const now = new Date().toISOString();
-    await sc.from("friend_requests")
+    const { error: autoAcceptErr } = await sc.from("friend_requests")
       .update({ status: "accepted", responded_at: now, updated_at: now })
       .eq("id", incoming.id);
+    if (autoAcceptErr) {
+      req.log.error({ err: autoAcceptErr }, "friend request auto-accept update failed");
+      sendError(res, "db_error", autoAcceptErr.message);
+      return;
+    }
     const [ua, ub] = normalizedFriendshipPair(user.id, recipientId);
     await sc.from("user_friendships")
       .upsert({ user_a: ua, user_b: ub, accepted_request_id: incoming.id, created_at: now });
@@ -171,9 +181,14 @@ router.post("/friend-requests/:requestId/accept", async (req, res) => {
   }
 
   const now = new Date().toISOString();
-  await sc.from("friend_requests")
+  const { error: acceptErr } = await sc.from("friend_requests")
     .update({ status: "accepted", responded_at: now, updated_at: now })
     .eq("id", requestId);
+  if (acceptErr) {
+    req.log.error({ err: acceptErr }, "friend request accept update failed");
+    sendError(res, "db_error", acceptErr.message);
+    return;
+  }
 
   const [ua, ub] = normalizedFriendshipPair(fr.requester_id, fr.recipient_id);
   await sc.from("user_friendships")
@@ -218,9 +233,14 @@ router.post("/friend-requests/:requestId/decline", async (req, res) => {
 
   const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
-  await sc.from("friend_requests")
+  const { error: declineErr } = await sc.from("friend_requests")
     .update({ status: "declined", responded_at: now, updated_at: now })
     .eq("id", requestId);
+  if (declineErr) {
+    req.log.error({ err: declineErr }, "friend request decline update failed");
+    sendError(res, "db_error", declineErr.message);
+    return;
+  }
 
   // Anti-retaliation cooldown: requester cannot re-send for 24 hours after a decline
   const cooldownExpiry = new Date(nowMs + 24 * 60 * 60 * 1000).toISOString();
@@ -269,9 +289,14 @@ router.post("/friend-requests/:requestId/cancel", async (req, res) => {
   }
 
   const now = new Date().toISOString();
-  await sc.from("friend_requests")
+  const { error: cancelErr } = await sc.from("friend_requests")
     .update({ status: "cancelled", updated_at: now })
     .eq("id", requestId);
+  if (cancelErr) {
+    req.log.error({ err: cancelErr }, "friend request cancel update failed");
+    sendError(res, "db_error", cancelErr.message);
+    return;
+  }
 
   res.status(200).json({ status: "cancelled", requestId });
 });

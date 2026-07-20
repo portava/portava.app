@@ -239,7 +239,12 @@ router.post("/me/requests/friend_request/:id/accept", async (req, res) => {
   }
 
   const now = new Date().toISOString();
-  await sc.from("friend_requests").update({ status: "accepted", responded_at: now, updated_at: now }).eq("id", id);
+  const { error: acceptErr } = await sc.from("friend_requests").update({ status: "accepted", responded_at: now, updated_at: now }).eq("id", id);
+  if (acceptErr) {
+    req.log.error({ err: acceptErr }, "friend request accept update failed");
+    sendError(res, "db_error", acceptErr.message);
+    return;
+  }
   const [ua, ub] = normalizedFriendshipPair(fr.requester_id, fr.recipient_id);
   await sc.from("user_friendships").upsert({ user_a: ua, user_b: ub, accepted_request_id: id, created_at: now });
 
@@ -281,7 +286,12 @@ router.post("/me/requests/friend_request/:id/decline", async (req, res) => {
 
   const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
-  await sc.from("friend_requests").update({ status: "declined", responded_at: now, updated_at: now }).eq("id", id);
+  const { error: declineErr } = await sc.from("friend_requests").update({ status: "declined", responded_at: now, updated_at: now }).eq("id", id);
+  if (declineErr) {
+    req.log.error({ err: declineErr }, "friend request decline update failed");
+    sendError(res, "db_error", declineErr.message);
+    return;
+  }
 
   // Anti-retaliation cooldown: requester cannot re-send for 24 hours after a decline
   const cooldownExpiry = new Date(nowMs + 24 * 60 * 60 * 1000).toISOString();
@@ -329,7 +339,12 @@ router.post("/me/requests/friend_request/:id/cancel", async (req, res) => {
   }
 
   const now = new Date().toISOString();
-  await sc.from("friend_requests").update({ status: "cancelled", responded_at: now, updated_at: now }).eq("id", id);
+  const { error: cancelErr } = await sc.from("friend_requests").update({ status: "cancelled", responded_at: now, updated_at: now }).eq("id", id);
+  if (cancelErr) {
+    req.log.error({ err: cancelErr }, "friend request cancel update failed");
+    sendError(res, "db_error", cancelErr.message);
+    return;
+  }
   res.status(200).json({ status: "cancelled", requestId: id });
 });
 
