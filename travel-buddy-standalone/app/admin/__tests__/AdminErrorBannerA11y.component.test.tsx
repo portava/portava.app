@@ -65,7 +65,7 @@ describe('admin error banners are announced to screen readers', () => {
 
   it('gaming flags: load-failure banner has alert role + assertive live region', async () => {
     mockFetchFlags.mockRejectedValue(new Error('boom'));
-    render(<GamingFlagsScreen />);
+    await render(<GamingFlagsScreen />);
     await waitFor(() => expect(screen.getByTestId('gaming-flags-error')).toBeTruthy());
     expectAlertBanner('gaming-flags-error');
     expect(screen.getByText('boom')).toBeTruthy();
@@ -73,7 +73,7 @@ describe('admin error banners are announced to screen readers', () => {
 
   it('trust reviews: load-failure banner has alert role + assertive live region', async () => {
     mockFetchReviews.mockRejectedValue(new Error('reviews down'));
-    render(<TrustReviewsScreen />);
+    await render(<TrustReviewsScreen />);
     await waitFor(() => expect(screen.getByTestId('trust-reviews-error')).toBeTruthy());
     expectAlertBanner('trust-reviews-error');
     expect(screen.getByText('reviews down')).toBeTruthy();
@@ -81,7 +81,7 @@ describe('admin error banners are announced to screen readers', () => {
 
   it('trust settings: load-failure banner has alert role + assertive live region', async () => {
     mockFetchSettings.mockRejectedValue(new Error('settings down'));
-    render(<TrustSettingsScreen />);
+    await render(<TrustSettingsScreen />);
     await waitFor(() => expect(screen.getByTestId('trust-settings-error')).toBeTruthy());
     expectAlertBanner('trust-settings-error');
     expect(screen.getByText('settings down')).toBeTruthy();
