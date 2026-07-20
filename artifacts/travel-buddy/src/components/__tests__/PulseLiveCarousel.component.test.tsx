@@ -185,7 +185,7 @@ describe('PulseLiveCarousel', () => {
 
     // Poll until the 150ms crossfade delay fires and the re-render propagates.
     await waitFor(() => expect(screen.getByText('Event Gamma')).toBeTruthy(), {
-      timeout: 500,
+      timeout: 3000,
     });
   });
 

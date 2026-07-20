@@ -471,6 +471,50 @@ describe("trips-expansion routes", () => {
       assert.equal(r.body.endDate,   null);
     });
 
+    it("returns buddies trip (stripped shape) to a mutual follower", async () => {
+      const { client } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Buddies Trip", destination_city: "Lisbon",
+            status: "upcoming", visibility: "buddies",
+            show_exact_dates: true, precise_location_visible: false,
+            trip_notes: "hidden", created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_members: { rows: [] },
+        blocks: { rows: [] },
+        user_follows: { rows: [
+          { follower_id: OTHER_ID, following_id: OWNER_ID },
+          { follower_id: OWNER_ID, following_id: OTHER_ID },
+        ]},
+      });
+      _setTestClient(client, true);
+
+      const r = await req(port, "GET", `/trips/${TRIP_ID}`, { token: "other-token" });
+      assert.equal(r.status, 200);
+      assert.equal(r.body.id, TRIP_ID);
+      assert.equal(r.body.title, "Buddies Trip");
+      assert.equal(r.body.destinationCity, "Lisbon");
+      // Stripped public shape — no private fields
+      assert.equal(r.body.tripNotes, undefined);
+    });
+
+    it("returns 404 for buddies trip when the follow is only one-way", async () => {
+      const { client } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Buddies Trip", destination_city: "Lisbon",
+            status: "upcoming", visibility: "buddies", created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_members: { rows: [] },
+        blocks: { rows: [] },
+        user_follows: { rows: [
+          { follower_id: OTHER_ID, following_id: OWNER_ID },
+        ]},
+      });
+      _setTestClient(client, true);
+
+      const r = await req(port, "GET", `/trips/${TRIP_ID}`, { token: "other-token" });
+      assert.equal(r.status, 404);
+    });
+
     it("returns 404 for private trip viewed by non-member", async () => {
       const { client } = makeFakeClient({
         trips: { rows: [
