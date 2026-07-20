@@ -1,1 +1,214 @@
 Scanned 830 source files → 294 tables, 10 RPCs, 2 buckets referenced.
+
+══ RESULTS ══
+
+— Missing TABLES (code references, prod lacks): 13
+  ✗ circle_invites  (used in src/routes/friends.ts)  (never declared in migrations — dashboard drift?)
+  ✗ circle_members  (used in src/routes/events.ts)  (never declared in migrations — dashboard drift?)
+  ✗ compass_analytics  (used in src/routes/admin.ts)  (never declared in migrations — dashboard drift?)
+  ✗ follows  (used in src/routes/discovery.ts)  (never declared in migrations — dashboard drift?)
+  ✗ friend_connections  (used in src/routes/passportStamps.ts)  (never declared in migrations — dashboard drift?)
+  ✗ places  (used in src/routes/plan.ts)  (never declared in migrations — dashboard drift?)
+  ✗ post_impressions  (used in src/routes/profile.ts)  (never declared in migrations — dashboard drift?)
+  ✗ profile_views  (used in src/routes/passport.ts)  (never declared in migrations — dashboard drift?)
+  ✗ rank_events  (used in src/lib/rankLog.ts)  ⚠ declared in 0153_add_rank_events.sql — migration skipped?
+  ✗ search_history  (used in src/routes/searchHistory.ts)  (never declared in migrations — dashboard drift?)
+  ✗ stamps  (used in src/routes/passport.ts)  (never declared in migrations — dashboard drift?)
+  ✗ user_recent_places  (used in src/routes/places.ts)  (never declared in migrations — dashboard drift?)
+  ✗ user_trust_scores  (used in src/routes/pulse.ts)  (never declared in migrations — dashboard drift?)
+
+— Tables with missing COLUMNS: 51
+  ✗ buddy_booking_events:
+      thread_id [write] (src/routes/messaging.ts)
+      excerpt [write] (src/routes/messaging.ts)
+      visibility [write] (src/routes/messaging.ts)
+      offense_count [write] (src/routes/messaging.ts)
+      cancellation_reason [write] (src/routes/rentABuddy.ts)
+      proposed_time [write] (src/routes/rentABuddy.ts)
+      proposed_duration_h [write] (src/routes/rentABuddy.ts)
+      proposed_location [write] (src/routes/rentABuddy.ts)
+      message [write] (src/routes/rentABuddy.ts)
+      dispute_id [write] (src/routes/rentABuddy.ts)
+      grace_expires_at [write] (src/routes/rentABuddy.ts)
+      proposed_value [write] (src/routes/rentABuddy.ts)
+      change_request_id [write] (src/routes/rentABuddy.ts)
+  ✗ circle_memberships:
+      member_id [read/filter/write] (src/lib/chatSync.ts)
+      owner_id [filter/read/write] (src/lib/chatSync.ts)
+  ✗ compass_abuse_flags:
+      created_at [filter/read] (src/routes/adminCompass.ts)
+  ✗ compass_active_user_scores:
+      updated_at [read] (src/routes/adminCompass.ts)
+      badge_eligibility [read] (src/routes/compass.ts)
+  ✗ compass_feedback:
+      details [write] (src/routes/compass.ts)
+  ✗ compass_feedback_events:
+      category [write] (src/compass/CompassFeedbackEngine.ts)
+  ✗ compass_user_preferences:
+      interests [read] (src/routes/discovery.ts)
+  ✗ delayed_post_location_events:
+      worker [write] (src/lib/delayedPostPublisher.ts)
+  ✗ discovery_places:
+      country [read] (src/routes/trips-expansion.ts)
+      cover_url [read] (src/routes/trips-expansion.ts)
+  ✗ event_attendee_states:
+      id [filter] (src/services/appeals/resolveAppeal.ts)
+  ✗ events:
+      featured [read/filter] (src/routes/admin.ts)
+      cover_image_url [read] (src/routes/discoverySearch.ts)
+      status [read/filter] (src/routes/discoverySearch.ts)
+      name [read/filter] (src/routes/hashtags.ts)
+      location [read] (src/routes/hashtags.ts)
+      start_at [read] (src/routes/hashtags.ts)
+      end_at [read] (src/routes/hashtags.ts)
+      organizer_id [read] (src/routes/hashtags.ts)
+  ✗ feature_flags:
+      key [filter] (src/lib/safeReturnScheduler.ts)
+  ✗ friend_requests:
+      responded_at [write] (src/routes/friends.ts)
+      updated_at [write] (src/routes/friends.ts)
+  ✗ geo_zones:
+      note [write] (src/routes/airport.ts)
+      source [write] (src/routes/airport.ts)
+  ✗ hashtags:
+      normalized_name [read] (src/routes/hashtags.ts)  ⚠ declared in 0044_tags_hashtags.sql
+  ✗ hidden_gems:
+      image_url [read] (src/routes/discoverySearch.ts)
+      location_city [read] (src/routes/hiddenGems.ts)
+      location_country [read] (src/routes/hiddenGems.ts)
+      lat [read] (src/routes/pulse.ts)
+      lng [read] (src/routes/pulse.ts)
+  ✗ highlights:
+      media_thumbnail_url [read/write] (src/routes/collections.ts)
+      user_id [read] (src/routes/engagement.ts)  ⚠ declared in 0026_highlights.sql
+      filter_id [read/write] (src/routes/highlights.ts)
+      filter_intensity [read/write] (src/routes/highlights.ts)
+      media_duration_seconds [read/write] (src/routes/highlights.ts)
+      updated_at [write] (src/services/appeals/resolveAppeal.ts)
+  ✗ layover_events:
+      token [write] (src/services/airport/LayoverNotificationService.ts)
+  ✗ location_trust_events:
+      note [write] (src/routes/admin.ts)
+  ✗ meetups:
+      proposed_time [read/filter] (src/routes/dailyBrief.ts)
+      attendee_count [read] (src/routes/dailyBrief.ts)
+  ✗ memories:
+      user_id [read] (src/routes/engagement.ts)
+  ✗ message_requests:
+      updated_at [write] (src/routes/blocks.ts)
+  ✗ message_thread_members:
+      id [read] (src/routes/messaging.ts)
+  ✗ message_threads:
+      type [write] (src/routes/events.ts)
+      name [write] (src/routes/events.ts)
+      created_by [write] (src/routes/events.ts)
+      metadata [write] (src/routes/events.ts)
+  ✗ messages:
+      metadata [write] (src/routes/events.ts)
+      pinned [write] (src/routes/events.ts)
+      content [write] (src/routes/hiddenGems.ts)
+      status [filter] (src/routes/messaging.ts)
+      media_url [read/write] (src/routes/messaging.ts)  ⚠ declared in 0152_messages_media.sql
+      media_type [read/write] (src/routes/messaging.ts)  ⚠ declared in 0152_messages_media.sql
+      media_thumbnail_url [read/write] (src/routes/messaging.ts)  ⚠ declared in 0152_messages_media.sql
+      media_duration_seconds [read/write] (src/routes/messaging.ts)  ⚠ declared in 0152_messages_media.sql
+  ✗ notification_devices:
+      expo_push_token [read] (src/routes/trips.ts)
+  ✗ notifications:
+      notification_type [write] (src/routes/appeals.ts)
+      content [write] (src/routes/events.ts)
+  ✗ passport_postcards:
+      pinned_at [filter/write/read] (src/routes/passport.ts)
+      note [read] (src/routes/passport.ts)
+  ✗ passport_stamps:
+      unlocked_at [read/filter] (src/compass/CompassFallbackFeedBuilder.ts)
+      earned_at [read/filter/write] (src/services/passport/PassportMapService.ts)  ⚠ declared in 0042_passport_stamps.sql
+  ✗ plan_attendance_events:
+      metadata [read/write] (src/routes/admin.ts)  ⚠ declared in 0039_plan_geofence_full.sql
+  ✗ posts:
+      user_id [read/filter] (src/compass/CompassAbuseDefenseEngine.ts)
+      post_type [filter] (src/compass/CompassFallbackFeedBuilder.ts)
+      is_verified [filter] (src/compass/CompassFallbackFeedBuilder.ts)
+      event_starts_at [filter] (src/compass/CompassFallbackFeedBuilder.ts)
+      title [read] (src/routes/collections.ts)
+      caption [read] (src/routes/collections.ts)
+      body [write] (src/routes/hiddenGems.ts)
+  ✗ profiles:
+      referred_by [read/filter] (src/compass/CompassAbuseDefenseEngine.ts)
+      safety_flags [read] (src/compass/CompassActiveUserRewardEngine.ts)
+      email [filter] (src/routes/admin.ts)
+      city_key [read/filter] (src/routes/adminGeocode.ts)
+      resolved_at [read] (src/routes/adminGeocode.ts)
+      is_buddy [filter] (src/routes/discoverySearch.ts)
+      is_verified [read] (src/routes/posts.ts)
+  ✗ rent_buddy_applications:
+      admin_status [write] (src/routes/rentABuddy.ts)
+  ✗ rent_buddy_availability:
+      available_now [read] (src/routes/passport.ts)
+  ✗ rent_buddy_bookings:
+      rating [read/filter] (src/compass/CompassAbuseDefenseEngine.ts)
+      stay_connected_traveler [read] (src/lib/calls/callGatewayAdapter.ts)
+      stay_connected_buddy [read] (src/lib/calls/callGatewayAdapter.ts)
+      service_id [read] (src/routes/rentABuddy.ts)
+  ✗ rent_buddy_profiles:
+      is_verified [read] (src/compass/CompassItemHydrator.ts)
+      is_active [filter] (src/routes/adminCompass.ts)
+      trust_score [read] (src/routes/pulse.ts)
+      moderation_status [filter] (src/routes/pulse.ts)
+  ✗ rent_buddy_safety_events:
+      response [write] (src/routes/rentABuddy.ts)
+  ✗ report_evidence:
+      context_id [write] (src/routes/reports.ts)
+      auto_attached [write] (src/routes/reports.ts)
+  ✗ reports:
+      notes [write] (src/routes/reviews.ts)
+  ✗ reviews:
+      reviewee_id [read] (src/compass/CompassAbuseDefenseEngine.ts)
+  ✗ stamp_progress:
+      name [read] (src/routes/stamps.ts)
+      icon_url [read] (src/routes/stamps.ts)
+  ✗ tags:
+      tagged_at [filter] (src/services/tagging/TaggingService.ts)  ⚠ declared in 0044_tags_hashtags.sql
+  ✗ trip_members:
+      id [read] (src/routes/engagement.ts)
+      updated_at [write] (src/services/appeals/resolveAppeal.ts)
+  ✗ trip_plan_items:
+      structured_location [read] (src/routes/routePlan.ts)
+      item_type [filter] (src/routes/routePlan.ts)
+      planned_start_date [filter] (src/routes/routePlan.ts)
+  ✗ trips:
+      user_id [read] (src/routes/admin.ts)
+      destination [read] (src/routes/collections.ts)
+      cover_image_url [read] (src/routes/discoverySearch.ts)
+      name [read] (src/routes/hashtags.ts)
+      member_count [read] (src/routes/pulse.ts)
+  ✗ trust_events:
+      updated_at [write] (src/services/appeals/resolveAppeal.ts)
+  ✗ user_deletion_requests:
+      id [read/filter] (src/routes/admin.ts)
+      executed_by [write] (src/routes/admin.ts)
+  ✗ user_follows:
+      id [read] (src/routes/profile.ts)
+  ✗ user_friendships:
+      accepted_request_id [write] (src/routes/friends.ts)
+  ✗ user_location_state:
+      resolved_city [read/filter] (src/routes/adminCompass.ts)
+      resolved_country [read] (src/routes/adminCompass.ts)
+  ✗ user_restrictions:
+      report_id [write] (src/routes/reports.ts)
+
+— Missing storage BUCKETS: 0
+
+— RPC functions referenced in code (verify these exist under Supabase → Database → Functions; not auto-called for safety):
+  ? reconcile_invite_link_slots  (src/lib/inviteSlotReconciler.ts)
+  ? upsert_city_stamp  (src/lib/stampHelper.ts)
+  ? append_stamp_cleanup_error_paths  (src/lib/stamps/generationWorker.ts)
+  ? toggle_feature_flag_with_audit  (src/routes/admin.ts)
+  ? cleanup_stale_invite_link_attempts  (src/routes/admin.ts)
+  ? claim_invite_link_slot_for_user  (src/routes/trips-expansion.ts)
+  ? release_invite_link_slot  (src/routes/trips-expansion.ts)
+  ? decrement_discovery_place_saved_count  (src/routes/wishlist.ts)
+  ? increment_counter  (src/services/hiddenGems/HiddenGemService.ts)
+  ? upsert_hashtag_usage_and_increment  (src/services/tagging/TaggingService.ts)
+
+Note: [write]-only columns come from insert/update object keys and can include false positives (nested JSON keys). [read]/[filter] findings are high-confidence.
