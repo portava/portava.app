@@ -51,8 +51,10 @@ import {
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
+// NOTE: intentionally does NOT spread requireActual — expo-router's internals
+// register global navigation state that leaks across test files when the full
+// suite runs.  Only the hooks and router stub used by StampStudioIndex are needed.
 jest.mock('expo-router', () => ({
-  ...jest.requireActual('expo-router'),
   useFocusEffect: jest.fn(),
   router: { push: jest.fn(), back: jest.fn(), replace: jest.fn() },
 }));
