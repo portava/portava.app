@@ -150,6 +150,9 @@ export default function RentABuddyActive() {
   const [circleShare, setCircleShare] = useState(false);
   const [circleShareLoading, setCircleShareLoading] = useState(false);
   const [shareId, setShareId] = useState<string | null>(null);
+  const [shareRecipientName, setShareRecipientName] = useState<string | null>(null);
+  const [shareExpiresAt, setShareExpiresAt] = useState<string | null>(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const [safeReturnSessionId, setSafeReturnSessionId] = useState<string | null>(null);
   const [contactPickerVisible, setContactPickerVisible] = useState(false);
   const [contactPickerLoading, setContactPickerLoading] = useState(false);
@@ -173,6 +176,13 @@ export default function RentABuddyActive() {
     timerRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, []);
+
+  // Minute tick so the share-expiry countdown updates live while a share is active.
+  useEffect(() => {
+    if (!shareExpiresAt) return;
+    const id = setInterval(() => setNowTick(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, [shareExpiresAt]);
 
   // Fetch the active safe-return session so we can wire live-share to it.
   useEffect(() => {
@@ -210,6 +220,8 @@ export default function RentABuddyActive() {
       if (!shareId || !safeReturnSessionId) {
         setCircleShare(false);
         setShareId(null);
+        setShareRecipientName(null);
+        setShareExpiresAt(null);
         return;
       }
       setCircleShareLoading(true);
@@ -218,6 +230,8 @@ export default function RentABuddyActive() {
       if (res.ok) {
         setShareId(null);
         setCircleShare(false);
+        setShareRecipientName(null);
+        setShareExpiresAt(null);
       } else {
         Alert.alert('Error', res.error ?? 'Could not stop live share. Please try again.');
         // Revert: keep toggle ON since the share is still active.
@@ -233,6 +247,9 @@ export default function RentABuddyActive() {
     setCircleShareLoading(false);
     if (res.ok && res.share) {
       setShareId(res.share.id);
+      setShareRecipientName(contact.contactName ?? 'Trusted contact');
+      setShareExpiresAt(res.share.expiresAt ?? null);
+      setNowTick(Date.now());
       setCircleShare(true);
     } else {
       // Show error and leave toggle OFF.
@@ -242,6 +259,16 @@ export default function RentABuddyActive() {
       );
     }
   }, [safeReturnSessionId]);
+
+  const shareBadgeText = (() => {
+    if (!circleShare || !shareId) return null;
+    const name = shareRecipientName ?? 'Trusted contact';
+    if (!shareExpiresAt) return `Shared with ${name}`;
+    const msLeft = new Date(shareExpiresAt).getTime() - nowTick;
+    if (Number.isNaN(msLeft)) return `Shared with ${name}`;
+    const minLeft = Math.max(0, Math.ceil(msLeft / 60_000));
+    return `Shared with ${name} · expires in ${minLeft} min`;
+  })();
 
   const totalDurationS = ((booking?.durationH ?? 1) + addedH) * 3600;
   const remaining = Math.max(0, totalDurationS - elapsed);
@@ -370,9 +397,7 @@ export default function RentABuddyActive() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.safetyToggleLabel}>Share location with Trusted Circle</Text>
                 <Text style={styles.safetyToggleSub}>
-                  {circleShare && shareId
-                    ? 'Live share active — contact can see your location'
-                    : 'Share real-time location with a trusted contact during this session'}
+                  {shareBadgeText ?? 'Share real-time location with a trusted contact during this session'}
                 </Text>
               </View>
               {circleShareLoading ? (
