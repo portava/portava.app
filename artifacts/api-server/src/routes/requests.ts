@@ -409,7 +409,12 @@ router.post("/me/requests/circle_invite/:id/accept", async (req, res) => {
   }
 
   const now = new Date().toISOString();
-  await sc.from("circle_invites").update({ status: "accepted", responded_at: now }).eq("id", id);
+  const { error: ciAcceptErr } = await sc.from("circle_invites").update({ status: "accepted", responded_at: now }).eq("id", id);
+  if (ciAcceptErr) {
+    req.log.error({ err: ciAcceptErr }, "circle invite accept update failed");
+    sendError(res, "db_error", ciAcceptErr.message);
+    return;
+  }
   await sc.from("circle_memberships").upsert({ user_id: inv.owner_id, other_id: user.id, created_at: now });
 
   res.status(200).json({ status: "accepted", ownerId: inv.owner_id });
@@ -434,7 +439,12 @@ router.post("/me/requests/circle_invite/:id/cancel", async (req, res) => {
   if (inv.owner_id !== user.id) { sendError(res, "forbidden", "Only the invite owner may cancel this invite"); return; }
 
   const now = new Date().toISOString();
-  await sc.from("circle_invites").update({ status: "cancelled", updated_at: now }).eq("id", id);
+  const { error: ciCancelErr } = await sc.from("circle_invites").update({ status: "cancelled", updated_at: now }).eq("id", id);
+  if (ciCancelErr) {
+    req.log.error({ err: ciCancelErr }, "circle invite cancel update failed");
+    sendError(res, "db_error", ciCancelErr.message);
+    return;
+  }
   res.status(200).json({ status: "cancelled" });
 });
 
@@ -458,7 +468,12 @@ router.post("/me/requests/circle_invite/:id/decline", async (req, res) => {
   const nowMs = Date.now();
 
   const now = new Date(nowMs).toISOString();
-  await sc.from("circle_invites").update({ status: "declined", responded_at: now }).eq("id", id);
+  const { error: ciDeclineErr } = await sc.from("circle_invites").update({ status: "declined", responded_at: now }).eq("id", id);
+  if (ciDeclineErr) {
+    req.log.error({ err: ciDeclineErr }, "circle invite decline update failed");
+    sendError(res, "db_error", ciDeclineErr.message);
+    return;
+  }
 
   // Anti-retaliation cooldown: invite owner cannot re-invite for 48 hours after a decline
   const ciCooldownExpiry = new Date(nowMs + 48 * 60 * 60 * 1000).toISOString();
@@ -496,7 +511,12 @@ router.post("/me/requests/trip_invite/:tripId/accept", async (req, res) => {
   if (!tm) { sendError(res, "not_found", "Trip invite not found"); return; }
   if (tm.role !== "invited") { sendError(res, "invalid_payload", `Trip membership is already '${tm.role}'`); return; }
 
-  await sc.from("trip_members").update({ role: "member" }).eq("trip_id", tripId).eq("user_id", user.id);
+  const { error: tmAcceptErr } = await sc.from("trip_members").update({ role: "member" }).eq("trip_id", tripId).eq("user_id", user.id);
+  if (tmAcceptErr) {
+    req.log.error({ err: tmAcceptErr }, "trip invite accept update failed");
+    sendError(res, "db_error", tmAcceptErr.message);
+    return;
+  }
   res.status(200).json({ status: "member", tripId });
 });
 
