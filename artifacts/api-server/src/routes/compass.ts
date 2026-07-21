@@ -170,7 +170,23 @@ function enrichFeedWithRecommendationIds(
     }),
   }));
 
-  return { enrichedFeed: { ...feed, sections: enrichedSections }, registrationRows };
+  return { enrichedFeed: { ...feed, sections: enrichedSections }, registrationRows: dedupeByRecommendationId(registrationRows) };
+}
+
+/**
+ * Tokens are deterministic (HMAC over user/item/section/key), so the same item
+ * appearing twice in one page yields duplicate recommendation_ids. Postgres
+ * rejects an upsert batch containing duplicates of the ON CONFLICT key
+ * ("cannot affect row a second time", code 21000) — which would silently drop
+ * the WHOLE registration batch. Dedupe before writing.
+ */
+function dedupeByRecommendationId(rows: RecommendationRow[]): RecommendationRow[] {
+  const seen = new Set<string>();
+  return rows.filter((r) => {
+    if (seen.has(r.recommendation_id)) return false;
+    seen.add(r.recommendation_id);
+    return true;
+  });
 }
 
 router.get("/compass/me/context", async (req, res) => {
@@ -367,9 +383,12 @@ router.get("/compass/feed", async (req, res) => {
     // Await pre-registration so that a subsequent /why call on any returned
     // recommendationId is guaranteed to find the row — no race window.
     if (registrationRows.length > 0) {
-      await sc
+      const { error: regError } = await sc
         .from("compass_served_recommendations")
         .upsert(registrationRows, { onConflict: "recommendation_id" });
+      if (regError) {
+        req.log.error({ err: regError }, "compass/feed: served-recommendation registration failed");
+      }
     }
 
     // Write-through: cache the result (fire-and-forget — never blocks response)
@@ -504,9 +523,13 @@ router.get("/compass/feed/section/:section", async (req, res) => {
     });
 
     // Pre-register tokens (fire-and-forget — /why route does authoritative lookup)
-    if (registrationRows.length > 0) {
+    const dedupedRows = dedupeByRecommendationId(registrationRows);
+    if (dedupedRows.length > 0) {
       void sc.from("compass_served_recommendations")
-        .upsert(registrationRows, { onConflict: "recommendation_id" });
+        .upsert(dedupedRows, { onConflict: "recommendation_id" })
+        .then(({ error }) => {
+          if (error) req.log.error({ err: error }, "compass/feed/section: served-recommendation registration failed");
+        });
     }
 
     const sectionPayload = result.section

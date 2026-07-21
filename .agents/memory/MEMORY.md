@@ -41,4 +41,5 @@
 - [Compass dual-score ranking](compass-dual-score-ranking.md) — Compass Match must have zero popularity inputs, Community Score zero viewer inputs; /why reads the stored delivery-time factor snapshot, never recomputes.
 - [Intelligence graph conventions](intelligence-graph-conventions.md) — edge identity must encode any non-collapsible dimension (attrs get overwritten on upsert); UTC slices; read-time privacy aggregates.
 - [Debug instrumentation reverts](debug-instrumentation-reverts.md) — never `git checkout --` a file with uncommitted task edits to strip debug logs; it wipes the task work too.
+- [Upsert batch duplicate keys](upsert-batch-duplicate-keys.md) — one duplicate ON CONFLICT key silently kills the whole upsert batch (21000); dedupe deterministic keys and check `error`.
 - [Compass Phase 1 test gotchas](compass-phase1-test-gotchas.md) — feature_flags column is `flag` not `key`; Express test servers need req.log shim; _setTestClient second arg is boolean not string.
