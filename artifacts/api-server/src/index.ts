@@ -8,6 +8,7 @@ import { startSafeReturnScheduler } from "./lib/safeReturnScheduler";
 import { startTripCrewLiveShareScheduler } from "./lib/tripCrewLiveShareScheduler";
 import { startDelayedPostPublisher } from "./lib/delayedPostPublisher";
 import { startCompassAbuseScanScheduler } from "./lib/compassAbuseScanScheduler";
+import { startCompassSenseScheduler } from "./lib/compassSenseScheduler";
 import { startDiscoveryCacheWarmer } from "./lib/discoveryWarmup";
 import { startPushRetryWorker, queryPushRetryHealth } from "./lib/pushRetryWorker";
 import { startZombieTokenSweeper } from "./lib/zombieTokenSweeper";
@@ -55,6 +56,11 @@ app.listen(port, (err) => {
   startTripCrewLiveShareScheduler();
   startDelayedPostPublisher();
   startCompassAbuseScanScheduler();
+  // Periodic Compass Sense evaluator: delivers nudges to opted-in
+  // (aware/active) users even when the app is closed. Passive users are
+  // never evaluated; all runSense gates (permissions, quiet hours, dedupe,
+  // daily caps) apply unchanged.
+  startCompassSenseScheduler();
   startPushRetryWorker();
   startZombieTokenSweeper();
   startEventWaitlistSweeper();
