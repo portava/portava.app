@@ -13,6 +13,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { logger as rootLogger } from "../lib/logger.js";
 import { requireUser, sendError } from "../lib/http.js";
+import { invalidateCompassHomeCache } from "./compassHome.js";
 
 const prefsLogger = rootLogger.child({ route: "preferences" });
 import {
@@ -122,6 +123,8 @@ router.patch("/me/preferences", async (req, res) => {
     .eq("user_id", user.id);
 
   if (error) { sendError(res, "db_error", error.message); return; }
+
+  invalidateCompassHomeCache(user.id);
 
   res.json({ ok: true, explicit: merged });
 });

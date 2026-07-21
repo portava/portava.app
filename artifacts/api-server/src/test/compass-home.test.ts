@@ -25,6 +25,7 @@ import compassHomeRouter, {
   _setTestHourUtc,
   _clearCompassHomeCache,
   _setTestHomeCacheTtlMs,
+  invalidateCompassHomeCache,
   timeOfDayForHour,
   localHourFor,
 } from "../routes/compassHome.js";
@@ -359,6 +360,58 @@ describe("compass home per-user cache", () => {
     assert.equal(off.compassEnabled, false);
     assert.equal(off.fallback, true);
     assert.equal(off.bestNextMove, undefined);
+  });
+
+  it("reflects a block applied between two opens on the second open (invalidation)", async () => {
+    const { fakeClient, store } = makeFakeClient({
+      feature_flags: [enabledFlag()],
+      events: [eventRow("ev-blocked-host", "Sunset run club", hoursFromNow(2), "host-blocked")],
+    });
+    _setTestClient(fakeClient, true);
+    _setTestHourUtc(8);
+
+    const first = (await getHome()).json as any;
+    assert.deepEqual(
+      first.startingSoon.map((e: any) => e.id),
+      ["ev-blocked-host"],
+      "event must be visible before the block",
+    );
+
+    // The user blocks the host between two opens. Mirror what the block route
+    // does: persist the block row, evict the Compass profile cache, and
+    // invalidate the user's home-cache entry.
+    store.blocks = [{ blocker_id: USER_ID, blocked_id: "host-blocked" }];
+    clearCompassProfileCache();
+    invalidateCompassHomeCache(USER_ID);
+
+    const second = (await getHome()).json as any;
+    assert.equal(
+      second.startingSoon,
+      null,
+      "second open must rebuild and hide the blocked host's event — not serve the pre-block cache",
+    );
+  });
+
+  it("invalidation only evicts the targeted user's entries", async () => {
+    const { fakeClient, store } = makeFakeClient({
+      feature_flags: [enabledFlag()],
+      events: [eventRow("ev-first", "Sunset run club", hoursFromNow(2))],
+    });
+    _setTestClient(fakeClient, true);
+    _setTestHourUtc(8);
+
+    const u2First = (await getHome("valid-token-2")).json as any;
+    assert.deepEqual(u2First.startingSoon.map((e: any) => e.id), ["ev-first"]);
+
+    store.events!.push(eventRow("ev-second", "New thing", hoursFromNow(1)));
+    invalidateCompassHomeCache(USER_ID); // user 1, not user 2
+
+    const u2Second = (await getHome("valid-token-2")).json as any;
+    assert.deepEqual(
+      u2Second.startingSoon.map((e: any) => e.id),
+      ["ev-first"],
+      "user 2's cached entry must survive user 1's invalidation",
+    );
   });
 
   it("does not cache the disabled fallback envelope", async () => {

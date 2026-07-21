@@ -70,6 +70,18 @@ const homeCache = new Map<string, { payload: unknown; expiresAt: number }>();
 export function _clearCompassHomeCache(): void {
   homeCache.clear();
 }
+
+/**
+ * Drop every cached home payload for one user (all tz-offset variants).
+ * Called by profile/privacy/preference/block/mute write routes so a change
+ * is reflected on the very next Home open — not up to TTL later.
+ */
+export function invalidateCompassHomeCache(userId: string): void {
+  const prefix = `${userId}|`;
+  for (const key of homeCache.keys()) {
+    if (key.startsWith(prefix)) homeCache.delete(key);
+  }
+}
 export function _setTestHomeCacheTtlMs(ms: number | null): void {
   _ttlMs = ms ?? HOME_CACHE_TTL_MS;
 }

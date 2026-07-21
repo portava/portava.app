@@ -10,6 +10,7 @@ import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { LOCATION_MODE_DESCRIPTIONS } from "../services/location/LocationPermissionService";
 import { asyncHandler } from "../lib/asyncHandler";
+import { invalidateCompassHomeCache } from "./compassHome";
 
 const router = Router();
 
@@ -115,6 +116,8 @@ router.patch("/me/location-preferences", asyncHandler(async (req, res) => {
     sendError(res, "db_error", error.message);
     return;
   }
+
+  invalidateCompassHomeCache(user.id);
 
   res.status(200).json({ ok: true });
 }));

@@ -4,6 +4,7 @@ import { publishToUsers } from "../lib/telegraphEvents";
 import { getServiceClient } from "../lib/supabase.js";
 import { invalidateCompassProfile } from "../compass/CompassProfileService.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
+import { invalidateCompassHomeCache } from "./compassHome.js";
 import { resolveInteractionPermissions } from "../services/interactionPermissions.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 
@@ -83,6 +84,8 @@ router.post("/users/:userId/block", async (req, res) => {
   // so clients immediately see consistent state on next request.
   invalidateCompassProfile(user.id);
   invalidateCompassProfile(target);
+  invalidateCompassHomeCache(user.id);
+  invalidateCompassHomeCache(target);
   const sc = getServiceClient ? getServiceClient() : null;
   await Promise.allSettled([
     invalidateCompassCache(sc, user.id, "block"),
@@ -159,6 +162,8 @@ router.delete("/users/:userId/block", async (req, res) => {
   // Evict Compass profile cache for both parties — unblock changes block signals immediately.
   invalidateCompassProfile(user.id);
   invalidateCompassProfile(target);
+  invalidateCompassHomeCache(user.id);
+  invalidateCompassHomeCache(target);
 });
 
 /* ===========================================================================

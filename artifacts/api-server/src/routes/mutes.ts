@@ -20,6 +20,7 @@ import { getServiceClient } from "../lib/supabase";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
 import { muteRateLimit } from "../lib/rateLimit";
+import { invalidateCompassHomeCache } from "./compassHome";
 
 const router = Router();
 
@@ -94,6 +95,9 @@ router.post("/users/:userId/mute", async (req, res) => {
     return;
   }
 
+  // Mutes only shape the muter's view — evict their cached Home payload.
+  invalidateCompassHomeCache(user.id);
+
   res.status(200).json({ muted: true, userId: targetId, muteTypes });
 });
 
@@ -137,6 +141,9 @@ router.delete("/users/:userId/mute", async (req, res) => {
     sendError(res, "db_error", error.message);
     return;
   }
+
+  // Unmute only shapes the muter's view — evict their cached Home payload.
+  invalidateCompassHomeCache(user.id);
 
   res.status(200).json({ muted: false, userId: targetId });
 });

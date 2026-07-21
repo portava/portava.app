@@ -4,6 +4,7 @@ import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { retranslateForUser } from "../services/messageTranslation";
 import { isFlagEnabled } from "../lib/featureFlags";
+import { invalidateCompassHomeCache } from "./compassHome";
 
 const router = Router();
 
@@ -646,6 +647,7 @@ router.patch("/me/profile", async (req, res) => {
       // Partial success: base columns saved, but some requested fields were
       // dropped by the fallback. Tell the client exactly which ones.
       cleanupOldMedia(safeRow);
+      invalidateCompassHomeCache(user.id);
       res.status(200).json({
         ...mapProfile(updated),
         unsavedFields,
@@ -675,6 +677,10 @@ router.patch("/me/profile", async (req, res) => {
 
   // Fire-and-forget: delete old storage files now that the profile row is confirmed saved.
   cleanupOldMedia(row);
+
+  // Profile changes (current city, visibility, interests…) shape Compass Home
+  // — evict the cached payload so the next open reflects them immediately.
+  invalidateCompassHomeCache(user.id);
 
   res.status(200).json(mapProfile(updated));
 });
@@ -1450,6 +1456,8 @@ router.patch("/me/privacy", async (req, res) => {
       .eq("id", user.id)
       .then(undefined, (e: any) => req.log.warn({ err: e }, "privacy/patch: failed to sync is_private to profiles"));
   }
+
+  invalidateCompassHomeCache(user.id);
 
   res.status(200).json(data);
 });
