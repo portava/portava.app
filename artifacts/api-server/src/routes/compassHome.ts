@@ -42,17 +42,82 @@ export function _setTestHourUtc(hour: number | null): void {
   _testHourUtc = hour;
 }
 
-function nowHourUtc(): number {
-  return _testHourUtc ?? new Date().getUTCHours();
+/** Current UTC instant; when a test hour is injected, today's date at that UTC hour. */
+function nowUtcInstant(): Date {
+  if (_testHourUtc !== null) {
+    const d = new Date();
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), _testHourUtc, 0, 0));
+  }
+  return new Date();
 }
 
 export type TimeOfDay = "morning" | "afternoon" | "evening" | "night";
 
-export function timeOfDayForHour(hourUtc: number): TimeOfDay {
-  if (hourUtc >= 5 && hourUtc < 11) return "morning";
-  if (hourUtc >= 11 && hourUtc < 17) return "afternoon";
-  if (hourUtc >= 17 && hourUtc < 22) return "evening";
+export function timeOfDayForHour(hour: number): TimeOfDay {
+  if (hour >= 5 && hour < 11) return "morning";
+  if (hour >= 11 && hour < 17) return "afternoon";
+  if (hour >= 17 && hour < 22) return "evening";
   return "night";
+}
+
+/* ── Local-time resolution ───────────────────────────────────────────────────
+ * The time bucket must follow the traveler's clock, not the server's. Priority:
+ *   1. Explicit client-supplied UTC offset (?tzOffsetMinutes=480 for UTC+8)
+ *   2. The traveler's IANA timezone (notification_preferences.timezone)
+ *   3. UTC — only when neither is known.
+ */
+const MAX_TZ_OFFSET_MINUTES = 14 * 60;
+
+export function localHourFor(
+  nowUtc: Date,
+  tzOffsetMinutes: number | null,
+  timezone: string | null,
+): number {
+  if (
+    tzOffsetMinutes !== null &&
+    Number.isFinite(tzOffsetMinutes) &&
+    Math.abs(tzOffsetMinutes) <= MAX_TZ_OFFSET_MINUTES
+  ) {
+    const utcMinutes = nowUtc.getUTCHours() * 60 + nowUtc.getUTCMinutes();
+    const localMinutes = (((utcMinutes + Math.trunc(tzOffsetMinutes)) % 1440) + 1440) % 1440;
+    return Math.floor(localMinutes / 60);
+  }
+  if (timezone) {
+    try {
+      const part = new Intl.DateTimeFormat("en-GB", {
+        timeZone: timezone,
+        hour: "2-digit",
+        hourCycle: "h23",
+      })
+        .formatToParts(nowUtc)
+        .find((p) => p.type === "hour");
+      const h = Number(part?.value);
+      if (Number.isFinite(h)) return h;
+    } catch {
+      // Invalid timezone name — fall through to UTC.
+    }
+  }
+  return nowUtc.getUTCHours();
+}
+
+function parseTzOffsetParam(raw: unknown): number | null {
+  if (typeof raw !== "string" || raw.trim() === "") return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || Math.abs(n) > MAX_TZ_OFFSET_MINUTES) return null;
+  return Math.trunc(n);
+}
+
+async function fetchUserTimezone(sc: any, userId: string): Promise<string | null> {
+  try {
+    const { data } = await sc
+      .from("notification_preferences")
+      .select("timezone")
+      .eq("user_id", userId)
+      .maybeSingle();
+    return ((data as any)?.timezone as string | null) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function hiddenUserIds(profile: CompassProfile | null): Set<string> {
@@ -190,10 +255,15 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
   }
 
   try {
-    const profile = await getCompassProfile(sc, user.id);
-    const hourUtc = nowHourUtc();
-    const timeOfDay = timeOfDayForHour(hourUtc);
-    const signals = { ...defaultSignals(profile), hourUtc };
+    const [profile, timezone] = await Promise.all([
+      getCompassProfile(sc, user.id),
+      fetchUserTimezone(sc, user.id),
+    ]);
+    const nowUtc = nowUtcInstant();
+    const tzOffsetMinutes = parseTzOffsetParam((req.query as any)?.tzOffsetMinutes);
+    const localHour = localHourFor(nowUtc, tzOffsetMinutes, timezone);
+    const timeOfDay = timeOfDayForHour(localHour);
+    const signals = { ...defaultSignals(profile), hourUtc: localHour };
     const context = buildCompassContext(profile, signals);
 
     const now = new Date();

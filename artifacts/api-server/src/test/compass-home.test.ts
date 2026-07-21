@@ -21,7 +21,7 @@ import pino from "pino";
 import { _setTestClient } from "../lib/http.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { clearCompassProfileCache } from "../compass/CompassProfileService.js";
-import compassHomeRouter, { _setTestHourUtc, timeOfDayForHour } from "../routes/compassHome.js";
+import compassHomeRouter, { _setTestHourUtc, timeOfDayForHour, localHourFor } from "../routes/compassHome.js";
 
 const USER_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -123,8 +123,8 @@ beforeEach(() => {
   _setTestHourUtc(null);
 });
 
-async function getHome(token = "valid-token") {
-  const resp = await fetch(`${base}/api/compass/home`, {
+async function getHome(token = "valid-token", query = "") {
+  const resp = await fetch(`${base}/api/compass/home${query}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   return { status: resp.status, json: await resp.json() };
@@ -258,5 +258,99 @@ describe("timeOfDayForHour", () => {
     assert.equal(timeOfDayForHour(19), "evening");
     assert.equal(timeOfDayForHour(23), "night");
     assert.equal(timeOfDayForHour(2), "night");
+  });
+});
+
+describe("localHourFor", () => {
+  const noonUtc = new Date(Date.UTC(2026, 0, 15, 13, 0, 0)); // 13:00 UTC
+
+  it("applies an explicit client offset (UTC+8 → 21:00)", () => {
+    assert.equal(localHourFor(noonUtc, 480, null), 21);
+  });
+
+  it("applies a negative offset with day wrap (UTC-5 at 03:00 UTC → 22:00 prev day)", () => {
+    const threeUtc = new Date(Date.UTC(2026, 0, 15, 3, 0, 0));
+    assert.equal(localHourFor(threeUtc, -300, null), 22);
+  });
+
+  it("uses the IANA timezone when no offset is supplied", () => {
+    assert.equal(localHourFor(noonUtc, null, "Asia/Manila"), 21);
+    assert.equal(localHourFor(noonUtc, null, "Etc/UTC"), 13);
+  });
+
+  it("explicit offset wins over the stored timezone", () => {
+    assert.equal(localHourFor(noonUtc, 0, "Asia/Manila"), 13);
+  });
+
+  it("falls back to UTC for invalid timezone or out-of-range offset", () => {
+    assert.equal(localHourFor(noonUtc, null, "Not/AZone"), 13);
+    assert.equal(localHourFor(noonUtc, 9999, null), 13);
+    assert.equal(localHourFor(noonUtc, null, null), 13);
+  });
+});
+
+describe("traveler-local time buckets", () => {
+  it("same UTC instant: UTC+8 client offset is 'evening', UTC±0 is 'morning' — tonightVibe gates accordingly", async () => {
+    const { fakeClient } = makeFakeClient({
+      feature_flags: [enabledFlag()],
+      events: [eventRow("ev-manila", "Night market crawl", hoursFromNow(3))],
+    });
+    _setTestClient(fakeClient, true);
+    _setTestHourUtc(13); // 13:00 UTC — 21:00 in Manila, 13:00 in London-ish UTC
+
+    const manila = (await getHome("valid-token", "?tzOffsetMinutes=480")).json as any;
+    assert.equal(manila.timeOfDay, "evening", "UTC+8 traveler at 13:00 UTC must be in the evening");
+    assert.ok(manila.tonightVibe, "tonight's vibe must be assembled for the UTC+8 evening");
+    assert.equal(manila.tonightVibe.events[0].id, "ev-manila");
+
+    invalidateFlagsCache();
+    clearCompassProfileCache();
+    const utc = (await getHome("valid-token", "?tzOffsetMinutes=0")).json as any;
+    assert.equal(utc.timeOfDay, "afternoon", "UTC±0 traveler at 13:00 UTC is in the afternoon");
+    assert.equal(utc.tonightVibe, null, "tonightVibe must not appear outside evening/night");
+  });
+
+  it("same UTC instant: UTC+8 is 'evening' while UTC±0 is 'morning'", async () => {
+    const { fakeClient } = makeFakeClient({ feature_flags: [enabledFlag()] });
+    _setTestClient(fakeClient, true);
+    _setTestHourUtc(10); // 10:00 UTC — 18:00 UTC+8, 10:00 UTC±0
+
+    const east = (await getHome("valid-token", "?tzOffsetMinutes=480")).json as any;
+    assert.equal(east.timeOfDay, "evening");
+
+    invalidateFlagsCache();
+    clearCompassProfileCache();
+    const west = (await getHome("valid-token", "?tzOffsetMinutes=0")).json as any;
+    assert.equal(west.timeOfDay, "morning");
+  });
+
+  it("uses the stored IANA timezone from notification_preferences when no offset is supplied", async () => {
+    const { fakeClient } = makeFakeClient({
+      feature_flags: [enabledFlag()],
+      notification_preferences: [{ user_id: USER_ID, timezone: "Asia/Manila" }],
+      events: [eventRow("ev-tz", "Rooftop session", hoursFromNow(3))],
+    });
+    _setTestClient(fakeClient, true);
+    _setTestHourUtc(13); // 21:00 in Manila
+
+    const j = (await getHome()).json as any;
+    assert.equal(j.timeOfDay, "evening", "stored timezone must drive the bucket");
+    assert.ok(j.tonightVibe, "tonightVibe should gate on the traveler's local evening");
+  });
+
+  it("falls back to UTC when neither offset nor timezone is known", async () => {
+    const { fakeClient } = makeFakeClient({ feature_flags: [enabledFlag()] });
+    _setTestClient(fakeClient, true);
+    _setTestHourUtc(13);
+    const j = (await getHome()).json as any;
+    assert.equal(j.timeOfDay, "afternoon");
+  });
+
+  it("ignores a malformed tzOffsetMinutes and falls back honestly", async () => {
+    const { fakeClient } = makeFakeClient({ feature_flags: [enabledFlag()] });
+    _setTestClient(fakeClient, true);
+    _setTestHourUtc(13);
+    const j = (await getHome("valid-token", "?tzOffsetMinutes=banana")).json as any;
+    assert.equal(j.timeOfDay, "afternoon");
   });
 });
