@@ -85,6 +85,7 @@ import {
   MEMORY_SCOPES,
   type MemoryScope,
 } from "../compass/CompassMemoryService.js";
+import { buildLiveChatContextLines }             from "../compass/CompassLiveEngine.js";
 import { getOpenAI }                             from "../lib/openai.js";
 import { COMPASS_ASK_PROMPT, COMPASS_ASK_PROMPT_VERSION } from "../lib/prompts/compass-v1.js";
 import {
@@ -1118,6 +1119,15 @@ router.post("/compass/ask", async (req, res) => {
     });
     ctxLines.push(...memoryLines);
   } catch { /* non-fatal — proceed without memory */ }
+
+  // ── Phase 12: live-session grounding ──────────────────────────────────────
+  // While a live session is active, chat answers are grounded in the rolling
+  // session context (current stop, next plan item, timing). Empty outside a
+  // session — chat is unchanged when Live is off. Never fatal.
+  try {
+    const liveLines = await buildLiveChatContextLines(sc, user.id);
+    ctxLines.push(...liveLines);
+  } catch { /* non-fatal — proceed without live context */ }
 
   const userMessageWithContext = `${prompt}\n\n${ctxLines.join("\n")}`;
 

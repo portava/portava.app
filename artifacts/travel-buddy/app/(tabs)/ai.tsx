@@ -17,6 +17,7 @@ import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { CompassHome } from '../../src/components/compass/CompassHome';
+import { CompassLive } from '../../src/components/compass/CompassLive';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 
 type ChatEntry =
@@ -180,6 +181,8 @@ export default function AiChat() {
         onScroll={navScrollHandler}
         scrollEventThrottle={16}
       >
+        {/* Phase 12: live-session surface — explicit start/stop, nudges, summary. */}
+        <CompassLive />
         {entries.length === 0 ? (
           // Phase 10: context-aware Compass Home replaces the blank-chat state.
           <CompassHome onAsk={(prompt) => send(prompt)} />

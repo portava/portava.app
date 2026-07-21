@@ -477,3 +477,56 @@ State when the standing brief was installed:
   Also registered the previously unregistered `compass-home.test.ts` in the
   suite. Out of scope (per roadmap): live sessions (Phase 12), re-planning
   actions (Phase 13) — Sense flags, never fixes.
+
+## Phase 12 — Compass Live (2026-07-21)
+
+- New `src/compass/CompassLiveEngine.ts` — a persistent live travel session
+  the user EXPLICITLY starts and stops. Companion, not surveillance:
+  `runLiveCheck` returns immediately with zero evaluation and zero writes
+  when no session is active; nothing runs before start or after stop.
+- Session lifecycle: `compass_live_sessions` (migration
+  `20260727_compass_live.sql`, applied live via Management API — own-row
+  RLS, one active session per user via a partial unique index). Start is
+  idempotent (a second start returns the existing session); stop marks the
+  row ended and returns an end-of-session summary (duration, checks,
+  nudges delivered, stops reached, city).
+- Live context loop: each check recomputes rolling context against the
+  day's plan (`trips` in_progress → today's `trip_plan_items`): current
+  stop, next item, minutes-to-next, city (trip destination or stored
+  city — city-level only, no coordinates ever read or stored). Real
+  transitions are recorded as events in a capped `recentEvents` trail, so
+  context provably carries across a sequence of checks.
+- Signals: the Phase 11 `evaluateSenseSignals` run at live frequency, plus
+  live-only session-aware nudges — `live_next_up` (next item within
+  30 min), `live_arriving_early` (45 min–3 h gap → room for a detour),
+  `live_ride_home` (late night 22:00–04:00 safety prompt). Starting a
+  session is an explicit opt-in, so presence level does not gate live
+  checks; per-category permissions, durable 24 h dedupe (shared
+  `compass_sense_nudges` log), and a per-session cap (12) all still do.
+  Delivery via `NotificationService` + `NotificationRouter`
+  (`compass.live.*`, category `compass`, confidence in metadata).
+- Routes (`src/routes/compassLive.ts`, COMPASS_ENABLED-gated with the
+  honest fallback envelope): GET `/api/compass/live/session`,
+  POST `/api/compass/live/start` / `stop` / `check`.
+- Chat grounding: `/api/compass/ask` injects live-session context lines
+  (active flag, city, current/next stop, timing, recent events) into the
+  context block while a session is active; empty outside a session.
+- Mobile: `CompassLive` surface at the top of the AI tab — explicit
+  "Go Live" row when inactive, live card (city, now/next, delivered
+  nudges) with a prominent red "End live session" button while active,
+  end-of-session summary card after stop. Polls `/check` every 60 s only
+  while active AND focused; the interval is cleared on stop, blur, and
+  unmount — zero background activity after stop. Service functions in
+  `services/compass.ts`.
+- Tests: `src/test/compass-live.test.ts` (11 tests — auth, disabled-flag
+  fallback, explicit/idempotent lifecycle, simulated event-sequence
+  context carry across three checks, nudge timeliness windows (20 min →
+  next-up, 40 min → silence, 2 h → arriving-early), late-night-only
+  ride-home, category permission, durable dedupe, clean shutdown with
+  summary + zero post-stop evaluation/writes, chat grounding only while
+  active). Mobile: `CompassLive.component.test.tsx` (session resume
+  render + explicit start-on-press only). Chat flows in the standing eval
+  set are unchanged (context-line injection only) and remain covered by
+  the Phase 5–9 fallback precedent.
+- Out of scope honored: no automatic trip modification (Phase 13) — Live
+  nudges inform; they never move items.
