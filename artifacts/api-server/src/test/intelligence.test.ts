@@ -710,6 +710,52 @@ describe("F — Feedback events + ranking + privacy", () => {
     assert.ok(brief.warnings.includes("cancelled_meetup"));
   });
 
+  test("F14b: fetchBriefData derives attendee counts from meetup_invites (status going)", async () => {
+    const { fetchBriefData } = await import("../routes/dailyBrief.js");
+    const meetupRows = [
+      { id: "m1", title: "Tapas night", starts_at: "2026-07-01T19:00:00Z", status: "active", trip_id: TRIP_ID },
+      { id: "m2", title: "Museum walk", starts_at: "2026-07-02T10:00:00Z", status: "active", trip_id: TRIP_ID },
+    ];
+    const inviteRows = [
+      { meetup_id: "m1", status: "going" },
+      { meetup_id: "m1", status: "going" },
+      { meetup_id: "m1", status: "invited" },
+      { meetup_id: "m2", status: "declined" },
+      { meetup_id: "other", status: "going" },
+    ];
+    const fakeClient = {
+      from(table: string) {
+        const filters: Array<(r: any) => boolean> = [];
+        const b: any = {
+          select() { return b; },
+          eq(col: string, val: any) { filters.push((r) => r[col] === val); return b; },
+          in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return b; },
+          is() { return b; },
+          then(onF: any, onR: any) {
+            let source: any[] = [];
+            if (table === "meetups") source = meetupRows;
+            else if (table === "meetup_invites") source = inviteRows;
+            else if (table === "trip_plan_items") source = [];
+            return Promise.resolve({ data: source.filter((r) => filters.every((f) => f(r))), error: null }).then(onF, onR);
+          },
+        };
+        return b;
+      },
+    };
+    const { meetups } = await fetchBriefData(fakeClient, TRIP_ID);
+    const byId = new Map(meetups.map((m: any) => [m.id, m.attendee_count]));
+    assert.equal(byId.get("m1"), 2, "only 'going' invites for m1 count");
+    assert.equal(byId.get("m2"), 0, "declined invites don't count");
+
+    const { buildDailyBrief } = await import("../lib/dailyBriefEngine.js");
+    const brief = buildDailyBrief({
+      tripId: "t1", userId: "u1", date: "2026-07-01", planItems: [],
+      meetups, recommendations: [], preferenceProfile: null,
+    });
+    const opp = brief.meetupOpportunities.find((o: any) => o.id === "m1");
+    assert.equal(opp?.attendeeCount, 2);
+  });
+
   test("F15: buildDailyBrief isStale is false on fresh build", async () => {
     const { buildDailyBrief } = await import("../lib/dailyBriefEngine.js");
     const brief = buildDailyBrief({ tripId: "t1", userId: "u1", date: "2026-07-01", planItems: [], meetups: [], recommendations: [], preferenceProfile: null });

@@ -598,7 +598,7 @@ function formatGapDayLabel(dateStr: string): string {
 
 /* ── Plan + meetup fetch ─────────────────────────────────────────────────── */
 
-async function fetchBriefData(client: any, tripId: string) {
+export async function fetchBriefData(client: any, tripId: string) {
   const [planResult, meetupsResult] = await Promise.all([
     client
       .from("trip_plan_items")
@@ -611,7 +611,29 @@ async function fetchBriefData(client: any, tripId: string) {
       .eq("trip_id", tripId)
       .then((r: any) => r, () => ({ data: [] })),
   ]);
-  return { planItems: planResult.data ?? [], meetups: meetupsResult.data ?? [] };
+
+  const meetups = meetupsResult.data ?? [];
+
+  // Derive per-meetup attendee counts from meetup_invites (status "going") —
+  // the meetups table has no attendee_count column.
+  const meetupIds = meetups.map((m: any) => m.id as string).filter(Boolean);
+  const countByMeetup = new Map<string, number>();
+  if (meetupIds.length > 0) {
+    const { data: inviteRows } = await client
+      .from("meetup_invites")
+      .select("meetup_id")
+      .in("meetup_id", meetupIds)
+      .eq("status", "going");
+    for (const row of inviteRows ?? []) {
+      const id = row.meetup_id as string;
+      countByMeetup.set(id, (countByMeetup.get(id) ?? 0) + 1);
+    }
+  }
+
+  return {
+    planItems: planResult.data ?? [],
+    meetups: meetups.map((m: any) => ({ ...m, attendee_count: countByMeetup.get(m.id) ?? 0 })),
+  };
 }
 
 /* ── Gap-day computation ─────────────────────────────────────────────────── */
