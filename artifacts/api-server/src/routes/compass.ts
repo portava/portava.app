@@ -1426,7 +1426,11 @@ router.post("/compass/ask", async (req, res) => {
       );
       const { message, payload, quickActions } = _parseModelResponse(finalRaw);
       // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
-      const uiBlocks = await buildUiBlocks(sc, payload, toolLog).catch(() => []);
+      // outMeta tracks how many model-declared ids were not found in the tool log
+      // (hallucinated references). When no blocks were declared, synthesis runs
+      // from the tool log and droppedInventedIds stays 0.
+      const uiBlockMeta = { droppedInventedIds: 0 };
+      const uiBlocks = await buildUiBlocks(sc, payload, toolLog, uiBlockMeta).catch(() => []);
       // Attach signed recommendation tokens + pre-register served recommendations
       // so chat-card "viewed" outcomes attribute to this serving.
       const uiBlockRegRows = enrichUiBlocksWithRecommendationTokens(user.id, uiBlocks);
@@ -1457,7 +1461,7 @@ router.post("/compass/ask", async (req, res) => {
       } catch { /* non-fatal */ }
       // Phase 6: bounded-cadence memory compression (fire-and-forget)
       compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
-      res.write(`data: ${JSON.stringify({ done: true, conversationId, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, intent: intentResult })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true, conversationId, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds }, intent: intentResult })}\n\n`);
       res.end();
     } catch (err) {
       if (clientAbort.signal.aborted) {
@@ -1480,7 +1484,11 @@ router.post("/compass/ask", async (req, res) => {
     );
     const { message, payload, quickActions } = _parseModelResponse(finalRaw);
     // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
-    const uiBlocks = await buildUiBlocks(sc, payload, toolLog).catch(() => []);
+    // outMeta tracks how many model-declared ids were not found in the tool log
+    // (hallucinated references). When no blocks were declared, synthesis runs
+    // from the tool log and droppedInventedIds stays 0.
+    const uiBlockMeta = { droppedInventedIds: 0 };
+    const uiBlocks = await buildUiBlocks(sc, payload, toolLog, uiBlockMeta).catch(() => []);
     // Attach signed recommendation tokens + pre-register served recommendations
     // so chat-card "viewed" outcomes attribute to this serving.
     const uiBlockRegRows = enrichUiBlocksWithRecommendationTokens(user.id, uiBlocks);
@@ -1511,7 +1519,7 @@ router.post("/compass/ask", async (req, res) => {
     } catch { /* non-fatal */ }
     // Phase 6: bounded-cadence memory compression (fire-and-forget)
     compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
-    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
+    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds }, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
   } catch (err) {
     req.log.error({ err, userId: user.id }, "compass/ask: LLM call failed");
     res.json({

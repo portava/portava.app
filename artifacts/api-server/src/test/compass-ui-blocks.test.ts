@@ -128,9 +128,84 @@ describe("buildUiBlocks validation", () => {
     assert.equal(blocks[0].type, "event_cards");
   });
 
-  it("returns [] when payload has no blocks or is null", async () => {
-    assert.deepEqual(await buildUiBlocks(null, null, toolLog()), []);
-    assert.deepEqual(await buildUiBlocks(null, { type: "recommendation" }, toolLog()), []);
+  it("returns [] when payload is null and toolLog is empty (nothing to synthesise)", async () => {
+    assert.deepEqual(await buildUiBlocks(null, null, []), []);
+  });
+
+  it("synthesises blocks from tool log when payload has no 'blocks' array", async () => {
+    // null payload → synthesis runs
+    const blocksFromNull = await buildUiBlocks(null, null, toolLog());
+    assert.ok(blocksFromNull.length > 0, "expected synthesised blocks for null payload");
+    // JSON payload without a blocks key → synthesis runs
+    const blocksFromRec = await buildUiBlocks(null, { type: "recommendation" }, toolLog());
+    assert.ok(blocksFromRec.length > 0, "expected synthesised blocks for payload without blocks key");
+  });
+
+  it("synthesises person_cards from get_circle_activity when no blocks declared", async () => {
+    const log: ToolExecution[] = [
+      {
+        name: "get_circle_activity",
+        arguments: {},
+        result: {
+          circles: [{ name: "Island Crew", memberHandles: ["@alice", "@bob"], isOwner: true }],
+        },
+      },
+    ];
+    const blocks = await buildUiBlocks(null, null, log);
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0].type, "person_cards");
+    const b = blocks[0] as Extract<CompassUiBlock, { type: "person_cards" }>;
+    assert.deepEqual(b.people.map((p) => p.handle), ["alice", "bob"]);
+  });
+
+  it("synthesises comparison when ≥2 places in tool log and no blocks declared", async () => {
+    const log: ToolExecution[] = [
+      {
+        name: "search_places",
+        arguments: {},
+        result: {
+          candidates: [
+            { id: PLACE_A, name: "Cafe Uno", category: "food", city: "Cebu", rating: 4.5 },
+            { id: PLACE_B, name: "Bar Dos", category: "nightlife", city: "Cebu", rating: 4.0 },
+          ],
+        },
+      },
+    ];
+    const blocks = await buildUiBlocks(null, null, log);
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0].type, "comparison");
+    const b = blocks[0] as Extract<CompassUiBlock, { type: "comparison" }>;
+    assert.deepEqual(b.columns, ["Category", "City", "Rating"]);
+    assert.equal(b.rows.length, 2);
+    assert.equal(b.rows[0].label, "Cafe Uno");
+  });
+
+  it("synthesises place_cards when exactly 1 place in tool log and no blocks declared", async () => {
+    const log: ToolExecution[] = [
+      {
+        name: "get_place_details",
+        arguments: {},
+        result: { place: { id: PLACE_A, name: "Solo Spot", category: "food" } },
+      },
+    ];
+    const blocks = await buildUiBlocks(null, null, log);
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0].type, "place_cards");
+  });
+
+  it("synthesises event_cards from search_events when no blocks declared", async () => {
+    const log: ToolExecution[] = [
+      {
+        name: "search_events",
+        arguments: {},
+        result: {
+          candidates: [{ id: EVENT_A, title: "Beach Meetup", city: "Cebu" }],
+        },
+      },
+    ];
+    const blocks = await buildUiBlocks(null, null, log);
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0].type, "event_cards");
   });
 
   it("validates comparison rows against candidates and hydrates labels", async () => {

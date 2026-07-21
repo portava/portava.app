@@ -16,8 +16,11 @@
  *      (for places) re-fetches coordinates from the DB so the client can
  *      deep-link to the map. Coordinates never pass through the model.
  *
- * A block that ends up with no valid entities is dropped entirely, so the
- * client falls back to plain text.
+ * When no blocks are declared (plain-text reply, or JSON without a
+ * "blocks" key), the module synthesises blocks directly from whatever
+ * the tools already fetched — so clients always see rich cards when
+ * real data is available, regardless of whether the model included a
+ * block envelope.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ToolExecution } from "./CompassTools.js";
@@ -210,6 +213,62 @@ export function collectToolCandidates(toolLog: ToolExecution[]): ToolCandidateIn
   return { places, events, people };
 }
 
+// ── Synthesis fallback ─────────────────────────────────────────────────────────
+
+/**
+ * Synthesise UI blocks from tool-log results when the model did not declare
+ * any blocks in its JSON payload (e.g. plain-text reply, or JSON without a
+ * "blocks" array). Produces:
+ *
+ *   - comparison  when ≥2 places were fetched (basic attribute columns so
+ *                 the client can render a side-by-side view)
+ *   - place_cards when exactly 1 place was fetched
+ *   - event_cards when events were fetched (and block budget remains)
+ *   - person_cards when circle people were fetched
+ *
+ * Returns [] when the tool log produced no candidates — there is nothing to
+ * synthesise and the client correctly falls back to plain text.
+ */
+export function synthesizeUiBlocksFromToolLog(index: ToolCandidateIndex): CompassUiBlock[] {
+  const blocks: CompassUiBlock[] = [];
+
+  // person_cards — synthesised from get_circle_activity results.
+  if (index.people.size > 0) {
+    const people = [...index.people.values()].slice(0, MAX_ITEMS_PER_BLOCK);
+    blocks.push({ type: "person_cards", people });
+  }
+
+  // comparison (≥2 places) or place_cards (1 place) from search_places / get_place_details.
+  // For comparison, use basic attribute columns since the model didn't supply
+  // query-specific values; still more useful than no card at all.
+  if (index.places.size >= 2) {
+    const places = [...index.places.values()].slice(0, MAX_ITEMS_PER_BLOCK);
+    const columns = ["Category", "City", "Rating"];
+    const rows: Extract<CompassUiBlock, { type: "comparison" }>["rows"] = places.map((p) => ({
+      kind: "place" as const,
+      id: p.id,
+      label: p.name,
+      values: [
+        p.category ?? "—",
+        p.city ?? "—",
+        p.rating != null ? String(p.rating) : "—",
+      ],
+      place: p,
+    }));
+    blocks.push({ type: "comparison", columns, rows });
+  } else if (index.places.size === 1) {
+    blocks.push({ type: "place_cards", places: [...index.places.values()] });
+  }
+
+  // event_cards — synthesised from search_events results.
+  if (index.events.size > 0 && blocks.length < MAX_BLOCKS) {
+    const events = [...index.events.values()].slice(0, MAX_ITEMS_PER_BLOCK);
+    blocks.push({ type: "event_cards", events });
+  }
+
+  return blocks.slice(0, MAX_BLOCKS);
+}
+
 // ── Block validation + hydration ──────────────────────────────────────────────
 
 function strArray(v: unknown, cap: number): string[] {
@@ -224,22 +283,46 @@ function strArray(v: unknown, cap: number): string[] {
 
 /**
  * Build the validated, hydrated uiBlocks array from the model's raw payload
- * and the executed tool log. Returns [] when nothing valid was declared.
+ * and the executed tool log. Returns [] when nothing valid was declared or
+ * could be synthesised from tool results.
  *
- * `sc` is only used to re-fetch coordinates for validated place ids; pass
- * null to skip coordinate hydration (e.g. in degraded mode).
+ * When the model's payload contains no `blocks` array, blocks are synthesised
+ * directly from the tool log so rich cards appear even on plain-text replies.
+ *
+ * `sc` is only used to re-fetch coordinates for validated/synthesised place
+ * ids; pass null to skip coordinate hydration (e.g. in degraded mode).
+ *
+ * `outMeta` — optional out-parameter; when supplied, `.droppedInventedIds`
+ * is set to the count of model-declared ids that were not found in the tool
+ * log (hallucinated references). Always 0 for synthesised blocks.
  */
 export async function buildUiBlocks(
   sc: SupabaseClient | null,
   payload: Record<string, unknown> | null,
   toolLog: ToolExecution[],
+  outMeta?: { droppedInventedIds: number },
 ): Promise<CompassUiBlock[]> {
+  const index = collectToolCandidates(toolLog);
+
   const rawBlocks = payload && Array.isArray((payload as any).blocks)
     ? ((payload as any).blocks as unknown[])
     : [];
-  if (rawBlocks.length === 0) return [];
 
-  const index = collectToolCandidates(toolLog);
+  // ── Synthesis path: no model-declared blocks ──────────────────────────────
+  // When the model returned plain text (payload is null), returned JSON
+  // without a "blocks" key, or the blocks array is empty, synthesise blocks
+  // directly from whatever the tools fetched. This ensures rich cards appear
+  // for place/event/person results regardless of the model's envelope.
+  if (rawBlocks.length === 0) {
+    if (outMeta) outMeta.droppedInventedIds = 0;
+    const synthesised = synthesizeUiBlocksFromToolLog(index);
+    // Coordinate hydration for synthesised blocks (same logic as validated path).
+    await hydrateBlockCoordinates(sc, synthesised);
+    return synthesised;
+  }
+
+  // ── Validation path: model declared blocks ────────────────────────────────
+  let droppedInventedIds = 0;
   const blocks: CompassUiBlock[] = [];
   const wantedPlaceIds = new Set<string>();
   const wantedEventIds = new Set<string>();
@@ -253,9 +336,12 @@ export async function buildUiBlocks(
       case "place_cards":
       case "map": {
         const ids = strArray(b.placeIds, MAX_ITEMS_PER_BLOCK);
-        const places = ids
-          .map((id) => index.places.get(id))
-          .filter((p): p is UiPlace => Boolean(p));
+        const places: UiPlace[] = [];
+        for (const id of ids) {
+          const p = index.places.get(id);
+          if (p) places.push(p);
+          else droppedInventedIds++;
+        }
         if (places.length === 0) continue;
         for (const p of places) wantedPlaceIds.add(p.id);
         blocks.push({ type: b.type, places } as CompassUiBlock);
@@ -263,9 +349,12 @@ export async function buildUiBlocks(
       }
       case "event_cards": {
         const ids = strArray(b.eventIds, MAX_ITEMS_PER_BLOCK);
-        const eventsArr = ids
-          .map((id) => index.events.get(id))
-          .filter((e): e is UiEvent => Boolean(e));
+        const eventsArr: UiEvent[] = [];
+        for (const id of ids) {
+          const e = index.events.get(id);
+          if (e) eventsArr.push(e);
+          else droppedInventedIds++;
+        }
         if (eventsArr.length === 0) continue;
         for (const e of eventsArr) wantedEventIds.add(e.id);
         blocks.push({ type: "event_cards", events: eventsArr });
@@ -273,9 +362,12 @@ export async function buildUiBlocks(
       }
       case "person_cards": {
         const handles = strArray(b.handles, MAX_ITEMS_PER_BLOCK);
-        const peopleArr = handles
-          .map((h) => index.people.get(h.replace(/^@/, "").toLowerCase()))
-          .filter((p): p is UiPerson => Boolean(p));
+        const peopleArr: UiPerson[] = [];
+        for (const h of handles) {
+          const p = index.people.get(h.replace(/^@/, "").toLowerCase());
+          if (p) peopleArr.push(p);
+          else droppedInventedIds++;
+        }
         if (peopleArr.length === 0) continue;
         blocks.push({ type: "person_cards", people: peopleArr });
         break;
@@ -292,12 +384,12 @@ export async function buildUiBlocks(
           const values = strArray(row.values, MAX_COMPARISON_COLUMNS).map((v) => v.slice(0, 80));
           if (kind === "place") {
             const place = index.places.get(id);
-            if (!place) continue;
+            if (!place) { droppedInventedIds++; continue; }
             wantedPlaceIds.add(place.id);
             rows.push({ kind, id, label: place.name, values, place });
           } else {
             const event = index.events.get(id);
-            if (!event) continue;
+            if (!event) { droppedInventedIds++; continue; }
             wantedEventIds.add(event.id);
             rows.push({ kind, id, label: event.title, values, event });
           }
@@ -311,7 +403,52 @@ export async function buildUiBlocks(
     }
   }
 
-  // ── Coordinate hydration for validated place ids (server-side only) ────────
+  if (outMeta) outMeta.droppedInventedIds = droppedInventedIds;
+
+  // ── Coordinate hydration for validated place/event ids (server-side only) ─
+  await hydrateBlockCoordinates(sc, blocks, wantedPlaceIds, wantedEventIds);
+
+  return blocks;
+}
+
+// ── Coordinate hydration helper ───────────────────────────────────────────────
+
+/**
+ * Re-fetch coordinates from the DB for all place/event ids referenced in
+ * `blocks` and attach them in-place. Coordinates never pass through the model.
+ *
+ * When `wantedPlaceIds` / `wantedEventIds` are omitted, all ids referenced
+ * in the blocks are collected and fetched (used by the synthesis path).
+ */
+async function hydrateBlockCoordinates(
+  sc: SupabaseClient | null,
+  blocks: CompassUiBlock[],
+  wantedPlaceIds?: Set<string>,
+  wantedEventIds?: Set<string>,
+): Promise<void> {
+  // Collect ids when not pre-computed (synthesis path).
+  if (!wantedPlaceIds) {
+    wantedPlaceIds = new Set<string>();
+    for (const blk of blocks) {
+      if (blk.type === "place_cards" || blk.type === "map") {
+        for (const p of blk.places) wantedPlaceIds.add(p.id);
+      } else if (blk.type === "comparison") {
+        for (const r of blk.rows) { if (r.place) wantedPlaceIds.add(r.place.id); }
+      }
+    }
+  }
+  if (!wantedEventIds) {
+    wantedEventIds = new Set<string>();
+    for (const blk of blocks) {
+      if (blk.type === "event_cards") {
+        for (const e of blk.events) wantedEventIds.add(e.id);
+      } else if (blk.type === "comparison") {
+        for (const r of blk.rows) { if (r.event) wantedEventIds.add(r.event.id); }
+      }
+    }
+  }
+
+  // ── Place coordinates ─────────────────────────────────────────────────────
   if (sc && wantedPlaceIds.size > 0) {
     try {
       const { data } = await sc
@@ -336,7 +473,7 @@ export async function buildUiBlocks(
     } catch { /* non-fatal — blocks ship without coordinates */ }
   }
 
-  // ── Coordinate hydration for validated event ids (server-side only) ────────
+  // ── Event coordinates ─────────────────────────────────────────────────────
   // Privacy: an event's exact venue coordinates are only exposed when the host
   // allows it (show_exact_location !== false — same rule as the events routes).
   if (sc && wantedEventIds.size > 0) {
@@ -363,6 +500,4 @@ export async function buildUiBlocks(
       }
     } catch { /* non-fatal — blocks ship without coordinates */ }
   }
-
-  return blocks;
 }
