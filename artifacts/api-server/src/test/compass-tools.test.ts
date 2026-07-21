@@ -505,6 +505,132 @@ describe("G. /compass/ask tool loop", () => {
   });
 });
 
+describe("G2. /compass/ask SSE streaming with tool rounds", () => {
+  /** Turn chunks into the async-iterable shape the OpenAI SDK returns for stream:true. */
+  function asStream(chunks: any[]) {
+    return {
+      async *[Symbol.asyncIterator]() {
+        for (const c of chunks) yield c;
+      },
+    };
+  }
+
+  it("streams the final answer token-by-token after a silent tool round; done carries pendingProposals contract fields", async () => {
+    const db = makeDb({
+      discovery_places: [{ id: PLACE_ID, name: "Lantaw Cafe", category: "cafe", city: "Cebu", rating: 4.6, verified: true, blurb: "views", lat: 10.35, lng: 123.87 }],
+    });
+    const client = makeClient(db);
+    _setTestClient(client, "test-token");
+
+    const finalJson = JSON.stringify({ message: "Try Lantaw Cafe in Busay.", payload: null, quickActions: [] });
+    // Split the final content into several token-sized deltas.
+    const tokens = finalJson.match(/.{1,12}/gs) ?? [];
+
+    let mainCalls = 0;
+    _setTestOpenAI({
+      chat: { completions: { create: async (opts: any) => {
+        const isClassifier = opts.max_completion_tokens === 60 && opts.temperature === 0;
+        if (isClassifier) {
+          return { choices: [{ message: { content: JSON.stringify({ intent: "recommendation", confidence: 0.9 }), role: "assistant" } }] };
+        }
+        assert.equal(opts.stream, true, "SSE path must request streamed completions");
+        mainCalls++;
+        if (mainCalls === 1) {
+          // Tool round — tool_call arrives via streamed deltas, split across chunks.
+          return asStream([
+            { choices: [{ delta: { tool_calls: [{ index: 0, id: "tc_1", type: "function", function: { name: "search_places", arguments: "" } }] } }] },
+            { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: JSON.stringify({ city: "Cebu" }) } }] } }] },
+          ]);
+        }
+        const toolMsg = (opts.messages as any[]).find((m: any) => m.role === "tool");
+        assert.ok(toolMsg, "tool result must be in the follow-up context");
+        return asStream(tokens.map((t) => ({ choices: [{ delta: { content: t } }] })));
+      } } },
+    } as any);
+
+    const r = await fetch(`http://localhost:${port}/api/compass/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
+      body: JSON.stringify({ prompt: "coffee in Cebu?", stream: true }),
+    });
+    assert.equal(r.status, 200);
+    assert.ok(String(r.headers.get("content-type")).includes("text/event-stream"));
+
+    const raw = await r.text();
+    const events = raw
+      .split("\n\n")
+      .filter((l) => l.startsWith("data: "))
+      .map((l) => JSON.parse(l.slice("data: ".length)));
+
+    const deltas = events.filter((e) => typeof e.delta === "string");
+    const done   = events.find((e) => e.done === true);
+
+    // Incremental streaming restored: multiple delta events, not one blob.
+    assert.ok(deltas.length > 1, `expected multiple delta events, got ${deltas.length}`);
+    assert.equal(deltas.map((e) => e.delta).join(""), finalJson, "concatenated deltas reconstruct the final round content");
+
+    // Tool round stayed invisible — no delta emitted before the second main call.
+    assert.equal(mainCalls, 2);
+
+    // done event contract unchanged.
+    assert.ok(done, "done event required");
+    assert.ok(typeof done.conversationId === "string");
+    assert.ok(Array.isArray(done.pendingProposals), "pendingProposals present on done");
+    assert.ok(Array.isArray(done.quickActions));
+
+    // Tool call persisted in the assistant message payload as before.
+    const msgs = db.compass_conversation_messages.filter((m) => m.role === "assistant");
+    assert.equal(msgs.length, 1);
+    assert.equal((msgs[0].payload as any).toolCalls[0].name, "search_places");
+    assert.equal(msgs[0].content, "Try Lantaw Cafe in Busay.", "parsed message persisted, not raw JSON");
+  });
+
+  it("streams a no-tool answer live and surfaces pendingProposals on done after an add_to_trip tool round", async () => {
+    const db = makeDb({
+      trips: [{ id: TRIP_ID, owner_id: ALICE_ID, title: "Cebu trip", plan_edit_permission: "all_members", status: "upcoming" }],
+      trip_members: [{ trip_id: TRIP_ID, user_id: ALICE_ID, role: "owner", status: "accepted" }],
+      discovery_places: [{ id: PLACE_ID, name: "Lantaw Cafe", category: "cafe", city: "Cebu" }],
+    });
+    const client = makeClient(db);
+    _setTestClient(client, "test-token");
+
+    let mainCalls = 0;
+    _setTestOpenAI({
+      chat: { completions: { create: async (opts: any) => {
+        if (opts.max_completion_tokens === 60 && opts.temperature === 0) {
+          return { choices: [{ message: { content: JSON.stringify({ intent: "action", confidence: 0.95 }), role: "assistant" } }] };
+        }
+        mainCalls++;
+        if (mainCalls === 1) {
+          return asStream([
+            { choices: [{ delta: { tool_calls: [{ index: 0, id: "tc_1", type: "function", function: { name: "add_to_trip", arguments: JSON.stringify({ tripId: TRIP_ID, placeId: PLACE_ID }) } }] } }] },
+          ]);
+        }
+        const final = JSON.stringify({ message: "I can add Lantaw Cafe — confirm below.", payload: null, quickActions: [] });
+        return asStream((final.match(/.{1,10}/gs) ?? []).map((t) => ({ choices: [{ delta: { content: t } }] })));
+      } } },
+    } as any);
+
+    const r = await fetch(`http://localhost:${port}/api/compass/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
+      body: JSON.stringify({ prompt: "add lantaw to my trip", stream: true }),
+    });
+    assert.equal(r.status, 200);
+    const events = (await r.text())
+      .split("\n\n")
+      .filter((l) => l.startsWith("data: "))
+      .map((l) => JSON.parse(l.slice("data: ".length)));
+
+    const done = events.find((e) => e.done === true);
+    assert.ok(done);
+    assert.equal((done.pendingProposals as any[]).length, 1, "proposal from the tool round surfaces on done");
+    assert.equal((done.pendingProposals as any[])[0].status, "pending_confirmation");
+    assert.ok(events.filter((e) => typeof e.delta === "string").length > 1, "final answer streamed incrementally");
+    assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], [], "nothing written before confirmation");
+  });
+});
+
 describe("H. Proposal confirmation flow", () => {
   function seededDb(proposalId: string): Db {
     return makeDb({

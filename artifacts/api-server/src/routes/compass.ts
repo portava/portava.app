@@ -879,12 +879,64 @@ interface ToolLoopOutcome {
   proposals: AddToTripProposal[];
 }
 
+/**
+ * Run one streamed model round, forwarding content deltas via onDelta.
+ * Returns the reconstructed assistant message (content + tool_calls).
+ *
+ * Content deltas are forwarded live ONLY while no tool-call delta has been
+ * seen in this round — in practice the model emits either tool calls or
+ * content, and tool-call deltas arrive first when present, so a tool round
+ * stays invisible to the SSE client while a final answer streams token-by-token.
+ */
+async function streamModelRound(
+  opts:    Record<string, unknown>,
+  onDelta: (delta: string) => void,
+): Promise<{ content: string; toolCalls: any[] }> {
+  const streamResp = await getOpenAI().chat.completions.create({
+    ...opts,
+    stream: true,
+  } as any);
+
+  let content = "";
+  const toolCallsByIndex = new Map<number, { id: string; type: string; function: { name: string; arguments: string } }>();
+
+  for await (const chunk of streamResp as any) {
+    const delta = chunk.choices?.[0]?.delta;
+    if (!delta) continue;
+
+    for (const tc of (delta.tool_calls ?? []) as any[]) {
+      const idx = tc.index ?? 0;
+      const existing = toolCallsByIndex.get(idx) ?? { id: "", type: "function", function: { name: "", arguments: "" } };
+      if (tc.id) existing.id = tc.id;
+      if (tc.function?.name) existing.function.name += tc.function.name;
+      if (tc.function?.arguments) existing.function.arguments += tc.function.arguments;
+      toolCallsByIndex.set(idx, existing);
+    }
+
+    const text: string = delta.content ?? "";
+    if (text) {
+      content += text;
+      // Suppress live emission once any tool-call delta has appeared —
+      // tool rounds must stay invisible to streaming clients.
+      if (toolCallsByIndex.size === 0) onDelta(text);
+    }
+  }
+
+  const toolCalls = [...toolCallsByIndex.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, tc]) => tc);
+  return { content, toolCalls };
+}
+
 async function runToolCallingLoop(
   sc:       SupabaseClient,
   userId:   string,
   profile:  Awaited<ReturnType<typeof getCompassProfile>> | null,
   messages: Array<Record<string, unknown>>,
   log:      { info: (o: object, m: string) => void; warn: (o: object, m: string) => void },
+  /** When set, model rounds are streamed and final-answer content deltas are
+   *  forwarded live (tool rounds stay silent). Used by the SSE branch. */
+  onDelta?: (delta: string) => void,
 ): Promise<ToolLoopOutcome> {
   const convo: any[] = [...messages];
   const toolLog: ToolExecution[] = [];
@@ -892,17 +944,30 @@ async function runToolCallingLoop(
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
     const forceFinal = round === MAX_TOOL_ROUNDS;
-    const completion = await getOpenAI().chat.completions.create({
+    const requestOpts = {
       model: "gpt-5-mini",
       max_completion_tokens: 1200,
       messages: convo,
       ...(forceFinal
         ? {}
         : { tools: COMPASS_TOOL_DEFINITIONS as any, tool_choice: "auto" as const }),
-    } as any);
+    };
 
-    const msg = (completion as any).choices?.[0]?.message;
-    const toolCalls: any[] = msg?.tool_calls ?? [];
+    let msg: any;
+    let toolCalls: any[];
+    if (onDelta) {
+      const streamed = await streamModelRound(requestOpts, onDelta);
+      toolCalls = streamed.toolCalls;
+      msg = {
+        role: "assistant",
+        content: streamed.content || null,
+        ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
+      };
+    } else {
+      const completion = await getOpenAI().chat.completions.create(requestOpts as any);
+      msg = (completion as any).choices?.[0]?.message;
+      toolCalls = msg?.tool_calls ?? [];
+    }
 
     if (!toolCalls.length || forceFinal) {
       return { finalRaw: String(msg?.content ?? ""), toolLog, proposals };
@@ -1172,14 +1237,14 @@ router.post("/compass/ask", async (req, res) => {
     res.setHeader("Connection",    "keep-alive");
     res.flushHeaders();
     try {
-      // Phase 4: the tool-calling loop runs non-streamed (tool rounds cannot be
-      // usefully streamed); the final answer is emitted as a single delta so
-      // the SSE contract is unchanged for clients.
+      // Tool rounds run silently server-side; the FINAL model round streams
+      // its content token-by-token as delta events (same contract as before
+      // Phase 4). The done event still carries the parsed message fields.
       const { finalRaw, toolLog, proposals } = await runToolCallingLoop(
         sc, user.id, guardProfile, messages as any, req.log,
+        (delta) => { res.write(`data: ${JSON.stringify({ delta })}\n\n`); },
       );
       const { message, payload, quickActions } = _parseModelResponse(finalRaw);
-      res.write(`data: ${JSON.stringify({ delta: message })}\n\n`);
       // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
       const uiBlocks = await buildUiBlocks(sc, payload, toolLog).catch(() => []);
       const persistedPayload: Record<string, unknown> | undefined =
