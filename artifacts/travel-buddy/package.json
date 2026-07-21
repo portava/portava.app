@@ -17,7 +17,7 @@
     "test": "node scripts/run-node-tests.mjs",
     "test:event-rab-cta": "node --import tsx/esm --test src/services/__tests__/event.rabCta.test.ts",
     "test:stamps": "node --import tsx --test src/test/stampGracefulDegradation.test.ts",
-    "test:component": "node scripts/check-test-mocks.mjs && jest --forceExit --testPathPattern='\\.component\\.test\\.'",
+    "test:component": "node scripts/check-test-mocks.mjs && jest --forceExit --testPathPattern='\\.component\\.test\\.' && jest -c jest.web.config.js --forceExit",
     "lint:imports": "node scripts/check-import-extensions.mjs",
     "lint:mocks": "node scripts/check-test-mocks.mjs",
     "lint:ksv": "node scripts/check-ksv-inner-scroll.mjs"

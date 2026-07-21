@@ -15,6 +15,10 @@ module.exports = {
   testPathIgnorePatterns: [
     '/node_modules/',
     '<rootDir>/src/test/',
+    // *.webrender.test.* files run under jest.web.config.js (jest-expo/web,
+    // react-dom) — the native renderer cannot commit their out-of-band
+    // event-bus state updates (known React 19 renderer wall).
+    '\\.webrender\\.test\\.',
   ],
   // Cap workers so the full component suite doesn't exhaust the heap.
   // Without this limit Jest spawns one worker per CPU and OOMs on large suites.

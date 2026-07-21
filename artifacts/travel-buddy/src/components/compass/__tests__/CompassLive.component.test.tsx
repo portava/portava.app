@@ -89,6 +89,10 @@ describe('CompassLive', () => {
   // wall), so this test asserts the wiring — an immediate refresh check fires
   // on a compass.live.* event and unrelated events are ignored — via the mock
   // call counts, which observe the synchronous listener dispatch.
+  // The on-screen render of the nudge card IS covered end-to-end: see
+  // CompassLiveNudge.webrender.test.tsx, which runs the same component under
+  // react-native-web + real react-dom (jest.web.config.js) where the commit
+  // works, and asserts the card text is visible the instant the event fires.
   it('refreshes in the moment when a live notification event arrives — and ignores unrelated events', async () => {
     mockFetchSession.mockResolvedValue({ ok: true, compassEnabled: true, active: true, session: ACTIVE_SESSION });
     mockCheck.mockResolvedValue({ ok: true, compassEnabled: true, active: true, session: ACTIVE_SESSION, delivered: [] });
