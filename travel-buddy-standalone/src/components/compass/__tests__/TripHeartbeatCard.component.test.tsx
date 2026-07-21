@@ -14,6 +14,8 @@ const mockFetchHeartbeat = jest.fn();
 const mockRunCheck = jest.fn();
 const mockFetchProposals = jest.fn();
 const mockResolve = jest.fn();
+const mockFetchSettings = jest.fn();
+const mockPutSettings = jest.fn();
 
 // NOTE: intentionally exhaustive — TripHeartbeatCard imports exactly these four
 // functions; requireActual would drag in supabase/env config into the jest env.
@@ -22,6 +24,8 @@ jest.mock('../../../services/compass', () => ({
   runTripAutopilotCheck: (...a: unknown[]) => mockRunCheck(...a),
   fetchAutopilotProposals: (...a: unknown[]) => mockFetchProposals(...a),
   resolveAutopilotProposal: (...a: unknown[]) => mockResolve(...a),
+  fetchAutopilotSettings: (...a: unknown[]) => mockFetchSettings(...a),
+  putAutopilotSettings: (...a: unknown[]) => mockPutSettings(...a),
 }));
 
 import { TripHeartbeatCard } from '../TripHeartbeatCard.tsx';
@@ -53,12 +57,25 @@ const PROPOSAL = {
   resolvedAt: null,
 };
 
+const SETTINGS = {
+  enabled: true,
+  allowMoveFlexible: true,
+  allowMoveOptional: true,
+  allowRemoveOptional: false,
+};
+
 describe('TripHeartbeatCard', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockFetchHeartbeat.mockResolvedValue({ ok: true, compassEnabled: true, heartbeat: HEARTBEAT });
     mockFetchProposals.mockResolvedValue({ ok: true, proposals: [PROPOSAL] });
     mockResolve.mockResolvedValue({ ok: true, applied: 1, blocked: [] });
+    mockFetchSettings.mockResolvedValue({ ok: true, compassEnabled: true, settings: SETTINGS });
+    mockPutSettings.mockImplementation(async (_tripId: string, patch: Record<string, boolean>) => ({
+      ok: true,
+      compassEnabled: true,
+      settings: { ...SETTINGS, ...patch },
+    }));
   });
 
   it('renders status, issue reasons, risks, and a pending proposal', async () => {
@@ -82,5 +99,34 @@ describe('TripHeartbeatCard', () => {
     mockFetchHeartbeat.mockResolvedValue({ ok: true, compassEnabled: false });
     await render(<TripHeartbeatCard tripId="trip-1" />);
     await waitFor(() => expect(screen.queryByTestId('trip-heartbeat-card')).toBeNull());
+  });
+
+  it('opens the permissions panel and toggling a grant persists via PUT', async () => {
+    await render(<TripHeartbeatCard tripId="trip-1" />);
+    await waitFor(() => expect(screen.getByTestId('autopilot-settings-toggle')).toBeTruthy());
+    fireEvent.press(screen.getByTestId('autopilot-settings-toggle'));
+    await waitFor(() => expect(screen.getByTestId('autopilot-settings-panel')).toBeTruthy());
+    expect(screen.getByTestId('autopilot-switch-enabled')).toBeTruthy();
+    expect(screen.getByTestId('autopilot-switch-allowMoveFlexible')).toBeTruthy();
+    expect(screen.getByTestId('autopilot-switch-allowMoveOptional')).toBeTruthy();
+    expect(screen.getByTestId('autopilot-switch-allowRemoveOptional')).toBeTruthy();
+
+    fireEvent(screen.getByTestId('autopilot-switch-allowRemoveOptional'), 'valueChange', true);
+    await waitFor(() =>
+      expect(mockPutSettings).toHaveBeenCalledWith('trip-1', { allowRemoveOptional: true }),
+    );
+  });
+
+  it('turning Autopilot off hides Check my trip now but keeps the health view', async () => {
+    mockFetchSettings.mockResolvedValue({
+      ok: true,
+      compassEnabled: true,
+      settings: { ...SETTINGS, enabled: false },
+    });
+    await render(<TripHeartbeatCard tripId="trip-1" />);
+    await waitFor(() => expect(screen.getByTestId('trip-heartbeat-card')).toBeTruthy());
+    expect(screen.getByText('At risk')).toBeTruthy();
+    expect(screen.getByTestId('autopilot-off-note')).toBeTruthy();
+    expect(screen.queryByTestId('trip-heartbeat-check')).toBeNull();
   });
 });

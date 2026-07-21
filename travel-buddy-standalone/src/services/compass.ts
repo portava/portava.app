@@ -934,6 +934,52 @@ export async function resolveAutopilotProposal(
   }
 }
 
+export interface AutopilotSettings {
+  enabled: boolean;
+  allowMoveFlexible: boolean;
+  allowMoveOptional: boolean;
+  allowRemoveOptional: boolean;
+}
+
+export interface AutopilotSettingsResult {
+  ok: boolean;
+  compassEnabled?: boolean;
+  settings?: AutopilotSettings;
+  error?: string;
+}
+
+export async function fetchAutopilotSettings(tripId: string): Promise<AutopilotSettingsResult> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
+  try {
+    const r = await authedFetch(`/api/trips/${tripId}/autopilot/settings`);
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    if (body.compassEnabled === false) return { ok: true, compassEnabled: false };
+    return { ok: true, compassEnabled: true, settings: body.settings };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+export async function putAutopilotSettings(
+  tripId: string,
+  patch: Partial<AutopilotSettings>,
+): Promise<AutopilotSettingsResult> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
+  try {
+    const r = await authedFetch(`/api/trips/${tripId}/autopilot/settings`, {
+      method: 'PUT',
+      body: JSON.stringify(patch),
+    });
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    if (body.compassEnabled === false) return { ok: true, compassEnabled: false };
+    return { ok: true, compassEnabled: true, settings: body.settings };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
 export interface CompassSettingsResult {
   ok: boolean;
   data?: CompassSettings;

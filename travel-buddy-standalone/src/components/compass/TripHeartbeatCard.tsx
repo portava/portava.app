@@ -7,15 +7,18 @@
  * proposes — nothing changes without an explicit confirm here.
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
-import { HeartPulse, RefreshCw, Check, X } from 'lucide-react-native';
+import { View, Text, Pressable, ActivityIndicator, StyleSheet, Switch } from 'react-native';
+import { HeartPulse, RefreshCw, Check, X, Settings2 } from 'lucide-react-native';
 import {
   fetchTripHeartbeat,
   runTripAutopilotCheck,
   fetchAutopilotProposals,
   resolveAutopilotProposal,
+  fetchAutopilotSettings,
+  putAutopilotSettings,
   type TripHeartbeat,
   type AutopilotProposal,
+  type AutopilotSettings,
 } from '../../services/compass.ts';
 
 const STATUS_META: Record<TripHeartbeat['status'], { label: string; color: string; bg: string }> = {
@@ -31,6 +34,9 @@ export function TripHeartbeatCard({ tripId }: { tripId: string }) {
   const [heartbeat, setHeartbeat] = useState<TripHeartbeat | null>(null);
   const [proposals, setProposals] = useState<AutopilotProposal[]>([]);
   const [resolving, setResolving] = useState<string | null>(null);
+  const [settings, setSettings] = useState<AutopilotSettings | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [savingKey, setSavingKey] = useState<keyof AutopilotSettings | null>(null);
 
   const load = useCallback(async () => {
     const hb = await fetchTripHeartbeat(tripId);
@@ -40,6 +46,8 @@ export function TripHeartbeatCard({ tripId }: { tripId: string }) {
       return;
     }
     if (hb.ok && hb.heartbeat) setHeartbeat(hb.heartbeat);
+    const st = await fetchAutopilotSettings(tripId);
+    if (st.ok && st.settings) setSettings(st.settings);
     const pr = await fetchAutopilotProposals(tripId);
     if (pr.ok && pr.proposals) setProposals(pr.proposals.filter((p) => p.status === 'pending'));
     setLoading(false);
@@ -55,6 +63,19 @@ export function TripHeartbeatCard({ tripId }: { tripId: string }) {
     await load();
     setChecking(false);
   }, [tripId, load]);
+
+  const onToggleSetting = useCallback(
+    async (key: keyof AutopilotSettings, value: boolean) => {
+      setSavingKey(key);
+      const prev = settings;
+      setSettings((s) => (s ? { ...s, [key]: value } : s));
+      const r = await putAutopilotSettings(tripId, { [key]: value });
+      if (r.ok && r.settings) setSettings(r.settings);
+      else setSettings(prev ?? null);
+      setSavingKey(null);
+    },
+    [tripId, settings],
+  );
 
   const onResolve = useCallback(
     async (id: string, action: 'confirm' | 'decline') => {
@@ -85,10 +106,53 @@ export function TripHeartbeatCard({ tripId }: { tripId: string }) {
           <HeartPulse size={16} color={meta.color} />
           <Text style={styles.title}>Trip Heartbeat</Text>
         </View>
-        <View style={[styles.badge, { backgroundColor: meta.bg }]} testID="trip-heartbeat-status">
-          <Text style={[styles.badgeText, { color: meta.color }]}>{meta.label}</Text>
+        <View style={styles.titleRow}>
+          <View style={[styles.badge, { backgroundColor: meta.bg }]} testID="trip-heartbeat-status">
+            <Text style={[styles.badgeText, { color: meta.color }]}>{meta.label}</Text>
+          </View>
+          <Pressable
+            onPress={() => setShowSettings((v) => !v)}
+            hitSlop={8}
+            testID="autopilot-settings-toggle"
+            accessibilityLabel="Autopilot permissions"
+          >
+            <Settings2 size={16} color="#64748b" />
+          </Pressable>
         </View>
       </View>
+
+      {showSettings && settings ? (
+        <View style={styles.settingsPanel} testID="autopilot-settings-panel">
+          <Text style={styles.settingsTitle}>What Autopilot may touch</Text>
+          {(
+            [
+              { key: 'enabled', label: 'Autopilot on', hint: 'Watch this trip and suggest fixes' },
+              { key: 'allowMoveFlexible', label: 'Move flexible plans', hint: 'May propose new times for Flexible items' },
+              { key: 'allowMoveOptional', label: 'Move optional plans', hint: 'May propose new times for Optional items' },
+              { key: 'allowRemoveOptional', label: 'Remove optional plans', hint: 'May propose dropping Optional items' },
+            ] as { key: keyof AutopilotSettings; label: string; hint: string }[]
+          ).map(({ key, label, hint }) => {
+            const grantDisabled = key !== 'enabled' && !settings.enabled;
+            return (
+              <View key={key} style={styles.settingRow} testID={`autopilot-setting-${key}`}>
+                <View style={styles.settingText}>
+                  <Text style={[styles.settingLabel, grantDisabled && styles.settingLabelDisabled]}>{label}</Text>
+                  <Text style={styles.settingHint}>{hint}</Text>
+                </View>
+                <Switch
+                  value={settings[key]}
+                  onValueChange={(v) => onToggleSetting(key, v)}
+                  disabled={savingKey !== null || grantDisabled}
+                  testID={`autopilot-switch-${key}`}
+                />
+              </View>
+            );
+          })}
+          <Text style={styles.settingsFootnote}>
+            Fixed plans are never touched. Autopilot only proposes — nothing changes without your confirm.
+          </Text>
+        </View>
+      ) : null}
 
       {heartbeat.issues.length === 0 && heartbeat.risks.length === 0 ? (
         <Text style={styles.okText}>No conflicts or risks detected. Everything looks workable.</Text>
@@ -136,10 +200,16 @@ export function TripHeartbeatCard({ tripId }: { tripId: string }) {
         </View>
       ))}
 
-      <Pressable style={styles.checkBtn} onPress={onCheckNow} disabled={checking} testID="trip-heartbeat-check">
-        <RefreshCw size={13} color="#0f172a" />
-        <Text style={styles.checkText}>{checking ? 'Checking…' : 'Check my trip now'}</Text>
-      </Pressable>
+      {settings?.enabled === false ? (
+        <Text style={styles.autopilotOffText} testID="autopilot-off-note">
+          Autopilot is off for this trip. You still see honest health above — no new proposals will be created.
+        </Text>
+      ) : (
+        <Pressable style={styles.checkBtn} onPress={onCheckNow} disabled={checking} testID="trip-heartbeat-check">
+          <RefreshCw size={13} color="#0f172a" />
+          <Text style={styles.checkText}>{checking ? 'Checking…' : 'Check my trip now'}</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -196,4 +266,20 @@ const styles = StyleSheet.create({
     backgroundColor: '#f1f5f9',
   },
   checkText: { fontSize: 12.5, fontWeight: '600', color: '#0f172a' },
+  settingsPanel: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 10,
+    gap: 10,
+  },
+  settingsTitle: { fontSize: 12, fontWeight: '700', color: '#0f172a' },
+  settingRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  settingText: { flex: 1 },
+  settingLabel: { fontSize: 12.5, fontWeight: '600', color: '#0f172a' },
+  settingLabelDisabled: { color: '#94a3b8' },
+  settingHint: { fontSize: 11, color: '#64748b', marginTop: 1 },
+  settingsFootnote: { fontSize: 11, color: '#64748b', lineHeight: 15 },
+  autopilotOffText: { fontSize: 12, color: '#64748b', lineHeight: 16 },
 });
