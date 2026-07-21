@@ -35,17 +35,24 @@
  *     (`rel(...)`, including `rel!hint(...)`) are skipped — embedded
  *     resources reference OTHER tables and are out of scope here
  *
- * Deliberately skipped (counted and printed in verbose mode, never failed):
+ * Skipped-but-TRACKED (the blind spot must not grow silently):
  *   - dynamic table names (`.from(tableVar)`)
  *   - payloads that cannot be statically resolved (function results,
  *     imported values, spreads — spread keys that ARE statically visible
  *     are still collected)
  *   - non-literal select lists (template strings with substitutions,
  *     variables)
+ *   Every such site is counted against UNRESOLVED_ALLOWLIST below, keyed by
+ *   `file|method|reason` (line numbers churn, so counts per key are used).
+ *   A NEW unresolvable site — a new key, or more sites under an existing
+ *   key — turns the check red: either rewrite the site so it is statically
+ *   resolvable, or consciously bump the allowlist entry.
  *
  * Usage (from artifacts/api-server):
  *   pnpm run check:write-path-columns          # diff against live schema
  *   pnpm run check:write-path-columns -- --verbose
+ *   pnpm run check:write-path-columns -- --print-unresolved-allowlist
+ *       # emit the UNRESOLVED_ALLOWLIST block matching the current tree
  *
  * Exit code 0 → every extracted column exists live (or is allowlisted)
  * Exit code 1 → at least one written column is missing from the live schema
@@ -61,6 +68,9 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(__dir, "../..");
 const SCAN_DIRS = [resolve(__dir, "../routes"), resolve(__dir, "../services")];
 const VERBOSE = process.argv.includes("--verbose");
+const PRINT_UNRESOLVED_ALLOWLIST = process.argv.includes(
+  "--print-unresolved-allowlist",
+);
 
 // ── Allowlist ─────────────────────────────────────────────────────────────────
 //
@@ -75,6 +85,78 @@ const ALLOWLIST = new Set<string>([
 // (e.g. test doubles or tables owned by another system).
 const SKIP_TABLES = new Set<string>([
   // (none currently)
+]);
+
+// ── Unresolvable-site allowlist ───────────────────────────────────────────────
+//
+// Every write/read site the AST extraction CANNOT statically resolve is a
+// blind spot where a phantom column can still sneak through.  Each is
+// tracked here as `file|method|reason` → expected count (line numbers churn
+// too much to key on).  If a NEW unresolvable site appears — a new key, or
+// more sites under an existing key — the check FAILS: rewrite the site so
+// the payload/select list is statically resolvable, or consciously bump the
+// entry here.  If a count DROPS, the check also fails so the entry gets
+// trimmed (keeping the ledger honest).
+//
+// Regenerate the whole block with:
+//   pnpm run check:write-path-columns -- --print-unresolved-allowlist
+//
+// Burn this list down — every entry is a hole in the check.
+const UNRESOLVED_ALLOWLIST = new Map<string, number>([
+  ["src/routes/admin.ts|select|select list not statically resolvable", 2],
+  ["src/routes/adminGeocode.ts|select|dynamic table name", 2],
+  ["src/routes/adminGeocode.ts|update|dynamic table name", 2],
+  ["src/routes/adminGeocode.ts|upsert|dynamic table name", 2],
+  ["src/routes/airport.ts|select|select list not statically resolvable", 2],
+  ["src/routes/circle.ts|upsert|payload not statically resolvable", 1],
+  ["src/routes/compass.ts|select|select list not statically resolvable", 4],
+  ["src/routes/compass.ts|upsert|payload not statically resolvable", 1],
+  ["src/routes/compass.ts|upsert|payload partially resolvable", 2],
+  ["src/routes/events.ts|select|select list not statically resolvable", 2],
+  ["src/routes/follows.ts|select|select list not statically resolvable", 4],
+  ["src/routes/friends.ts|select|select list not statically resolvable", 4],
+  ["src/routes/geofence.ts|select|select list not statically resolvable", 1],
+  ["src/routes/groupChat.ts|select|select list not statically resolvable", 1],
+  ["src/routes/meetups.ts|insert|payload not statically resolvable", 2],
+  ["src/routes/memories.ts|insert|payload not statically resolvable", 2],
+  ["src/routes/memories.ts|select|select list not statically resolvable", 5],
+  ["src/routes/messaging.ts|select|dynamic table name", 1],
+  ["src/routes/messaging.ts|select|select list not statically resolvable", 2],
+  ["src/routes/messaging.ts|update|payload partially resolvable", 1],
+  ["src/routes/messaging.ts|upsert|payload partially resolvable", 1],
+  ["src/routes/passport.ts|select|select list not statically resolvable", 10],
+  ["src/routes/postcards.ts|select|select list not statically resolvable", 3],
+  ["src/routes/posts.ts|select|select list not statically resolvable", 14],
+  ["src/routes/profile.ts|select|select list not statically resolvable", 4],
+  ["src/routes/profile.ts|upsert|payload partially resolvable", 1],
+  ["src/routes/pulse.ts|select|select list not statically resolvable", 1],
+  ["src/routes/rentABuddy.ts|insert|payload not statically resolvable", 1],
+  ["src/routes/rentABuddy.ts|select|select list not statically resolvable", 3],
+  ["src/routes/rentABuddy.ts|update|payload partially resolvable", 1],
+  ["src/routes/rentABuddyMarketplace.ts|insert|payload not statically resolvable", 1],
+  ["src/routes/rentABuddyMarketplace.ts|upsert|payload not statically resolvable", 1],
+  ["src/routes/rentABuddySpec.ts|select|select list not statically resolvable", 2],
+  ["src/routes/rentABuddySpec.ts|upsert|payload not statically resolvable", 2],
+  ["src/routes/requests.ts|select|select list not statically resolvable", 1],
+  ["src/routes/routePlan.ts|insert|payload not statically resolvable", 2],
+  ["src/routes/stampCatalog.ts|select|select list not statically resolvable", 4],
+  ["src/routes/stamps.ts|select|select list not statically resolvable", 10],
+  ["src/routes/stories.ts|select|select list not statically resolvable", 3],
+  ["src/routes/telegraphChat.ts|insert|payload not statically resolvable", 1],
+  ["src/routes/telegraphChat.ts|update|payload not statically resolvable", 1],
+  ["src/routes/trips-expansion.ts|insert|payload not statically resolvable", 1],
+  ["src/routes/trips.ts|insert|payload not statically resolvable", 1],
+  ["src/routes/trips.ts|select|select list not statically resolvable", 3],
+  ["src/routes/trust-admin.ts|update|payload partially resolvable", 1],
+  ["src/services/groupChatSync.ts|upsert|payload not statically resolvable", 2],
+  ["src/services/hiddenGems/HiddenGemService.ts|select|select list not statically resolvable", 6],
+  ["src/services/hiddenGems/HiddenGemService.ts|update|payload not statically resolvable", 2],
+  ["src/services/notifications/NotificationPreferenceService.ts|upsert|payload partially resolvable", 1],
+  ["src/services/rentBuddy/ReliabilityCounters.ts|select|select list not statically resolvable", 1],
+  ["src/services/rentBuddy/ReliabilityCounters.ts|update|payload partially resolvable", 1],
+  ["src/services/safeReturn/SafeReturnService.ts|insert|payload not statically resolvable", 1],
+  ["src/services/trust/TrustAdminService.ts|upsert|payload partially resolvable", 1],
+  ["src/services/trust/TrustEventService.ts|select|select list not statically resolvable", 1],
 ]);
 
 // ── Read-path baseline ────────────────────────────────────────────────────────
@@ -611,7 +693,96 @@ if (VERBOSE && skipped.length > 0) {
   }
 }
 
+// ── Unresolvable-site ledger ──────────────────────────────────────────────────
+//
+// Fully-unresolvable sites (skipped) AND partially-unresolved payloads
+// (statically visible keys plus a spread/computed part we can't see) are
+// both blind spots.  Count them per `file|method|reason` key and diff
+// against UNRESOLVED_ALLOWLIST.
+
+const unresolvedCounts = new Map<string, number>();
+const unresolvedWhere = new Map<string, string[]>();
+function trackUnresolved(file: string, line: number, method: string, reason: string) {
+  const key = `${file}|${method}|${reason}`;
+  unresolvedCounts.set(key, (unresolvedCounts.get(key) ?? 0) + 1);
+  const list = unresolvedWhere.get(key) ?? [];
+  list.push(`${file}:${line}`);
+  unresolvedWhere.set(key, list);
+}
+for (const s of skipped) trackUnresolved(s.file, s.line, s.method, s.reason);
+for (const s of sites) {
+  if (s.unresolved) {
+    trackUnresolved(s.file, s.line, s.method, "payload partially resolvable");
+  }
+}
+
+if (PRINT_UNRESOLVED_ALLOWLIST) {
+  console.log("\nconst UNRESOLVED_ALLOWLIST = new Map<string, number>([");
+  for (const [key, count] of [...unresolvedCounts].sort()) {
+    console.log(`  ["${key}", ${count}],`);
+  }
+  console.log("]);");
+  process.exit(0);
+}
+
 let failed = false;
+
+const newUnresolved: string[] = [];
+const staleUnresolved: string[] = [];
+for (const [key, count] of [...unresolvedCounts].sort()) {
+  const allowed = UNRESOLVED_ALLOWLIST.get(key) ?? 0;
+  if (count > allowed) {
+    newUnresolved.push(
+      `  ${key} — ${count} site(s), allowlisted ${allowed}\n` +
+        unresolvedWhere
+          .get(key)!
+          .map((w) => `      ${w}`)
+          .join("\n"),
+    );
+  } else if (count < allowed) {
+    staleUnresolved.push(`  ${key} — allowlisted ${allowed}, found ${count}`);
+  }
+}
+for (const [key, allowed] of [...UNRESOLVED_ALLOWLIST].sort()) {
+  if (!unresolvedCounts.has(key)) {
+    staleUnresolved.push(`  ${key} — allowlisted ${allowed}, found 0`);
+  }
+}
+
+if (newUnresolved.length > 0) {
+  failed = true;
+  console.error(
+    "\n✗ NEW unresolvable write/read sites (not in UNRESOLVED_ALLOWLIST):",
+  );
+  for (const entry of newUnresolved) console.error(entry);
+  console.error(
+    "\nThese sites are blind spots — the column check cannot verify them " +
+      "against the live schema. Prefer rewriting the site so the payload/" +
+      "select list is statically resolvable. If that is genuinely not " +
+      "possible, regenerate the ledger with\n" +
+      "  pnpm run check:write-path-columns -- --print-unresolved-allowlist\n" +
+      "and update UNRESOLVED_ALLOWLIST in this script.",
+  );
+}
+
+if (newUnresolved.length === 0 && staleUnresolved.length === 0) {
+  const total = [...unresolvedCounts.values()].reduce((a, b) => a + b, 0);
+  console.log(
+    `\n⚠ ${total} unresolvable write/read sites tracked in UNRESOLVED_ALLOWLIST ` +
+      "(blind spots — burn the list down; run with --verbose for locations).",
+  );
+}
+
+if (staleUnresolved.length > 0) {
+  failed = true;
+  console.error(
+    "\n✗ Stale UNRESOLVED_ALLOWLIST entries (fewer sites than allowlisted — trim the ledger):",
+  );
+  for (const entry of staleUnresolved) console.error(entry);
+  console.error(
+    "\nRegenerate with: pnpm run check:write-path-columns -- --print-unresolved-allowlist",
+  );
+}
 
 if (baselined > 0) {
   console.log(
