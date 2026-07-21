@@ -24,6 +24,7 @@ import {
   eventSatisfiesGroup,
   ageFromDob,
 } from "../compass/CompassSocialEngine.js";
+import { loadCircleMemoryPreferenceTags } from "../compass/CompassRecommendationEngine.js";
 import type { CompassProfile } from "../compass/types.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -410,6 +411,52 @@ describe("E. get_group_recommendation", () => {
     assert.ok(!json.includes('"lat"') && !json.includes('"lng"'), "no coordinates");
     assert.ok(!json.includes("1996") && !json.includes("date_of_birth"), "no DOB");
     assert.ok(String(result.group.label).includes("Cebu Trip"));
+  });
+
+  it("uses the circle's remembered preferences to boost matching candidates", async () => {
+    const db = groupFixture();
+    const soon = new Date(Date.now() + 86400_000).toISOString();
+    db.events.push({ id: "ev-veg", title: "Garden Feast", city: "Cebu", starts_at: soon, category: "vegetarian", host_id: CARA_ID, state: "published", visibility: "public", max_attendees: 30, going_count: 0, age_min: null, verified_only: false });
+    db.compass_memories = [
+      { id: "m-1", user_id: BOB_ID, scope: "circle", circle_owner_id: ALICE_ID, category: "food", content: "The group always wants vegetarian options", source: "taught", confidence: 1 },
+    ];
+    const result: any = await executeCompassTool(makeClient(db), ALICE_ID, profileFor(), "get_group_recommendation", { circleName: "Dive Crew", kind: "events", city: "Cebu" });
+    const veg = result.candidates.find((c: any) => c.id === "ev-veg");
+    assert.ok(veg, "vegetarian event surfaces");
+    assert.ok(
+      String(veg.whyThis ?? "").toLowerCase().includes("told compass"),
+      `circle memory must ground a memory_preference factor (got whyThis=${veg.whyThis})`,
+    );
+  });
+
+  it("ISOLATION: another circle's memories never influence this circle's group ranking", async () => {
+    const db = groupFixture();
+    const soon = new Date(Date.now() + 86400_000).toISOString();
+    db.events.push({ id: "ev-veg", title: "Garden Feast", city: "Cebu", starts_at: soon, category: "vegetarian", host_id: CARA_ID, state: "published", visibility: "public", max_attendees: 30, going_count: 0, age_min: null, verified_only: false });
+    db.circles.push({ id: "circ-2", name: "Others Only", owner_id: CARA_ID });
+    // The vegetarian memory belongs to CARA's circle — NOT Dive Crew.
+    db.compass_memories = [
+      { id: "m-2", user_id: CARA_ID, scope: "circle", circle_owner_id: CARA_ID, category: "food", content: "The group always wants vegetarian options", source: "taught", confidence: 1 },
+    ];
+    const result: any = await executeCompassTool(makeClient(db), ALICE_ID, profileFor(), "get_group_recommendation", { circleName: "Dive Crew", kind: "events", city: "Cebu" });
+    const veg = result.candidates.find((c: any) => c.id === "ev-veg");
+    assert.ok(veg, "vegetarian event still surfaces (no gating, just no boost)");
+    assert.ok(
+      !String(veg.whyThis ?? "").toLowerCase().includes("told compass"),
+      "cross-circle memory must not create a memory_preference factor",
+    );
+  });
+
+  it("FAIL-CLOSED: loadCircleMemoryPreferenceTags returns nothing for a non-member", async () => {
+    const db = groupFixture();
+    db.compass_memories = [
+      { id: "m-3", user_id: CARA_ID, scope: "circle", circle_owner_id: CARA_ID, category: "food", content: "vegetarian options always", source: "taught", confidence: 1 },
+    ];
+    const client = makeClient(db);
+    const asStranger = await loadCircleMemoryPreferenceTags(client, ALICE_ID, CARA_ID); // Alice not in Cara's circle
+    assert.equal(asStranger.size, 0, "non-member must get an empty tag set");
+    const asOwner = await loadCircleMemoryPreferenceTags(client, CARA_ID, CARA_ID);
+    assert.ok(asOwner.has("vegetarian"), "owner sees the circle's tags");
   });
 
   it("is honest when no candidates satisfy the whole group", async () => {

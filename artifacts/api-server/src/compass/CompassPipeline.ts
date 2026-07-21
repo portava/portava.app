@@ -106,12 +106,16 @@ export async function runPipeline(
   context: CompassContext,
   db: SupabaseClient | null = null,
   _testOverrides?: PipelineTestOverrides,
+  extraMemoryTags?: Set<string>,
 ): Promise<PipelineSummary> {
   // Pre-load feature flags once for the whole batch
   const flags = await loadFlags(db);
 
-  // Phase 7 — load memory-derived preference tags once per pipeline call
+  // Phase 7 — load memory-derived preference tags once per pipeline call.
+  // Callers may pass extra pre-gated tags (e.g. circle-scoped group memories
+  // for group recommendations); the boost stays bounded either way.
   const memoryTags = await loadMemoryPreferenceTags(db, profile.userId);
+  for (const t of extraMemoryTags ?? []) memoryTags.add(t);
 
   // Phase 15 — load the Destination World Model for the viewer's city once
   // per pipeline call. Fail-soft: a missing model contributes zero boost.

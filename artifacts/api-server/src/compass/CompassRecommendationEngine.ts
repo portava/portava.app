@@ -32,6 +32,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile } from "./types.js";
+import { isCircleMember } from "./CompassMemoryService.js";
 
 // ── Ranking factors ───────────────────────────────────────────────────────────
 
@@ -387,6 +388,42 @@ export async function loadMemoryPreferenceTags(
       }
     }
   } catch { /* non-fatal */ }
+  return out;
+}
+
+/**
+ * Load a circle's scope="circle" memories (group facts taught by any member
+ * of that circle) and distil them into lower-case preference tokens — the
+ * group-ranking mirror of loadMemoryPreferenceTags.
+ *
+ * Membership-gated exactly like the memory prompt injection: returns an empty
+ * set unless callerId is a verified member of the circle (fail-closed), so
+ * one circle's memories can never influence another circle's group ranking.
+ * Non-fatal: returns an empty set on any error or when db is null.
+ */
+export async function loadCircleMemoryPreferenceTags(
+  db: SupabaseClient | null,
+  callerId: string,
+  circleOwnerId: string,
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (!db || !circleOwnerId) return out;
+  try {
+    const member = await isCircleMember(db, callerId, circleOwnerId);
+    if (!member) return out;
+    const { data } = await db
+      .from("compass_memories")
+      .select("content, category")
+      .eq("scope", "circle")
+      .eq("circle_owner_id", circleOwnerId)
+      .limit(100);
+    for (const row of (data as any[]) ?? []) {
+      const text = `${row.category ?? ""} ${row.content ?? ""}`.toLowerCase();
+      for (const word of text.split(/[^a-z]+/)) {
+        if (word.length >= 4 && !MEMORY_STOPWORDS.has(word)) out.add(word);
+      }
+    }
+  } catch { /* non-fatal — fail-closed to no boost */ }
   return out;
 }
 

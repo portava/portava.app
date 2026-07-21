@@ -24,6 +24,7 @@ import { buildCompassContext, defaultSignals } from "./CompassContextEngine.js";
 import { runPipeline } from "./CompassPipeline.js";
 import {
   buildWhyThisText,
+  loadCircleMemoryPreferenceTags,
   normalizeProfileForRanking,
 } from "./CompassRecommendationEngine.js";
 import {
@@ -286,12 +287,13 @@ async function rankToolCandidates(
   sc: SupabaseClient,
   profile: CompassProfile | null,
   items: CompassItem[],
+  extraMemoryTags?: Set<string>,
 ): Promise<Map<string, ToolRankEntry> | null> {
   if (!profile || items.length === 0) return null;
   try {
     const p = normalizeProfileForRanking(profile);
     const context = buildCompassContext(p, defaultSignals(p));
-    const { results } = await runPipeline(items, p, context, sc);
+    const { results } = await runPipeline(items, p, context, sc, undefined, extraMemoryTags);
     // A successful pipeline run with zero survivors means every candidate was
     // intentionally gated out (safety/eligibility/kill-switch) — honour that
     // with an EMPTY ranking map so the tool returns no candidates. Raw
@@ -806,7 +808,7 @@ async function resolveGroupMemberIds(
   sc: SupabaseClient,
   userId: string,
   circleName: string | null,
-): Promise<{ memberIds: string[]; groupLabel: string } | { error: string }> {
+): Promise<{ memberIds: string[]; groupLabel: string; circleOwnerId: string | null } | { error: string }> {
   if (circleName) {
     // Circles the user owns, or belongs to (circle_memberships: user_id = owner).
     const [{ data: owned }, { data: memberships }] = await Promise.all([
@@ -839,7 +841,7 @@ async function resolveGroupMemberIds(
     for (const m of (members ?? []) as any[]) {
       if ((m.status ?? "accepted") === "accepted") ids.add(String(m.other_id));
     }
-    return { memberIds: [...ids], groupLabel: wrapUgc(String(circle.name ?? "Circle")) };
+    return { memberIds: [...ids], groupLabel: wrapUgc(String(circle.name ?? "Circle")), circleOwnerId: ownerId };
   }
 
   // Default: current/upcoming trip members.
@@ -855,7 +857,7 @@ async function resolveGroupMemberIds(
   for (const m of (members ?? []) as any[]) {
     if (m.status == null || m.status === "accepted") ids.add(String(m.user_id));
   }
-  return { memberIds: [...ids], groupLabel: trip.title ? wrapUgc(String(trip.title)) : "the trip group" };
+  return { memberIds: [...ids], groupLabel: trip.title ? wrapUgc(String(trip.title)) : "the trip group", circleOwnerId: null };
 }
 
 /** Union of block relationships (both directions) involving any group member. */
@@ -906,6 +908,12 @@ async function toolGroupRecommendation(
   const groupProfile = buildGroupRankingProfile(viewerProfile, agg, blockUnion);
   const excluded = new Set<string>([...hidden, ...blockUnion]);
 
+  // Phase 6 circle memories → group ranking. Membership-gated inside the
+  // loader (fail-closed), boost stays bounded exactly like personal memories.
+  const circleMemoryTags = group.circleOwnerId
+    ? await loadCircleMemoryPreferenceTags(sc, userId, group.circleOwnerId)
+    : new Set<string>();
+
   const city = typeof args["city"] === "string" && args["city"].trim()
     ? (args["city"] as string)
     : (viewerProfile.currentCity ?? null);
@@ -948,7 +956,7 @@ async function toolGroupRecommendation(
       eventStartsAt: e.starts_at ?? null,
       authorId:      e.host_id ? String(e.host_id) : undefined,
     } as CompassItem));
-    const ranking = await rankToolCandidates(sc, groupProfile, rankItems);
+    const ranking = await rankToolCandidates(sc, groupProfile, rankItems, circleMemoryTags);
     candidates = applyToolRanking(
       visible.map((e) => ({
         id:          e.id,
@@ -979,7 +987,7 @@ async function toolGroupRecommendation(
       qualityScore: typeof p.rating === "number" ? p.rating * 2 : undefined,
       savedCount:   Number(p.saved_count ?? 0),
     } as CompassItem));
-    const ranking = await rankToolCandidates(sc, groupProfile, rankItems);
+    const ranking = await rankToolCandidates(sc, groupProfile, rankItems, circleMemoryTags);
     candidates = applyToolRanking(
       rows.map((p) => ({
         ...p,
