@@ -678,16 +678,21 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
 
   } else if (tab === 'circles') {
     try {
-      // Visibility: only show circles the viewer owns, is a member of, or are public
-      const { data: memberCircleRows } = await sc
-        .from('circle_members').select('circle_id').eq('user_id', user.id).in('circle_id', sourceIds);
-      const viewerCircleIds = new Set((memberCircleRows ?? []).map((r: any) => r.circle_id as string));
-
+      // Visibility: only show circles the viewer owns, is a member of, or are public.
+      // Live membership table is circle_memberships(user_id = circle owner,
+      // other_id = member) — membership is keyed by circle OWNER, not circle id.
       const { data: circles } = await sc.from('circles').select('id, name, owner_id, visibility').in('id', sourceIds);
+      const ownerIds = [...new Set((circles ?? []).map((c: any) => c.owner_id as string))];
+      let viewerCircleOwnerIds = new Set<string>();
+      if (ownerIds.length > 0) {
+        const { data: memberRows } = await sc
+          .from('circle_memberships').select('user_id').eq('other_id', user.id).in('user_id', ownerIds);
+        viewerCircleOwnerIds = new Set((memberRows ?? []).map((r: any) => r.user_id as string));
+      }
       const items = (circles ?? [])
         .filter((c: any) =>
           !feedBlockedSet.has(c.owner_id) &&
-          (c.visibility === 'public' || c.owner_id === user.id || viewerCircleIds.has(c.id))
+          (c.visibility === 'public' || c.owner_id === user.id || viewerCircleOwnerIds.has(c.owner_id))
         )
         .map((c: any) => ({ id: c.id, type: 'circle', name: c.name }));
       res.status(200).json({ items, posts: [], hasMore: items.length === limit, nextCursor, tab, scope });
@@ -1038,8 +1043,6 @@ router.patch('/admin/hashtags/:slug', async (req, res) => {
       return;
     }
     patch.slug = normalizedSlug;
-    // normalized_name strips all non-alphanumeric chars for fuzzy matching
-    patch.normalized_name = normalizedSlug.replace(/[^a-z0-9]/g, '');
     if (parsed.data.name === undefined) patch.name = parsed.data.newSlug;
   }
 
@@ -1050,7 +1053,7 @@ router.patch('/admin/hashtags/:slug', async (req, res) => {
     .from('hashtags')
     .update(patch)
     .eq('id', (ht as any).id)
-    .select('id, slug, name, normalized_name, is_blocked, is_hidden_from_trending, usage_count')
+    .select('id, slug, name, is_blocked, is_hidden_from_trending, usage_count')
     .single();
 
   if (error) {

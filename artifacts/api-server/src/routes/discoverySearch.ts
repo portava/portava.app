@@ -643,7 +643,7 @@ async function searchHiddenGems(
     const pat = sqlPattern(q);
     const { data, error } = await sc
       .from("hidden_gems")
-      .select("id, name, description, city, country, submitted_by, image_url, category, status, created_at")
+      .select("id, name, description, city, country, submitted_by, category, status, created_at")
       .or(`name.ilike.${pat},description.ilike.${pat},city.ilike.${pat}`)
       .in("status", ["approved", "active"])
       .order("created_at", { ascending: false })
@@ -668,7 +668,7 @@ async function searchHiddenGems(
         title: (g.name as string) ?? "",
         subtitle: (g.category as string | null) ?? null,
         avatarUrl: null,
-        imageUrl: (g.image_url as string | null) ?? null,
+        imageUrl: null,
         fallbackInitials: initials((g.name as string) ?? ""),
         locationPreview: [(g.city as string | null), (g.country as string | null)].filter(Boolean).join(", ") || null,
         matchedReason: null,

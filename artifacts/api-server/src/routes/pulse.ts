@@ -1254,15 +1254,15 @@ router.get("/pulse/live", async (req, res) => {
         // Proximity mode: fetch all active gems with coordinates, filter by radius
         const { data } = await sc
           .from("hidden_gems")
-          .select("id, name, city, category, save_count, lat, lng")
+          .select("id, name, city, category, save_count, latitude, longitude")
           .eq("status", "active")
           .order("save_count", { ascending: false })
           .limit(100);
         gems = ((data as any[]) ?? [])
           .map((g: any) => ({
             ...g,
-            _distKm: (g.lat != null && g.lng != null)
-              ? haversineKmGems(lat, lng, g.lat as number, g.lng as number)
+            _distKm: (g.latitude != null && g.longitude != null)
+              ? haversineKmGems(lat, lng, g.latitude as number, g.longitude as number)
               : null,
           }))
           .filter((g: any) => g._distKm !== null && (g._distKm as number) <= NEAR_ME_RADIUS_KM)

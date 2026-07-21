@@ -2177,7 +2177,7 @@ router.patch('/threads/:threadId/mute', async (req, res) => {
 
   const { data: member } = await sc
     .from('message_thread_members')
-    .select('id')
+    .select('user_id')
     .eq('thread_id', threadId)
     .eq('user_id', user.id)
     .is('left_at', null)

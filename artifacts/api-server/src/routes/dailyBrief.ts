@@ -317,18 +317,18 @@ async function fetchUpcomingMeetups24h(
 
   const { data: meetupRows } = await client
     .from("meetups")
-    .select("id,title,proposed_time,location_name")
+    .select("id,title,starts_at,location_name")
     .eq("trip_id", tripId)
     .in("id", rsvpMeetupIds)
     .eq("status", "confirmed")
-    .gte("proposed_time", now.toISOString())
-    .lte("proposed_time", in24h.toISOString())
-    .order("proposed_time", { ascending: true });
+    .gte("starts_at", now.toISOString())
+    .lte("starts_at", in24h.toISOString())
+    .order("starts_at", { ascending: true });
 
   return (meetupRows ?? []).map((m: any) => ({
     id: m.id as string,
     title: m.title as string,
-    proposedTime: m.proposed_time as string,
+    proposedTime: m.starts_at as string,
     locationName: (m.location_name as string | null) ?? null,
   }));
 }
@@ -607,7 +607,7 @@ async function fetchBriefData(client: any, tripId: string) {
       .is("removed_at", null),
     client
       .from("meetups")
-      .select("id,title,proposed_time,attendee_count,status")
+      .select("id,title,starts_at,status")
       .eq("trip_id", tripId)
       .then((r: any) => r, () => ({ data: [] })),
   ]);

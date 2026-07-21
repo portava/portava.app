@@ -447,8 +447,8 @@ export async function resolveInteractionPermissions(
     // shared circle
     Promise.resolve(
       sc.from("circle_memberships")
-        .select("owner_id")
-        .or(`and(owner_id.eq.${targetUserId},member_id.eq.${viewerId}),and(owner_id.eq.${viewerId},member_id.eq.${targetUserId})`)
+        .select("user_id")
+        .or(`and(user_id.eq.${targetUserId},other_id.eq.${viewerId}),and(user_id.eq.${viewerId},other_id.eq.${targetUserId})`)
         .limit(1)
         .maybeSingle(),
     ).then((r: any) => Boolean(r.data)).catch(() => false),

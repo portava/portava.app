@@ -216,11 +216,11 @@ router.get("/me/profile/analytics", async (req, res) => {
       .neq("viewer_id", user.id)
       .gte("viewed_at", d30),
     sc.from("user_follows")
-      .select("id", { count: "exact", head: true })
+      .select("follower_id", { count: "exact", head: true })
       .eq("following_id", user.id)
       .gte("created_at", d7),
     sc.from("user_follows")
-      .select("id", { count: "exact", head: true })
+      .select("follower_id", { count: "exact", head: true })
       .eq("following_id", user.id)
       .gte("created_at", d30),
   ]);

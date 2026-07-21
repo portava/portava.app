@@ -64,7 +64,7 @@ async function checkPostAccess(sc: any, viewerId: string, postId: string): Promi
   if (visibility === "trip_only" && tripId) {
     const { data: member } = await sc
       .from("trip_members")
-      .select("id")
+      .select("user_id")
       .eq("trip_id", tripId)
       .eq("user_id", viewerId)
       .maybeSingle();

@@ -138,9 +138,9 @@ export async function resolvePrivacyVerdict(
     } else {
       const { data: cm } = await client
         .from("circle_memberships")
-        .select("member_id")
-        .eq("owner_id", circleOwnerId)
-        .eq("member_id", userId)
+        .select("other_id")
+        .eq("user_id", circleOwnerId)
+        .eq("other_id", userId)
         .maybeSingle();
       canUseCircleContext = Boolean(cm);
     }

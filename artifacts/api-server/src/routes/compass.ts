@@ -1844,7 +1844,7 @@ router.get("/compass/me/active-reward", async (req, res) => {
 
   const { data, error } = await sc
     .from("compass_active_user_scores")
-    .select("tier, badge_eligibility, boost_visibility_enabled")
+    .select("tier, boost_visibility_enabled")
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -1855,7 +1855,8 @@ router.get("/compass/me/active-reward", async (req, res) => {
   }
 
   const tier   = (data as any)?.tier ?? "active_traveler";
-  const badges = (data as any)?.badge_eligibility ?? [];
+  // badge_eligibility does not exist in the live table — no badge data yet.
+  const badges: string[] = [];
   const boost  = (data as any)?.boost_visibility_enabled !== false;
 
   res.json({
@@ -3146,10 +3147,10 @@ router.get("/compass/telegraph", async (req, res) => {
     if (tripId) {
       const { data: tripRow } = await sc
         .from("trips")
-        .select("destination")
+        .select("destination_city")
         .eq("id", tripId)
         .maybeSingle();
-      cityContext = (tripRow as any)?.destination ?? null;
+      cityContext = (tripRow as any)?.destination_city ?? null;
     }
 
     // Fallback: use viewer's Compass profile city, or participants' cities

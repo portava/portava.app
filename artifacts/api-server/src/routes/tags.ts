@@ -229,12 +229,12 @@ router.get('/tags/suggestions', async (req, res) => {
 
     try {
       const { data: circleRows } = await sc
-        .from('circle_members')
-        .select('user_id')
-        .eq('owner_id', user.id)
-        .in('user_id', visibleIds);
-      for (const r of (circleRows ?? []) as any[]) inCircle.add(r.user_id);
-    } catch { /* circle_members may not exist on all deployments */ }
+        .from('circle_memberships')
+        .select('other_id')
+        .eq('user_id', user.id)
+        .in('other_id', visibleIds);
+      for (const r of (circleRows ?? []) as any[]) inCircle.add(r.other_id);
+    } catch { /* circle membership check is best-effort */ }
 
     // Crew = people who share a trip with the viewer
     try {
@@ -352,13 +352,13 @@ router.get('/tags/suggestions', async (req, res) => {
     try {
       const { data: eventRows } = await sc
         .from('events')
-        .select('id, name, location, start_at')
-        .ilike('name', `%${q}%`)
+        .select('id, title, location_name, starts_at')
+        .ilike('title', `%${q}%`)
         .limit(10);
       for (const e of (eventRows ?? []) as any[]) {
         entitySuggestions.push({
           id: e.id, type: 'event',
-          name: e.name, location: e.location ?? null, startAt: e.start_at ?? null,
+          name: e.title, location: e.location_name ?? null, startAt: e.starts_at ?? null,
         });
       }
     } catch { /* events table may not exist on all deployments */ }

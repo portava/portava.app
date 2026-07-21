@@ -169,40 +169,13 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
 // missing migration or fix the select list, then delete the entry.
 // Applies to `select` sites only — never to writes.
 const READ_BASELINE = new Set<string>([
-  "circle_memberships.member_id",
-  "circle_memberships.owner_id",
-  "compass_abuse_flags.created_at",
-  "compass_active_user_scores.badge_eligibility",
-  "discovery_places.country",
-  "discovery_places.cover_url",
-  "events.location",
-  "events.name",
-  "events.start_at",
-  "events.status",
-  "hashtags.normalized_name",
-  "hidden_gems.image_url",
-  "hidden_gems.lat",
-  "hidden_gems.lng",
-  "meetups.attendee_count",
-  "meetups.proposed_time",
-  "message_thread_members.id",
-  "passport_stamps.check_in_count",
-  "passport_stamps.first_earned_at",
-  "passport_stamps.kind",
-  "passport_stamps.label",
-  "passport_stamps.last_earned_at",
-  "passport_stamps.locked",
-  "passport_stamps.sublabel",
-  "stamp_reconciliation_log.created_at",
-  "trip_members.id",
-  "trips.destination",
-  "user_follows.id",
+  // (none currently — the 2026-07-21 baseline was fully burned down)
 ]);
 
 // Tables read via `.select()` that do not exist live at all (same baseline
 // semantics as READ_BASELINE).
 const READ_BASELINE_TABLES = new Set<string>([
-  "circle_members", // live table is circle_memberships
+  // (none currently)
 ]);
 
 // ── Environment ───────────────────────────────────────────────────────────────

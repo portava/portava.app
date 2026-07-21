@@ -1131,9 +1131,9 @@ router.get("/me/stamps", async (req, res) => {
 
   const { data, error } = await sc
     .from("passport_stamps")
-    .select("id, kind, label, sublabel, first_earned_at, last_earned_at, check_in_count, locked")
+    .select("id, stamp_type, city, country, awarded_at")
     .eq("user_id", user.id)
-    .order("first_earned_at", { ascending: false });
+    .order("awarded_at", { ascending: false });
 
   if (error) {
     if ((error as any).code === "PGRST205") {
@@ -1145,14 +1145,16 @@ router.get("/me/stamps", async (req, res) => {
     return;
   }
 
+  // Live passport_stamps has no kind/label/sublabel/check_in_count/locked
+  // columns — derive the legacy PassportStamp shape from the live columns.
   let stamps = (data ?? []).map((r: any) => ({
     id: r.id,
-    kind: r.kind,
-    label: r.label,
-    sublabel: r.sublabel ?? null,
-    earnedAt: r.first_earned_at,
-    checkInCount: r.check_in_count ?? 1,
-    locked: r.locked ?? false,
+    kind: r.stamp_type,
+    label: r.city ?? r.country ?? r.stamp_type,
+    sublabel: r.city ? (r.country ?? null) : null,
+    earnedAt: r.awarded_at,
+    checkInCount: 1,
+    locked: false,
   }));
 
   // Best-effort: attach AI universal artwork from Stamp System v2 definitions.

@@ -96,7 +96,7 @@ export async function resolveGemCoords(
       const [{ data: memberRow }, { data: planRow }] = await Promise.all([
         db
           .from("trip_members")
-          .select("id")
+          .select("user_id")
           .eq("trip_id", callerTripId)
           .eq("user_id", callerId)
           .eq("status", "accepted")

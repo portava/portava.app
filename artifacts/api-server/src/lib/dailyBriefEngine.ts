@@ -109,8 +109,10 @@ interface PlanRow {
 interface MeetupRow {
   id: string;
   title: string;
-  proposed_time: string | null;
-  attendee_count: number;
+  /** Live column is starts_at; proposed_time is the legacy field name. */
+  starts_at?: string | null;
+  proposed_time?: string | null;
+  attendee_count?: number;
   status: string;
 }
 
@@ -211,8 +213,8 @@ export function buildDailyBrief(opts: {
     .map((m) => ({
       id: m.id,
       title: m.title,
-      proposedTime: m.proposed_time,
-      attendeeCount: m.attendee_count,
+      proposedTime: m.starts_at ?? m.proposed_time ?? null,
+      attendeeCount: m.attendee_count ?? 0,
     }));
 
   // Quick actions

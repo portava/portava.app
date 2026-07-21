@@ -205,12 +205,12 @@ export async function syncCircleChatMembers(
   // Get circle members: owner + all accepted circle_memberships.
   const { data: circleMembers } = await sc
     .from('circle_memberships')
-    .select('member_id')
-    .eq('owner_id', circleOwnerId);
+    .select('other_id')
+    .eq('user_id', circleOwnerId);
 
   const memberIds = new Set<string>([
     circleOwnerId,
-    ...((circleMembers ?? []) as any[]).map((m) => m.member_id as string),
+    ...((circleMembers ?? []) as any[]).map((m) => m.other_id as string),
   ]);
 
   // Upsert all current members as active.

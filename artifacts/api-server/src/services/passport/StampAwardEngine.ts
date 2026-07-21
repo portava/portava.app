@@ -75,10 +75,10 @@ async function validateSource(
         return { valid: false, reason: `source_invalid_status:${(data as any).status}` };
       }
     } else if (sourceType === "events") {
-      const { data } = await sc.from("events").select("status").eq("id", sourceId).maybeSingle();
+      const { data } = await sc.from("events").select("state").eq("id", sourceId).maybeSingle();
       if (!data) return { valid: false, reason: "source_not_found" };
-      if (INVALID_EVENT_STATUSES.has((data as any).status)) {
-        return { valid: false, reason: `source_invalid_status:${(data as any).status}` };
+      if (INVALID_EVENT_STATUSES.has((data as any).state)) {
+        return { valid: false, reason: `source_invalid_status:${(data as any).state}` };
       }
     }
     // Unknown source types (admin, system, recalculate, safe_return, rent_buddy)

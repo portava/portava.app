@@ -1162,9 +1162,9 @@ router.get("/admin/stamps/reconcile/runs", asyncHandler(async (req, res) => {
 
   const { data, error } = await sc
     .from("stamp_reconciliation_log")
-    .select("id, source_id, review_reason, created_at")
+    .select("id, source_id, review_reason, processed_at")
     .eq("source_table", RUN_SUMMARY_SOURCE_TABLE)
-    .order("created_at", { ascending: false })
+    .order("processed_at", { ascending: false })
     .limit(limit);
 
   if (error) { sendError(res, "db_error", error.message); return; }
@@ -1184,7 +1184,7 @@ router.get("/admin/stamps/reconcile/runs", asyncHandler(async (req, res) => {
     return {
       id:         row.id ?? null,
       runId:      row.source_id ?? null,
-      ranAt:      row.created_at ?? null,
+      ranAt:      row.processed_at ?? null,
       resolved:   Number(counts.resolved ?? 0),
       flagged:    Number(counts.flagged ?? 0),
       skipped:    Number(counts.skipped ?? 0),

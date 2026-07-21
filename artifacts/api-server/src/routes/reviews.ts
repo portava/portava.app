@@ -84,7 +84,7 @@ async function checkEligibility(
     case "trip": {
       const { data: membership } = await sc
         .from("trip_members")
-        .select("id")
+        .select("user_id")
         .eq("trip_id", entityId)
         .eq("user_id", userId)
         .maybeSingle();

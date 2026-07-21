@@ -937,8 +937,8 @@ router.get("/admin/compass/abuse-flags", async (req, res) => {
   try {
     let query = sc
       .from("compass_abuse_flags")
-      .select("id, pattern_type, involved_users, severity, status, evidence, created_at")
-      .order("created_at", { ascending: false })
+      .select("id, pattern_type, involved_users, severity, status, evidence, detected_at")
+      .order("detected_at", { ascending: false })
       .limit(limit);
 
     if (severity) query = query.eq("severity", severity);

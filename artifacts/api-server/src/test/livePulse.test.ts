@@ -993,9 +993,9 @@ describe("GET /api/pulse/live", () => {
     _setTestClient(makeClient({
       hidden_gems: [
         // within 50km of Manila
-        { id: "ee000000-0000-0000-0000-000000000001", name: "Near Gem", city: "Manila", category: "cafe", save_count: 5, status: "active", lat: 14.5995, lng: 120.9842 },
+        { id: "ee000000-0000-0000-0000-000000000001", name: "Near Gem", city: "Manila", category: "cafe", save_count: 5, status: "active", latitude: 14.5995, longitude: 120.9842 },
         // >50km away (Baguio is ~250km)
-        { id: "ee000000-0000-0000-0000-000000000002", name: "Far Gem", city: "Baguio", category: "spot", save_count: 10, status: "active", lat: 16.4023, lng: 120.5960 },
+        { id: "ee000000-0000-0000-0000-000000000002", name: "Far Gem", city: "Baguio", category: "spot", save_count: 10, status: "active", latitude: 16.4023, longitude: 120.5960 },
       ],
       feature_flags: [{ flag: "hidden_gems_enabled", enabled: true }],
     }), true);

@@ -1200,7 +1200,7 @@ router.get("/trips/invite-link/:token/preview", async (req, res) => {
   if (maxMembers != null) {
     const { data: memberRows } = await sc
       .from("trip_members")
-      .select("id")
+      .select("user_id")
       .eq("trip_id", lk.trip_id)
       .eq("status", "accepted");
     isFull = (memberRows?.length ?? 0) >= maxMembers;
@@ -1301,7 +1301,7 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
   if (maxMembers != null) {
     const { data: memberRows } = await sc
       .from("trip_members")
-      .select("id")
+      .select("user_id")
       .eq("trip_id", tripId)
       .eq("status", "accepted");
     if ((memberRows?.length ?? 0) >= maxMembers) {
@@ -1481,12 +1481,20 @@ router.get("/trips/:tripId/nearby-places", async (req, res) => {
   // Return discovery places matching the destination city
   const { data: places } = await sc
     .from("discovery_places")
-    .select("id, name, category, lat, lng, city, country, cover_url, rating")
+    .select("id, name, category, lat, lng, city, image_url, rating")
     .ilike("city", `%${t.destination_city}%`)
     .order("rating", { ascending: false })
     .limit(30);
 
-  res.json({ places: places ?? [], destination: { city: t.destination_city, country: t.destination_country ?? null } });
+  // Live discovery_places has image_url (not cover_url) and no country column —
+  // preserve the response shape the client expects.
+  const shapedPlaces = ((places ?? []) as any[]).map((p) => ({
+    ...p,
+    cover_url: p.image_url ?? null,
+    country: t.destination_country ?? null,
+  }));
+
+  res.json({ places: shapedPlaces, destination: { city: t.destination_city, country: t.destination_country ?? null } });
 });
 
 // ===========================================================================

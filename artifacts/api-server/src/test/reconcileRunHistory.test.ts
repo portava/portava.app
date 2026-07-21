@@ -139,7 +139,7 @@ function summaryRow(overrides: Partial<Record<string, any>> = {}) {
     needs_admin_review: false,
     review_reason: overrides.review_reason ??
       JSON.stringify({ resolved: 2, flagged: 1, skipped: 0, enqueued: 3, combos: 4 }),
-    created_at:    overrides.created_at ?? "2026-07-19T10:00:00Z",
+    processed_at:  overrides.processed_at ?? "2026-07-19T10:00:00Z",
     ...overrides,
   };
 }
@@ -162,9 +162,9 @@ describe("GET /admin/stamps/reconcile/runs", () => {
   it("returns recent runs newest-first with parsed counts", async () => {
     useClient({
       logRows: [
-        summaryRow({ id: "log-old", source_id: "run-old", created_at: "2026-07-18T10:00:00Z" }),
+        summaryRow({ id: "log-old", source_id: "run-old", processed_at: "2026-07-18T10:00:00Z" }),
         summaryRow({
-          id: "log-new", source_id: "run-new", created_at: "2026-07-19T10:00:00Z",
+          id: "log-new", source_id: "run-new", processed_at: "2026-07-19T10:00:00Z",
           review_reason: JSON.stringify({ resolved: 5, flagged: 0, skipped: 1, enqueued: 2, combos: 6 }),
         }),
       ],
@@ -197,7 +197,7 @@ describe("GET /admin/stamps/reconcile/runs", () => {
           source_id: "stamp-1",
           needs_admin_review: true,
           review_reason: "location-less stamp: missing stamp_definition_id",
-          created_at: "2026-07-19T11:00:00Z",
+          processed_at: "2026-07-19T11:00:00Z",
         },
       ],
     });
@@ -231,8 +231,8 @@ describe("GET /admin/stamps/reconcile/runs", () => {
     useClient({
       logRows: [
         summaryRow({ id: "log-bad", source_id: "run-bad", review_reason: "not-json{{",
-                     created_at: "2026-07-19T12:00:00Z" }),
-        summaryRow({ created_at: "2026-07-18T10:00:00Z" }),
+                     processed_at: "2026-07-19T12:00:00Z" }),
+        summaryRow({ processed_at: "2026-07-18T10:00:00Z" }),
       ],
     });
 
@@ -250,9 +250,9 @@ describe("GET /admin/stamps/reconcile/runs", () => {
   it("honors the limit query param", async () => {
     useClient({
       logRows: [
-        summaryRow({ id: "l1", source_id: "r1", created_at: "2026-07-19T10:00:00Z" }),
-        summaryRow({ id: "l2", source_id: "r2", created_at: "2026-07-18T10:00:00Z" }),
-        summaryRow({ id: "l3", source_id: "r3", created_at: "2026-07-17T10:00:00Z" }),
+        summaryRow({ id: "l1", source_id: "r1", processed_at: "2026-07-19T10:00:00Z" }),
+        summaryRow({ id: "l2", source_id: "r2", processed_at: "2026-07-18T10:00:00Z" }),
+        summaryRow({ id: "l3", source_id: "r3", processed_at: "2026-07-17T10:00:00Z" }),
       ],
     });
 

@@ -337,7 +337,7 @@ router.get("/hidden-gems/trip-city/:tripId", async (req, res) => {
   // Load trip destination
   const { data: trip } = await client
     .from("trips")
-    .select("id, destination")
+    .select("id, destination_city")
     .eq("id", tripId)
     .maybeSingle();
 
@@ -346,7 +346,7 @@ router.get("/hidden-gems/trip-city/:tripId", async (req, res) => {
     return;
   }
 
-  const city = (trip as any).destination?.split(",")[0]?.trim();
+  const city = (trip as any).destination_city?.split(",")[0]?.trim();
   if (!city) {
     res.json({ gems: [], total: 0 });
     return;
