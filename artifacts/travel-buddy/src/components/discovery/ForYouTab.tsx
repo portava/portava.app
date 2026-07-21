@@ -377,6 +377,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
       {/* Full-parity detail sheet (same as OSM tabs) */}
       <PlaceDetailSheet
         place={detail}
+        city={destination}
         visible={detail !== null}
         onClose={() => setDetail(null)}
         onAddToPlan={(p) => {

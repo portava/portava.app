@@ -3,7 +3,8 @@ import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Linking,
 } from 'react-native';
 import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star, ListPlus } from 'lucide-react-native';
-import type { DiscoveryPlace } from '../../services/discovery.ts';
+import type { DiscoveryPlace, PlaceLiveStatus } from '../../services/discovery.ts';
+import { getPlaceLiveStatus } from '../../services/discovery.ts';
 import { checkSaved, toggleSave } from '../../services/collections.ts';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { categoryColor } from './PlaceCard.tsx';
@@ -15,12 +16,15 @@ interface PlaceDetailSheetProps {
   visible: boolean;
   onClose: () => void;
   onAddToPlan: (place: DiscoveryPlace) => void;
+  /** City context used to disambiguate the live open-now lookup. */
+  city?: string | null;
 }
 
-export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: PlaceDetailSheetProps) {
+export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }: PlaceDetailSheetProps) {
   const plainInset = usePlainBottomInset();
   const [saved, setSaved]               = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
+  const [liveStatus, setLiveStatus]     = useState<PlaceLiveStatus | null>(null);
 
   useEffect(() => {
     if (place) {
@@ -29,6 +33,23 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: Place
         .catch(() => {});
     }
   }, [place?.id]);
+
+  // Live open-now lookup (Phase 8) — honest degradation: any failure leaves
+  // liveStatus null and no pill is shown; a status is never invented.
+  useEffect(() => {
+    setLiveStatus(null);
+    if (!place || !visible) return;
+    let cancelled = false;
+    getPlaceLiveStatus(place.name, city ?? null)
+      .then((ls) => { if (!cancelled) setLiveStatus(ls); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [place?.id, visible]);
+
+  const liveOpenNow: boolean | null =
+    liveStatus?.available && typeof liveStatus.openNow === 'boolean'
+      ? liveStatus.openNow
+      : null;
 
   if (!place) return null;
 
@@ -80,9 +101,22 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: Place
           <View style={[styles.accentDot, { backgroundColor: accent }]} />
           <View style={{ flex: 1 }}>
             <Text style={styles.name} numberOfLines={2}>{place.name}</Text>
-            {place.type ? (
-              <Text style={[styles.type, { color: accent }]}>{capitalize(place.type)}</Text>
-            ) : null}
+            <View style={styles.typeRow}>
+              {place.type ? (
+                <Text style={[styles.type, { color: accent }]}>{capitalize(place.type)}</Text>
+              ) : null}
+              {liveOpenNow != null ? (
+                <Text
+                  style={[styles.openPill, liveOpenNow
+                    ? { color: '#047857', backgroundColor: '#04785716' }
+                    : { color: '#B91C1C', backgroundColor: '#B91C1C16' }]}
+                  testID={`place-open-now-${place.id}`}
+                  accessibilityLabel={liveOpenNow ? 'Open now — verified live' : 'Closed now — verified live'}
+                >
+                  {liveOpenNow ? 'Open now' : 'Closed now'}
+                </Text>
+              ) : null}
+            </View>
           </View>
           <Pressable
             style={({ pressed }) => [styles.saveHeaderBtn, saved && styles.saveHeaderBtnActive, pressed && { opacity: 0.7 }]}
@@ -143,7 +177,12 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: Place
           {place.openingHours && (
             <View style={styles.infoRow}>
               <Clock size={15} color={color.mute} />
-              <Text style={styles.infoText}>{place.openingHours}</Text>
+              <Text style={styles.infoText}>
+                {place.openingHours}
+                {liveStatus != null && liveOpenNow == null ? (
+                  <Text style={styles.lastKnownNote}>  · Last known hours — can’t verify live</Text>
+                ) : null}
+              </Text>
             </View>
           )}
 
@@ -294,8 +333,27 @@ const styles = StyleSheet.create({
   type: {
     ...t.stamp,
     fontSize: 11,
-    marginTop: 2,
     textTransform: 'capitalize',
+  },
+  typeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginTop: 2,
+  },
+  openPill: {
+    ...t.stamp,
+    fontSize: 9,
+    fontWeight: '700',
+    paddingHorizontal: space.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    overflow: 'hidden',
+  },
+  lastKnownNote: {
+    ...t.small,
+    color: color.faint,
+    fontSize: 10,
   },
   saveHeaderBtn: {
     width: 34,

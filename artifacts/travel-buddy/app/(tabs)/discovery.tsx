@@ -865,6 +865,7 @@ export default function DiscoveryHub() {
       {/* ── Place detail sheet ── */}
       <PlaceDetailSheet
         place={selectedPlace}
+        city={destination}
         visible={detailVisible}
         onClose={() => setDetailVisible(false)}
         onAddToPlan={handleAddToPlanFromPlace}

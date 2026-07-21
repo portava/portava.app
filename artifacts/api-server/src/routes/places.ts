@@ -12,6 +12,11 @@ import { getServiceClient } from "../lib/supabase";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 import { reverseGeocode } from "../services/geocodingService";
 import { searchFoursquare } from "../lib/foursquarePlaces";
+import {
+  getLiveVenueStatus,
+  makeConfidence,
+  CANT_VERIFY_NOTE,
+} from "../lib/liveIntelligence";
 import { normalizeLocationName } from "../lib/canonicalLocations";
 import { logger as rootLogger } from "../lib/logger";
 
@@ -268,6 +273,47 @@ async function runUniversalSearch(
 
   return ranked.slice(0, 12);
 }
+
+// ── GET /api/places/live-status ───────────────────────────────────────────────
+//
+// Live open-now lookup for Explore / place detail surfaces. Reuses the same
+// Foursquare-backed getLiveVenueStatus (10-minute cache, strict timeout) that
+// powers Compass chat cards, and returns the identical confidence-labeled
+// liveStatus shape:
+//
+//   { liveStatus: { available: true,  openNow, source, checkedAt, confidence } }
+//   { liveStatus: { available: false, openNow: null, dataNote, confidence } }
+//
+// Honest degradation: when the live source can't verify (no key, outage,
+// timeout, venue not found), available=false with an explicit dataNote —
+// a status is NEVER invented. openNow may also be null when the source
+// responded but had no hours data.
+router.get("/places/live-status", async (req, res) => {
+  const name = String(req.query.name ?? "").trim();
+  if (!name || name.length > 200) {
+    res.status(400).json({ error: "invalid_payload", message: "name is required (max 200 chars)" });
+    return;
+  }
+  const cityRaw = typeof req.query.city === "string" ? req.query.city.trim() : "";
+  const city = cityRaw && cityRaw.length <= 200 ? cityRaw : null;
+
+  const live = await getLiveVenueStatus(name, city);
+  const liveStatus = live
+    ? {
+        available:  true as const,
+        openNow:    live.openNow,
+        source:     live.source,
+        checkedAt:  live.checkedAt,
+        confidence: makeConfidence("verified_live"),
+      }
+    : {
+        available:  false as const,
+        openNow:    null,
+        dataNote:   CANT_VERIFY_NOTE,
+        confidence: makeConfidence("historical", CANT_VERIFY_NOTE),
+      };
+  res.json({ liveStatus });
+});
 
 // ── GET /api/places/reverse ───────────────────────────────────────────────────
 router.get("/places/reverse", async (req, res) => {

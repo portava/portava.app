@@ -57,6 +57,46 @@ export interface DiscoveryResult {
   cached: boolean;
 }
 
+// ── Live venue status (Phase 8 live intelligence) ─────────────────────────────
+//
+// Confidence-labeled live open-now status from /api/places/live-status.
+// available=false means the live source couldn't verify — callers must
+// degrade honestly (no pill / "last known hours"), never invent a status.
+
+export interface PlaceLiveConfidence {
+  sourceClass: 'verified_live' | 'community_reported' | 'historical' | 'ai_inference';
+  label: string;
+  checkedAt: string;
+  dataNote?: string;
+}
+
+export interface PlaceLiveStatus {
+  available: boolean;
+  openNow: boolean | null;
+  source?: string;
+  checkedAt?: string;
+  dataNote?: string;
+  confidence: PlaceLiveConfidence;
+}
+
+export async function getPlaceLiveStatus(
+  name: string,
+  city?: string | null,
+): Promise<PlaceLiveStatus | null> {
+  const base = apiBase();
+  if (!base || !name.trim()) return null;
+  const params = new URLSearchParams({ name: name.trim() });
+  if (city?.trim()) params.set('city', city.trim());
+  try {
+    const res = await fetch(`${base}/api/places/live-status?${params}`);
+    if (!res.ok) return null;
+    const body = await res.json();
+    return (body?.liveStatus as PlaceLiveStatus | undefined) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Community discovery ────────────────────────────────────────────────────────
 
 export interface CommunityPlaceItem {
