@@ -9,6 +9,7 @@
  */
 import React, { useState } from 'react';
 import { View, Text, Image, StyleSheet } from 'react-native';
+import { UserIdentityLink } from '../interaction/UserIdentityLink.tsx';
 import {
   Shield, MapPin, Navigation, Eye, EyeOff, Clock, CheckCircle2,
 } from 'lucide-react-native';
@@ -80,7 +81,15 @@ export function CrewMemberCard({ member, isBlockedByViewer = false, onBlockSucce
 
   return (
     <View style={s.card}>
-      {/* Avatar */}
+      {/* Avatar + Name — tappable identity area.
+          style preserves the card's horizontal row layout (Pressable defaults
+          to column, which would stack avatar on top of name). */}
+      <UserIdentityLink
+        userId={member.userId ?? ''}
+        handle={member.handle ?? null}
+        style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 12 }}
+        testID={`crew-member-identity-${member.userId ?? 'unknown'}`}
+      >
       <View style={s.avatarWrap}>
         {member.avatarUrl ? (
           <Image source={{ uri: member.avatarUrl }} style={s.avatar} />
@@ -119,6 +128,7 @@ export function CrewMemberCard({ member, isBlockedByViewer = false, onBlockSucce
           </View>
         ) : null}
       </View>
+      </UserIdentityLink>
 
       {/* Status badge */}
       <View style={[s.badge, { borderColor: status.color + '33', backgroundColor: status.color + '11' }]}>

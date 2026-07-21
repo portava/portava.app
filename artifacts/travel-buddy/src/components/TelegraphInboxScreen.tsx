@@ -23,6 +23,7 @@ import { useScreenTiming } from '../hooks/useScreenTiming.ts';
 import type { ThreadSummary, MessageRequest } from '../services/messaging.ts';
 import { circleCardInboxPreview } from './CircleStatusCardMessage.logic';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
+import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 
 type FilterKey = 'all' | 'direct' | 'trips' | 'circles' | 'unread' | 'requests';
 
@@ -602,21 +603,32 @@ function RequestCard({
 
   return (
     <View style={rc.card}>
-      {/* Header: avatar + name + time */}
+      {/* Header: avatar + name + time — sender identity is tappable */}
       <View style={rc.headerRow}>
-        {sender?.avatarUrl ? (
-          <Image source={{ uri: sender.avatarUrl }} style={rc.avatar} />
-        ) : (
-          <View style={[rc.avatar, rc.avatarFallback]}>
-            <Text style={rc.avatarInitial}>{initial}</Text>
+        <UserIdentityLink
+          userId={sender?.id ?? ''}
+          handle={sender?.handle ?? null}
+          testID={`request-sender-identity-${sender?.id ?? 'unknown'}`}
+        >
+          {sender?.avatarUrl ? (
+            <Image source={{ uri: sender.avatarUrl }} style={rc.avatar} />
+          ) : (
+            <View style={[rc.avatar, rc.avatarFallback]}>
+              <Text style={rc.avatarInitial}>{initial}</Text>
+            </View>
+          )}
+        </UserIdentityLink>
+        <UserIdentityLink
+          userId={sender?.id ?? ''}
+          handle={sender?.handle ?? null}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={rc.name} numberOfLines={1}>{senderName}</Text>
+            {senderHandleSub ? (
+              <Text style={rc.handle}>{senderHandleSub}</Text>
+            ) : null}
           </View>
-        )}
-        <View style={{ flex: 1 }}>
-          <Text style={rc.name} numberOfLines={1}>{senderName}</Text>
-          {senderHandleSub ? (
-            <Text style={rc.handle}>{senderHandleSub}</Text>
-          ) : null}
-        </View>
+        </UserIdentityLink>
         <Text style={rc.time}>{timeAgo(createdAt)}</Text>
       </View>
 

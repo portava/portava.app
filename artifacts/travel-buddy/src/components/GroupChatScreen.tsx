@@ -52,6 +52,7 @@ import { getTripMembers, getCircleMembers, type FriendUser } from '../services/f
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import { MessageEntrance, useMessageEntranceGate } from './MessageEntrance.tsx';
+import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
@@ -804,15 +805,22 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
               style={[styles.bubbleRow, mine && styles.bubbleRowMine]}
             >
               {!mine && (
-                <View style={[styles.avatar, styles.avatarSmall]}>
-                  {m.senderAvatarUrl ? (
-                    <Image source={{ uri: m.senderAvatarUrl }} style={styles.avatarSmall} />
-                  ) : (
-                    <Text style={styles.avatarInitial}>
-                      {(m.senderName?.[0] ?? '?').toUpperCase()}
-                    </Text>
-                  )}
-                </View>
+                <UserIdentityLink
+                  userId={m.senderId}
+                  handle={m.senderHandle}
+                  currentUserId={userId}
+                  testID={`msg-sender-identity-${m.id}`}
+                >
+                  <View style={[styles.avatar, styles.avatarSmall]}>
+                    {m.senderAvatarUrl ? (
+                      <Image source={{ uri: m.senderAvatarUrl }} style={styles.avatarSmall} />
+                    ) : (
+                      <Text style={styles.avatarInitial}>
+                        {(m.senderName?.[0] ?? '?').toUpperCase()}
+                      </Text>
+                    )}
+                  </View>
+                </UserIdentityLink>
               )}
               <GroupMessageBubble
                 item={m}
