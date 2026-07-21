@@ -77,6 +77,16 @@ export interface CompassFeedResponse {
   safeItems?: CompassFeedItem[];
 }
 
+/**
+ * The device's real UTC offset in minutes (UTC+8 → 480). JS
+ * getTimezoneOffset() is inverted, so negate it. Sent on all time-aware
+ * Compass calls so evening styling follows the traveler's clock even when
+ * no timezone is saved server-side.
+ */
+function deviceTzOffsetMinutes(): number {
+  return -new Date().getTimezoneOffset();
+}
+
 export async function fetchCompassFeed(
   params: { city?: string; cursor?: string } = {},
 ): Promise<{ ok: boolean; data?: CompassFeedResponse; error?: string }> {
@@ -85,6 +95,7 @@ export async function fetchCompassFeed(
     const qs = new URLSearchParams();
     if (params.city) qs.set('city', params.city);
     if (params.cursor) qs.set('cursor', params.cursor);
+    qs.set('tzOffsetMinutes', String(deviceTzOffsetMinutes()));
     const r = await authedFetch(`/api/compass/feed?${qs.toString()}`);
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     return { ok: true, data: await r.json() };
@@ -159,6 +170,7 @@ export async function fetchCompassSection(
     const qs = new URLSearchParams();
     if (params.city) qs.set('city', params.city);
     if (params.cursor) qs.set('cursor', params.cursor);
+    qs.set('tzOffsetMinutes', String(deviceTzOffsetMinutes()));
     const r = await authedFetch(`/api/compass/feed/section/${encodeURIComponent(section)}?${qs.toString()}`);
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     return { ok: true, data: normalizeSectionResponse(await r.json()) };
@@ -658,7 +670,7 @@ export async function postCompassAsk(
   try {
     const r = await authedFetch('/api/compass/ask', {
       method: 'POST',
-      body:   JSON.stringify({ prompt, ...opts }),
+      body:   JSON.stringify({ prompt, ...opts, tzOffsetMinutes: deviceTzOffsetMinutes() }),
     });
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     return { ok: true, data: await r.json() };
@@ -798,7 +810,7 @@ export async function postCompassAskStream(
         Accept: 'text/event-stream',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ prompt, ...opts, stream: true }),
+      body: JSON.stringify({ prompt, ...opts, stream: true, tzOffsetMinutes: deviceTzOffsetMinutes() }),
     });
     if (!r.ok) return { ok: false, error: `http_${r.status}`, streamed: false };
     const body: any = (r as any).body;
@@ -923,6 +935,7 @@ export async function fetchCompassRecommendations(params: {
     if (params.startDate) qs.set('startDate', params.startDate);
     if (params.endDate)   qs.set('endDate', params.endDate);
     if (params.tripId)    qs.set('tripId', params.tripId);
+    qs.set('tzOffsetMinutes', String(deviceTzOffsetMinutes()));
     const r = await authedFetch(`/api/compass/recommendations?${qs.toString()}`);
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     return { ok: true, data: await r.json() };
@@ -1437,6 +1450,7 @@ export async function fetchCompassBuddyMatches(params: {
     const qs = new URLSearchParams({ surface: 'buddy' });
     if (params.city) qs.set('city', params.city);
     if (params.limit != null) qs.set('limit', String(params.limit));
+    qs.set('tzOffsetMinutes', String(deviceTzOffsetMinutes()));
     const r = await authedFetch(`/api/compass/recommendations?${qs.toString()}`);
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     const body = await r.json();
@@ -1488,6 +1502,7 @@ export async function fetchCompassTravelerMatches(params: {
     const qs = new URLSearchParams({ surface: 'traveler' });
     if (params.city) qs.set('city', params.city);
     if (params.limit != null) qs.set('limit', String(params.limit));
+    qs.set('tzOffsetMinutes', String(deviceTzOffsetMinutes()));
     const r = await authedFetch(`/api/compass/recommendations?${qs.toString()}`);
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     const body = await r.json();
@@ -1531,7 +1546,7 @@ export async function fetchCompassTelegraphCards(
     return { ok: false, error: 'not_configured' };
   }
   try {
-    const qs = new URLSearchParams({ threadId });
+    const qs = new URLSearchParams({ threadId, tzOffsetMinutes: String(deviceTzOffsetMinutes()) });
     const r = await authedFetch(`/api/compass/telegraph?${qs.toString()}`);
     if (r.status === 404 || r.status === 403) {
       const body = await r.json().catch(() => ({}));
