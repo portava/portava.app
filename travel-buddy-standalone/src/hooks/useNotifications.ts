@@ -170,21 +170,53 @@ export function useUnreadNotificationCount() {
 export function useRecentNotifications() {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(false);
+  // Ids prepended optimistically from SSE payloads that the server hasn't
+  // confirmed yet — preserved across reconciling refetches so a stale server
+  // read (SSE→DB lag) can't silently drop a just-arrived notification.
+  const optimisticIdsRef = useRef<Set<string>>(new Set());
+  // Monotonic fetch sequence so an older refetch resolving late can't
+  // overwrite the result of a newer one.
+  const fetchSeqRef = useRef(0);
+
+  /** Merge a server list with still-pending optimistic entries. */
+  const applyServerList = useCallback((items: AppNotification[]) => {
+    setNotifications((prev) => {
+      const serverIds = new Set(items.map((n) => n.id));
+      for (const id of optimisticIdsRef.current) {
+        if (serverIds.has(id)) optimisticIdsRef.current.delete(id);
+      }
+      const pending = prev.filter((n) => optimisticIdsRef.current.has(n.id));
+      return pending.length ? [...pending, ...items] : items;
+    });
+  }, []);
 
   const reload = useCallback(async () => {
     setLoading(true);
+    const seq = ++fetchSeqRef.current;
     const items = await getRecentNotifications();
-    setNotifications(items);
+    if (seq === fetchSeqRef.current) applyServerList(items);
     setLoading(false);
-  }, []);
+  }, [applyServerList]);
 
-  // Realtime: refresh silently (no loading flicker) the moment a notification
-  // arrives on the bus, so an open popover updates instantly.
+  // Realtime: optimistically prepend the arriving notification (the SSE payload
+  // carries the full record) so an open popover updates with zero latency, then
+  // reconcile silently with the server (covers SSE→DB read lag). Mirrors the
+  // optimistic bump pattern in useUnreadNotificationCount.
   useEffect(() => {
-    return subscribeNotificationEvents(() => {
-      getRecentNotifications().then(setNotifications).catch(() => { /* keep current list */ });
+    return subscribeNotificationEvents((event) => {
+      if (event.id) {
+        setNotifications((prev) => {
+          if (prev.some((n) => n.id === event.id)) return prev;
+          optimisticIdsRef.current.add(event.id!);
+          return [event as AppNotification, ...prev];
+        });
+      }
+      const seq = ++fetchSeqRef.current;
+      getRecentNotifications()
+        .then((items) => { if (seq === fetchSeqRef.current) applyServerList(items); })
+        .catch(() => { /* keep current list */ });
     });
-  }, []);
+  }, [applyServerList]);
 
   return { notifications, loading, reload };
 }
