@@ -507,3 +507,109 @@ describe("G. Low classifier confidence passthrough", () => {
     assert.ok(!body.fallback, "should not be marked as fallback");
   });
 });
+
+// ── H. SSE client disconnect mid-answer ───────────────────────────────────────
+// A dropped SSE connection must abort the upstream OpenAI stream (no further
+// token spend) and persist NO assistant message. A stream that completes fully
+// still persists normally.
+
+interface StreamMockState {
+  signal?:        AbortSignal;
+  chunksYielded:  number;
+  totalChunks:    number;
+  finished:       boolean;
+}
+
+/** OpenAI mock: non-stream calls (classifier) return quickly; stream calls
+ *  yield one token per chunk with a small delay, honouring options.signal. */
+function makeStreamingOpenAIMock(state: StreamMockState): object {
+  return {
+    chat: {
+      completions: {
+        create: async (opts: any, options?: { signal?: AbortSignal }) => {
+          if (!opts.stream) {
+            // Intent classifier call
+            return { choices: [{ message: { content: JSON.stringify({ intent: "question", confidence: 0.3 }), role: "assistant" } }] };
+          }
+          state.signal = options?.signal;
+          return {
+            [Symbol.asyncIterator]: async function* () {
+              for (let i = 0; i < state.totalChunks; i++) {
+                if (options?.signal?.aborted) throw new Error("upstream aborted");
+                state.chunksYielded = i + 1;
+                yield { choices: [{ delta: { content: `tok${i} ` } }] };
+                await new Promise((r) => setTimeout(r, 15));
+              }
+              state.finished = true;
+            },
+          };
+        },
+      },
+    },
+  };
+}
+
+function assistantInserts(client: any): any[] {
+  return (client._getInserts()["compass_conversation_messages"] ?? [])
+    .filter((m: any) => m.role === "assistant");
+}
+
+describe("H. SSE client disconnect mid-answer", () => {
+  it("aborts the upstream model stream and persists no assistant message", async () => {
+    const client = makeClient();
+    _setTestClient(client, "test-token");
+    const state: StreamMockState = { chunksYielded: 0, totalChunks: 200, finished: false };
+    _setTestOpenAI(makeStreamingOpenAIMock(state) as any);
+
+    const ac = new AbortController();
+    const r = await fetch(`http://localhost:${port}/api/compass/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
+      body: JSON.stringify({ prompt: "Tell me everything about Lisbon", stream: true }),
+      signal: ac.signal,
+    });
+    assert.equal(r.status, 200);
+    const reader = (r.body as any).getReader();
+    await reader.read(); // wait for at least one SSE delta
+    ac.abort();          // client drops mid-answer
+
+    // Wait until the server observes the disconnect and aborts upstream.
+    const deadline = Date.now() + 3000;
+    while (!(state.signal?.aborted) && Date.now() < deadline) {
+      await new Promise((res) => setTimeout(res, 25));
+    }
+    assert.ok(state.signal, "stream call should receive an abort signal");
+    assert.ok(state.signal!.aborted, "upstream abort signal should fire on client disconnect");
+
+    // Token spend stops: chunk consumption halts well short of the full answer.
+    await new Promise((res) => setTimeout(res, 150));
+    const stoppedAt = state.chunksYielded;
+    await new Promise((res) => setTimeout(res, 200));
+    assert.equal(state.chunksYielded, stoppedAt, "no further chunks consumed after abort");
+    assert.ok(!state.finished, "upstream stream must not run to completion");
+    assert.ok(stoppedAt < state.totalChunks, "stream should stop early");
+
+    // Nothing half-generated lands in compass_conversation_messages.
+    assert.equal(assistantInserts(client).length, 0, "no partial assistant message persisted");
+  });
+
+  it("still persists the assistant message when the stream completes normally", async () => {
+    const client = makeClient();
+    _setTestClient(client, "test-token");
+    const state: StreamMockState = { chunksYielded: 0, totalChunks: 3, finished: false };
+    _setTestOpenAI(makeStreamingOpenAIMock(state) as any);
+
+    const r = await fetch(`http://localhost:${port}/api/compass/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
+      body: JSON.stringify({ prompt: "Quick tip for Lisbon?", stream: true }),
+    });
+    assert.equal(r.status, 200);
+    const text = await r.text();
+    assert.ok(text.includes('"done":true'), "done event should be sent");
+    assert.ok(state.finished, "stream should run to completion");
+    const persisted = assistantInserts(client);
+    assert.equal(persisted.length, 1, "complete assistant message should be persisted");
+    assert.ok(String(persisted[0].content).includes("tok0"), "persisted content should be the full streamed answer");
+  });
+});

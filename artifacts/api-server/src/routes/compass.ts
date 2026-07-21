@@ -925,6 +925,15 @@ function _parseModelResponse(raw: string): {
 
 const MAX_TOOL_ROUNDS = 5;
 
+/**
+ * Thrown when the SSE client disconnects mid-answer. The upstream OpenAI
+ * stream is aborted (no further token spend) and NOTHING is persisted —
+ * a partial answer must never land in compass_conversation_messages.
+ */
+export class ClientDisconnectedError extends Error {
+  constructor() { super("client_disconnected"); this.name = "ClientDisconnectedError"; }
+}
+
 interface ToolLoopOutcome {
   finalRaw:  string;
   toolLog:   ToolExecution[];
@@ -943,16 +952,25 @@ interface ToolLoopOutcome {
 async function streamModelRound(
   opts:    Record<string, unknown>,
   onDelta: (delta: string) => void,
+  /** Aborts the upstream OpenAI stream (e.g. on client disconnect). */
+  signal?: AbortSignal,
 ): Promise<{ content: string; toolCalls: any[] }> {
-  const streamResp = await getOpenAI().chat.completions.create({
-    ...opts,
-    stream: true,
-  } as any);
+  const streamResp = await getOpenAI().chat.completions.create(
+    {
+      ...opts,
+      stream: true,
+    } as any,
+    signal ? ({ signal } as any) : undefined,
+  );
 
   let content = "";
   const toolCallsByIndex = new Map<number, { id: string; type: string; function: { name: string; arguments: string } }>();
 
   for await (const chunk of streamResp as any) {
+    // Belt-and-braces: the SDK's { signal } already aborts the underlying
+    // request, but mocks / older transports may keep yielding — bail out
+    // explicitly so an aborted round never completes.
+    if (signal?.aborted) throw new ClientDisconnectedError();
     const delta = chunk.choices?.[0]?.delta;
     if (!delta) continue;
 
@@ -989,12 +1007,15 @@ async function runToolCallingLoop(
   /** When set, model rounds are streamed and final-answer content deltas are
    *  forwarded live (tool rounds stay silent). Used by the SSE branch. */
   onDelta?: (delta: string) => void,
+  /** Aborts model calls when the SSE client disconnects mid-answer. */
+  signal?:  AbortSignal,
 ): Promise<ToolLoopOutcome> {
   const convo: any[] = [...messages];
   const toolLog: ToolExecution[] = [];
   const proposals: AddToTripProposal[] = [];
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+    if (signal?.aborted) throw new ClientDisconnectedError();
     const forceFinal = round === MAX_TOOL_ROUNDS;
     const requestOpts = {
       model: "gpt-5-mini",
@@ -1008,7 +1029,7 @@ async function runToolCallingLoop(
     let msg: any;
     let toolCalls: any[];
     if (onDelta) {
-      const streamed = await streamModelRound(requestOpts, onDelta);
+      const streamed = await streamModelRound(requestOpts, onDelta, signal);
       toolCalls = streamed.toolCalls;
       msg = {
         role: "assistant",
@@ -1288,13 +1309,23 @@ router.post("/compass/ask", async (req, res) => {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection",    "keep-alive");
     res.flushHeaders();
+    // Client-disconnect handling: if the SSE client drops mid-answer we abort
+    // the upstream OpenAI stream (no further token spend) and persist NOTHING —
+    // a half-generated assistant message must never reach
+    // compass_conversation_messages. A fully generated answer that completes
+    // before the disconnect is still persisted normally.
+    const clientAbort = new AbortController();
+    res.on("close", () => {
+      if (!res.writableEnded) clientAbort.abort();
+    });
     try {
       // Tool rounds run silently server-side; the FINAL model round streams
       // its content token-by-token as delta events (same contract as before
       // Phase 4). The done event still carries the parsed message fields.
       const { finalRaw, toolLog, proposals } = await runToolCallingLoop(
         sc, user.id, guardProfile, messages as any, req.log,
-        (delta) => { res.write(`data: ${JSON.stringify({ delta })}\n\n`); },
+        (delta) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify({ delta })}\n\n`); },
+        clientAbort.signal,
       );
       const { message, payload, quickActions } = _parseModelResponse(finalRaw);
       // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
@@ -1317,6 +1348,12 @@ router.post("/compass/ask", async (req, res) => {
       res.write(`data: ${JSON.stringify({ done: true, conversationId, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, intent: intentResult })}\n\n`);
       res.end();
     } catch (err) {
+      if (clientAbort.signal.aborted) {
+        // Client went away mid-answer: upstream aborted, nothing persisted.
+        req.log.info({ userId: user.id, conversationId }, "compass/ask stream: client disconnected, model call aborted");
+        res.end();
+        return;
+      }
       req.log.error({ err, userId: user.id }, "compass/ask stream failed");
       res.write(`data: ${JSON.stringify({ error: true, message: HONEST_FALLBACK_MESSAGE })}\n\n`);
       res.end();
