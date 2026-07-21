@@ -20,7 +20,7 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, Modal, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
-  MapPin, CalendarClock, ChevronRight, Users, Map as MapIcon, Plus, Star,
+  MapPin, CalendarClock, ChevronRight, Users, Map as MapIcon, Plus, Star, Sparkles,
 } from 'lucide-react-native';
 import {
   reportCompassViewed,
@@ -29,6 +29,7 @@ import {
 } from '../../services/compass.ts';
 import { formatCompassEventChip } from '../../utils/compassFormat.ts';
 import { CompassMiniMap } from './CompassMiniMap';
+import { CompassWhySheet } from './CompassWhySheet.tsx';
 import {
   haversineKm, formatDistanceKm, type CompassMiniMapPoint,
 } from './compassMiniMapShared.ts';
@@ -225,60 +226,85 @@ function PlaceBlockCard({ place, onAddToPlan }: {
   onAddToPlan?: (place: CompassUiPlace) => void;
 }) {
   const openPlace = usePlaceNavigation();
+  const [whyOpen, setWhyOpen] = useState(false);
   return (
-    <Pressable
-      style={({ pressed }) => [s.card, pressed && s.pressed]}
-      onPress={() => openPlace(place)}
-      accessibilityRole="button"
-      accessibilityLabel={`View ${place.name}`}
-      testID={`compass-block-place-${place.id}`}
-    >
-      <View style={[s.strip, { backgroundColor: color.signal }]} />
-      <View style={s.cardBody}>
-        <View style={s.titleRow}>
-          <Text style={s.cardTitle} numberOfLines={1}>{place.name}</Text>
-          <ChevronRight size={14} color={color.faint} />
+    <>
+      <Pressable
+        style={({ pressed }) => [s.card, pressed && s.pressed]}
+        onPress={() => openPlace(place)}
+        accessibilityRole="button"
+        accessibilityLabel={`View ${place.name}`}
+        testID={`compass-block-place-${place.id}`}
+      >
+        <View style={[s.strip, { backgroundColor: color.signal }]} />
+        <View style={s.cardBody}>
+          <View style={s.titleRow}>
+            <Text style={s.cardTitle} numberOfLines={1}>{place.name}</Text>
+            <ChevronRight size={14} color={color.faint} />
+          </View>
+          <View style={s.metaRow}>
+            {place.category ? <Text style={s.metaChip}>{place.category}</Text> : null}
+            <ConfidencePill confidence={place.confidence} testID={`compass-confidence-${place.id}`} />
+            {place.openNow != null ? (
+              <Text style={[s.confidencePill, place.openNow
+                ? { color: '#047857', backgroundColor: '#04785716' }
+                : { color: '#B91C1C', backgroundColor: '#B91C1C16' }]}
+                testID={`compass-open-now-${place.id}`}
+              >
+                {place.openNow ? 'Open now' : 'Closed now'}
+              </Text>
+            ) : null}
+            {place.rating != null ? (
+              <View style={s.inlineMeta}>
+                <Star size={10} color="#F59E0B" fill="#F59E0B" />
+                <Text style={s.metaText}>{place.rating.toFixed(1)}</Text>
+              </View>
+            ) : null}
+            {(place.neighborhood || place.city) ? (
+              <View style={s.inlineMeta}>
+                <MapPin size={10} color={color.mute} />
+                <Text style={s.metaText} numberOfLines={1}>{place.neighborhood ?? place.city}</Text>
+              </View>
+            ) : null}
+          </View>
+          {place.blurb ? <Text style={s.blurb} numberOfLines={2}>{place.blurb}</Text> : null}
+          <View style={s.cardActions}>
+            {onAddToPlan ? (
+              <Pressable
+                style={({ pressed }) => [s.planBtn, pressed && s.pressed]}
+                onPress={() => onAddToPlan(place)}
+                hitSlop={6}
+                accessibilityLabel={`Add ${place.name} to plan`}
+                testID={`compass-block-place-plan-${place.id}`}
+              >
+                <Plus size={12} color={color.signal} />
+                <Text style={s.planBtnText}>Plan</Text>
+              </Pressable>
+            ) : null}
+            {place.recommendationToken ? (
+              <Pressable
+                style={({ pressed }) => [s.whyBtn, pressed && s.pressed]}
+                onPress={() => setWhyOpen(true)}
+                hitSlop={6}
+                accessibilityRole="button"
+                accessibilityLabel={`Why am I seeing ${place.name}?`}
+                testID={`compass-block-place-why-${place.id}`}
+              >
+                <Sparkles size={12} color={color.mute} />
+                <Text style={s.whyBtnText}>Why this?</Text>
+              </Pressable>
+            ) : null}
+          </View>
         </View>
-        <View style={s.metaRow}>
-          {place.category ? <Text style={s.metaChip}>{place.category}</Text> : null}
-          <ConfidencePill confidence={place.confidence} testID={`compass-confidence-${place.id}`} />
-          {place.openNow != null ? (
-            <Text style={[s.confidencePill, place.openNow
-              ? { color: '#047857', backgroundColor: '#04785716' }
-              : { color: '#B91C1C', backgroundColor: '#B91C1C16' }]}
-              testID={`compass-open-now-${place.id}`}
-            >
-              {place.openNow ? 'Open now' : 'Closed now'}
-            </Text>
-          ) : null}
-          {place.rating != null ? (
-            <View style={s.inlineMeta}>
-              <Star size={10} color="#F59E0B" fill="#F59E0B" />
-              <Text style={s.metaText}>{place.rating.toFixed(1)}</Text>
-            </View>
-          ) : null}
-          {(place.neighborhood || place.city) ? (
-            <View style={s.inlineMeta}>
-              <MapPin size={10} color={color.mute} />
-              <Text style={s.metaText} numberOfLines={1}>{place.neighborhood ?? place.city}</Text>
-            </View>
-          ) : null}
-        </View>
-        {place.blurb ? <Text style={s.blurb} numberOfLines={2}>{place.blurb}</Text> : null}
-        {onAddToPlan ? (
-          <Pressable
-            style={({ pressed }) => [s.planBtn, pressed && s.pressed]}
-            onPress={() => onAddToPlan(place)}
-            hitSlop={6}
-            accessibilityLabel={`Add ${place.name} to plan`}
-            testID={`compass-block-place-plan-${place.id}`}
-          >
-            <Plus size={12} color={color.signal} />
-            <Text style={s.planBtnText}>Plan</Text>
-          </Pressable>
-        ) : null}
-      </View>
-    </Pressable>
+      </Pressable>
+      {place.recommendationToken ? (
+        <CompassWhySheet
+          visible={whyOpen}
+          recommendationId={place.recommendationToken}
+          onClose={() => setWhyOpen(false)}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -286,63 +312,88 @@ function PlaceBlockCard({ place, onAddToPlan }: {
 
 function EventBlockCard({ event }: { event: CompassUiEvent }) {
   const router = useRouter();
+  const [whyOpen, setWhyOpen] = useState(false);
   return (
-    <Pressable
-      style={({ pressed }) => [s.card, pressed && s.pressed]}
-      onPress={() => {
-        reportCompassViewed(event.recommendationToken ?? null, event.id);
-        router.push(`/event/${event.id}` as any);
-      }}
-      accessibilityRole="button"
-      accessibilityLabel={`View event ${event.title}`}
-      testID={`compass-block-event-${event.id}`}
-    >
-      <View style={[s.strip, { backgroundColor: '#B45309' }]} />
-      <View style={s.cardBody}>
-        <View style={s.titleRow}>
-          <Text style={s.cardTitle} numberOfLines={1}>{event.title}</Text>
-          <ChevronRight size={14} color={color.faint} />
-        </View>
-        <View style={s.metaRow}>
-          <ConfidencePill confidence={event.confidence} testID={`compass-confidence-${event.id}`} />
-          <View style={s.inlineMeta}>
-            <CalendarClock size={10} color={color.mute} />
-            <Text style={s.metaText}>{formatCompassEventChip(event.startsAt)}</Text>
+    <>
+      <Pressable
+        style={({ pressed }) => [s.card, pressed && s.pressed]}
+        onPress={() => {
+          reportCompassViewed(event.recommendationToken ?? null, event.id);
+          router.push(`/event/${event.id}` as any);
+        }}
+        accessibilityRole="button"
+        accessibilityLabel={`View event ${event.title}`}
+        testID={`compass-block-event-${event.id}`}
+      >
+        <View style={[s.strip, { backgroundColor: '#B45309' }]} />
+        <View style={s.cardBody}>
+          <View style={s.titleRow}>
+            <Text style={s.cardTitle} numberOfLines={1}>{event.title}</Text>
+            <ChevronRight size={14} color={color.faint} />
           </View>
-          {event.city ? (
+          <View style={s.metaRow}>
+            <ConfidencePill confidence={event.confidence} testID={`compass-confidence-${event.id}`} />
             <View style={s.inlineMeta}>
-              <MapPin size={10} color={color.mute} />
-              <Text style={s.metaText} numberOfLines={1}>{event.city}</Text>
+              <CalendarClock size={10} color={color.mute} />
+              <Text style={s.metaText}>{formatCompassEventChip(event.startsAt)}</Text>
             </View>
-          ) : null}
+            {event.city ? (
+              <View style={s.inlineMeta}>
+                <MapPin size={10} color={color.mute} />
+                <Text style={s.metaText} numberOfLines={1}>{event.city}</Text>
+              </View>
+            ) : null}
+          </View>
+          {event.description ? <Text style={s.blurb} numberOfLines={2}>{event.description}</Text> : null}
+          <View style={s.cardActions}>
+            {event.lat != null && event.lng != null ? (
+              <Pressable
+                style={({ pressed }) => [s.planBtn, pressed && s.pressed]}
+                onPress={() => {
+                  reportCompassViewed(event.recommendationToken ?? null, event.id);
+                  router.push({
+                    pathname: '/map',
+                    params: {
+                      lat: String(event.lat),
+                      lng: String(event.lng),
+                      focusId: event.id,
+                      title: event.title,
+                      ...(event.category ? { category: event.category } : {}),
+                    },
+                  } as any);
+                }}
+                hitSlop={6}
+                accessibilityLabel={`View ${event.title} on map`}
+                testID={`compass-block-event-map-${event.id}`}
+              >
+                <MapPin size={12} color={color.signal} />
+                <Text style={s.planBtnText}>Map</Text>
+              </Pressable>
+            ) : null}
+            {event.recommendationToken ? (
+              <Pressable
+                style={({ pressed }) => [s.whyBtn, pressed && s.pressed]}
+                onPress={() => setWhyOpen(true)}
+                hitSlop={6}
+                accessibilityRole="button"
+                accessibilityLabel={`Why am I seeing ${event.title}?`}
+                testID={`compass-block-event-why-${event.id}`}
+              >
+                <Sparkles size={12} color={color.mute} />
+                <Text style={s.whyBtnText}>Why this?</Text>
+              </Pressable>
+            ) : null}
+          </View>
         </View>
-        {event.description ? <Text style={s.blurb} numberOfLines={2}>{event.description}</Text> : null}
-        {event.lat != null && event.lng != null ? (
-          <Pressable
-            style={({ pressed }) => [s.planBtn, pressed && s.pressed]}
-            onPress={() => {
-              reportCompassViewed(event.recommendationToken ?? null, event.id);
-              router.push({
-                pathname: '/map',
-                params: {
-                  lat: String(event.lat),
-                  lng: String(event.lng),
-                  focusId: event.id,
-                  title: event.title,
-                  ...(event.category ? { category: event.category } : {}),
-                },
-              } as any);
-            }}
-            hitSlop={6}
-            accessibilityLabel={`View ${event.title} on map`}
-            testID={`compass-block-event-map-${event.id}`}
-          >
-            <MapPin size={12} color={color.signal} />
-            <Text style={s.planBtnText}>Map</Text>
-          </Pressable>
-        ) : null}
-      </View>
-    </Pressable>
+      </Pressable>
+      {event.recommendationToken ? (
+        <CompassWhySheet
+          visible={whyOpen}
+          recommendationId={event.recommendationToken}
+          onClose={() => setWhyOpen(false)}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -587,8 +638,11 @@ const s = StyleSheet.create({
   inlineMeta: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   metaText:   { ...t.stamp, fontSize: 10, color: color.mute },
   blurb:      { ...t.small, fontSize: 11, color: color.mute, lineHeight: 15 },
-  planBtn:    { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-start', backgroundColor: color.haze, paddingHorizontal: space.sm, paddingVertical: 3, borderRadius: radius.sm, marginTop: 2 },
+  cardActions:{ flexDirection: 'row', alignItems: 'center', gap: space.sm, flexWrap: 'wrap', marginTop: 2 },
+  planBtn:    { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-start', backgroundColor: color.haze, paddingHorizontal: space.sm, paddingVertical: 3, borderRadius: radius.sm },
   planBtnText:{ ...t.stamp, fontSize: 10, fontWeight: '700', color: color.signal },
+  whyBtn:     { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-start', backgroundColor: color.haze, paddingHorizontal: space.sm, paddingVertical: 3, borderRadius: radius.sm },
+  whyBtnText: { ...t.stamp, fontSize: 10, fontWeight: '600', color: color.mute },
 
   mapBlock:   { backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.sm, gap: 2 },
   mapHead:    { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.xs, paddingBottom: 4 },
