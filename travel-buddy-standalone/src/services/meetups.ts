@@ -267,6 +267,7 @@ export async function getFrequentInvitees(): Promise<MeetupResult<{ invitees: Fr
 export async function addMeetupToTripPlan(
   meetupId: string,
   tripId: string,
+  opts: { lockType?: 'fixed' | 'flexible' | 'optional' } = {},
 ): Promise<MeetupResult<{ planItemId?: string; tripId: string; meetupId: string; idempotent?: boolean }>> {
-  return apiCall(`/api/meetups/${meetupId}/add-to-trip-plan`, 'POST', { tripId });
+  return apiCall(`/api/meetups/${meetupId}/add-to-trip-plan`, 'POST', { tripId, ...opts });
 }
