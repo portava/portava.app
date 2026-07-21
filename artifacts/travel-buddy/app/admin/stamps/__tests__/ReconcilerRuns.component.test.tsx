@@ -19,9 +19,10 @@
  */
 
 import React from 'react';
-import { render, screen } from '@testing-library/react-native';
+import { Alert } from 'react-native';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import ReconcilerRunsScreen from '../reconciler-runs';
-import { getReconcilerRuns } from '../../../../src/services/adminStamps';
+import { getReconcilerRuns, triggerReconcilerRun } from '../../../../src/services/adminStamps';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
@@ -38,9 +39,11 @@ jest.mock('../../../../src/hooks/useRequireAdmin', () => ({
 jest.mock('../../../../src/services/adminStamps', () => ({
   ...jest.requireActual('../../../../src/services/adminStamps'),
   getReconcilerRuns: jest.fn(),
+  triggerReconcilerRun: jest.fn(),
 }));
 
 const mockGetRuns = getReconcilerRuns as jest.Mock;
+const mockTrigger = triggerReconcilerRun as jest.Mock;
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────
 
@@ -114,5 +117,61 @@ describe('ReconcilerRunsScreen', () => {
 
     await render(<ReconcilerRunsScreen />);
     await screen.findByText('Admin role required');
+  });
+
+  it('Run now confirms, triggers the reconciler, and refreshes the list', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockGetRuns.mockResolvedValue(runsOk([OK_RUN]));
+    mockTrigger.mockResolvedValue({
+      ok: true,
+      data: { ok: true, stats: { resolved: 1, flagged: 0, skipped: 0, enqueued: 0 } },
+    });
+
+    await render(<ReconcilerRunsScreen />);
+    await screen.findByTestId('run-row-log-ok');
+
+    fireEvent.press(screen.getByTestId('run-now-btn'));
+
+    // Confirmation alert shown; nothing triggered yet.
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Run reconciler now?',
+      expect.any(String),
+      expect.any(Array),
+    );
+    expect(mockTrigger).not.toHaveBeenCalled();
+
+    // Press the confirm button of the alert (bare call, then waitFor — see
+    // RNTL Alert act() guidance).
+    const buttons = alertSpy.mock.calls[0][2] as Array<{ text: string; onPress?: () => void }>;
+    buttons.find((b) => b.text === 'Run now')!.onPress!();
+
+    await waitFor(() => expect(mockTrigger).toHaveBeenCalledTimes(1));
+    // List refreshed after the run (initial load + post-run reload).
+    await waitFor(() => expect(mockGetRuns).toHaveBeenCalledTimes(2));
+    alertSpy.mockRestore();
+  });
+
+  it('surfaces a run failure in an alert and re-enables the button', async () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    mockGetRuns.mockResolvedValue(runsOk([]));
+    mockTrigger.mockResolvedValue({ ok: false, error: 'db_error: boom' });
+
+    await render(<ReconcilerRunsScreen />);
+    await screen.findByText('No reconciler runs recorded yet');
+
+    fireEvent.press(screen.getByTestId('run-now-btn'));
+    const buttons = alertSpy.mock.calls[0][2] as Array<{ text: string; onPress?: () => void }>;
+    buttons.find((b) => b.text === 'Run now')!.onPress!();
+
+    await waitFor(() =>
+      expect(alertSpy).toHaveBeenCalledWith('Error', 'db_error: boom'),
+    );
+    // Button re-enabled after the failed run.
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('run-now-btn').props.accessibilityState?.disabled,
+      ).toBe(false),
+    );
+    alertSpy.mockRestore();
   });
 });

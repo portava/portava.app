@@ -406,6 +406,24 @@ export async function getReconcilerRuns(limit = 20): Promise<ApiResult<{ runs: R
   return adminGet(`/api/admin/stamps/reconcile/runs?limit=${limit}`);
 }
 
+/**
+ * Response of POST /admin/stamps/reconcile. The endpoint runs the catalog
+ * reconciliation synchronously and returns the run's counts on success.
+ */
+export interface TriggerReconcileResponse {
+  ok: true;
+  stats: {
+    resolved: number;
+    flagged: number;
+    skipped: number;
+    enqueued: number;
+  };
+}
+
+export async function triggerReconcilerRun(): Promise<ApiResult<TriggerReconcileResponse>> {
+  return adminPost('/api/admin/stamps/reconcile', {});
+}
+
 // ── Public catalog batch fetch ─────────────────────────────────────────────────
 
 export async function batchFetchCatalogEntries(catalogIds: string[]): Promise<ApiResult<{
