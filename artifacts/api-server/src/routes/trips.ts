@@ -1199,7 +1199,7 @@ router.get("/trips/:tripId/plan", async (req, res) => {
     .select(
       "id, trip_id, creator_id, title, category, status, source_type, source_id, " +
       "day_date, starts_at, ends_at, location_name, notes, sort_order, visibility, " +
-      "location_is_private, lat, lng, created_at, updated_at",
+      "lock_type, location_is_private, lat, lng, created_at, updated_at",
     )
     .eq("trip_id", tripId)
     .is("removed_at", null)

@@ -19,9 +19,10 @@ import { X, Check, MapPin, ChevronLeft } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
 import { fetchPlanEditableTrips, createPlanItem, addMeetupToPlan, addPlaceToPlan } from '../services/tripPlan.ts';
 import type { EditableTripRow } from '../services/tripPlan.ts';
-import type { TripPlanCategory } from '../types/models.ts';
+import type { TripPlanCategory, TripPlanLockType } from '../types/models.ts';
 import { useSession } from '../context/SessionContext.tsx';
 import { DatePickerField } from './DateTimePickerField';
+import { LockTypeSelector } from './itinerary/LockTypeSelector.tsx';
 
 // ── Source descriptor ─────────────────────────────────────────────────────────
 
@@ -97,6 +98,7 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
 
   const [dayDate, setDayDate]   = useState<Date | null>(null);
   const [startsAt, setStartsAt] = useState<Date | null>(null);
+  const [lockType, setLockType] = useState<TripPlanLockType>('flexible');
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError]           = useState<string | null>(null);
@@ -138,6 +140,7 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
       setDayDate(null);
       setStartsAt(null);
     }
+    setLockType('flexible');
     setError(null);
     setStep('pick_trip');
     setSheetOpen(true);
@@ -165,12 +168,13 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
 
     try {
       if (source.type === 'meetup') {
-        await addMeetupToPlan(source.id, selectedTrip.id);
+        await addMeetupToPlan(source.id, selectedTrip.id, { lockType });
       } else {
         try {
           await addPlaceToPlan(source.id, selectedTrip.id, {
             dayDate:  dayDate  ? dateToDayStr(dayDate)                    : undefined,
             startsAt: buildTimestamp(dayDate, startsAt),
+            lockType,
           });
         } catch (placeErr: any) {
           const msg = (placeErr.message ?? '').toLowerCase();
@@ -183,6 +187,7 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
               locationName: source.locationName ?? source.city,
               dayDate:      dayDate  ? dateToDayStr(dayDate)              : undefined,
               startsAt:     buildTimestamp(dayDate, startsAt),
+              lockType,
             });
           } else {
             throw placeErr;
@@ -213,7 +218,7 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
     } finally {
       setSubmitting(false);
     }
-  }, [source, selectedTrip, dayDate, startsAt, submitting, close, showToast]);
+  }, [source, selectedTrip, dayDate, startsAt, lockType, submitting, close, showToast]);
 
   const contextValue = useMemo<PlanPickerContextValue>(() => ({
     open,
@@ -327,6 +332,9 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
                 onClear={() => setStartsAt(null)}
                 placeholder="Pick a time"
               />
+
+              <Text style={s.fieldLabel}>Autopilot handling</Text>
+              <LockTypeSelector value={lockType} onChange={setLockType} />
 
               <Pressable
                 style={[s.confirmBtn, submitting && s.confirmBtnDisabled]}

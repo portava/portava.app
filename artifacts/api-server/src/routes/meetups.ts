@@ -944,6 +944,7 @@ router.post("/meetups/:meetupId/confirm-time", async (req, res) => {
 
 const AddToPlanSchema = z.object({
   tripId: z.string().regex(UUID, "tripId must be a valid UUID"),
+  lockType: z.enum(["fixed", "flexible", "optional"]).default("flexible"),
 });
 
 router.post("/meetups/:meetupId/add-to-trip-plan", async (req, res) => {
@@ -956,7 +957,7 @@ router.post("/meetups/:meetupId/add-to-trip-plan", async (req, res) => {
 
   const parsed = AddToPlanSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
-  const { tripId } = parsed.data;
+  const { tripId, lockType } = parsed.data;
 
   // Caller must have plan-edit permission on the target trip
   const canEdit = await canEditPlan(client, tripId, user.id);
@@ -1002,6 +1003,7 @@ router.post("/meetups/:meetupId/add-to-trip-plan", async (req, res) => {
       location_name: (meetup as any).location_name ?? null,
       sort_order:    0,
       visibility:    "members",
+      lock_type:     lockType,
     })
     .select("*")
     .single();

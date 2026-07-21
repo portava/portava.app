@@ -195,10 +195,14 @@ export async function fetchPlanEditableTrips(): Promise<EditableTripRow[]> {
   return (json.trips ?? []) as EditableTripRow[];
 }
 
-export async function addMeetupToPlan(meetupId: string, tripId: string): Promise<TripPlanItem> {
+export async function addMeetupToPlan(
+  meetupId: string,
+  tripId: string,
+  opts: { lockType?: TripPlanLockType } = {},
+): Promise<TripPlanItem> {
   const res = await authedFetch(`${apiBase()}/api/meetups/${meetupId}/add-to-trip-plan`, {
     method: 'POST',
-    body: JSON.stringify({ tripId }),
+    body: JSON.stringify({ tripId, ...opts }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -210,7 +214,7 @@ export async function addMeetupToPlan(meetupId: string, tripId: string): Promise
 export async function addPlaceToPlan(
   placeId: string,
   tripId: string,
-  opts: { dayDate?: string; startsAt?: string } = {},
+  opts: { dayDate?: string; startsAt?: string; lockType?: TripPlanLockType } = {},
 ): Promise<TripPlanItem> {
   const res = await authedFetch(`${apiBase()}/api/places/${placeId}/add-to-trip-plan`, {
     method: 'POST',

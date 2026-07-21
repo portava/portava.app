@@ -17,6 +17,7 @@ const UUID = /^[0-9a-f-]{36}$/i;
 
 const AddMeetupSchema = z.object({
   tripId: z.string().regex(UUID, "tripId must be a valid UUID"),
+  lockType: z.enum(["fixed", "flexible", "optional"]).default("flexible"),
 });
 
 router.post("/meetups/:meetupId/add-to-trip-plan", asyncHandler(async (req, res) => {
@@ -29,7 +30,7 @@ router.post("/meetups/:meetupId/add-to-trip-plan", asyncHandler(async (req, res)
 
   const parsed = AddMeetupSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
-  const { tripId } = parsed.data;
+  const { tripId, lockType } = parsed.data;
 
   // Caller must be an accepted trip member with plan edit permission
   const member = await isAcceptedTripMember(client, tripId, user.id);
@@ -71,6 +72,7 @@ router.post("/meetups/:meetupId/add-to-trip-plan", asyncHandler(async (req, res)
       location_name: (meetup as any).location_name ?? null,
       sort_order: 0,
       visibility: "members",
+      lock_type: lockType,
     })
     .select("*")
     .single();
@@ -86,6 +88,7 @@ const AddPlaceSchema = z.object({
   tripId:   z.string().regex(UUID, "tripId must be a valid UUID"),
   dayDate:  z.string().optional(),
   startsAt: z.string().optional(),
+  lockType: z.enum(["fixed", "flexible", "optional"]).default("flexible"),
 });
 
 router.post("/places/:placeId/add-to-trip-plan", asyncHandler(async (req, res) => {
@@ -97,7 +100,7 @@ router.post("/places/:placeId/add-to-trip-plan", asyncHandler(async (req, res) =
 
   const parsed = AddPlaceSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
-  const { tripId, dayDate, startsAt } = parsed.data;
+  const { tripId, dayDate, startsAt, lockType } = parsed.data;
 
   const member = await isAcceptedTripMember(client, tripId, user.id);
   if (!member) { sendError(res, "not_member", "You must be an accepted trip member to add items"); return; }
@@ -141,6 +144,7 @@ router.post("/places/:placeId/add-to-trip-plan", asyncHandler(async (req, res) =
       location_name: (place as any).city ?? null,
       sort_order: 0,
       visibility: "members",
+      lock_type: lockType,
     })
     .select("*")
     .single();
@@ -187,6 +191,7 @@ function toCamel(row: Record<string, any>, opts: { stripCoords?: boolean; warnin
     notes: row.notes ?? null,
     sortOrder: row.sort_order,
     visibility: row.visibility,
+    lockType: row.lock_type ?? "flexible",
     ...coords,
     warnings: opts.warnings ?? [],
     createdAt: row.created_at,
