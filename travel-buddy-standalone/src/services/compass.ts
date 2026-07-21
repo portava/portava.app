@@ -687,6 +687,53 @@ export interface CompassSettings {
   updated_at?: string;
 }
 
+// ── Compass Sense (Phase 11) ─────────────────────────────────────────────────
+
+export type CompassSensePresence = 'passive' | 'aware' | 'active';
+
+export interface CompassSenseSettings {
+  presenceLevel: CompassSensePresence;
+  categories: Record<string, boolean>;
+}
+
+export interface CompassSenseSettingsResult {
+  ok: boolean;
+  data?: CompassSenseSettings;
+  compassEnabled?: boolean;
+  error?: string;
+}
+
+export async function fetchCompassSenseSettings(): Promise<CompassSenseSettingsResult> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const r = await authedFetch('/api/compass/sense/settings');
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    if (body.compassEnabled === false) return { ok: true, compassEnabled: false };
+    return { ok: true, compassEnabled: true, data: body.settings };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+export async function putCompassSenseSettings(
+  patch: { presenceLevel?: CompassSensePresence; categories?: Record<string, boolean> },
+): Promise<CompassSenseSettingsResult> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const r = await authedFetch('/api/compass/sense/settings', {
+      method: 'PUT',
+      body: JSON.stringify(patch),
+    });
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    if (body.compassEnabled === false) return { ok: true, compassEnabled: false };
+    return { ok: true, compassEnabled: true, data: body.settings };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
 export interface CompassSettingsResult {
   ok: boolean;
   data?: CompassSettings;
