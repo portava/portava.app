@@ -42,6 +42,59 @@ export function _setTestHourUtc(hour: number | null): void {
   _testHourUtc = hour;
 }
 
+/* ── Per-user short-lived payload cache ─────────────────────────────────────
+ * The full home build (Phase 7 ranking + who's-around + events + weather) is
+ * expensive (~1.7s observed). Repeat opens within a short window serve the
+ * cached payload instantly. Mirrors the discovery L1 in-memory cache pattern.
+ *
+ * Safety:
+ *   - Keyed strictly per user (plus the tz offset param, which shapes the
+ *     payload) — never shared across users.
+ *   - Checked only AFTER auth and the COMPASS_ENABLED flag check, so the
+ *     feature flag and privacy gates always apply.
+ *   - Only successful, non-fallback payloads are cached.
+ */
+const HOME_CACHE_TTL_MS = 45_000;
+const HOME_CACHE_MAX_ENTRIES = 1_000;
+let _ttlMs = HOME_CACHE_TTL_MS;
+const homeCache = new Map<string, { payload: unknown; expiresAt: number }>();
+
+export function _clearCompassHomeCache(): void {
+  homeCache.clear();
+}
+export function _setTestHomeCacheTtlMs(ms: number | null): void {
+  _ttlMs = ms ?? HOME_CACHE_TTL_MS;
+}
+
+function homeCacheKey(userId: string, tzOffsetMinutes: number | null): string {
+  return `${userId}|${tzOffsetMinutes ?? "auto"}`;
+}
+
+function getCachedHome(key: string): unknown | null {
+  const entry = homeCache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    homeCache.delete(key);
+    return null;
+  }
+  return entry.payload;
+}
+
+function setCachedHome(key: string, payload: unknown): void {
+  if (homeCache.size >= HOME_CACHE_MAX_ENTRIES) {
+    const now = Date.now();
+    for (const [k, v] of homeCache) {
+      if (v.expiresAt <= now) homeCache.delete(k);
+    }
+    // Still full after pruning expired entries — drop the oldest.
+    if (homeCache.size >= HOME_CACHE_MAX_ENTRIES) {
+      const oldest = homeCache.keys().next().value;
+      if (oldest !== undefined) homeCache.delete(oldest);
+    }
+  }
+  homeCache.set(key, { payload, expiresAt: Date.now() + _ttlMs });
+}
+
 /** Current UTC instant; when a test hour is injected, today's date at that UTC hour. */
 function nowUtcInstant(): Date {
   if (_testHourUtc !== null) {
@@ -254,13 +307,20 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
     return;
   }
 
+  const tzOffsetMinutes = parseTzOffsetParam((req.query as any)?.tzOffsetMinutes);
+  const cacheKey = homeCacheKey(user.id, tzOffsetMinutes);
+  const cached = getCachedHome(cacheKey);
+  if (cached !== null) {
+    res.json(cached);
+    return;
+  }
+
   try {
     const [profile, timezone] = await Promise.all([
       getCompassProfile(sc, user.id),
       fetchUserTimezone(sc, user.id),
     ]);
     const nowUtc = nowUtcInstant();
-    const tzOffsetMinutes = parseTzOffsetParam((req.query as any)?.tzOffsetMinutes);
     const localHour = localHourFor(nowUtc, tzOffsetMinutes, timezone);
     const timeOfDay = timeOfDayForHour(localHour);
     const signals = { ...defaultSignals(profile), hourUtc: localHour };
@@ -323,7 +383,7 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
         fetchWeatherWindow(profile),
       ]);
 
-    res.json({
+    const payload = {
       compassEnabled: true,
       fallback: false,
       timeOfDay,
@@ -334,7 +394,9 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
       startingSoon: startingSoon.length > 0 ? startingSoon : null,
       tonightVibe: isEveningOrNight ? buildTonightVibe(tonightEvents) : null,
       weatherWindow,
-    });
+    };
+    setCachedHome(cacheKey, payload);
+    res.json(payload);
   } catch (err) {
     req.log.error({ err }, "compass/home: build failed, returning fallback");
     res.json({ compassEnabled: true, fallback: true });

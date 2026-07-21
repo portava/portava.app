@@ -21,9 +21,16 @@ import pino from "pino";
 import { _setTestClient } from "../lib/http.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { clearCompassProfileCache } from "../compass/CompassProfileService.js";
-import compassHomeRouter, { _setTestHourUtc, timeOfDayForHour, localHourFor } from "../routes/compassHome.js";
+import compassHomeRouter, {
+  _setTestHourUtc,
+  _clearCompassHomeCache,
+  _setTestHomeCacheTtlMs,
+  timeOfDayForHour,
+  localHourFor,
+} from "../routes/compassHome.js";
 
 const USER_ID = "00000000-0000-0000-0000-000000000001";
+const USER_ID_2 = "00000000-0000-0000-0000-000000000002";
 
 /* ── Permissive fake Supabase client ──────────────────────────────────────────
  * Generic chainable builder: eq/neq/gte/lte filters are applied; every other
@@ -82,10 +89,13 @@ function makeFakeClient(store: Record<string, Row[]> = {}) {
     fakeClient: {
       from: (name: string) => builder(name),
       auth: {
-        getUser: (token: string) =>
-          token === "valid-token"
-            ? Promise.resolve({ data: { user: { id: USER_ID } }, error: null })
-            : Promise.resolve({ data: { user: null }, error: { message: "bad token" } }),
+        getUser: (token: string) => {
+          if (token === "valid-token")
+            return Promise.resolve({ data: { user: { id: USER_ID } }, error: null });
+          if (token === "valid-token-2")
+            return Promise.resolve({ data: { user: { id: USER_ID_2 } }, error: null });
+          return Promise.resolve({ data: { user: null }, error: { message: "bad token" } });
+        },
       },
     } as any,
     store,
@@ -120,6 +130,8 @@ after(async () => {
 beforeEach(() => {
   invalidateFlagsCache();
   clearCompassProfileCache();
+  _clearCompassHomeCache();
+  _setTestHomeCacheTtlMs(null);
   _setTestHourUtc(null);
 });
 
@@ -197,6 +209,7 @@ describe("GET /api/compass/home", () => {
 
     invalidateFlagsCache();
     clearCompassProfileCache();
+    _clearCompassHomeCache();
     _setTestHourUtc(23); // night
     const night = (await getHome()).json as any;
     assert.equal(night.timeOfDay, "night");
@@ -248,6 +261,118 @@ describe("GET /api/compass/home", () => {
         `bestNextMove id '${j.bestNextMove.id}' must come from seeded data`,
       );
     }
+  });
+});
+
+describe("compass home per-user cache", () => {
+  it("serves the cached payload on repeat opens within the TTL (hit vs miss)", async () => {
+    const { fakeClient, store } = makeFakeClient({
+      feature_flags: [enabledFlag()],
+      events: [eventRow("ev-first", "Sunset run club", hoursFromNow(2))],
+    });
+    _setTestClient(fakeClient, true);
+    _setTestHourUtc(8);
+
+    const first = (await getHome()).json as any;
+    assert.deepEqual(first.startingSoon.map((e: any) => e.id), ["ev-first"]);
+
+    // Mutate the underlying data — a cache hit must NOT see it.
+    store.events!.push(eventRow("ev-second", "New thing", hoursFromNow(1)));
+    const second = (await getHome()).json as any;
+    assert.deepEqual(
+      second.startingSoon.map((e: any) => e.id),
+      ["ev-first"],
+      "repeat open within TTL must be served from cache",
+    );
+    assert.deepEqual(second, first, "cached payload must be identical");
+  });
+
+  it("rebuilds after the cache entry expires", async () => {
+    _setTestHomeCacheTtlMs(10);
+    const { fakeClient, store } = makeFakeClient({
+      feature_flags: [enabledFlag()],
+      events: [eventRow("ev-first", "Sunset run club", hoursFromNow(2))],
+    });
+    _setTestClient(fakeClient, true);
+    _setTestHourUtc(8);
+
+    const first = (await getHome()).json as any;
+    assert.deepEqual(first.startingSoon.map((e: any) => e.id), ["ev-first"]);
+
+    store.events!.push(eventRow("ev-second", "New thing", hoursFromNow(1)));
+    await new Promise((r) => setTimeout(r, 30));
+    const second = (await getHome()).json as any;
+    assert.deepEqual(
+      second.startingSoon.map((e: any) => e.id).sort(),
+      ["ev-first", "ev-second"],
+      "expired entry must trigger a fresh build",
+    );
+  });
+
+  it("never shares cached payloads across users", async () => {
+    const { fakeClient } = makeFakeClient({
+      feature_flags: [enabledFlag()],
+      notification_preferences: [{ user_id: USER_ID, timezone: "Asia/Manila" }],
+      events: [eventRow("ev-shared", "Rooftop session", hoursFromNow(3))],
+    });
+    _setTestClient(fakeClient, true);
+    _setTestHourUtc(13); // 21:00 Manila for user 1; UTC for user 2
+
+    const u1 = (await getHome()).json as any;
+    assert.equal(u1.timeOfDay, "evening");
+
+    const u2 = (await getHome("valid-token-2")).json as any;
+    assert.equal(
+      u2.timeOfDay,
+      "afternoon",
+      "second user must get their own build, not user 1's cached payload",
+    );
+  });
+
+  it("caches per tz-offset variant, not across differing offsets", async () => {
+    const { fakeClient } = makeFakeClient({ feature_flags: [enabledFlag()] });
+    _setTestClient(fakeClient, true);
+    _setTestHourUtc(13);
+
+    const east = (await getHome("valid-token", "?tzOffsetMinutes=480")).json as any;
+    assert.equal(east.timeOfDay, "evening");
+    const utc = (await getHome("valid-token", "?tzOffsetMinutes=0")).json as any;
+    assert.equal(utc.timeOfDay, "afternoon");
+  });
+
+  it("respects COMPASS_ENABLED turning off — cached payload is not served", async () => {
+    const { fakeClient, store } = makeFakeClient({
+      feature_flags: [enabledFlag()],
+      events: [eventRow("ev-soon", "Sunset run club", hoursFromNow(2))],
+    });
+    _setTestClient(fakeClient, true);
+    _setTestHourUtc(8);
+
+    const on = (await getHome()).json as any;
+    assert.equal(on.compassEnabled, true);
+
+    // Flip the flag off and expire the flags cache — the home cache must not
+    // leak the enabled payload past the flag gate.
+    store.feature_flags!.length = 0;
+    invalidateFlagsCache();
+    const off = (await getHome()).json as any;
+    assert.equal(off.compassEnabled, false);
+    assert.equal(off.fallback, true);
+    assert.equal(off.bestNextMove, undefined);
+  });
+
+  it("does not cache the disabled fallback envelope", async () => {
+    const { fakeClient, store } = makeFakeClient({ feature_flags: [] });
+    _setTestClient(fakeClient, true);
+    _setTestHourUtc(8);
+
+    const off = (await getHome()).json as any;
+    assert.equal(off.compassEnabled, false);
+
+    store.feature_flags!.push(enabledFlag());
+    invalidateFlagsCache();
+    const on = (await getHome()).json as any;
+    assert.equal(on.compassEnabled, true, "re-enabled flag must produce a real payload");
   });
 });
 
