@@ -24,7 +24,7 @@ import {
 } from '../../../src/services/emergencyContacts';
 import { useSession } from '../../../src/context/SessionContext';
 import { useNavBarScrollHandler } from '../../../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../../../src/hooks/useBottomInset';
+import { NavBarFiller } from '../../../src/hooks/useNavBarCollapse';
 
 // ── Method labels ─────────────────────────────────────────────────────────────
 
@@ -400,7 +400,7 @@ export default function EmergencyContactsScreen() {
             <Text style={styles.limitNote}>Maximum 10 contacts reached.</Text>
           )}
 
-          <PlainBottomFiller />
+          <NavBarFiller />
         </ScrollView>
       )}
 

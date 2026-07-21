@@ -15,7 +15,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../src/lib/supabase';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
+import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 import { ReasonPromptModal } from '../../src/components/ReasonPromptModal';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -117,7 +117,7 @@ function AdminQueue<T extends { id: string }>({
       contentContainerStyle={styles.list}
       onScroll={navBarScrollHandler}
       scrollEventThrottle={16}
-      ListFooterComponent={<PlainBottomFiller />}
+      ListFooterComponent={<NavBarFiller />}
     />
   );
 }

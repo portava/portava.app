@@ -21,7 +21,7 @@ import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { emitCommentCount } from '../../src/lib/commentCountStore';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
+import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 
 const UNDO_WINDOW_MS = 5000;
 
@@ -301,7 +301,7 @@ export default function PostDetail() {
               />
             </View>
           )}
-          <PlainBottomFiller />
+          <NavBarFiller />
         </ScrollView>
       </KeyboardSafeScrollView>
 

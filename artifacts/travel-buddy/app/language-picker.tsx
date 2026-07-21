@@ -15,7 +15,7 @@ import { ScreenHeader } from '../src/components/ScreenHeader';
 import { color, space, type as t, radius } from '../src/theme/tokens';
 import { useLanguagePreference } from '../src/context/LanguagePreferenceContext';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../src/hooks/useBottomInset';
+import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
 
 export const SUPPORTED_LANGUAGES: Array<{ code: string; name: string }> = [
   { code: 'en',    name: 'English' },
@@ -104,7 +104,7 @@ export default function LanguagePicker() {
         contentContainerStyle={{ paddingBottom: 40 }}
         onScroll={navBarScrollHandler}
         scrollEventThrottle={16}
-        ListFooterComponent={<PlainBottomFiller />}
+        ListFooterComponent={<NavBarFiller />}
         renderItem={({ item }) => {
           const active = selected === item.code;
           return (

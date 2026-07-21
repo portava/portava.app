@@ -17,7 +17,7 @@ import { getCurrentGps } from '../../src/services/location';
 import { verificationBadge, sensitivityLabel, type HiddenGem, type GemCategory } from '../../src/services/hiddenGems';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
+import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 
 // ── Category filter chips ─────────────────────────────────────────────────────
 
@@ -225,7 +225,7 @@ function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
             ItemSeparatorComponent={() => <View style={styles.sep} />}
             onScroll={navBarScrollHandler}
             scrollEventThrottle={16}
-            ListFooterComponent={<PlainBottomFiller />}
+            ListFooterComponent={<NavBarFiller />}
           />
         )
       )}
@@ -272,7 +272,7 @@ function SavedTab() {
       ItemSeparatorComponent={() => <View style={styles.sep} />}
       onScroll={navBarScrollHandler}
       scrollEventThrottle={16}
-      ListFooterComponent={<PlainBottomFiller />}
+      ListFooterComponent={<NavBarFiller />}
     />
   );
 }
@@ -331,7 +331,7 @@ function LayoverTab() {
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           onScroll={navBarScrollHandler}
           scrollEventThrottle={16}
-          ListFooterComponent={<PlainBottomFiller />}
+          ListFooterComponent={<NavBarFiller />}
         />
       )}
     </View>

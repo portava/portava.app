@@ -28,7 +28,7 @@ import {
 } from '../../../src/services/reviewDraftStorage';
 import { useSession } from '../../../src/context/SessionContext';
 import { useNavBarScrollHandler } from '../../../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../../../src/hooks/useBottomInset';
+import { NavBarFiller } from '../../../src/hooks/useNavBarCollapse';
 
 // ── Star rating ───────────────────────────────────────────────────────────────
 
@@ -368,7 +368,7 @@ export default function ReviewComposerScreen() {
         <Text style={s.cancelBtnText}>Go back</Text>
       </TouchableOpacity>
 
-      <PlainBottomFiller />
+      <NavBarFiller />
 
     </KeyboardSafeView>
   );

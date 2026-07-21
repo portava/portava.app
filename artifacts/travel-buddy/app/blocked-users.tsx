@@ -16,7 +16,7 @@ import { color, space, radius, type as t } from '../src/theme/tokens';
 import { getBlockList, unblockUser } from '../src/services/blocks';
 import type { BlockedUser } from '../src/services/blocks';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../src/hooks/useBottomInset';
+import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
 
 export default function BlockedUsersScreen() {
   const [users, setUsers] = useState<BlockedUser[]>([]);
@@ -76,7 +76,7 @@ export default function BlockedUsersScreen() {
           contentContainerStyle={{ padding: space.lg, gap: space.sm }}
           onScroll={navBarScrollHandler}
           scrollEventThrottle={16}
-          ListFooterComponent={<PlainBottomFiller />}
+          ListFooterComponent={<NavBarFiller />}
           renderItem={({ item }) => (
             <View style={s.row}>
               {item.avatarUrl ? (

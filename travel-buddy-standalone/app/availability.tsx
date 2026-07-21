@@ -9,7 +9,7 @@ import type { Weekday, TimeBlock } from '../src/types/models';
 import type { QuickStatus } from '../src/services/availability';
 import { color, space, radius, type as t, shadow, layout } from '../src/theme/tokens';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../src/hooks/useBottomInset';
+import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
 
 const DAYS: { key: Weekday; label: string }[] = [
   { key: 'mon', label: 'Mon' }, { key: 'tue', label: 'Tue' }, { key: 'wed', label: 'Wed' },
@@ -204,7 +204,7 @@ export default function AvailabilityScreen() {
             <Text style={s.saveText}>{saved ? 'Saved!' : 'Save'}</Text>
           </Pressable>
         </View>
-        <PlainBottomFiller />
+        <NavBarFiller />
       </ScrollView>
     </View>
   );

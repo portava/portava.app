@@ -36,7 +36,7 @@ import {
   type PendingPostRow,
 } from '../src/services/posts';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../src/hooks/useBottomInset';
+import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
 
 function statusLabel(post: PendingPostRow): string {
   switch (post.postStatus) {
@@ -249,7 +249,7 @@ export default function PendingPostsScreen() {
           )}
           onScroll={navBarScrollHandler}
           scrollEventThrottle={16}
-          ListFooterComponent={<PlainBottomFiller />}
+          ListFooterComponent={<NavBarFiller />}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}

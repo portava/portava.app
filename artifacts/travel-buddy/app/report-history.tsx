@@ -9,7 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { fetchMyReports, type MyReport } from '../src/services/reports';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../src/hooks/useBottomInset';
+import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
 
 const STATUS_LABEL: Record<string, string> = {
   pending:    'Under review',
@@ -157,7 +157,7 @@ export default function ReportHistoryScreen() {
                   <ActivityIndicator size="small" color={color.mute} />
                 </View>
               ) : null}
-              <PlainBottomFiller />
+              <NavBarFiller />
             </>
           }
           renderItem={({ item }) => <ReportCard report={item} />}

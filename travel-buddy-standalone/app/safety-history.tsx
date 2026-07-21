@@ -15,7 +15,7 @@ import { getHistory, type SafeReturnSession, type SafeReturnSessionEvents } from
 import { SafeReturnSetupSheet } from '../src/components/safeReturn/SafeReturnSetupSheet';
 import { useSession } from '../src/context/SessionContext';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../src/hooks/useBottomInset';
+import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
 
 // ── Status display map ────────────────────────────────────────────────────────
 
@@ -239,7 +239,7 @@ export default function SafetyHistoryScreen() {
           </View>
 
           {sessions.map((s) => <SessionRow key={s.id} session={s} />)}
-          <PlainBottomFiller />
+          <NavBarFiller />
         </ScrollView>
       )}
 

@@ -29,7 +29,7 @@ import { RichText } from '../../src/components/RichText';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import { addMeetupToCalendar } from '../../src/services/calendar';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
+import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 
 const TODAY_START = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
 
@@ -917,7 +917,7 @@ export default function MeetupScreen() {
           </Pressable>
         )}
 
-        <PlainBottomFiller />
+        <NavBarFiller />
       </ScrollView>
 
       {/* Success toast */}

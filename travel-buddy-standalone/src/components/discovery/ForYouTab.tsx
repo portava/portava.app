@@ -496,7 +496,7 @@ function buildSharePayload(item: ForYouItem): DiscoverySharePayload {
 const styles = StyleSheet.create({
   list: {
     paddingTop: space.md,
-    paddingBottom: space.xxxl,
+    paddingBottom: 130,
   },
   communitySection: {
     marginTop: space.xl,

@@ -16,7 +16,7 @@ import { ArrowLeft, MapPin, BookImage } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { getMemoryFeed, type Memory, type MemoryFeedFilter } from '../../src/services/memories';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
+import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -224,7 +224,7 @@ export default function LocationMemoryFeedScreen() {
                 <ActivityIndicator size="small" color={color.signal} />
               </View>
             ) : null}
-            <PlainBottomFiller />
+            <NavBarFiller />
           </>
         }
         ListEmptyComponent={

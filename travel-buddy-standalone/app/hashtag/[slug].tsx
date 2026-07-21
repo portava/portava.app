@@ -28,7 +28,7 @@ import {
 import { RichText } from '../../src/components/RichText';
 import { useLocationContext } from '../../src/context/LocationContext';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
+import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 
 // ── Tab config ─────────────────────────────────────────────────────────────────
 
@@ -471,7 +471,7 @@ export default function HashtagFeedScreen() {
                   <ActivityIndicator size="small" color={color.signal} />
                 </View>
               ) : null}
-              <PlainBottomFiller />
+              <NavBarFiller />
             </>
           }
           ListEmptyComponent={

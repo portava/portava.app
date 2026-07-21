@@ -480,7 +480,7 @@ const styles = StyleSheet.create({
   },
   list: {
     paddingTop: space.sm,
-    paddingBottom: space.xxxl,
+    paddingBottom: 130,
   },
   endText: {
     ...t.stamp,

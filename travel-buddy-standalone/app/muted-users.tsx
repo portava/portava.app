@@ -10,7 +10,7 @@ import { color, space, radius, type as t } from '../src/theme/tokens';
 import { getMuteList, unmuteUser } from '../src/services/mutes';
 import type { MutedUser } from '../src/services/mutes';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../src/hooks/useBottomInset';
+import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
 
 function muteTypeLabel(types: string[]): string {
   if (!types || types.length === 0) return '';
@@ -80,7 +80,7 @@ export default function MutedUsersScreen() {
           contentContainerStyle={{ padding: space.lg, gap: space.sm }}
           onScroll={navBarScrollHandler}
           scrollEventThrottle={16}
-          ListFooterComponent={<PlainBottomFiller />}
+          ListFooterComponent={<NavBarFiller />}
           renderItem={({ item }) => (
             <View style={s.row}>
               {item.avatarUrl ? (

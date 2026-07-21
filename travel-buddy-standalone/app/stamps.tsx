@@ -9,7 +9,7 @@ import type { PassportStampNew, StampVisibility } from '../src/services/passport
 import type { PassportStamp } from '../src/types/models';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../src/hooks/useBottomInset';
+import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
 
 const FILTERS: { label: string; kind?: string }[] = [
   { label: 'All' },
@@ -134,7 +134,7 @@ export default function StampsPage() {
           {shown.length === 0 && (
             <View style={styles.empty}><Text style={styles.emptyText}>No stamps in this category yet.</Text></View>
           )}
-          <PlainBottomFiller />
+          <NavBarFiller />
         </ScrollView>
       )}
 

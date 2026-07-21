@@ -28,7 +28,7 @@ import { useRequests } from '../src/hooks/useRequests';
 import { acceptRequest, declineRequest } from '../src/services/requests';
 import type { InboxItem } from '../src/services/requests';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../src/hooks/useBottomInset';
+import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
 
 // ── Tab definitions ───────────────────────────────────────────────────────────
 
@@ -318,7 +318,7 @@ export default function ActivityCenter() {
                   <ActivityIndicator size="small" color={color.mute} />
                 </View>
               )}
-              <PlainBottomFiller />
+              <NavBarFiller />
             </>
           }
           ListEmptyComponent={
@@ -422,7 +422,7 @@ function SocialRequestsPane({
       onScroll={navBarScrollHandler}
       scrollEventThrottle={16}
       ListHeaderComponent={headerComponent ? <>{headerComponent}</> : undefined}
-      ListFooterComponent={<PlainBottomFiller />}
+      ListFooterComponent={<NavBarFiller />}
       refreshControl={
         <RefreshControl refreshing={loading} onRefresh={onReload} tintColor={color.signal} />
       }
