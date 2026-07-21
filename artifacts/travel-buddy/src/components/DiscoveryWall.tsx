@@ -16,9 +16,57 @@ import type { DiscoverySharePayload } from './DiscoveryShareSheet.tsx';
 import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
-import { saveCommunityPlace, reportCommunityPlace } from '../services/discovery.ts';
+import { saveCommunityPlace, reportCommunityPlace, getPlaceLiveStatusCached } from '../services/discovery.ts';
 import { removeSaved } from '../services/discoveryBookmarks.ts';
-import type { PlaceReportReason } from '../services/discovery.ts';
+import type { PlaceReportReason, PlaceLiveStatus } from '../services/discovery.ts';
+
+/**
+ * Live open-now status for community place cards. Reuses the shared
+ * getPlaceLiveStatusCached service (10-min cache, dedup, 3-concurrent limit)
+ * so community cards add no new fetch path. The 600 ms delay skips cards the
+ * user scrolls past quickly. Honest degradation: any failure returns null and
+ * the caller renders nothing.
+ */
+function useLiveOpenNow(name: string | null | undefined, city: string | null | undefined): boolean | null {
+  const [liveStatus, setLiveStatus] = useState<PlaceLiveStatus | null>(null);
+  useEffect(() => {
+    setLiveStatus(null);
+    if (!name?.trim() || !city?.trim()) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      getPlaceLiveStatusCached(name, city)
+        .then((ls) => { if (!cancelled) setLiveStatus(ls); })
+        .catch(() => {});
+    }, 600);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [name, city]);
+  return liveStatus?.available && typeof liveStatus.openNow === 'boolean'
+    ? liveStatus.openNow
+    : null;
+}
+
+/** Verified live "Open now / Closed now" pill — renders nothing when status is unknown. */
+function LiveOpenPill({ openNow, testID }: { openNow: boolean | null; testID?: string }) {
+  if (openNow == null) return null;
+  return (
+    <View
+      style={[lp.pill, openNow ? lp.open : lp.closed]}
+      testID={testID}
+      accessibilityLabel={openNow ? 'Open now — verified live' : 'Closed now — verified live'}
+    >
+      <Text style={[lp.text, { color: openNow ? '#047857' : '#B91C1C' }]}>
+        {openNow ? 'Open now' : 'Closed now'}
+      </Text>
+    </View>
+  );
+}
+
+const lp = StyleSheet.create({
+  pill:   { borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2, borderWidth: 1, alignSelf: 'flex-start' },
+  open:   { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' },
+  closed: { backgroundColor: '#FEF2F2', borderColor: '#FECACA' },
+  text:   { fontSize: 10, fontWeight: '700' },
+});
 
 // Module-level set so saved state survives card unmount/remount during scroll recycling.
 // Pre-populated by prefillSavedPlaceIds() on Discovery load so returning users
@@ -271,6 +319,7 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
   const [saving, setSaving] = useState(false);
   const [reported, setReported] = useState(false);
   const [displayCount, setDisplayCount] = useState(gem.savedCount ?? 0);
+  const liveOpenNow = useLiveOpenNow(gem.name, gem.city ?? gem.neighborhood);
   // Re-sync when prefillSavedPlaceIds() fires after this card has already mounted.
   useEffect(() => subscribeToSavedIds(() => {
     if (!saved) setSaved(savedPlaceIds.has(gem.id));
@@ -306,6 +355,11 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
         <View style={g.body}>
           <Text style={g.name} numberOfLines={1}>{gem.name}</Text>
           <View style={g.locRow}><MapPin size={11} color={color.mute} /><Text style={g.loc} numberOfLines={1}>{gem.neighborhood}</Text></View>
+          {liveOpenNow != null && (
+            <View style={{ marginTop: 3 }}>
+              <LiveOpenPill openNow={liveOpenNow} testID={`gem-open-now-${gem.id}`} />
+            </View>
+          )}
           {gem.rating != null && (
             <View style={g.ratingRow}>
               <Text style={g.ratingStar}>★</Text>
@@ -419,6 +473,7 @@ export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; o
   const [saving, setSaving] = useState(false);
   const [reported, setReported] = useState(false);
   const [displayCount, setDisplayCount] = useState(pick.savedCount ?? 0);
+  const liveOpenNow = useLiveOpenNow(pick.place, pick.city);
   // Re-sync when prefillSavedPlaceIds() fires after this card has already mounted.
   useEffect(() => subscribeToSavedIds(() => {
     if (!saved) setSaved(savedPlaceIds.has(pick.id));
@@ -440,6 +495,7 @@ export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; o
       </View>
       <View style={tpk.placeRow}>
         <Text style={tpk.place} numberOfLines={1}>{pick.place}</Text>
+        <LiveOpenPill openNow={liveOpenNow} testID={`pick-open-now-${pick.id}`} />
         {pick.rating != null && (
           <View style={tpk.rating}><Text style={tpk.ratingStar}>★</Text><Text style={tpk.ratingText}>{pick.rating.toFixed(1)}</Text></View>
         )}
