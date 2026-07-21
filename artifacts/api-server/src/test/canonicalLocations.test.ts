@@ -8,6 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   normalizeLocationName,
+  canonicalCityKey,
   kindClass,
   providerKeyOf,
   matchCanonical,
@@ -189,4 +190,32 @@ test("match: missing coordinates fall back to name+country", () => {
 test("haversine sanity", () => {
   const d = haversineKm(10.316, 123.891, 14.599, 120.984); // Cebu -> Manila
   assert.ok(d > 550 && d < 600, `expected ~570 km, got ${d}`);
+});
+
+// ── canonicalCityKey — shared city-key canonicalization ───────────────────────
+
+test("canonicalCityKey collapses variants and misspellings to one key", () => {
+  assert.equal(canonicalCityKey("Cebu"), "cebu");
+  assert.equal(canonicalCityKey("Cebu City"), "cebu");
+  assert.equal(canonicalCityKey("New York"), "new york");
+  assert.equal(canonicalCityKey("New York City"), "new york");
+  assert.equal(canonicalCityKey("NYC"), "new york");
+  assert.equal(canonicalCityKey("Siargao"), "siargao");
+  assert.equal(canonicalCityKey("Siargoa"), "siargao"); // live-data misspelling
+  assert.equal(canonicalCityKey("  siargoa  "), "siargao");
+});
+
+test("canonicalCityKey rejects junk fragments and empty input", () => {
+  assert.equal(canonicalCityKey("san"), null); // truncated "San ..." fragment
+  assert.equal(canonicalCityKey(""), null);
+  assert.equal(canonicalCityKey("   "), null);
+  assert.equal(canonicalCityKey(null), null);
+  assert.equal(canonicalCityKey(undefined), null);
+  assert.equal(canonicalCityKey("x"), null); // too short
+});
+
+test("canonicalCityKey keeps legitimate distinct cities separate", () => {
+  assert.notEqual(canonicalCityKey("San Francisco"), canonicalCityKey("San Diego"));
+  assert.equal(canonicalCityKey("San Francisco"), "san francisco");
+  assert.equal(canonicalCityKey("Mexico City"), "mexico"); // suffix strip, matches registry behavior
 });

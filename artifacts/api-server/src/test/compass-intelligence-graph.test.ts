@@ -48,6 +48,7 @@ import {
   type CityWorldModel,
 } from "../compass/CompassGraphEngine.js";
 import { SEED_CITIES } from "../lib/popularCities.js";
+import { canonicalCityKey } from "../lib/canonicalLocations.js";
 import { runPipeline } from "../compass/CompassPipeline.js";
 import type { CompassItem, CompassProfile, CompassContext } from "../compass/types.js";
 
@@ -349,6 +350,56 @@ describe("time slicing", () => {
       assert.match(timeSliceKey(at, city), /^(sun|mon|tue|wed|thu|fri|sat):(morning|afternoon|evening|night)$/);
     }
   });
+  it("resolves variant/misspelled city names to their real city's timezone", () => {
+    // Misspellings and variants collapse through canonicalCityKey — the map
+    // itself no longer needs entries like "siargoa".
+    assert.equal(cityTimezone("Siargoa"), "Asia/Manila");   // misspelled Siargao
+    assert.equal(cityTimezone("Cebu City"), "Asia/Manila");
+    assert.equal(cityTimezone("New York City"), "America/New_York");
+    assert.equal(cityTimezone("NYC"), "America/New_York");
+  });
+
+  it("coords override a stale learned entry for ambiguous same-name cities", () => {
+    // Two different real-world "Springfield"s: IL (America/Chicago) and
+    // MA (America/New_York). Learning one must never shadow the other's
+    // coordinates on later calls.
+    const il = { lat: 39.7817, lng: -89.6501 }; // Springfield, IL
+    const ma = { lat: 42.1015, lng: -72.5898 }; // Springfield, MA
+    assert.equal(cityTimezone("Springfield", il), "America/Chicago");
+    // Learned cache now holds Chicago — but MA coords must still win.
+    assert.equal(cityTimezone("Springfield", ma), "America/New_York");
+    // And back again — each call's coords are authoritative.
+    assert.equal(cityTimezone("Springfield", il), "America/Chicago");
+  });
+
+  it("resolves timezones for CANONICAL keys — what graph builders actually store", () => {
+    // Graph city nodes are keyed by canonicalCityKey, which strips generic
+    // suffixes ("Mexico City" → "mexico"). Those canonical keys must resolve
+    // to the same timezone as the raw names — no silent UTC fallback.
+    const canonicalPairs: Array<[string, string]> = [
+      ["mexico", "America/Mexico_City"],       // from "Mexico City"
+      ["ho chi minh", "Asia/Ho_Chi_Minh"],     // from "Ho Chi Minh City"
+      ["quezon", "Asia/Manila"],               // from "Quezon City"
+      ["cebu", "Asia/Manila"],
+      ["davao", "Asia/Manila"],
+      ["new york", "America/New_York"],
+      ["siargao", "Asia/Manila"],
+    ];
+    for (const [key, tz] of canonicalPairs) {
+      assert.equal(cityTimezone(key), tz, `canonical key "${key}" must resolve`);
+    }
+    // Exhaustive guard: every raw map name's canonical form must still resolve
+    // to the same timezone as the raw form.
+    const rawNames = [
+      "Mexico City", "Ho Chi Minh City", "Quezon City", "Cebu City",
+      "Davao City", "New York City",
+    ];
+    for (const raw of rawNames) {
+      const canon = canonicalCityKey(raw);
+      assert.ok(canon, `canonicalCityKey("${raw}") should not be null`);
+      assert.equal(cityTimezone(canon!), cityTimezone(raw), `"${raw}" vs canonical "${canon}"`);
+    }
+  });
 });
 
 /* ── Graph substrate ──────────────────────────────────────────────────────── */
@@ -382,7 +433,7 @@ describe("graph substrate — batch builders persist typed nodes/edges", () => {
 
     // USER_ID took two trips to Cebu → cross-trip edge persists
     const returned = edges.find(
-      (e) => e.edge_type === "returned_to" && e.src_key === USER_ID && e.dst_key === "Cebu",
+      (e) => e.edge_type === "returned_to" && e.src_key === USER_ID && e.dst_key === "cebu",
     );
     assert.ok(returned, "returned_to edge should exist for the two-trip user");
 
@@ -394,10 +445,34 @@ describe("graph substrate — batch builders persist typed nodes/edges", () => {
 
     // Repeat observations accumulate on the visited edge (2 Cebu stamps)
     const visited = edges.find(
-      (e) => e.edge_type === "visited" && e.src_key === USER_ID && e.dst_key === "Cebu",
+      (e) => e.edge_type === "visited" && e.src_key === USER_ID && e.dst_key === "cebu",
     );
     assert.ok(visited);
     assert.equal(visited!.observed_count, 2);
+  });
+
+  it("merges misspelled/variant city names into one canonical city node", async () => {
+    const friEvening = "2026-07-24T11:00:00Z";
+    fake.store.user_stamps = [
+      { user_id: USER_ID, city: "Siargao",  country: "Philippines", earned_at: friEvening, is_revoked: false },
+      { user_id: USER_B,  city: "Siargoa",  country: "Philippines", earned_at: friEvening, is_revoked: false }, // misspelling
+      { user_id: USER_ID, city: "Cebu City", country: "Philippines", earned_at: friEvening, is_revoked: false },
+      { user_id: USER_B,  city: "Cebu",      country: "Philippines", earned_at: friEvening, is_revoked: false },
+      { user_id: USER_ID, city: "san",       country: "Philippines", earned_at: friEvening, is_revoked: false }, // junk fragment
+    ];
+    await buildGraphFromSources(fake.fakeClient);
+
+    const cityNodes = (fake.store.compass_graph_nodes ?? [])
+      .filter((n) => n.node_type === "city")
+      .map((n) => n.node_key)
+      .sort();
+    assert.deepEqual(cityNodes, ["cebu", "siargao"], "variants collapse; junk rejected");
+
+    // Both users' activity lands on the SAME siargao node — not split
+    const siargaoVisits = (fake.store.compass_graph_edges ?? []).filter(
+      (e) => e.edge_type === "visited" && e.dst_key === "siargao",
+    );
+    assert.equal(siargaoVisits.length, 2);
   });
 
   it("person nodes never carry profile attributes (privacy)", async () => {
@@ -488,7 +563,7 @@ describe("Destination World Model — time-sliced per-city profiles", () => {
     const now = new Date();
     const currentSlice = timeSliceKey(now, "Cebu"); // boost lookup uses Cebu's local clock
     store.compass_city_models = [{
-      city: "Cebu",
+      city: "cebu", // world-model rows are keyed by canonical city key
       time_slices: { [currentSlice]: { count: 10, categories: { nightlife: 9 } } },
       monthly: {},
       top_categories: ["nightlife"],
@@ -521,7 +596,7 @@ describe("Destination World Model — time-sliced per-city profiles", () => {
 
     // Same items, but the model's activity lives in a DIFFERENT slice → tie stands
     store.compass_city_models = [{
-      city: "Cebu",
+      city: "cebu",
       time_slices: { "__other:slice__": { count: 10, categories: { nightlife: 9 } } },
       monthly: {}, top_categories: ["nightlife"], sample_size: 10, built_at: now.toISOString(),
     }];
@@ -553,7 +628,7 @@ describe("city-confidence index", () => {
     seedTravelData(fake.store);
     const report = await rebuildIntelligenceGraph(fake.fakeClient);
     assert.ok(report.citiesScored >= 2);
-    assert.equal(report.strongestCity, "Cebu");
+    assert.equal(report.strongestCity, "cebu"); // canonical city key
 
     const cebu = await getCityConfidence(fake.fakeClient, "Cebu");
     const baguio = await getCityConfidence(fake.fakeClient, "Baguio");
@@ -613,7 +688,7 @@ describe("graph routes", () => {
     assert.equal(ok.status, 200);
     assert.ok(ok.json.nodesUpserted > 0);
     assert.ok(ok.json.edgesUpserted > 0);
-    assert.equal(ok.json.strongestCity, "Cebu");
+    assert.equal(ok.json.strongestCity, "cebu"); // canonical city key
   });
 
   it("GET /api/compass/graph/status is admin-only and reports counts", async () => {

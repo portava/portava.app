@@ -33,6 +33,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import tzLookup from "tz-lookup";
 import type { CompassItem } from "./types.js";
 import type { RankingFactor } from "./CompassRecommendationEngine.js";
+import { canonicalCityKey } from "../lib/canonicalLocations.js";
 
 // ── Time slicing ──────────────────────────────────────────────────────────────
 
@@ -91,11 +92,25 @@ const CITY_TIMEZONES: Record<string, string> = {
   "oia": "Europe/Athens", "santorini": "Europe/Athens", "athens": "Europe/Athens",
   "mumbai": "Asia/Kolkata", "delhi": "Asia/Kolkata",
   // Philippines / Indonesia hotspots seen in stamps and trips
-  "general luna": "Asia/Manila", "siargoa": "Asia/Manila", // common misspelling of Siargao
+  // (misspellings like "siargoa" collapse to their real city via
+  // canonicalCityKey before lookup — no misspelling entries needed here)
+  "general luna": "Asia/Manila",
   "coron": "Asia/Manila", "moalboal": "Asia/Manila", "oslob": "Asia/Manila",
   "ubud": "Asia/Makassar", "canggu": "Asia/Makassar", "denpasar": "Asia/Makassar",
   "phuket": "Asia/Bangkok", "krabi": "Asia/Bangkok",
 };
+
+// Every static entry is ALSO indexed under its canonical key ("mexico city"
+// → "mexico", "quezon city" → "quezon") so canonical keys produced by the
+// graph builders resolve to the same timezone as the raw names. Built once.
+const CANONICAL_CITY_TIMEZONES: Record<string, string> = (() => {
+  const out: Record<string, string> = { ...CITY_TIMEZONES };
+  for (const [k, tz] of Object.entries(CITY_TIMEZONES)) {
+    const canon = canonicalCityKey(k);
+    if (canon && !(canon in out)) out[canon] = tz;
+  }
+  return out;
+})();
 
 /** Coordinates that can upgrade an unknown city to a real timezone. */
 export interface CityCoords {
@@ -140,7 +155,7 @@ export function registerCityCoordinates(
   lng: number | null | undefined,
 ): void {
   const key = normTzKey(city);
-  if (!key || CITY_TIMEZONES[key] || LEARNED_CITY_TIMEZONES.has(key)) return;
+  if (!key || CANONICAL_CITY_TIMEZONES[key] || LEARNED_CITY_TIMEZONES.has(key)) return;
   if (LEARNED_CITY_TIMEZONES.size >= LEARNED_CITY_TZ_MAX) return;
   const tz = timezoneFromCoords(lat, lng);
   if (tz) LEARNED_CITY_TIMEZONES.set(key, tz);
@@ -156,17 +171,32 @@ export function cityTimezone(
   coords?: CityCoords | null,
 ): string | null {
   const key = normTzKey(city);
+  const canonical = key ? canonicalCityKey(key) : null;
+  // 1. Curated static map (raw or canonical key) — authoritative.
   if (key) {
-    const fromStatic = CITY_TIMEZONES[key];
+    const fromStatic =
+      CANONICAL_CITY_TIMEZONES[key] ??
+      (canonical && canonical !== key ? CANONICAL_CITY_TIMEZONES[canonical] : undefined);
     if (fromStatic) return fromStatic;
-    const learned = LEARNED_CITY_TIMEZONES.get(key);
+  }
+  // 2. Valid coordinates override the learned city-name cache: the same
+  //    free-text name ("Springfield") can exist in multiple timezones, so a
+  //    previously learned entry must never shadow this call's real coords.
+  const coordTz = timezoneFromCoords(coords?.lat, coords?.lng);
+  if (coordTz) {
+    if (key && (LEARNED_CITY_TIMEZONES.has(key) || LEARNED_CITY_TIMEZONES.size < LEARNED_CITY_TZ_MAX)) {
+      LEARNED_CITY_TIMEZONES.set(key, coordTz);
+    }
+    return coordTz;
+  }
+  // 3. Learned cache (raw then canonical key) — best effort when no coords.
+  if (key) {
+    const learned =
+      LEARNED_CITY_TIMEZONES.get(key) ??
+      (canonical && canonical !== key ? LEARNED_CITY_TIMEZONES.get(canonical) : undefined);
     if (learned) return learned;
   }
-  const tz = timezoneFromCoords(coords?.lat, coords?.lng);
-  if (tz && key && LEARNED_CITY_TIMEZONES.size < LEARNED_CITY_TZ_MAX) {
-    LEARNED_CITY_TIMEZONES.set(key, tz);
-  }
-  return tz;
+  return null;
 }
 
 const TZ_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
@@ -289,7 +319,18 @@ class GraphBatch {
   }
 }
 
+/**
+ * Canonical city key for graph nodes / world models. Variants and known
+ * misspellings collapse to one key ("Cebu City"/"cebu" → "cebu",
+ * "Siargoa" → "siargao") so a city's activity is never split across nodes;
+ * junk fragments ("san") are rejected entirely.
+ */
 function normCity(raw: unknown): string | null {
+  return canonicalCityKey(raw);
+}
+
+/** Plain trimmed string (no city canonicalization) — for categories etc. */
+function normStr(raw: unknown): string | null {
   const s = String(raw ?? "").trim();
   return s.length > 0 ? s : null;
 }
@@ -367,7 +408,7 @@ export async function buildGraphFromSources(
       const city = normCity(r.city);
       if (!r.id || !city) continue;
       const at = r.start_at ? String(r.start_at) : null;
-      const category = normCity(r.category) ?? "event";
+      const category = normStr(r.category) ?? "event";
       registerCityCoordinates(city, r.location_lat, r.location_lng);
       batch.node("event", String(r.id), city, { category });
       batch.node("city", city, city);
@@ -533,12 +574,13 @@ export async function getCityWorldModel(
   db: SupabaseClient | null,
   city: string | null,
 ): Promise<CityWorldModel | null> {
-  if (!db || !city) return null;
+  const key = canonicalCityKey(city);
+  if (!db || !key) return null;
   try {
     const { data } = await db
       .from("compass_city_models")
       .select("city, time_slices, monthly, top_categories, sample_size, built_at")
-      .eq("city", city)
+      .eq("city", key)
       .maybeSingle();
     if (!data) return null;
     return {
@@ -743,12 +785,13 @@ export async function getCityConfidence(
   db: SupabaseClient | null,
   city: string | null,
 ): Promise<CityConfidence | null> {
-  if (!db || !city) return null;
+  const key = canonicalCityKey(city);
+  if (!db || !key) return null;
   try {
     const { data } = await db
       .from("compass_city_confidence")
       .select("city, depth_score, tier, signals, computed_at")
-      .eq("city", city)
+      .eq("city", key)
       .maybeSingle();
     if (!data) return null;
     return {

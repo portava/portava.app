@@ -92,6 +92,41 @@ export function normalizeLocationName(name: string): string {
   return stripped.length > 0 ? stripped : n;
 }
 
+// ── Canonical city keys (shared with the intelligence graph) ─────────────────
+//
+// Known misspellings/variants observed in live rows that normalization alone
+// cannot collapse. Keys and values are already-normalized names
+// (post-normalizeLocationName). "cebu city"→"cebu" and "new york city"→
+// "new york" are handled by the generic suffix strip; this map is only for
+// true misspellings and abbreviations.
+export const CITY_NAME_ALIASES: Record<string, string> = {
+  "siargoa": "siargao",   // common misspelling of Siargao
+  "nyc": "new york",
+};
+
+// Junk/fragment strings seen in live city columns that must never become
+// city nodes ("san" is a truncated "San ..." fragment, not a city).
+const JUNK_CITY_NAMES = new Set([
+  "san", "n a", "na", "none", "null", "unknown", "undefined", "test",
+]);
+
+/**
+ * Canonical city key for grouping/aggregation: normalized name with known
+ * misspellings collapsed and junk fragments rejected. Returns null when the
+ * input is empty, junk, or too short to be a real city name.
+ *
+ * "Cebu City" / "cebu" -> "cebu"; "New York City" -> "new york";
+ * "Siargoa" -> "siargao"; "san" -> null.
+ */
+export function canonicalCityKey(raw: unknown): string | null {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  const norm = normalizeLocationName(s);
+  const key = CITY_NAME_ALIASES[norm] ?? norm;
+  if (key.length < 2 || JUNK_CITY_NAMES.has(key)) return null;
+  return key;
+}
+
 /** Coarse kind classes: matching rules differ per class. */
 export type KindClass = "admin" | "city" | "venue";
 
