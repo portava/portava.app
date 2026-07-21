@@ -264,3 +264,75 @@ describe("buildUiBlocks person_cards", () => {
     assert.deepEqual(b.people.map((p) => p.handle), ["maria_travels", "ben_k"]);
   });
 });
+
+// ── F. Chat recommendation-token enrichment (ask route) ──────────────────────
+
+describe("enrichUiBlocksWithRecommendationTokens", () => {
+  const USER = "aaaaaaaa-aaaa-aaaa-aaaa-000000000001";
+
+  async function blocksFixture(): Promise<CompassUiBlock[]> {
+    return buildUiBlocks(null, {
+      blocks: [
+        { type: "place_cards", placeIds: [PLACE_A, PLACE_B] },
+        { type: "event_cards", eventIds: [EVENT_A] },
+        { type: "map", placeIds: [PLACE_A] },
+        {
+          type: "comparison",
+          columns: ["Vibe"],
+          rows: [
+            { kind: "place", id: PLACE_A, values: ["cozy"] },
+            { kind: "event", id: EVENT_A, values: ["loud"] },
+          ],
+        },
+      ],
+    }, toolLog());
+  }
+
+  it("attaches a decodable token to every place/event entity across all block types", async () => {
+    const { enrichUiBlocksWithRecommendationTokens } = await import("../routes/compass.js");
+    const { decodeRecommendationToken } = await import("../compass/CompassExplanationEngine.js");
+    const blocks = await blocksFixture();
+    enrichUiBlocksWithRecommendationTokens(USER, blocks);
+    for (const blk of blocks) {
+      if (blk.type === "place_cards" || blk.type === "map") {
+        for (const p of blk.places) {
+          const d = decodeRecommendationToken(p.recommendationToken!);
+          assert.ok(d, "place token must decode");
+          assert.equal(d!.userId, USER);
+          assert.equal(d!.itemId, p.id);
+          assert.equal(d!.itemType, "place");
+          assert.equal(d!.sectionName, "compass_chat");
+        }
+      } else if (blk.type === "event_cards") {
+        for (const e of blk.events) {
+          const d = decodeRecommendationToken(e.recommendationToken!);
+          assert.ok(d);
+          assert.equal(d!.itemId, e.id);
+          assert.equal(d!.itemType, "event");
+        }
+      } else if (blk.type === "comparison") {
+        for (const r of blk.rows) {
+          const entity = r.kind === "event" ? r.event : r.place;
+          assert.ok(entity?.recommendationToken, "comparison row entity must carry a token");
+        }
+      }
+    }
+  });
+
+  it("registration batch has no duplicate recommendation_ids even when an entity repeats across blocks", async () => {
+    const { enrichUiBlocksWithRecommendationTokens } = await import("../routes/compass.js");
+    const blocks = await blocksFixture();
+    const rows = enrichUiBlocksWithRecommendationTokens(USER, blocks);
+    const ids = rows.map((r) => r.recommendation_id);
+    assert.equal(new Set(ids).size, ids.length, "no duplicate recommendation_ids in one upsert batch");
+    // PLACE_A appears in place_cards, map and comparison — but registers once.
+    const placeARows = rows.filter((r) => r.item_id === PLACE_A);
+    assert.equal(placeARows.length, 1);
+    assert.equal(placeARows[0]!.section_name, "compass_chat");
+  });
+
+  it("is a no-op on empty blocks", async () => {
+    const { enrichUiBlocksWithRecommendationTokens } = await import("../routes/compass.js");
+    assert.deepEqual(enrichUiBlocksWithRecommendationTokens(USER, []), []);
+  });
+});

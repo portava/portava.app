@@ -5,8 +5,9 @@
  *
  * Opening a recommendation card from Compass chat must fire the same
  * fire-and-forget reportCompassViewed used by the feed / picks / trip
- * surfaces. Chat uiBlocks carry no recommendation tokens, so the report is
- * keyed by item id (recommendationId = null).
+ * surfaces. When the server-hydrated entity carries a recommendationToken,
+ * the report attributes to that exact serving; older payloads without a
+ * token fall back to the item id (recommendationId = null).
  *
  * Renderer budget (TESTING.md): one press per render.
  */
@@ -79,4 +80,50 @@ it('opening a map row reports a viewed outcome for that place', async () => {
   await render(<CompassChatBlocks blocks={[{ type: 'map', places: [PLACE] }]} />);
   fireEvent.press(screen.getByTestId(`compass-block-map-${PLACE.id}`));
   expect(reportMock).toHaveBeenCalledWith(null, PLACE.id);
+});
+
+// ── Token attribution — server-hydrated recommendationToken wins over item id ──
+
+const TOKENED_PLACE = { ...PLACE, id: 'place-3', recommendationToken: 'tok-place-3' };
+const TOKENED_EVENT = { ...EVENT, id: 'event-2', recommendationToken: 'tok-event-2' };
+
+it('a place card with a recommendationToken reports the token, not null', async () => {
+  await render(<CompassChatBlocks blocks={[{ type: 'place_cards', places: [TOKENED_PLACE] }]} />);
+  fireEvent.press(screen.getByTestId(`compass-block-place-${TOKENED_PLACE.id}`));
+  expect(reportMock).toHaveBeenCalledWith('tok-place-3', TOKENED_PLACE.id);
+});
+
+it('an event card with a recommendationToken reports the token, not null', async () => {
+  await render(<CompassChatBlocks blocks={[{ type: 'event_cards', events: [TOKENED_EVENT] }]} />);
+  fireEvent.press(screen.getByTestId(`compass-block-event-${TOKENED_EVENT.id}`));
+  expect(reportMock).toHaveBeenCalledWith('tok-event-2', TOKENED_EVENT.id);
+});
+
+it('a comparison event row with a recommendationToken reports the token', async () => {
+  await render(
+    <CompassChatBlocks
+      blocks={[{
+        type: 'comparison',
+        columns: ['Distance'],
+        rows: [{ kind: 'event', id: TOKENED_EVENT.id, label: TOKENED_EVENT.title, values: ['2 km'], event: TOKENED_EVENT }],
+      }]}
+    />,
+  );
+  fireEvent.press(screen.getByTestId(`compass-block-compare-${TOKENED_EVENT.id}`));
+  expect(reportMock).toHaveBeenCalledWith('tok-event-2', TOKENED_EVENT.id);
+});
+
+const TOKENED_COORD_EVENT = { ...EVENT, id: 'event-3', lat: 10.3, lng: 123.9, recommendationToken: 'tok-event-3' };
+const COORD_EVENT = { ...EVENT, id: 'event-4', lat: 10.3, lng: 123.9 };
+
+it('the event mini-map preview reports the token when present', async () => {
+  await render(<CompassChatBlocks blocks={[{ type: 'event_cards', events: [TOKENED_COORD_EVENT] }]} />);
+  fireEvent.press(screen.getByTestId('compass-block-event-map-preview'));
+  expect(reportMock).toHaveBeenCalledWith('tok-event-3', TOKENED_COORD_EVENT.id);
+});
+
+it('the event mini-map preview falls back to item id without a token', async () => {
+  await render(<CompassChatBlocks blocks={[{ type: 'event_cards', events: [COORD_EVENT] }]} />);
+  fireEvent.press(screen.getByTestId('compass-block-event-map-preview'));
+  expect(reportMock).toHaveBeenCalledWith(null, COORD_EVENT.id);
 });

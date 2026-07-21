@@ -110,7 +110,10 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/airport.ts|select|select list not statically resolvable", 2],
   ["src/routes/circle.ts|upsert|payload not statically resolvable", 1],
   ["src/routes/compass.ts|select|select list not statically resolvable", 4],
-  ["src/routes/compass.ts|upsert|payload not statically resolvable", 1],
+  // 3 sites: feed-section registration + the two /compass/ask uiBlock
+  // registration upserts (chat recommendation tokens) — row arrays are built
+  // dynamically from RecommendationRow, columns verified by the feed paths.
+  ["src/routes/compass.ts|upsert|payload not statically resolvable", 3],
   ["src/routes/compass.ts|upsert|payload partially resolvable", 2],
   ["src/routes/events.ts|select|select list not statically resolvable", 2],
   ["src/routes/follows.ts|select|select list not statically resolvable", 4],

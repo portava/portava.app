@@ -584,6 +584,8 @@ export interface CompassUiPlace {
   confidence?:  CompassUiConfidence | null;
   /** Phase 8 — live open-now status; null/absent when not verifiable. */
   openNow?:     boolean | null;
+  /** Signed recommendation token for outcome attribution; absent on older payloads. */
+  recommendationToken?: string;
 }
 
 export interface CompassUiEvent {
@@ -599,6 +601,8 @@ export interface CompassUiEvent {
   /** Venue coordinates — hydrated server-side; absent on older payloads. */
   lat?:        number | null;
   lng?:        number | null;
+  /** Signed recommendation token for outcome attribution; absent on older payloads. */
+  recommendationToken?: string;
 }
 
 export interface CompassUiPerson {

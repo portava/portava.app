@@ -76,7 +76,7 @@ import {
   passesTripFilter,
   passesPassportFilter,
 } from "../compass/CompassSurfaceFilters.js";
-import { buildUiBlocks } from "../compass/CompassUiBlocks.js";
+import { buildUiBlocks, type CompassUiBlock } from "../compass/CompassUiBlocks.js";
 import {
   listMemories,
   teachMemory,
@@ -253,6 +253,59 @@ export function dedupeByRecommendationId(rows: RecommendationRow[]): Recommendat
     seen.add(r.recommendation_id);
     return true;
   });
+}
+
+// ── Chat uiBlock recommendation enrichment ────────────────────────────────────
+// Attaches a signed recommendationToken to every hydrated place/event entity in
+// the /api/compass/ask uiBlocks (same HMAC token scheme as the feed), and
+// returns registration rows for compass_served_recommendations so chat-card
+// "viewed" outcomes attribute to this serving — not just the item id.
+// Mutates the blocks in place; deduped rows are ready to upsert.
+
+const CHAT_SECTION_NAME = "compass_chat";
+
+export function enrichUiBlocksWithRecommendationTokens(
+  userId: string,
+  blocks: CompassUiBlock[],
+): RecommendationRow[] {
+  const rows: RecommendationRow[] = [];
+
+  const attach = (entity: { id: string; recommendationToken?: string }, itemType: "place" | "event") => {
+    if (!entity.id) return;
+    if (!entity.recommendationToken) {
+      const explanationKey = `${CHAT_SECTION_NAME}:${itemType}`;
+      entity.recommendationToken = encodeRecommendationToken({
+        userId,
+        itemId:         entity.id,
+        itemType,
+        sectionName:    CHAT_SECTION_NAME,
+        explanationKey,
+      });
+      rows.push({
+        user_id:           userId,
+        recommendation_id: entity.recommendationToken,
+        explanation_key:   explanationKey,
+        item_id:           entity.id,
+        item_type:         itemType,
+        section_name:      CHAT_SECTION_NAME,
+        ranking_factors:   null,
+      });
+    }
+  };
+
+  for (const blk of blocks) {
+    if (blk.type === "place_cards" || blk.type === "map") {
+      for (const p of blk.places) attach(p, "place");
+    } else if (blk.type === "event_cards") {
+      for (const e of blk.events) attach(e, "event");
+    } else if (blk.type === "comparison") {
+      for (const r of blk.rows) {
+        if (r.place) attach(r.place, "place");
+        if (r.event) attach(r.event, "event");
+      }
+    }
+  }
+  return dedupeByRecommendationId(rows);
 }
 
 router.get("/compass/me/context", async (req, res) => {
@@ -1372,6 +1425,21 @@ router.post("/compass/ask", async (req, res) => {
       const { message, payload, quickActions } = _parseModelResponse(finalRaw);
       // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
       const uiBlocks = await buildUiBlocks(sc, payload, toolLog).catch(() => []);
+      // Attach signed recommendation tokens + pre-register served recommendations
+      // so chat-card "viewed" outcomes attribute to this serving.
+      const uiBlockRegRows = enrichUiBlocksWithRecommendationTokens(user.id, uiBlocks);
+      if (uiBlockRegRows.length > 0) {
+        // Non-fatal: a registration failure must never break the chat reply.
+        try {
+          void sc.from("compass_served_recommendations")
+            .upsert(uiBlockRegRows, { onConflict: "recommendation_id" })
+            .then(({ error }) => {
+              if (error) req.log.error({ err: error }, "compass/ask stream: served-recommendation registration failed");
+            });
+        } catch (regErr) {
+          req.log.error({ err: regErr }, "compass/ask stream: served-recommendation registration failed");
+        }
+      }
       const persistedPayload: Record<string, unknown> | undefined =
         payload || toolLog.length > 0 || proposals.length > 0
           ? {
@@ -1411,6 +1479,21 @@ router.post("/compass/ask", async (req, res) => {
     const { message, payload, quickActions } = _parseModelResponse(finalRaw);
     // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
     const uiBlocks = await buildUiBlocks(sc, payload, toolLog).catch(() => []);
+    // Attach signed recommendation tokens + pre-register served recommendations
+    // so chat-card "viewed" outcomes attribute to this serving.
+    const uiBlockRegRows = enrichUiBlocksWithRecommendationTokens(user.id, uiBlocks);
+    if (uiBlockRegRows.length > 0) {
+      // Non-fatal: a registration failure must never break the chat reply.
+      try {
+        void sc.from("compass_served_recommendations")
+          .upsert(uiBlockRegRows, { onConflict: "recommendation_id" })
+          .then(({ error }) => {
+            if (error) req.log.error({ err: error }, "compass/ask: served-recommendation registration failed");
+          });
+      } catch (regErr) {
+        req.log.error({ err: regErr }, "compass/ask: served-recommendation registration failed");
+      }
+    }
     const persistedPayload: Record<string, unknown> | undefined =
       payload || toolLog.length > 0 || proposals.length > 0
         ? {

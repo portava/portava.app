@@ -92,7 +92,9 @@ function usePlaceNavigation() {
   const router = useRouter();
   return (place: CompassUiPlace) => {
     // Fire-and-forget "viewed" outcome — the user actually opened this card.
-    reportCompassViewed(null, place.id);
+    // Prefer the server-issued recommendation token (exact attribution);
+    // fall back to the bare item id on older payloads.
+    reportCompassViewed(place.recommendationToken ?? null, place.id);
     if (place.lat != null && place.lng != null) {
       router.push({
         pathname: '/map',
@@ -288,7 +290,7 @@ function EventBlockCard({ event }: { event: CompassUiEvent }) {
     <Pressable
       style={({ pressed }) => [s.card, pressed && s.pressed]}
       onPress={() => {
-        reportCompassViewed(null, event.id);
+        reportCompassViewed(event.recommendationToken ?? null, event.id);
         router.push(`/event/${event.id}` as any);
       }}
       accessibilityRole="button"
@@ -319,7 +321,7 @@ function EventBlockCard({ event }: { event: CompassUiEvent }) {
           <Pressable
             style={({ pressed }) => [s.planBtn, pressed && s.pressed]}
             onPress={() => {
-              reportCompassViewed(null, event.id);
+              reportCompassViewed(event.recommendationToken ?? null, event.id);
               router.push({
                 pathname: '/map',
                 params: {
@@ -359,7 +361,7 @@ function EventCardsBlock({ events }: { events: CompassUiEvent[] }) {
         <CompassMiniMap
           points={points}
           onPress={() => {
-            reportCompassViewed(null, first.id);
+            reportCompassViewed(first.recommendationToken ?? null, first.id);
             router.push({
               pathname: '/map',
               params: {
@@ -460,7 +462,7 @@ function ComparisonBlock({ columns, rows }: { columns: string[]; rows: CompassCo
 
   const openRow = (row: CompassComparisonRow) => {
     if (row.kind === 'event') {
-      reportCompassViewed(null, row.id);
+      reportCompassViewed(row.event?.recommendationToken ?? null, row.id);
       router.push(`/event/${row.id}` as any);
     } else if (row.place) {
       openPlace(row.place);

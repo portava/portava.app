@@ -68,6 +68,8 @@ export interface UiPlace {
   confidence: UiConfidence | null;
   /** Phase 8 — live open-now status; null when the live source couldn't verify. */
   openNow: boolean | null;
+  /** Signed recommendation token for outcome attribution — set by the ask route. */
+  recommendationToken?: string;
 }
 
 export interface UiEvent {
@@ -83,6 +85,8 @@ export interface UiEvent {
   /** Venue coordinates — hydrated server-side, only when show_exact_location allows. */
   lat: number | null;
   lng: number | null;
+  /** Signed recommendation token for outcome attribution — set by the ask route. */
+  recommendationToken?: string;
 }
 
 export interface UiPerson {
