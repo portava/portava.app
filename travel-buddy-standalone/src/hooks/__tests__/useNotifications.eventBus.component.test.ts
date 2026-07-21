@@ -17,6 +17,7 @@ import { renderHook, act, waitFor } from '@testing-library/react-native';
 import {
   useNotifications,
   useUnreadNotificationCount,
+  useRecentNotifications,
 } from '../useNotifications.ts';
 import {
   emitNotificationEvent,
@@ -24,6 +25,7 @@ import {
 import {
   listNotifications,
   getUnreadNotificationCount,
+  getRecentNotifications,
 } from '../../services/notifications.ts'; // eslint-disable-line @typescript-eslint/no-unused-vars
 
 // NOTE: intentionally exhaustive — the real module pulls in Supabase/network
@@ -63,6 +65,7 @@ jest.mock('../../components/NotificationToast.tsx', () => ({
 
 const mockList = listNotifications as jest.Mock;
 const mockUnread = getUnreadNotificationCount as jest.Mock;
+const mockRecent = getRecentNotifications as jest.Mock;
 
 function notif(id: string, readAt: string | null = null) {
   return { id, category: 'social', eventType: 'x', title: 't', body: 'b', actionUrl: null, readAt, createdAt: new Date(0).toISOString() };
@@ -73,6 +76,7 @@ describe('useNotifications hooks — event-bus realtime updates', () => {
     jest.clearAllMocks();
     mockList.mockResolvedValue({ ok: true, data: { notifications: [notif('n1')], total: 1 } });
     mockUnread.mockResolvedValue(1);
+    mockRecent.mockResolvedValue([notif('n1')]);
   });
 
   afterEach(async () => {
@@ -106,6 +110,34 @@ describe('useNotifications hooks — event-bus realtime updates', () => {
 
     await waitFor(() => expect(result.current.notifications).toHaveLength(2), { timeout: 500 });
     expect(mockList.mock.calls.length).toBeGreaterThan(callsAfterMount);
+  });
+
+  it('useRecentNotifications (bell popover) refreshes silently when a bus event fires', async () => {
+    const { result } = await renderHook(() => useRecentNotifications());
+    // Popover loads on demand.
+    await act(async () => { await result.current.reload(); });
+    expect(result.current.notifications).toHaveLength(1);
+
+    mockRecent.mockResolvedValue([notif('n2'), notif('n1')]);
+    await act(async () => {
+      emitNotificationEvent({ id: 'n2' });
+    });
+
+    await waitFor(() => expect(result.current.notifications).toHaveLength(2), { timeout: 500 });
+    // Silent refresh: loading must NOT flip back to true.
+    expect(result.current.loading).toBe(false);
+  });
+
+  it('useRecentNotifications stops reacting to bus events after unmount', async () => {
+    const { result, unmount } = await renderHook(() => useRecentNotifications());
+    await act(async () => { await result.current.reload(); });
+    const callsBefore = mockRecent.mock.calls.length;
+
+    await act(async () => { unmount(); });
+    emitNotificationEvent({ id: 'n4' });
+    await act(async () => {});
+
+    expect(mockRecent.mock.calls.length).toBe(callsBefore);
   });
 
   it('stops reacting to bus events after unmount (unsubscribes on cleanup)', async () => {

@@ -178,6 +178,14 @@ export function useRecentNotifications() {
     setLoading(false);
   }, []);
 
+  // Realtime: refresh silently (no loading flicker) the moment a notification
+  // arrives on the bus, so an open popover updates instantly.
+  useEffect(() => {
+    return subscribeNotificationEvents(() => {
+      getRecentNotifications().then(setNotifications).catch(() => { /* keep current list */ });
+    });
+  }, []);
+
   return { notifications, loading, reload };
 }
 
