@@ -315,8 +315,68 @@ export interface CityConfidence {
 const _cityConfidenceCache = new Map<string, { data: CityConfidence; at: number }>();
 const CITY_CONFIDENCE_TTL_MS = 10 * 60 * 1_000; // 10 minutes
 
-/** For tests only — clear the city-confidence cache. */
-export function _clearCityConfidenceCache(): void { _cityConfidenceCache.clear(); }
+// L2 — AsyncStorage persistence (native only; getStorage() returns null on web).
+// Entries older than the hard cap are dropped; entries past the soft TTL are
+// served immediately (instant badge paint on relaunch) while a background
+// network refresh updates both cache layers (stale-while-revalidate).
+export const CITY_CONFIDENCE_STORAGE_KEY = 'city_confidence_cache_v1';
+const CITY_CONFIDENCE_MAX_AGE_MS = 24 * 60 * 60 * 1_000; // 24 hours hard cap
+
+type CityConfidenceBlob = Record<string, { data: CityConfidence; at: number }>;
+
+async function readCityConfidenceBlob(storage: AsyncStorageStub): Promise<CityConfidenceBlob> {
+  try {
+    const raw = await storage.getItem(CITY_CONFIDENCE_STORAGE_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as CityConfidenceBlob;
+  } catch {
+    return {};
+  }
+}
+
+function persistCityConfidence(cacheKey: string, data: CityConfidence, at: number): void {
+  const storage = getStorage();
+  if (!storage) return;
+  void (async () => {
+    try {
+      const blob = await readCityConfidenceBlob(storage);
+      const now = Date.now();
+      // Prune hard-expired entries so the blob doesn't grow indefinitely.
+      for (const [k, v] of Object.entries(blob)) {
+        if (!v || now - v.at > CITY_CONFIDENCE_MAX_AGE_MS) delete blob[k];
+      }
+      blob[cacheKey] = { data, at };
+      await storage.setItem(CITY_CONFIDENCE_STORAGE_KEY, JSON.stringify(blob));
+    } catch {
+      // Fire-and-forget — storage failures must never break the badge.
+    }
+  })();
+}
+
+/** For tests only — clear the city-confidence cache (memory + storage). */
+export function _clearCityConfidenceCache(): void {
+  _cityConfidenceCache.clear();
+  const storage = getStorage();
+  if (storage) void storage.removeItem(CITY_CONFIDENCE_STORAGE_KEY).catch(() => {});
+}
+
+async function fetchCityConfidenceFromNetwork(
+  city: string,
+  cacheKey: string,
+): Promise<{ ok: boolean; data?: CityConfidence; error?: string }> {
+  try {
+    const r = await authedFetch(`/api/compass/city-confidence?city=${encodeURIComponent(city.trim())}`);
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    const data = body as CityConfidence;
+    const at = Date.now();
+    _cityConfidenceCache.set(cacheKey, { data, at });
+    persistCityConfidence(cacheKey, data, at);
+    return { ok: true, data };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
 
 export async function fetchCityConfidence(
   city: string,
@@ -328,16 +388,24 @@ export async function fetchCityConfidence(
   if (cached && Date.now() - cached.at < CITY_CONFIDENCE_TTL_MS) {
     return { ok: true, data: cached.data };
   }
-  try {
-    const r = await authedFetch(`/api/compass/city-confidence?city=${encodeURIComponent(city.trim())}`);
-    if (!r.ok) return { ok: false, error: `http_${r.status}` };
-    const body = await r.json();
-    const data = body as CityConfidence;
-    _cityConfidenceCache.set(cacheKey, { data, at: Date.now() });
-    return { ok: true, data };
-  } catch {
-    return { ok: false, error: 'network_error' };
+
+  // L2 — check persisted cache (native only) before paying the round-trip.
+  const storage = getStorage();
+  if (storage && !cached) {
+    const blob = await readCityConfidenceBlob(storage);
+    const entry = blob[cacheKey];
+    if (entry && Date.now() - entry.at <= CITY_CONFIDENCE_MAX_AGE_MS) {
+      _cityConfidenceCache.set(cacheKey, entry);
+      if (Date.now() - entry.at < CITY_CONFIDENCE_TTL_MS) {
+        return { ok: true, data: entry.data };
+      }
+      // Stale-while-revalidate: paint instantly, refresh in the background.
+      void fetchCityConfidenceFromNetwork(city, cacheKey).catch(() => {});
+      return { ok: true, data: entry.data };
+    }
   }
+
+  return fetchCityConfidenceFromNetwork(city, cacheKey);
 }
 
 export async function fetchCompassPreferences(): Promise<{ ok: boolean; data?: CompassPreferences; error?: string }> {
