@@ -1879,21 +1879,42 @@ router.get("/compass/me/active-reward", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
-  const { data, error } = await sc
-    .from("compass_active_user_scores")
-    .select("tier, boost_visibility_enabled")
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const nowIso = new Date().toISOString();
+  const [scoreRes, badgeRes] = await Promise.all([
+    sc
+      .from("compass_active_user_scores")
+      .select("tier, boost_visibility_enabled")
+      .eq("user_id", user.id)
+      .maybeSingle(),
+    // Badges are persisted by the reward engine into compass_active_user_badges;
+    // derive the badge list from eligible, non-expired rows.
+    sc
+      .from("compass_active_user_badges")
+      .select("badge_type, expires_at")
+      .eq("user_id", user.id)
+      .eq("eligible", true),
+  ]);
 
-  if (error) {
-    req.log.warn({ err: error, userId: user.id }, "compass/me/active-reward: read failed");
+  if (scoreRes.error) {
+    req.log.warn({ err: scoreRes.error, userId: user.id }, "compass/me/active-reward: read failed");
+    sendError(res, "db_error", "Could not load active reward");
+    return;
+  }
+  if (badgeRes.error) {
+    req.log.warn({ err: badgeRes.error, userId: user.id }, "compass/me/active-reward: badge read failed");
     sendError(res, "db_error", "Could not load active reward");
     return;
   }
 
+  const data   = scoreRes.data;
   const tier   = (data as any)?.tier ?? "active_traveler";
-  // badge_eligibility does not exist in the live table — no badge data yet.
-  const badges: string[] = [];
+  const badges = [
+    ...new Set(
+      ((badgeRes.data ?? []) as Array<{ badge_type: string; expires_at: string | null }>)
+        .filter((b) => b.badge_type && (!b.expires_at || b.expires_at > nowIso))
+        .map((b) => b.badge_type),
+    ),
+  ];
   const boost  = (data as any)?.boost_visibility_enabled !== false;
 
   res.json({
