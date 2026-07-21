@@ -39,6 +39,14 @@ const STARTUP_DELAY_MS = 60_000;        // 1 minute — let Supabase client init
 const SWEEP_INTERVAL_MS = 15 * 60_000;  // every 15 minutes
 /** Upper bound on users evaluated per tick — keeps a single sweep cheap. */
 const MAX_USERS_PER_SWEEP = 500;
+/**
+ * Per-user time budget. One user whose evaluators hang on a slow external
+ * call (e.g. a weather fetch) must not delay everyone after them or push a
+ * tick past the sweep interval. When the budget elapses the sweep counts an
+ * error for that user and moves on; the orphaned runSense may still settle
+ * in the background but its result is ignored.
+ */
+export const PER_USER_TIMEOUT_MS = 30_000;
 
 // ── test hooks ────────────────────────────────────────────────────────────────
 
@@ -46,6 +54,38 @@ let _testClient: SupabaseClient | null = null;
 /** Inject a fake Supabase client in tests; pass null to restore. */
 export function _setTestClient(sc: SupabaseClient | null): void {
   _testClient = sc;
+}
+
+type RunSenseFn = typeof runSense;
+let _testRunSense: RunSenseFn | null = null;
+/** Inject a fake runSense in tests (e.g. one that never resolves); pass null to restore. */
+export function _setTestRunSense(fn: RunSenseFn | null): void {
+  _testRunSense = fn;
+}
+
+let _testPerUserTimeoutMs: number | null = null;
+/** Override the per-user timeout in tests; pass null to restore. */
+export function _setTestPerUserTimeoutMs(ms: number | null): void {
+  _testPerUserTimeoutMs = ms;
+}
+
+class SenseUserTimeoutError extends Error {
+  constructor(ms: number) {
+    super(`runSense exceeded per-user budget of ${ms}ms`);
+    this.name = "SenseUserTimeoutError";
+  }
+}
+
+/** Race a promise against the per-user time budget. Always clears its timer. */
+function withUserTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new SenseUserTimeoutError(ms)), ms);
+      if (typeof timer.unref === "function") timer.unref();
+    }),
+  ]).finally(() => clearTimeout(timer!));
 }
 
 export interface SenseSweepSummary {
@@ -89,14 +129,25 @@ export async function runSenseSweep(
     new Set(((data ?? []) as any[]).map((r) => String(r.user_id)).filter(Boolean)),
   );
 
+  const runSenseImpl = _testRunSense ?? runSense;
+  const timeoutMs = _testPerUserTimeoutMs ?? PER_USER_TIMEOUT_MS;
+
   for (const userId of userIds) {
     try {
-      const result = await runSense(sc, userId, opts);
+      const promise = runSenseImpl(sc, userId, opts);
+      // Swallow late rejections from an abandoned (timed-out) runSense so they
+      // never surface as unhandled rejections after the sweep moved on.
+      promise.catch(() => {});
+      const result = await withUserTimeout(promise, timeoutMs);
       summary.usersEvaluated += 1;
       summary.nudgesDelivered += result.delivered.length;
     } catch (err) {
       summary.errors += 1;
-      logger.warn({ err, userId }, "CompassSenseScheduler: runSense failed for user");
+      if (err instanceof SenseUserTimeoutError) {
+        logger.warn({ userId, timeoutMs }, "CompassSenseScheduler: runSense timed out for user; continuing sweep");
+      } else {
+        logger.warn({ err, userId }, "CompassSenseScheduler: runSense failed for user");
+      }
     }
   }
 

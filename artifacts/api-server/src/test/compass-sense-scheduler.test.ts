@@ -17,7 +17,13 @@
 import { describe, it, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
 import { invalidateFlagsCache } from "../compass/flags.js";
-import { _setTestClient, runSenseSweep } from "../lib/compassSenseScheduler.js";
+import {
+  _setTestClient,
+  _setTestRunSense,
+  _setTestPerUserTimeoutMs,
+  runSenseSweep,
+} from "../lib/compassSenseScheduler.js";
+import { runSense } from "../compass/CompassSenseEngine.js";
 import { ACTIVE_DAILY_CAP } from "../compass/CompassSenseEngine.js";
 
 const ACTIVE_USER = "00000000-0000-0000-0000-0000000000a1";
@@ -142,6 +148,8 @@ beforeEach(() => {
 
 after(() => {
   _setTestClient(null);
+  _setTestRunSense(null);
+  _setTestPerUserTimeoutMs(null);
 });
 
 /* ── Tests ────────────────────────────────────────────────────────────────── */
@@ -283,5 +291,39 @@ describe("Compass Sense background scheduler", () => {
       (store.compass_sense_nudges ?? []).filter((n) => n.user_id === ACTIVE_USER).length,
       1,
     );
+  });
+
+  it("a hanging runSense for one user times out and the rest of the sweep still delivers", async () => {
+    const HANG_USER = "00000000-0000-0000-0000-0000000000d1";
+    const store: Record<string, Row[]> = {
+      feature_flags: [enabledFlag()],
+      compass_sense_settings: [
+        senseSettings(HANG_USER, "active"),
+        senseSettings(ACTIVE_USER, "active"),
+      ],
+    };
+    savedEventSignal(store, ACTIVE_USER, 1);
+    const { fakeClient } = makeFakeClient(store);
+    _setTestClient(fakeClient);
+    _setTestPerUserTimeoutMs(50);
+    _setTestRunSense(((sc: any, userId: string, opts: any) => {
+      if (userId === HANG_USER) return new Promise(() => {}); // never resolves
+      return runSense(sc, userId, opts);
+    }) as any);
+
+    try {
+      const summary = await runSenseSweep(daytime);
+      // The hanging user is counted as an error, not evaluated; the other
+      // user is still fully evaluated and delivers.
+      assert.equal(summary.errors, 1);
+      assert.equal(summary.usersEvaluated, 1);
+      assert.equal(summary.nudgesDelivered, 1);
+      const nudges = store.compass_sense_nudges ?? [];
+      assert.equal(nudges.length, 1);
+      assert.equal(nudges[0]!.user_id, ACTIVE_USER);
+    } finally {
+      _setTestRunSense(null);
+      _setTestPerUserTimeoutMs(null);
+    }
   });
 });
