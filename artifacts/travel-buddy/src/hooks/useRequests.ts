@@ -6,6 +6,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { AppState } from 'react-native';
 import { getMyRequests, getRequestCount, type InboxItem } from '../services/requests.ts';
+import { onFriendsChanged } from '../lib/friendEvents.ts';
 
 export function useRequests() {
   const [incoming, setIncoming] = useState<InboxItem[]>([]);
@@ -28,6 +29,9 @@ export function useRequests() {
   }, []);
 
   useEffect(() => { reload(); }, [reload]);
+  // Refresh when a friendship changes elsewhere (e.g. auto-accepted request),
+  // so pending rows clear without a manual pull-to-refresh.
+  useEffect(() => onFriendsChanged(reload), [reload]);
 
   return { incoming, outgoing, loading, error, reload };
 }
