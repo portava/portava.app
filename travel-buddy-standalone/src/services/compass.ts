@@ -826,6 +826,114 @@ export function checkCompassLive(): Promise<CompassLiveResult> {
   return liveCall('/api/compass/live/check', 'POST');
 }
 
+// ── Trip Autopilot / Heartbeat (Phase 13) ────────────────────────────────────
+
+export interface TripHeartbeatIssue {
+  type: string;
+  severity: 'watch' | 'attention' | 'high';
+  itemIds: string[];
+  reason: string;
+}
+
+export interface TripHeartbeatRisk {
+  type: string;
+  label: string;
+  detail: string;
+}
+
+export interface TripHeartbeat {
+  status: 'healthy' | 'attention' | 'at_risk';
+  issues: TripHeartbeatIssue[];
+  risks: TripHeartbeatRisk[];
+  pendingProposals: number;
+  itemCounts: { fixed: number; flexible: number; optional: number; total: number };
+  nextItem: { id: string; title: string; startsAt: string | null; dayDate: string | null } | null;
+}
+
+export interface AutopilotProposalChange {
+  itemId: string;
+  title: string;
+  lockType: string;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+}
+
+export interface AutopilotProposal {
+  id: string;
+  issueType: string;
+  severity: string;
+  reason: string;
+  changes: AutopilotProposalChange[];
+  status: 'pending' | 'confirmed' | 'declined' | 'expired';
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+export interface TripHeartbeatResult {
+  ok: boolean;
+  compassEnabled?: boolean;
+  heartbeat?: TripHeartbeat;
+  error?: string;
+}
+
+export async function fetchTripHeartbeat(tripId: string): Promise<TripHeartbeatResult> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
+  try {
+    const r = await authedFetch(`/api/trips/${tripId}/heartbeat`);
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    if (body.compassEnabled === false) return { ok: true, compassEnabled: false };
+    return { ok: true, compassEnabled: true, heartbeat: body.heartbeat };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+export async function runTripAutopilotCheck(tripId: string): Promise<{ ok: boolean; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
+  try {
+    const r = await authedFetch(`/api/trips/${tripId}/autopilot/check`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    return r.ok ? { ok: true } : { ok: false, error: `http_${r.status}` };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+export async function fetchAutopilotProposals(
+  tripId: string,
+): Promise<{ ok: boolean; proposals?: AutopilotProposal[]; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
+  try {
+    const r = await authedFetch(`/api/trips/${tripId}/autopilot/proposals`);
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    return { ok: true, proposals: body.proposals ?? [] };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+export async function resolveAutopilotProposal(
+  proposalId: string,
+  action: 'confirm' | 'decline',
+): Promise<{ ok: boolean; applied?: number; blocked?: string[]; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
+  try {
+    const r = await authedFetch(`/api/autopilot/proposals/${proposalId}/${action}`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    return { ok: true, applied: body.applied, blocked: body.blocked };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
 export interface CompassSettingsResult {
   ok: boolean;
   data?: CompassSettings;

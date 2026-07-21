@@ -13,6 +13,7 @@ import {
   TripCrewSection, TripCircle,
 } from '../../src/components/TripPage';
 import { ActiveSafeReturnCard } from '../../src/components/safeReturn/ActiveSafeReturnCard';
+import { TripHeartbeatCard } from '../../src/components/compass/TripHeartbeatCard';
 import { SafeReturnSetupSheet } from '../../src/components/safeReturn/SafeReturnSetupSheet';
 import { MissedCheckinPrompt } from '../../src/components/safeReturn/MissedCheckinPrompt';
 import { getActiveSession, type SafeReturnSession } from '../../src/services/safeReturn';
@@ -465,6 +466,9 @@ function TripDetailScreen() {
             startDate={realTrip?.startDate ?? undefined}
             endDate={realTrip?.endDate ?? undefined}
           />
+        </CompassBriefErrorBoundary>
+        <CompassBriefErrorBoundary>
+          <TripHeartbeatCard tripId={id} />
         </CompassBriefErrorBoundary>
         <TripStamps stamps={[]} />
         <TripMapPlaceholder />
