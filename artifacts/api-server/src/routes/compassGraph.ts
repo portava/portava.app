@@ -23,6 +23,7 @@ import {
   getCityConfidence,
   cityConfidenceNote,
 } from "../compass/CompassGraphEngine.js";
+import { getLastRebuildInfo } from "../lib/intelligenceGraphScheduler.js";
 
 const router = Router();
 
@@ -74,11 +75,14 @@ router.get("/compass/graph/status", asyncHandler(async (req, res) => {
       .limit(50),
   ]);
 
+  const { lastRebuildAt, lastOutcome } = getLastRebuildInfo();
   res.json({
     nodes:  nodeCount ?? 0,
     edges:  edgeCount ?? 0,
     cities: (cities as any[]) ?? [],
     strongestCity: ((cities as any[]) ?? [])[0]?.city ?? null,
+    lastRebuildAt,
+    lastOutcome,
   });
 }));
 

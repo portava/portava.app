@@ -19,6 +19,8 @@ import {
   runIntelligenceGraphRebuildOnce,
   _setTestRebuild,
   _setTestGetClient,
+  getLastRebuildInfo,
+  _resetLastRebuildInfo,
 } from "../lib/intelligenceGraphScheduler.js";
 
 const FAKE_REPORT = {
@@ -34,6 +36,55 @@ describe("IntelligenceGraphScheduler", () => {
     _setTestRebuild(null);
     _setTestGetClient(null);
     _setTestServiceClient(null);
+    _resetLastRebuildInfo();
+  });
+
+  it("records lastRebuildAt / lastOutcome after a successful run", async () => {
+    _setTestServiceClient({} as any);
+    _setTestRebuild(async () => FAKE_REPORT);
+
+    // Before any run: nothing recorded.
+    const before = getLastRebuildInfo();
+    assert.equal(before.lastRebuildAt, null);
+    assert.equal(before.lastOutcome, null);
+
+    const t0 = Date.now();
+    await runIntelligenceGraphRebuildOnce();
+
+    const info = getLastRebuildInfo();
+    assert.equal(info.lastOutcome, "completed");
+    assert.ok(info.lastRebuildAt, "lastRebuildAt must be set after a run");
+    const at = Date.parse(info.lastRebuildAt!);
+    assert.ok(at >= t0 - 1000 && at <= Date.now() + 1000, "timestamp is current");
+    assert.deepEqual(info.lastReport, FAKE_REPORT);
+  });
+
+  it("records a failed outcome and keeps the previous successful report", async () => {
+    _setTestServiceClient({} as any);
+
+    let calls = 0;
+    _setTestRebuild(async () => {
+      calls++;
+      if (calls === 2) throw new Error("db down");
+      return FAKE_REPORT;
+    });
+
+    await runIntelligenceGraphRebuildOnce();
+    await runIntelligenceGraphRebuildOnce();
+
+    const info = getLastRebuildInfo();
+    assert.equal(info.lastOutcome, "failed");
+    assert.ok(info.lastRebuildAt);
+    // The report from the last successful run is retained.
+    assert.deepEqual(info.lastReport, FAKE_REPORT);
+  });
+
+  it("does not update the last-run record on a skipped run", async () => {
+    _setTestGetClient(() => null);
+    await runIntelligenceGraphRebuildOnce();
+    const info = getLastRebuildInfo();
+    assert.equal(info.lastRebuildAt, null);
+    assert.equal(info.lastOutcome, null);
   });
 
   it("invokes the rebuild with the service client and reports completion", async () => {

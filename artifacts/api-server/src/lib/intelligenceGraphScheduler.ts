@@ -48,6 +48,39 @@ export function _setTestGetClient(fn: (() => SupabaseClient | null) | null): voi
 /** In-process overlap guard — true while a rebuild is in flight. */
 let running = false;
 
+// ── last-run record ───────────────────────────────────────────────────────────
+
+export type LastRebuildOutcome = "completed" | "failed";
+
+export interface LastRebuildInfo {
+  /** ISO timestamp of when the last run finished (success or failure). */
+  lastRebuildAt: string | null;
+  /** Outcome of the last completed/failed run; null if none has run yet. */
+  lastOutcome: LastRebuildOutcome | null;
+  /** Rebuild report from the last successful run, if any. */
+  lastReport: GraphRebuildReport | null;
+}
+
+/**
+ * In-memory record of the last run that actually executed (skips don't count).
+ * Resets on server restart — that's acceptable: staleness visibility only.
+ */
+let lastRebuild: LastRebuildInfo = {
+  lastRebuildAt: null,
+  lastOutcome: null,
+  lastReport: null,
+};
+
+/** Read-only snapshot of the last rebuild for the admin status endpoint. */
+export function getLastRebuildInfo(): LastRebuildInfo {
+  return { ...lastRebuild };
+}
+
+/** Test hook: reset the last-run record between tests. */
+export function _resetLastRebuildInfo(): void {
+  lastRebuild = { lastRebuildAt: null, lastOutcome: null, lastReport: null };
+}
+
 export type SchedulerRunResult =
   | { status: "completed"; report: GraphRebuildReport }
   | { status: "skipped"; reason: "overlap" | "no_service_client" }
@@ -76,12 +109,22 @@ export async function runIntelligenceGraphRebuildOnce(): Promise<SchedulerRunRes
   try {
     const rebuild = _testRebuild ?? rebuildIntelligenceGraph;
     const report = await rebuild(sc);
+    lastRebuild = {
+      lastRebuildAt: new Date(Date.now()).toISOString(),
+      lastOutcome: "completed",
+      lastReport: report,
+    };
     logger.info(
       { ...report, durationMs: Date.now() - startedAt },
       "IntelligenceGraphScheduler: scheduled rebuild completed",
     );
     return { status: "completed", report };
   } catch (err) {
+    lastRebuild = {
+      lastRebuildAt: new Date(Date.now()).toISOString(),
+      lastOutcome: "failed",
+      lastReport: lastRebuild.lastReport,
+    };
     // Fail-soft: a failing rebuild (e.g. DB outage) never crashes the server;
     // the next scheduled tick simply tries again.
     logger.error(
