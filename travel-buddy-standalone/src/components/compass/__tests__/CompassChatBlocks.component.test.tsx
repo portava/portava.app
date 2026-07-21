@@ -175,6 +175,24 @@ it('map block with no coordinates renders no preview, only the rows', async () =
   expect(screen.getByTestId(`compass-block-map-${PLACE_NO_COORDS.id}`)).toBeTruthy();
 });
 
+it('event_cards block with coordinate-bearing events renders a mini-map preview; tapping opens /map focused on the first event', async () => {
+  const EVENT_WITH_COORDS = { ...EVENT, lat: 10.32, lng: 123.92 };
+  await render(<CompassChatBlocks blocks={[{ type: 'event_cards', events: [EVENT_WITH_COORDS] }]} />);
+  const preview = screen.getByTestId('compass-block-event-map-preview');
+  expect(preview).toBeTruthy();
+  fireEvent.press(preview);
+  expect(pushMock).toHaveBeenCalledWith(expect.objectContaining({
+    pathname: '/map',
+    params: expect.objectContaining({ lat: '10.32', lng: '123.92', focusId: EVENT.id }),
+  }));
+});
+
+it('event_cards block without coordinates renders no mini-map preview, only the cards', async () => {
+  await render(<CompassChatBlocks blocks={[{ type: 'event_cards', events: [EVENT] }]} />);
+  expect(screen.queryByTestId('compass-block-event-map-preview')).toBeNull();
+  expect(screen.getByTestId(`compass-block-event-${EVENT.id}`)).toBeTruthy();
+});
+
 it('comparison with two coordinate-bearing places shows a mini-map and distance delta', async () => {
   const PLACE_B = { ...PLACE, id: 'place-b', name: 'Cafe Dos', lat: 10.31, lng: 123.91 };
   await render(
