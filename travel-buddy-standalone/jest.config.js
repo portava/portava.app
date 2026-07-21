@@ -36,5 +36,11 @@ module.exports = {
       '@react-native-async-storage/async-storage/jest/async-storage-mock',
     'lucide-react-native': '<rootDir>/src/__mocks__/lucide-react-native.tsx',
     'expo-router': '<rootDir>/src/__mocks__/expo-router.tsx',
+    // maplibre requires native GL/camera modules unavailable in jest-expo.
+    // The stub exports null-render components so screens using the map can be
+    // tested without crashing the suite. Per-file jest.mock() factories
+    // override this global stub when they need to assert on map behaviour.
+    '^@maplibre/maplibre-react-native$':
+      '<rootDir>/src/__mocks__/maplibre-react-native.tsx',
   },
 };

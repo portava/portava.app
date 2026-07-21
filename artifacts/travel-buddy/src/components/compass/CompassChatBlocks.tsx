@@ -27,6 +27,10 @@ import type {
   CompassComparisonRow, CompassAskPayload, CompassUiConfidence,
 } from '../../services/compass.ts';
 import { formatCompassEventChip } from '../../utils/compassFormat.ts';
+import { CompassMiniMap } from './CompassMiniMap';
+import {
+  haversineKm, formatDistanceKm, type CompassMiniMapPoint,
+} from './compassMiniMapShared.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
 export interface CompassChatBlocksProps {
@@ -345,14 +349,29 @@ function PersonBlockCard({ person }: { person: CompassUiPerson }) {
 
 // ── Map ───────────────────────────────────────────────────────────────────────
 
+function placesToPoints(places: CompassUiPlace[]): CompassMiniMapPoint[] {
+  return places
+    .filter((p) => p.lat != null && p.lng != null)
+    .map((p) => ({ id: p.id, label: p.name, lat: p.lat!, lng: p.lng! }));
+}
+
 function MapBlock({ places }: { places: CompassUiPlace[] }) {
   const openPlace = usePlaceNavigation();
+  const points = placesToPoints(places);
+  const firstWithCoords = places.find((p) => p.lat != null && p.lng != null);
   return (
     <View style={s.mapBlock}>
       <View style={s.mapHead}>
         <MapIcon size={12} color={color.signal} />
         <Text style={s.mapHeadText}>ON THE MAP</Text>
       </View>
+      {points.length > 0 ? (
+        <CompassMiniMap
+          points={points}
+          onPress={firstWithCoords ? () => openPlace(firstWithCoords) : undefined}
+          testID="compass-block-map-preview"
+        />
+      ) : null}
       {places.map((p) => (
         <Pressable
           key={p.id}
@@ -388,8 +407,35 @@ function ComparisonBlock({ columns, rows }: { columns: string[]; rows: CompassCo
     }
   };
 
+  // Inline distance context: when at least two compared entities carry real
+  // coordinates, show them on a mini-map with the pairwise distance delta.
+  const coordRows = rows.filter((r) => r.place?.lat != null && r.place?.lng != null);
+  const points: CompassMiniMapPoint[] = coordRows.map((r) => ({
+    id: r.id, label: r.label, lat: r.place!.lat!, lng: r.place!.lng!,
+  }));
+  const deltas: string[] = [];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[0], b = points[i];
+    deltas.push(`${a.label} ↔ ${b.label} · ${formatDistanceKm(haversineKm(a.lat, a.lng, b.lat, b.lng))}`);
+  }
+
   return (
     <View style={s.table}>
+      {points.length >= 2 ? (
+        <View style={s.compareMapWrap}>
+          <CompassMiniMap
+            points={points}
+            height={140}
+            onPress={coordRows[0]?.place ? () => openPlace(coordRows[0].place!) : undefined}
+            testID="compass-block-compare-map"
+          />
+          {deltas.map((d, i) => (
+            <Text key={i} style={s.compareDelta} testID={`compass-block-compare-delta-${i}`}>
+              {d}
+            </Text>
+          ))}
+        </View>
+      ) : null}
       <View style={[s.tableRow, s.tableHead]}>
         <Text style={[s.tableHeadCell, s.tableLabelCell]} numberOfLines={1}> </Text>
         {columns.map((c) => (
@@ -478,6 +524,9 @@ const s = StyleSheet.create({
   mapHeadText:{ ...t.stamp, fontFamily: 'Courier', fontSize: 9, color: color.signal, letterSpacing: 1 },
   mapRow:     { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.sm, paddingHorizontal: space.xs, borderTopWidth: 1, borderTopColor: color.haze },
   mapRowText: { ...t.small, fontWeight: '600', color: color.ink, flex: 1 },
+
+  compareMapWrap: { padding: space.sm, gap: 4 },
+  compareDelta: { ...t.stamp, fontSize: 10, color: color.mute, paddingHorizontal: space.xs },
 
   table:        { backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, overflow: 'hidden' },
   tableRow:     { flexDirection: 'row', alignItems: 'center', paddingVertical: space.sm, paddingHorizontal: space.sm, borderTopWidth: 1, borderTopColor: color.haze },

@@ -141,6 +141,61 @@ it('comparison event row navigates to the event screen', async () => {
   expect(pushMock).toHaveBeenCalledWith(`/event/${EVENT.id}`);
 });
 
+// ── 2b. Inline mini-map previews ──────────────────────────────────────────────
+
+it('map block renders an inline mini-map preview; tapping it opens /map focused', async () => {
+  await render(<CompassChatBlocks blocks={[{ type: 'map', places: [PLACE] }]} />);
+  const preview = screen.getByTestId('compass-block-map-preview');
+  expect(preview).toBeTruthy();
+  fireEvent.press(preview);
+  expect(pushMock).toHaveBeenCalledWith(expect.objectContaining({
+    pathname: '/map',
+    params: expect.objectContaining({ lat: '10.3', lng: '123.9', focusId: PLACE.id }),
+  }));
+});
+
+it('map block with no coordinates renders no preview, only the rows', async () => {
+  await render(<CompassChatBlocks blocks={[{ type: 'map', places: [PLACE_NO_COORDS] }]} />);
+  expect(screen.queryByTestId('compass-block-map-preview')).toBeNull();
+  expect(screen.getByTestId(`compass-block-map-${PLACE_NO_COORDS.id}`)).toBeTruthy();
+});
+
+it('comparison with two coordinate-bearing places shows a mini-map and distance delta', async () => {
+  const PLACE_B = { ...PLACE, id: 'place-b', name: 'Cafe Dos', lat: 10.31, lng: 123.91 };
+  await render(
+    <CompassChatBlocks
+      blocks={[{
+        type: 'comparison',
+        columns: ['Rating'],
+        rows: [
+          { kind: 'place', id: PLACE.id, label: PLACE.name, values: ['4.5'], place: PLACE },
+          { kind: 'place', id: PLACE_B.id, label: PLACE_B.name, values: ['4.2'], place: PLACE_B },
+        ],
+      }]}
+    />,
+  );
+  expect(screen.getByTestId('compass-block-compare-map')).toBeTruthy();
+  const delta = screen.getByTestId('compass-block-compare-delta-0');
+  expect(delta.props.children).toContain('Cafe Uno ↔ Cafe Dos');
+  expect(delta.props.children).toMatch(/km|m$/);
+});
+
+it('comparison with fewer than two coordinate rows renders no mini-map', async () => {
+  await render(
+    <CompassChatBlocks
+      blocks={[{
+        type: 'comparison',
+        columns: ['Rating'],
+        rows: [
+          { kind: 'place', id: PLACE.id, label: PLACE.name, values: ['4.5'], place: PLACE },
+          { kind: 'place', id: PLACE_NO_COORDS.id, label: PLACE_NO_COORDS.name, values: ['4.0'], place: PLACE_NO_COORDS },
+        ],
+      }]}
+    />,
+  );
+  expect(screen.queryByTestId('compass-block-compare-map')).toBeNull();
+});
+
 // ── 3. Plan button uses the confirmation-gated PlanPicker callback ────────────
 
 it('Plan button hands the real place to the PlanPicker callback', async () => {
