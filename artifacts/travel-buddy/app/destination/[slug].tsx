@@ -23,6 +23,7 @@ import { listEvents, type EventListItem } from '../../src/services/events';
 import { getPulseData, type PulsePost } from '../../src/services/pulse';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
+import { CityConfidenceBadge } from '../../src/components/compass/CityConfidenceBadge';
 
 type SectionState<T> = { status: 'loading' | 'ready' | 'error'; items: T[] };
 
@@ -107,6 +108,9 @@ export default function Destination() {
           <MapPin size={16} color={color.deep} />
           <Text style={s.heroText}>Traveler guide to {cityName}</Text>
         </View>
+
+        {/* Local data depth honesty signal */}
+        <CityConfidenceBadge city={slug ? cityName : null} />
 
         {/* ── Hidden Gems ── */}
         {gems.status === 'error' ? (
