@@ -19,6 +19,7 @@ import { startIntelligenceGraphScheduler } from "./lib/intelligenceGraphSchedule
 import { startInviteSlotReconciler } from "./lib/inviteSlotReconciler";
 import { startInviteSlotSweeper } from "./lib/inviteSlotSweeper";
 import { getServiceClient } from "./lib/supabase";
+import { initCityTimezonePersistence } from "./compass/CompassGraphEngine.js";
 import { assertRequiredEnv } from "./lib/envValidation";
 import { startWorkerLoop, queryStampWorkerHealth, startHealthMonitorLoop } from "./lib/stamps/generationWorker";
 import { startXXCatalogSweeper } from "./lib/stamps/xxCatalogRepair";
@@ -69,6 +70,12 @@ app.listen(port, (err) => {
   startIntelligenceGraphScheduler();
   startInviteSlotReconciler();
   startInviteSlotSweeper();
+  // Reload coordinate-learned city timezones so a restart doesn't reset
+  // brand-new cities to UTC. Fail-soft: errors leave the in-memory resolver
+  // fully functional, just non-durable.
+  void initCityTimezonePersistence(getServiceClient()).then((loaded) => {
+    logger.info({ loaded }, "City timezone persistence initialized");
+  });
   // startDiscoveryCacheWarmer calls warmUpDiscoveryCache immediately on startup
   // then repeats hourly so the Postgres L2 cache stays warm across restarts.
   startDiscoveryCacheWarmer(port);

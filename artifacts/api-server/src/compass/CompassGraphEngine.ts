@@ -130,6 +130,76 @@ function normTzKey(city: string | null | undefined): string {
   return String(city ?? "").trim().toLowerCase();
 }
 
+// ── Learned-timezone persistence (survives restarts) ─────────────────────────
+//
+// Learned entries are mirrored to the small `city_timezones` table
+// (migration 0165) and reloaded on boot, so a restart doesn't reset
+// brand-new cities to UTC until their coordinates are re-seen. Everything
+// here is fail-soft and fire-and-forget: persistence being unavailable
+// never blocks or breaks a hot path.
+
+const CITY_TZ_TABLE = "city_timezones";
+let tzPersistDb: SupabaseClient | null = null;
+
+/**
+ * Enable persistence and reload previously learned entries. Call once on
+ * boot with the service client. Fail-soft: any error (missing table, DB
+ * down) leaves the resolver fully functional, just non-durable.
+ * Returns the number of entries loaded.
+ */
+export async function initCityTimezonePersistence(
+  db: SupabaseClient | null,
+): Promise<number> {
+  tzPersistDb = db;
+  if (!db) return 0;
+  try {
+    const { data, error } = await db
+      .from(CITY_TZ_TABLE)
+      .select("city_key, timezone")
+      .limit(LEARNED_CITY_TZ_MAX);
+    if (error) throw error;
+    let loaded = 0;
+    for (const r of (data as any[]) ?? []) {
+      const key = normTzKey(r?.city_key);
+      const tz = typeof r?.timezone === "string" ? r.timezone.trim() : "";
+      if (!key || !tz || CANONICAL_CITY_TIMEZONES[key]) continue; // static map stays authoritative
+      if (!LEARNED_CITY_TIMEZONES.has(key) && LEARNED_CITY_TIMEZONES.size >= LEARNED_CITY_TZ_MAX) break;
+      LEARNED_CITY_TIMEZONES.set(key, tz);
+      loaded++;
+    }
+    return loaded;
+  } catch {
+    return 0; // fail-soft — resolver keeps working in-memory only
+  }
+}
+
+/** Test-only: reset the persistence handle and learned cache. */
+export function _resetCityTimezoneStateForTest(): void {
+  tzPersistDb = null;
+  LEARNED_CITY_TIMEZONES.clear();
+}
+
+/** Fire-and-forget upsert of one learned entry. Never throws. */
+function persistLearnedTimezone(key: string, tz: string): void {
+  const db = tzPersistDb;
+  if (!db) return;
+  try {
+    void Promise.resolve(
+      db.from(CITY_TZ_TABLE).upsert(
+        { city_key: key, timezone: tz, updated_at: new Date().toISOString() },
+        { onConflict: "city_key" },
+      ),
+    ).catch(() => { /* fail-soft */ });
+  } catch { /* fail-soft */ }
+}
+
+/** Record a learned entry in memory and mirror it to the DB when changed. */
+function learnCityTimezone(key: string, tz: string): void {
+  if (LEARNED_CITY_TIMEZONES.get(key) === tz) return;
+  LEARNED_CITY_TIMEZONES.set(key, tz);
+  persistLearnedTimezone(key, tz);
+}
+
 /** Offline coordinate → IANA timezone (null on invalid coords). */
 export function timezoneFromCoords(
   lat: number | null | undefined,
@@ -158,7 +228,7 @@ export function registerCityCoordinates(
   if (!key || CANONICAL_CITY_TIMEZONES[key] || LEARNED_CITY_TIMEZONES.has(key)) return;
   if (LEARNED_CITY_TIMEZONES.size >= LEARNED_CITY_TZ_MAX) return;
   const tz = timezoneFromCoords(lat, lng);
-  if (tz) LEARNED_CITY_TIMEZONES.set(key, tz);
+  if (tz) learnCityTimezone(key, tz);
 }
 
 /**
@@ -185,7 +255,7 @@ export function cityTimezone(
   const coordTz = timezoneFromCoords(coords?.lat, coords?.lng);
   if (coordTz) {
     if (key && (LEARNED_CITY_TIMEZONES.has(key) || LEARNED_CITY_TIMEZONES.size < LEARNED_CITY_TZ_MAX)) {
-      LEARNED_CITY_TIMEZONES.set(key, coordTz);
+      learnCityTimezone(key, coordTz);
     }
     return coordTz;
   }

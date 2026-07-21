@@ -14,7 +14,7 @@ import {
   haversineKm,
 } from "./canonicalLocations";
 import { logger as rootLogger } from "./logger";
-import { registerCityCoordinates } from "../compass/CompassGraphEngine.js";
+import { registerCityCoordinates, cityTimezone } from "../compass/CompassGraphEngine.js";
 
 const logger = rootLogger.child({ lib: "popularCities" });
 
@@ -173,7 +173,8 @@ export interface PopularCityPlace {
   district: null;
   lat: number | null;
   lng: number | null;
-  timezone: null;
+  /** IANA timezone when resolvable (static map, learned cache, or coords). */
+  timezone: string | null;
   source: "canonical";
   /** Relative activity score — clients may show ranking hints. */
   activityScore: number;
@@ -238,7 +239,7 @@ function toPlace(
     city: name,
     district: null,
     lat, lng,
-    timezone: null,
+    timezone: cityTimezone(name, { lat, lng }),
     source: "canonical",
     activityScore: Math.round(score * 10) / 10,
   };

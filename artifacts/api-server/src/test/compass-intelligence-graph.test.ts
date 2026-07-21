@@ -46,8 +46,10 @@ import {
   WORLD_MODEL_BOOST_MAX,
   MIN_SLICE_SAMPLE,
   type CityWorldModel,
+  initCityTimezonePersistence,
+  _resetCityTimezoneStateForTest,
 } from "../compass/CompassGraphEngine.js";
-import { SEED_CITIES } from "../lib/popularCities.js";
+import { SEED_CITIES, getPopularCities } from "../lib/popularCities.js";
 import { canonicalCityKey } from "../lib/canonicalLocations.js";
 import { runPipeline } from "../compass/CompassPipeline.js";
 import type { CompassItem, CompassProfile, CompassContext } from "../compass/types.js";
@@ -723,5 +725,81 @@ describe("graph routes", () => {
     assert.ok(typeof cebu.json.depthScore === "number");
     // Aggregates only — response never includes user identifiers
     assert.ok(!JSON.stringify(cebu.json).includes(USER_ID));
+  });
+});
+
+/* ── Learned-timezone persistence (survives restarts) ─────────────────────── */
+
+describe("city timezone persistence", () => {
+  beforeEach(() => {
+    _resetCityTimezoneStateForTest();
+  });
+
+  after(() => {
+    _resetCityTimezoneStateForTest();
+  });
+
+  it("persists learned entries and reloads them after a restart", async () => {
+    const store: Record<string, Row[]> = { city_timezones: [] };
+    const { fakeClient } = makeFakeClient(store);
+    await initCityTimezonePersistence(fakeClient);
+
+    // Learn Tbilisi from coordinates — not in the static map.
+    registerCityCoordinates("Tbilisi", 41.7151, 44.8271);
+    await new Promise((r) => setTimeout(r, 0)); // flush fire-and-forget upsert
+
+    assert.equal(store.city_timezones!.length, 1);
+    assert.equal(store.city_timezones![0]!.city_key, "tbilisi");
+    assert.equal(store.city_timezones![0]!.timezone, "Asia/Tbilisi");
+
+    // Simulate restart: in-memory cache wiped, no coords available anymore.
+    _resetCityTimezoneStateForTest();
+    assert.equal(cityTimezone("Tbilisi"), null);
+
+    const loaded = await initCityTimezonePersistence(makeFakeClient(store).fakeClient);
+    assert.equal(loaded, 1);
+    assert.equal(cityTimezone("Tbilisi"), "Asia/Tbilisi");
+  });
+
+  it("coord-path learning in cityTimezone is also persisted", async () => {
+    const store: Record<string, Row[]> = { city_timezones: [] };
+    await initCityTimezonePersistence(makeFakeClient(store).fakeClient);
+
+    assert.equal(cityTimezone("Reykjavik", { lat: 64.1466, lng: -21.9426 }), "Atlantic/Reykjavik");
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(store.city_timezones!.length, 1);
+    assert.equal(store.city_timezones![0]!.city_key, "reykjavik");
+  });
+
+  it("is fail-soft when the table is missing or the DB errors", async () => {
+    const failing: any = {
+      from: () => ({
+        select: () => ({
+          limit: () => Promise.reject(new Error("relation does not exist")),
+        }),
+      }),
+    };
+    const loaded = await initCityTimezonePersistence(failing);
+    assert.equal(loaded, 0);
+    // Learning still works in-memory even though persistence is broken.
+    registerCityCoordinates("Tbilisi", 41.7151, 44.8271);
+    assert.equal(cityTimezone("Tbilisi"), "Asia/Tbilisi");
+  });
+
+  it("static map stays authoritative over persisted rows", async () => {
+    const store: Record<string, Row[]> = {
+      city_timezones: [{ city_key: "cebu", timezone: "Europe/Paris" }],
+    };
+    await initCityTimezonePersistence(makeFakeClient(store).fakeClient);
+    assert.equal(cityTimezone("Cebu"), "Asia/Manila");
+  });
+
+  it("popular seed places carry a real timezone instead of null", async () => {
+    const places = await getPopularCities(null, { limit: 3 });
+    assert.ok(places.length > 0);
+    const cebu = places.find((p) => p.name === "Cebu City");
+    assert.ok(cebu);
+    assert.equal(cebu!.timezone, "Asia/Manila");
+    for (const p of places) assert.equal(typeof p.timezone, "string");
   });
 });
