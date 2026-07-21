@@ -106,6 +106,104 @@ export function extractColumnRefs(source: string, table: string): ColumnRef[] {
   return refs;
 }
 
+/**
+ * Extract the top-level object-literal keys of every `.insert({...})` (and
+ * `.upsert({...})`, `.update({...})`) payload in query chains rooted at
+ * `.from("<table>")`. These keys are column names sent to PostgREST — one
+ * unknown key fails the whole write (PGRST204), which silently kills
+ * fire-and-forget audit-log inserts.
+ *
+ * Only object-literal payloads (`{` as first non-space char, or an array of
+ * object literals `[{...}, ...]`) are extracted; variable payloads are
+ * skipped (can't be statically resolved). Nested objects/arrays inside
+ * values are skipped — only depth-1 keys are columns.
+ */
+export function extractInsertPayloadKeys(
+  source: string,
+  table: string,
+): ColumnRef[] {
+  const refs: ColumnRef[] = [];
+  const WRITE_METHODS = new Set(["insert", "upsert", "update"]);
+  const fromRe = new RegExp(`\\.from\\(\\s*["'\`]${table}["'\`]\\s*\\)`, "g");
+  let m: RegExpExecArray | null;
+  while ((m = fromRe.exec(source)) !== null) {
+    let pos = m.index + m[0].length;
+    for (;;) {
+      const rest = source.slice(pos);
+      const link = /^(\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*\.\s*([A-Za-z_$][\w$]*)\s*\(/.exec(rest);
+      if (!link) break;
+      const method = link[2]!;
+      const argStart = pos + link[0].length;
+      // Find matching close paren (handles nested parens and strings).
+      let depth = 1;
+      let i = argStart;
+      let inStr: string | null = null;
+      while (i < source.length && depth > 0) {
+        const ch = source[i]!;
+        if (inStr) {
+          if (ch === "\\") i++;
+          else if (ch === inStr) inStr = null;
+        } else if (ch === '"' || ch === "'" || ch === "`") {
+          inStr = ch;
+        } else if (ch === "(") depth++;
+        else if (ch === ")") depth--;
+        i++;
+      }
+      if (WRITE_METHODS.has(method)) {
+        const argText = sliceFirstTopLevelArg(source.slice(argStart, i - 1));
+        for (const key of extractObjectLiteralKeys(argText)) {
+          refs.push({ column: key, method, index: m.index });
+        }
+      }
+      pos = i;
+    }
+  }
+  return refs;
+}
+
+/**
+ * Given the text of a payload argument, collect depth-1 keys of every
+ * object literal in it (handles a single `{...}` or an array `[{...},{...}]`).
+ * Returns [] if the argument is not an object/array literal.
+ */
+function extractObjectLiteralKeys(argText: string): string[] {
+  const keys: string[] = [];
+  const trimmed = argText.trimStart();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return keys;
+  let depth = 0; // brace/bracket depth; keys live at object depth 1
+  let objDepth = 0; // depth counted in `{` only
+  let inStr: string | null = null;
+  let expectKey = false;
+  for (let i = 0; i < argText.length; i++) {
+    const ch = argText[i]!;
+    if (inStr) {
+      if (ch === "\\") i++;
+      else if (ch === inStr) inStr = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") { inStr = ch; continue; }
+    if (ch === "{") { objDepth++; depth++; if (objDepth === 1) expectKey = true; continue; }
+    if (ch === "}") { objDepth--; depth--; continue; }
+    if (ch === "[" || ch === "(") { depth++; continue; }
+    if (ch === "]" || ch === ")") { depth--; continue; }
+    if (objDepth === 1) {
+      if (ch === ",") { expectKey = true; continue; }
+      if (ch === ".") { expectKey = false; continue; } // spread `...x`
+      if (expectKey && /[A-Za-z_$]/.test(ch)) {
+        const rest = argText.slice(i);
+        // `key:` or shorthand `key,`/`key}` — spread (...x) has no ident start.
+        const km = /^([A-Za-z_$][\w$]*)\s*(?::|,|\})/.exec(rest);
+        if (km) {
+          keys.push(km[1]!);
+          i += km[1]!.length - 1;
+        }
+        expectKey = false;
+      }
+    }
+  }
+  return keys;
+}
+
 /** Text of the first top-level (comma-delimited) argument of a call. */
 function sliceFirstTopLevelArg(argText: string): string {
   let depth = 0;
