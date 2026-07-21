@@ -5,6 +5,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import { PulseHeader } from '../../src/components/PulseHeader';
 import { FitsCard, FlexibleStrip } from '../../src/components/PulseFits';
+import { ExploreTodaySection } from '../../src/components/ExploreTodaySection';
 import { PulseFeedCard } from '../../src/components/PulseFeedCard';
 import { PulseFilterSheet } from '../../src/components/PulseCreate';
 import { Chip } from '../../src/components/ui';
@@ -127,7 +128,7 @@ function Pulse() {
     }).catch(() => { /* best-effort: silently ignore if not logged in yet */ });
   }, []);
 
-  const { buckets, status } = useCityPulse({ currentCitySlug: activeCitySlug, interests: [], categoryAffinities });
+  const { buckets, events, status } = useCityPulse({ currentCitySlug: activeCitySlug, interests: [], categoryAffinities });
 
   const livePulse = useLivePulse({
     context: activeCitySlug ? 'currentCity' : 'myPlans',
@@ -310,30 +311,38 @@ function Pulse() {
       <LivePulseRail pulse={livePulse} />
 
       {activeCity ? (
-        <>
-          {/* Fits your time */}
-          <View style={styles.fitsHead}>
-            <Text style={styles.sectionTitle}>Fits your time</Text>
-            <View style={styles.insideBadge}><Text style={styles.insideText}>Inside your availability</Text></View>
-            <View style={{ flex: 1 }} />
-            {fits.length > 0 && (
-              <Pressable onPress={() => router.push('/(tabs)/trips')}><Text style={styles.viewAll}>View all ({fits.length})</Text></Pressable>
-            )}
-          </View>
-          {noFits ? (
-            <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>{status === 'not_set' ? 'Set your availability to see better matches.' : 'No plans fit your availability yet.'}</Text>
-              <Text style={styles.emptySub}>Check flexible options below or create a plan.</Text>
+        status === 'not_set' ? (
+          // ── Explore Today — user has no availability set ─────────────────
+          // Availability improves personalisation but must not gate Pulse's
+          // usefulness. Show what's happening in the city right now instead of
+          // a dead-end message telling the user to set availability first.
+          <ExploreTodaySection events={events} city={activeCity} />
+        ) : (
+          <>
+            {/* Fits your time — only visible when availability is set */}
+            <View style={styles.fitsHead}>
+              <Text style={styles.sectionTitle}>Fits your time</Text>
+              <View style={styles.insideBadge}><Text style={styles.insideText}>Inside your availability</Text></View>
+              <View style={{ flex: 1 }} />
+              {fits.length > 0 && (
+                <Pressable onPress={() => router.push('/(tabs)/trips')}><Text style={styles.viewAll}>View all ({fits.length})</Text></Pressable>
+              )}
             </View>
-          ) : (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.fitsStrip}>
-              {fits.map((e) => <FitsCard key={e.id} ev={e} />)}
-            </ScrollView>
-          )}
+            {noFits ? (
+              <View style={styles.empty}>
+                <Text style={styles.emptyTitle}>No plans fit your availability yet.</Text>
+                <Text style={styles.emptySub}>Check flexible options below or create a plan.</Text>
+              </View>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.fitsStrip}>
+                {fits.map((e) => <FitsCard key={e.id} ev={e} />)}
+              </ScrollView>
+            )}
 
-          {/* When you're flexible */}
-          <FlexibleStrip events={buckets.flexible} />
-        </>
+            {/* When you're flexible */}
+            <FlexibleStrip events={buckets.flexible} />
+          </>
+        )
       ) : (
         <Pressable style={styles.cityCta} onPress={openCityPicker}>
           <MapPin size={16} color={color.signal} />

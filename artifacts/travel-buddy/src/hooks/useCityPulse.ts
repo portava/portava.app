@@ -138,5 +138,8 @@ export function useCityPulse({
   );
 
   const status = resolveStatus(availability, new Date().toISOString(), currentCitySlug);
-  return { buckets, availability, status, sessionId, loading: false, error: null };
+  // `events` is the raw fetched list before bucket filtering. Expose it so
+  // consumers like ExploreTodaySection can do their own time-band grouping
+  // without re-fetching or pulling in the full filterPulse machinery.
+  return { buckets, events, availability, status, sessionId, loading: false, error: null };
 }

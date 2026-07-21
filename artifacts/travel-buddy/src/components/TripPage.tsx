@@ -21,6 +21,7 @@ import { PassportStampCard } from './PassportStampCard.tsx';
 import { TravelSectionHeader, TravelEmptyState } from './primitives.tsx';
 import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
+import { AddToPlanSheet } from './AddToPlanSheet.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
 
 /* ── Progress ring (semicircle arc) ── */
@@ -44,6 +45,7 @@ function ProgressRing({ pct }: { pct: number }) {
 
 /* ── Trip hero header ── */
 export function TripHero({ trip }: { trip: TripDetail }) {
+  const [addPlanOpen, setAddPlanOpen] = useState(false);
   const dates = `${fmt(trip.startDate)} – ${fmt(trip.endDate)}, ${new Date(trip.endDate).getFullYear()}`;
   return (
     <View style={hero.wrap}>
@@ -76,7 +78,7 @@ export function TripHero({ trip }: { trip: TripDetail }) {
       </View>
 
       <View style={hero.actions}>
-        <Action icon={<CalendarPlus size={18} color={color.signal} />} label="Add Plan" onPress={() => router.push('/create')} />
+        <Action icon={<CalendarPlus size={18} color={color.signal} />} label="Add Plan" onPress={() => setAddPlanOpen(true)} />
         <Action icon={<UserPlus size={18} color={color.ink} />} label="Invite Buddy" onPress={() => router.push(`/circle?tripId=${encodeURIComponent(trip.id)}` as any)} />
         <Action icon={<Sparkles size={18} color={color.signal} />} label="Ask Compass" onPress={() => router.push('/(tabs)/ai')} />
         <Action icon={<Settings size={18} color={color.ink} />} label="Trip Settings" onPress={() => router.push({ pathname: '/trip/edit', params: { id: trip.id } } as any)} />
@@ -95,6 +97,13 @@ export function TripHero({ trip }: { trip: TripDetail }) {
           ))}
         </View>
       </View>
+      {/* Plan composer sheet — Modal renders as an overlay, safe inside hero.wrap */}
+      <AddToPlanSheet
+        visible={addPlanOpen}
+        tripId={trip.id}
+        onClose={() => setAddPlanOpen(false)}
+        onAdded={() => setAddPlanOpen(false)}
+      />
     </View>
   );
 }
@@ -456,6 +465,7 @@ const PLAN_TABS: { key: TripPlanStatus; label: string }[] = [
 /* ── Plans ── */
 export function TripPlans({ plans, tripId }: { plans: TripPlan[]; tripId?: string }) {
   const [tab, setTab] = useState<TripPlanStatus>('joined');
+  const [addPlanOpen, setAddPlanOpen] = useState(false);
   const visible = plans.filter((p) => p.status === tab);
   return (
     <View>
@@ -468,7 +478,22 @@ export function TripPlans({ plans, tripId }: { plans: TripPlan[]; tripId?: strin
         ))}
       </ScrollView>
       {visible.length === 0 ? (
-        <TravelEmptyState title="No trip plans yet" sub="Add your first plan to start building your itinerary." action="Add a Plan" onAction={() => router.push('/create' as any)} />
+        <>
+          <TravelEmptyState
+            title="No trip plans yet"
+            sub="Add your first plan to start building your itinerary."
+            action={tripId ? 'Add a Plan' : undefined}
+            onAction={tripId ? () => setAddPlanOpen(true) : undefined}
+          />
+          {tripId ? (
+            <AddToPlanSheet
+              visible={addPlanOpen}
+              tripId={tripId}
+              onClose={() => setAddPlanOpen(false)}
+              onAdded={() => setAddPlanOpen(false)}
+            />
+          ) : null}
+        </>
       ) : (
         <View style={pl.list}>
           {visible.map((plan) => (
