@@ -428,8 +428,12 @@ describe("E. get_group_recommendation", () => {
     const veg = result.candidates.find((c: any) => c.id === "ev-veg");
     assert.ok(veg, "vegetarian event surfaces");
     assert.ok(
-      String(veg.whyThis ?? "").toLowerCase().includes("told compass"),
-      `circle memory must ground a memory_preference factor (got whyThis=${veg.whyThis})`,
+      String(veg.whyThis ?? "").toLowerCase().includes("matches your circle's remembered preferences"),
+      `circle memory must ground a circle_memory_preference factor with the group label (got whyThis=${veg.whyThis})`,
+    );
+    assert.ok(
+      !String(veg.whyThis ?? "").toLowerCase().includes("told compass"),
+      `a circle-memory hit must not reuse the personal-memory label (got whyThis=${veg.whyThis})`,
     );
   });
 
@@ -446,8 +450,9 @@ describe("E. get_group_recommendation", () => {
     const veg = result.candidates.find((c: any) => c.id === "ev-veg");
     assert.ok(veg, "vegetarian event still surfaces (no gating, just no boost)");
     assert.ok(
-      !String(veg.whyThis ?? "").toLowerCase().includes("told compass"),
-      "cross-circle memory must not create a memory_preference factor",
+      !String(veg.whyThis ?? "").toLowerCase().includes("told compass") &&
+        !String(veg.whyThis ?? "").toLowerCase().includes("circle's remembered preferences"),
+      "cross-circle memory must not create any memory factor",
     );
   });
 

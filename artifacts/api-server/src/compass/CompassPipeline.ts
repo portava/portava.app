@@ -106,16 +106,16 @@ export async function runPipeline(
   context: CompassContext,
   db: SupabaseClient | null = null,
   _testOverrides?: PipelineTestOverrides,
-  extraMemoryTags?: Set<string>,
+  circleMemoryTags?: Set<string>,
 ): Promise<PipelineSummary> {
   // Pre-load feature flags once for the whole batch
   const flags = await loadFlags(db);
 
   // Phase 7 — load memory-derived preference tags once per pipeline call.
-  // Callers may pass extra pre-gated tags (e.g. circle-scoped group memories
-  // for group recommendations); the boost stays bounded either way.
+  // Callers may pass pre-gated circle-scoped group memory tags (group
+  // recommendations); those are kept separate so hits ground a
+  // group-specific factor label, while the boost stays bounded either way.
   const memoryTags = await loadMemoryPreferenceTags(db, profile.userId);
-  for (const t of extraMemoryTags ?? []) memoryTags.add(t);
 
   // Phase 15 — load the Destination World Model for the viewer's city once
   // per pipeline call. Fail-soft: a missing model contributes zero boost.
@@ -154,7 +154,7 @@ export async function runPipeline(
     // Phase 7 — Compass Match / Community Score / grounded ranking factors.
     // The memory-derived preference boost is bounded (0–5) so memories can
     // nudge but never dominate the rank.
-    const annotation = annotateCandidate(sanitized, profile, memoryTags);
+    const annotation = annotateCandidate(sanitized, profile, memoryTags, circleMemoryTags);
 
     // Phase 15 — bounded, time-aware Destination World Model boost. The same
     // item ranks differently on a Friday night vs a Monday morning when the

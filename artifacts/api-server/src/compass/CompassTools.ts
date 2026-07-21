@@ -324,13 +324,13 @@ async function rankToolCandidates(
   sc: SupabaseClient,
   profile: CompassProfile | null,
   items: CompassItem[],
-  extraMemoryTags?: Set<string>,
+  circleMemoryTags?: Set<string>,
 ): Promise<Map<string, ToolRankEntry> | null> {
   if (!profile || items.length === 0) return null;
   try {
     const p = normalizeProfileForRanking(profile);
     const context = buildCompassContext(p, defaultSignals(p));
-    const { results } = await runPipeline(items, p, context, sc, undefined, extraMemoryTags);
+    const { results } = await runPipeline(items, p, context, sc, undefined, circleMemoryTags);
     // A successful pipeline run with zero survivors means every candidate was
     // intentionally gated out (safety/eligibility/kill-switch) — honour that
     // with an EMPTY ranking map so the tool returns no candidates. Raw

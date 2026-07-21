@@ -134,13 +134,19 @@ export interface CompassMatchResult {
  *
  * @param item        Sanitized candidate item
  * @param profile     Viewer's Compass profile
- * @param memoryTags  Lower-case preference tokens derived from the viewer's
- *                    long-term Compass memories (Phase 6)
+ * @param memoryTags        Lower-case preference tokens derived from the viewer's
+ *                          long-term Compass memories (Phase 6)
+ * @param circleMemoryTags  Lower-case preference tokens derived from a circle's
+ *                          scope="circle" memories (group ranking only). Hits
+ *                          surface a group-specific factor label so "Why this?"
+ *                          stays honest — the fact may have been taught by
+ *                          another member.
  */
 export function computeCompassMatch(
   item: CompassItem,
   profile: CompassProfile,
   memoryTags: Set<string> = new Set(),
+  circleMemoryTags: Set<string> = new Set(),
 ): CompassMatchResult {
   const w = MATCH_WEIGHTS;
   const factors: RankingFactor[] = [];
@@ -293,19 +299,35 @@ export function computeCompassMatch(
     }
   }
 
-  // Phase 6 memory-derived preferences
+  // Phase 6 memory-derived preferences. Personal and circle memories share
+  // one bounded weight budget: total affinity is capped exactly as before,
+  // but each source grounds its own honestly-worded factor.
   let memoryAffinity = 0;
-  if (memoryTags.size > 0 && tags.length > 0) {
-    const memHits = tags.filter((t) => memoryTags.has(t));
-    if (memHits.length > 0) {
-      memoryAffinity = Math.min(1, memHits.length / 2);
+  if (tags.length > 0 && (memoryTags.size > 0 || circleMemoryTags.size > 0)) {
+    const personalHits = tags.filter((t) => memoryTags.has(t));
+    const circleHits = tags.filter(
+      (t) => circleMemoryTags.has(t) && !memoryTags.has(t),
+    );
+    const totalHits = personalHits.length + circleHits.length;
+    if (totalHits > 0) {
+      memoryAffinity = Math.min(1, totalHits / 2);
       score += memoryAffinity * w.memory;
-      factors.push({
-        key: "memory_preference",
-        label: "Based on what you've told Compass",
-        weight: memoryAffinity,
-        detail: memHits.slice(0, 3).join(", "),
-      });
+      if (personalHits.length > 0) {
+        factors.push({
+          key: "memory_preference",
+          label: "Based on what you've told Compass",
+          weight: Math.min(1, personalHits.length / 2),
+          detail: personalHits.slice(0, 3).join(", "),
+        });
+      }
+      if (circleHits.length > 0) {
+        factors.push({
+          key: "circle_memory_preference",
+          label: "Matches your circle's remembered preferences",
+          weight: Math.min(1, circleHits.length / 2),
+          detail: circleHits.slice(0, 3).join(", "),
+        });
+      }
     }
   }
 
@@ -326,10 +348,11 @@ export function annotateCandidate(
   item: CompassItem,
   profile: CompassProfile,
   memoryTags: Set<string> = new Set(),
+  circleMemoryTags: Set<string> = new Set(),
 ): CandidateAnnotation {
   try {
     const communityScore = computeCommunityScore(item);
-    const match = computeCompassMatch(item, profile, memoryTags);
+    const match = computeCompassMatch(item, profile, memoryTags, circleMemoryTags);
 
     const factors = [...match.factors];
     // Community factor is grounded in the Community Score itself — shown only
