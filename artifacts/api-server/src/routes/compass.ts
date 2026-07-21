@@ -34,6 +34,7 @@ import {
   formatStructuredContextLines,
   buildModeWeightingLines,
 } from "../compass/CompassStructuredContext.js";
+import { buildDestinationContextLines } from "../compass/CompassGraphEngine.js";
 import { buildFeed, buildSection, SECTION_NAMES, type SectionName, type FeedPage } from "../compass/CompassFeedBuilder.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { hydrateCompassItems } from "../compass/CompassItemHydrator.js";
@@ -1108,6 +1109,16 @@ router.post("/compass/ask", async (req, res) => {
     ctxLines.push(`Verified nearby places:\n${topItemsContext.join("\n")}`);
   ctxLines.push(...structuredLines);
   ctxLines.push(...modeWeightingLines);
+
+  // ── Phase 15: Destination World Model + city-confidence honesty ───────────
+  // Per-city time-sliced rhythm (Friday night ≠ Monday morning) and an honest
+  // data-depth line so deep cities answer confidently and thin cities say so.
+  // Aggregates only — no user ids, handles, or coordinates. Never fatal.
+  try {
+    const wmCity = effectiveCity || locationCtx?.currentCity || null;
+    const destinationLines = await buildDestinationContextLines(sc, wmCity);
+    ctxLines.push(...destinationLines);
+  } catch { /* non-fatal — proceed without destination model */ }
 
   // ── Phase 6: layered memory injection (bounded, structured insights only) ─
   // Circle memories require verified membership of the named circle; group

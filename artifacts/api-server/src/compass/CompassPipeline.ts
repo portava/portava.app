@@ -25,6 +25,7 @@ import {
   loadMemoryPreferenceTags,
   type RankingFactor,
 } from "./CompassRecommendationEngine.js";
+import { getCityWorldModel, worldModelBoostForItem } from "./CompassGraphEngine.js";
 
 export interface PipelineResult {
   item:             CompassItem;
@@ -112,6 +113,11 @@ export async function runPipeline(
   // Phase 7 — load memory-derived preference tags once per pipeline call
   const memoryTags = await loadMemoryPreferenceTags(db, profile.userId);
 
+  // Phase 15 — load the Destination World Model for the viewer's city once
+  // per pipeline call. Fail-soft: a missing model contributes zero boost.
+  const worldModel = await getCityWorldModel(db, profile.currentCity ?? null);
+  const now = new Date();
+
   const safetyFn     = _testOverrides?.safetyFilter     ?? runSafetyFilter;
   const eligibilityFn = _testOverrides?.eligibilityCheck ?? runEligibilityCheck;
   const scoreFn      = _testOverrides?.scoreItem         ?? scoreItem;
@@ -146,15 +152,23 @@ export async function runPipeline(
     // nudge but never dominate the rank.
     const annotation = annotateCandidate(sanitized, profile, memoryTags);
 
+    // Phase 15 — bounded, time-aware Destination World Model boost. The same
+    // item ranks differently on a Friday night vs a Monday morning when the
+    // city's graph history says its category peaks in the current time slice.
+    const wm = worldModelBoostForItem(sanitized, worldModel, now);
+    const rankingFactors = wm.factor
+      ? [...annotation.factors, wm.factor]
+      : annotation.factors;
+
     results.push({
       item:             sanitized,
-      finalScore:       scored.finalScore + annotation.memoryBoost,
+      finalScore:       scored.finalScore + annotation.memoryBoost + wm.boost,
       safetyPassed:     true,
       eligiblePassed:   true,
       privacySanitized: true,
       compassMatch:     annotation.compassMatch,
       communityScore:   annotation.communityScore,
-      rankingFactors:   annotation.factors,
+      rankingFactors,
     });
   }
 

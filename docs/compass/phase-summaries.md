@@ -632,3 +632,86 @@ State when the standing brief was installed:
   validation, value-delivered aggregate math and admin gating).
 - Out of scope honored: no new user-facing surfaces; no intelligence
   graph (Phase 15).
+
+## Phase 15 — Travel Intelligence Graph (2026-07-21)
+
+- Graph substrate: `compass_graph_nodes` + `compass_graph_edges` persist a
+  typed graph over People–Places–Events–Trips–Time–Vibe–Behavior–Outcomes,
+  populated by batch builders in `src/compass/CompassGraphEngine.ts` from
+  data the app already collects (user_stamps, trips, events,
+  compass_outcome_events, rank_events — no new external data). Cross-trip
+  relationships persist: repeat visits accumulate `observed_count` on the
+  `visited` edge, and a second trip by the same person to the same city
+  creates an explicit `returned_to` edge. Person nodes carry no profile
+  attributes; privacy guards apply at read time (every read API returns
+  aggregates only — no user ids, handles, or coordinates ever leave the
+  graph). Rebuild is idempotent (batch upserts on typed identity keys).
+- Destination World Model: `compass_city_models` holds per-city
+  day-of-week × daypart activity profiles (`active_during:<category>`
+  edge observations rolled up per time slice) plus monthly/seasonal
+  buckets and top categories. Cebu on a Friday night genuinely differs
+  from Monday morning — each slice has its own count + category mix.
+  Consumed in two places: (1) ranking — `runPipeline` loads the viewer's
+  city model once per call and `worldModelBoostForItem` adds a bounded
+  0–5 time-aware boost (mirroring memoryBoost) with a `city_rhythm`
+  ranking factor so "Why this?" stays grounded; under-sampled slices
+  (<3 observations) contribute zero boost; (2) context —
+  `buildDestinationContextLines` injects rhythm + seasonality lines into
+  the `/api/compass/ask` prompt context.
+- City-confidence index: `compass_city_confidence` scores per-city data
+  depth 0–100 from aggregate signals (visitors, cross-trip returners,
+  events, realized outcomes, time-slice coverage, sample size) with
+  tiers deep/moderate/thin. Feeds the Phase 8 honesty surface: prompt
+  context always includes an honest data-depth line
+  (`cityConfidenceNote`) — deep cities answer confidently, thin cities
+  say so. Exposed via GET `/api/compass/city-confidence` (auth,
+  aggregates only, unknown cities default honestly to thin) and admin
+  GET `/api/compass/graph/status` / POST `/api/compass/graph/rebuild`.
+- Depth-first launch: live rebuild against production data ran clean
+  (90 nodes, 117 edges, 23 cities modeled + scored). Strongest city
+  today: London (23.78, tier thin) — and the index honestly reports ALL
+  cities as thin at current data volume, exactly the intended behavior:
+  confidence is earned from data depth, not asserted.
+- Migration `20260730_compass_intelligence_graph.sql` applied live
+  (4 tables + indexes + service-role-only RLS verified via
+  information_schema).
+- Tests: `src/test/compass-intelligence-graph.test.ts` (18 tests —
+  cross-trip persistence, person-node privacy, idempotent rebuild,
+  time-sliced world models, time-varying boost (same item, different
+  time, different rank) end to end through `runPipeline`, under-sampled
+  honesty, depth scoring + tiers + strongest-city selection, honest
+  thin/deep notes, prompt lines free of ids/coordinates, route auth).
+- Out of scope honored: no external data acquisition; no multi-city
+  depth work beyond wiring the index.
+
+---
+
+## Roadmap wrap-up (2026-07-21)
+
+All 15 phases of the Compass master roadmap are complete. The arc:
+
+- **Foundation (1–4):** a real conversational endpoint with honest
+  fallbacks, the four-gate pipeline (safety → eligibility → scoring →
+  ranking), privacy-guarded structured context, and grounded "verified
+  places only" answers.
+- **Personalization (5–8):** per-user preference weights, layered memory
+  with strict circle boundaries, memory-boosted ranking, and the
+  confidence/honesty system (source-classed labels, "can't verify"
+  notes).
+- **Real-world surface (9–13):** proactive suggestions, booking
+  frontloading, dual-score ranking (Compass Match with zero popularity
+  inputs vs Community Score with zero viewer inputs), live in-trip
+  grounding, and Trip Autopilot.
+- **Proprietary intelligence (14–15):** the outcome chain
+  (served → viewed → … → returned) closes the loop from prediction to
+  reality and nudges ranking weights from prediction error; the
+  intelligence graph, Destination World Model, and city-confidence
+  index make Portava's answers improve with every stamp, trip, event,
+  and outcome the community records — independent of the underlying
+  model. Deep cities will answer confidently because the data earned
+  it; thin cities say so honestly until it does.
+
+The system is designed to compound: every phase's signals feed the
+graph, and the graph feeds ranking, context, and honesty. Next
+frontier work (multi-city depth, richer seasonal models, graph-driven
+buddy matching) can build on this substrate without schema changes.
