@@ -138,3 +138,111 @@ describe('HiddenGemCard — live open-now pill', () => {
     expect(mockGetLive).toHaveBeenCalledWith('Secret Falls Cafe', 'Cebu City');
   });
 });
+
+/**
+ * Card recycling: the same component instance receives a different place
+ * (new gem/pick props) while the first place's live lookup is still pending.
+ * The first result must be discarded — never briefly shown, and never
+ * allowed to overwrite the second place's status after it resolves.
+ */
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
+const pick2: TravelerPick = {
+  ...pick,
+  id: 'tp-2',
+  place: 'Sirao Garden Cafe',
+  city: 'Cebu City',
+};
+
+const gem2: DiscoveryItem = {
+  ...gem,
+  id: 'gem-2',
+  name: 'Tops Lookout Kiosk',
+} as DiscoveryItem;
+
+describe('TravelerPickCard — recycled onto a different place', () => {
+  it('discards the first place\'s slow lookup and only shows the new place\'s status', async () => {
+    const first = deferred<typeof openStatus>();
+    const second = deferred<typeof closedStatus>();
+    mockGetLive
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+
+    const { rerender } = await render(<TravelerPickCard pick={pick} />);
+
+    // Wait until the first place's lookup has actually started (600 ms delay).
+    await waitFor(
+      () => expect(mockGetLive).toHaveBeenCalledWith('The Distillery Cebu', 'Cebu City'),
+      { timeout: 3000 },
+    );
+
+    // Recycle the card onto a different place while the first lookup is pending.
+    rerender(<TravelerPickCard pick={pick2} />);
+
+    // No stale pill from the previous place while the new lookup runs.
+    expect(screen.queryByTestId('pick-open-now-tp-1')).toBeNull();
+    expect(screen.queryByTestId('pick-open-now-tp-2')).toBeNull();
+
+    // Second place's lookup fires for the new name.
+    await waitFor(
+      () => expect(mockGetLive).toHaveBeenCalledWith('Sirao Garden Cafe', 'Cebu City'),
+      { timeout: 3000 },
+    );
+
+    // New place resolves closed → its pill renders.
+    second.resolve(closedStatus);
+    await waitFor(() => expect(screen.getByTestId('pick-open-now-tp-2')).toBeTruthy(), { timeout: 3000 });
+    expect(screen.getByText('Closed now')).toBeTruthy();
+
+    // The FIRST place's slow lookup finally resolves open — it must be discarded,
+    // not overwrite the second place's status.
+    first.resolve(openStatus);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText('Open now')).toBeNull();
+    expect(screen.getByText('Closed now')).toBeTruthy();
+    expect(screen.queryByTestId('pick-open-now-tp-1')).toBeNull();
+  });
+});
+
+describe('HiddenGemCard — recycled onto a different place', () => {
+  it('discards the first gem\'s slow lookup and only shows the new gem\'s status', async () => {
+    const first = deferred<typeof closedStatus>();
+    const second = deferred<typeof openStatus>();
+    mockGetLive
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+
+    const { rerender } = await render(<HiddenGemCard gem={gem} />);
+
+    await waitFor(
+      () => expect(mockGetLive).toHaveBeenCalledWith('Secret Falls Cafe', 'Cebu City'),
+      { timeout: 3000 },
+    );
+
+    // Recycle onto a different gem while the first lookup is still pending.
+    rerender(<HiddenGemCard gem={gem2} />);
+    expect(screen.queryByTestId('gem-open-now-gem-1')).toBeNull();
+    expect(screen.queryByTestId('gem-open-now-gem-2')).toBeNull();
+
+    await waitFor(
+      () => expect(mockGetLive).toHaveBeenCalledWith('Tops Lookout Kiosk', 'Cebu City'),
+      { timeout: 3000 },
+    );
+
+    // New gem resolves open → its pill renders.
+    second.resolve(openStatus);
+    await waitFor(() => expect(screen.getByTestId('gem-open-now-gem-2')).toBeTruthy(), { timeout: 3000 });
+    expect(screen.getByText('Open now')).toBeTruthy();
+
+    // First gem's slow result arrives late — must be discarded.
+    first.resolve(closedStatus);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText('Closed now')).toBeNull();
+    expect(screen.getByText('Open now')).toBeTruthy();
+    expect(screen.queryByTestId('gem-open-now-gem-1')).toBeNull();
+  });
+});
