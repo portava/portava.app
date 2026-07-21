@@ -249,6 +249,43 @@ function hiddenUserIds(profile: CompassProfile | null): Set<string> {
   ]);
 }
 
+/**
+ * Re-resolve blocked/blocker/muted user ids straight from the DB.
+ *
+ * The CompassProfile passed into the tool loop is a snapshot taken at ask
+ * time (and cached ~2 min). If the user blocks someone MID-CONVERSATION,
+ * later tool calls in the same conversation must not surface that person —
+ * so social tools refresh the hidden set per call instead of trusting the
+ * stale snapshot. Fails safe: on query error the snapshot's ids are kept.
+ */
+async function refreshHiddenUsers(
+  sc: SupabaseClient,
+  userId: string,
+  profile: CompassProfile | null,
+): Promise<CompassProfile | null> {
+  try {
+    const [blockedRes, blockerRes, mutedRes] = await Promise.all([
+      sc.from("blocks").select("blocked_id").eq("blocker_id", userId),
+      sc.from("blocks").select("blocker_id").eq("blocked_id", userId),
+      sc.from("user_mutes").select("muted_id").eq("muter_id", userId),
+    ]);
+    const blockedUserIds = blockedRes.error
+      ? (profile?.blockedUserIds ?? [])
+      : ((blockedRes.data ?? []) as any[]).map((r) => String(r.blocked_id));
+    const blockerUserIds = blockerRes.error
+      ? (profile?.blockerUserIds ?? [])
+      : ((blockerRes.data ?? []) as any[]).map((r) => String(r.blocker_id));
+    const mutedUserIds = mutedRes.error
+      ? (profile?.mutedUserIds ?? [])
+      : ((mutedRes.data ?? []) as any[]).map((r) => String(r.muted_id));
+    const base =
+      profile ?? ({ userId, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile);
+    return { ...base, blockedUserIds, blockerUserIds, mutedUserIds };
+  } catch {
+    return profile; // fail safe to the snapshot — never widen visibility
+  }
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface AddToTripProposal {
@@ -1053,9 +1090,12 @@ export async function executeCompassTool(
       case "get_circle_activity":  raw = await toolGetCircleActivity(sc, profile, userId); break;
       case "check_trip_conflicts": raw = await toolCheckTripConflicts(sc, userId, args); break;
       case "add_to_trip":          raw = await toolAddToTrip(sc, userId, args); break;
-      case "get_whos_around":            raw = await toolWhosAround(sc, profile, userId); break;
-      case "get_travel_compatibility":   raw = await toolTravelCompatibility(sc, profile, userId, args); break;
-      case "get_group_recommendation":   raw = await toolGroupRecommendation(sc, profile, userId, args); break;
+      // Phase 9 social tools re-resolve blocked/muted users PER CALL so a
+      // mid-conversation block takes effect immediately (the profile snapshot
+      // passed into the tool loop may be stale/cached).
+      case "get_whos_around":            raw = await toolWhosAround(sc, await refreshHiddenUsers(sc, userId, profile), userId); break;
+      case "get_travel_compatibility":   raw = await toolTravelCompatibility(sc, await refreshHiddenUsers(sc, userId, profile), userId, args); break;
+      case "get_group_recommendation":   raw = await toolGroupRecommendation(sc, await refreshHiddenUsers(sc, userId, profile), userId, args); break;
       default:                     raw = { error: `Unknown tool: ${name}` };
     }
     return sanitizeToolResult(raw);

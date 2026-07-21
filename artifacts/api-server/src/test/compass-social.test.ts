@@ -283,6 +283,8 @@ describe("C. get_whos_around", () => {
     // Bob shares; Cara has sharing off; Eve shares but is BLOCKED by Alice.
     db.circle_visibility_settings = [sharingOn(BOB_ID), sharingOn(EVE_ID)];
     db.circle_presence = [presenceRow(BOB_ID), presenceRow(CARA_ID), presenceRow(EVE_ID)];
+    // The blocks TABLE is the source of truth — social tools re-resolve it per call.
+    db.blocks = [{ blocker_id: ALICE_ID, blocked_id: EVE_ID }];
     const profile = profileFor({ blockedUserIds: [EVE_ID] });
     const result: any = await executeCompassTool(makeClient(db), ALICE_ID, profile, "get_whos_around", {});
     const handles = result.people.map((p: any) => p.handle);
@@ -335,6 +337,8 @@ describe("D. get_travel_compatibility", () => {
     const db = tripFixture();
     // Cara exists but shares no context with Alice; Eve is a co-member but blocked.
     db.trip_members.push({ trip_id: TRIP_ID, user_id: EVE_ID, role: "member", status: "accepted" });
+    // The blocks TABLE is the source of truth — social tools re-resolve it per call.
+    db.blocks = [{ blocker_id: ALICE_ID, blocked_id: EVE_ID }];
     const profile = profileFor({ blockedUserIds: [EVE_ID] });
     const client = makeClient(db);
     const stranger: any = await executeCompassTool(client, ALICE_ID, profile, "get_travel_compatibility", { handle: "cara" });
@@ -465,5 +469,84 @@ describe("E. get_group_recommendation", () => {
     const result: any = await executeCompassTool(makeClient(db), ALICE_ID, profileFor(), "get_group_recommendation", { circleName: "Dive Crew", kind: "events", city: "Cebu" });
     assert.deepEqual(result.candidates, []);
     assert.ok(String(result.info).toLowerCase().includes("no candidates"), "honest empty answer");
+  });
+});
+
+// ── F. Mid-conversation block freshness ──────────────────────────────────────
+// The CompassProfile passed into the tool loop is a snapshot taken at ask time
+// (cached ~2 min). If the user blocks someone mid-conversation, the NEXT tool
+// call in the SAME conversation must not surface that person — social tools
+// must re-resolve hidden users from the blocks/user_mutes tables per call,
+// never trust the stale snapshot arrays.
+
+describe("F. mid-conversation block freshness", () => {
+  it("get_whos_around: a block written AFTER the profile snapshot hides the person immediately", async () => {
+    const db = tripFixture([EVE_ID]);
+    db.circle_visibility_settings = [sharingOn(BOB_ID), sharingOn(EVE_ID)];
+    db.circle_presence = [presenceRow(BOB_ID), presenceRow(EVE_ID)];
+    // Stale snapshot: Alice's profile arrays are EMPTY (block happened after ask).
+    const staleProfile = profileFor();
+    // The block only exists in the DB — as it would mid-conversation.
+    db.blocks = [{ blocker_id: ALICE_ID, blocked_id: EVE_ID }];
+    const result: any = await executeCompassTool(makeClient(db), ALICE_ID, staleProfile, "get_whos_around", {});
+    const handles = result.people.map((p: any) => p.handle);
+    assert.deepEqual(handles, ["@bob"], "just-blocked user must vanish despite the stale snapshot");
+    assert.ok(!JSON.stringify(result).includes("@eve") && !JSON.stringify(result).includes(EVE_ID), "no trace of the just-blocked user");
+  });
+
+  it("get_whos_around: a mid-conversation MUTE also hides the person immediately", async () => {
+    const db = tripFixture([EVE_ID]);
+    db.circle_visibility_settings = [sharingOn(BOB_ID), sharingOn(EVE_ID)];
+    db.circle_presence = [presenceRow(BOB_ID), presenceRow(EVE_ID)];
+    db.user_mutes = [{ muter_id: ALICE_ID, muted_id: EVE_ID }];
+    const result: any = await executeCompassTool(makeClient(db), ALICE_ID, profileFor(), "get_whos_around", {});
+    assert.deepEqual(result.people.map((p: any) => p.handle), ["@bob"], "just-muted user must vanish");
+  });
+
+  it("get_group_recommendation: a just-blocked fellow MEMBER drops out of the group despite the stale snapshot", async () => {
+    const db = groupFixture();
+    // Alice blocks Bob mid-conversation — DB row only, snapshot arrays empty.
+    db.blocks = [{ blocker_id: ALICE_ID, blocked_id: BOB_ID }];
+    const result: any = await executeCompassTool(makeClient(db), ALICE_ID, profileFor(), "get_group_recommendation", { circleName: "Dive Crew", kind: "events", city: "Cebu" });
+    assert.equal(result.group.size, 1, "just-blocked member must not count toward the group");
+    assert.ok(!result.group.memberHandles.includes("@bob"), "just-blocked member's handle must not appear");
+    assert.ok(!JSON.stringify(result).includes(BOB_ID), "no trace of the just-blocked member");
+  });
+
+  it("get_group_recommendation: a just-blocked event HOST's events vanish despite the stale snapshot", async () => {
+    const db = groupFixture();
+    // Eve hosts ev-blocked; Alice blocks Eve mid-conversation (DB row only).
+    db.blocks = [{ blocker_id: ALICE_ID, blocked_id: EVE_ID }];
+    const result: any = await executeCompassTool(makeClient(db), ALICE_ID, profileFor(), "get_group_recommendation", { circleName: "Dive Crew", kind: "events", city: "Cebu" });
+    const ids = result.candidates.map((c: any) => c.id);
+    assert.ok(!ids.includes("ev-blocked"), "event hosted by the just-blocked user must not surface");
+    assert.ok(!JSON.stringify(result).includes("Rooftop Party"), "no trace of the just-blocked host's event");
+  });
+
+  it("get_travel_compatibility: a just-blocked co-member becomes 'not available' despite the stale snapshot", async () => {
+    const db = tripFixture();
+    db.blocks = [{ blocker_id: ALICE_ID, blocked_id: BOB_ID }];
+    const result: any = await executeCompassTool(makeClient(db), ALICE_ID, profileFor(), "get_travel_compatibility", { handle: "bob" });
+    assert.equal(result.compatibility, null, "just-blocked user must not be comparable");
+  });
+
+  it("fails safe: if the blocks refresh errors, the snapshot's hidden set still applies", async () => {
+    const db = tripFixture([EVE_ID]);
+    db.circle_visibility_settings = [sharingOn(BOB_ID), sharingOn(EVE_ID)];
+    db.circle_presence = [presenceRow(BOB_ID), presenceRow(EVE_ID)];
+    // Snapshot says Eve is muted; the refresh query itself blows up.
+    // (user_mutes is only touched by the refresh — the presence guard's own
+    // blocks check keeps working, so Bob stays visible.)
+    const snapshot = profileFor({ mutedUserIds: [EVE_ID] });
+    const inner = makeClient(db);
+    const erroring = {
+      from: (table: string) =>
+        table === "user_mutes"
+          ? { select: () => { throw new Error("db down"); } }
+          : inner.from(table),
+    } as any;
+    const result: any = await executeCompassTool(erroring, ALICE_ID, snapshot, "get_whos_around", {});
+    const handles = result.people.map((p: any) => p.handle);
+    assert.deepEqual(handles, ["@bob"], "on refresh failure the stale hidden set must still hide Eve — never widen visibility");
   });
 });
