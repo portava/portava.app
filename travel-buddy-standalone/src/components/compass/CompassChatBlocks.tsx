@@ -409,10 +409,16 @@ function ComparisonBlock({ columns, rows }: { columns: string[]; rows: CompassCo
 
   // Inline distance context: when at least two compared entities carry real
   // coordinates, show them on a mini-map with the pairwise distance delta.
-  const coordRows = rows.filter((r) => r.place?.lat != null && r.place?.lng != null);
-  const points: CompassMiniMapPoint[] = coordRows.map((r) => ({
-    id: r.id, label: r.label, lat: r.place!.lat!, lng: r.place!.lng!,
-  }));
+  // Rows of either kind count — places and events (hydrated venue coords).
+  const rowCoords = (r: CompassComparisonRow): { lat: number; lng: number } | null => {
+    const src = r.kind === 'event' ? r.event : r.place;
+    return src?.lat != null && src?.lng != null ? { lat: src.lat, lng: src.lng } : null;
+  };
+  const coordRows = rows.filter((r) => rowCoords(r) != null);
+  const points: CompassMiniMapPoint[] = coordRows.map((r) => {
+    const c = rowCoords(r)!;
+    return { id: r.id, label: r.label, lat: c.lat, lng: c.lng };
+  });
   const deltas: string[] = [];
   for (let i = 1; i < points.length; i++) {
     const a = points[0], b = points[i];
@@ -426,7 +432,7 @@ function ComparisonBlock({ columns, rows }: { columns: string[]; rows: CompassCo
           <CompassMiniMap
             points={points}
             height={140}
-            onPress={coordRows[0]?.place ? () => openPlace(coordRows[0].place!) : undefined}
+            onPress={coordRows[0] ? () => openRow(coordRows[0]) : undefined}
             testID="compass-block-compare-map"
           />
           {deltas.map((d, i) => (

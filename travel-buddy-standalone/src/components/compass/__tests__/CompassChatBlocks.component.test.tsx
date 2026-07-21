@@ -180,6 +180,26 @@ it('comparison with two coordinate-bearing places shows a mini-map and distance 
   expect(delta.props.children).toMatch(/km|m$/);
 });
 
+it('comparison event row with hydrated coords contributes a pin and distance delta', async () => {
+  const EVENT_WITH_COORDS = { ...EVENT, lat: 10.32, lng: 123.92 };
+  await render(
+    <CompassChatBlocks
+      blocks={[{
+        type: 'comparison',
+        columns: ['Rating'],
+        rows: [
+          { kind: 'place', id: PLACE.id, label: PLACE.name, values: ['4.5'], place: PLACE },
+          { kind: 'event', id: EVENT.id, label: EVENT.title, values: ['—'], event: EVENT_WITH_COORDS },
+        ],
+      }]}
+    />,
+  );
+  expect(screen.getByTestId('compass-block-compare-map')).toBeTruthy();
+  const delta = screen.getByTestId('compass-block-compare-delta-0');
+  expect(delta.props.children).toContain('Cafe Uno ↔ Beach Meetup');
+  expect(delta.props.children).toMatch(/km|m$/);
+});
+
 it('comparison with fewer than two coordinate rows renders no mini-map', async () => {
   await render(
     <CompassChatBlocks
