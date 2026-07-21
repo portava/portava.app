@@ -90,30 +90,42 @@ export async function syncTripChatMembers(
   for (const { user_id, role } of accepted) {
     const existing = currentById.get(user_id);
     if (!existing) {
-      await sc.from('message_thread_members').insert({
+      const { error: insErr } = await sc.from('message_thread_members').insert({
         thread_id: threadId,
         user_id,
         role,
         joined_at: now,
         left_at: null,
       });
+      if (insErr) {
+        console.error(`syncTripChatMembers: member insert failed for trip ${tripId}: ${insErr.message}`);
+        return null;
+      }
     } else if (existing.left_at !== null || existing.role !== role) {
-      await sc
+      const { error: updErr } = await sc
         .from('message_thread_members')
         .update({ left_at: null, role })
         .eq('thread_id', threadId)
         .eq('user_id', user_id);
+      if (updErr) {
+        console.error(`syncTripChatMembers: member restore failed for trip ${tripId}: ${updErr.message}`);
+        return null;
+      }
     }
   }
 
   // 5. Set left_at for members no longer accepted.
   for (const [user_id, m] of currentById.entries()) {
     if (!acceptedIds.has(user_id) && m.left_at === null) {
-      await sc
+      const { error: leaveErr } = await sc
         .from('message_thread_members')
         .update({ left_at: now })
         .eq('thread_id', threadId)
         .eq('user_id', user_id);
+      if (leaveErr) {
+        console.error(`syncTripChatMembers: member removal failed for trip ${tripId}: ${leaveErr.message}`);
+        return null;
+      }
     }
   }
 
@@ -193,30 +205,42 @@ export async function syncCircleChatMembers(
   for (const { user_id, role } of allAccepted) {
     const ex = currentById.get(user_id);
     if (!ex) {
-      await sc.from('message_thread_members').insert({
+      const { error: insErr } = await sc.from('message_thread_members').insert({
         thread_id: threadId,
         user_id,
         role,
         joined_at: now,
         left_at: null,
       });
+      if (insErr) {
+        console.error(`syncCircleChatMembers: member insert failed for circle ${circleOwnerId}: ${insErr.message}`);
+        return null;
+      }
     } else if (ex.left_at !== null || ex.role !== role) {
-      await sc
+      const { error: updErr } = await sc
         .from('message_thread_members')
         .update({ left_at: null, role })
         .eq('thread_id', threadId)
         .eq('user_id', user_id);
+      if (updErr) {
+        console.error(`syncCircleChatMembers: member restore failed for circle ${circleOwnerId}: ${updErr.message}`);
+        return null;
+      }
     }
   }
 
   // 5. Remove members no longer in the accepted set.
   for (const [user_id, m] of currentById.entries()) {
     if (!acceptedSet.has(user_id) && m.left_at === null) {
-      await sc
+      const { error: leaveErr } = await sc
         .from('message_thread_members')
         .update({ left_at: now })
         .eq('thread_id', threadId)
         .eq('user_id', user_id);
+      if (leaveErr) {
+        console.error(`syncCircleChatMembers: member removal failed for circle ${circleOwnerId}: ${leaveErr.message}`);
+        return null;
+      }
     }
   }
 

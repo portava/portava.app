@@ -108,10 +108,11 @@ export async function syncTripChatMembers(
     left_at: null,
   }));
 
-  await sc.from('message_thread_members').upsert(upsertRows, {
+  const { error: upsertErr } = await sc.from('message_thread_members').upsert(upsertRows, {
     onConflict: 'thread_id,user_id',
     ignoreDuplicates: false,
   });
+  if (upsertErr) throw new Error(`syncTripChatMembers: member upsert failed for trip ${tripId}: ${upsertErr.message}`);
 
   // Mark any thread members no longer in the accepted set as left.
   const { data: activeMembers } = await sc
@@ -125,11 +126,12 @@ export async function syncTripChatMembers(
     .filter((id) => !acceptedIds.has(id));
 
   if (toRemove.length > 0) {
-    await sc
+    const { error: removeErr } = await sc
       .from('message_thread_members')
       .update({ left_at: now })
       .eq('thread_id', threadId)
       .in('user_id', toRemove);
+    if (removeErr) throw new Error(`syncTripChatMembers: member removal failed for trip ${tripId}: ${removeErr.message}`);
   }
 
   return threadId;
@@ -220,10 +222,11 @@ export async function syncCircleChatMembers(
     left_at: null,
   }));
 
-  await sc.from('message_thread_members').upsert(upsertRows, {
+  const { error: upsertErr } = await sc.from('message_thread_members').upsert(upsertRows, {
     onConflict: 'thread_id,user_id',
     ignoreDuplicates: false,
   });
+  if (upsertErr) throw new Error(`syncCircleChatMembers: member upsert failed for circle ${circleOwnerId}: ${upsertErr.message}`);
 
   // Mark any thread members no longer in the circle as left.
   const { data: activeMembers } = await sc
@@ -237,11 +240,12 @@ export async function syncCircleChatMembers(
     .filter((id) => !memberIds.has(id));
 
   if (toRemove.length > 0) {
-    await sc
+    const { error: removeErr } = await sc
       .from('message_thread_members')
       .update({ left_at: now })
       .eq('thread_id', threadId)
       .in('user_id', toRemove);
+    if (removeErr) throw new Error(`syncCircleChatMembers: member removal failed for circle ${circleOwnerId}: ${removeErr.message}`);
   }
 
   return threadId;

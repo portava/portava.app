@@ -529,8 +529,10 @@ router.delete("/meetups/:meetupId", async (req, res) => {
   if ((meetup as any).creator_id !== user.id) { sendError(res, "forbidden", "Only the creator can cancel this meetup"); return; }
 
   const now = new Date().toISOString();
-  await client.from("meetups").update({ status: "cancelled", updated_at: now }).eq("id", meetupId);
-  await client.from("meetup_invites").update({ status: "cancelled", updated_at: now }).eq("meetup_id", meetupId).eq("status", "pending");
+  const { error: cancelErr } = await client.from("meetups").update({ status: "cancelled", updated_at: now }).eq("id", meetupId);
+  if (cancelErr) { req.log.error({ err: cancelErr }, "cancel meetup"); sendError(res, "db_error", cancelErr.message); return; }
+  const { error: inviteCancelErr } = await client.from("meetup_invites").update({ status: "cancelled", updated_at: now }).eq("meetup_id", meetupId).eq("status", "pending");
+  if (inviteCancelErr) { req.log.error({ err: inviteCancelErr }, "cancel meetup invites"); sendError(res, "db_error", inviteCancelErr.message); return; }
 
   // Post a system message to the linked chat thread (best-effort)
   postCancelSystemMessage(
@@ -664,7 +666,8 @@ router.post("/meetups/:meetupId/invites", async (req, res) => {
   }
 
   if (toInvite.length > 0) {
-    await client.from("meetup_invites").insert(toInvite.map((uid) => ({ meetup_id: meetupId, user_id: uid })));
+    const { error: inviteInsertErr } = await client.from("meetup_invites").insert(toInvite.map((uid) => ({ meetup_id: meetupId, user_id: uid })));
+    if (inviteInsertErr) { req.log.error({ err: inviteInsertErr }, "insert meetup invites"); sendError(res, "db_error", inviteInsertErr.message); return; }
     await createMeetupInboxItems(client, meetupId, (meetup as any).title, toInvite, user.id);
   }
 
@@ -900,8 +903,10 @@ router.post("/meetups/:meetupId/confirm-time", async (req, res) => {
 
   const now = new Date().toISOString();
   // Clear any previously confirmed options for this meetup first (single winner)
-  await client.from("meetup_time_options").update({ confirmed: false }).eq("meetup_id", meetupId).eq("confirmed", true);
-  await client.from("meetup_time_options").update({ confirmed: true }).eq("id", parsed.data.optionId);
+  const { error: clearErr } = await client.from("meetup_time_options").update({ confirmed: false }).eq("meetup_id", meetupId).eq("confirmed", true);
+  if (clearErr) { req.log.error({ err: clearErr }, "clear confirmed time options"); sendError(res, "db_error", clearErr.message); return; }
+  const { error: confirmOptErr } = await client.from("meetup_time_options").update({ confirmed: true }).eq("id", parsed.data.optionId);
+  if (confirmOptErr) { req.log.error({ err: confirmOptErr }, "confirm time option"); sendError(res, "db_error", confirmOptErr.message); return; }
   const { data: updated, error } = await client
     .from("meetups")
     .update({ starts_at: startsAt, status: "confirmed", updated_at: now })
@@ -1137,13 +1142,15 @@ async function postCancelSystemMessage(
   const text = `${creatorName} cancelled the meetup: ${title}`;
   const body = JSON.stringify({ type: "meetup_cancelled", meetupId, title, creatorName, text });
 
-  await client.from("messages").insert({
+  const { error: msgErr } = await client.from("messages").insert({
     thread_id: threadId,
     sender_id: creatorId,
     body,
     msg_type: "system",
     subtype: "meetup_cancelled",
   });
+  // Best-effort: the cancel itself already succeeded — only log delivery failure.
+  if (msgErr) console.warn("meetup cancel system message insert failed (best-effort):", msgErr.message ?? msgErr);
 }
 
 async function createMeetupInboxItems(
@@ -1224,9 +1231,11 @@ async function postConfirmTimeSystemMessage(
     text,
   });
 
-  await client
+  const { error: confirmMsgErr } = await client
     .from("messages")
     .insert({ thread_id: threadId, sender_id: creatorId, body, msg_type: "system", subtype: "meetup_confirmed" });
+  // Best-effort: the confirm itself already succeeded — only log delivery failure.
+  if (confirmMsgErr) console.warn("meetup confirm system message insert failed (best-effort):", confirmMsgErr.message ?? confirmMsgErr);
 }
 
 async function postMeetupSystemMessage(
@@ -1293,10 +1302,12 @@ async function postMeetupSystemMessage(
     .single();
 
   if (msg) {
-    await client
+    const { error: linkErr } = await client
       .from("meetups")
       .update({ chat_thread_id: threadId, chat_message_id: (msg as any).id })
       .eq("id", meetupId);
+    // Best-effort backlink: the card is posted — only log a failed pointer write.
+    if (linkErr) console.warn("meetup chat backlink update failed (best-effort):", linkErr.message ?? linkErr);
   }
 }
 

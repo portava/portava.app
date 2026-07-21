@@ -292,13 +292,14 @@ async function postCircleStatusCard(
     if (extra?.venueLabel)  bodyObj["venueLabel"]  = extra.venueLabel;
     if (extra?.approxArea)  bodyObj["approxArea"]  = extra.approxArea;
 
-    await sc.from("messages").insert({
+    const { error: cardErr } = await sc.from("messages").insert({
       thread_id: threadId,
       sender_id: actorId,
       msg_type:  "circle_status_card",
       subtype:   cardSubtype,
       body:      JSON.stringify(bodyObj),
     });
+    if (cardErr) console.warn("circle status card insert failed (non-fatal):", cardErr.message ?? cardErr);
   } catch { /* non-fatal — card delivery must never block Circle operations */ }
 }
 
@@ -1334,12 +1335,13 @@ router.post("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
   }
 
   // Deactivate any existing active meeting point
-  await sc
+  const { error: deactivateErr } = await sc
     .from("circle_meeting_points")
     .update({ is_active: false, updated_at: new Date().toISOString() })
     .eq("context_type", type)
     .eq("context_id", id)
     .eq("is_active", true);
+  if (deactivateErr) { sendError(res, "db_error", deactivateErr.message); return; }
 
   const { data, error } = await sc
     .from("circle_meeting_points")
@@ -1495,12 +1497,13 @@ router.delete("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
   const hostOk = await isContextHost(sc, user.id, type as ContextType, id);
   if (!hostOk) { sendError(res, "forbidden", "Only the host can remove meeting points"); return; }
 
-  await sc
+  const { error: removeErr } = await sc
     .from("circle_meeting_points")
     .update({ is_active: false, updated_at: new Date().toISOString() })
     .eq("context_type", type)
     .eq("context_id", id)
     .eq("is_active", true);
+  if (removeErr) { sendError(res, "db_error", removeErr.message); return; }
 
   void writeAuditEvent(sc, {
     actorUserId: user.id,
@@ -1557,7 +1560,7 @@ router.post("/circle/contexts/:type/:id/need-help", async (req, res) => {
   }
 
   // Update presence with needs_help=true (upsert)
-  await sc
+  const { error: presenceErr } = await sc
     .from("circle_presence")
     .upsert(
       {
@@ -1572,15 +1575,17 @@ router.post("/circle/contexts/:type/:id/need-help", async (req, res) => {
       },
       { onConflict: "user_id,context_type,context_id" },
     );
+  if (presenceErr) { sendError(res, "db_error", presenceErr.message); return; }
 
-  // Append check-in log
-  await sc.from("circle_checkins").insert({
+  // Append check-in log (best-effort: presence is already updated — log only)
+  const { error: checkinErr } = await sc.from("circle_checkins").insert({
     user_id:      user.id,
     context_type: type,
     context_id:   id,
     checkin_type: "needs_help",
     note:         (req.body as any)?.note ?? null,
   });
+  if (checkinErr) console.warn("needs-help check-in insert failed (non-fatal):", checkinErr.message ?? checkinErr);
 
   // Audit event
   void writeAuditEvent(sc, {
@@ -1945,9 +1950,10 @@ router.post("/admin/circle/disable-context", async (req, res) => {
       enabled:      false,
       updated_at:   new Date().toISOString(),
     }));
-    await sc
+    const { error: disableErr } = await sc
       .from("circle_context_settings")
       .upsert(rows, { onConflict: "user_id,context_type,context_id" });
+    if (disableErr) { sendError(res, "db_error", disableErr.message); return; }
   }
 
   void writeAuditEvent(sc, {
@@ -2029,7 +2035,8 @@ router.post("/circle/internal/cleanup-presence", async (req, res) => {
 
   let markedStale = 0;
   if (staleIds.length > 0) {
-    await sc.from("circle_presence").update({ is_stale: true }).in("id", staleIds);
+    const { error: staleErr } = await sc.from("circle_presence").update({ is_stale: true }).in("id", staleIds);
+    if (staleErr) { sendError(res, "db_error", staleErr.message); return; }
     markedStale = staleIds.length;
   }
 
@@ -2045,7 +2052,8 @@ router.post("/circle/internal/cleanup-presence", async (req, res) => {
 
   let deleted = 0;
   if (expiredIds.length > 0) {
-    await sc.from("circle_presence").delete().in("id", expiredIds);
+    const { error: expireDelErr } = await sc.from("circle_presence").delete().in("id", expiredIds);
+    if (expireDelErr) { sendError(res, "db_error", expireDelErr.message); return; }
     deleted = expiredIds.length;
   }
 
@@ -2060,11 +2068,12 @@ router.post("/circle/internal/cleanup-presence", async (req, res) => {
   const endedTripIds = ((endedTrips ?? []) as any[]).map((t) => t.id as string);
   let tripDeleted = 0;
   if (endedTripIds.length > 0) {
-    await sc
+    const { error: tripDelErr } = await sc
       .from("circle_presence")
       .delete()
       .eq("context_type", "trip")
       .in("context_id", endedTripIds);
+    if (tripDelErr) { sendError(res, "db_error", tripDelErr.message); return; }
     tripDeleted = endedTripIds.length;
   }
 
@@ -2079,11 +2088,12 @@ router.post("/circle/internal/cleanup-presence", async (req, res) => {
   const endedEventIds = ((endedEvents ?? []) as any[]).map((e) => e.id as string);
   let eventDeleted = 0;
   if (endedEventIds.length > 0) {
-    await sc
+    const { error: eventDelErr } = await sc
       .from("circle_presence")
       .delete()
       .eq("context_type", "event")
       .in("context_id", endedEventIds);
+    if (eventDelErr) { sendError(res, "db_error", eventDelErr.message); return; }
     eventDeleted = endedEventIds.length;
   }
 

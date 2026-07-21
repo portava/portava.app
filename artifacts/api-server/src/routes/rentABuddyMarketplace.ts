@@ -790,11 +790,11 @@ export async function notifyEligibleBuddies(svc: any, request: any) {
 
   const buddyIds = eligible.map((b: any) => b.id);
   if (buddyIds.length > 0) {
-    await svc
+    const { error: notifiedErr } = await svc
       .from("rent_buddy_requests")
       .update({ notified_buddy_ids: buddyIds })
-      .eq("id", request.id)
-      .then(() => {}).catch(() => {});
+      .eq("id", request.id);
+    if (notifiedErr) logger.error({ err: notifiedErr, requestId: request.id }, "notified_buddy_ids update failed (best-effort)");
   }
 
   // Collect push tokens. Buddies who registered their device before the
@@ -1026,7 +1026,8 @@ router.post("/api/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
 
   const now = new Date().toISOString();
   if (o.expires_at && new Date(o.expires_at) < new Date()) {
-    await svc.from("rent_buddy_offers").update({ status: "expired" }).eq("id", offerId);
+    const { error: expireErr } = await svc.from("rent_buddy_offers").update({ status: "expired" }).eq("id", offerId);
+    if (expireErr) logger.error({ err: expireErr, offerId }, "offer expire status write failed (best-effort)");
     return sendError(res, 'invalid_payload', "Offer has expired.");
   }
 
@@ -1061,15 +1062,19 @@ router.post("/api/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
   const bk = booking as any;
 
   // Mark offer accepted, decline others
-  await svc.from("rent_buddy_offers").update({ status: "accepted", accepted_booking_id: bk.id, updated_at: now }).eq("id", offerId);
-  await svc.from("rent_buddy_offers")
+  const { error: acceptErr } = await svc.from("rent_buddy_offers").update({ status: "accepted", accepted_booking_id: bk.id, updated_at: now }).eq("id", offerId);
+  if (acceptErr) return sendError(res, 'db_error', acceptErr.message);
+  // Best-effort cascades: the acceptance itself is committed — log, don't fail the response.
+  const { error: declineOthersErr } = await svc.from("rent_buddy_offers")
     .update({ status: "declined", updated_at: now })
     .eq("request_id", o.request_id)
     .neq("id", offerId)
     .eq("status", "pending");
+  if (declineOthersErr) logger.error({ err: declineOthersErr, offerId }, "declining sibling offers failed (best-effort)");
 
   // Close request
-  await svc.from("rent_buddy_requests").update({ status: "matched", updated_at: now }).eq("id", o.request_id);
+  const { error: closeReqErr } = await svc.from("rent_buddy_requests").update({ status: "matched", updated_at: now }).eq("id", o.request_id);
+  if (closeReqErr) logger.error({ err: closeReqErr, requestId: o.request_id }, "closing matched request failed (best-effort)");
 
   // Create earnings ledger entry
   await createEarningsLedgerEntry(svc, bk, o.buddy_profile_id).catch(() => {});
@@ -1089,7 +1094,8 @@ router.post("/api/rent-a-buddy/offers/:offerId/decline", async (req, res) => {
   const o = offer as any;
   if (o.request.traveler_id !== auth.user.id) return sendError(res, 'forbidden', "Only the traveler can decline offers.");
 
-  await svc.from("rent_buddy_offers").update({ status: "declined", updated_at: new Date().toISOString() }).eq("id", offerId);
+  const { error: declineErr } = await svc.from("rent_buddy_offers").update({ status: "declined", updated_at: new Date().toISOString() }).eq("id", offerId);
+  if (declineErr) return sendError(res, 'db_error', declineErr.message);
   emitAnalyticsEvent(svc, "offer_declined", { userId: auth.user.id });
   res.json({ ok: true });
 });
@@ -1104,7 +1110,8 @@ router.post("/api/rent-a-buddy/offers/:offerId/withdraw", async (req, res) => {
   if (!offer) return sendError(res, 'not_found', "Offer not found.");
   if ((offer as any).buddy_user_id !== auth.user.id) return sendError(res, 'forbidden', "Only the Buddy can withdraw their offer.");
 
-  await svc.from("rent_buddy_offers").update({ status: "withdrawn", updated_at: new Date().toISOString() }).eq("id", offerId);
+  const { error: withdrawErr } = await svc.from("rent_buddy_offers").update({ status: "withdrawn", updated_at: new Date().toISOString() }).eq("id", offerId);
+  if (withdrawErr) return sendError(res, 'db_error', withdrawErr.message);
   res.json({ ok: true });
 });
 
@@ -1440,7 +1447,8 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/addons", async (req, res) => 
     title: a.title,
     price_usd: a.price_usd,
   }));
-  await svc.from("rent_buddy_booking_addons").insert(inserts);
+  const { error: addonInsErr } = await svc.from("rent_buddy_booking_addons").insert(inserts);
+  if (addonInsErr) return sendError(res, 'db_error', addonInsErr.message);
 
   // Recalculate total + deposit
   const newTotal = Number(bk.total_usd) + addonsTotal;
@@ -1462,7 +1470,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/addons", async (req, res) => 
     totalUsd: newTotal,
   });
 
-  await svc
+  const { error: totalsErr } = await svc
     .from("rent_buddy_bookings")
     .update({
       total_usd: newTotal,
@@ -1476,6 +1484,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/addons", async (req, res) => 
       updated_at: new Date().toISOString(),
     })
     .eq("id", bookingId);
+  if (totalsErr) return sendError(res, 'db_error', totalsErr.message);
 
   emitAnalyticsEvent(svc, "addon_attached", { userId: user.id, city: bk.city, category: bk.category, amountUsd: addonsTotal });
 
@@ -1520,14 +1529,16 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/tip", async (req, res) => {
 
   if (error) return sendError(res, 'db_error', error.message);
 
-  // Update ledger with tip
-  await svc
+  // Update ledger with tip (best-effort: the tip row itself is committed — log only)
+  const { error: ledgerTipErr } = await svc
     .from("rent_buddy_earnings_ledger")
     .update({ tip_usd: amountUsd, updated_at: new Date().toISOString() })
     .eq("booking_id", bookingId);
+  if (ledgerTipErr) logger.error({ err: ledgerTipErr, bookingId }, "ledger tip update failed (best-effort)");
 
-  // Update booking tip field
-  await svc.from("rent_buddy_bookings").update({ tip_usd: amountUsd, updated_at: new Date().toISOString() }).eq("id", bookingId);
+  // Update booking tip field (best-effort denormalised copy)
+  const { error: bookingTipErr } = await svc.from("rent_buddy_bookings").update({ tip_usd: amountUsd, updated_at: new Date().toISOString() }).eq("id", bookingId);
+  if (bookingTipErr) logger.error({ err: bookingTipErr, bookingId }, "booking tip update failed (best-effort)");
 
   emitAnalyticsEvent(svc, "tip_sent", { userId: user.id, buddyId: bk.buddy_id, city: bk.buddy?.city, category: bk.category, amountUsd: Number(amountUsd) });
 
@@ -1561,7 +1572,8 @@ router.delete("/api/rent-a-buddy/buddies/:buddyId/save", async (req, res) => {
   if (!auth) return;
   const svc = sc() ?? auth.client;
 
-  await svc.from("rent_buddy_saved").delete().eq("user_id", auth.user.id).eq("buddy_id", req.params.buddyId);
+  const { error: unsaveErr } = await svc.from("rent_buddy_saved").delete().eq("user_id", auth.user.id).eq("buddy_id", req.params.buddyId);
+  if (unsaveErr) return sendError(res, 'db_error', unsaveErr.message);
   await syncFavoritesCount(svc, req.params.buddyId);
   res.json({ ok: true });
 });
@@ -1697,11 +1709,12 @@ router.delete("/api/rent-a-buddy/waitlist/:waitlistId", async (req, res) => {
   if (!auth) return;
   const svc = sc() ?? auth.client;
 
-  await svc
+  const { error: waitlistErr } = await svc
     .from("rent_buddy_waitlist")
     .update({ status: "cancelled" })
     .eq("id", req.params.waitlistId)
     .eq("user_id", auth.user.id);
+  if (waitlistErr) return sendError(res, 'db_error', waitlistErr.message);
 
   res.json({ ok: true });
 });
@@ -1871,7 +1884,7 @@ async function createEarningsLedgerEntry(svc: any, booking: any, buddyProfileId:
   const buddyGross = total + Number(booking.tip_usd ?? 0);
   const buddyNet = Math.round((buddyGross - platformFeeAmount) * 100) / 100;
 
-  await svc.from("rent_buddy_earnings_ledger").upsert({
+  const { error: ledgerErr } = await svc.from("rent_buddy_earnings_ledger").upsert({
     booking_id: booking.id,
     buddy_user_id: (buddy as any).user_id,
     traveler_id: booking.traveler_id,
@@ -1890,6 +1903,7 @@ async function createEarningsLedgerEntry(svc: any, booking: any, buddyProfileId:
     cash_balance_confirmed: false,
     is_estimated: true,
   }, { onConflict: "booking_id" });
+  if (ledgerErr) logger.error({ err: ledgerErr, bookingId: booking.id }, "earnings ledger upsert failed (best-effort)");
 }
 
 // ── Admin Marketplace ─────────────────────────────────────────────────────────
@@ -2021,13 +2035,14 @@ router.post("/api/rent-a-buddy/admin/profiles/:id/feature", async (req, res) => 
 
   if (error) return sendError(res, 'db_error', error.message);
 
-  await svc.from("rent_buddy_admin_actions").insert({
+  const { error: auditErr } = await svc.from("rent_buddy_admin_actions").insert({
     admin_id: admin.userId,
     target_type: "profile",
     target_id: req.params.id,
     action: "feature",
     notes: req.body?.reason ?? null,
   });
+  if (auditErr) logger.error({ err: auditErr }, "admin action audit insert failed (best-effort)");
 
   res.json({ ok: true });
 });
@@ -2037,13 +2052,15 @@ router.delete("/api/rent-a-buddy/admin/profiles/:id/feature", async (req, res) =
   if (!admin) return;
   const { svc } = admin;
 
-  await svc.from("rent_buddy_profiles")
+  const { error: unfeatureErr } = await svc.from("rent_buddy_profiles")
     .update({ featured: false, featured_at: null, updated_at: new Date().toISOString() })
     .eq("id", req.params.id);
+  if (unfeatureErr) return sendError(res, 'db_error', unfeatureErr.message);
 
-  await svc.from("rent_buddy_admin_actions").insert({
+  const { error: auditErr } = await svc.from("rent_buddy_admin_actions").insert({
     admin_id: admin.userId, target_type: "profile", target_id: req.params.id, action: "unfeature", notes: null,
   });
+  if (auditErr) logger.error({ err: auditErr }, "admin action audit insert failed (best-effort)");
 
   res.json({ ok: true });
 });
@@ -2054,7 +2071,7 @@ router.post("/api/rent-a-buddy/admin/profiles/:id/city-ambassador", async (req, 
   const { svc } = admin;
 
   const enable = req.body?.enable !== false;
-  await svc.from("rent_buddy_profiles")
+  const { error: ambassadorErr } = await svc.from("rent_buddy_profiles")
     .update({
       city_ambassador: enable,
       city_ambassador_at: enable ? new Date().toISOString() : null,
@@ -2062,11 +2079,13 @@ router.post("/api/rent-a-buddy/admin/profiles/:id/city-ambassador", async (req, 
       updated_at: new Date().toISOString(),
     })
     .eq("id", req.params.id);
+  if (ambassadorErr) return sendError(res, 'db_error', ambassadorErr.message);
 
-  await svc.from("rent_buddy_admin_actions").insert({
+  const { error: auditErr } = await svc.from("rent_buddy_admin_actions").insert({
     admin_id: admin.userId, target_type: "profile", target_id: req.params.id,
     action: enable ? "city_ambassador_grant" : "city_ambassador_revoke", notes: req.body?.reason ?? null,
   });
+  if (auditErr) logger.error({ err: auditErr }, "admin action audit insert failed (best-effort)");
 
   res.json({ ok: true });
 });
@@ -2076,7 +2095,7 @@ router.post("/api/rent-a-buddy/admin/packages/:id/approve", async (req, res) => 
   if (!admin) return;
   const { svc } = admin;
 
-  await svc.from("rent_buddy_packages")
+  const { error: approveErr } = await svc.from("rent_buddy_packages")
     .update({
       admin_review_status: "approved",
       admin_reviewed_by: admin.userId,
@@ -2084,10 +2103,12 @@ router.post("/api/rent-a-buddy/admin/packages/:id/approve", async (req, res) => 
       updated_at: new Date().toISOString(),
     })
     .eq("id", req.params.id);
+  if (approveErr) return sendError(res, 'db_error', approveErr.message);
 
-  await svc.from("rent_buddy_admin_actions").insert({
+  const { error: auditErr } = await svc.from("rent_buddy_admin_actions").insert({
     admin_id: admin.userId, target_type: "package", target_id: req.params.id, action: "package_approve", notes: req.body?.reason ?? null,
   });
+  if (auditErr) logger.error({ err: auditErr }, "admin action audit insert failed (best-effort)");
 
   // Compass: buddy's approved package changes their feed ranking — invalidate their cache
   const { data: pkg } = await svc
@@ -2107,7 +2128,7 @@ router.post("/api/rent-a-buddy/admin/packages/:id/disable", async (req, res) => 
   if (!admin) return;
   const { svc } = admin;
 
-  await svc.from("rent_buddy_packages")
+  const { error: disableErr } = await svc.from("rent_buddy_packages")
     .update({
       admin_review_status: "disabled",
       is_active: false,
@@ -2116,10 +2137,12 @@ router.post("/api/rent-a-buddy/admin/packages/:id/disable", async (req, res) => 
       updated_at: new Date().toISOString(),
     })
     .eq("id", req.params.id);
+  if (disableErr) return sendError(res, 'db_error', disableErr.message);
 
-  await svc.from("rent_buddy_admin_actions").insert({
+  const { error: auditErr } = await svc.from("rent_buddy_admin_actions").insert({
     admin_id: admin.userId, target_type: "package", target_id: req.params.id, action: "package_disable", notes: req.body?.reason ?? null,
   });
+  if (auditErr) logger.error({ err: auditErr }, "admin action audit insert failed (best-effort)");
 
   // Compass: buddy's package was revoked — their ranking/availability changes
   const { data: disabledPkg } = await svc
@@ -2161,7 +2184,7 @@ router.patch("/api/rent-a-buddy/admin/fee-rules", async (req, res) => {
 
   for (const upd of updates) {
     if (!upd.buddyLevel) continue;
-    await svc.from("rent_buddy_fee_rules")
+    const { error: feeErr } = await svc.from("rent_buddy_fee_rules")
       .upsert({
         buddy_level: upd.buddyLevel,
         platform_fee_percent: upd.platformFeePercent,
@@ -2169,11 +2192,13 @@ router.patch("/api/rent-a-buddy/admin/fee-rules", async (req, res) => {
         traveler_service_fee_pct: upd.travelerServiceFeePct ?? 0,
         updated_at: new Date().toISOString(),
       }, { onConflict: "buddy_level" });
+    if (feeErr) return sendError(res, 'db_error', feeErr.message);
   }
 
-  await svc.from("rent_buddy_admin_actions").insert({
+  const { error: auditErr } = await svc.from("rent_buddy_admin_actions").insert({
     admin_id: admin.userId, target_type: "fee_rules", target_id: admin.userId, action: "fee_rules_update", notes: null,
   });
+  if (auditErr) logger.error({ err: auditErr }, "admin action audit insert failed (best-effort)");
 
   res.json({ ok: true });
 });
@@ -2183,17 +2208,19 @@ router.post("/api/rent-a-buddy/admin/users/:userId/force-public-meetup", async (
   if (!admin) return;
   const { svc } = admin;
 
-  await svc.from("rent_buddy_user_limits").upsert({
+  const { error: limitErr } = await svc.from("rent_buddy_user_limits").upsert({
     user_id: req.params.userId,
     public_meetup_required: true,
     reason: req.body?.reason ?? "Admin restriction",
     created_by_admin_id: admin.userId,
     updated_at: new Date().toISOString(),
   }, { onConflict: "user_id" });
+  if (limitErr) return sendError(res, 'db_error', limitErr.message);
 
-  await svc.from("rent_buddy_admin_actions").insert({
+  const { error: auditErr } = await svc.from("rent_buddy_admin_actions").insert({
     admin_id: admin.userId, target_type: "user", target_id: req.params.userId, action: "force_public_meetup", notes: req.body?.reason ?? null,
   });
+  if (auditErr) logger.error({ err: auditErr }, "admin action audit insert failed (best-effort)");
 
   res.json({ ok: true });
 });
@@ -2203,7 +2230,7 @@ router.post("/api/rent-a-buddy/admin/users/:userId/force-full-in-app", async (re
   if (!admin) return;
   const { svc } = admin;
 
-  await svc.from("rent_buddy_user_limits").upsert({
+  const { error: limitErr } = await svc.from("rent_buddy_user_limits").upsert({
     user_id: req.params.userId,
     full_in_app_payment_required: true,
     cash_balance_disabled: true,
@@ -2211,10 +2238,12 @@ router.post("/api/rent-a-buddy/admin/users/:userId/force-full-in-app", async (re
     created_by_admin_id: admin.userId,
     updated_at: new Date().toISOString(),
   }, { onConflict: "user_id" });
+  if (limitErr) return sendError(res, 'db_error', limitErr.message);
 
-  await svc.from("rent_buddy_admin_actions").insert({
+  const { error: auditErr } = await svc.from("rent_buddy_admin_actions").insert({
     admin_id: admin.userId, target_type: "user", target_id: req.params.userId, action: "force_full_in_app", notes: req.body?.reason ?? null,
   });
+  if (auditErr) logger.error({ err: auditErr }, "admin action audit insert failed (best-effort)");
 
   res.json({ ok: true });
 });
@@ -2227,7 +2256,7 @@ router.post("/api/rent-a-buddy/admin/restrictions/city-category", async (req, re
   const { city, category, disableDepositCash, requirePublicMeetup, requireFullInApp, reason } = req.body ?? {};
   if (!city) return sendError(res, 'invalid_payload', "city is required.");
 
-  await svc.from("rent_buddy_city_restrictions").upsert({
+  const { error: restrictionErr } = await svc.from("rent_buddy_city_restrictions").upsert({
     city,
     category: category ?? null,
     disable_deposit_cash: disableDepositCash ?? false,
@@ -2236,6 +2265,7 @@ router.post("/api/rent-a-buddy/admin/restrictions/city-category", async (req, re
     reason: reason ?? null,
     created_by: admin.userId,
   }, { onConflict: "city,category" });
+  if (restrictionErr) return sendError(res, 'db_error', restrictionErr.message);
 
   // Compass: city/category restriction immediately invalidates all affected buddy caches.
   // Enumerate buddies in the city (and optionally in the given category) and fan out
