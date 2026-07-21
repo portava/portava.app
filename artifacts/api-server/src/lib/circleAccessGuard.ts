@@ -251,3 +251,234 @@ export async function canViewCirclePresence(
     visibilityMode: effectiveVisibilityMode,
   };
 }
+
+/**
+ * Batched variant of canViewCirclePresence for MANY targets in ONE context.
+ *
+ * Enforces exactly the same guard order and privacy rules, but with one query
+ * per table (membership, visibility settings, context overrides, blocks,
+ * account states, presence) instead of several round-trips per target — so
+ * "who's around" stays fast on large trips and events.
+ *
+ * Returns a Map keyed by target user id. Targets missing from the map were
+ * never evaluated (empty input). Fail-closed per target on any anomaly.
+ */
+export async function canViewCirclePresenceBatch(
+  sc: any,
+  viewerId: string,
+  targetUserIds: string[],
+  contextType: ContextType,
+  contextId: string,
+): Promise<Map<string, CircleAccessResult>> {
+  const out = new Map<string, CircleAccessResult>();
+  const targets = [...new Set(targetUserIds)].filter((id) => id && id !== viewerId);
+  if (targets.length === 0) return out;
+
+  const denyAll = (reason: string) => {
+    for (const id of targets) out.set(id, { allowed: false, reason });
+    return out;
+  };
+
+  // 1. Admin kill switch — fail-open: if DB is down, do NOT block users.
+  const killSwitchActive = await isFlagEnabled(sc, "find_your_circle_disabled");
+  if (killSwitchActive) return denyAll("kill_switch");
+
+  // 2. Viewer must be an accepted member (checked ONCE for the whole batch).
+  const viewerIsMember = await isAcceptedContextMember(sc, viewerId, contextType, contextId);
+  if (!viewerIsMember) return denyAll("viewer_not_member");
+
+  // 3. Target membership — one query per table.
+  const acceptedTargets = new Set<string>();
+  if (contextType === "trip") {
+    const { data } = await sc
+      .from("trip_members")
+      .select("user_id, role, status")
+      .eq("trip_id", contextId)
+      .in("user_id", targets);
+    for (const r of (data ?? []) as Array<{ user_id: string; role: string; status?: string | null }>) {
+      if (!ACCEPTED_TRIP_ROLES.has(r.role)) continue;
+      if (r.status != null && r.status !== "accepted") continue;
+      acceptedTargets.add(r.user_id);
+    }
+  } else {
+    // Event: require both RSVP going AND a confirmed event_attendees row.
+    const [rsvpResult, attendeeResult] = await Promise.all([
+      sc.from("event_rsvps").select("user_id, status").eq("event_id", contextId).in("user_id", targets),
+      sc.from("event_attendees").select("user_id").eq("event_id", contextId).in("user_id", targets),
+    ]);
+    const going = new Set(
+      ((rsvpResult.data ?? []) as Array<{ user_id: string; status: string }>)
+        .filter((r) => r.status === "going")
+        .map((r) => r.user_id),
+    );
+    for (const r of (attendeeResult.data ?? []) as Array<{ user_id: string }>) {
+      if (going.has(r.user_id)) acceptedTargets.add(r.user_id);
+    }
+  }
+
+  // 4–8. Batched prefetch of every remaining table (one query each).
+  const memberTargets = targets.filter((id) => acceptedTargets.has(id));
+  const [settingsRes, ctxRes, blocksRes, statesRes, presenceRes] = await Promise.all([
+    memberTargets.length > 0
+      ? sc
+          .from("circle_visibility_settings")
+          .select("user_id, global_enabled, visibility_mode, trip_sharing_default, event_sharing_default, is_paused, consent_version, consented_at")
+          .in("user_id", memberTargets)
+      : Promise.resolve({ data: [] }),
+    memberTargets.length > 0
+      ? sc
+          .from("circle_context_settings")
+          .select("user_id, enabled, visibility_mode_override, paused, paused_until")
+          .eq("context_type", contextType)
+          .eq("context_id", contextId)
+          .in("user_id", memberTargets)
+      : Promise.resolve({ data: [] }),
+    memberTargets.length > 0
+      ? sc
+          .from("blocks")
+          .select("blocker_id, blocked_id")
+          .or(`blocker_id.eq.${viewerId},blocked_id.eq.${viewerId}`)
+      : Promise.resolve({ data: [] }),
+    memberTargets.length > 0
+      ? sc
+          .from("user_account_states")
+          .select("user_id, state, expires_at")
+          .in("user_id", memberTargets)
+          .in("state", ["banned", "suspended", "deleted"])
+      : Promise.resolve({ data: [] }),
+    memberTargets.length > 0
+      ? sc
+          .from("circle_presence")
+          .select(
+            "user_id, id, status, status_label, approximate_label, venue_label, checked_in, last_seen_at, expires_at, stale_after_secs, is_stale, needs_help, updated_at",
+          )
+          .eq("context_type", contextType)
+          .eq("context_id", contextId)
+          .in("user_id", memberTargets)
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const settingsById = new Map<string, any>();
+  for (const s of (settingsRes.data ?? []) as any[]) settingsById.set(s.user_id as string, s);
+  const ctxById = new Map<string, any>();
+  for (const c of (ctxRes.data ?? []) as any[]) ctxById.set(c.user_id as string, c);
+  const blocks = (blocksRes.data ?? []) as Array<{ blocker_id: string; blocked_id: string }>;
+  const now = new Date();
+  const restricted = new Set<string>();
+  for (const r of (statesRes.data ?? []) as Array<{ user_id: string; state: string; expires_at: string | null }>) {
+    if (r.expires_at == null || new Date(r.expires_at) > now) restricted.add(r.user_id);
+  }
+  const presenceById = new Map<string, Record<string, any>>();
+  for (const p of (presenceRes.data ?? []) as any[]) presenceById.set(p.user_id as string, p);
+
+  // In-memory gating — identical rule order to canViewCirclePresence.
+  for (const targetUserId of targets) {
+    if (!acceptedTargets.has(targetUserId)) {
+      out.set(targetUserId, { allowed: false, reason: "target_not_member" });
+      continue;
+    }
+
+    const settings = settingsById.get(targetUserId) as {
+      global_enabled: boolean;
+      visibility_mode: string | null;
+      trip_sharing_default: string | null;
+      event_sharing_default: string | null;
+      is_paused: boolean;
+      consent_version: string | null;
+      consented_at: string | null;
+    } | undefined;
+
+    if (!settings || !settings.global_enabled) {
+      out.set(targetUserId, { allowed: false, reason: "target_sharing_off" });
+      continue;
+    }
+    if (!settings.consented_at) {
+      out.set(targetUserId, { allowed: false, reason: "target_not_consented" });
+      continue;
+    }
+    if (settings.is_paused) {
+      out.set(targetUserId, { allowed: false, reason: "global_paused" });
+      continue;
+    }
+
+    const perTypeDefault =
+      contextType === "trip"
+        ? (settings.trip_sharing_default ?? null)
+        : (settings.event_sharing_default ?? null);
+    if (perTypeDefault === "off") {
+      out.set(targetUserId, { allowed: false, reason: "type_sharing_off" });
+      continue;
+    }
+    let effectiveVisibilityMode = perTypeDefault ?? settings.visibility_mode ?? "status_only";
+
+    const ctx = ctxById.get(targetUserId) as {
+      enabled: boolean;
+      visibility_mode_override: string | null;
+      paused: boolean;
+      paused_until: string | null;
+    } | undefined;
+    if (ctx) {
+      if (!ctx.enabled) {
+        out.set(targetUserId, { allowed: false, reason: "context_sharing_off" });
+        continue;
+      }
+      if (ctx.paused) {
+        const resumesAt = ctx.paused_until ? new Date(ctx.paused_until) : null;
+        if (!resumesAt || resumesAt > new Date()) {
+          out.set(targetUserId, { allowed: false, reason: "context_paused" });
+          continue;
+        }
+      }
+      if (ctx.visibility_mode_override) {
+        effectiveVisibilityMode = ctx.visibility_mode_override;
+      }
+    }
+
+    const mutualBlock = blocks.some(
+      (b) =>
+        (b.blocker_id === viewerId && b.blocked_id === targetUserId) ||
+        (b.blocker_id === targetUserId && b.blocked_id === viewerId),
+    );
+    if (mutualBlock) {
+      out.set(targetUserId, { allowed: false, reason: "blocked" });
+      continue;
+    }
+
+    if (restricted.has(targetUserId)) {
+      out.set(targetUserId, { allowed: false, reason: "target_restricted" });
+      continue;
+    }
+
+    const presenceRow = presenceById.get(targetUserId) ?? null;
+    if (presenceRow) {
+      const row = presenceRow as {
+        expires_at: string | null;
+        last_seen_at: string;
+        stale_after_secs: number;
+      };
+      if (row.expires_at && new Date(row.expires_at) < new Date()) {
+        out.set(targetUserId, { allowed: false, reason: "presence_expired" });
+        continue;
+      }
+      const staleThreshold = new Date(
+        new Date(row.last_seen_at).getTime() + row.stale_after_secs * 1000,
+      );
+      out.set(targetUserId, {
+        allowed: true,
+        isStale: staleThreshold < new Date(),
+        presenceRow,
+        visibilityMode: effectiveVisibilityMode,
+      });
+      continue;
+    }
+
+    out.set(targetUserId, {
+      allowed: true,
+      isStale: false,
+      presenceRow: null,
+      visibilityMode: effectiveVisibilityMode,
+    });
+  }
+
+  return out;
+}

@@ -22,7 +22,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassProfile } from "./types.js";
-import { canViewCirclePresence, type ContextType } from "../lib/circleAccessGuard.js";
+import { canViewCirclePresenceBatch, type ContextType } from "../lib/circleAccessGuard.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { wrapUgc } from "./CompassStructuredContext.js";
 
@@ -372,16 +372,18 @@ export async function getWhosAround(
       .slice(0, 20);
     if (targets.length === 0) continue;
 
-    const results = await Promise.all(
-      targets.map(async (targetId) => {
-        try {
-          const access = await canViewCirclePresence(sc, viewerId, targetId, ctx.type, ctx.id);
-          return { targetId, access };
-        } catch {
-          return { targetId, access: { allowed: false as const } };
-        }
-      }),
-    );
+    // Batched gate: one query per table for the whole context, same rules as
+    // canViewCirclePresence. Fail-closed per target on any error.
+    let accessById = new Map<string, { allowed: boolean }>();
+    try {
+      accessById = await canViewCirclePresenceBatch(sc, viewerId, targets, ctx.type, ctx.id);
+    } catch {
+      continue;
+    }
+    const results = targets.map((targetId) => ({
+      targetId,
+      access: accessById.get(targetId) ?? { allowed: false as const },
+    }));
 
     const visible = results.filter((r) => r.access.allowed && (r.access as any).presenceRow);
     if (visible.length === 0) continue;
