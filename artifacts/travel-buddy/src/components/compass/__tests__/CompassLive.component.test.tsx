@@ -33,6 +33,8 @@ jest.mock('../../../services/compass.ts', () => ({
 }));
 
 import { CompassLive } from '../CompassLive.tsx';
+import { emitNotificationEvent } from '../../../services/notificationEvents.ts';
+import { act } from '@testing-library/react-native';
 
 const ACTIVE_SESSION = {
   id: 'ls-1',
@@ -80,5 +82,38 @@ describe('CompassLive', () => {
 
     fireEvent.press(view.getByTestId('live-start'));
     await waitFor(() => expect(mockStart).toHaveBeenCalledTimes(1));
+  });
+
+  // NOTE: the setNudges visual commit from an out-of-band event-bus setState
+  // never renders under this jest-expo/React 19 renderer (known renderer
+  // wall), so this test asserts the wiring — an immediate refresh check fires
+  // on a compass.live.* event and unrelated events are ignored — via the mock
+  // call counts, which observe the synchronous listener dispatch.
+  it('refreshes in the moment when a live notification event arrives — and ignores unrelated events', async () => {
+    mockFetchSession.mockResolvedValue({ ok: true, compassEnabled: true, active: true, session: ACTIVE_SESSION });
+    mockCheck.mockResolvedValue({ ok: true, compassEnabled: true, active: true, session: ACTIVE_SESSION, delivered: [] });
+
+    const view = await render(<CompassLive />);
+    await waitFor(() => expect(view.getByTestId('live-active')).toBeTruthy());
+    const checksBefore = mockCheck.mock.calls.length;
+
+    await act(async () => {
+      emitNotificationEvent({
+        eventType: 'compass.live.live_next_up',
+        category: 'compass',
+        title: 'Next up on your plan',
+        body: 'Lechon lunch starts in about 5 min.',
+        actionUrl: '/trip/trip-1',
+      });
+    });
+    // The surface refreshed via an immediate check — no 60 s poll wait.
+    await waitFor(() => expect(mockCheck.mock.calls.length).toBeGreaterThan(checksBefore));
+
+    // Unrelated notifications never trigger a live check.
+    const afterLive = mockCheck.mock.calls.length;
+    await act(async () => {
+      emitNotificationEvent({ eventType: 'plans.rsvp', title: 'Someone RSVPed', body: 'x' });
+    });
+    expect(mockCheck.mock.calls.length).toBe(afterLive);
   });
 });

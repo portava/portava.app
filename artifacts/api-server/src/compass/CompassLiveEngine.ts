@@ -38,6 +38,7 @@ import {
 } from "./CompassSenseEngine.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
+import { RealtimeActivityService } from "../services/notifications/RealtimeActivityService.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -449,6 +450,7 @@ export async function runLiveCheck(
 
   const notifSvc = new NotificationService(sc);
   const notifRouter = new NotificationRouter(sc);
+  const realtimeSvc = new RealtimeActivityService(sc);
 
   for (const nudge of candidates) {
     if (settings.categories[nudge.category] === false) {
@@ -492,7 +494,13 @@ export async function runLiveCheck(
         sourceId: nudge.dedupeKey,
         metadata: { confidence: nudge.confidence, liveSessionId: session.id, nudgeType: nudge.type },
       });
-      if (row) void notifRouter.route(row).catch(() => {});
+      if (row) {
+        // Push etc. via the existing router, plus an immediate SSE emit so the
+        // in-app live surface refreshes the moment the nudge exists — no wait
+        // for the next poll tick.
+        void notifRouter.route(row).catch(() => {});
+        realtimeSvc.emitCreated(row);
+      }
     } catch { /* delivery best-effort; log row exists */ }
 
     delivered.push(nudge);

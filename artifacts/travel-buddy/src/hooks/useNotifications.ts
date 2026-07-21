@@ -24,6 +24,7 @@ import { getDeviceTimezone } from '../services/pushTokenService.ts';
 import { freshToken } from '../services/apiToken.ts';
 import { showNotificationToast } from '../components/NotificationToast.tsx';
 import { _connectOnce } from './notificationStreamUtils.ts';
+import { emitNotificationEvent } from '../services/notificationEvents.ts';
 
 const UNREAD_POLL_MS = 15_000;
 const NOTIF_POLL_MS  = 30_000;
@@ -208,6 +209,7 @@ export function useNotificationStream() {
             try {
               const notification = JSON.parse(dataStr) as AppNotification;
               showNotificationToast(notification);
+              emitNotificationEvent(notification as unknown as import('../services/notificationEvents.ts').NotificationCreatedEvent);
             } catch { /* ignore parse errors */ }
           }
           eventName = '';

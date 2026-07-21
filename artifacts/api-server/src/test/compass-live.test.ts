@@ -308,6 +308,35 @@ describe("Compass Live", () => {
     assert.equal(c3.json.session.checksRun, 3);
   });
 
+  it("emits a realtime notification.created event when a live nudge is delivered — and none after stop", async () => {
+    const { activityBus } = await import("../services/notifications/RealtimeActivityService.js");
+    const seen: any[] = [];
+    const unsub = activityBus.subscribe((e) => { if (e.type === "notification.created") seen.push(e); });
+    try {
+      const { fakeClient, store } = makeFakeClient({ feature_flags: [enabledFlag()] });
+      _setTestClient(fakeClient, true);
+      seedTrip(store);
+      seedPlanItem(store, "item-rt", "Gallery walk", atHour(8, 15)); // 15 min away → live_next_up
+
+      await api("POST", "/compass/live/start");
+      const r = await api("POST", "/compass/live/check");
+      assert.ok(r.json.delivered.some((d: any) => d.type === "live_next_up"));
+      const live = seen.filter((e) => String(e.payload?.eventType ?? "").startsWith("compass.live."));
+      assert.ok(live.length >= 1, "expected an SSE notification.created emit for the live nudge");
+      assert.equal(live[0].userId, USER_ID);
+      assert.equal(live[0].payload.category, "compass");
+
+      // After stop: check is inert — no evaluation, no emission of any kind.
+      await api("POST", "/compass/live/stop");
+      seen.length = 0;
+      const after = await api("POST", "/compass/live/check");
+      assert.equal(after.json.active, false);
+      assert.equal(seen.length, 0, "no realtime emission after the session is stopped");
+    } finally {
+      unsub();
+    }
+  });
+
   it("delivers live_next_up only within 30 minutes of the next item", async () => {
     const { fakeClient, store } = makeFakeClient({ feature_flags: [enabledFlag()] });
     _setTestClient(fakeClient, true);
