@@ -9,7 +9,7 @@ import {
   MessageCircle, ShieldCheck, ImagePlus, Info, X,
 } from 'lucide-react-native';
 import { useTripSavedPlaces } from '../hooks/useTripSavedPlaces.ts';
-import { fetchCompassTripBrief, type CompassRecommendation } from '../services/compass.ts';
+import { fetchCompassTripBrief, reportCompassViewed, type CompassRecommendation } from '../services/compass.ts';
 import { resolveCompassTitle, formatCompassSubtitle } from '../utils/compassFormat.ts';
 import { openTripChat } from '../services/messaging.ts';
 import { createPlanItem } from '../services/tripPlan.ts';
@@ -675,7 +675,14 @@ function BriefItemCard({ item, tripId }: { item: CompassRecommendation; tripId?:
       })()}
       <Text style={cb.itemReason} numberOfLines={2}>{item.reason}</Text>
       <View style={cb.itemBtnRow}>
-        <Pressable style={[cb.itemBtn, cb.itemBtnView]} onPress={() => router.push(briefItemRoute(item) as any)}>
+        <Pressable
+          style={[cb.itemBtn, cb.itemBtnView]}
+          onPress={() => {
+            // Fire-and-forget "viewed" outcome — the recommendation was opened.
+            reportCompassViewed(null, item.id);
+            router.push(briefItemRoute(item) as any);
+          }}
+        >
           <Text style={cb.itemBtnText}>View</Text>
         </Pressable>
         {tripId && CAN_ADD_TO_PLAN.has(item.type) && (

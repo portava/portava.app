@@ -246,6 +246,39 @@ export async function postCompassFeedback(body: {
   }
 }
 
+// ── Outcomes ──────────────────────────────────────────────────────────────────
+
+/** One-shot dedupe: recommendationIds already reported as viewed this session. */
+const reportedViewedIds = new Set<string>();
+
+/** For tests only — clear the one-shot viewed dedupe set. */
+export function _resetReportedOutcomes(): void { reportedViewedIds.clear(); }
+
+/**
+ * Fire-and-forget "viewed" outcome report for a recommendation the user
+ * actually opened (not merely scrolled past). One-shot per recommendationId
+ * per session; the server additionally dedupes per user+recommendation+stage.
+ * Never blocks the UI and never throws — failures are silent.
+ */
+export function reportCompassViewed(
+  recommendationId: string | null | undefined,
+  itemId?: string | null,
+): void {
+  const key = recommendationId ?? (itemId ? `item:${itemId}` : null);
+  if (!key) return;
+  if (!isSupabaseConfigured || !apiBase()) return;
+  if (reportedViewedIds.has(key)) return;
+  reportedViewedIds.add(key);
+  void authedFetch('/api/compass/outcomes', {
+    method: 'POST',
+    body: JSON.stringify(
+      recommendationId
+        ? { recommendationId, stage: 'viewed' }
+        : { itemId, stage: 'viewed' },
+    ),
+  }).catch(() => { /* silent — outcome reporting must never surface errors */ });
+}
+
 // ── Preferences ───────────────────────────────────────────────────────────────
 
 export interface CompassPreferences {

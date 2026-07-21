@@ -26,7 +26,7 @@ import { useCompassFeed } from '../../hooks/compass/useCompassFeed.ts';
 import { CompassFeedbackMenu } from '../compass/CompassFeedbackMenu.tsx';
 import { resolveCompassTitle } from '../../utils/compassFormat.ts';
 import { CompassWhySheet } from '../compass/CompassWhySheet.tsx';
-import { postCompassFrontloadEvent } from '../../services/compass.ts';
+import { postCompassFrontloadEvent, reportCompassViewed } from '../../services/compass.ts';
 import { CompassTravelerRow } from '../compass/CompassTravelerRow.tsx';
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -296,7 +296,13 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
 
         <PlaceCard
           place={item.place}
-          onPress={() => setDetail(item.place)}
+          onPress={() => {
+            if (item.kind === 'compass') {
+              // Fire-and-forget "viewed" outcome — the card was actually opened.
+              reportCompassViewed(item.item.recommendationToken, item.item.id);
+            }
+            setDetail(item.place);
+          }}
           onAddToPlan={() => onAddToPlan({
             id:       item.place.id,
             name:     item.place.name,

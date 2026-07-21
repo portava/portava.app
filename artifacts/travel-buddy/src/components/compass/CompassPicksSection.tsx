@@ -24,7 +24,7 @@ import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { useCompassFeed } from '../../hooks/compass/useCompassFeed.ts';
 import { CompassWhySheet } from './CompassWhySheet.tsx';
 import { CompassFeedbackMenu } from './CompassFeedbackMenu.tsx';
-import { postCompassAnalyticsEvent, COMPASS_ENGINE_VERSION } from '../../services/compass.ts';
+import { postCompassAnalyticsEvent, reportCompassViewed, COMPASS_ENGINE_VERSION } from '../../services/compass.ts';
 import type { CompassFeedItem } from '../../services/compass.ts';
 import { resolveCompassTitle, formatCompassSubtitle, formatCompassContext, resolveCompassCategory } from '../../utils/compassFormat.ts';
 
@@ -73,6 +73,8 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
   const city       = (item.data?.city as string) ?? null;
 
   function navigateToItem() {
+    // Fire-and-forget "viewed" outcome — the user actually opened the card.
+    reportCompassViewed(item.recommendationToken, item.id);
     const type = item.type ?? '';
     if (type === 'event') {
       router.push(`/event/${item.id}` as any);
