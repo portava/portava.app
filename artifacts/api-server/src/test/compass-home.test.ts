@@ -19,6 +19,7 @@ import type { Server } from "node:http";
 import express from "express";
 import pino from "pino";
 import { _setTestClient } from "../lib/http.js";
+import { _setTestNowUtc } from "../lib/localTime.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { clearCompassProfileCache } from "../compass/CompassProfileService.js";
 import compassHomeRouter, {
@@ -134,6 +135,7 @@ beforeEach(() => {
   _clearCompassHomeCache();
   _setTestHomeCacheTtlMs(null);
   _setTestHourUtc(null);
+  _setTestNowUtc(null);
 });
 
 async function getHome(token = "valid-token", query = "") {
@@ -522,6 +524,35 @@ describe("traveler-local time buckets", () => {
     _setTestHourUtc(13);
     const j = (await getHome()).json as any;
     assert.equal(j.timeOfDay, "afternoon");
+  });
+
+  it("auto traveler crossing a time-of-day bucket boundary misses the stale home cache entry", async () => {
+    // No client offset — the bucket resolves from the stored IANA timezone.
+    const { fakeClient } = makeFakeClient({
+      feature_flags: [enabledFlag()],
+      notification_preferences: [{ user_id: USER_ID, timezone: "Asia/Manila" }],
+      events: [eventRow("ev-boundary", "Sunset rooftop", hoursFromNow(3))],
+    });
+    _setTestClient(fakeClient, true);
+    _setTestHomeCacheTtlMs(60 * 60 * 1_000); // long TTL — only the key can save us
+
+    // 08:59 UTC = 16:59 Manila → afternoon; payload gets cached.
+    _setTestNowUtc(new Date(Date.UTC(2026, 6, 21, 8, 59, 0)));
+    const first = (await getHome()).json as any;
+    assert.equal(first.timeOfDay, "afternoon");
+
+    // Two minutes later: 09:01 UTC = 17:01 Manila → evening. Within the TTL,
+    // but the bucket changed — the stale afternoon entry must NOT be served.
+    invalidateFlagsCache();
+    clearCompassProfileCache();
+    _setTestNowUtc(new Date(Date.UTC(2026, 6, 21, 9, 1, 0)));
+    const second = (await getHome()).json as any;
+    assert.equal(
+      second.timeOfDay,
+      "evening",
+      "auto traveler crossing a bucket boundary must rebuild, not get the cached afternoon payload",
+    );
+    assert.ok(second.tonightVibe, "evening rebuild must assemble tonightVibe");
   });
 
   it("ignores a malformed tzOffsetMinutes and falls back honestly", async () => {

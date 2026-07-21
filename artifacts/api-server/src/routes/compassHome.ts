@@ -34,6 +34,7 @@ import {
   localHourFor,
   parseTzOffsetParam,
   fetchUserTimezone,
+  nowUtcInstant as sharedNowUtcInstant,
 } from "../lib/localTime.js";
 
 // Re-exported for existing consumers/tests.
@@ -86,8 +87,26 @@ export function _setTestHomeCacheTtlMs(ms: number | null): void {
   _ttlMs = ms ?? HOME_CACHE_TTL_MS;
 }
 
-function homeCacheKey(userId: string, tzOffsetMinutes: number | null): string {
-  return `${userId}|${tzOffsetMinutes ?? "auto"}`;
+/**
+ * Cache keys must partition by the traveler's clock so a time-of-day boundary
+ * crossing within the TTL never serves the previous bucket's payload.
+ * Mirrors feedCacheKey in routes/compass.ts:
+ *   - explicit client offset → keyed by the offset (bucket follows from it)
+ *   - no offset ("auto")     → keyed by the resolved time-of-day bucket,
+ *     since the stored-timezone local hour can cross a bucket mid-TTL.
+ */
+export function homeCacheKey(
+  userId: string,
+  tzOffsetMinutes: number | null,
+  resolvedLocalHour?: number | null,
+): string {
+  const tzPart =
+    tzOffsetMinutes !== null
+      ? String(tzOffsetMinutes)
+      : typeof resolvedLocalHour === "number" && Number.isFinite(resolvedLocalHour)
+        ? `auto-${timeOfDayForHour(resolvedLocalHour)}`
+        : "auto";
+  return `${userId}|${tzPart}`;
 }
 
 function getCachedHome(key: string): unknown | null {
@@ -121,7 +140,8 @@ function nowUtcInstant(): Date {
     const d = new Date();
     return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), _testHourUtc, 0, 0));
   }
-  return new Date();
+  // Shared clock honours localTime's _setTestNowUtc; real time otherwise.
+  return sharedNowUtcInstant();
 }
 
 export type TimeOfDay = "morning" | "afternoon" | "evening" | "night";
@@ -272,7 +292,17 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
   }
 
   const tzOffsetMinutes = parseTzOffsetParam((req.query as any)?.tzOffsetMinutes);
-  const cacheKey = homeCacheKey(user.id, tzOffsetMinutes);
+
+  // Resolve the traveler's local hour BEFORE the cache lookup: for "auto"
+  // (no client offset) travelers the cache key must include the resolved
+  // time-of-day bucket, or a bucket boundary crossing within the TTL would
+  // briefly serve the previous bucket's payload.
+  const nowUtc = nowUtcInstant();
+  const timezone =
+    tzOffsetMinutes !== null ? null : await fetchUserTimezone(sc, user.id).catch(() => null);
+  const localHour = localHourFor(nowUtc, tzOffsetMinutes, timezone);
+
+  const cacheKey = homeCacheKey(user.id, tzOffsetMinutes, localHour);
   const cached = getCachedHome(cacheKey);
   if (cached !== null) {
     res.json(cached);
@@ -280,12 +310,7 @@ router.get("/compass/home", asyncHandler(async (req, res) => {
   }
 
   try {
-    const [profile, timezone] = await Promise.all([
-      getCompassProfile(sc, user.id),
-      fetchUserTimezone(sc, user.id),
-    ]);
-    const nowUtc = nowUtcInstant();
-    const localHour = localHourFor(nowUtc, tzOffsetMinutes, timezone);
+    const profile = await getCompassProfile(sc, user.id);
     const timeOfDay = timeOfDayForHour(localHour);
     const signals = { ...defaultSignals(profile), hourUtc: localHour };
     const context = buildCompassContext(profile, signals);
