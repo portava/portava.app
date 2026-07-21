@@ -76,6 +76,22 @@ const CITY_TIMEZONES: Record<string, string> = {
   "london": "Europe/London", "paris": "Europe/Paris", "berlin": "Europe/Berlin",
   "new york": "America/New_York", "los angeles": "America/Los_Angeles",
   "san francisco": "America/Los_Angeles", "dubai": "Asia/Dubai",
+  // Cities observed in live activity data (stamps/events/trips/posts/profiles)
+  "miami": "America/New_York", "fort lauderdale": "America/New_York",
+  "new york city": "America/New_York", "denver": "America/Denver",
+  "vancouver": "America/Vancouver", "mexico city": "America/Mexico_City",
+  "rio de janeiro": "America/Sao_Paulo",
+  "lisbon": "Europe/Lisbon", "barcelona": "Europe/Madrid", "madrid": "Europe/Madrid",
+  "rome": "Europe/Rome", "dublin": "Europe/Dublin", "zurich": "Europe/Zurich",
+  "interlaken": "Europe/Zurich", "copenhagen": "Europe/Copenhagen",
+  "amsterdam": "Europe/Amsterdam", "istanbul": "Europe/Istanbul",
+  "oia": "Europe/Athens", "santorini": "Europe/Athens", "athens": "Europe/Athens",
+  "mumbai": "Asia/Kolkata", "delhi": "Asia/Kolkata",
+  // Philippines / Indonesia hotspots seen in stamps and trips
+  "general luna": "Asia/Manila", "siargoa": "Asia/Manila", // common misspelling of Siargao
+  "coron": "Asia/Manila", "moalboal": "Asia/Manila", "oslob": "Asia/Manila",
+  "ubud": "Asia/Makassar", "canggu": "Asia/Makassar", "denpasar": "Asia/Makassar",
+  "phuket": "Asia/Bangkok", "krabi": "Asia/Bangkok",
 };
 
 /** Resolve a city's IANA timezone from the static map (null when unknown). */

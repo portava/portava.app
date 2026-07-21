@@ -28,6 +28,7 @@ import compassGraphRouter from "../routes/compassGraph.js";
 import {
   daypartOf,
   timeSliceKey,
+  cityTimezone,
   buildGraphFromSources,
   buildCityWorldModels,
   computeCityConfidenceIndex,
@@ -43,6 +44,7 @@ import {
   MIN_SLICE_SAMPLE,
   type CityWorldModel,
 } from "../compass/CompassGraphEngine.js";
+import { SEED_CITIES } from "../lib/popularCities.js";
 import { runPipeline } from "../compass/CompassPipeline.js";
 import type { CompassItem, CompassProfile, CompassContext } from "../compass/types.js";
 
@@ -283,6 +285,40 @@ describe("time slicing", () => {
     const at = new Date("2026-07-24T11:00:00Z");
     assert.equal(timeSliceKey(at, "Nowhereville"), timeSliceKey(at));
     assert.equal(timeSliceKey(at, null), timeSliceKey(at));
+  });
+
+  it("covers every seed popular city — none silently fall back to UTC", () => {
+    // Guard: SEED_CITIES is what the popular-cities picker surfaces to every
+    // fresh install. A seed city missing from CITY_TIMEZONES would skew its
+    // day-of-week × daypart world model. When a seed is added, add its tz.
+    for (const s of SEED_CITIES) {
+      assert.ok(
+        cityTimezone(s.name),
+        `SEED_CITIES entry "${s.name}" has no timezone in CITY_TIMEZONES — add it to CompassGraphEngine.ts`,
+      );
+    }
+  });
+
+  it("covers the cities seen in real activity data", () => {
+    // Snapshot of live user_stamps/events/trips/posts/profiles cities
+    // (July 2026 audit) — each must resolve to a real IANA timezone.
+    const liveCities = [
+      "Miami", "Fort Lauderdale", "New York City", "Denver", "Vancouver",
+      "Mexico City", "Rio de Janeiro", "Lisbon", "Barcelona", "Rome",
+      "Dublin", "Zurich", "Interlaken", "Copenhagen", "Istanbul", "Oia",
+      "Mumbai", "General Luna", "Ubud", "Cebu City", "Davao City",
+      "El Nido", "Siargao", "Palawan", "Ho Chi Minh City", "Hanoi",
+      "Hong Kong", "Taipei", "Bangkok", "Tokyo", "Seoul", "Singapore",
+      "Bali", "London", "Paris", "Dubai", "Sydney", "Melbourne",
+      "Los Angeles", "Berlin",
+    ];
+    const at = new Date("2026-07-24T11:00:00Z");
+    for (const city of liveCities) {
+      const tz = cityTimezone(city);
+      assert.ok(tz, `live city "${city}" has no timezone in CITY_TIMEZONES`);
+      // The tz must be valid — timeSliceKey should not throw or fall back oddly
+      assert.match(timeSliceKey(at, city), /^(sun|mon|tue|wed|thu|fri|sat):(morning|afternoon|evening|night)$/);
+    }
   });
 });
 
