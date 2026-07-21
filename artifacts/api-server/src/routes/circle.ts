@@ -22,6 +22,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import {
   canViewCirclePresence,
+  canViewCirclePresenceBatch,
   CURRENT_CONSENT_VERSION,
   type ContextType,
 } from "../lib/circleAccessGuard.js";
@@ -757,46 +758,42 @@ router.get("/circle/contexts/:type/:id/members", async (req, res) => {
   const limitParam  = Math.min(Math.max(Number((req.query as any).limit  ?? 50), 1), 200);
   const offsetParam = Math.max(Number((req.query as any).offset ?? 0), 0);
 
-  // Run access guard per member (excluding self)
+  // Run access guard for all members in one batched pass (self excluded by the batch gate)
   const results: any[] = [];
-  await Promise.all(
-    memberIds
-      .filter((mid) => mid !== user.id)
-      .map(async (targetId) => {
-        const guardResult = await canViewCirclePresence(
-          sc,
-          user.id,
-          targetId,
-          type as ContextType,
-          id,
-        );
-        if (!guardResult.allowed) return;
-
-        // Defensive: precise_live is not supported in V1 — skip this member
-        // rather than exposing an unsupported mode.
-        if (guardResult.visibilityMode === "precise_live") return;
-
-        const prof = profileMap.get(targetId);
-        const nameAllowed = targetId === user.id || allowedNames.has(targetId);
-        const snippet: CircleProfileSnippet = {
-          userId:      targetId,
-          avatarUrl:   (prof?.avatar_url as string | null)                                    ?? null,
-          displayName: nameAllowed
-            ? ((prof?.display_name as string | null) ?? (prof?.name as string | null) ?? "")
-            : "",
-          username:    (prof?.handle as string | null)                                         ?? "",
-        };
-
-        results.push(
-          shapePresence(
-            snippet,
-            guardResult.presenceRow ?? null,
-            guardResult.visibilityMode ?? "status_only",
-            guardResult.isStale ?? false,
-          ),
-        );
-      }),
+  const guardResults = await canViewCirclePresenceBatch(
+    sc,
+    user.id,
+    memberIds.filter((mid) => mid !== user.id),
+    type as ContextType,
+    id,
   );
+  for (const [targetId, guardResult] of guardResults) {
+    if (!guardResult.allowed) continue;
+
+    // Defensive: precise_live is not supported in V1 — skip this member
+    // rather than exposing an unsupported mode.
+    if (guardResult.visibilityMode === "precise_live") continue;
+
+    const prof = profileMap.get(targetId);
+    const nameAllowed = targetId === user.id || allowedNames.has(targetId);
+    const snippet: CircleProfileSnippet = {
+      userId:      targetId,
+      avatarUrl:   (prof?.avatar_url as string | null)                                    ?? null,
+      displayName: nameAllowed
+        ? ((prof?.display_name as string | null) ?? (prof?.name as string | null) ?? "")
+        : "",
+      username:    (prof?.handle as string | null)                                         ?? "",
+    };
+
+    results.push(
+      shapePresence(
+        snippet,
+        guardResult.presenceRow ?? null,
+        guardResult.visibilityMode ?? "status_only",
+        guardResult.isStale ?? false,
+      ),
+    );
+  }
 
   // Sort deterministically (displayName asc) then apply offset/limit
   results.sort((a, b) =>
