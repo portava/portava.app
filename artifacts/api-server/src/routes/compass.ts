@@ -122,6 +122,30 @@ export function _getLastFeedContext(): { hourUtc: number; contextState: string }
   return _lastFeedContext;
 }
 
+/**
+ * Feed/section cache keys must include the client's tz offset so a traveler
+ * crossing a time-of-day boundary (or switching timezones) is never served a
+ * cached payload built for the previous local-hour bucket. Mirrors
+ * compassHome's homeCacheKey, which keys by `tzOffsetMinutes ?? "auto"`.
+ */
+export function feedCacheKey(
+  prefix: "feed" | `section:${string}`,
+  cursor: string | undefined,
+  tzOffsetMinutes: number | null,
+): string {
+  return `${prefix}:tz${tzOffsetMinutes ?? "auto"}:${cursor ?? "first_page"}`;
+}
+
+function tzOffsetForRequest(req: { query?: unknown; body?: unknown }): number | null {
+  try {
+    const raw =
+      (req.query as any)?.tzOffsetMinutes ?? (req.body as any)?.tzOffsetMinutes;
+    return parseTzOffsetParam(raw);
+  } catch {
+    return null;
+  }
+}
+
 async function localHourForRequest(
   sc: any,
   userId: string,
@@ -348,7 +372,7 @@ router.get("/compass/feed", async (req, res) => {
   const { cursor } = parsed.data;
 
   try {
-    const cacheKey = `feed:${cursor ?? "first_page"}`;
+    const cacheKey = feedCacheKey("feed", cursor, tzOffsetForRequest(req));
 
     // Read-through: return cached payload if still fresh
     const cached = await getCachedFeed(sc, user.id, cacheKey, "feed");
@@ -476,7 +500,7 @@ router.get("/compass/feed/section/:section", async (req, res) => {
   const { cursor } = parsed.data;
 
   try {
-    const cacheKey = `section:${sectionParam}:${cursor ?? "first_page"}`;
+    const cacheKey = feedCacheKey(`section:${sectionParam}`, cursor, tzOffsetForRequest(req));
 
     // Read-through: return cached payload if still fresh
     const cached = await getCachedFeed(sc, user.id, cacheKey, "section");

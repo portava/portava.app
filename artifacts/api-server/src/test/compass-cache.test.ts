@@ -34,6 +34,7 @@ import {
   type FrontLoadItem,
 } from "../compass/CompassFrontLoadEngine.js";
 import type { CompassProfile } from "../compass/types.js";
+import { feedCacheKey } from "../routes/compass.js";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -236,6 +237,43 @@ describe("CompassCacheEngine — safety bypass", () => {
     const row = insertCall!.args as Record<string, unknown>;
     assert.strictEqual(row["user_id"], USER_B);
     assert.strictEqual(row["reason"], "admin_suspend");
+  });
+});
+
+// ── feedCacheKey — tz-offset partitioning ─────────────────────────────────────
+
+describe("feedCacheKey — tz offset partitions cache entries", () => {
+  it("different tzOffsetMinutes produce different keys (feed + section)", () => {
+    assert.notStrictEqual(
+      feedCacheKey("feed", undefined, 480),
+      feedCacheKey("feed", undefined, -300),
+    );
+    assert.notStrictEqual(
+      feedCacheKey("section:for_you", undefined, 480),
+      feedCacheKey("section:for_you", undefined, null),
+    );
+    // Same offset + cursor → stable key (cache hits still work)
+    assert.strictEqual(
+      feedCacheKey("feed", "abc", 60),
+      feedCacheKey("feed", "abc", 60),
+    );
+  });
+
+  it("two requests with different tzOffsetMinutes do not share a cache entry", async () => {
+    clearL1Cache();
+    const { db } = makeFakeDb({ compass_feed_cache: [] });
+    const eveningPayload = { sections: [{ name: "for_you", vibe: "evening" }] };
+
+    // Cache written for UTC+8 traveler
+    await setCachedFeed(db, USER_A, feedCacheKey("feed", undefined, 480), "feed", eveningPayload);
+
+    // Same user now reporting UTC-5 must NOT get the UTC+8 payload
+    const crossTz = await getCachedFeed(db, USER_A, feedCacheKey("feed", undefined, -300), "feed");
+    assert.strictEqual(crossTz, null, "different tz offset must miss the cache");
+
+    // Original offset still hits
+    const sameTz = await getCachedFeed(db, USER_A, feedCacheKey("feed", undefined, 480), "feed");
+    assert.deepStrictEqual(sameTz, eveningPayload);
   });
 });
 
