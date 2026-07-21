@@ -29,6 +29,8 @@ interface State {
   failUpdateTables: Set<string>;
   /** tables whose delete() should fail with a PGRST204-style error */
   failDeleteTables: Set<string>;
+  /** tables whose upsert() should fail with a PGRST204-style error */
+  failUpsertTables: Set<string>;
 }
 
 const OWNER_ID = "aaaaaaaa-0000-0000-0000-000000000001";
@@ -54,6 +56,7 @@ function baseState(): State {
     user_interaction_cooldowns: [],
     failUpdateTables: new Set(),
     failDeleteTables: new Set(),
+    failUpsertTables: new Set(),
   };
 }
 
@@ -75,6 +78,9 @@ function makeFakeClient(state: State) {
       update(changes: any) { _op = "update"; _updatePayload = changes; return b; },
       delete() { _op = "delete"; return b; },
       upsert(row: any) {
+        if (state.failUpsertTables?.has(table)) {
+          return Promise.resolve({ data: null, error: DRIFT_ERROR });
+        }
         let source: any[] = (state as any)[table];
         if (!source) { source = []; (state as any)[table] = source; }
         source.push(row);
@@ -227,6 +233,19 @@ describe("circle_invite update failure surfaces db_error", () => {
       assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
       assert.equal(state.circle_invites[0].status, "accepted");
       assert.equal(state.circle_memberships.length, 1, "membership row created on success");
+    } finally { await srv.close(); }
+  });
+
+  it("accept returns db_error when circle_memberships upsert fails after status update", async () => {
+    const state = baseState();
+    state.circle_invites.push(pendingInvite());
+    state.failUpsertTables.add("circle_memberships");
+    const srv = await startServer(state);
+    try {
+      const r = await post(srv.port, `/api/me/requests/circle_invite/${CI_ID}/accept`, "recip-tok");
+      assert.equal(r.status, 500, `expected 500, got ${r.status}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body?.error, "db_error");
+      assert.equal(state.circle_memberships.length, 0, "no membership row when upsert fails");
     } finally { await srv.close(); }
   });
 });

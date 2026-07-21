@@ -425,7 +425,12 @@ router.post("/me/requests/circle_invite/:id/accept", async (req, res) => {
     sendError(res, "db_error", ciAcceptErr.message);
     return;
   }
-  await sc.from("circle_memberships").upsert({ user_id: inv.owner_id, other_id: user.id, created_at: now });
+  const { error: cmUpsertErr } = await sc.from("circle_memberships").upsert({ user_id: inv.owner_id, other_id: user.id, created_at: now });
+  if (cmUpsertErr) {
+    req.log.error({ err: cmUpsertErr }, "circle membership upsert failed after invite accept");
+    sendError(res, "db_error", cmUpsertErr.message);
+    return;
+  }
 
   res.status(200).json({ status: "accepted", ownerId: inv.owner_id });
 });
