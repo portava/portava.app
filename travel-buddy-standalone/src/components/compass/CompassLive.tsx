@@ -20,9 +20,19 @@ import {
   fetchCompassLiveSession, startCompassLive, stopCompassLive, checkCompassLive,
 } from '../../services/compass.ts';
 import type { CompassLiveSession, CompassLiveNudge, CompassLiveSummary } from '../../services/compass.ts';
+import { subscribeNotificationEvents } from '../../services/notificationEvents.ts';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 
 const CHECK_INTERVAL_MS = 60_000;
+const LIVE_EVENT_PREFIX = 'compass.live.';
+
+/** Append nudges, deduping on type+title so an SSE-driven insert and the same
+ *  nudge arriving in a later poll response never render twice. */
+function appendNudges(prev: CompassLiveNudge[], incoming: CompassLiveNudge[]): CompassLiveNudge[] {
+  const seen = new Set(prev.map((n) => `${n.type}:${n.title}`));
+  const fresh = incoming.filter((n) => !seen.has(`${n.type}:${n.title}`));
+  return fresh.length === 0 ? prev : [...prev, ...fresh].slice(-6);
+}
 
 export function CompassLive() {
   const [session, setSession] = useState<CompassLiveSession | null>(null);
@@ -44,7 +54,7 @@ export function CompassLive() {
     if (!r.active) { activeRef.current = false; clearTimer(); setSession(null); return; }
     if (r.session) setSession(r.session);
     if (r.delivered && r.delivered.length > 0) {
-      setNudges((prev) => [...prev, ...r.delivered!].slice(-6));
+      setNudges((prev) => appendNudges(prev, r.delivered!));
     }
   }, [clearTimer]);
 
@@ -56,6 +66,24 @@ export function CompassLive() {
   // Resume state on focus; stop all polling on blur/unmount.
   useFocusEffect(useCallback(() => {
     let cancelled = false;
+    // Event-driven refresh: when a live-nudge notification arrives over the
+    // realtime stream, show it immediately and refresh session context —
+    // no wait for the next 60 s poll tick. Ignored entirely (no network,
+    // no state) unless a session is active; unsubscribed on blur/unmount.
+    const unsubscribe = subscribeNotificationEvents((evt) => {
+      if (!activeRef.current) return;
+      if (!evt.eventType || !evt.eventType.startsWith(LIVE_EVENT_PREFIX)) return;
+      if (evt.title && evt.body) {
+        const nudge: CompassLiveNudge = {
+          type: evt.eventType.slice(LIVE_EVENT_PREFIX.length),
+          title: evt.title,
+          body: evt.body,
+          actionUrl: evt.actionUrl ?? '',
+        };
+        setNudges((prev) => appendNudges(prev, [nudge]));
+      }
+      runCheck().catch(() => {});
+    });
     (async () => {
       const r = await fetchCompassLiveSession();
       if (cancelled) return;
@@ -69,7 +97,7 @@ export function CompassLive() {
         runCheck().catch(() => {});
       }
     })();
-    return () => { cancelled = true; activeRef.current = false; clearTimer(); };
+    return () => { cancelled = true; activeRef.current = false; clearTimer(); unsubscribe(); };
   }, [armTimer, clearTimer, runCheck]));
 
   useEffect(() => () => clearTimer(), [clearTimer]);
