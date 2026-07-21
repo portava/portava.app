@@ -42,6 +42,10 @@ import {
   readGeocodeFromDb,
   writeGeocodeToDb,
 } from "../lib/discoveryPersistentCache";
+import {
+  fetchEventPostsForDiscovery,
+  type DiscoveryEventPost,
+} from "../lib/eventPostsDiscovery";
 
 const router = Router();
 
@@ -1286,20 +1290,66 @@ router.get("/discovery/feed", async (req, res) => {
     if (!destination) destination = geo.display.split(",")[0]?.trim();
   }
 
+  // ── Viewer identity for event-post pipeline ───────────────────────────────
+  // Auth header is optional on the feed; block-checking requires a viewer id.
+  // When unauthenticated, pass null → fetchEventPostsForDiscovery returns [].
+  let viewerId: string | null = null;
+  let blockedIds = new Set<string>();
+  try {
+    const sc = getServiceClient();
+    if (sc) {
+      const authHeader = req.headers.authorization;
+      if (authHeader?.startsWith("Bearer ")) {
+        const token = authHeader.slice(7);
+        const { data: userData } = await sc.auth.getUser(token);
+        if (userData?.user?.id) {
+          viewerId = userData.user.id;
+          // Load both directions of the block relationship
+          const [{ data: out }, { data: inn }] = await Promise.all([
+            sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId),
+            sc.from("blocks").select("blocker_id").eq("blocked_id",  viewerId),
+          ]);
+          for (const r of (out as any[] ?? [])) blockedIds.add(r.blocked_id as string);
+          for (const r of (inn as any[] ?? [])) blockedIds.add(r.blocker_id as string);
+        }
+      }
+    }
+  } catch { /* fail-open: unresolved viewer still gets places */ }
+
   // ── Fetch places across all requested categories ───────────────────────────
   try {
-    const categoryResults = await Promise.all(
-      effectiveCats.map(async (cat) => {
-        const [rawOsmPlaces, dbPlaces] = includePlaces
-          ? await Promise.all([
-              queryOverpass(coords!.lat, coords!.lng, radiusM, cat),
-              queryDbPlaces(destination ?? "", cat, coords!.lat, coords!.lng),
-            ])
-          : [[], [] as DiscoveryPlace[]];
-        const osmPlaces = await enrichOsmSavedCounts(rawOsmPlaces);
-        return { osmPlaces, dbPlaces, merged: mergeAndDedup(osmPlaces, dbPlaces) };
-      }),
-    );
+    // TODO: denormalize is_event_post flag at write time to avoid per-request join
+    const [categoryResults, eventPosts] = await Promise.all([
+      Promise.all(
+        effectiveCats.map(async (cat) => {
+          const [rawOsmPlaces, dbPlaces] = includePlaces
+            ? await Promise.all([
+                queryOverpass(coords!.lat, coords!.lng, radiusM, cat),
+                queryDbPlaces(destination ?? "", cat, coords!.lat, coords!.lng),
+              ])
+            : [[], [] as DiscoveryPlace[]];
+          const osmPlaces = await enrichOsmSavedCounts(rawOsmPlaces);
+          return { osmPlaces, dbPlaces, merged: mergeAndDedup(osmPlaces, dbPlaces) };
+        }),
+      ),
+      // Event-post pipeline — only runs when we have a viewer identity for block-checking;
+      // returns [] when viewerId is null (unauthenticated request).
+      viewerId
+        ? fetchEventPostsForDiscovery({
+            db:          getServiceClient()!,
+            lat:         coords!.lat,
+            lng:         coords!.lng,
+            city:        destination ?? null,
+            radiusKm,
+            viewerId,
+            blockedIds,
+            seenPostIds: new Set<string>(),
+          }).catch((_err) => {
+            req.log.warn({ _err }, "discovery/feed: event-post fetch failed (non-fatal)");
+            return [] as DiscoveryEventPost[];
+          })
+        : Promise.resolve([] as DiscoveryEventPost[]),
+    ]);
 
     // Flatten, dedup across categories by id
     const seen = new Set<string>();
@@ -1322,14 +1372,18 @@ router.get("/discovery/feed", async (req, res) => {
     res.json({
       places: slice,
       events:   [],
-      posts:    [],
+      posts:    eventPosts,
       memories: [],
       sections: [],
       nextCursor,
       total,
       destination: destination ?? null,
       context: null,
-      sourceSummary: { seededDbCount: totalDb, osmCount: totalOsm, userCreatedCount: 0 },
+      sourceSummary: {
+        seededDbCount:    totalDb,
+        osmCount:         totalOsm,
+        userCreatedCount: eventPosts.length,
+      },
     });
   } catch (err) {
     req.log.error({ err }, "discovery/feed failed");

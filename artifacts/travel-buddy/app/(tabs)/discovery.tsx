@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, Pressable, ScrollView, StyleSheet, TextInput, Modal, InteractionManager,
+  View, Text, Pressable, ScrollView, StyleSheet, TextInput, Modal, InteractionManager, FlatList,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
@@ -36,6 +36,9 @@ import type { RouteStopDraft } from '../../src/components/RouteBuilderSheet';
 import { SubmitPlaceSheet } from '../../src/components/discovery/SubmitPlaceSheet';
 import { SectionErrorBoundary } from '../../src/components/discovery/SectionErrorBoundary';
 import { loadCachedCounts, saveCachedCounts } from '../../src/services/discoveryLocalCache';
+import { DiscoveryEventPostCard } from '../../src/components/discovery/DiscoveryEventPostCard';
+import type { DiscoveryEventPost } from '../../src/types/discovery';
+import { freshToken } from '../../src/services/apiToken';
 
 /** Returns the value only when it is a real, finite number — otherwise null. */
 function finiteOrNull(v: number | null | undefined): number | null {
@@ -145,6 +148,7 @@ export default function DiscoveryHub() {
   const [submitPlaceOpen, setSubmitPlaceOpen] = useState(false);
   const [agePickerOpen, setAgePickerOpen] = useState(false);
   const [communityRefreshKey, setCommunityRefreshKey] = useState(0);
+  const [eventPosts, setEventPosts] = useState<DiscoveryEventPost[]>([]);
   const [categoryCounts, setCategoryCounts] = useState<Partial<Record<DiscoveryCategory, number>>>({});
   const [countsLoading, setCountsLoading] = useState(false);
   const [activeFilters, setActiveFilters] = useState<DiscoveryFilters>({ radiusKm: 10, openNow: false, minRating: null });
@@ -156,6 +160,33 @@ export default function DiscoveryHub() {
   // Guard: prevents a rapid double-tap on a dimmed chip from calling openCityPicker twice.
   // Set to true on first press; cleared when the picker closes (showCityPicker → false).
   const cityPickerPendingRef = useRef(false);
+
+  // ── Event posts fetch — "Live from events" strip ───────────────────────────
+  // Fetches from /api/discovery/feed and reads the `posts` array (previously always []).
+  // Only fires when a destination is set; renders nothing when posts is empty.
+  // Auth token is included so block filtering applies for signed-in users.
+  // Fire-and-forget: errors are silently swallowed — the strip is supplementary.
+  useEffect(() => {
+    if (!destination) { setEventPosts([]); return; }
+    let cancelled = false;
+    const base = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+    const params = new URLSearchParams({ city: destination, limit: '20' });
+    if (destinationLat != null && Number.isFinite(destinationLat)) params.set('lat', String(destinationLat));
+    if (destinationLng != null && Number.isFinite(destinationLng)) params.set('lng', String(destinationLng));
+    freshToken().then((token) => {
+      if (cancelled) return;
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      return fetch(`${base}/api/discovery/feed?${params}`, { headers });
+    }).then((r) => (r && r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        const posts = Array.isArray(data?.posts) ? (data.posts as DiscoveryEventPost[]) : [];
+        setEventPosts(posts);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [destination, destinationLat, destinationLng]);
 
   // ── Step-1 instrumentation + Step-4 cache-first paint ─────────────────────
   const mountedAt          = useRef(Date.now());
@@ -701,6 +732,24 @@ export default function DiscoveryHub() {
         </SectionErrorBoundary>
       )}
 
+      {/* ── "Live from events" strip — shown when event posts are available ── */}
+      {eventPosts.length > 0 && (
+        <SectionErrorBoundary label="LiveFromEvents">
+          <View style={styles.liveFromEventsSection}>
+            <Text style={styles.liveFromEventsTitle}>Live from events</Text>
+            <FlatList
+              data={eventPosts}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => <DiscoveryEventPostCard post={item} />}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.liveFromEventsList}
+              initialNumToRender={4}
+            />
+          </View>
+        </SectionErrorBoundary>
+      )}
+
       {/* ── Location-loading placeholder ── */}
       {screenStatus === 'loading' && (
         <View style={styles.loadingState}>
@@ -733,6 +782,7 @@ export default function DiscoveryHub() {
     currentCity,
     nudgeHighlighted,
     handleDisabledChipPress,
+    eventPosts,
   ]);
 
   return (
@@ -930,6 +980,22 @@ const styles = StyleSheet.create({
   loadingStateText: {
     ...t.small,
     color: color.mute,
+  },
+  liveFromEventsSection: {
+    paddingTop: space.md,
+    borderTopWidth: 1,
+    borderTopColor: color.haze,
+  },
+  liveFromEventsTitle: {
+    ...t.small,
+    fontWeight: '600',
+    color: color.ink,
+    paddingHorizontal: space.lg,
+    marginBottom: space.sm,
+  },
+  liveFromEventsList: {
+    paddingHorizontal: space.lg,
+    paddingBottom: space.md,
   },
   header: {
     flexDirection: 'row',

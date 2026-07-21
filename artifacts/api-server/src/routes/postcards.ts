@@ -235,11 +235,14 @@ const createPostcardSchema = z.object({
   /** Universal canonical location registry id (canonical_locations.id — migrations 0125/0128). */
   canonicalLocationId: z.string().uuid().optional(),
   addToPassport:   z.boolean().optional().default(true),
+  /**
+   * Optional Portava Event id to link this post to via post_event_links.
+   * NOTE: posts has no event_id column (removed; the separate event_posts table handles
+   * participant-only event wall posts). This field writes a row to post_event_links instead,
+   * enabling the Discovery event-post pipeline without touching the posts schema.
+   */
+  eventId: z.string().uuid().optional(),
 });
-// NOTE: `eventId` was removed from this schema. posts has no event_id column
-// (event feeds live in the separate event_posts table); writing it made
-// PostgREST reject EVERY composer insert with PGRST204 → db_error. zod objects
-// are non-strict, so legacy clients still sending eventId are ignored safely.
 
 router.post('/postcards', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -317,6 +320,20 @@ router.post('/postcards', async (req, res) => {
   }
 
   const postId = (post as any).id as string;
+
+  // Fire-and-forget: link post to a Portava Event if eventId was provided.
+  // Errors here (e.g. unknown event_id, migration not yet applied) must never
+  // block the post creation response — the event link is supplementary.
+  if (p.eventId) {
+    void Promise.resolve(
+      sc.from('post_event_links' as any)
+        .insert({ post_id: postId, event_id: p.eventId })
+    ).then(({ error: linkErr }: { error: any }) => {
+      if (linkErr) {
+        req.log.warn({ err: linkErr, postId, eventId: p.eventId }, 'postcards: failed to insert post_event_links row (non-fatal)');
+      }
+    }).catch(() => {});
+  }
 
   // Fire-and-forget: extract @mentions and #hashtags from caption
   if (p.caption) {

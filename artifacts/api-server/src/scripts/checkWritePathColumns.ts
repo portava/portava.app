@@ -128,6 +128,9 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/messaging.ts|update|payload partially resolvable", 1],
   ["src/routes/messaging.ts|upsert|payload partially resolvable", 1],
   ["src/routes/passport.ts|select|select list not statically resolvable", 10],
+  // post_event_links is a new join table (migration 20260731_post_event_links.sql);
+  // the insert uses `as any` cast to avoid database.types.ts drift until types are regenerated.
+  ["src/routes/postcards.ts|insert|dynamic table name", 1],
   ["src/routes/postcards.ts|select|select list not statically resolvable", 3],
   ["src/routes/posts.ts|select|select list not statically resolvable", 14],
   ["src/routes/profile.ts|select|select list not statically resolvable", 4],
