@@ -734,6 +734,98 @@ export async function putCompassSenseSettings(
   }
 }
 
+// ── Compass Live (Phase 12) ──────────────────────────────────────────────────
+
+export interface CompassLivePlanItem {
+  id: string;
+  title: string;
+  startsAt: string | null;
+}
+
+export interface CompassLiveSessionEvent {
+  at: string;
+  kind: string;
+  detail: string;
+}
+
+export interface CompassLiveContext {
+  city: string | null;
+  tripId: string | null;
+  currentStop: CompassLivePlanItem | null;
+  nextItem: CompassLivePlanItem | null;
+  minutesToNext: number | null;
+  recentEvents: CompassLiveSessionEvent[];
+  updatedAt: string;
+}
+
+export interface CompassLiveSession {
+  id: string;
+  status: 'active' | 'ended';
+  context: CompassLiveContext;
+  checksRun: number;
+  nudgesDelivered: number;
+  startedAt: string;
+}
+
+export interface CompassLiveNudge {
+  type: string;
+  title: string;
+  body: string;
+  actionUrl: string;
+}
+
+export interface CompassLiveSummary {
+  durationMinutes: number;
+  checksRun: number;
+  nudgesDelivered: number;
+  eventsRecorded: number;
+  stopsReached: number;
+  city: string | null;
+}
+
+export interface CompassLiveResult {
+  ok: boolean;
+  compassEnabled?: boolean;
+  active?: boolean;
+  session?: CompassLiveSession | null;
+  delivered?: CompassLiveNudge[];
+  summary?: CompassLiveSummary | null;
+  error?: string;
+}
+
+async function liveCall(path: string, method: 'GET' | 'POST'): Promise<CompassLiveResult> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const r = await authedFetch(path, method === 'POST' ? { method } : undefined);
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    if (body.compassEnabled === false) return { ok: true, compassEnabled: false };
+    return {
+      ok: true,
+      compassEnabled: true,
+      active: Boolean(body.active),
+      session: body.session ?? null,
+      delivered: body.delivered ?? [],
+      summary: body.summary ?? null,
+    };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+export function fetchCompassLiveSession(): Promise<CompassLiveResult> {
+  return liveCall('/api/compass/live/session', 'GET');
+}
+export function startCompassLive(): Promise<CompassLiveResult> {
+  return liveCall('/api/compass/live/start', 'POST');
+}
+export function stopCompassLive(): Promise<CompassLiveResult> {
+  return liveCall('/api/compass/live/stop', 'POST');
+}
+export function checkCompassLive(): Promise<CompassLiveResult> {
+  return liveCall('/api/compass/live/check', 'POST');
+}
+
 export interface CompassSettingsResult {
   ok: boolean;
   data?: CompassSettings;
