@@ -23,6 +23,7 @@ import { isFlagEnabled } from "../lib/featureFlags.js";
 import {
   canViewCirclePresence,
   canViewCirclePresenceBatch,
+  canBeSeenByViewersBatch,
   CURRENT_CONSENT_VERSION,
   type ContextType,
 } from "../lib/circleAccessGuard.js";
@@ -850,14 +851,10 @@ router.get("/circle/contexts/:type/:id/who-can-see-me", async (req, res) => {
   const memberIds = await getAcceptedMemberIds(sc, type as ContextType, id);
   const others = memberIds.filter((m) => m !== user.id);
 
-  const canSeeMeIds: string[] = [];
-  await Promise.all(
-    others.map(async (otherId) => {
-      // Check if otherId (as viewer) can see user.id (as target)
-      const result = await canViewCirclePresence(sc, otherId, user.id, type as ContextType, id);
-      if (result.allowed) canSeeMeIds.push(otherId);
-    }),
-  );
+  // Check which of the other members (as viewers) can see user.id (as target)
+  // — batched inverse-shape gate, identical privacy semantics.
+  const gateResults = await canBeSeenByViewersBatch(sc, user.id, others, type as ContextType, id);
+  const canSeeMeIds = others.filter((otherId) => gateResults.get(otherId)?.allowed === true);
 
   // Load profiles for canSeeMeIds
   const { data: profileRows } = canSeeMeIds.length > 0
