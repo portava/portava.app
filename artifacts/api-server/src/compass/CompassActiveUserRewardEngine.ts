@@ -369,6 +369,22 @@ export async function computeActiveUserScore(
         .then(() => {}, () => {});
     }
 
+    // Revoke previously-earned badges the user no longer qualifies for —
+    // otherwise a badge, once earned, shows forever in /me/active-reward.
+    // Fire-and-forget, mirroring the award upserts above.
+    {
+      const revoke = db
+        .from("compass_active_user_badges")
+        .update({ eligible: false })
+        .eq("user_id", userId);
+      if (badgeEligibility.length > 0) {
+        const inList = "(" + badgeEligibility.map((b) => '"' + b + '"').join(",") + ")";
+        revoke.not("badge_type", "in", inList).then(() => {}, () => {});
+      } else {
+        revoke.then(() => {}, () => {});
+      }
+    }
+
     updateReputations(db, userId, events);
 
     return result;

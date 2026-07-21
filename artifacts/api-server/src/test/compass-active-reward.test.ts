@@ -15,6 +15,7 @@ import type { Server } from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import compassRouter from "../routes/compass.js";
+import { computeActiveUserScore } from "../compass/CompassActiveUserRewardEngine.js";
 
 const ALICE_ID = "00000000-0000-0000-0000-0000000000a1";
 
@@ -65,6 +66,63 @@ function makeState(overrides: Partial<FakeState> = {}): FakeState {
     compass_active_user_badges: [],
     ...overrides,
   };
+}
+
+/**
+ * Richer fake for exercising CompassActiveUserRewardEngine.computeActiveUserScore:
+ * supports the engine's read chains and the badge upsert/update(not-in) writes.
+ * Tables other than events/badges resolve empty (profiles, trust_caps, scores…).
+ */
+function makeEngineFakeClient(state: { events: any[]; badges: any[] }) {
+  function from(table: string) {
+    const filters: Array<(r: any) => boolean> = [];
+    let updatePatch: any = null;
+    const src = (): any[] =>
+      table === "compass_active_user_events" ? state.events :
+      table === "compass_active_user_badges" ? state.badges : [];
+    const rows = () => src().filter((r) => filters.every((f) => f(r)));
+    const b: any = {
+      select() { return b; },
+      eq(col: string, val: any) { filters.push((r) => r[col] === val); return b; },
+      gt(col: string, val: any) { filters.push((r) => r[col] > val); return b; },
+      is() { return b; },
+      or() { return b; },
+      limit() { return b; },
+      order() { return b; },
+      not(col: string, _op: string, val: string) {
+        const set = new Set(
+          String(val).slice(1, -1).split(",").filter(Boolean)
+            .map((s) => s.replace(/^"|"$/g, "")),
+        );
+        filters.push((r) => !set.has(r[col]));
+        return b;
+      },
+      maybeSingle: async () => ({ data: rows()[0] ?? null, error: null }),
+      insert: () => ({ then: (f: any, r: any) => Promise.resolve({ error: null }).then(f, r) }),
+      upsert(row: any) {
+        if (table === "compass_active_user_badges") {
+          const existing = state.badges.find(
+            (r) => r.user_id === row.user_id && r.badge_type === row.badge_type,
+          );
+          if (existing) Object.assign(existing, row);
+          else state.badges.push({ expires_at: null, ...row });
+        }
+        return { then: (f: any, r: any) => Promise.resolve({ error: null }).then(f, r) };
+      },
+      update(patch: any) { updatePatch = patch; return b; },
+      then(onF: any, onR: any) {
+        if (updatePatch !== null && table === "compass_active_user_badges") {
+          for (const r of state.badges) {
+            if (filters.every((f) => f(r))) Object.assign(r, updatePatch);
+          }
+          return Promise.resolve({ data: null, error: null }).then(onF, onR);
+        }
+        return Promise.resolve({ data: rows(), error: null }).then(onF, onR);
+      },
+    };
+    return b;
+  }
+  return { from };
 }
 
 const servers: Server[] = [];
@@ -154,6 +212,76 @@ describe("GET /api/compass/me/active-reward — badge derivation", () => {
     assert.equal(body.tier, "active_traveler");
     assert.deepEqual(body.badges, []);
     assert.equal(body.boostEnabled, true);
+  });
+
+  it("revokes a previously-awarded badge when the user no longer qualifies", async () => {
+    const now = new Date().toISOString();
+    const engineState = {
+      events: Array.from({ length: 5 }, () => ({
+        user_id: ALICE_ID, event_type: "review_posted", weight: 1, city: null, category: null, created_at: now,
+      })),
+      badges: [] as any[],
+    };
+    const db = makeEngineFakeClient(engineState) as any;
+
+    // Earn the badge
+    const r1 = await computeActiveUserScore(db, ALICE_ID);
+    await new Promise((r) => setImmediate(r)); // flush fire-and-forget writes
+    assert.ok(r1, "first compute returned null");
+    assert.ok(r1.badgeEligibility.includes("trusted_guide"));
+    assert.ok(
+      engineState.badges.some((b) => b.badge_type === "trusted_guide" && b.eligible === true),
+      "trusted_guide row not upserted eligible",
+    );
+
+    // Activity drops off — recompute without qualification
+    engineState.events = [];
+    const r2 = await computeActiveUserScore(db, ALICE_ID);
+    await new Promise((r) => setImmediate(r));
+    assert.ok(r2, "second compute returned null");
+    assert.ok(!r2.badgeEligibility.includes("trusted_guide"));
+    const row = engineState.badges.find((b) => b.badge_type === "trusted_guide");
+    assert.ok(row, "badge row should still exist");
+    assert.equal(row.eligible, false, "badge should be marked ineligible");
+
+    // The endpoint no longer returns the revoked badge
+    const port = await startApp(makeState({
+      compass_active_user_scores: [
+        { user_id: ALICE_ID, tier: "active_traveler", boost_visibility_enabled: true },
+      ],
+      compass_active_user_badges: engineState.badges.map((b) => ({ expires_at: null, ...b })),
+    }));
+    const { status, body } = await getReward(port);
+    assert.equal(status, 200);
+    assert.ok(!body.badges.includes("trusted_guide"));
+  });
+
+  it("keeps still-qualifying badges eligible while revoking only the lapsed ones", async () => {
+    const now = new Date().toISOString();
+    const reviewEvents = Array.from({ length: 5 }, () => ({
+      user_id: ALICE_ID, event_type: "review_posted", weight: 1, city: null, category: null, created_at: now,
+    }));
+    const engineState = { events: reviewEvents, badges: [] as any[] };
+    const db = makeEngineFakeClient(engineState) as any;
+
+    await computeActiveUserScore(db, ALICE_ID);
+    await new Promise((r) => setImmediate(r));
+    assert.ok(engineState.badges.some((b) => b.badge_type === "trusted_guide" && b.eligible));
+    assert.ok(engineState.badges.some((b) => b.badge_type === "safety_champion" && b.eligible));
+
+    // Old events (91 days ago) — trusted_guide still holds (lifetime review count),
+    // but consistent_explorer (24h score) lapses.
+    const old = new Date(Date.now() - 91 * 86_400_000).toISOString();
+    engineState.events = reviewEvents.map((e) => ({ ...e, created_at: old }));
+    const r2 = await computeActiveUserScore(db, ALICE_ID);
+    await new Promise((r) => setImmediate(r));
+    assert.ok(r2);
+    assert.ok(r2.badgeEligibility.includes("trusted_guide"));
+    assert.ok(!r2.badgeEligibility.includes("consistent_explorer"));
+    const trusted = engineState.badges.find((b) => b.badge_type === "trusted_guide");
+    const explorer = engineState.badges.find((b) => b.badge_type === "consistent_explorer");
+    assert.equal(trusted?.eligible, true, "still-qualifying badge must stay eligible");
+    assert.equal(explorer?.eligible, false, "lapsed badge must be revoked");
   });
 
   it("returns db_error when the badge read fails — not a silently empty list", async () => {
