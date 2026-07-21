@@ -54,13 +54,15 @@ export interface CompassRemembersProps {
   onScopeChange?: (scope: CompassMemoryScope | null) => void;
   /** Circles the user belongs to — enables circle targeting for teach + name display. */
   circles?:  CompassCircleOption[];
+  /** Transient confirmation shown after a successful teach (e.g. "Remembered for Lisbon Crew"). */
+  teachConfirmation?: string | null;
   onTeach:   (statement: string, circleOwnerId?: string) => void;
   onEdit:    (memoryId: string, content: string) => void;
   onForget:  (memoryId: string) => void;
 }
 
 export function CompassRemembers({
-  memories, loading, teaching, scope, onScopeChange, circles, onTeach, onEdit, onForget,
+  memories, loading, teaching, scope, onScopeChange, circles, teachConfirmation, onTeach, onEdit, onForget,
 }: CompassRemembersProps) {
   const [teachText, setTeachTextState] = useState('');
   // Ref mirror so the submit handler always sees the latest draft even if a
@@ -138,6 +140,12 @@ export function CompassRemembers({
             {teaching ? <ActivityIndicator size="small" color={color.onInk} /> : <Text style={styles.teachBtnText}>Remember</Text>}
           </Pressable>
         </View>
+        {teachConfirmation ? (
+          <View style={styles.confirmRow} testID="teach-confirmation">
+            <Check size={13} color={color.signal} />
+            <Text style={styles.confirmText}>{teachConfirmation}</Text>
+          </View>
+        ) : null}
         {circles && circles.length > 0 ? (
           <View style={styles.targetRow} testID="teach-target-row">
             <Text style={styles.targetLabel}>Remember for:</Text>
@@ -252,6 +260,8 @@ const styles = StyleSheet.create({
   teachBtn:     { paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill, backgroundColor: color.signal },
   teachBtnText: { ...t.small, fontWeight: '700', color: color.onInk },
   btnDisabled:  { opacity: 0.45 },
+  confirmRow:   { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  confirmText:  { ...t.small, color: color.signal, fontWeight: '700' },
   targetRow:    { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.sm },
   targetLabel:  { ...t.stamp, color: color.faint },
   targetChip:   { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.sm, paddingVertical: 5, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper },
