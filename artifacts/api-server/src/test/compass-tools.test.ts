@@ -566,6 +566,46 @@ describe("H. Proposal confirmation flow", () => {
     assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], []);
   });
 
+  it("expired proposals (older than 24h) return 410 on confirm — no write", async () => {
+    const pid = "52345678-1234-1234-1234-123456789abc";
+    const db = seededDb(pid);
+    db.compass_conversation_messages[0].created_at =
+      new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(); // 25h old
+    const client = makeClient(db);
+    _setTestClient(client, "test-token");
+
+    const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+    assert.equal(r.status, 410, "expired confirm must return 410 Gone");
+    assert.equal(r.body.error, "gone");
+    assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], [], "no write for expired proposal");
+  });
+
+  it("expired proposals return 410 on decline too", async () => {
+    const pid = "62345678-1234-1234-1234-123456789abc";
+    const db = seededDb(pid);
+    db.compass_conversation_messages[0].created_at =
+      new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString(); // a week old
+    const client = makeClient(db);
+    _setTestClient(client, "test-token");
+
+    const r = await post(`/api/compass/proposals/${pid}/decline`, { conversationId: CONV_ID });
+    assert.equal(r.status, 410);
+    assert.equal(r.body.error, "gone");
+  });
+
+  it("a fresh proposal (just under the TTL) still confirms", async () => {
+    const pid = "72345678-1234-1234-1234-123456789abc";
+    const db = seededDb(pid);
+    db.compass_conversation_messages[0].created_at =
+      new Date(Date.now() - 23 * 60 * 60 * 1000).toISOString(); // 23h old — within TTL
+    const client = makeClient(db);
+    _setTestClient(client, "test-token");
+
+    const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+    assert.equal(r.status, 201);
+    assert.equal(client._getInserts()["trip_plan_items"].length, 1);
+  });
+
   it("re-authorizes at confirm time — membership revoked after proposal ⇒ 403, no write", async () => {
     const pid = "42345678-1234-1234-1234-123456789abc";
     const db = seededDb(pid);

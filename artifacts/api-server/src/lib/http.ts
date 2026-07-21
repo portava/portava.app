@@ -53,7 +53,8 @@ export type ApiErrorCode =
   | "invalid_state_transition"
   | "collection_create_failed"
   | "duplicate_event"
-  | "conflict";
+  | "conflict"
+  | "gone";
 
 const STATUS: Record<ApiErrorCode, number> = {
   server_not_configured: 503,
@@ -77,6 +78,7 @@ const STATUS: Record<ApiErrorCode, number> = {
   collection_create_failed: 503,
   duplicate_event: 409,
   conflict: 409,
+  gone: 410,
 };
 
 export function sendError(res: Response, code: ApiErrorCode, message?: string) {

@@ -1258,12 +1258,15 @@ interface FoundProposal {
   proposal: AddToTripProposal;
 }
 
+/** Proposals are confirmable for 24h after the proposal message was created. */
+export const PROPOSAL_TTL_MS = 24 * 60 * 60 * 1000;
+
 async function findPendingProposal(
   sc: SupabaseClient,
   userId: string,
   conversationId: string,
   proposalId: string,
-): Promise<FoundProposal | { error: "not_found" | "already_resolved" }> {
+): Promise<FoundProposal | { error: "not_found" | "already_resolved" | "expired" }> {
   // Conversation must belong to the caller.
   const { data: conv } = await sc
     .from("compass_conversations")
@@ -1275,12 +1278,13 @@ async function findPendingProposal(
 
   const { data: msgs } = await sc
     .from("compass_conversation_messages")
-    .select("payload")
+    .select("payload, created_at")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .limit(50);
 
   let proposal: AddToTripProposal | null = null;
+  let proposalCreatedAt: string | null = null;
   for (const m of (msgs ?? []) as any[]) {
     const p = m.payload as Record<string, unknown> | null;
     if (!p) continue;
@@ -1288,10 +1292,21 @@ async function findPendingProposal(
     if (resolved.includes(proposalId)) return { error: "already_resolved" };
     if (!proposal && Array.isArray(p.pendingProposals)) {
       const hit = (p.pendingProposals as any[]).find((pr) => pr?.proposalId === proposalId);
-      if (hit) proposal = hit as AddToTripProposal;
+      if (hit) {
+        proposal = hit as AddToTripProposal;
+        proposalCreatedAt = typeof m.created_at === "string" ? m.created_at : null;
+      }
     }
   }
   if (!proposal) return { error: "not_found" };
+
+  // Time-based expiry: a proposal older than the TTL must never execute.
+  // A missing/unparsable created_at is treated as expired — fail closed.
+  const createdMs = proposalCreatedAt ? Date.parse(proposalCreatedAt) : NaN;
+  if (!Number.isFinite(createdMs) || Date.now() - createdMs > PROPOSAL_TTL_MS) {
+    return { error: "expired" };
+  }
+
   return { proposal };
 }
 
@@ -1311,6 +1326,7 @@ router.post("/compass/proposals/:proposalId/confirm", async (req, res) => {
   const found = await findPendingProposal(sc, user.id, conversationId, proposalId);
   if ("error" in found) {
     if (found.error === "already_resolved") { sendError(res, "conflict", "This proposal was already confirmed or declined"); return; }
+    if (found.error === "expired") { sendError(res, "gone", "This proposal has expired — ask Compass again if you still want to add it"); return; }
     sendError(res, "not_found", "Proposal not found");
     return;
   }
@@ -1388,6 +1404,7 @@ router.post("/compass/proposals/:proposalId/decline", async (req, res) => {
   const found = await findPendingProposal(sc, user.id, conversationId, proposalId);
   if ("error" in found) {
     if (found.error === "already_resolved") { sendError(res, "conflict", "This proposal was already confirmed or declined"); return; }
+    if (found.error === "expired") { sendError(res, "gone", "This proposal has expired — no action needed"); return; }
     sendError(res, "not_found", "Proposal not found");
     return;
   }

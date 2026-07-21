@@ -90,7 +90,7 @@ export default function AiChat() {
 
   // Phase 4: confirm/decline an add_to_trip proposal. Nothing is written to a
   // trip until confirm succeeds server-side.
-  const [resolvedProposals, setResolvedProposals] = useState<Record<string, 'confirmed' | 'declined' | 'busy'>>({});
+  const [resolvedProposals, setResolvedProposals] = useState<Record<string, 'confirmed' | 'declined' | 'busy' | 'expired'>>({});
 
   async function resolveProposal(
     rec: CompassAskResponse,
@@ -101,6 +101,16 @@ export default function AiChat() {
     setResolvedProposals((p) => ({ ...p, [proposal.proposalId]: 'busy' }));
     const fn = decision === 'confirm' ? confirmCompassProposal : declineCompassProposal;
     const result = await fn(proposal.proposalId, rec.conversationId);
+    if (!result.ok && result.error === 'http_410') {
+      // Proposal expired server-side — show it as expired, don't re-enable the buttons.
+      setResolvedProposals((p) => ({ ...p, [proposal.proposalId]: 'expired' }));
+      setEntries((prev) => [...prev, {
+        kind: 'ai_text', id: 'pexp_' + Date.now(),
+        text: `That proposal for "${proposal.title}" has expired — just ask me again if you still want it.`,
+      }]);
+      scrollToEnd();
+      return;
+    }
     if (!result.ok) {
       setResolvedProposals((p) => {
         const next = { ...p };
@@ -291,7 +301,7 @@ function RecCard({
   rec: CompassAskResponse;
   onAction: (kind: string) => void;
   onProposal: (proposal: CompassPendingProposal, decision: 'confirm' | 'decline') => void;
-  proposalStates: Record<string, 'confirmed' | 'declined' | 'busy'>;
+  proposalStates: Record<string, 'confirmed' | 'declined' | 'busy' | 'expired'>;
   onAddPlaceToPlan: (place: CompassUiPlace) => void;
 }) {
   return (
@@ -320,6 +330,8 @@ function RecCard({
               <Text style={styles.proposalDone}>Added ✓</Text>
             ) : state === 'declined' ? (
               <Text style={styles.proposalDone}>Declined</Text>
+            ) : state === 'expired' ? (
+              <Text style={styles.proposalDone}>Expired — ask again to re-create it</Text>
             ) : (
               <View style={styles.actions}>
                 <Pressable
