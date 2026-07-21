@@ -547,7 +547,9 @@ router.post("/me/requests/trip_invite/:tripId/decline", async (req, res) => {
   if (!tm) { sendError(res, "not_found", "Trip invite not found"); return; }
   if (tm.role !== "invited") { sendError(res, "invalid_payload", `Trip membership is already '${tm.role}'`); return; }
 
-  await sc.from("trip_members").delete().eq("trip_id", tripId).eq("user_id", user.id);
+  const { error: tiDeclineErr } = await sc.from("trip_members")
+    .delete().eq("trip_id", tripId).eq("user_id", user.id);
+  if (tiDeclineErr) { sendError(res, "db_error", "Failed to decline trip invite"); return; }
 
   // Anti-retaliation cooldown: trip owner cannot re-invite for 48 hours after a decline
   const tiPermSc = getServiceClient();

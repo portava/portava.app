@@ -27,6 +27,8 @@ interface State {
   user_interaction_cooldowns: any[];
   /** tables whose update() should fail with a PGRST204-style error */
   failUpdateTables: Set<string>;
+  /** tables whose delete() should fail with a PGRST204-style error */
+  failDeleteTables: Set<string>;
 }
 
 const OWNER_ID = "aaaaaaaa-0000-0000-0000-000000000001";
@@ -51,6 +53,7 @@ function baseState(): State {
     ],
     user_interaction_cooldowns: [],
     failUpdateTables: new Set(),
+    failDeleteTables: new Set(),
   };
 }
 
@@ -111,6 +114,9 @@ function makeFakeClient(state: State) {
       return { data: null, error: null };
     }
     async function resolveDelete() {
+      if (state.failDeleteTables.has(table)) {
+        return { data: null, error: DRIFT_ERROR };
+      }
       (state as any)[table] = getSource().filter((r: any) => !filters.every((f) => f(r)));
       return { data: null, error: null };
     }
@@ -249,6 +255,32 @@ describe("trip_invite update failure surfaces db_error", () => {
       const r = await post(srv.port, `/api/me/requests/trip_invite/${TRIP_ID}/accept`, "recip-tok");
       assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
       assert.equal(state.trip_members[0].role, "member");
+    } finally { await srv.close(); }
+  });
+
+  it("decline returns db_error, row survives, and no cooldown is written", async () => {
+    const state = baseState();
+    state.trip_members.push(invitedTripMember());
+    state.failDeleteTables.add("trip_members");
+    const srv = await startServer(state);
+    try {
+      const r = await post(srv.port, `/api/me/requests/trip_invite/${TRIP_ID}/decline`, "recip-tok");
+      assert.equal(r.status, 500, `expected 500, got ${r.status}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body?.error, "db_error");
+      assert.equal(state.trip_members.length, 1, "trip_members row must survive failed delete");
+      assert.equal(state.trip_members[0].role, "invited");
+      assert.equal(state.user_interaction_cooldowns.length, 0, "no cooldown row on failed decline");
+    } finally { await srv.close(); }
+  });
+
+  it("decline still succeeds when the delete succeeds (control)", async () => {
+    const state = baseState();
+    state.trip_members.push(invitedTripMember());
+    const srv = await startServer(state);
+    try {
+      const r = await post(srv.port, `/api/me/requests/trip_invite/${TRIP_ID}/decline`, "recip-tok");
+      assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+      assert.equal(state.trip_members.length, 0, "invite row removed on successful decline");
     } finally { await srv.close(); }
   });
 });
