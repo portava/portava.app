@@ -9,7 +9,7 @@
  *
  * Accessible from: Compass Preferences → "Compass Remembers".
  */
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Alert, Pressable, SafeAreaView } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { ArrowLeft } from 'lucide-react-native';
@@ -30,6 +30,10 @@ export default function CompassMemoriesScreen() {
   const [circles, setCircles]   = useState<CompassCircleOption[]>([]);
   // Guards against a slow fetch for a previous scope overwriting the current one.
   const loadSeq = useRef(0);
+  // Transient "Remembered for …" confirmation after a successful teach.
+  const [teachConfirmation, setTeachConfirmation] = useState<string | null>(null);
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (confirmTimer.current) clearTimeout(confirmTimer.current); }, []);
 
   const load = useCallback(async (s: CompassMemoryScope | null) => {
     const seq = ++loadSeq.current;
@@ -65,6 +69,15 @@ export default function CompassMemoriesScreen() {
     if (scope === null || r.data.scope === scope) {
       setMemories((prev) => [r.data!, ...prev.filter((m) => m.id !== r.data!.id)]);
     }
+    // Confirm where the memory landed — circle name for group teaches.
+    const circleName = circleOwnerId
+      ? circles.find((c) => c.ownerId === circleOwnerId)?.name
+      : undefined;
+    setTeachConfirmation(
+      circleOwnerId ? `Remembered for ${circleName ?? 'your circle'}` : 'Remembered for you',
+    );
+    if (confirmTimer.current) clearTimeout(confirmTimer.current);
+    confirmTimer.current = setTimeout(() => setTeachConfirmation(null), 4000);
   }
 
   async function handleEdit(memoryId: string, content: string) {
@@ -111,6 +124,7 @@ export default function CompassMemoriesScreen() {
           scope={scope}
           onScopeChange={handleScopeChange}
           circles={circles}
+          teachConfirmation={teachConfirmation}
           onTeach={handleTeach}
           onEdit={handleEdit}
           onForget={handleForget}
