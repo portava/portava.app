@@ -201,18 +201,11 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     load(true);
   };
 
-  if (!destination) return (
-    listHeaderComponent ? <View style={{ flex: 1 }}>{listHeaderComponent}</View> : null
-  );
-
-  if (loading && items.length === 0) {
-    return (
-      <View style={{ flex: 1 }}>
-        {listHeaderComponent}
-        <PlaceSkeletonList count={5} />
-      </View>
-    );
-  }
+  // ── Hooks hoisted before early returns ──────────────────────────────────────
+  // All useMemo/useCallback calls MUST appear before any conditional return.
+  // Placing them after the "loading && items.length === 0" early return caused
+  // "Rendered fewer hooks than expected" whenever a city switch triggered
+  // setItems([]) + setLoading(true) after items had already loaded.
 
   // Virtualized list data — pre-filtered to exclude dismissed items.
   const listData = useMemo(
@@ -270,6 +263,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
 
   // renderItem is memoized to prevent FlatList from re-rendering all visible
   // rows on unrelated state changes (e.g. community data arriving).
+  // NOTE: defined here (before early returns) to keep hook count stable.
   const renderItem = useCallback(({ item }: { item: ForYouItem }) => {
     const isShowMore = showMoreIds.has(item.place.id);
     return (
@@ -340,6 +334,20 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
       </View>
     );
   }, [showMoreIds, onAddToPlan, onAddToRoute, isAuthed, handleWhyPress, destination]);
+
+  // ── Early returns (after all hooks) ─────────────────────────────────────────
+  if (!destination) return (
+    listHeaderComponent ? <View style={{ flex: 1 }}>{listHeaderComponent}</View> : null
+  );
+
+  if (loading && items.length === 0) {
+    return (
+      <View style={{ flex: 1 }}>
+        {listHeaderComponent}
+        <PlaceSkeletonList count={5} />
+      </View>
+    );
+  }
 
   return (
     <>
