@@ -309,16 +309,32 @@ export interface CityConfidence {
   computedAt: string | null;
 }
 
+// Short-lived in-memory cache, keyed by normalized city. Confidence only
+// changes on graph rebuilds, so repeat Discovery visits within the TTL can
+// skip the network round-trip (same pattern as the discovery counts cache).
+const _cityConfidenceCache = new Map<string, { data: CityConfidence; at: number }>();
+const CITY_CONFIDENCE_TTL_MS = 10 * 60 * 1_000; // 10 minutes
+
+/** For tests only — clear the city-confidence cache. */
+export function _clearCityConfidenceCache(): void { _cityConfidenceCache.clear(); }
+
 export async function fetchCityConfidence(
   city: string,
 ): Promise<{ ok: boolean; data?: CityConfidence; error?: string }> {
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();
   if (!city.trim()) return { ok: false, error: 'no_city' };
+  const cacheKey = city.trim().toLowerCase();
+  const cached = _cityConfidenceCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < CITY_CONFIDENCE_TTL_MS) {
+    return { ok: true, data: cached.data };
+  }
   try {
     const r = await authedFetch(`/api/compass/city-confidence?city=${encodeURIComponent(city.trim())}`);
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     const body = await r.json();
-    return { ok: true, data: body as CityConfidence };
+    const data = body as CityConfidence;
+    _cityConfidenceCache.set(cacheKey, { data, at: Date.now() });
+    return { ok: true, data };
   } catch {
     return { ok: false, error: 'network_error' };
   }
