@@ -424,6 +424,85 @@ describe("E. Privacy scrub", () => {
   });
 });
 
+// ── G. Contradiction resolution ──────────────────────────────────────────────
+
+describe("G. Contradiction resolution — newer preference wins", () => {
+  /** OpenAI mock that flags every EXISTING candidate id as contradicted. */
+  function contradictionMock() {
+    return makeOpenAIMock((opts: any) => {
+      const user = (opts.messages ?? []).find((m: any) => m.role === "user")?.content ?? "";
+      if (!String(user).startsWith("NEW:")) return [];
+      const ids = [...String(user).matchAll(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g)].map((m) => m[0]);
+      return ids;
+    });
+  }
+
+  it("a newer taught preference supersedes an older conflicting one — only the newer reaches the prompt", async () => {
+    const client = makeClient();
+    _setTestClient(client, true as any);
+    _setTestOpenAI(openAIError); // no candidates yet → no contradiction call anyway
+    await createMemory(client, ALICE, {
+      scope: "long_term", category: "food", content: "Loves steakhouses and BBQ joints",
+      source: "compressed", confidence: 0.7,
+    });
+
+    _setTestOpenAI(contradictionMock());
+    const newer = await createMemory(client, ALICE, {
+      scope: "long_term", category: "food", content: "Is vegetarian", source: "taught",
+    });
+    assert.ok(newer);
+
+    assert.equal(client._db.compass_memories.length, 1, "older conflicting memory removed");
+    assert.equal(client._db.compass_memories[0].content, "Is vegetarian");
+
+    const block = (await buildMemoryPromptBlock(client, ALICE)).join("\n");
+    assert.ok(block.includes("Is vegetarian"), "newer preference in prompt");
+    assert.ok(!block.includes("steakhouses"), "older contradicted preference gone from prompt");
+  });
+
+  it("a lower-confidence newer memory decays the older's confidence instead of deleting it", async () => {
+    const client = makeClient();
+    _setTestClient(client, true as any);
+    _setTestOpenAI(openAIError);
+    await createMemory(client, ALICE, {
+      scope: "long_term", category: "food", content: "Loves steakhouses", source: "taught", confidence: 1,
+    });
+
+    _setTestOpenAI(contradictionMock());
+    await createMemory(client, ALICE, {
+      scope: "long_term", category: "food", content: "Seems to prefer vegetarian spots",
+      source: "inferred", confidence: 0.6,
+    });
+
+    assert.equal(client._db.compass_memories.length, 2, "high-confidence older memory kept");
+    const older = client._db.compass_memories.find((m: Row) => m.content === "Loves steakhouses");
+    assert.equal(older.confidence, 0.5, "older confidence halved");
+  });
+
+  it("does not touch same-category memories in a different scope or when the model is unavailable", async () => {
+    const client = makeClient();
+    _setTestClient(client, true as any);
+    _setTestOpenAI(openAIError);
+    await createMemory(client, ALICE, {
+      scope: "long_term", category: "food", content: "Loves steakhouses", source: "taught",
+    });
+    // Model unavailable → contradiction pass is a no-op; both persist.
+    await createMemory(client, ALICE, {
+      scope: "long_term", category: "food", content: "Is vegetarian", source: "taught",
+    });
+    assert.equal(client._db.compass_memories.length, 2, "model outage keeps both memories");
+
+    // Different scope: session memory never contradicts long_term candidates
+    // (candidates are same-scope only).
+    _setTestOpenAI(contradictionMock());
+    await createMemory(client, ALICE, {
+      scope: "session", category: "food", content: "Wants seafood tonight",
+      source: "compressed", conversationId: randomUUID(),
+    });
+    assert.equal(client._db.compass_memories.length, 3, "cross-scope memories untouched");
+  });
+});
+
 // ── F. Compression cadence ───────────────────────────────────────────────────
 
 describe("F. Compression cadence", () => {
