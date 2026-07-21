@@ -1,0 +1,38 @@
+Global UX invariant — user identity is universally tappable to open Passport/profile.
+
+This is now a permanent invariant across the entire app: see a person → tap the person → open their profile. Compass Phase 1 work stays untouched (do not modify Compass conversations/messages tables, the Compass system prompt file, the Compass intent classifier, or any Compass API route). Do not disturb the map screen work (camera guard, style/env-var fix, search-navigation fix, MapLibre error toast, duplicate header restoration, trip card peek/drag), the Add Plan routing fix, the Pulse Explore Today mode, or the Discovery event-post pipeline.
+
+Requirement.
+A user's identity must be tappable to open that user's Passport/profile everywhere their identity is rendered anywhere in Portava. Identity elements include: profile photos, avatars, display names, usernames/handles, verified badges when attached to identity, traveler cards, post authorship, comment authorship, like/reaction lists, followers/following lists, Telegraph chat headers and message senders, group members, Trip Crew members, event hosts, event attendee lists, Rent a Buddy listings, reviews and reviewer identity, Pulse cards, Discovery cards, memory attributions, postcard senders/recipients, notifications referring to a user, search results, map user pins/markers, and any future user-generated surface.
+
+Rules.
+- Tapping the avatar or displayed name/handle opens that user's profile using the single canonical profile route and user identifier. Do NOT create separate profile implementations for different features.
+- The current user's own identity opens their own Passport.
+- Other users open the correct public profile with all privacy and visibility rules enforced server-side (never trust the client to filter).
+- Blocked users, restricted accounts, and private accounts must follow existing access controls — the tap still routes, the profile screen itself handles the appropriate state (blocked, private, request-follow, etc).
+- Deleted, suspended, or otherwise unavailable accounts render a graceful unavailable-profile state on the profile screen. Never crash. Never surface a raw error. Never navigate to a broken route.
+- Nested controls inside identity surfaces must still work independently — Follow, Message, Like, Menu/overflow (…), Report, and any inline action button must perform its action WITHOUT accidentally triggering profile navigation. Use event.stopPropagation / hitSlop / separate Pressable regions so taps do not bubble to the parent identity link.
+- A visible avatar or name is never dead non-interactive UI unless there is a specific safety reason (e.g. anonymous SOS report, redacted moderation view). Any exception must be explicit and documented in code.
+
+Implementation.
+Create (or standardize onto) one reusable component — call it UserIdentityLink (or ProfilePressable, whichever naming already exists in the repo — reuse existing if there is one, don't fork). It:
+- Takes a userId and renders whatever child content it's given (avatar, name, handle, verified badge, or any combination).
+- Handles the tap with the canonical profile route (routes to own Passport if userId matches current user, otherwise the public profile route).
+- Handles the current-user vs other-user branching in one place.
+- Provides a way for children to opt out of tap propagation (so Follow/Message/Like/Menu buttons nested inside still work).
+- Supports a testID prop so tests can target identity surfaces.
+- Handles loading, unavailable, and deleted-user states gracefully — never throws.
+
+Audit and fix.
+Do a full codebase sweep for every rendered avatar, display name, username/handle, and user card. Grep for common patterns — Avatar components, Image with a user's photo URL, Text rendering username/displayName, user card components, message sender rows, mention chips, and every list of user identities (followers, following, attendees, members, likers, etc). Wrap every one that isn't already interactive in UserIdentityLink. Report the total count of identity surfaces found and how many needed to be wrapped. Do not leave any behind.
+
+Tests.
+Add integration/UI tests that prove tapping identity elements routes to the correct profile from at least these surfaces: Discovery card, Pulse card, post authorship, comment authorship, followers list, following list, Telegraph chat header, Telegraph message sender avatar, group member row, Trip Crew member row, event attendee row, Rent a Buddy listing, reviewer identity on a review, search result, notification referring to a user. Include a test proving nested actions (Follow, Message, Like, Menu) do not trigger profile navigation. Include a test proving the current user's identity routes to their own Passport rather than the public-profile route. Include a test proving deleted/unavailable accounts render the graceful state, not a crash.
+
+Verify.
+Manually smoke-test the biggest surfaces (Discovery, Pulse, Telegraph, followers/following, event attendees, Trip Crew) on device to confirm the invariant holds visually and that nested actions still work correctly.
+
+Add a note to the changelog/PR summary describing the invariant, the reusable component, and the audit numbers (how many identity surfaces existed and how many were made interactive).
+
+Quoting the user:
+"A user's profile must be clickable everywhere their identity appears anywhere in Portava.", "Never leave a visible user avatar/name as dead, non-interactive UI unless there is a specific safety reason.", "Use one reusable UserIdentityLink / ProfilePressable-style component wherever possible so this behavior remains consistent across the entire app.", "This is now a permanent UX invariant: see a person \u2192 tap the person \u2192 open their profile."
