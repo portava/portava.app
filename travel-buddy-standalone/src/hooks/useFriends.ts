@@ -11,6 +11,7 @@ import {
   acceptFriendRequest,
   declineFriendRequest,
   cancelFriendRequest,
+  resolveSendFriendRequestOutcome,
   type FriendStatus,
   type FriendRequest,
   type FriendRow,
@@ -44,8 +45,9 @@ export function useFriendStatus(userId: string | null | undefined) {
     if (!userId) return { ok: false, data: null, errorKind: 'config_error' };
     const res = await sendFriendRequest(userId);
     if (res.ok) {
-      setStatus('outgoing_pending');
-      setRequestId((res.data as any)?.requestId);
+      const outcome = resolveSendFriendRequestOutcome(res.data as any);
+      setStatus(outcome.status);
+      setRequestId(outcome.requestId);
     }
     return res;
   }, [userId]);
