@@ -143,7 +143,9 @@ export function feedCacheKey(
 ): string {
   const tzPart =
     tzOffsetMinutes !== null
-      ? String(tzOffsetMinutes)
+      ? typeof resolvedLocalHour === "number" && Number.isFinite(resolvedLocalHour)
+        ? `${tzOffsetMinutes}-${timeOfDayForHour(resolvedLocalHour)}`
+        : String(tzOffsetMinutes)
       : typeof resolvedLocalHour === "number" && Number.isFinite(resolvedLocalHour)
         ? `auto-${timeOfDayForHour(resolvedLocalHour)}`
         : "auto";

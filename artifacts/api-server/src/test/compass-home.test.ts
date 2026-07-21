@@ -557,6 +557,35 @@ describe("traveler-local time buckets", () => {
     assert.ok(second.tonightVibe, "evening rebuild must assemble tonightVibe");
   });
 
+  it("explicit-offset traveler crossing a bucket boundary misses the stale home cache entry", async () => {
+    // UTC+8 traveler (tzOffsetMinutes=480):
+    //   08:59 UTC → 16:59 local → afternoon; payload cached.
+    //   09:01 UTC → 17:01 local → evening.  Within the TTL, but bucket changed.
+    const { fakeClient } = makeFakeClient({
+      feature_flags: [enabledFlag()],
+      events: [eventRow("ev-boundary", "Rooftop session", hoursFromNow(3))],
+    });
+    _setTestClient(fakeClient, true);
+    _setTestHomeCacheTtlMs(60 * 60 * 1_000); // long TTL — only the key can save us
+
+    _setTestNowUtc(new Date(Date.UTC(2026, 6, 21, 8, 59, 0))); // 16:59 local → afternoon
+    const first = (await getHome("valid-token", "?tzOffsetMinutes=480")).json as any;
+    assert.equal(first.timeOfDay, "afternoon", "16:59 local must be afternoon for UTC+8 traveler");
+
+    // Two minutes later: 09:01 UTC = 17:01 local → evening. The cache TTL has not
+    // expired, but the bucket changed — the stale afternoon entry must NOT be served.
+    invalidateFlagsCache();
+    clearCompassProfileCache();
+    _setTestNowUtc(new Date(Date.UTC(2026, 6, 21, 9, 1, 0))); // 17:01 local → evening
+    const second = (await getHome("valid-token", "?tzOffsetMinutes=480")).json as any;
+    assert.equal(
+      second.timeOfDay,
+      "evening",
+      "explicit-offset traveler crossing a bucket boundary must rebuild, not get the cached afternoon payload",
+    );
+    assert.ok(second.tonightVibe, "evening rebuild must assemble tonightVibe");
+  });
+
   it("ignores a malformed tzOffsetMinutes and falls back honestly", async () => {
     const { fakeClient } = makeFakeClient({ feature_flags: [enabledFlag()] });
     _setTestClient(fakeClient, true);

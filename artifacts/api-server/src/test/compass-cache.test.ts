@@ -292,8 +292,13 @@ describe("feedCacheKey — auto path partitions by time-of-day bucket", () => {
       feedCacheKey("feed", undefined, null, 10),
       feedCacheKey("feed", undefined, null, 11),
     );
-    // Explicit offset still ignores the resolved hour (offset already partitions)
+    // Explicit offset also keys by resolved bucket: same offset + same bucket → stable key
     assert.strictEqual(
+      feedCacheKey("feed", undefined, 480, 8),
+      feedCacheKey("feed", undefined, 480, 10),
+    );
+    // Explicit offset + bucket crossing → different keys (the fix for task 2145)
+    assert.notStrictEqual(
       feedCacheKey("feed", undefined, 480, 10),
       feedCacheKey("feed", undefined, 480, 23),
     );
@@ -330,6 +335,31 @@ describe("feedCacheKey — auto path partitions by time-of-day bucket", () => {
     } finally {
       _setTestNowUtc(null);
     }
+  });
+
+  it("an explicit-offset traveler crossing a bucket boundary misses the stale cache entry", async () => {
+    clearL1Cache();
+    // UTC+8 traveler (tzOffsetMinutes=480):
+    //   16:59 local (08:59 UTC) → "afternoon" bucket
+    //   17:01 local (09:01 UTC) → "evening" bucket
+    const afternoonPayload = { sections: [{ name: "for_you", vibe: "afternoon" }] };
+
+    // Compute local hours directly from the offset (no DB lookup needed for explicit offset)
+    const hourBefore = 16; // 08:59 UTC + 480min = 16:59 local → hour 16 → afternoon
+    const keyBefore  = feedCacheKey("feed", undefined, 480, hourBefore);
+    const { db } = makeFakeDb({ compass_feed_cache: [] });
+    await setCachedFeed(db, USER_A, keyBefore, "feed", afternoonPayload);
+
+    const hourAfter = 17; // 09:01 UTC + 480min = 17:01 local → hour 17 → evening
+    const keyAfter  = feedCacheKey("feed", undefined, 480, hourAfter);
+
+    assert.notStrictEqual(keyBefore, keyAfter, "bucket crossing must change the key even with an explicit offset");
+    const stale = await getCachedFeed(db, USER_A, keyAfter, "feed");
+    assert.strictEqual(stale, null, "evening request must miss the afternoon cache entry for an explicit-offset traveler");
+
+    // The afternoon key itself still hits (stable within a bucket)
+    const sameBucket = await getCachedFeed(db, USER_A, keyBefore, "feed");
+    assert.deepStrictEqual(sameBucket, afternoonPayload, "afternoon key must still hit within the same bucket");
   });
 });
 

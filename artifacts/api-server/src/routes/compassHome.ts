@@ -91,7 +91,9 @@ export function _setTestHomeCacheTtlMs(ms: number | null): void {
  * Cache keys must partition by the traveler's clock so a time-of-day boundary
  * crossing within the TTL never serves the previous bucket's payload.
  * Mirrors feedCacheKey in routes/compass.ts:
- *   - explicit client offset → keyed by the offset (bucket follows from it)
+ *   - explicit client offset → keyed by offset + resolved bucket (the local
+ *     hour is already computed before the cache lookup, so a bucket boundary
+ *     crossing within the TTL produces a different key even for offset travelers)
  *   - no offset ("auto")     → keyed by the resolved time-of-day bucket,
  *     since the stored-timezone local hour can cross a bucket mid-TTL.
  */
@@ -102,7 +104,9 @@ export function homeCacheKey(
 ): string {
   const tzPart =
     tzOffsetMinutes !== null
-      ? String(tzOffsetMinutes)
+      ? typeof resolvedLocalHour === "number" && Number.isFinite(resolvedLocalHour)
+        ? `${tzOffsetMinutes}-${timeOfDayForHour(resolvedLocalHour)}`
+        : String(tzOffsetMinutes)
       : typeof resolvedLocalHour === "number" && Number.isFinite(resolvedLocalHour)
         ? `auto-${timeOfDayForHour(resolvedLocalHour)}`
         : "auto";
