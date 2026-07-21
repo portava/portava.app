@@ -36,7 +36,11 @@ export default function AiChat() {
   const scroll = useRef<ScrollView>(null);
   const navScrollHandler = useNavBarScrollHandler();
 
-  // Pull-to-refresh for the Compass Home surface (empty-chat state only).
+  // Pull-to-refresh — always available. On the empty chat it refreshes the
+  // Compass Home surface; mid-conversation it re-syncs the live-session
+  // surface (deliberate semantics: the chat transcript is local and is never
+  // re-run on a pull). The spinner is cleared by whichever surface owns the
+  // refresh for the current state.
   const [refreshing, setRefreshing]     = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const onPullRefresh = useCallback(() => {
@@ -198,12 +202,15 @@ export default function AiChat() {
         contentContainerStyle={{ padding: space.lg, gap: space.md }}
         onScroll={navScrollHandler}
         scrollEventThrottle={16}
-        refreshControl={entries.length === 0 ? (
+        refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onPullRefresh} tintColor={color.signal} />
-        ) : undefined}
+        }
       >
         {/* Phase 12: live-session surface — explicit start/stop, nudges, summary. */}
-        <CompassLive />
+        <CompassLive
+          refreshNonce={refreshNonce}
+          onRefreshed={() => setRefreshing(false)}
+        />
         {entries.length === 0 ? (
           // Phase 10: context-aware Compass Home replaces the blank-chat state.
           <CompassHome
