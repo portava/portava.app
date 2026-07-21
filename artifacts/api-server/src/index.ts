@@ -14,6 +14,7 @@ import { startZombieTokenSweeper } from "./lib/zombieTokenSweeper";
 import { startEventWaitlistSweeper } from "./lib/eventWaitlistSweeper";
 import { startCallSweepScheduler } from "./lib/callSweepScheduler";
 import { startTripReminderScheduler } from "./lib/tripReminderScheduler";
+import { startIntelligenceGraphScheduler } from "./lib/intelligenceGraphScheduler";
 import { startInviteSlotReconciler } from "./lib/inviteSlotReconciler";
 import { startInviteSlotSweeper } from "./lib/inviteSlotSweeper";
 import { getServiceClient } from "./lib/supabase";
@@ -59,6 +60,7 @@ app.listen(port, (err) => {
   startEventWaitlistSweeper();
   startCallSweepScheduler();
   startTripReminderScheduler();
+  startIntelligenceGraphScheduler();
   startInviteSlotReconciler();
   startInviteSlotSweeper();
   // startDiscoveryCacheWarmer calls warmUpDiscoveryCache immediately on startup
