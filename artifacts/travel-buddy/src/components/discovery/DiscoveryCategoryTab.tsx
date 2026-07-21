@@ -405,6 +405,7 @@ export function DiscoveryCategoryTab({
               onAddToPlan={() => onAddToPlan(item)}
               onAddToRoute={onAddToRoute}
               showDistance={filters.sortBy === 'nearest'}
+              city={destination}
             />
           )}
           ListHeaderComponent={listHeader}

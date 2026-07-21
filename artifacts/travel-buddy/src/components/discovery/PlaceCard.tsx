@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
 import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation, Route, ListPlus } from 'lucide-react-native';
-import type { DiscoveryPlace } from '../../services/discovery.ts';
+import type { DiscoveryPlace, PlaceLiveStatus } from '../../services/discovery.ts';
+import { getPlaceLiveStatusCached } from '../../services/discovery.ts';
 import { checkSaved, saveItem, unsaveItem } from '../../services/collections.ts';
 import { getSavedListIds } from '../../services/discoveryBookmarks.ts';
 import { usePlanPicker } from '../PlanPickerController.tsx';
@@ -16,9 +17,11 @@ interface PlaceCardProps {
   onAddToRoute?: (draft: RouteStopDraft) => void;
   /** Show the distance badge. Defaults to true; pass false to hide it (e.g. non-nearest sorts). */
   showDistance?: boolean;
+  /** City context used to disambiguate the live open-now lookup. When absent, no live pill is fetched. */
+  city?: string | null;
 }
 
-export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDistance = true }: PlaceCardProps) {
+export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDistance = true, city }: PlaceCardProps) {
   const [saved, setSaved]               = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [savedCount, setSavedCount]     = useState(0);
@@ -26,6 +29,28 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
   const { isAdded } = usePlanPicker();
   const alreadyAdded = isAdded(place.id);
   const savedCountTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [liveStatus, setLiveStatus] = useState<PlaceLiveStatus | null>(null);
+
+  // Live open-now pill — viewport-gated: FlatList only mounts near-viewport
+  // rows, and the 600 ms delay skips cards flung past while scrolling. The
+  // service layer dedupes, caches (10 min) and limits concurrency, so there is
+  // no request storm. Honest degradation: any failure leaves the pill hidden.
+  useEffect(() => {
+    setLiveStatus(null);
+    if (!city) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      getPlaceLiveStatusCached(place.name, city)
+        .then((ls) => { if (!cancelled) setLiveStatus(ls); })
+        .catch(() => {});
+    }, 600);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [place.id, place.name, city]);
+
+  const liveOpenNow: boolean | null =
+    liveStatus?.available && typeof liveStatus.openNow === 'boolean'
+      ? liveStatus.openNow
+      : null;
 
   // `checkSaved` is the bookmark icon — must be accurate so fires immediately.
   useEffect(() => {
@@ -94,6 +119,17 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
                 {place.distanceKm < 1
                   ? `${Math.round(place.distanceKm * 1000)} m`
                   : `${place.distanceKm} km`}
+              </Text>
+            </View>
+          )}
+          {liveOpenNow != null && (
+            <View
+              style={[styles.livePill, liveOpenNow ? styles.livePillOpen : styles.livePillClosed]}
+              testID={`card-open-now-${place.id}`}
+              accessibilityLabel={liveOpenNow ? 'Open now — verified live' : 'Closed now — verified live'}
+            >
+              <Text style={[styles.livePillText, { color: liveOpenNow ? '#047857' : '#B91C1C' }]}>
+                {liveOpenNow ? 'Open now' : 'Closed now'}
               </Text>
             </View>
           )}
@@ -318,6 +354,22 @@ const styles = StyleSheet.create({
   distBadgeText: {
     ...t.stamp,
     color: '#0891B2',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  livePill: {
+    paddingHorizontal: space.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  livePillOpen: {
+    backgroundColor: '#04785716',
+  },
+  livePillClosed: {
+    backgroundColor: '#B91C1C16',
+  },
+  livePillText: {
+    ...t.stamp,
     fontSize: 10,
     fontWeight: '600',
   },

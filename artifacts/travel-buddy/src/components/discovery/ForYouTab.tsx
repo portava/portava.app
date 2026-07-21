@@ -296,6 +296,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
 
         <PlaceCard
           place={item.place}
+          city={destination}
           onPress={() => {
             if (item.kind === 'compass') {
               // Fire-and-forget "viewed" outcome — the card was actually opened.
@@ -338,7 +339,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
         </View>
       </View>
     );
-  }, [showMoreIds, onAddToPlan, onAddToRoute, isAuthed, handleWhyPress]);
+  }, [showMoreIds, onAddToPlan, onAddToRoute, isAuthed, handleWhyPress, destination]);
 
   return (
     <>

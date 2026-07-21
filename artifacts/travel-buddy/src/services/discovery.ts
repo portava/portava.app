@@ -97,6 +97,83 @@ export async function getPlaceLiveStatus(
   }
 }
 
+// ── Cached live-status for list cards ─────────────────────────────────────────
+//
+// Explore/Discover cards fetch live status lazily as they mount. To avoid a
+// request storm while scrolling:
+//  - results (including "unavailable") are cached in-memory for 10 minutes,
+//    mirroring the server-side cache TTL;
+//  - failed lookups (network error → null) are cached for 60 s so a flaky
+//    connection doesn't retry on every re-mount;
+//  - identical concurrent lookups share one in-flight promise;
+//  - at most 3 lookups run concurrently — the rest queue.
+
+const LIVE_STATUS_TTL_MS = 10 * 60 * 1_000;
+const LIVE_STATUS_FAIL_TTL_MS = 60 * 1_000;
+const LIVE_STATUS_MAX_CONCURRENT = 3;
+
+const _liveStatusCache = new Map<string, { value: PlaceLiveStatus | null; at: number }>();
+const _liveStatusInFlight = new Map<string, Promise<PlaceLiveStatus | null>>();
+let _liveStatusActive = 0;
+const _liveStatusQueue: (() => void)[] = [];
+
+function _liveStatusKey(name: string, city?: string | null): string {
+  return `${name.trim().toLowerCase()}|${(city ?? '').trim().toLowerCase()}`;
+}
+
+function _acquireLiveStatusSlot(): Promise<void> {
+  if (_liveStatusActive < LIVE_STATUS_MAX_CONCURRENT) {
+    _liveStatusActive++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    _liveStatusQueue.push(() => { _liveStatusActive++; resolve(); });
+  });
+}
+
+function _releaseLiveStatusSlot(): void {
+  _liveStatusActive--;
+  const next = _liveStatusQueue.shift();
+  if (next) next();
+}
+
+/**
+ * Deduped, cached, concurrency-limited variant of getPlaceLiveStatus for
+ * list surfaces (Explore cards). Never invents a status — a null return or
+ * `available: false` means the caller should render nothing.
+ */
+export async function getPlaceLiveStatusCached(
+  name: string,
+  city?: string | null,
+): Promise<PlaceLiveStatus | null> {
+  if (!name.trim()) return null;
+  const key = _liveStatusKey(name, city);
+
+  const cached = _liveStatusCache.get(key);
+  if (cached) {
+    const ttl = cached.value ? LIVE_STATUS_TTL_MS : LIVE_STATUS_FAIL_TTL_MS;
+    if (Date.now() - cached.at < ttl) return cached.value;
+    _liveStatusCache.delete(key);
+  }
+
+  const inFlight = _liveStatusInFlight.get(key);
+  if (inFlight) return inFlight;
+
+  const promise = (async () => {
+    await _acquireLiveStatusSlot();
+    try {
+      const value = await getPlaceLiveStatus(name, city);
+      _liveStatusCache.set(key, { value, at: Date.now() });
+      return value;
+    } finally {
+      _releaseLiveStatusSlot();
+      _liveStatusInFlight.delete(key);
+    }
+  })();
+  _liveStatusInFlight.set(key, promise);
+  return promise;
+}
+
 // ── Community discovery ────────────────────────────────────────────────────────
 
 export interface CommunityPlaceItem {
