@@ -45,3 +45,4 @@
 - [Upsert batch duplicate keys](upsert-batch-duplicate-keys.md) — one duplicate ON CONFLICT key silently kills the whole upsert batch (21000); dedupe deterministic keys and check `error`.
 - [Compass Phase 1 test gotchas](compass-phase1-test-gotchas.md) — feature_flags column is `flag` not `key`; Express test servers need req.log shim; _setTestClient second arg is boolean not string.
 - [Discarded-write audits](discarded-write-audits.md) — dual grep (single-line + bare-await multiline chains) to find ignored `{ error }` writes; fatal vs best-effort fix policy per site type.
+- [Shared dev/prod job queue](shared-dev-prod-job-queue.md) — one Supabase DB: jobs enqueued from dev run on the PROD worker; stamp images need a proxy-supported model (dall-e-3 rejected).

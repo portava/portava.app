@@ -705,7 +705,7 @@ describe("GET /api/pulse/live", () => {
       rent_buddy_profiles: [{
         id: buddyProfileId,
         user_id: ALICE_ID,
-        moderation_status: "approved",
+        admin_status: "active",
       }],
       buddy_bookings: [{
         id: bookingId,
@@ -1091,7 +1091,7 @@ describe("GET /api/pulse/live", () => {
       rent_buddy_profiles: [{
         id:                buddyProfileId,
         user_id:           buddyUserId,
-        moderation_status: "approved",
+        admin_status:      "active",
         city:              "Manila",
         bio:               "Local guide",
       }],
@@ -1108,7 +1108,7 @@ describe("GET /api/pulse/live", () => {
       rent_buddy_profiles: [{
         id:                "ba000000-0000-0000-0000-000000000002",
         user_id:           ALICE_ID, // caller is Alice
-        moderation_status: "approved",
+        admin_status:      "active",
         city:              "Manila",
         bio:               "Own profile",
       }],
