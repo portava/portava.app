@@ -19,6 +19,7 @@ import {
   runIntelligenceGraphRebuildOnce,
   _setTestRebuild,
   _setTestGetClient,
+  _setTestSweep,
   getLastRebuildInfo,
   _resetLastRebuildInfo,
 } from "../lib/intelligenceGraphScheduler.js";
@@ -35,6 +36,7 @@ describe("IntelligenceGraphScheduler", () => {
   afterEach(() => {
     _setTestRebuild(null);
     _setTestGetClient(null);
+    _setTestSweep(null);
     _setTestServiceClient(null);
     _resetLastRebuildInfo();
   });
@@ -168,6 +170,42 @@ describe("IntelligenceGraphScheduler", () => {
     assert.equal(result.status, "skipped");
     assert.equal((result as any).reason, "no_service_client");
     assert.equal(calls, 0);
+  });
+
+  it("runs the city_timezones sweep with the service client after a successful rebuild", async () => {
+    const fakeClient = { __tag: "fake-service-client" } as any;
+    _setTestServiceClient(fakeClient);
+    _setTestRebuild(async () => FAKE_REPORT);
+
+    let sweepCalls = 0;
+    let sweepDb: unknown = null;
+    _setTestSweep(async (db) => { sweepCalls++; sweepDb = db; return 3; });
+
+    const result = await runIntelligenceGraphRebuildOnce();
+    assert.equal(result.status, "completed");
+    assert.equal(sweepCalls, 1);
+    assert.equal(sweepDb, fakeClient);
+  });
+
+  it("a sweep failure never turns a completed rebuild into a failed run", async () => {
+    _setTestServiceClient({} as any);
+    _setTestRebuild(async () => FAKE_REPORT);
+    _setTestSweep(async () => { throw new Error("sweep exploded"); });
+
+    const result = await runIntelligenceGraphRebuildOnce();
+    assert.equal(result.status, "completed");
+    assert.equal(getLastRebuildInfo().lastOutcome, "completed");
+  });
+
+  it("skips the sweep when the rebuild itself fails", async () => {
+    _setTestServiceClient({} as any);
+    _setTestRebuild(async () => { throw new Error("db down"); });
+    let sweepCalls = 0;
+    _setTestSweep(async () => { sweepCalls++; return 0; });
+
+    const result = await runIntelligenceGraphRebuildOnce();
+    assert.equal(result.status, "failed");
+    assert.equal(sweepCalls, 0);
   });
 
   it("survives a hard DB failure through the real rebuild engine", async () => {

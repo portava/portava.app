@@ -48,6 +48,7 @@ import {
   MIN_SLICE_SAMPLE,
   type CityWorldModel,
   initCityTimezonePersistence,
+  sweepCityTimezoneTable,
   _resetCityTimezoneStateForTest,
 } from "../compass/CompassGraphEngine.js";
 import { SEED_CITIES, getPopularCities } from "../lib/popularCities.js";
@@ -810,6 +811,111 @@ describe("city timezone persistence", () => {
     assert.ok(cebu);
     assert.equal(cebu!.timezone, "Asia/Manila");
     for (const p of places) assert.equal(typeof p.timezone, "string");
+  });
+});
+
+/* ── City-timezone table sweep (bounded persistence) ──────────────────────── */
+
+// Dedicated mini-fake: unlike the shared fake it honors string ordering
+// (ISO timestamps), lt filters, and head/count selects — the exact query
+// surface the sweep and the boot loader depend on.
+function makeTzFake(rows: Row[]) {
+  const table = rows;
+  return {
+    from: (name: string) => {
+      assert.equal(name, "city_timezones");
+      const filters: Array<(r: Row) => boolean> = [];
+      let _order: { key: string; asc: boolean } | null = null;
+      let _limit: number | null = null;
+      let _head = false;
+      let _delete = false;
+      const b: any = {
+        select: (_cols?: string, opts?: { head?: boolean }) => { _head = !!opts?.head; return b; },
+        order: (key: string, opts?: { ascending?: boolean }) => { _order = { key, asc: opts?.ascending !== false }; return b; },
+        limit: (n: number) => { _limit = n; return b; },
+        lt: (k: string, v: unknown) => { filters.push((r) => String(r[k] ?? "") < String(v)); return b; },
+        delete: () => { _delete = true; return b; },
+        then: (resolve: Function) => {
+          let out = table.filter((r) => filters.every((f) => f(r)));
+          if (_delete) {
+            const kept = table.filter((r) => !out.includes(r));
+            table.length = 0;
+            table.push(...kept);
+            return resolve({ data: null, error: null, count: out.length });
+          }
+          if (_order) {
+            const { key, asc } = _order;
+            out = [...out].sort((a, b2) => {
+              const av = String(a[key] ?? ""), bv = String(b2[key] ?? "");
+              return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+            });
+          }
+          if (_limit !== null) out = out.slice(0, _limit);
+          return resolve({ data: _head ? null : out, error: null, count: table.length });
+        },
+      };
+      return b;
+    },
+  } as any;
+}
+
+const TZ_CAP = 5000; // mirrors LEARNED_CITY_TZ_MAX
+
+function tzRow(i: number, updatedAt: string): Row {
+  return { city_key: `junkcity${i}`, timezone: "Asia/Manila", updated_at: updatedAt };
+}
+
+describe("city_timezones table sweep", () => {
+  beforeEach(() => _resetCityTimezoneStateForTest());
+  after(() => _resetCityTimezoneStateForTest());
+
+  it("no-ops when the table is within the cap", async () => {
+    const rows = [tzRow(1, "2020-01-01T00:00:00.000Z"), tzRow(2, "2020-01-02T00:00:00.000Z")];
+    const deleted = await sweepCityTimezoneTable(makeTzFake(rows));
+    assert.equal(deleted, 0);
+    assert.equal(rows.length, 2);
+  });
+
+  it("deletes old rows beyond the newest cap, keeping recently-updated ones", async () => {
+    const recent = new Date(Date.now() - 24 * 60 * 60_000).toISOString(); // 1 day ago
+    const ancient = "2020-01-01T00:00:00.000Z"; // far beyond the age window
+    const rows: Row[] = [];
+    for (let i = 0; i < TZ_CAP; i++) rows.push(tzRow(i, recent));
+    rows.push(tzRow(TZ_CAP, ancient), tzRow(TZ_CAP + 1, ancient));
+
+    const deleted = await sweepCityTimezoneTable(makeTzFake(rows));
+    assert.equal(deleted, 2);
+    assert.equal(rows.length, TZ_CAP);
+    assert.ok(rows.every((r) => r.updated_at === recent), "only the ancient overflow rows are removed");
+  });
+
+  it("never purges recently-updated rows even when the table overshoots the cap", async () => {
+    const recent = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+    const rows: Row[] = [];
+    for (let i = 0; i < TZ_CAP + 3; i++) rows.push(tzRow(i, recent)); // all fresh
+    const deleted = await sweepCityTimezoneTable(makeTzFake(rows));
+    assert.equal(deleted, 0);
+    assert.equal(rows.length, TZ_CAP + 3);
+  });
+
+  it("is fail-soft: null client and throwing client both return 0", async () => {
+    assert.equal(await sweepCityTimezoneTable(null), 0);
+    const throwing: any = { from: () => { throw new Error("db down"); } };
+    assert.equal(await sweepCityTimezoneTable(throwing), 0);
+  });
+
+  it("boot load prefers most-recently-updated rows when the table exceeds the cap", async () => {
+    const rows: Row[] = [];
+    // junkcity0 is the OLDEST — with cap+1 rows it must be the one left out.
+    const base = Date.parse("2026-01-01T00:00:00.000Z");
+    for (let i = 0; i <= TZ_CAP; i++) {
+      rows.push(tzRow(i, new Date(base + i * 1000).toISOString()));
+    }
+    const loaded = await initCityTimezonePersistence(makeTzFake(rows));
+    assert.equal(loaded, TZ_CAP);
+    assert.equal(cityTimezone("junkcity0"), null, "oldest row is dropped");
+    assert.equal(cityTimezone(`junkcity${TZ_CAP}`), "Asia/Manila", "newest row is loaded");
+    assert.equal(cityTimezone("junkcity1"), "Asia/Manila");
   });
 });
 

@@ -156,6 +156,9 @@ export async function initCityTimezonePersistence(
     const { data, error } = await db
       .from(CITY_TZ_TABLE)
       .select("city_key, timezone")
+      // Prefer the most-recently-updated rows when the table exceeds the
+      // in-memory cap — junk that hasn't been touched in ages loses first.
+      .order("updated_at", { ascending: false })
       .limit(LEARNED_CITY_TZ_MAX);
     if (error) throw error;
     let loaded = 0;
@@ -170,6 +173,59 @@ export async function initCityTimezonePersistence(
     return loaded;
   } catch {
     return 0; // fail-soft — resolver keeps working in-memory only
+  }
+}
+
+// Rows must be BOTH outside the newest LEARNED_CITY_TZ_MAX and untouched for
+// this long before the sweep deletes them — recent learning is never purged
+// just because the table briefly overshoots the cap.
+const CITY_TZ_SWEEP_MIN_AGE_MS = 180 * 24 * 60 * 60_000; // ~6 months
+
+/**
+ * Periodic sweep keeping the persisted `city_timezones` table aligned with
+ * the in-memory bound: deletes rows that are (a) not among the
+ * LEARNED_CITY_TZ_MAX most-recently-updated AND (b) not updated within the
+ * minimum age window. Fail-soft: any error (missing table, DB down) is
+ * swallowed and 0 is returned. Returns the number of rows deleted.
+ */
+export async function sweepCityTimezoneTable(
+  db: SupabaseClient | null,
+): Promise<number> {
+  if (!db) return 0;
+  try {
+    const { count, error: countErr } = await db
+      .from(CITY_TZ_TABLE)
+      .select("city_key", { count: "exact", head: true });
+    if (countErr) throw countErr;
+    if (typeof count !== "number" || count <= LEARNED_CITY_TZ_MAX) return 0;
+
+    // updated_at of the LEARNED_CITY_TZ_MAX-th newest row — anything strictly
+    // older sits outside the cap.
+    const { data, error: rankErr } = await db
+      .from(CITY_TZ_TABLE)
+      .select("updated_at")
+      .order("updated_at", { ascending: false })
+      .limit(LEARNED_CITY_TZ_MAX);
+    if (rankErr) throw rankErr;
+    const rows = (data as any[]) ?? [];
+    const rankCutoff = typeof rows[rows.length - 1]?.updated_at === "string"
+      ? (rows[rows.length - 1].updated_at as string)
+      : null;
+    if (!rankCutoff) return 0;
+
+    const ageCutoff = new Date(Date.now() - CITY_TZ_SWEEP_MIN_AGE_MS).toISOString();
+    // Both conditions must hold → delete below the EARLIER of the two cutoffs
+    // (ISO-8601 strings compare lexicographically).
+    const cutoff = rankCutoff < ageCutoff ? rankCutoff : ageCutoff;
+
+    const { count: deleted, error: delErr } = await db
+      .from(CITY_TZ_TABLE)
+      .delete({ count: "exact" })
+      .lt("updated_at", cutoff);
+    if (delErr) throw delErr;
+    return deleted ?? 0;
+  } catch {
+    return 0; // fail-soft — the sweep must never break its host scheduler
   }
 }
 

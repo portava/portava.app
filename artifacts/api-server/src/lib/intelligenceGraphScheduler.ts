@@ -17,7 +17,11 @@
 
 import { logger as rootLogger } from "./logger.js";
 import { getServiceClient } from "./supabase.js";
-import { rebuildIntelligenceGraph, type GraphRebuildReport } from "../compass/CompassGraphEngine.js";
+import {
+  rebuildIntelligenceGraph,
+  sweepCityTimezoneTable,
+  type GraphRebuildReport,
+} from "../compass/CompassGraphEngine.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const logger = rootLogger.child({ job: "IntelligenceGraphScheduler" });
@@ -41,6 +45,15 @@ let _testGetClient: (() => SupabaseClient | null) | null = null;
 
 export function _setTestGetClient(fn: (() => SupabaseClient | null) | null): void {
   _testGetClient = fn;
+}
+
+type SweepFn = (db: SupabaseClient | null) => Promise<number>;
+
+/** Injected city-timezone sweep implementation for tests; null = real sweep. */
+let _testSweep: SweepFn | null = null;
+
+export function _setTestSweep(fn: SweepFn | null): void {
+  _testSweep = fn;
 }
 
 // ── run-once ──────────────────────────────────────────────────────────────────
@@ -118,6 +131,20 @@ export async function runIntelligenceGraphRebuildOnce(): Promise<SchedulerRunRes
       { ...report, durationMs: Date.now() - startedAt },
       "IntelligenceGraphScheduler: scheduled rebuild completed",
     );
+
+    // Piggybacked maintenance: keep the persisted city_timezones table
+    // bounded (aligned with the in-memory learned-cache cap). Fail-soft —
+    // a sweep failure never turns a completed rebuild into a failed run.
+    try {
+      const sweep = _testSweep ?? sweepCityTimezoneTable;
+      const swept = await sweep(sc);
+      if (swept > 0) {
+        logger.info({ swept }, "IntelligenceGraphScheduler: city_timezones sweep removed stale rows");
+      }
+    } catch (err) {
+      logger.warn({ err }, "IntelligenceGraphScheduler: city_timezones sweep failed (ignored)");
+    }
+
     return { status: "completed", report };
   } catch (err) {
     lastRebuild = {
