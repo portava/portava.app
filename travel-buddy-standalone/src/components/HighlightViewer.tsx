@@ -37,6 +37,7 @@ import { markHighlightsViewed } from '../services/messaging.ts';
 import { markViewed, invalidateHighlightCache } from '../hooks/useHighlightRingState.ts';
 import { HighlightViewersSheet } from './HighlightViewersSheet.tsx';
 import { EngagementUserListSheet } from './EngagementUserListSheet.tsx';
+import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const ITEM_DURATION_MS = 5000;
@@ -353,16 +354,23 @@ export function HighlightViewer({
         {/* Top row: author + close */}
         <View style={s.topRow}>
           {current.author && (
-            <View style={s.authorRow}>
-              <Image source={{ uri: current.author.avatarUrl ?? undefined }} style={s.avatar} />
-              <View>
-                <Text style={s.authorName}>{current.author.name}</Text>
-                {locLabel ? <Text style={s.locText}>{locLabel}</Text> : null}
+            <UserIdentityLink
+              userId={current.author.id}
+              handle={current.author.handle}
+              currentUserId={currentUserId}
+              testID="highlight-author-identity"
+            >
+              <View style={s.authorRow}>
+                <Image source={{ uri: current.author.avatarUrl ?? undefined }} style={s.avatar} />
+                <View>
+                  <Text style={s.authorName}>{current.author.name}</Text>
+                  {locLabel ? <Text style={s.locText}>{locLabel}</Text> : null}
+                </View>
+                <View style={s.timeChip}>
+                  <Text style={s.timeText}>{fmtExpiry(current.expiresAt)}</Text>
+                </View>
               </View>
-              <View style={s.timeChip}>
-                <Text style={s.timeText}>{fmtExpiry(current.expiresAt)}</Text>
-              </View>
-            </View>
+            </UserIdentityLink>
           )}
           <View style={{ flex: 1 }} />
           {isVideo && (

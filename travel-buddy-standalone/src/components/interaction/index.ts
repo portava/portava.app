@@ -1,5 +1,7 @@
 export { UserAvatarButton } from './UserAvatarButton.tsx';
 export { UserNameButton } from './UserNameButton.tsx';
+export { UserIdentityLink, stopPropagation } from './UserIdentityLink.tsx';
+export type { UserIdentityLinkProps } from './UserIdentityLink.tsx';
 export { BlockUserConfirmSheet } from './BlockUserConfirmSheet.tsx';
 export { ReportUserSheet } from './ReportUserSheet.tsx';
 export { MuteUserSheet } from './MuteUserSheet.tsx';

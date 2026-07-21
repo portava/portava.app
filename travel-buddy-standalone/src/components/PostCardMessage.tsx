@@ -14,6 +14,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
 import { router } from 'expo-router';
 import { MapPin, Heart, MessageCircle, ExternalLink, User } from 'lucide-react-native';
+import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { TG } from '../theme/telegraphTokens.ts';
 
@@ -81,26 +82,32 @@ export function PostCardMessage({ body, mine }: Props) {
         <Text style={[card.brandLabel, mine && { color: color.onInk + 'BB' }]}>POST</Text>
       </View>
 
-      {/* Author row */}
-      <View style={card.authorRow}>
-        {payload.authorAvatar ? (
-          <Image source={{ uri: payload.authorAvatar }} style={card.avatar} />
-        ) : (
-          <View style={card.avatarFallback}>
-            <User size={12} color={mine ? color.onInk : color.mute} />
-          </View>
-        )}
-        <View style={{ flex: 1 }}>
-          <Text style={[card.authorName, mine && card.authorNameMine]} numberOfLines={1}>
-            {authorLabel}
-          </Text>
-          {payload.authorHandle && payload.authorName ? (
-            <Text style={[card.authorHandle, mine && card.authorHandleMine]} numberOfLines={1}>
-              @{payload.authorHandle}
+      {/* Author row — tappable identity */}
+      <UserIdentityLink
+        userId=""
+        handle={payload.authorHandle ?? null}
+        testID="post-card-author-identity"
+      >
+        <View style={card.authorRow}>
+          {payload.authorAvatar ? (
+            <Image source={{ uri: payload.authorAvatar }} style={card.avatar} />
+          ) : (
+            <View style={card.avatarFallback}>
+              <User size={12} color={mine ? color.onInk : color.mute} />
+            </View>
+          )}
+          <View style={{ flex: 1 }}>
+            <Text style={[card.authorName, mine && card.authorNameMine]} numberOfLines={1}>
+              {authorLabel}
             </Text>
-          ) : null}
+            {payload.authorHandle && payload.authorName ? (
+              <Text style={[card.authorHandle, mine && card.authorHandleMine]} numberOfLines={1}>
+                @{payload.authorHandle}
+              </Text>
+            ) : null}
+          </View>
         </View>
-      </View>
+      </UserIdentityLink>
 
       {/* Thumbnail */}
       {payload.thumbnail ? (

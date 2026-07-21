@@ -21,6 +21,7 @@ import { getViewers, type StoryViewer } from '../services/stories.ts';
 import { useSession } from '../context/SessionContext.tsx';
 import { formatRelativeTime as formatRelative } from '../lib/dateTime/formatters.ts';
 import { primaryIdentityText } from '../lib/displayIdentity.ts';
+import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 
 const STORY_DURATION_MS = 5000;
 
@@ -115,13 +116,20 @@ export function StoryViewer({ visible, feedUser, onClose }: Props) {
 
         {/* Header */}
         <View style={s.header}>
-          <View style={s.authorRow}>
-            <View style={s.avatar} />
-            <View>
-              <Text style={s.authorName}>{primaryIdentityText({ name: feedUser.name, handle: feedUser.handle })}</Text>
-              <Text style={s.timeAgo}>{formatRelative(current.created_at)}</Text>
+          <UserIdentityLink
+            userId={feedUser.userId}
+            handle={feedUser.handle}
+            currentUserId={userId}
+            testID="story-author-identity"
+          >
+            <View style={s.authorRow}>
+              <View style={s.avatar} />
+              <View>
+                <Text style={s.authorName}>{primaryIdentityText({ name: feedUser.name, handle: feedUser.handle })}</Text>
+                <Text style={s.timeAgo}>{formatRelative(current.created_at)}</Text>
+              </View>
             </View>
-          </View>
+          </UserIdentityLink>
           <Pressable onPress={onClose} hitSlop={12}>
             <X size={24} color="#fff" />
           </Pressable>
@@ -177,11 +185,19 @@ export function StoryViewer({ visible, feedUser, onClose }: Props) {
                 <Text style={s.emptyText}>No viewers yet</Text>
               ) : (
                 viewers.map((v) => (
-                  <View key={v.userId} style={s.viewerRow}>
-                    <View style={s.viewerAvatar} />
-                    <Text style={s.viewerName}>{primaryIdentityText({ name: v.name, handle: v.handle })}</Text>
-                    <Text style={s.viewerTime}>{formatRelative(v.viewedAt)}</Text>
-                  </View>
+                  <UserIdentityLink
+                    key={v.userId}
+                    userId={v.userId}
+                    handle={v.handle}
+                    currentUserId={userId}
+                    testID={`viewer-identity-${v.userId}`}
+                  >
+                    <View style={s.viewerRow}>
+                      <View style={s.viewerAvatar} />
+                      <Text style={s.viewerName}>{primaryIdentityText({ name: v.name, handle: v.handle })}</Text>
+                      <Text style={s.viewerTime}>{formatRelative(v.viewedAt)}</Text>
+                    </View>
+                  </UserIdentityLink>
                 ))
               )}
             </View>
