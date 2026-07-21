@@ -70,11 +70,7 @@ function BlockRenderer({ block, onAddPlaceToPlan }: {
         </View>
       );
     case 'event_cards':
-      return (
-        <View style={s.stack}>
-          {block.events.map((e) => <EventBlockCard key={e.id} event={e} />)}
-        </View>
-      );
+      return <EventCardsBlock events={block.events} />;
     case 'person_cards':
       return (
         <View style={s.stack}>
@@ -345,6 +341,41 @@ function EventBlockCard({ event }: { event: CompassUiEvent }) {
         ) : null}
       </View>
     </Pressable>
+  );
+}
+
+// ── Event cards block (mini-map preview + cards) ──────────────────────────────
+
+function EventCardsBlock({ events }: { events: CompassUiEvent[] }) {
+  const router = useRouter();
+  const coordEvents = events.filter((e) => e.lat != null && e.lng != null);
+  const points: CompassMiniMapPoint[] = coordEvents.map((e) => ({
+    id: e.id, label: e.title, lat: e.lat!, lng: e.lng!,
+  }));
+  const first = coordEvents[0];
+  return (
+    <View style={s.stack}>
+      {points.length > 0 && first ? (
+        <CompassMiniMap
+          points={points}
+          onPress={() => {
+            reportCompassViewed(null, first.id);
+            router.push({
+              pathname: '/map',
+              params: {
+                lat: String(first.lat),
+                lng: String(first.lng),
+                focusId: first.id,
+                title: first.title,
+                ...(first.category ? { category: first.category } : {}),
+              },
+            } as any);
+          }}
+          testID="compass-block-event-map-preview"
+        />
+      ) : null}
+      {events.map((e) => <EventBlockCard key={e.id} event={e} />)}
+    </View>
   );
 }
 
