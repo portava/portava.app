@@ -46,6 +46,7 @@ import type { MeetupCounts, MeetupCreator, RsvpStatus, MeetupTimeOption, Attende
 import type { Message } from '../../src/services/messaging';
 import { deleteMessage, muteThread, leaveThread, reportThread, retryTranslation, saveMessage } from '../../src/services/messaging';
 import { DiscoveryCardMessage } from '../../src/components/DiscoveryCardMessage';
+import { PostCardMessage } from '../../src/components/PostCardMessage';
 import { ThreadSafetySheet } from '../../src/components/ThreadSafetySheet';
 import { TelegraphRecommendationCard } from '../../src/components/TelegraphRecommendationCard';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
@@ -784,6 +785,15 @@ function MessageBubble({
     return (
       <Pressable onLongPress={onLongPress} delayLongPress={300}>
         <DiscoveryCardMessage body={item.body ?? ''} mine={mine} />
+      </Pressable>
+    );
+  }
+
+  // Shared post card — sent from a post's ShareSheet
+  if (item.msgType === 'system' && item.subtype === 'post_card') {
+    return (
+      <Pressable onLongPress={onLongPress} delayLongPress={300}>
+        <PostCardMessage body={item.body ?? ''} mine={mine} />
       </Pressable>
     );
   }
@@ -1847,7 +1857,7 @@ export default function TelegraphThread() {
             );
           }
           // System event messages (non-meetup, non-rich-card) render as centred pill labels
-          if (m.msgType === 'system' && m.subtype !== 'discovery_card' && m.subtype !== 'compass_card' && !parseMeetupCard(m.body ?? '', m)) {
+          if (m.msgType === 'system' && m.subtype !== 'discovery_card' && m.subtype !== 'compass_card' && m.subtype !== 'post_card' && !parseMeetupCard(m.body ?? '', m)) {
             return (
               <MessageEntrance animate={shouldAnimateMessage(m.clientId ?? m.id, m.createdAt)}>
                 <TelegraphSystemNotice text={m.body ?? ''} />
