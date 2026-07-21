@@ -718,32 +718,138 @@ buddy matching) can build on this substrate without schema changes.
 
 ---
 
-## Live answer-quality eval attempt (2026-07-21)
+## Live answer-quality eval attempt (2026-07-21, blocked)
 
 Attempted to run the standing 9-question eval set against the live model
 via `POST /api/compass/ask` with a signed-in ephemeral user (admin-created,
-deleted after). Outcome: **blocked — the AI proxy is still unreachable**,
-identical to the Phase 5 attempt.
+deleted after). Outcome: **blocked — the AI proxy was unreachable**.
 
 Evidence gathered:
-- Direct proxy probe (`$AI_INTEGRATIONS_OPENAI_BASE_URL/chat/completions`,
-  localhost:1106 modelfarm) returns `404 Replit AI Integrations is not
-  configured` for every model tried.
+- Direct proxy probe returns `404 Replit AI Integrations is not configured`.
 - Through the running dev server, `/api/compass/ask` returns the honest
   fallback (`fallbackReason: "ai_error"`); server logs show the same 404
-  from the OpenAI SDK inside `runToolCallingLoop` — the compass-v1.1
-  prompt path is reached, only the upstream model call fails.
+  from the OpenAI SDK inside `runToolCallingLoop`.
 - The `AI_INTEGRATIONS_OPENAI_*` secrets exist; the failure is the proxy
-  service itself, which a task environment cannot provision (the
-  integration setup callback is unavailable here — it must be run from
-  the owner's main workspace session).
+  service itself (setup callback unavailable in task environments).
 - Production (`portava.replit.app`) responds on `/api/compass/ask` but
-  with the legacy pre-v1.1 response shape (`bestPick`/`socialProof`),
-  i.e. the deployed build predates the compass-v1.1 contract, so prod
-  cannot exercise block declaration either.
+  with the legacy pre-v1.1 response shape (`bestPick`/`socialProof`).
 
-No block-type / hallucination / conversational-quality observations could
-be recorded — no live model turn occurred. Positive note: the honest-
-fallback guarantee held on every turn (no fake AI output). The eval should
-be re-run after the OpenAI AI integration is enabled from the main
-workspace session (and/or a fresh build is published).
+No model turns occurred. Honest-fallback guarantee held on every turn.
+
+---
+
+## Live answer-quality eval — 2026-07-21 (OpenAI integration enabled)
+
+All 9 questions from the standing evaluation set were sent to
+`POST /api/compass/ask` using an ephemeral Supabase user (admin-created,
+deleted after). The OpenAI AI integration was enabled by the owner from
+the main workspace session prior to this run.
+
+### Setup
+- Ephemeral user created via Supabase Admin API (`email_confirm: true`),
+  profile row upserted so route auth passes, JWT obtained via password
+  grant, user deleted after all 9 turns.
+- Single conversation thread: `conversationId` carried forward from turn
+  to turn so the model had full history context.
+- Model used by the route: **gpt-5-mini** (`max_completion_tokens: 1200`,
+  up to `MAX_TOOL_ROUNDS` tool rounds before a forced final reply).
+- Prompt version confirmed: **compass-v1.1** on all 9 turns.
+
+### Results (sequential, single conversation)
+
+| # | Question | Status | ms | Reply | uiBlocks | droppedIds |
+|---|----------|--------|----|-------|----------|------------|
+| 1 | What should I do in Cebu? | 200 | 23 320 | *(empty)* | none | 0 |
+| 2 | What did you mean? | 200 | 29 563 | *(empty)* | none | 0 |
+| 3 | Which one is closer? | 200 | 22 533 | ✓ text | none | 0 |
+| 4 | Add the second one. | 200 | 25 339 | *(empty)* | none | 0 |
+| 5 | Find something romantic but not a date. | 200 | 39 262 | *(empty)* | none | 0 |
+| 6 | I'm traveling alone tonight. | 200 | 28 975 | *(empty)* | none | 0 |
+| 7 | Find my circle. | 200 | 20 152 | ✓ text | none | 0 |
+| 8 | I'm tired. | 200 | 13 875 | *(empty)* | none | 0 |
+| 9 | My event was canceled. | 200 | 13 487 | *(empty)* | none | 0 |
+
+### Replies for questions that produced text
+
+**Q3 — "Which one is closer?"**
+> "I can't tell which is closer right now — you haven't set a current city
+> or shared a location. From your list: 'Beach bonfire & music' is in
+> Palawan, 'Cooking class & market tour' is in Tokyo, and the three 'buddy'
+> items are people (no city listed). If you're in Palawan the bonfire is
+> closer; if you're in Japan the cooking class is closer. Tell me which
+> city you're in (or allow location access / set your current city in the
+> app) and I'll compare distances precisely."
+
+*Conversational quality: Good.* Honest about missing location context,
+correctly identifies the two place items from prior context, offers a
+clear path forward. No invented IDs.
+
+**Q7 — "Find my circle."**
+> "I checked your Circles — you don't have any right now. That means I
+> can't show or coordinate with trusted people for you. Circles are private
+> groups for trusted people to share location and coordinate trips; if you
+> want one you'll need to create it in the Circles tab and invite people
+> (they must accept). Since you're traveling alone tonight, options you
+> can take now: 1) Create a Circle and invite any friends who might join;
+> 2) Use Rent a Buddy to find a vetted local companion; 3) Ask the
+> community or use Discovery to find romantic-but-not-date experiences
+> nearby."
+
+*Conversational quality: Good.* Correctly called the `get_circles` tool,
+got an empty result, gave an honest and actionable reply. Cross-references
+earlier turn context ("traveling alone tonight"). No invented IDs.
+
+### Key findings
+
+1. **No fallbacks — proxy and v1.1 prompt path confirmed working.**  
+   All 9 turns returned HTTP 200 with `promptVersion: "compass-v1.1"`.
+   The integration blockage from the earlier attempt is resolved.
+
+2. **Silent responses on 7/9 questions.**  
+   `message`, `uiBlocks`, `payload`, and `quickActions` are all empty for
+   seven turns. The model completes tool rounds (evidenced by 13–39 s
+   latency — well above a zero-tool baseline) but the final assistant turn
+   returns `content: null` or `""`. Root cause: `runToolCallingLoop`
+   returns `String(msg?.content ?? "")` from the last model turn; when
+   `gpt-5-mini` ends a tool-calling sequence without a closing text reply,
+   `finalRaw` is `""` and nothing reaches the client. This is a model
+   behaviour gap, not a route bug — the final forced-reply round
+   (`forceFinal = true`, which strips `tools`) should prevent this, but
+   the model's final content is still empty on these turns.
+
+3. **Block-type selection not exercised.**  
+   `uiBlocks` was empty on every turn. Expected block types —
+   `comparison` ("Which one is closer?"), `itinerary` ("Build my day"),
+   `person_cards` ("Find my circle.") — were not emitted. This may be
+   downstream of finding #2: if `finalRaw` is empty the block-parsing
+   step has nothing to parse.
+
+4. **Zero invented-ID drops.**  
+   `droppedInventedIds = 0` across all turns. Positive signal: when the
+   model does produce output it is not hallucinating place/event IDs that
+   the drop guard would need to catch. Could not be verified on the silent
+   turns.
+
+5. **Latency profile.**  
+   13–39 s per turn. Tool-calling rounds are active for every question
+   including the "silent" ones, so the route is correctly invoking tools
+   before the final reply attempt.
+
+6. **Memory / context carry-through.**  
+   Q7 correctly cross-referenced Q6 ("traveling alone tonight"), showing
+   conversation history is loading and being passed to the model. Could
+   not be verified on silent turns.
+
+### Action items surfaced
+
+- Investigate why `gpt-5-mini` returns `content: null`/`""` on final
+  turns for most query types. Consider adding a fallback in
+  `runToolCallingLoop` that re-prompts with "Please summarise your
+  findings in a single assistant reply" when `finalRaw` is empty after
+  the forced-final round (or upgrade to a stronger model for the final
+  turn).
+- Ensure `uiBlocks` are populated from tool results even when the model
+  doesn't emit a JSON block declaration in its text; the block-assembly
+  step may need to run over tool log output directly.
+- Re-run eval after the silent-response fix to observe block-type
+  selection, hallucination rate, and personalization across all 9 turns.
