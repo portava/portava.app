@@ -55,5 +55,9 @@ export function useRequestCount() {
     return () => sub.remove();
   }, [reload]);
 
+  // Refresh when a friendship changes elsewhere (e.g. a request accepted or
+  // auto-accepted on another screen), so the badge drops immediately.
+  useEffect(() => onFriendsChanged(reload), [reload]);
+
   return { count, loading, reload };
 }
