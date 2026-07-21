@@ -530,3 +530,57 @@ State when the standing brief was installed:
   the Phase 5–9 fallback precedent.
 - Out of scope honored: no automatic trip modification (Phase 13) — Live
   nudges inform; they never move items.
+
+## Phase 13 — Trip Autopilot (2026-07-21)
+
+- Goal: Compass keeps a trip healthy — monitor for problems, repair only
+  the affected pieces, and never act without explicit user confirmation.
+- Item typing: `trip_plan_items.lock_type` — `fixed` (never auto-moved,
+  under any circumstances), `flexible` (movable when permitted), and
+  `optional` (movable/removable when permitted). Exposed through the
+  plan-item create/patch APIs (`lockType`), default `flexible`.
+- Permissions: `trip_autopilot_settings` per user per trip — `enabled`,
+  `allow_move_flexible`, `allow_move_optional`, `allow_remove_optional`.
+  GET/PUT `/api/trips/:tripId/autopilot/settings`. Disabling autopilot
+  still reports issues (honest Heartbeat) but creates zero proposals.
+- Monitors (`CompassAutopilotEngine.detect*`): timing conflicts per day
+  with a travel-time estimate between located items (haversine at walking
+  speed, 10-min floor) producing concrete reasons ("ends 17:30, starts
+  18:00 — only 30 min gap but getting there takes about 40 min");
+  weather clashes (rainy forecast day × outdoor items, via the shared
+  weather cache); social changes (meetup-sourced item whose meetup was
+  cancelled); plus injectable disruptions (`item_cancelled`,
+  `transport_delay`, `closure`) accepted by POST
+  `/api/trips/:tripId/autopilot/check` so recovery is testable/demoable.
+- Partial re-planner (`buildRepairProposals`): minimal changes touching
+  ONLY the affected items — shift the later conflicting item (or the
+  earlier one if the later is immovable), delay a delayed item, and for a
+  cancelled day anchor propose cancelling it plus pulling the same day's
+  next movable item up into the freed slot; everything else untouched.
+  Never full regeneration. A final safety filter drops any proposal that
+  would touch a fixed item.
+- Propose, never execute: proposals are durable rows in
+  `trip_autopilot_proposals` (before/after per item, dedupe via a partial
+  unique pending index). Confirm (`POST /api/autopilot/proposals/:id/confirm`)
+  re-verifies membership, lock types, and permissions at apply time —
+  an item re-typed to `fixed` after proposing is refused with a reason.
+  Decline resolves with zero writes. Only
+  `starts_at`/`ends_at`/`day_date`/`status` are ever applyable.
+- Trip Heartbeat: GET `/api/trips/:tripId/heartbeat` → status
+  (healthy/attention/at_risk), active issues, upcoming weather risks,
+  pending-proposal count, fixed/flexible/optional item counts, and the
+  next upcoming item. Mobile `TripHeartbeatCard` on the trip screen
+  (inside an error boundary, hidden on the disabled-flag fallback) with
+  issue/risk rows, Apply / Keep-as-is per proposal, and a
+  "Check my trip now" action.
+- Migration `20260728_compass_autopilot.sql` applied live (column +
+  two tables verified via information_schema).
+- Tests: `src/test/compass-autopilot.test.ts` (15 tests — auth, fallback
+  envelope, non-member rejection, conflict reason quality, fixed-item
+  immunity at propose AND confirm time, permission bounds, disabled
+  autopilot, simulated day-anchor cancellation recovery touching only
+  affected items, dedupe, confirm/decline semantics, heartbeat states
+  incl. weather risk). Mobile: `TripHeartbeatCard.component.test.tsx`
+  (render, confirm wiring, disabled-flag hiding).
+- Out of scope honored: no booking/paying on the user's behalf; no
+  outcome-learning loops (Phase 14).

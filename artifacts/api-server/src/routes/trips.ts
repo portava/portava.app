@@ -1067,6 +1067,7 @@ const CreatePlanItemSchema = z.object({
   locationIsPrivate: z.boolean().default(false),
   notes:             z.string().max(1000).optional(),
   sortOrder:         z.number().int().default(0),
+  lockType:          z.enum(["fixed", "flexible", "optional"]).default("flexible"),
 });
 
 const UpdatePlanItemSchema = z.object({
@@ -1082,6 +1083,7 @@ const UpdatePlanItemSchema = z.object({
   locationIsPrivate: z.boolean().optional(),
   notes:             z.string().max(1000).nullable().optional(),
   sortOrder:         z.number().int().optional(),
+  lockType:          z.enum(["fixed", "flexible", "optional"]).optional(),
 });
 
 const ReorderSchema = z.object({
@@ -1314,6 +1316,7 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
       location_is_private: b.locationIsPrivate ?? false,
       notes:               b.notes ?? null,
       sort_order:          b.sortOrder,
+      lock_type:           b.lockType,
       visibility:          "members",
     })
     .select("*")
@@ -1351,6 +1354,7 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
   if (patch.category          !== undefined) dbPatch.category            = patch.category;
   if (patch.status            !== undefined) dbPatch.status              = patch.status;
   if (patch.dayDate           !== undefined) dbPatch.day_date            = patch.dayDate;
+  if (patch.lockType          !== undefined) dbPatch.lock_type           = patch.lockType;
   if (patch.startsAt          !== undefined) dbPatch.starts_at           = patch.startsAt;
   if (patch.endsAt            !== undefined) dbPatch.ends_at             = patch.endsAt;
   if (patch.locationName      !== undefined) dbPatch.location_name       = patch.locationName;
