@@ -24,10 +24,13 @@ import { getDeviceTimezone } from '../services/pushTokenService.ts';
 import { freshToken } from '../services/apiToken.ts';
 import { showNotificationToast } from '../components/NotificationToast.tsx';
 import { _connectOnce } from './notificationStreamUtils.ts';
-import { emitNotificationEvent } from '../services/notificationEvents.ts';
+import { emitNotificationEvent, subscribeNotificationEvents } from '../services/notificationEvents.ts';
 
-const UNREAD_POLL_MS = 15_000;
-const NOTIF_POLL_MS  = 30_000;
+// Poll intervals are relaxed because the SSE-fed notification event bus
+// (subscribeNotificationEvents) delivers realtime updates; polling is now a
+// slow safety net for missed events.
+const UNREAD_POLL_MS = 60_000;
+const NOTIF_POLL_MS  = 120_000;
 const SSE_RECONNECT_MS = 5_000;
 
 // ── useNotifications ──────────────────────────────────────────────────────────
@@ -71,14 +74,18 @@ export function useNotifications(params: ListNotificationsParams = {}) {
     setLoadingMore(false);
   }, [params, limit, total, loadingMore]);
 
-  const silentPoll = useCallback(async () => {
-    if (appStateRef.current !== 'active') return;
+  const refetchFirstPage = useCallback(async () => {
     const res = await listNotifications({ ...params, limit, offset: 0 });
     if (res.ok && res.data) {
       setNotifications(res.data.notifications);
       setTotal(res.data.total);
     }
   }, [JSON.stringify(params), limit]);
+
+  const silentPoll = useCallback(async () => {
+    if (appStateRef.current !== 'active') return;
+    await refetchFirstPage();
+  }, [refetchFirstPage]);
 
   useEffect(() => { reload(); }, [reload]);
 
@@ -90,6 +97,12 @@ export function useNotifications(params: ListNotificationsParams = {}) {
     const timer = setInterval(silentPoll, NOTIF_POLL_MS);
     return () => { sub.remove(); clearInterval(timer); };
   }, [silentPoll]);
+
+  // Realtime: refresh the list the moment a notification arrives on the bus.
+  // No foreground guard — receiving an SSE event implies the stream is live.
+  useEffect(() => {
+    return subscribeNotificationEvents(() => { refetchFirstPage(); });
+  }, [refetchFirstPage]);
 
   const markRead = useCallback(async (id: string) => {
     await markNotificationRead(id);
@@ -138,6 +151,15 @@ export function useUnreadNotificationCount() {
       if (appStateRef.current === 'active') refresh();
     }, UNREAD_POLL_MS);
     return () => { sub.remove(); clearInterval(timer); };
+  }, [refresh]);
+
+  // Realtime: bump the badge immediately on a bus event, then reconcile with
+  // the server count (the optimistic bump covers SSE→DB read lag).
+  useEffect(() => {
+    return subscribeNotificationEvents(() => {
+      setCount((c) => c + 1);
+      refresh();
+    });
   }, [refresh]);
 
   return { count, refresh };
