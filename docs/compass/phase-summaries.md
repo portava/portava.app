@@ -715,3 +715,35 @@ The system is designed to compound: every phase's signals feed the
 graph, and the graph feeds ranking, context, and honesty. Next
 frontier work (multi-city depth, richer seasonal models, graph-driven
 buddy matching) can build on this substrate without schema changes.
+
+---
+
+## Live answer-quality eval attempt (2026-07-21)
+
+Attempted to run the standing 9-question eval set against the live model
+via `POST /api/compass/ask` with a signed-in ephemeral user (admin-created,
+deleted after). Outcome: **blocked — the AI proxy is still unreachable**,
+identical to the Phase 5 attempt.
+
+Evidence gathered:
+- Direct proxy probe (`$AI_INTEGRATIONS_OPENAI_BASE_URL/chat/completions`,
+  localhost:1106 modelfarm) returns `404 Replit AI Integrations is not
+  configured` for every model tried.
+- Through the running dev server, `/api/compass/ask` returns the honest
+  fallback (`fallbackReason: "ai_error"`); server logs show the same 404
+  from the OpenAI SDK inside `runToolCallingLoop` — the compass-v1.1
+  prompt path is reached, only the upstream model call fails.
+- The `AI_INTEGRATIONS_OPENAI_*` secrets exist; the failure is the proxy
+  service itself, which a task environment cannot provision (the
+  integration setup callback is unavailable here — it must be run from
+  the owner's main workspace session).
+- Production (`portava.replit.app`) responds on `/api/compass/ask` but
+  with the legacy pre-v1.1 response shape (`bestPick`/`socialProof`),
+  i.e. the deployed build predates the compass-v1.1 contract, so prod
+  cannot exercise block declaration either.
+
+No block-type / hallucination / conversational-quality observations could
+be recorded — no live model turn occurred. Positive note: the honest-
+fallback guarantee held on every turn (no fake AI output). The eval should
+be re-run after the OpenAI AI integration is enabled from the main
+workspace session (and/or a fresh build is published).
