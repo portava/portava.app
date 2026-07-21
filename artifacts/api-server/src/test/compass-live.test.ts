@@ -372,6 +372,21 @@ describe("Compass Live", () => {
     assert.ok(t2.includes("live_arriving_early"), `expected live_arriving_early in ${t2}`);
   });
 
+  it("routes every delivered live nudge to the AI live surface (/(tabs)/ai)", async () => {
+    const { fakeClient, store } = makeFakeClient({ feature_flags: [enabledFlag()] });
+    _setTestClient(fakeClient, true);
+    seedTrip(store);
+    seedPlanItem(store, "item-soon", "Museum entry", atHour(8, 20)); // live_next_up
+
+    await api("POST", "/compass/live/start");
+    _setTestHourUtc(23); // also trigger live_ride_home
+    const r = await api("POST", "/compass/live/check");
+    assert.ok(r.json.delivered.length >= 2, `expected multiple nudges, got ${r.json.delivered.length}`);
+    for (const d of r.json.delivered) {
+      assert.equal(d.actionUrl, "/(tabs)/ai", `nudge ${d.type} should point at the live surface, got ${d.actionUrl}`);
+    }
+  });
+
   it("offers ride-home help only late at night", async () => {
     const { fakeClient } = makeFakeClient({ feature_flags: [enabledFlag()] });
     _setTestClient(fakeClient, true);

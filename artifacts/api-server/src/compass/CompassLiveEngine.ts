@@ -42,6 +42,15 @@ import { RealtimeActivityService } from "../services/notifications/RealtimeActiv
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Where a live-nudge push tap lands. The AI tab hosts the CompassLive
+ * surface (active session, nudges, summary), so a tap always opens the
+ * screen where the live session and the nudge itself are visible.
+ * Route exists in the mobile app as app/(tabs)/ai.tsx and matches the
+ * in-app convention router.push('/(tabs)/ai').
+ */
+export const LIVE_SURFACE_URL = "/(tabs)/ai";
+
 export const LIVE_SESSION_NUDGE_CAP = 12;
 export const LIVE_DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1_000;
 const NEXT_UP_WINDOW_MS = 30 * 60 * 1_000;
@@ -362,7 +371,7 @@ function liveOnlyCandidates(
         dedupeKey: `live_next_up:${context.nextItem.id}`,
         title: "Next up on your plan",
         body: `${context.nextItem.title} starts in about ${Math.max(1, Math.round(gapMs / 60_000))} min.`,
-        actionUrl: context.tripId ? `/trip/${context.tripId}` : "/map",
+        actionUrl: LIVE_SURFACE_URL,
         confidence: makeConfidence("verified_live", "From your trip plan's scheduled times"),
       });
     } else if (gapMs >= EARLY_MIN_GAP_MS && gapMs <= EARLY_MAX_GAP_MS) {
@@ -372,7 +381,7 @@ function liveOnlyCandidates(
         dedupeKey: `live_early:${context.nextItem.id}`,
         title: "You're ahead of schedule",
         body: `About ${Math.round(gapMs / 60_000)} min until ${context.nextItem.title} — room for a detour nearby.`,
-        actionUrl: context.tripId ? `/trip/${context.tripId}` : "/map",
+        actionUrl: LIVE_SURFACE_URL,
         confidence: makeConfidence("verified_live", "From your trip plan's scheduled times"),
       });
     }
@@ -385,7 +394,7 @@ function liveOnlyCandidates(
       dedupeKey: `live_ride_home:${today}`,
       title: "Heading back soon?",
       body: "It's getting late — want a hand planning a safe way back?",
-      actionUrl: "/map",
+      actionUrl: LIVE_SURFACE_URL,
       confidence: makeConfidence("verified_live", "Based on the current time during your live session"),
     });
   }
@@ -439,7 +448,13 @@ export async function runLiveCheck(
 
   // Phase 11 evaluators at live frequency + live-only session-aware signals.
   const senseCandidates = await evaluateSenseSignals(sc, userId, { nowMs, hourUtc });
-  const candidates = [...senseCandidates, ...liveOnlyCandidates(context, nowMs, hourUtc)];
+  // Every nudge delivered during a live session taps through to the live
+  // surface (AI tab) where the session and the nudge itself are visible —
+  // including Sense-derived candidates that carry other deep links outside
+  // live mode.
+  const candidates = [...senseCandidates, ...liveOnlyCandidates(context, nowMs, hourUtc)].map(
+    (n) => ({ ...n, actionUrl: LIVE_SURFACE_URL }),
+  );
 
   // Explicit opt-in: presence level does not gate live checks, but per-category
   // permissions, durable dedupe, and the per-session cap all do.
