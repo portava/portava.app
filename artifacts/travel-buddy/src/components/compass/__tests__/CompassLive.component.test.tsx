@@ -117,3 +117,43 @@ describe('CompassLive', () => {
     expect(mockCheck.mock.calls.length).toBe(afterLive);
   });
 });
+
+describe('CompassLive pull-to-refresh nonce', () => {
+  it('re-fetches session state on nonce bump when inactive and reports done', async () => {
+    mockFetchSession.mockResolvedValue({ ok: true, compassEnabled: true, active: false, session: null });
+    const onRefreshed = jest.fn();
+
+    const view = await render(<CompassLive refreshNonce={0} onRefreshed={onRefreshed} />);
+    await waitFor(() => expect(view.getByTestId('live-start')).toBeTruthy());
+    expect(mockFetchSession).toHaveBeenCalledTimes(1);
+    expect(onRefreshed).not.toHaveBeenCalled();
+
+    // A session was started elsewhere; a pull should pick it up.
+    mockFetchSession.mockResolvedValue({ ok: true, compassEnabled: true, active: true, session: ACTIVE_SESSION });
+    mockCheck.mockResolvedValue({ ok: true, compassEnabled: true, active: true, session: ACTIVE_SESSION, delivered: [] });
+    await act(async () => {
+      view.rerender(<CompassLive refreshNonce={1} onRefreshed={onRefreshed} />);
+    });
+    await waitFor(() => expect(view.getByTestId('live-active')).toBeTruthy());
+    expect(mockFetchSession).toHaveBeenCalledTimes(2);
+    expect(onRefreshed).toHaveBeenCalledTimes(1);
+  });
+
+  it('polls-now on nonce bump when a session is active and reports done', async () => {
+    mockFetchSession.mockResolvedValue({ ok: true, compassEnabled: true, active: true, session: ACTIVE_SESSION });
+    mockCheck.mockResolvedValue({ ok: true, compassEnabled: true, active: true, session: ACTIVE_SESSION, delivered: [] });
+    const onRefreshed = jest.fn();
+
+    const view = await render(<CompassLive refreshNonce={0} onRefreshed={onRefreshed} />);
+    await waitFor(() => expect(view.getByTestId('live-active')).toBeTruthy());
+    const checksBefore = mockCheck.mock.calls.length;
+
+    await act(async () => {
+      view.rerender(<CompassLive refreshNonce={1} onRefreshed={onRefreshed} />);
+    });
+    await waitFor(() => expect(onRefreshed).toHaveBeenCalledTimes(1));
+    expect(mockCheck.mock.calls.length).toBeGreaterThan(checksBefore);
+    // still only the mount fetch — active path is a poll-now, not a re-mount fetch
+    expect(mockFetchSession).toHaveBeenCalledTimes(1);
+  });
+});

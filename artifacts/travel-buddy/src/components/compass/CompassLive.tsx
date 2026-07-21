@@ -34,7 +34,15 @@ function appendNudges(prev: CompassLiveNudge[], incoming: CompassLiveNudge[]): C
   return fresh.length === 0 ? prev : [...prev, ...fresh].slice(-6);
 }
 
-export function CompassLive() {
+export function CompassLive({
+  refreshNonce = 0,
+  onRefreshed,
+}: {
+  /** Increment to force a re-fetch of live-session state (pull-to-refresh). */
+  refreshNonce?: number;
+  /** Called when a nonce-triggered refresh settles (success or failure). */
+  onRefreshed?: () => void;
+} = {}) {
   const [session, setSession] = useState<CompassLiveSession | null>(null);
   const [nudges, setNudges]   = useState<CompassLiveNudge[]>([]);
   const [summary, setSummary] = useState<CompassLiveSummary | null>(null);
@@ -101,6 +109,39 @@ export function CompassLive() {
   }, [armTimer, clearTimer, runCheck]));
 
   useEffect(() => () => clearTimer(), [clearTimer]);
+
+  // Pull-to-refresh: re-sync live-session state on demand. If a session is
+  // active this is a poll-now (same as the interval tick); otherwise it
+  // re-fetches session state so a session started elsewhere shows up.
+  const onRefreshedRef = useRef(onRefreshed);
+  onRefreshedRef.current = onRefreshed;
+  useEffect(() => {
+    if (refreshNonce <= 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        if (activeRef.current) {
+          await runCheck();
+          return;
+        }
+        const r = await fetchCompassLiveSession();
+        if (cancelled || !r.ok) return;
+        if (r.compassEnabled === false) { setEnabled(false); return; }
+        setEnabled(true);
+        if (r.active && r.session) {
+          setSession(r.session);
+          activeRef.current = true;
+          armTimer();
+        }
+      } catch {
+        // best-effort refresh — never crash the surface
+      } finally {
+        if (!cancelled) onRefreshedRef.current?.();
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshNonce]);
 
   async function onStart() {
     if (busy) return;
