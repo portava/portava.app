@@ -15,6 +15,7 @@
  * inline via Platform.OS checks so we avoid a separate .web.tsx route file.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import type { CameraRef } from '@maplibre/maplibre-react-native';
 import {
   View, Text, Pressable, StyleSheet, Platform,
 } from 'react-native';
@@ -293,8 +294,9 @@ export default function FullScreenMapScreen() {
   }>();
 
   // Shared camera ref — forwarded into DiscoveryMapView so the Camera element
-  // inside is the same ref that MapTopControls calls setCamera on.
-  const cameraRef = useRef<any>(null);
+  // inside is the same ref that MapTopControls calls easeTo on.
+  // Typed as CameraRef (maplibre-react-native v11 imperative handle); null until Camera mounts.
+  const cameraRef = useRef<CameraRef | null>(null);
   const { locationState, requireLocation, resolvedLocation } = useLocationContext();
   // Parse query params — invalid / missing values are silently ignored.
   const paramLat = parseCoord(params.lat);
@@ -475,11 +477,13 @@ export default function FullScreenMapScreen() {
         setActiveIndex(focusIndex);
         carouselRef.current?.scrollToIndex(focusIndex);
         const entity = entities[focusIndex];
-        cameraRef.current?.setCamera({
-          centerCoordinate: [entity.lng, entity.lat],
-          zoomLevel: zoomForEntity(entity.type),
-          animationDuration: 400,
-        });
+        if (cameraRef.current && typeof cameraRef.current.easeTo === 'function') {
+          cameraRef.current.easeTo({
+            center: [entity.lng, entity.lat],
+            zoom: zoomForEntity(entity.type),
+            duration: 400,
+          });
+        }
         return;
       }
       // focusId not matched — fall through to proximity selection; camera stays on
@@ -501,11 +505,13 @@ export default function FullScreenMapScreen() {
     // Pan the camera to the selected entity.
     const entity = entities[bestIndex];
     if (entity) {
-      cameraRef.current?.setCamera({
-        centerCoordinate: [entity.lng, entity.lat],
-        zoomLevel: zoomForEntity(entity.type),
-        animationDuration: 400,
-      });
+      if (cameraRef.current && typeof cameraRef.current.easeTo === 'function') {
+        cameraRef.current.easeTo({
+          center: [entity.lng, entity.lat],
+          zoom: zoomForEntity(entity.type),
+          duration: 400,
+        });
+      }
     }
   // Deliberately exclude userLat/userLng from deps — we only want this to fire
   // when the entity list changes, not on every location update.
@@ -518,11 +524,13 @@ export default function FullScreenMapScreen() {
       setActiveIndex(index);
       const entity = entities[index];
       if (!entity) return;
-      cameraRef.current?.setCamera({
-        centerCoordinate: [entity.lng, entity.lat],
-        zoomLevel: zoomForEntity(entity.type),
-        animationDuration: 400,
-      });
+      if (cameraRef.current && typeof cameraRef.current.easeTo === 'function') {
+        cameraRef.current.easeTo({
+          center: [entity.lng, entity.lat],
+          zoom: zoomForEntity(entity.type),
+          duration: 400,
+        });
+      }
     },
     [entities],
   );

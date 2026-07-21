@@ -54,11 +54,15 @@ export function MapTopControls({
     const lat = hasUser ? (userLat as number) : (fallbackLat as number);
     const lng = hasUser ? (userLng as number) : (fallbackLng as number);
     if (lat == null || lng == null) return;
-    cameraRef.current.setCamera({
-      centerCoordinate: [lng, lat],
-      zoomLevel: hasUser ? 14 : 11,
-      animationDuration: 600,
-    });
+    // Guard: easeTo is the v11 replacement for setCamera; check existence so
+    // a future API change fails soft (no crash) rather than throwing a TypeError.
+    if (typeof cameraRef.current.easeTo === 'function') {
+      cameraRef.current.easeTo({
+        center: [lng, lat],
+        zoom: hasUser ? 14 : 11,
+        duration: 600,
+      });
+    }
   };
 
   return (

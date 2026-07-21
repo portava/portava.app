@@ -311,13 +311,13 @@ describe('FullScreenMapScreen — camera snaps to entity pin after entities load
       ],
     });
 
-    const mockSetCamera = jest.fn();
+    const mockEaseTo = jest.fn();
 
     // Capture the externalCameraRef and populate it so the focusId effect
-    // can invoke setCamera after entities load.
+    // can invoke easeTo after entities load.
     (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
       if (props.externalCameraRef) {
-        props.externalCameraRef.current = { setCamera: mockSetCamera };
+        props.externalCameraRef.current = { easeTo: mockEaseTo };
       }
       return null;
     });
@@ -333,16 +333,16 @@ describe('FullScreenMapScreen — camera snaps to entity pin after entities load
 
     await act(async () => { await render(<FullScreenMapScreen />); });
 
-    // setCamera must have been called at least once (the focusId snap).
-    expect(mockSetCamera).toHaveBeenCalled();
+    // easeTo must have been called at least once (the focusId snap).
+    expect(mockEaseTo).toHaveBeenCalled();
 
     // Find the call that snapped to the entity (there may also be a proximity
     // selection call; look for the one carrying the entity's coordinates).
-    const snapCall = mockSetCamera.mock.calls.find(
+    const snapCall = mockEaseTo.mock.calls.find(
       ([arg]: [any]) =>
-        Array.isArray(arg?.centerCoordinate) &&
-        Math.abs(arg.centerCoordinate[0] - entityLng) < 0.001 &&
-        Math.abs(arg.centerCoordinate[1] - entityLat) < 0.001,
+        Array.isArray(arg?.center) &&
+        Math.abs(arg.center[0] - entityLng) < 0.001 &&
+        Math.abs(arg.center[1] - entityLat) < 0.001,
     );
 
     expect(snapCall).toBeDefined();
@@ -370,10 +370,10 @@ describe('FullScreenMapScreen — camera snaps to entity pin after entities load
       ],
     });
 
-    const mockSetCamera = jest.fn();
+    const mockEaseTo = jest.fn();
     (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
       if (props.externalCameraRef) {
-        props.externalCameraRef.current = { setCamera: mockSetCamera };
+        props.externalCameraRef.current = { easeTo: mockEaseTo };
       }
       return null;
     });
@@ -387,13 +387,13 @@ describe('FullScreenMapScreen — camera snaps to entity pin after entities load
 
     await act(async () => { await render(<FullScreenMapScreen />); });
 
-    // No setCamera call must target the city centroid — once focusId snaps to the
+    // No easeTo call must target the city centroid — once focusId snaps to the
     // entity, the camera must not be reset back to the URL coords.
-    const citySnapCall = mockSetCamera.mock.calls.find(
+    const citySnapCall = mockEaseTo.mock.calls.find(
       ([arg]: [any]) =>
-        Array.isArray(arg?.centerCoordinate) &&
-        Math.abs(arg.centerCoordinate[0] - cityLng) < 0.001 &&
-        Math.abs(arg.centerCoordinate[1] - cityLat) < 0.001,
+        Array.isArray(arg?.center) &&
+        Math.abs(arg.center[0] - cityLng) < 0.001 &&
+        Math.abs(arg.center[1] - cityLat) < 0.001,
     );
 
     expect(citySnapCall).toBeUndefined();
@@ -420,7 +420,7 @@ describe('FullScreenMapScreen — camera snaps to entity pin after entities load
     (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
       capturedProps = props;
       if (props.externalCameraRef) {
-        props.externalCameraRef.current = { setCamera: jest.fn() };
+        props.externalCameraRef.current = { easeTo: jest.fn() };
       }
       return null;
     });

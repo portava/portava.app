@@ -15,7 +15,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
+import { Map, Camera, Marker, type CameraRef } from '@maplibre/maplibre-react-native';
 import { Layers, MapPin, Navigation, Star, Users } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
@@ -228,11 +228,11 @@ export function DiscoveryMapView({
   const vp = viewport ?? fallback;
 
   const travelerCount = useMemo(() => mappable.filter((p) => isDbPlace(p.id)).length, [mappable]);
-  const internalCameraRef = useRef<any>(null);
+  const internalCameraRef = useRef<CameraRef | null>(null);
   // Prefer the forwarded ref from the parent (e.g. full-screen /map route) so
-  // external recenter controls can call setCamera.  Fall back to the internal
+  // external recenter controls can call easeTo.  Fall back to the internal
   // ref when no parent ref is supplied (in-tab inline map use-case).
-  const cameraRef = externalCameraRef ?? internalCameraRef;
+  const cameraRef = (externalCameraRef ?? internalCameraRef) as React.RefObject<CameraRef | null>;
   const hasUser = userLat != null && userLng != null;
 
   // ── Travelers layer (users sharing their location in discovery) ──────────
@@ -291,11 +291,11 @@ export function DiscoveryMapView({
   };
 
   const recenterOnMe = () => {
-    if (hasUser && cameraRef.current) {
-      cameraRef.current.setCamera({
-        centerCoordinate: [userLng as number, userLat as number],
-        zoomLevel: 14,
-        animationDuration: 600,
+    if (hasUser && cameraRef.current && typeof cameraRef.current.easeTo === 'function') {
+      cameraRef.current.easeTo({
+        center: [userLng as number, userLat as number],
+        zoom: 14,
+        duration: 600,
       });
     }
   };
@@ -360,11 +360,13 @@ export function DiscoveryMapView({
             zoom={zoom ?? safeZoom}
             onPressTraveler={(t) => { setSelectedEntity(null); setSelectedTraveler(t); }}
             onPressCluster={(c) => {
-              cameraRef.current?.setCamera({
-                centerCoordinate: [c.lng, c.lat],
-                zoomLevel: Math.min((zoom ?? safeZoom) + 1.8, 17),
-                animationDuration: 450,
-              });
+              if (cameraRef.current && typeof cameraRef.current.easeTo === 'function') {
+                cameraRef.current.easeTo({
+                  center: [c.lng, c.lat],
+                  zoom: Math.min((zoom ?? safeZoom) + 1.8, 17),
+                  duration: 450,
+                });
+              }
             }}
           />
         )}
@@ -375,11 +377,13 @@ export function DiscoveryMapView({
             zoom={zoom ?? safeZoom}
             onSelectEntity={(e) => { setSelectedTraveler(null); setSelectedEntity(e); onSelectEntity?.(e); }}
             onPressCluster={(lat, lng, currentZoom) => {
-              cameraRef.current?.setCamera({
-                centerCoordinate: [lng, lat],
-                zoomLevel: Math.min(currentZoom + 1.8, 17),
-                animationDuration: 450,
-              });
+              if (cameraRef.current && typeof cameraRef.current.easeTo === 'function') {
+                cameraRef.current.easeTo({
+                  center: [lng, lat],
+                  zoom: Math.min(currentZoom + 1.8, 17),
+                  duration: 450,
+                });
+              }
               onPressEntityCluster?.(lat, lng, currentZoom);
             }}
           />
