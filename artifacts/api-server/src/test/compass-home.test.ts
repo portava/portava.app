@@ -22,6 +22,7 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestNowUtc } from "../lib/localTime.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { clearCompassProfileCache } from "../compass/CompassProfileService.js";
+import { clearUserTimezoneCache } from "../lib/localTime.js";
 import compassHomeRouter, {
   _setTestHourUtc,
   _clearCompassHomeCache,
@@ -132,6 +133,7 @@ after(async () => {
 beforeEach(() => {
   invalidateFlagsCache();
   clearCompassProfileCache();
+  clearUserTimezoneCache();
   _clearCompassHomeCache();
   _setTestHomeCacheTtlMs(null);
   _setTestHourUtc(null);

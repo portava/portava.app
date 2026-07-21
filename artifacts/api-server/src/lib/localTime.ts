@@ -71,15 +71,41 @@ export function parseTzOffsetParam(raw: unknown): number | null {
   return Math.trunc(n);
 }
 
-/** The traveler's stored IANA timezone (notification_preferences.timezone). */
+/* ── Per-user timezone memoization ───────────────────────────────────────────
+ * Feed/section routes resolve the local hour before the cache lookup (for the
+ * cache key), and other surfaces (/compass/me/context, Compass Home) resolve
+ * independently — so a single hot path could hit notification_preferences
+ * several times per request for "auto" travelers. A stored timezone changes
+ * rarely, so a short per-user TTL cache cuts those redundant reads without
+ * affecting resolution priority (offset → stored timezone → UTC).
+ */
+const TZ_CACHE_TTL_MS = 60_000;
+const tzCache = new Map<string, { value: string | null; expiresAt: number }>();
+
+/** Drop all memoized timezones (tests; call after mutating notification_preferences). */
+export function clearUserTimezoneCache(userId?: string): void {
+  if (userId !== undefined) tzCache.delete(userId);
+  else tzCache.clear();
+}
+
+/**
+ * The traveler's stored IANA timezone (notification_preferences.timezone).
+ * Memoized per user for a short TTL — errors are NOT cached, so a transient
+ * DB failure doesn't pin the traveler to UTC for the TTL window.
+ */
 export async function fetchUserTimezone(sc: any, userId: string): Promise<string | null> {
+  const hit = tzCache.get(userId);
+  if (hit && hit.expiresAt > Date.now()) return hit.value;
   try {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("notification_preferences")
       .select("timezone")
       .eq("user_id", userId)
       .maybeSingle();
-    return ((data as any)?.timezone as string | null) ?? null;
+    if (error) return null; // do not cache failures
+    const value = ((data as any)?.timezone as string | null) ?? null;
+    tzCache.set(userId, { value, expiresAt: Date.now() + TZ_CACHE_TTL_MS });
+    return value;
   } catch {
     return null;
   }

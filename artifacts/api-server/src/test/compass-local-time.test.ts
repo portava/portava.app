@@ -22,7 +22,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import compassRouter, { _getLastFeedContext } from "../routes/compass.js";
 import { timeOfDayForHour } from "../routes/compassHome.js";
-import { localHourFor, _setTestNowUtc, resolveLocalHour } from "../lib/localTime.js";
+import { localHourFor, _setTestNowUtc, resolveLocalHour, clearUserTimezoneCache } from "../lib/localTime.js";
 import { defaultSignals } from "../compass/CompassContextEngine.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { clearL1Cache } from "../compass/CompassCacheEngine.js";
@@ -115,6 +115,7 @@ async function startApp(store: Record<string, Row[]>): Promise<number> {
   invalidateFlagsCache();
   clearCompassProfileCache();
   clearL1Cache();
+  clearUserTimezoneCache();
   const app = express();
   app.use(express.json());
   app.use((req: any, _res, next) => {
@@ -182,6 +183,7 @@ describe("defaultSignals local-hour override", () => {
 
 describe("resolveLocalHour", () => {
   it("reads notification_preferences.timezone when no offset is supplied", async () => {
+    clearUserTimezoneCache();
     const sc = makeFakeClient(makeStore({
       notification_preferences: [{ user_id: ALICE_ID, timezone: "Asia/Singapore" }],
     }));

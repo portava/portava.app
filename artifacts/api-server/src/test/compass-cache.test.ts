@@ -35,7 +35,7 @@ import {
 } from "../compass/CompassFrontLoadEngine.js";
 import type { CompassProfile } from "../compass/types.js";
 import { feedCacheKey } from "../routes/compass.js";
-import { resolveLocalHour, _setTestNowUtc } from "../lib/localTime.js";
+import { resolveLocalHour, _setTestNowUtc, clearUserTimezoneCache } from "../lib/localTime.js";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -301,6 +301,7 @@ describe("feedCacheKey — auto path partitions by time-of-day bucket", () => {
 
   it("an 'auto' traveler crossing a bucket boundary misses the stale cache entry", async () => {
     clearL1Cache();
+    clearUserTimezoneCache();
     const { db } = makeFakeDb({
       compass_feed_cache: [],
       notification_preferences: [{ user_id: USER_A, timezone: "America/New_York" }],
