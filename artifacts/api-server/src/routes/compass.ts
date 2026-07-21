@@ -28,6 +28,7 @@ import { checkRateLimit } from "../lib/rateLimit.js";
 import { getCompassProfile } from "../compass/CompassProfileService.js";
 import { logCompassImpression } from "../lib/rankLog.js";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine.js";
+import { resolveLocalHour, parseTzOffsetParam } from "../lib/localTime.js";
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine.js";
 import {
   buildStructuredCompassContext,
@@ -107,6 +108,33 @@ import {
 import { buildCompassContext as buildLocationCompassContext } from "../services/location/CompassLocationContext.js";
 
 const router = Router();
+
+/* ── Traveler-local hour ─────────────────────────────────────────────────────
+ * Time-of-day context must follow the traveler's clock, not the server's.
+ * Same resolution as Compass Home (lib/localTime.ts):
+ *   client tzOffsetMinutes (query or body) → stored timezone → UTC.
+ * Never throws — falls back to the raw UTC hour on any failure.
+ */
+/* Test hook: the feed response doesn't expose its internal context, so tests
+ * observe the last computed feed signals here. */
+let _lastFeedContext: { hourUtc: number; contextState: string } | null = null;
+export function _getLastFeedContext(): { hourUtc: number; contextState: string } | null {
+  return _lastFeedContext;
+}
+
+async function localHourForRequest(
+  sc: any,
+  userId: string,
+  req: { query?: unknown; body?: unknown },
+): Promise<number> {
+  try {
+    const raw =
+      (req.query as any)?.tzOffsetMinutes ?? (req.body as any)?.tzOffsetMinutes;
+    return await resolveLocalHour(sc, userId, parseTzOffsetParam(raw));
+  } catch {
+    return new Date().getUTCHours();
+  }
+}
 
 // ── Feed recommendation enrichment ────────────────────────────────────────────
 // Generates HMAC-signed recommendationId tokens for each feed item, adds them
@@ -217,8 +245,8 @@ router.get("/compass/me/context", async (req, res) => {
     // Build profile (cached 2 min per user)
     const profile = await getCompassProfile(sc, user.id);
 
-    // Build signals from profile (server clock + profile booleans)
-    const signals = defaultSignals(profile);
+    // Build signals from profile (traveler's local clock + profile booleans)
+    const signals = defaultSignals(profile, await localHourForRequest(sc, user.id, req));
 
     // Compute context and intent mode
     const context    = buildCompassContext(profile, signals);
@@ -336,7 +364,7 @@ router.get("/compass/feed", async (req, res) => {
     // Apply compass_settings toggles to signals so disabled data sources are
     // not used in the ranking pipeline for this request.
     const settings = (settingsRow.data ?? {}) as Record<string, boolean>;
-    const rawSignals = defaultSignals(profile);
+    const rawSignals = defaultSignals(profile, await localHourForRequest(sc, user.id, req));
     // Gate trip-data signals when user has disabled trip-data personalisation
     if (settings.use_trip_data === false) {
       rawSignals.activeTripNow           = false;
@@ -346,6 +374,7 @@ router.get("/compass/feed", async (req, res) => {
     }
     const signals  = rawSignals;
     const context  = buildCompassContext(profile, signals);
+    _lastFeedContext = { hourUtc: signals.hourUtc, contextState: context.contextState };
 
     // Hydrate candidates, applying settings gates that affect candidate selection:
     //   use_location=false + use_chosen_city=false → skip city-biased fetching
@@ -461,7 +490,7 @@ router.get("/compass/feed/section/:section", async (req, res) => {
     ]);
 
     const sectionSettings = (sectionSettingsRow.data ?? {}) as Record<string, boolean>;
-    const sectionRawSignals = defaultSignals(profile);
+    const sectionRawSignals = defaultSignals(profile, await localHourForRequest(sc, user.id, req));
     if (sectionSettings.use_trip_data === false) {
       sectionRawSignals.activeTripNow          = false;
       sectionRawSignals.upcomingTripWithin48h  = false;
@@ -1150,7 +1179,7 @@ router.post("/compass/ask", async (req, res) => {
   try {
     const profile    = await getCompassProfile(sc, user.id);
     const effProfile = effectiveCity ? { ...profile, currentCity: effectiveCity } : profile;
-    const signals    = defaultSignals(effProfile);
+    const signals    = defaultSignals(effProfile, await localHourForRequest(sc, user.id, req));
     const ctx        = buildCompassContext(effProfile, signals);
     const rawItems   = await hydrateCompassItems(sc, effProfile);
     const { section: feedSection } = await buildSection("for_you", rawItems, effProfile, ctx, sc);
@@ -1173,7 +1202,7 @@ router.post("/compass/ask", async (req, res) => {
     const profile    = await getCompassProfile(sc, user.id);
     const effProfile = effectiveCity ? { ...profile, currentCity: effectiveCity } : profile;
     guardProfile     = effProfile;
-    const signals    = defaultSignals(effProfile);
+    const signals    = defaultSignals(effProfile, await localHourForRequest(sc, user.id, req));
     const ctx        = buildCompassContext(effProfile, signals);
     const intentMode = deriveIntentMode(ctx);
     modeWeightingLines = buildModeWeightingLines(ctx.contextState, intentMode);
@@ -2667,7 +2696,10 @@ router.get("/compass/recommendations", async (req, res) => {
     // Allow caller to override the context city.
     const effectiveProfile = city ? { ...profile, currentCity: city } : profile;
 
-    const signals = defaultSignals(effectiveProfile as typeof profile);
+    const signals = defaultSignals(
+      effectiveProfile as typeof profile,
+      await localHourForRequest(sc, user.id, req),
+    );
     const context = buildCompassContext(effectiveProfile as typeof profile, signals);
     const items   = await hydrateCompassItems(sc, effectiveProfile as typeof profile);
 
@@ -3163,7 +3195,7 @@ router.get("/compass/telegraph", async (req, res) => {
     });
 
     // Score and rank via the pipeline
-    const signals = defaultSignals(effectiveProfile);
+    const signals = defaultSignals(effectiveProfile, await localHourForRequest(sc, user.id, req));
     const context = buildCompassContext(effectiveProfile, signals);
 
     // Build section to get scored, ranked items

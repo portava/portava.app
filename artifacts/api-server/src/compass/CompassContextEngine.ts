@@ -77,10 +77,16 @@ export function buildCompassContext(
 /**
  * Build default signals from the current wall clock, with all boolean signals
  * driven from the CompassProfile.
+ *
+ * @param localHour  The traveler's local hour (0–23), when known. Time-aware
+ *                   surfaces should resolve it via lib/localTime.ts
+ *                   (client offset → stored timezone → UTC) so time-of-day
+ *                   context follows the traveler's clock, not the server's.
+ *                   Falls back to the raw UTC hour when omitted.
  */
-export function defaultSignals(profile: CompassProfile): CompassSignals {
+export function defaultSignals(profile: CompassProfile, localHour?: number): CompassSignals {
   return {
-    hourUtc:                 new Date().getUTCHours(),
+    hourUtc:                 localHour ?? new Date().getUTCHours(),
     safeReturnActive:        profile.safeReturnActive,
     activeBooking:           profile.hasActiveBooking,
     upcomingTripWithin48h:   profile.upcomingTripWithin48h,

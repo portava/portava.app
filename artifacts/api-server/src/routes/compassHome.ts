@@ -30,6 +30,14 @@ import { buildSection } from "../compass/CompassFeedBuilder.js";
 import { getWhosAround } from "../compass/CompassSocialEngine.js";
 import { getWeatherContext } from "../lib/weatherCache.js";
 import type { CompassProfile } from "../compass/types.js";
+import {
+  localHourFor,
+  parseTzOffsetParam,
+  fetchUserTimezone,
+} from "../lib/localTime.js";
+
+// Re-exported for existing consumers/tests.
+export { localHourFor };
 
 const router = Router();
 
@@ -113,65 +121,9 @@ export function timeOfDayForHour(hour: number): TimeOfDay {
   return "night";
 }
 
-/* ── Local-time resolution ───────────────────────────────────────────────────
- * The time bucket must follow the traveler's clock, not the server's. Priority:
- *   1. Explicit client-supplied UTC offset (?tzOffsetMinutes=480 for UTC+8)
- *   2. The traveler's IANA timezone (notification_preferences.timezone)
- *   3. UTC — only when neither is known.
- */
-const MAX_TZ_OFFSET_MINUTES = 14 * 60;
-
-export function localHourFor(
-  nowUtc: Date,
-  tzOffsetMinutes: number | null,
-  timezone: string | null,
-): number {
-  if (
-    tzOffsetMinutes !== null &&
-    Number.isFinite(tzOffsetMinutes) &&
-    Math.abs(tzOffsetMinutes) <= MAX_TZ_OFFSET_MINUTES
-  ) {
-    const utcMinutes = nowUtc.getUTCHours() * 60 + nowUtc.getUTCMinutes();
-    const localMinutes = (((utcMinutes + Math.trunc(tzOffsetMinutes)) % 1440) + 1440) % 1440;
-    return Math.floor(localMinutes / 60);
-  }
-  if (timezone) {
-    try {
-      const part = new Intl.DateTimeFormat("en-GB", {
-        timeZone: timezone,
-        hour: "2-digit",
-        hourCycle: "h23",
-      })
-        .formatToParts(nowUtc)
-        .find((p) => p.type === "hour");
-      const h = Number(part?.value);
-      if (Number.isFinite(h)) return h;
-    } catch {
-      // Invalid timezone name — fall through to UTC.
-    }
-  }
-  return nowUtc.getUTCHours();
-}
-
-function parseTzOffsetParam(raw: unknown): number | null {
-  if (typeof raw !== "string" || raw.trim() === "") return null;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || Math.abs(n) > MAX_TZ_OFFSET_MINUTES) return null;
-  return Math.trunc(n);
-}
-
-async function fetchUserTimezone(sc: any, userId: string): Promise<string | null> {
-  try {
-    const { data } = await sc
-      .from("notification_preferences")
-      .select("timezone")
-      .eq("user_id", userId)
-      .maybeSingle();
-    return ((data as any)?.timezone as string | null) ?? null;
-  } catch {
-    return null;
-  }
-}
+/* Local-time resolution (localHourFor / parseTzOffsetParam / fetchUserTimezone)
+ * lives in ../lib/localTime.ts — shared with the feed routes and any other
+ * time-aware Compass surface. */
 
 function hiddenUserIds(profile: CompassProfile | null): Set<string> {
   return new Set([
