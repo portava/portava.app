@@ -340,8 +340,12 @@ let app: Express;
 let server: Server;
 let port: number;
 
+let ClientDisconnectedError: new () => Error;
+
 before(async () => {
-  const { default: compassRouter } = await import("../routes/compass.js");
+  const compassMod = await import("../routes/compass.js");
+  const { default: compassRouter } = compassMod;
+  ClientDisconnectedError = (compassMod as any).ClientDisconnectedError;
   app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -471,6 +475,50 @@ describe("G. /compass/ask tool loop", () => {
     const msgs = db.compass_conversation_messages.filter((m) => m.role === "assistant");
     const payload = msgs[msgs.length - 1].payload as any;
     assert.ok(Array.isArray(payload.uiBlocks) && payload.uiBlocks.length === 1, "uiBlocks persisted");
+  });
+
+  it("re-prompts with a summarise instruction when the forced-final round returns empty content", async () => {
+    const db = makeDb({
+      discovery_places: [{ id: PLACE_ID, name: "Lantaw Cafe", category: "cafe", city: "Cebu", rating: 4.6, verified: true, blurb: "views", lat: 10.35, lng: 123.87 }],
+    });
+    const client = makeClient(db);
+    _setTestClient(client, "test-token");
+
+    let mainCalls = 0;
+    _setTestOpenAI({
+      chat: { completions: { create: async (opts: any) => {
+        const isClassifier = opts.max_completion_tokens === 60 && opts.temperature === 0;
+        if (isClassifier) {
+          return { choices: [{ message: { content: JSON.stringify({ intent: "recommendation", confidence: 0.9 }), role: "assistant" } }] };
+        }
+        mainCalls++;
+        if (mainCalls === 1) {
+          // Tool round: model requests search_places.
+          return { choices: [{ message: { role: "assistant", content: null,
+            tool_calls: [{ id: "tc_1", type: "function", function: { name: "search_places", arguments: JSON.stringify({ city: "Cebu" }) } }] } }] };
+        }
+        if (mainCalls === 2) {
+          // Second round (after the tool result is fed back): model returns null
+          // content with no tool_calls — simulates the silent-reply bug where
+          // the model ends the sequence without producing text.
+          return { choices: [{ message: { role: "assistant", content: null, tool_calls: [] } }] };
+        }
+        // Third call: summarise re-prompt issued by the safeguard — return a real message.
+        const msgs = opts.messages as any[];
+        const lastUserMsg = msgs.slice().reverse().find((m: any) => m.role === "user");
+        assert.ok(
+          lastUserMsg?.content?.includes("direct, helpful reply"),
+          "re-prompt must include summarise instruction",
+        );
+        return { choices: [{ message: { role: "assistant", content: JSON.stringify({ message: "Try Lantaw Cafe in Busay.", payload: null, quickActions: [] }) } }] };
+      } } },
+    } as any);
+
+    const { status, body } = await post("/api/compass/ask", { prompt: "coffee in Cebu?" });
+    assert.equal(status, 200);
+    assert.ok(body.message && body.message.length > 0, "reply must be non-empty after summarise re-prompt");
+    assert.ok(String(body.message).includes("Lantaw"), "summarise reply must reference tool results");
+    assert.equal(mainCalls, 3, "three model calls: tool round, silent forced-final, summarise re-prompt");
   });
 
   it("surfaces add_to_trip pendingProposals on the response and persists them", async () => {
@@ -632,6 +680,55 @@ describe("G2. /compass/ask SSE streaming with tool rounds", () => {
     assert.equal((done.pendingProposals as any[])[0].status, "pending_confirmation");
     assert.ok(events.filter((e) => typeof e.delta === "string").length > 1, "final answer streamed incrementally");
     assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], [], "nothing written before confirmation");
+  });
+
+  it("does not persist an assistant message when the client disconnects during the summarise re-prompt", async () => {
+    // Scenario: tool round fires, forced-final returns null content (triggering
+    // summarise fallback), then the summarise streaming round throws
+    // ClientDisconnectedError — the error must propagate out of runToolCallingLoop
+    // so the SSE handler fires its disconnect branch and persists nothing.
+    const db = makeDb({
+      discovery_places: [{ id: PLACE_ID, name: "Lantaw Cafe", category: "cafe", city: "Cebu", rating: 4.6, verified: true }],
+    });
+    const client = makeClient(db);
+    _setTestClient(client, "test-token");
+
+    let mainCalls = 0;
+    _setTestOpenAI({
+      chat: { completions: { create: async (opts: any) => {
+        const isClassifier = opts.max_completion_tokens === 60 && opts.temperature === 0;
+        if (isClassifier) {
+          return { choices: [{ message: { content: JSON.stringify({ intent: "recommendation", confidence: 0.9 }), role: "assistant" } }] };
+        }
+        assert.equal(opts.stream, true, "SSE path must use streamed completions");
+        mainCalls++;
+        if (mainCalls === 1) {
+          // Tool round: model requests search_places.
+          return asStream([
+            { choices: [{ delta: { tool_calls: [{ index: 0, id: "tc_1", type: "function", function: { name: "search_places", arguments: JSON.stringify({ city: "Cebu" }) } }] } }] },
+          ]);
+        }
+        if (mainCalls === 2) {
+          // Forced-final: empty content stream — triggers summarise fallback.
+          return asStream([{ choices: [{ delta: { content: "" } }] }]);
+        }
+        // Summarise re-prompt: simulate a client disconnect mid-stream.
+        throw new ClientDisconnectedError();
+      } } },
+    } as any);
+
+    const r = await fetch(`http://localhost:${port}/api/compass/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
+      body: JSON.stringify({ prompt: "coffee in Cebu?", stream: true }),
+    });
+    assert.equal(r.status, 200, "SSE response header is 200");
+    await r.text(); // drain
+
+    // No assistant message must be persisted when a disconnect aborts the summarise round.
+    const assistantMsgs = db.compass_conversation_messages.filter((m) => m.role === "assistant");
+    assert.equal(assistantMsgs.length, 0, "no assistant message persisted on summarise-round disconnect");
+    assert.equal(mainCalls, 3, "three model calls: tool round, empty forced-final, summarise round that disconnects");
   });
 });
 

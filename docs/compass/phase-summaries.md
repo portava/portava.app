@@ -842,14 +842,38 @@ earlier turn context ("traveling alone tonight"). No invented IDs.
 
 ### Action items surfaced
 
-- Investigate why `gpt-5-mini` returns `content: null`/`""` on final
+- ~~Investigate why `gpt-5-mini` returns `content: null`/`""` on final
   turns for most query types. Consider adding a fallback in
   `runToolCallingLoop` that re-prompts with "Please summarise your
   findings in a single assistant reply" when `finalRaw` is empty after
   the forced-final round (or upgrade to a stronger model for the final
-  turn).
+  turn).~~ **Fixed (2026-07-21, Task 2142)** — see Phase 2142 entry below.
 - Ensure `uiBlocks` are populated from tool results even when the model
   doesn't emit a JSON block declaration in its text; the block-assembly
   step may need to run over tool log output directly.
 - Re-run eval after the silent-response fix to observe block-type
   selection, hallucination rate, and personalization across all 9 turns.
+
+## Phase 2142 — Compass silent-reply safeguard (2026-07-21)
+
+Root cause confirmed: `gpt-5-mini` ends tool-calling sequences without a
+closing text turn on most query types, leaving `finalRaw = ""` and the
+client receiving an empty `message`, empty `uiBlocks`, and null `payload`.
+
+- New `summariseFallback()` helper in `src/routes/compass.ts` (before
+  `runToolCallingLoop`): when `finalRaw === ""` after any terminal path
+  in the loop (both the `!toolCalls.length` early-exit and the
+  `forceFinal` round), re-prompts the model once with
+  `SUMMARISE_PROMPT` ("Based on what you just found, please give a
+  direct, helpful reply to the traveler. Be concise.") appended as a
+  `user` message. Handles both streaming (`onDelta`) and non-streaming
+  paths. Non-fatal: returns `""` if the re-prompt also errors, so the
+  existing honest-fallback path in the POST handler still fires.
+- `runToolCallingLoop` terminal return now reads:
+  `if (!finalRaw) finalRaw = await summariseFallback(...)`.
+- Test: "re-prompts with a summarise instruction when the forced-final
+  round returns empty content" added to `compass-tools.test.ts` suite G —
+  verifies three model calls (tool round → silent null-content turn →
+  summarise re-prompt), that the re-prompt carries the summarise
+  instruction, and that `body.message` is non-empty and references tool
+  results. 4685 tests pass.

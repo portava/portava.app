@@ -1023,6 +1023,55 @@ function _parseModelResponse(raw: string): {
 const MAX_TOOL_ROUNDS = 5;
 
 /**
+ * Safeguard for the "silent reply" failure mode: when gpt-5-mini ends a
+ * tool-calling sequence without producing text on the forced-final round,
+ * re-prompt once with an explicit summarise instruction so the client always
+ * receives a visible reply.
+ *
+ * Called only when `finalRaw === ""` after the loop exits. Non-fatal: returns
+ * `""` if the re-prompt also fails, so the caller can still emit a graceful
+ * fallback rather than crash.
+ */
+const SUMMARISE_PROMPT =
+  "Based on what you just found, please give a direct, helpful reply to the traveler. Be concise.";
+
+async function summariseFallback(
+  convo:    any[],
+  log:      { warn: (o: object, m: string) => void },
+  userId:   string,
+  onDelta?: (delta: string) => void,
+  signal?:  AbortSignal,
+): Promise<string> {
+  log.warn(
+    { userId },
+    "compass/ask: empty final turn — re-prompting with summarise instruction",
+  );
+  const opts = {
+    model:                 "gpt-5-mini",
+    max_completion_tokens: 800,
+    messages: [
+      ...convo,
+      { role: "user", content: SUMMARISE_PROMPT },
+    ],
+    // No tools — text-only summarise turn.
+  };
+  try {
+    if (onDelta) {
+      const streamed = await streamModelRound(opts as any, onDelta, signal);
+      return streamed.content;
+    }
+    const completion = await getOpenAI().chat.completions.create(opts as any);
+    const msg = (completion as any).choices?.[0]?.message;
+    return String(msg?.content ?? "");
+  } catch (err) {
+    // A client disconnect during the summarise round must still abort the
+    // request and suppress persistence — rethrow so the SSE handler sees it.
+    if (err instanceof ClientDisconnectedError || signal?.aborted) throw err;
+    return "";
+  }
+}
+
+/**
  * Thrown when the SSE client disconnects mid-answer. The upstream OpenAI
  * stream is aborted (no further token spend) and NOTHING is persisted —
  * a partial answer must never land in compass_conversation_messages.
@@ -1140,7 +1189,15 @@ async function runToolCallingLoop(
     }
 
     if (!toolCalls.length || forceFinal) {
-      return { finalRaw: String(msg?.content ?? ""), toolLog, proposals };
+      let finalRaw = String(msg?.content ?? "");
+      // Safeguard: when the model ends a tool-calling sequence without any
+      // closing text (common with gpt-5-mini after heavy tool rounds), re-prompt
+      // once with an explicit summarise instruction so the client always receives
+      // a visible reply — never a silent empty message.
+      if (!finalRaw) {
+        finalRaw = await summariseFallback(convo, log, userId, onDelta, signal);
+      }
+      return { finalRaw, toolLog, proposals };
     }
 
     convo.push(msg);
