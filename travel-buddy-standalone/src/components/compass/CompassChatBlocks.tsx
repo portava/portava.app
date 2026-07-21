@@ -22,9 +22,10 @@ import { useRouter } from 'expo-router';
 import {
   MapPin, CalendarClock, ChevronRight, Users, Map as MapIcon, Plus, Star,
 } from 'lucide-react-native';
-import type {
-  CompassUiBlock, CompassUiPlace, CompassUiEvent, CompassUiPerson,
-  CompassComparisonRow, CompassAskPayload, CompassUiConfidence,
+import {
+  reportCompassViewed,
+  type CompassUiBlock, type CompassUiPlace, type CompassUiEvent, type CompassUiPerson,
+  type CompassComparisonRow, type CompassAskPayload, type CompassUiConfidence,
 } from '../../services/compass.ts';
 import { formatCompassEventChip } from '../../utils/compassFormat.ts';
 import { CompassMiniMap } from './CompassMiniMap';
@@ -94,6 +95,8 @@ function BlockRenderer({ block, onAddPlaceToPlan }: {
 function usePlaceNavigation() {
   const router = useRouter();
   return (place: CompassUiPlace) => {
+    // Fire-and-forget "viewed" outcome — the user actually opened this card.
+    reportCompassViewed(null, place.id);
     if (place.lat != null && place.lng != null) {
       router.push({
         pathname: '/map',
@@ -288,7 +291,10 @@ function EventBlockCard({ event }: { event: CompassUiEvent }) {
   return (
     <Pressable
       style={({ pressed }) => [s.card, pressed && s.pressed]}
-      onPress={() => router.push(`/event/${event.id}` as any)}
+      onPress={() => {
+        reportCompassViewed(null, event.id);
+        router.push(`/event/${event.id}` as any);
+      }}
       accessibilityRole="button"
       accessibilityLabel={`View event ${event.title}`}
       testID={`compass-block-event-${event.id}`}
@@ -399,10 +405,12 @@ function ComparisonBlock({ columns, rows }: { columns: string[]; rows: CompassCo
 
   const openRow = (row: CompassComparisonRow) => {
     if (row.kind === 'event') {
+      reportCompassViewed(null, row.id);
       router.push(`/event/${row.id}` as any);
     } else if (row.place) {
       openPlace(row.place);
     } else {
+      reportCompassViewed(null, row.id);
       router.push({ pathname: '/search', params: { q: row.label, type: 'places' } } as any);
     }
   };
