@@ -3,44 +3,68 @@
  *
  * View, edit, and forget the structured memories Compass keeps about you,
  * and teach it new preferences explicitly. Wired to real memory records via
- * /api/compass/me/memories.
+ * /api/compass/me/memories. Scope tabs (All / Long-term / This trip / Circles)
+ * use the server-side ?scope= filter; circle memories show the circle's name
+ * and Teach My Compass can target a circle the user belongs to.
  *
  * Accessible from: Compass Preferences → "Compass Remembers".
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Alert, Pressable, SafeAreaView } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { ArrowLeft } from 'lucide-react-native';
 import { color, space, type as t } from '../src/theme/tokens';
 import {
   fetchCompassMemories, teachCompassMemory, updateCompassMemory, forgetCompassMemory,
-  type CompassMemory,
+  type CompassMemory, type CompassMemoryScope,
 } from '../src/services/compass';
-import { CompassRemembers } from '../src/components/compass/CompassRemembers';
+import { getMyCircles } from '../src/services/circles';
+import { CompassRemembers, type CompassCircleOption } from '../src/components/compass/CompassRemembers';
 import { PlainBottomFiller } from '../src/hooks/useBottomInset';
 
 export default function CompassMemoriesScreen() {
   const [memories, setMemories] = useState<CompassMemory[]>([]);
   const [loading, setLoading]   = useState(true);
   const [teaching, setTeaching] = useState(false);
+  const [scope, setScope]       = useState<CompassMemoryScope | null>(null);
+  const [circles, setCircles]   = useState<CompassCircleOption[]>([]);
+  // Guards against a slow fetch for a previous scope overwriting the current one.
+  const loadSeq = useRef(0);
 
-  const load = useCallback(async () => {
-    const r = await fetchCompassMemories();
+  const load = useCallback(async (s: CompassMemoryScope | null) => {
+    const seq = ++loadSeq.current;
+    setLoading(true);
+    const r = await fetchCompassMemories(s ?? undefined);
+    if (seq !== loadSeq.current) return;
     if (r.ok) setMemories(r.data ?? []);
     setLoading(false);
   }, []);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  const loadCircles = useCallback(async () => {
+    const rows = await getMyCircles();
+    setCircles(rows.map((c) => ({ ownerId: c.ownerId, name: c.name })));
+  }, []);
 
-  async function handleTeach(statement: string) {
+  useFocusEffect(useCallback(() => { load(scope); loadCircles(); }, [load, loadCircles, scope]));
+
+  function handleScopeChange(next: CompassMemoryScope | null) {
+    if (next === scope) return;
+    setScope(next);
+    load(next);
+  }
+
+  async function handleTeach(statement: string, circleOwnerId?: string) {
     setTeaching(true);
-    const r = await teachCompassMemory(statement);
+    const r = await teachCompassMemory(statement, circleOwnerId ? { circleOwnerId } : {});
     setTeaching(false);
     if (!r.ok || !r.data) {
       Alert.alert('Could not save', 'Compass could not remember that right now — try again shortly.');
       return;
     }
-    setMemories((prev) => [r.data!, ...prev.filter((m) => m.id !== r.data!.id)]);
+    // Only show the new memory in the list if it matches the active scope filter.
+    if (scope === null || r.data.scope === scope) {
+      setMemories((prev) => [r.data!, ...prev.filter((m) => m.id !== r.data!.id)]);
+    }
   }
 
   async function handleEdit(memoryId: string, content: string) {
@@ -84,6 +108,9 @@ export default function CompassMemoriesScreen() {
           memories={memories}
           loading={loading}
           teaching={teaching}
+          scope={scope}
+          onScopeChange={handleScopeChange}
+          circles={circles}
           onTeach={handleTeach}
           onEdit={handleEdit}
           onForget={handleForget}
