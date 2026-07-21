@@ -28,6 +28,9 @@ import compassGraphRouter from "../routes/compassGraph.js";
 import {
   daypartOf,
   timeSliceKey,
+  localMonthKey,
+  registerCityCoordinates,
+  timezoneFromCoords,
   cityTimezone,
   buildGraphFromSources,
   buildCityWorldModels,
@@ -285,6 +288,32 @@ describe("time slicing", () => {
     const at = new Date("2026-07-24T11:00:00Z");
     assert.equal(timeSliceKey(at, "Nowhereville"), timeSliceKey(at));
     assert.equal(timeSliceKey(at, null), timeSliceKey(at));
+  });
+
+  it("resolves brand-new cities from coordinates when the static map misses", () => {
+    const sevenPmCebu = new Date("2026-07-24T11:00:00Z"); // Fri 19:00 Asia/Manila
+    // Not in CITY_TIMEZONES, but coords near Cebu → Asia/Manila
+    assert.equal(cityTimezone("Lapu-Lapu City", { lat: 10.31, lng: 123.95 }), "Asia/Manila");
+    assert.equal(timeSliceKey(sevenPmCebu, "Lapu-Lapu City", { lat: 10.31, lng: 123.95 }), "fri:evening");
+    // Once seen with coords, the city resolves even WITHOUT coords (learned cache)
+    assert.equal(cityTimezone("lapu-lapu city"), "Asia/Manila");
+    assert.equal(timeSliceKey(sevenPmCebu, "Lapu-Lapu City"), "fri:evening");
+    assert.equal(localMonthKey(sevenPmCebu, "Lapu-Lapu City"), "07");
+  });
+
+  it("registerCityCoordinates teaches the resolver ahead of time", () => {
+    registerCityCoordinates("Reykjanesbær", 63.99, -22.56);
+    assert.equal(cityTimezone("reykjanesbær"), "Atlantic/Reykjavik");
+  });
+
+  it("still falls back honestly to UTC with missing or invalid coords", () => {
+    const at = new Date("2026-07-24T11:00:00Z");
+    assert.equal(cityTimezone("Totally Unknown Place"), null);
+    assert.equal(cityTimezone("Totally Unknown Place", { lat: null, lng: null }), null);
+    assert.equal(cityTimezone("Totally Unknown Place", { lat: 999, lng: 999 }), null);
+    assert.equal(timeSliceKey(at, "Totally Unknown Place", { lat: 999, lng: 999 }), timeSliceKey(at));
+    assert.equal(timezoneFromCoords(null, null), null);
+    assert.equal(timezoneFromCoords(NaN, 10), null);
   });
 
   it("covers every seed popular city — none silently fall back to UTC", () => {

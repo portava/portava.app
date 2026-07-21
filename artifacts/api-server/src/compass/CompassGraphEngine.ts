@@ -30,6 +30,7 @@
  * pipeline or chat routes that consume it.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import tzLookup from "tz-lookup";
 import type { CompassItem } from "./types.js";
 import type { RankingFactor } from "./CompassRecommendationEngine.js";
 
@@ -51,8 +52,10 @@ export function daypartOf(hour: number): Daypart {
 // ── Per-city timezone resolution ─────────────────────────────────────────────
 //
 // Time slices must reflect each city's LOCAL clock: a 7pm Cebu event is a
-// "fri:evening" observation even though it is 11am UTC. Static map — no
-// external services. Unknown cities fall back to UTC (honest default).
+// "fri:evening" observation even though it is 11am UTC. Static map as the
+// fast path, plus an offline coordinate → timezone lookup (tz-lookup) for
+// brand-new cities — no external services. Unknown cities with no
+// coordinates fall back to UTC (honest default).
 
 const CITY_TIMEZONES: Record<string, string> = {
   // Philippines (primary market)
@@ -94,10 +97,76 @@ const CITY_TIMEZONES: Record<string, string> = {
   "phuket": "Asia/Bangkok", "krabi": "Asia/Bangkok",
 };
 
-/** Resolve a city's IANA timezone from the static map (null when unknown). */
-export function cityTimezone(city: string | null | undefined): string | null {
-  const key = String(city ?? "").trim().toLowerCase();
-  return key ? CITY_TIMEZONES[key] ?? null : null;
+/** Coordinates that can upgrade an unknown city to a real timezone. */
+export interface CityCoords {
+  lat: number | null | undefined;
+  lng: number | null | undefined;
+}
+
+// Learned city → timezone entries resolved from coordinates via the bundled
+// offline tz-boundary lookup (tz-lookup). Static map stays the fast path;
+// this cache makes brand-new cities resolve automatically once ANY caller
+// has seen their coordinates. Bounded to avoid unbounded growth from junk
+// free-text city strings.
+const LEARNED_CITY_TIMEZONES = new Map<string, string>();
+const LEARNED_CITY_TZ_MAX = 5000;
+
+function normTzKey(city: string | null | undefined): string {
+  return String(city ?? "").trim().toLowerCase();
+}
+
+/** Offline coordinate → IANA timezone (null on invalid coords). */
+export function timezoneFromCoords(
+  lat: number | null | undefined,
+  lng: number | null | undefined,
+): string | null {
+  if (typeof lat !== "number" || typeof lng !== "number") return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  try {
+    return tzLookup(lat, lng);
+  } catch {
+    return null; // out-of-range coords → honest null (UTC fallback upstream)
+  }
+}
+
+/**
+ * Teach the resolver a city's timezone from its coordinates. No-op when the
+ * city is already covered by the static map or previously learned. Purely
+ * in-memory and offline — safe to call from any hot path.
+ */
+export function registerCityCoordinates(
+  city: string | null | undefined,
+  lat: number | null | undefined,
+  lng: number | null | undefined,
+): void {
+  const key = normTzKey(city);
+  if (!key || CITY_TIMEZONES[key] || LEARNED_CITY_TIMEZONES.has(key)) return;
+  if (LEARNED_CITY_TIMEZONES.size >= LEARNED_CITY_TZ_MAX) return;
+  const tz = timezoneFromCoords(lat, lng);
+  if (tz) LEARNED_CITY_TIMEZONES.set(key, tz);
+}
+
+/**
+ * Resolve a city's IANA timezone: static map → learned (coord-derived) cache
+ * → direct coordinate lookup when coords are provided. Null when unknown —
+ * callers fall back honestly to UTC. No network calls, ever.
+ */
+export function cityTimezone(
+  city: string | null | undefined,
+  coords?: CityCoords | null,
+): string | null {
+  const key = normTzKey(city);
+  if (key) {
+    const fromStatic = CITY_TIMEZONES[key];
+    if (fromStatic) return fromStatic;
+    const learned = LEARNED_CITY_TIMEZONES.get(key);
+    if (learned) return learned;
+  }
+  const tz = timezoneFromCoords(coords?.lat, coords?.lng);
+  if (tz && key && LEARNED_CITY_TIMEZONES.size < LEARNED_CITY_TZ_MAX) {
+    LEARNED_CITY_TIMEZONES.set(key, tz);
+  }
+  return tz;
 }
 
 const TZ_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
@@ -132,8 +201,8 @@ function localClockParts(at: Date, tz: string): { dow: string; hour: number; mon
  * Slice key like "fri:evening" for a Date. When a city is provided and its
  * timezone is known, the slice reflects the city's LOCAL clock; otherwise UTC.
  */
-export function timeSliceKey(at: Date, city?: string | null): string {
-  const tz = cityTimezone(city);
+export function timeSliceKey(at: Date, city?: string | null, coords?: CityCoords | null): string {
+  const tz = cityTimezone(city, coords);
   if (tz) {
     const parts = localClockParts(at, tz);
     if (parts) return `${parts.dow}:${daypartOf(parts.hour)}`;
@@ -142,8 +211,8 @@ export function timeSliceKey(at: Date, city?: string | null): string {
 }
 
 /** Month ("01".."12") of a Date in a city's local timezone (UTC fallback). */
-export function localMonthKey(at: Date, city?: string | null): string {
-  const tz = cityTimezone(city);
+export function localMonthKey(at: Date, city?: string | null, coords?: CityCoords | null): string {
+  const tz = cityTimezone(city, coords);
   if (tz) {
     const parts = localClockParts(at, tz);
     if (parts?.month) return parts.month;
@@ -243,7 +312,7 @@ export async function buildGraphFromSources(
   try {
     const { data } = await db
       .from("user_stamps")
-      .select("user_id, city, country, earned_at, is_revoked")
+      .select("user_id, city, country, earned_at, is_revoked, lat, lng")
       .eq("is_revoked", false)
       .limit(BUILD_LIMIT);
     for (const r of (data as any[]) ?? []) {
@@ -253,8 +322,9 @@ export async function buildGraphFromSources(
       batch.node("person", String(r.user_id));            // no profile attrs — privacy
       batch.node("city", city, city, { country: r.country ?? null });
       batch.edge({ src_type: "person", src_key: String(r.user_id), dst_type: "city", dst_key: city, edge_type: "visited", at });
+      registerCityCoordinates(city, r.lat, r.lng);
       if (at) {
-        const slice = timeSliceKey(new Date(at), city);
+        const slice = timeSliceKey(new Date(at), city, { lat: r.lat, lng: r.lng });
         batch.node("time_slice", `${city}|${slice}`, city, { slice });
         batch.edge({ src_type: "city", src_key: city, dst_type: "time_slice", dst_key: `${city}|${slice}`, edge_type: "active_during:exploring", at });
       }
@@ -265,13 +335,14 @@ export async function buildGraphFromSources(
   try {
     const { data } = await db
       .from("trips")
-      .select("id, owner_id, destination_city, start_date, end_date")
+      .select("id, owner_id, destination_city, start_date, end_date, destination_lat, destination_lng")
       .limit(BUILD_LIMIT);
     const tripsPerUserCity = new Map<string, number>();
     for (const r of (data as any[]) ?? []) {
       const city = normCity(r.destination_city);
       if (!r.owner_id || !city) continue;
       const at = r.start_date ? String(r.start_date) : null;
+      registerCityCoordinates(city, r.destination_lat, r.destination_lng);
       batch.node("person", String(r.owner_id));
       batch.node("city", city, city);
       batch.node("trip", String(r.id), city);
@@ -290,20 +361,21 @@ export async function buildGraphFromSources(
   try {
     const { data } = await db
       .from("events")
-      .select("id, city, category, start_at")
+      .select("id, city, category, start_at, location_lat, location_lng")
       .limit(BUILD_LIMIT);
     for (const r of (data as any[]) ?? []) {
       const city = normCity(r.city);
       if (!r.id || !city) continue;
       const at = r.start_at ? String(r.start_at) : null;
       const category = normCity(r.category) ?? "event";
+      registerCityCoordinates(city, r.location_lat, r.location_lng);
       batch.node("event", String(r.id), city, { category });
       batch.node("city", city, city);
       batch.edge({ src_type: "event", src_key: String(r.id), dst_type: "city", dst_key: city, edge_type: "in_city", at });
       batch.node("vibe", category.toLowerCase());
       batch.edge({ src_type: "event", src_key: String(r.id), dst_type: "vibe", dst_key: category.toLowerCase(), edge_type: "has_vibe", at });
       if (at) {
-        const slice = timeSliceKey(new Date(at), city);
+        const slice = timeSliceKey(new Date(at), city, { lat: r.location_lat, lng: r.location_lng });
         batch.node("time_slice", `${city}|${slice}`, city, { slice });
         batch.edge({ src_type: "city", src_key: city, dst_type: "time_slice", dst_key: `${city}|${slice}`, edge_type: `active_during:${category.toLowerCase()}`, at });
       }

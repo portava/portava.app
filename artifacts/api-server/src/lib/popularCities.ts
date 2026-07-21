@@ -14,6 +14,7 @@ import {
   haversineKm,
 } from "./canonicalLocations";
 import { logger as rootLogger } from "./logger";
+import { registerCityCoordinates } from "../compass/CompassGraphEngine.js";
 
 const logger = rootLogger.child({ lib: "popularCities" });
 
@@ -68,6 +69,11 @@ function bump(
   coords?: { lat: number | null; lng: number | null },
 ) {
   if (!city || typeof city !== "string" || !city.trim()) return;
+  // Teach the timezone resolver as coords flow through — brand-new cities
+  // get a real coordinate-derived timezone instead of skewing rhythms to UTC.
+  if (coords?.lat != null && coords?.lng != null) {
+    registerCityCoordinates(city, coords.lat, coords.lng);
+  }
   const key = cityKey(city, country ?? null);
   const cur = map.get(key);
   if (cur) {
