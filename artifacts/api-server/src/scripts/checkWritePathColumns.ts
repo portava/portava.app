@@ -1,11 +1,15 @@
 /**
- * Write-path column drift check
+ * Write-path + read-path column drift check
  *
  * Extracts every column written by `.insert()` / `.upsert()` / `.update()`
- * calls in src/routes and src/services (via the TypeScript AST — not regex,
+ * calls AND every column read by string-literal `.select("col_a, col_b")`
+ * lists in src/routes and src/services (via the TypeScript AST — not regex,
  * so chained calls and multi-line payloads are handled correctly) and diffs
  * the referenced columns against the LIVE Supabase schema through the
  * Supabase Management API.
+ *
+ * The read side matters just as much as the write side: a missing column in
+ * a select list fails the WHOLE query (PGRST100) and breaks reads silently.
  *
  * This is the maintained version of the ad-hoc task-1925 wizard-write-path
  * audit (2026-07-20), which found three live drifts (posts filter columns,
@@ -22,11 +26,22 @@
  *     of object literals, and (one level deep) same-file `const x = {...}`
  *     variables passed by identifier
  *
+ * What counts as a read site:
+ *   - a call chain that contains `.from("<string literal>")` followed by
+ *     `.select("<string literal>")`
+ *   - the select list is parsed PostgREST-style: aliases (`alias:col`),
+ *     casts (`col::text`), JSON paths (`col->x`, `col->>x`) all resolve to
+ *     the base column; `*`, `count`, and embedded resources
+ *     (`rel(...)`, including `rel!hint(...)`) are skipped — embedded
+ *     resources reference OTHER tables and are out of scope here
+ *
  * Deliberately skipped (counted and printed in verbose mode, never failed):
  *   - dynamic table names (`.from(tableVar)`)
  *   - payloads that cannot be statically resolved (function results,
  *     imported values, spreads — spread keys that ARE statically visible
  *     are still collected)
+ *   - non-literal select lists (template strings with substitutions,
+ *     variables)
  *
  * Usage (from artifacts/api-server):
  *   pnpm run check:write-path-columns          # diff against live schema
@@ -60,6 +75,52 @@ const ALLOWLIST = new Set<string>([
 // (e.g. test doubles or tables owned by another system).
 const SKIP_TABLES = new Set<string>([
   // (none currently)
+]);
+
+// ── Read-path baseline ────────────────────────────────────────────────────────
+//
+// Pre-existing read-side drift found when select-list checking was added
+// (2026-07-21).  These "table.column" pairs are selected by routes but absent
+// live — each is a latent PGRST100 failure on that query.  They are
+// BASELINED (not allowlisted-as-good) so the checker stays green while
+// guarding against NEW read drift.  Burn this list down: either apply the
+// missing migration or fix the select list, then delete the entry.
+// Applies to `select` sites only — never to writes.
+const READ_BASELINE = new Set<string>([
+  "circle_memberships.member_id",
+  "circle_memberships.owner_id",
+  "compass_abuse_flags.created_at",
+  "compass_active_user_scores.badge_eligibility",
+  "discovery_places.country",
+  "discovery_places.cover_url",
+  "events.location",
+  "events.name",
+  "events.start_at",
+  "events.status",
+  "hashtags.normalized_name",
+  "hidden_gems.image_url",
+  "hidden_gems.lat",
+  "hidden_gems.lng",
+  "meetups.attendee_count",
+  "meetups.proposed_time",
+  "message_thread_members.id",
+  "passport_stamps.check_in_count",
+  "passport_stamps.first_earned_at",
+  "passport_stamps.kind",
+  "passport_stamps.label",
+  "passport_stamps.last_earned_at",
+  "passport_stamps.locked",
+  "passport_stamps.sublabel",
+  "stamp_reconciliation_log.created_at",
+  "trip_members.id",
+  "trips.destination",
+  "user_follows.id",
+]);
+
+// Tables read via `.select()` that do not exist live at all (same baseline
+// semantics as READ_BASELINE).
+const READ_BASELINE_TABLES = new Set<string>([
+  "circle_members", // live table is circle_memberships
 ]);
 
 // ── Environment ───────────────────────────────────────────────────────────────
@@ -316,6 +377,58 @@ function findInitializer(
   return best?.init;
 }
 
+/**
+ * Parse a PostgREST select list into base column names.
+ *
+ * Splits on TOP-LEVEL commas (respecting parentheses so embedded resources
+ * stay intact), then per item:
+ *   - items containing `(` are embedded resources (`rel(...)`, `rel!hint(...)`)
+ *     → skipped (their columns belong to another table)
+ *   - `*` and bare `count` → skipped
+ *   - `alias:col` → col;  `col::cast` → col;  `col->x` / `col->>x` → col
+ *   - quoted identifiers keep their inner text
+ */
+function parseSelectList(list: string): { columns: string[]; skippedEmbedded: number } {
+  const items: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of list) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "," && depth === 0) {
+      items.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  items.push(cur);
+
+  const columns: string[] = [];
+  let skippedEmbedded = 0;
+  for (const raw of items) {
+    const item = raw.replace(/\s+/g, "");
+    if (item === "") continue;
+    if (item.includes("(")) {
+      skippedEmbedded++;
+      continue; // embedded resource — another table's columns
+    }
+    // alias:column — keep the part AFTER the colon (but not `::` casts)
+    let col = item;
+    const aliasIdx = col.indexOf(":");
+    if (aliasIdx !== -1 && col[aliasIdx + 1] !== ":") {
+      col = col.slice(aliasIdx + 1);
+    }
+    // strip cast and JSON path operators
+    col = col.split("::")[0].split("->")[0];
+    // strip surrounding quotes on quoted identifiers
+    col = col.replace(/^"(.*)"$/, "$1");
+    if (col === "" || col === "*" || col === "count") continue;
+    columns.push(col);
+  }
+  return { columns, skippedEmbedded };
+}
+
 function scanFile(path: string): void {
   const text = readFileSync(path, "utf8");
   const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
@@ -356,6 +469,46 @@ function scanFile(path: string): void {
           });
         }
       }
+    } else if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "select"
+    ) {
+      const table = findTableInChain(node.expression.expression);
+      const line =
+        sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+      if (table === null) {
+        // Not a supabase chain — ignore silently.
+      } else if (table === "<dynamic>") {
+        skipped.push({ file: rel, line, method: "select", reason: "dynamic table name" });
+      } else {
+        const arg = node.arguments[0];
+        if (arg === undefined) {
+          // `.select()` → `*` — nothing to check.
+        } else if (
+          ts.isStringLiteralLike(arg) ||
+          ts.isNoSubstitutionTemplateLiteral(arg)
+        ) {
+          const { columns } = parseSelectList(arg.text);
+          if (columns.length > 0) {
+            sites.push({
+              file: rel,
+              line,
+              table,
+              method: "select",
+              columns: [...new Set(columns)],
+              unresolved: false,
+            });
+          }
+        } else {
+          skipped.push({
+            file: rel,
+            line,
+            method: "select",
+            reason: "select list not statically resolvable",
+          });
+        }
+      }
     }
     ts.forEachChild(node, visit);
   };
@@ -373,7 +526,7 @@ const referencedTables = [
 ].sort();
 
 console.log(
-  `Extracted ${sites.length} statically-resolvable write sites across ` +
+  `Extracted ${sites.length} statically-resolvable write/read sites across ` +
     `${referencedTables.length} tables (${skipped.length} sites skipped as unresolvable).`,
 );
 
@@ -416,10 +569,18 @@ interface Finding {
 const missingByKey = new Map<string, Finding>();
 const missingTables = new Map<string, string[]>();
 
+let baselined = 0;
+
 for (const site of sites) {
   if (SKIP_TABLES.has(site.table)) continue;
+  const isRead = site.method === "select";
   const where = `${site.file}:${site.line} (${site.method})`;
   if (!liveRelationSet.has(site.table)) {
+    if (isRead && READ_BASELINE_TABLES.has(site.table)) {
+      baselined++;
+      if (VERBOSE) console.log(`  baselined (read): table ${site.table} — ${where}`);
+      continue;
+    }
     const list = missingTables.get(site.table) ?? [];
     list.push(where);
     missingTables.set(site.table, list);
@@ -428,6 +589,11 @@ for (const site of sites) {
   for (const col of site.columns) {
     const key = `${site.table}.${col}`;
     if (liveColumnSet.has(key) || ALLOWLIST.has(key)) continue;
+    if (isRead && READ_BASELINE.has(key)) {
+      baselined++;
+      if (VERBOSE) console.log(`  baselined (read): ${key} — ${where}`);
+      continue;
+    }
     const f = missingByKey.get(key) ?? {
       table: site.table,
       column: col,
@@ -447,9 +613,17 @@ if (VERBOSE && skipped.length > 0) {
 
 let failed = false;
 
+if (baselined > 0) {
+  console.log(
+    `\n⚠ ${baselined} read-site references matched the READ_BASELINE ` +
+      "(pre-existing read drift — see the annotated list in this script; " +
+      "burn it down, don't grow it).",
+  );
+}
+
 if (missingTables.size > 0) {
   failed = true;
-  console.error("\n✗ Written TABLES missing from the live schema:");
+  console.error("\n✗ Referenced TABLES missing from the live schema:");
   for (const [table, where] of [...missingTables].sort()) {
     console.error(`  ${table}`);
     for (const w of [...new Set(where)]) console.error(`      ${w}`);
@@ -458,23 +632,24 @@ if (missingTables.size > 0) {
 
 if (missingByKey.size > 0) {
   failed = true;
-  console.error("\n✗ Written COLUMNS missing from the live schema:");
+  console.error("\n✗ Referenced COLUMNS missing from the live schema:");
   for (const [key, f] of [...missingByKey].sort()) {
     console.error(`  ${key}`);
     for (const w of [...new Set(f.where)]) console.error(`      ${w}`);
   }
   console.error(
-    "\nEach of these will fail the whole write (PostgREST rejects the " +
-      "payload even when the value is null). Apply the migration that adds " +
-      "the column via the Management API and record it in docs/migrations.md, " +
-      "or add a justified ALLOWLIST entry in this script.",
+    "\nEach of these fails the WHOLE query: writes are rejected even when " +
+      "the value is null, and a missing select-list column fails the read " +
+      "with PGRST100. Apply the migration that adds the column via the " +
+      "Management API and record it in docs/migrations.md, or add a " +
+      "justified ALLOWLIST entry in this script.",
   );
 }
 
 if (!failed) {
   console.log(
-    `✓ All ${referencedTables.length} written tables and every extracted ` +
-      "column exist in the live schema.",
+    `✓ All ${referencedTables.length} referenced tables and every extracted ` +
+      "written/selected column exist in the live schema (or are baselined).",
   );
   process.exit(0);
 }

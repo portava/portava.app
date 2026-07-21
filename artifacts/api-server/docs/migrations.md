@@ -70,6 +70,26 @@ site; unresolvable sites (dynamic table names, non-static payloads) are
 counted and shown with `--verbose`, never failed. Known-good exceptions go
 in the annotated `ALLOWLIST` in the script.
 
+**Read-side (select-list) coverage (task 1947).** The same script also
+extracts every column read via a string-literal `.select("col_a, col_b")`
+on a `.from("<table>")` chain and diffs those against the live schema — a
+missing select-list column fails the whole read with PGRST100, the same
+drift class from the read side. The select list is parsed PostgREST-style:
+aliases (`alias:col`), casts (`col::text`), and JSON paths (`col->x`)
+resolve to the base column; `*`, `count`, and embedded resources
+(`rel(...)`) are skipped. Non-literal select lists are counted as
+unresolvable (shown with `--verbose`). Missing read columns/tables fail
+with exit 1 and share the `ALLOWLIST`/`SKIP_TABLES` handling.
+
+Adding read coverage (2026-07-21) surfaced 28 pre-existing read drifts
+(e.g. `circle_memberships.member_id`/`owner_id` — the live columns are
+`user_id`/`other_id` — the whole `passport_stamps` select list, and the
+dead `circle_members` table). These are recorded in the annotated
+`READ_BASELINE` / `READ_BASELINE_TABLES` sets in the script: baselined,
+NOT fixed, so the check stays green while catching new drift. Each entry
+is a latent runtime read failure — burn the list down (apply the missing
+migration or fix the select list, then delete the entry); never grow it.
+
 Run it before release and after any migration wave. Its first full run
 (2026-07-20) found a second batch of 13 drifted columns across 8 tables —
 applied live as `0164_write_path_drift_columns_2.sql` (see table above).
