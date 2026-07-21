@@ -197,6 +197,30 @@ describe("buildUiBlocks coordinate hydration", () => {
     assert.equal(cmp.rows[1].event?.lng, 123.91);
   });
 
+  it("attaches venue coordinates to event_cards blocks when show_exact_location allows", async () => {
+    const sc = fakeClientByTable({
+      events: [{ id: EVENT_A, location_lat: 10.31, location_lng: 123.91, show_exact_location: true }],
+    });
+    const blocks = await buildUiBlocks(sc, {
+      blocks: [{ type: "event_cards", eventIds: [EVENT_A] }],
+    }, toolLog());
+    const b = blocks[0] as Extract<CompassUiBlock, { type: "event_cards" }>;
+    assert.equal(b.events[0].lat, 10.31);
+    assert.equal(b.events[0].lng, 123.91);
+  });
+
+  it("withholds event_cards coordinates when show_exact_location is false", async () => {
+    const sc = fakeClientByTable({
+      events: [{ id: EVENT_A, location_lat: 10.31, location_lng: 123.91, show_exact_location: false }],
+    });
+    const blocks = await buildUiBlocks(sc, {
+      blocks: [{ type: "event_cards", eventIds: [EVENT_A] }],
+    }, toolLog());
+    const b = blocks[0] as Extract<CompassUiBlock, { type: "event_cards" }>;
+    assert.equal(b.events[0].lat, null);
+    assert.equal(b.events[0].lng, null);
+  });
+
   it("withholds event coordinates when show_exact_location is false", async () => {
     const sc = fakeClientByTable({
       events: [{ id: EVENT_A, location_lat: 10.31, location_lng: 123.91, show_exact_location: false }],

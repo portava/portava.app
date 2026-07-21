@@ -319,6 +319,30 @@ function EventBlockCard({ event }: { event: CompassUiEvent }) {
           ) : null}
         </View>
         {event.description ? <Text style={s.blurb} numberOfLines={2}>{event.description}</Text> : null}
+        {event.lat != null && event.lng != null ? (
+          <Pressable
+            style={({ pressed }) => [s.planBtn, pressed && s.pressed]}
+            onPress={() => {
+              reportCompassViewed(null, event.id);
+              router.push({
+                pathname: '/map',
+                params: {
+                  lat: String(event.lat),
+                  lng: String(event.lng),
+                  focusId: event.id,
+                  title: event.title,
+                  ...(event.category ? { category: event.category } : {}),
+                },
+              } as any);
+            }}
+            hitSlop={6}
+            accessibilityLabel={`View ${event.title} on map`}
+            testID={`compass-block-event-map-${event.id}`}
+          >
+            <MapPin size={12} color={color.signal} />
+            <Text style={s.planBtnText}>Map</Text>
+          </Pressable>
+        ) : null}
       </View>
     </Pressable>
   );

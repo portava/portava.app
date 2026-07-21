@@ -263,6 +263,7 @@ export async function buildUiBlocks(
           .map((id) => index.events.get(id))
           .filter((e): e is UiEvent => Boolean(e));
         if (eventsArr.length === 0) continue;
+        for (const e of eventsArr) wantedEventIds.add(e.id);
         blocks.push({ type: "event_cards", events: eventsArr });
         break;
       }
@@ -353,6 +354,7 @@ export async function buildUiBlocks(
         if (c) { e.lat = c.lat; e.lng = c.lng; }
       };
       for (const blk of blocks) {
+        if (blk.type === "event_cards") blk.events.forEach(apply);
         if (blk.type === "comparison") blk.rows.forEach((r) => { if (r.event) apply(r.event); });
       }
     } catch { /* non-fatal — blocks ship without coordinates */ }

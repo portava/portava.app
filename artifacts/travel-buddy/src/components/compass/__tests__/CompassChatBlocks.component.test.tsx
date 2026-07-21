@@ -141,6 +141,21 @@ it('comparison event row navigates to the event screen', async () => {
   expect(pushMock).toHaveBeenCalledWith(`/event/${EVENT.id}`);
 });
 
+it('event card with hydrated coords shows a Map button that deep-links to /map', async () => {
+  const EVENT_WITH_COORDS = { ...EVENT, lat: 10.32, lng: 123.92 };
+  await render(<CompassChatBlocks blocks={[{ type: 'event_cards', events: [EVENT_WITH_COORDS] }]} />);
+  fireEvent.press(screen.getByTestId(`compass-block-event-map-${EVENT.id}`));
+  expect(pushMock).toHaveBeenCalledWith(expect.objectContaining({
+    pathname: '/map',
+    params: expect.objectContaining({ lat: '10.32', lng: '123.92', focusId: EVENT.id }),
+  }));
+});
+
+it('event card without coords renders no Map button', async () => {
+  await render(<CompassChatBlocks blocks={[{ type: 'event_cards', events: [EVENT] }]} />);
+  expect(screen.queryByTestId(`compass-block-event-map-${EVENT.id}`)).toBeNull();
+});
+
 // ── 2b. Inline mini-map previews ──────────────────────────────────────────────
 
 it('map block renders an inline mini-map preview; tapping it opens /map focused', async () => {
