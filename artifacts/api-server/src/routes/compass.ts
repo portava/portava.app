@@ -29,6 +29,7 @@ import { getCompassProfile } from "../compass/CompassProfileService.js";
 import { logCompassImpression } from "../lib/rankLog.js";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine.js";
 import { resolveLocalHour, parseTzOffsetParam } from "../lib/localTime.js";
+import { timeOfDayForHour } from "./compassHome.js";
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine.js";
 import {
   buildStructuredCompassContext,
@@ -127,13 +128,26 @@ export function _getLastFeedContext(): { hourUtc: number; contextState: string }
  * crossing a time-of-day boundary (or switching timezones) is never served a
  * cached payload built for the previous local-hour bucket. Mirrors
  * compassHome's homeCacheKey, which keys by `tzOffsetMinutes ?? "auto"`.
+ *
+ * When the client sends NO offset ("auto"), the offset alone can't partition
+ * time-of-day: the resolved local hour (from the traveler's stored timezone)
+ * may cross a bucket boundary within the cache TTL, briefly serving the
+ * previous bucket's styling. So the "auto" path additionally keys by the
+ * resolved time-of-day bucket (morning/afternoon/evening/night).
  */
 export function feedCacheKey(
   prefix: "feed" | `section:${string}`,
   cursor: string | undefined,
   tzOffsetMinutes: number | null,
+  resolvedLocalHour?: number | null,
 ): string {
-  return `${prefix}:tz${tzOffsetMinutes ?? "auto"}:${cursor ?? "first_page"}`;
+  const tzPart =
+    tzOffsetMinutes !== null
+      ? String(tzOffsetMinutes)
+      : typeof resolvedLocalHour === "number" && Number.isFinite(resolvedLocalHour)
+        ? `auto-${timeOfDayForHour(resolvedLocalHour)}`
+        : "auto";
+  return `${prefix}:tz${tzPart}:${cursor ?? "first_page"}`;
 }
 
 function tzOffsetForRequest(req: { query?: unknown; body?: unknown }): number | null {
@@ -372,7 +386,9 @@ router.get("/compass/feed", async (req, res) => {
   const { cursor } = parsed.data;
 
   try {
-    const cacheKey = feedCacheKey("feed", cursor, tzOffsetForRequest(req));
+    const tzOffset  = tzOffsetForRequest(req);
+    const localHour = await localHourForRequest(sc, user.id, req);
+    const cacheKey  = feedCacheKey("feed", cursor, tzOffset, localHour);
 
     // Read-through: return cached payload if still fresh
     const cached = await getCachedFeed(sc, user.id, cacheKey, "feed");
@@ -388,7 +404,7 @@ router.get("/compass/feed", async (req, res) => {
     // Apply compass_settings toggles to signals so disabled data sources are
     // not used in the ranking pipeline for this request.
     const settings = (settingsRow.data ?? {}) as Record<string, boolean>;
-    const rawSignals = defaultSignals(profile, await localHourForRequest(sc, user.id, req));
+    const rawSignals = defaultSignals(profile, localHour);
     // Gate trip-data signals when user has disabled trip-data personalisation
     if (settings.use_trip_data === false) {
       rawSignals.activeTripNow           = false;
@@ -500,7 +516,9 @@ router.get("/compass/feed/section/:section", async (req, res) => {
   const { cursor } = parsed.data;
 
   try {
-    const cacheKey = feedCacheKey(`section:${sectionParam}`, cursor, tzOffsetForRequest(req));
+    const sectionTzOffset  = tzOffsetForRequest(req);
+    const sectionLocalHour = await localHourForRequest(sc, user.id, req);
+    const cacheKey = feedCacheKey(`section:${sectionParam}`, cursor, sectionTzOffset, sectionLocalHour);
 
     // Read-through: return cached payload if still fresh
     const cached = await getCachedFeed(sc, user.id, cacheKey, "section");
@@ -514,7 +532,7 @@ router.get("/compass/feed/section/:section", async (req, res) => {
     ]);
 
     const sectionSettings = (sectionSettingsRow.data ?? {}) as Record<string, boolean>;
-    const sectionRawSignals = defaultSignals(profile, await localHourForRequest(sc, user.id, req));
+    const sectionRawSignals = defaultSignals(profile, sectionLocalHour);
     if (sectionSettings.use_trip_data === false) {
       sectionRawSignals.activeTripNow          = false;
       sectionRawSignals.upcomingTripWithin48h  = false;

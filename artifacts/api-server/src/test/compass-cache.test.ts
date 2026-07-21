@@ -35,6 +35,7 @@ import {
 } from "../compass/CompassFrontLoadEngine.js";
 import type { CompassProfile } from "../compass/types.js";
 import { feedCacheKey } from "../routes/compass.js";
+import { resolveLocalHour, _setTestNowUtc } from "../lib/localTime.js";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -274,6 +275,60 @@ describe("feedCacheKey — tz offset partitions cache entries", () => {
     // Original offset still hits
     const sameTz = await getCachedFeed(db, USER_A, feedCacheKey("feed", undefined, 480), "feed");
     assert.deepStrictEqual(sameTz, eveningPayload);
+  });
+});
+
+// ── feedCacheKey — "auto" (no offset) keys by resolved time-of-day bucket ─────
+
+describe("feedCacheKey — auto path partitions by time-of-day bucket", () => {
+  it("same bucket → stable key; different bucket → different key", () => {
+    // 8am and 10am are both "morning" → same key (cache hits still work)
+    assert.strictEqual(
+      feedCacheKey("feed", undefined, null, 8),
+      feedCacheKey("feed", undefined, null, 10),
+    );
+    // 10am (morning) vs 11am (afternoon) → different keys
+    assert.notStrictEqual(
+      feedCacheKey("feed", undefined, null, 10),
+      feedCacheKey("feed", undefined, null, 11),
+    );
+    // Explicit offset still ignores the resolved hour (offset already partitions)
+    assert.strictEqual(
+      feedCacheKey("feed", undefined, 480, 10),
+      feedCacheKey("feed", undefined, 480, 23),
+    );
+  });
+
+  it("an 'auto' traveler crossing a bucket boundary misses the stale cache entry", async () => {
+    clearL1Cache();
+    const { db } = makeFakeDb({
+      compass_feed_cache: [],
+      notification_preferences: [{ user_id: USER_A, timezone: "America/New_York" }],
+    });
+    const morningPayload = { sections: [{ name: "for_you", vibe: "morning" }] };
+
+    try {
+      // 14:30 UTC = 10:30 in New York (UTC-4, July) → "morning" bucket
+      _setTestNowUtc(new Date("2026-07-21T14:30:00Z"));
+      const hourBefore = await resolveLocalHour(db, USER_A, null);
+      const keyBefore  = feedCacheKey("feed", undefined, null, hourBefore);
+      await setCachedFeed(db, USER_A, keyBefore, "feed", morningPayload);
+
+      // One hour later (within cache TTL): 11:30 local → "afternoon" bucket
+      _setTestNowUtc(new Date("2026-07-21T15:30:00Z"));
+      const hourAfter = await resolveLocalHour(db, USER_A, null);
+      const keyAfter  = feedCacheKey("feed", undefined, null, hourAfter);
+
+      assert.notStrictEqual(keyBefore, keyAfter, "bucket crossing must change the cache key");
+      const stale = await getCachedFeed(db, USER_A, keyAfter, "feed");
+      assert.strictEqual(stale, null, "afternoon request must miss the morning cache entry");
+
+      // The morning key itself still hits (stable within a bucket)
+      const sameBucket = await getCachedFeed(db, USER_A, keyBefore, "feed");
+      assert.deepStrictEqual(sameBucket, morningPayload);
+    } finally {
+      _setTestNowUtc(null);
+    }
   });
 });
 
