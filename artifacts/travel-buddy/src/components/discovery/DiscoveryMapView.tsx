@@ -41,8 +41,7 @@ const TRAVELERS_TOGGLE_KEY = 'discovery_map_travelers';
 
 // ── Map tile style ─────────────────────────────────────────────────────────────
 
-import { MAP_STYLE_URL } from '../../constants/mapStyle.ts';
-const MAP_STYLE = MAP_STYLE_URL;
+import { MAP_STYLE_URL, FALLBACK_MAP_STYLE_URL } from '../../constants/mapStyle.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -236,6 +235,13 @@ export function DiscoveryMapView({
   const hasUser = userLat != null && userLng != null;
 
   // ── Travelers layer (users sharing their location in discovery) ──────────
+  // Style URL state — starts with the primary MapTiler style but falls back
+  // to OpenFreeMap Liberty on a 403 or any other style-load failure.
+  const [mapStyle, setMapStyle] = useState(MAP_STYLE_URL);
+  const handleMapLoadError = () => {
+    if (mapStyle !== FALLBACK_MAP_STYLE_URL) setMapStyle(FALLBACK_MAP_STYLE_URL);
+  };
+
   const [travelersOn, setTravelersOnRaw] = useState(true);
   const [zoom, setZoom] = useState<number | null>(null);
   // Camera centre as the user pans, rounded to ~1km so small drags don't
@@ -319,10 +325,11 @@ export function DiscoveryMapView({
       <SectionErrorBoundary label="DiscoveryMap" fullScreen>
       <Map
         style={StyleSheet.absoluteFill}
-        mapStyle={MAP_STYLE}
+        mapStyle={mapStyle}
         logo={false}
         attribution={false}
         onRegionDidChange={handleRegionChange}
+        onDidFailLoadingMap={handleMapLoadError}
       >
         {safeCenter && (
           <Camera

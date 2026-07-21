@@ -3,7 +3,7 @@
  * Uses MapLibre (replaces react-native-maps).
  * Metro picks RouteFullMapModal.web.tsx instead when bundling for web.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, Modal, Pressable, StyleSheet } from 'react-native';
 import {
   Map,
@@ -18,10 +18,7 @@ import type { RouteStop, RouteLeg } from '../services/routePlan.ts';
 
 // ── Map tile style ─────────────────────────────────────────────────────────────
 
-const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '';
-const MAP_STYLE = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_KEY}`
-  : 'https://demotiles.maplibre.org/style.json';
+import { MAP_STYLE_URL as MAP_STYLE, FALLBACK_MAP_STYLE_URL } from '../constants/mapStyle.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -67,6 +64,7 @@ export function RouteFullMapModal({
   userLng,
 }: RouteFullMapModalProps) {
   void _legs;
+  const [mapStyle, setMapStyle] = useState(MAP_STYLE);
 
   const viewport = computeViewport(stops);
   const nextStopId = stops.find((s) => s.checkpointStatus === 'pending')?.id ?? null;
@@ -100,9 +98,10 @@ export function RouteFullMapModal({
         {viewport ? (
           <Map
             style={{ flex: 1 }}
-            mapStyle={MAP_STYLE}
+            mapStyle={mapStyle}
             logo={false}
             attribution={false}
+            onDidFailLoadingMap={() => { if (mapStyle !== FALLBACK_MAP_STYLE_URL) setMapStyle(FALLBACK_MAP_STYLE_URL); }}
           >
             <Camera
               initialViewState={{

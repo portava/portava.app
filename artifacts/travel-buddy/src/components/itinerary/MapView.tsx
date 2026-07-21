@@ -3,7 +3,7 @@
  * Items without coordinates are shown in a fallback list below the map.
  * Metro automatically picks MapView.web.tsx on web (no MapLibre native modules there).
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
 import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
 import { MapPin, Navigation } from 'lucide-react-native';
@@ -12,10 +12,7 @@ import { color, radius, type as t } from '../../theme/tokens.ts';
 
 // ── Map tile style ─────────────────────────────────────────────────────────────
 
-const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '';
-const MAP_STYLE = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_KEY}`
-  : 'https://demotiles.maplibre.org/style.json';
+import { MAP_STYLE_URL as MAP_STYLE, FALLBACK_MAP_STYLE_URL } from '../../constants/mapStyle.ts';
 
 // ── Category pin colours ──────────────────────────────────────────────────────
 
@@ -79,6 +76,7 @@ function PinListCard({ item, onPress }: { item: TripPlanItem; onPress: () => voi
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function ItineraryMapView({ items, onItemPress, selectedDay, loading }: MapViewProps) {
+  const [mapStyle, setMapStyle] = useState(MAP_STYLE);
   const filtered = selectedDay === 'all' ? items : items.filter((i) => i.dayDate === selectedDay);
   const coordItems = filtered.filter((i) => i.lat != null && i.lng != null);
   const noCoordItems = filtered.filter((i) => i.lat == null || i.lng == null);
@@ -111,9 +109,10 @@ export function ItineraryMapView({ items, onItemPress, selectedDay, loading }: M
           <View style={mv.mapSurface}>
             <Map
               style={StyleSheet.absoluteFill}
-              mapStyle={MAP_STYLE}
+              mapStyle={mapStyle}
               logo={false}
               attribution={false}
+              onDidFailLoadingMap={() => { if (mapStyle !== FALLBACK_MAP_STYLE_URL) setMapStyle(FALLBACK_MAP_STYLE_URL); }}
             >
               <Camera
                 initialViewState={{
