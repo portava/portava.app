@@ -326,12 +326,12 @@ describe('FullScreenMapScreen — camera snap fires on async entity arrival', ()
     let currentEntities: Array<typeof asyncEntity> = [];
     (useMapEntities as jest.Mock).mockImplementation(() => ({ entities: currentEntities }));
 
-    const mockSetCamera = jest.fn();
+    const mockEaseTo = jest.fn();
 
-    // Install setCamera on the ref on every render so it persists across rerenders.
+    // Install easeTo on the ref on every render so it persists across rerenders.
     (DiscoveryMapView as jest.Mock).mockImplementation((props: any) => {
       if (props.externalCameraRef) {
-        props.externalCameraRef.current = { setCamera: mockSetCamera };
+        props.externalCameraRef.current = { easeTo: mockEaseTo };
       }
       return null;
     });
@@ -344,8 +344,8 @@ describe('FullScreenMapScreen — camera snap fires on async entity arrival', ()
     const { rerender } = await render(<FullScreenMapScreen />);
 
     // After the first render entities is [], so the focusId effect finds nothing
-    // and must NOT have called setCamera yet.
-    expect(mockSetCamera).not.toHaveBeenCalled();
+    // and must NOT have called easeTo yet.
+    expect(mockEaseTo).not.toHaveBeenCalled();
 
     // Simulate the async load completing: flip the live list, then trigger a
     // re-render so the hook now returns the entity and the effect re-fires.
@@ -355,14 +355,14 @@ describe('FullScreenMapScreen — camera snap fires on async entity arrival', ()
     });
 
     // The useEffect([entities]) must have fired with the new non-empty list and
-    // called setCamera with the entity's coordinates.
-    expect(mockSetCamera).toHaveBeenCalled();
+    // called easeTo with the entity's coordinates.
+    expect(mockEaseTo).toHaveBeenCalled();
 
-    const snapCall = mockSetCamera.mock.calls.find(
+    const snapCall = mockEaseTo.mock.calls.find(
       ([arg]: [any]) =>
-        Array.isArray(arg?.centerCoordinate) &&
-        Math.abs(arg.centerCoordinate[0] - entityLng) < 0.001 &&
-        Math.abs(arg.centerCoordinate[1] - entityLat) < 0.001,
+        Array.isArray(arg?.center) &&
+        Math.abs(arg.center[0] - entityLng) < 0.001 &&
+        Math.abs(arg.center[1] - entityLat) < 0.001,
     );
 
     expect(snapCall).toBeDefined();
@@ -375,10 +375,10 @@ describe('FullScreenMapScreen — camera snap fires on async entity arrival', ()
     // Entities never arrive in this test — we only care about the first render.
     (useMapEntities as jest.Mock).mockReturnValue({ entities: [] });
 
-    const mockSetCamera = jest.fn();
+    const mockEaseTo = jest.fn();
     (DiscoveryMapView as jest.Mock).mockImplementation((props: any) => {
       if (props.externalCameraRef) {
-        props.externalCameraRef.current = { setCamera: mockSetCamera };
+        props.externalCameraRef.current = { easeTo: mockEaseTo };
       }
       return null;
     });
@@ -391,7 +391,7 @@ describe('FullScreenMapScreen — camera snap fires on async entity arrival', ()
     await act(async () => { await render(<FullScreenMapScreen />); });
 
     // With an empty entity list the focusId effect bails early — no snap yet.
-    expect(mockSetCamera).not.toHaveBeenCalled();
+    expect(mockEaseTo).not.toHaveBeenCalled();
   });
 });
 

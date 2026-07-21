@@ -15,6 +15,7 @@
  * inline via Platform.OS checks so we avoid a separate .web.tsx route file.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import type { CameraRef } from '@maplibre/maplibre-react-native';
 import {
   View, Text, Pressable, StyleSheet, Platform,
 } from 'react-native';
@@ -293,8 +294,9 @@ export default function FullScreenMapScreen() {
   }>();
 
   // Shared camera ref — forwarded into DiscoveryMapView so the Camera element
-  // inside is the same ref that MapTopControls calls setCamera on.
-  const cameraRef = useRef<any>(null);
+  // inside is the same ref that MapTopControls calls easeTo on.
+  // Typed as CameraRef (maplibre-react-native v11 imperative handle); null until Camera mounts.
+  const cameraRef = useRef<CameraRef | null>(null);
   const { locationState, requireLocation, resolvedLocation } = useLocationContext();
   // Parse query params — invalid / missing values are silently ignored.
   const paramLat = parseCoord(params.lat);
@@ -433,9 +435,51 @@ export default function FullScreenMapScreen() {
   const [compassOverrideEntities, setCompassOverrideEntities] = useState<MapEntity[] | null>(null);
   const [compassQuery, setCompassQuery] = useState<string | null>(null);
 
+  // ── Geocode-and-fly ──────────────────────────────────────────────────────────
+  // Converts a free-text query to coordinates via Nominatim (free, no API key)
+  // then flies the camera there.  Runs independently of entity coordinates so
+  // the map moves even when Compass returns results without lat/lng.
+  const geocodeAndFly = useCallback(async (query: string) => {
+    try {
+      const url =
+        `https://nominatim.openstreetmap.org/search` +
+        `?q=${encodeURIComponent(query)}&format=json&limit=1`;
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'TravelBuddyApp/1.0 (map-search)' },
+      });
+      if (!res.ok) {
+        console.debug('[Map] geocode: HTTP', res.status, 'for', query);
+        return;
+      }
+      const hits: Array<{ lat: string; lon: string; display_name: string }> = await res.json();
+      if (!hits[0]) {
+        console.debug('[Map] geocode: no results for', query);
+        return;
+      }
+      const lat = parseFloat(hits[0].lat);
+      const lng = parseFloat(hits[0].lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      console.debug('[Map] geocode succeeded', { query, lat, lng, place: hits[0].display_name });
+      if (cameraRef.current && typeof cameraRef.current.easeTo === 'function') {
+        console.debug('[Map] geocode: calling easeTo → center', [lng, lat]);
+        cameraRef.current.easeTo({ center: [lng, lat], zoom: 11, duration: 700 });
+      } else {
+        console.debug('[Map] geocode: camera ref not ready');
+      }
+    } catch (err) {
+      console.debug('[Map] geocode error', err);
+    }
+    // cameraRef is a stable React ref — intentionally excluded from deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function handleCompassResults(entities: MapEntity[], query: string) {
     setCompassOverrideEntities(entities);
     setCompassQuery(query);
+    // Fly the camera to the queried location regardless of entity coordinates.
+    // toMapEntity (AskCompassBar) now skips results without real lat/lng, so for
+    // city/region queries the camera would otherwise stay unless we geocode here.
+    void geocodeAndFly(query);
   }
 
   function handleCompassClear() {
@@ -475,11 +519,13 @@ export default function FullScreenMapScreen() {
         setActiveIndex(focusIndex);
         carouselRef.current?.scrollToIndex(focusIndex);
         const entity = entities[focusIndex];
-        cameraRef.current?.setCamera({
-          centerCoordinate: [entity.lng, entity.lat],
-          zoomLevel: zoomForEntity(entity.type),
-          animationDuration: 400,
-        });
+        if (cameraRef.current && typeof cameraRef.current.easeTo === 'function') {
+          cameraRef.current.easeTo({
+            center: [entity.lng, entity.lat],
+            zoom: zoomForEntity(entity.type),
+            duration: 400,
+          });
+        }
         return;
       }
       // focusId not matched — fall through to proximity selection; camera stays on
@@ -501,11 +547,13 @@ export default function FullScreenMapScreen() {
     // Pan the camera to the selected entity.
     const entity = entities[bestIndex];
     if (entity) {
-      cameraRef.current?.setCamera({
-        centerCoordinate: [entity.lng, entity.lat],
-        zoomLevel: zoomForEntity(entity.type),
-        animationDuration: 400,
-      });
+      if (cameraRef.current && typeof cameraRef.current.easeTo === 'function') {
+        cameraRef.current.easeTo({
+          center: [entity.lng, entity.lat],
+          zoom: zoomForEntity(entity.type),
+          duration: 400,
+        });
+      }
     }
   // Deliberately exclude userLat/userLng from deps — we only want this to fire
   // when the entity list changes, not on every location update.
@@ -518,11 +566,13 @@ export default function FullScreenMapScreen() {
       setActiveIndex(index);
       const entity = entities[index];
       if (!entity) return;
-      cameraRef.current?.setCamera({
-        centerCoordinate: [entity.lng, entity.lat],
-        zoomLevel: zoomForEntity(entity.type),
-        animationDuration: 400,
-      });
+      if (cameraRef.current && typeof cameraRef.current.easeTo === 'function') {
+        cameraRef.current.easeTo({
+          center: [entity.lng, entity.lat],
+          zoom: zoomForEntity(entity.type),
+          duration: 400,
+        });
+      }
     },
     [entities],
   );
@@ -574,6 +624,7 @@ export default function FullScreenMapScreen() {
         entities={entities}
         enabledEntityLayers={enabledLayers}
         onSelectEntity={handleSelectEntity}
+        filterRowOffset={insets.top + 68}
       />
 
       {/* Floating top controls: Back, Recenter, Filters */}

@@ -358,10 +358,10 @@ describe('FullScreenMapScreen — focusAppliedRef guard prevents re-snap on enti
       entities: [focusEntity],
     });
 
-    const mockSetCamera = jest.fn();
+    const mockEaseTo = jest.fn();
     (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
       if (props.externalCameraRef) {
-        props.externalCameraRef.current = { setCamera: mockSetCamera };
+        props.externalCameraRef.current = { easeTo: mockEaseTo };
       }
       return null;
     });
@@ -374,7 +374,7 @@ describe('FullScreenMapScreen — focusAppliedRef guard prevents re-snap on enti
     const { rerender } = await render(<FullScreenMapScreen />);
     await act(async () => {});
 
-    mockSetCamera.mockClear();
+    mockEaseTo.mockClear();
 
     // Refresh: both entities, user near Paris → proximity picks nearbyEntity.
     (useMapEntities as jest.Mock).mockReturnValue({
@@ -385,13 +385,13 @@ describe('FullScreenMapScreen — focusAppliedRef guard prevents re-snap on enti
       await rerender(<FullScreenMapScreen />);
     });
 
-    // Proximity selection must have called setCamera with nearbyEntity's coords —
+    // Proximity selection must have called easeTo with nearbyEntity's coords —
     // confirming the effect ran via the proximity branch (not the focusId branch).
-    const proximitySnapCall = mockSetCamera.mock.calls.find(
+    const proximitySnapCall = mockEaseTo.mock.calls.find(
       ([arg]: [any]) =>
-        Array.isArray(arg?.centerCoordinate) &&
-        Math.abs(arg.centerCoordinate[0] - nearbyEntity.lng) < 0.001 &&
-        Math.abs(arg.centerCoordinate[1] - nearbyEntity.lat) < 0.001,
+        Array.isArray(arg?.center) &&
+        Math.abs(arg.center[0] - nearbyEntity.lng) < 0.001 &&
+        Math.abs(arg.center[1] - nearbyEntity.lat) < 0.001,
     );
 
     expect(proximitySnapCall).toBeDefined();
@@ -441,13 +441,13 @@ describe('FullScreenMapScreen — focusAppliedRef guard prevents re-snap on enti
       entities: [focusEntity],
     });
 
-    const mockSetCamera = jest.fn();
+    const mockEaseTo = jest.fn();
 
     // Populate cameraRef during the initial render so the focusId useEffect
-    // can call setCamera once the component mounts.
+    // can call easeTo once the component mounts.
     (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
       if (props.externalCameraRef) {
-        props.externalCameraRef.current = { setCamera: mockSetCamera };
+        props.externalCameraRef.current = { easeTo: mockEaseTo };
       }
       return null;
     });
@@ -461,16 +461,16 @@ describe('FullScreenMapScreen — focusAppliedRef guard prevents re-snap on enti
     await act(async () => {});
 
     // Verify the initial snap fired — focusAppliedRef is now armed.
-    const initialSnapCall = mockSetCamera.mock.calls.find(
+    const initialSnapCall = mockEaseTo.mock.calls.find(
       ([arg]: [any]) =>
-        Array.isArray(arg?.centerCoordinate) &&
-        Math.abs(arg.centerCoordinate[0] - focusEntity.lng) < 0.001 &&
-        Math.abs(arg.centerCoordinate[1] - focusEntity.lat) < 0.001,
+        Array.isArray(arg?.center) &&
+        Math.abs(arg.center[0] - focusEntity.lng) < 0.001 &&
+        Math.abs(arg.center[1] - focusEntity.lat) < 0.001,
     );
     expect(initialSnapCall).toBeDefined();
 
     // Clear the spy so we can inspect only the calls made after the refresh.
-    mockSetCamera.mockClear();
+    mockEaseTo.mockClear();
 
     // Simulate entities refresh: Compass override cleared, default entity list
     // restored — now includes both nearbyEntity (proximity winner) and focusEntity.
@@ -482,14 +482,14 @@ describe('FullScreenMapScreen — focusAppliedRef guard prevents re-snap on enti
       await rerender(<FullScreenMapScreen />);
     });
 
-    // setCamera must NOT have been called with focusEntity's coords — the guard
+    // easeTo must NOT have been called with focusEntity's coords — the guard
     // (focusAppliedRef.current === true) blocked the focusId branch.  Proximity
     // selection fires instead and chooses nearbyEntity (closer to user GPS).
-    const reSnapToFocusEntity = mockSetCamera.mock.calls.find(
+    const reSnapToFocusEntity = mockEaseTo.mock.calls.find(
       ([arg]: [any]) =>
-        Array.isArray(arg?.centerCoordinate) &&
-        Math.abs(arg.centerCoordinate[0] - focusEntity.lng) < 0.001 &&
-        Math.abs(arg.centerCoordinate[1] - focusEntity.lat) < 0.001,
+        Array.isArray(arg?.center) &&
+        Math.abs(arg.center[0] - focusEntity.lng) < 0.001 &&
+        Math.abs(arg.center[1] - focusEntity.lat) < 0.001,
     );
 
     expect(reSnapToFocusEntity).toBeUndefined();

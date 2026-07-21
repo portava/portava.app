@@ -6,7 +6,7 @@
  * Built on MapLibre (replaces react-native-maps).
  * Metro picks RouteMinimapView.web.tsx on web.
  */
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import {
   Map,
@@ -21,10 +21,7 @@ import type { FullRoutePlan, RouteStop } from '../services/routePlan.ts';
 
 // ── Map tile style ─────────────────────────────────────────────────────────────
 
-const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '';
-const MAP_STYLE = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_KEY}`
-  : 'https://demotiles.maplibre.org/style.json';
+import { MAP_STYLE_URL as MAP_STYLE, FALLBACK_MAP_STYLE_URL } from '../constants/mapStyle.ts';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -65,6 +62,7 @@ function computeViewport(stops: RouteStop[]) {
 
 export function RouteMinimapView({ routePlan, userLat, userLng, onExpand, height = 220 }: Props) {
   const { stops } = routePlan;
+  const [mapStyle, setMapStyle] = useState(MAP_STYLE);
 
   const viewport = useMemo(() => computeViewport(stops), [stops]);
 
@@ -102,13 +100,14 @@ export function RouteMinimapView({ routePlan, userLat, userLng, onExpand, height
     <View style={[styles.container, { height }]}>
       <Map
         style={StyleSheet.absoluteFill}
-        mapStyle={MAP_STYLE}
+        mapStyle={mapStyle}
         logo={false}
         attribution={false}
         dragPan={false}
         touchZoom={false}
         touchRotate={false}
         touchPitch={false}
+        onDidFailLoadingMap={() => { if (mapStyle !== FALLBACK_MAP_STYLE_URL) setMapStyle(FALLBACK_MAP_STYLE_URL); }}
       >
         <Camera
           initialViewState={{

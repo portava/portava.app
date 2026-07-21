@@ -98,6 +98,7 @@ jest.mock('@/components/ScreenErrorBoundary', () => ({
 jest.mock('../../../src/hooks/useCityPulse', () => ({
   useCityPulse: () => ({
     buckets: { fitsAvailability: [], openNearby: [], flexible: [] },
+    events: [],
     status: 'not_set',
   }),
 }));

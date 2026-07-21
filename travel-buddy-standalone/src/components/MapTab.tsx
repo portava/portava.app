@@ -27,7 +27,7 @@ import { COUNTRY_CENTROIDS } from '../lib/countryCentroids.ts';
 
 // ── Map style ──────────────────────────────────────────────────────────────────
 
-import { MAP_STYLE_URL } from '../constants/mapStyle.ts';
+import { MAP_STYLE_URL, FALLBACK_MAP_STYLE_URL } from '../constants/mapStyle.ts';
 const MAP_STYLE = MAP_STYLE_URL;
 
 // ── Country-level aggregation ─────────────────────────────────────────────────
@@ -128,6 +128,7 @@ export function MapTab({ postcards, currentCity, currentUserId }: MapTabProps) {
 
   const [nearbyUsers, setNearbyUsers] = useState<NearbyUser[]>([]);
   const [loadingNearby, setLoadingNearby] = useState(false);
+  const [mapStyle, setMapStyle] = useState(MAP_STYLE);
 
   // Load stamp-based map markers
   useEffect(() => {
@@ -214,7 +215,11 @@ export function MapTab({ postcards, currentCity, currentUserId }: MapTabProps) {
             <ActivityIndicator size="small" color={color.signal} />
           </View>
         )}
-        <MapView mapStyle={MAP_STYLE} style={mp.mapView}>
+        <MapView
+          mapStyle={mapStyle}
+          style={mp.mapView}
+          onDidFailLoadingMap={() => { if (mapStyle !== FALLBACK_MAP_STYLE_URL) setMapStyle(FALLBACK_MAP_STYLE_URL); }}
+        >
           <Camera
             ref={cameraRef}
             initialViewState={{ center: [10, 20], zoom: 1.2 }}
