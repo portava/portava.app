@@ -144,7 +144,7 @@ async function localHourForRequest(
 // Tokens are generated exactly once per item — same token used for both the
 // response and the DB write (no double-generation).
 
-interface RecommendationRow {
+export interface RecommendationRow {
   user_id:           string;
   recommendation_id: string;
   explanation_key:   string;
@@ -169,7 +169,7 @@ function rankingSnapshot(item: {
   };
 }
 
-function enrichFeedWithRecommendationIds(
+export function enrichFeedWithRecommendationIds(
   userId: string,
   feed:   FeedPage,
 ): { enrichedFeed: object; registrationRows: RecommendationRow[] } {
@@ -208,7 +208,7 @@ function enrichFeedWithRecommendationIds(
  * ("cannot affect row a second time", code 21000) — which would silently drop
  * the WHOLE registration batch. Dedupe before writing.
  */
-function dedupeByRecommendationId(rows: RecommendationRow[]): RecommendationRow[] {
+export function dedupeByRecommendationId(rows: RecommendationRow[]): RecommendationRow[] {
   const seen = new Set<string>();
   return rows.filter((r) => {
     if (seen.has(r.recommendation_id)) return false;
