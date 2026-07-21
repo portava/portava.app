@@ -32,6 +32,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../lib/logger.js";
 import type { CompassProfile } from "./types.js";
+import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime.js";
 
 const logger = rootLogger.child({ service: "CompassFrontLoadEngine" });
 import { buildFeed } from "./CompassFeedBuilder.js";
@@ -321,6 +322,7 @@ async function loadTier1(
   profile: CompassProfile,
   rules: Map<string, FrontLoadTier> = new Map(DEFAULT_TIER_RULES as Map<string, FrontLoadTier>),
   networkHint: NetworkHint = 'wifi',
+  localHour?: number,
 ): Promise<FrontLoadItem[]> {
   const items: FrontLoadItem[] = [];
   const now = new Date().toISOString();
@@ -330,7 +332,7 @@ async function loadTier1(
   let firstFeedPage: unknown = null;
   if (db) {
     try {
-      const signals = defaultSignals(profile);
+      const signals = defaultSignals(profile, localHour);
       const context = buildCompassContext(profile, signals);
       const items_  = await hydrateCompassItems(db, profile);
       let   feed    = await buildFeed(items_, profile, context, db, null);
@@ -508,6 +510,12 @@ export async function buildFrontLoadPayload(
 
   const builtAt = new Date().toISOString();
 
+  // Resolve the traveler's local hour (stored timezone → UTC fallback).
+  // Background preload has no client tz offset, so we always use the stored tz.
+  const localHour = db
+    ? localHourFor(nowUtcInstant(), null, await fetchUserTimezone(db, userId))
+    : nowUtcInstant().getUTCHours();
+
   // Load tier-assignment rules from DB (operator-configurable).
   // Falls back to DEFAULT_TIER_RULES when DB is unavailable.
   const rules = await loadTierRules(db);
@@ -533,7 +541,7 @@ export async function buildFrontLoadPayload(
     if (cached) {
       tier1 = cached;
     } else {
-      tier1 = await loadTier1(db, userId, profile, rules, networkHint);
+      tier1 = await loadTier1(db, userId, profile, rules, networkHint, localHour);
       // Back-fill asynchronously — caller already has the data it needs
       void setCachedFeed(db, userId, t1Key, 'frontload', tier1);
     }

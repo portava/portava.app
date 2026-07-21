@@ -45,6 +45,7 @@ import { isQuietHours } from "./CompassNotificationEngine.js";
 import { getWeatherContext } from "../lib/weatherCache.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
+import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -473,7 +474,10 @@ export async function evaluateSenseSignals(
   opts: { nowMs?: number; hourUtc?: number } = {},
 ): Promise<CandidateNudge[]> {
   const nowMs = opts.nowMs ?? Date.now();
-  const hourUtc = opts.hourUtc ?? new Date(nowMs).getUTCHours();
+  const nowUtc = new Date(nowMs);
+  const hourUtc = opts.hourUtc !== undefined
+    ? opts.hourUtc
+    : localHourFor(nowUtc, null, await fetchUserTimezone(sc, userId));
   const results = await Promise.all([
     evalSavedEventStarting(sc, userId, nowMs),
     evalLeaveEarlier(sc, userId, nowMs),
@@ -558,6 +562,13 @@ export async function runSense(
   opts: { nowMs?: number; hourUtc?: number; nowMinutes?: number } = {},
 ): Promise<SenseRunResult> {
   const nowMs = opts.nowMs ?? Date.now();
+  // Resolve the traveler's local hour (stored timezone → UTC fallback) when
+  // the caller hasn't supplied an explicit override.
+  const nowUtc = new Date(nowMs);
+  const resolvedHourUtc = opts.hourUtc !== undefined
+    ? opts.hourUtc
+    : localHourFor(nowUtc, null, await fetchUserTimezone(sc, userId));
+  const resolvedOpts = { ...opts, hourUtc: resolvedHourUtc };
   const settings = await getSenseSettings(sc, userId);
 
   // Passive = silent. Nothing is evaluated, nothing is sent.
@@ -565,7 +576,7 @@ export async function runSense(
     return { presenceLevel: "passive", evaluated: 0, delivered: [], suppressed: [] };
   }
 
-  const candidates = await evaluateSenseSignals(sc, userId, opts);
+  const candidates = await evaluateSenseSignals(sc, userId, resolvedOpts);
   const delivered: CandidateNudge[] = [];
   const suppressed: SuppressedNudge[] = [];
 

@@ -26,7 +26,8 @@ import pino from "pino";
 import { _setTestClient } from "../lib/http.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import compassSenseRouter, { _setTestHourUtc, _setTestNowMinutes } from "../routes/compassSense.js";
-import { ACTIVE_DAILY_CAP } from "../compass/CompassSenseEngine.js";
+import { ACTIVE_DAILY_CAP, runSense } from "../compass/CompassSenseEngine.js";
+import { clearUserTimezoneCache } from "../lib/localTime.js";
 
 const USER_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -514,6 +515,51 @@ describe("Compass Sense", () => {
     _setTestHourUtc(23);
     const r2 = await api("POST", "/compass/sense/check", {});
     assert.equal(r2.json.delivered.filter((d: any) => d.type === "free_time_block").length, 0);
+  });
+
+  it("stored UTC-far timezone governs the free-time daytime window — UTC 03:00 is daytime in Asia/Shanghai", async () => {
+    // UTC 03:00 → raw UTC hour = 3 (< 9 → nighttime by UTC, no free-time block).
+    // Asia/Shanghai is UTC+8 → local hour = 11 (daytime → free_time_block should fire).
+    const nowMs = new Date("2025-06-15T03:00:00.000Z").getTime();
+    const today = "2025-06-15";
+    // Plan item 5 hours after nowMs so the gap is well above the 3-hour threshold.
+    const planStartsAt = new Date("2025-06-15T08:00:00.000Z").toISOString();
+
+    function buildStore(tz: string | null): Record<string, Row[]> {
+      return {
+        feature_flags: [enabledFlag()],
+        compass_sense_settings: [senseSettings("active")],
+        notification_preferences: tz ? [{ user_id: USER_ID, timezone: tz }] : [],
+        trips: [{ id: "trip-tz", owner_id: USER_ID, destination_city: "ShanghaiFreeCity", status: "in_progress" }],
+        trip_members: [],
+        trip_plan_items: [
+          { id: "pi-tz", trip_id: "trip-tz", day_date: today, starts_at: planStartsAt, status: "planned", removed_at: null },
+        ],
+        // neutral forecast so the weather evaluator stays silent
+        weather_cache: [weatherCacheRow("ShanghaiFreeCity", 45, 1)],
+      };
+    }
+
+    // Asia/Shanghai: local time is 11:00 → daytime → free_time_block must fire.
+    clearUserTimezoneCache(USER_ID);
+    const { fakeClient: fcSH } = makeFakeClient(buildStore("Asia/Shanghai"));
+    const r1 = await runSense(fcSH as any, USER_ID, { nowMs });
+    const freeBlockSH = r1.delivered.find((d) => d.type === "free_time_block");
+    assert.ok(freeBlockSH, "free_time_block should fire when local time (11:00 Asia/Shanghai) is daytime");
+
+    // UTC timezone: local time is 03:00 → nighttime → free_time_block must NOT fire.
+    clearUserTimezoneCache(USER_ID);
+    const { fakeClient: fcUTC } = makeFakeClient(buildStore("UTC"));
+    const r2 = await runSense(fcUTC as any, USER_ID, { nowMs });
+    const freeBlockUTC = r2.delivered.find((d) => d.type === "free_time_block");
+    assert.equal(freeBlockUTC, undefined, "free_time_block should NOT fire when local time (03:00 UTC) is nighttime");
+
+    // No stored timezone at all: falls back to UTC → same nighttime result.
+    clearUserTimezoneCache(USER_ID);
+    const { fakeClient: fcNone } = makeFakeClient(buildStore(null));
+    const r3 = await runSense(fcNone as any, USER_ID, { nowMs });
+    const freeBlockNone = r3.delivered.find((d) => d.type === "free_time_block");
+    assert.equal(freeBlockNone, undefined, "free_time_block should NOT fire when no timezone stored (UTC fallback 03:00)");
   });
 
   it("GET /compass/sense/nudges returns the delivered log", async () => {

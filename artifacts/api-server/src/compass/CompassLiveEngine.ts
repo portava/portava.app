@@ -39,6 +39,7 @@ import {
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { RealtimeActivityService } from "../services/notifications/RealtimeActivityService.js";
+import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -440,7 +441,12 @@ export async function runLiveCheck(
   }
 
   const nowMs = opts.nowMs ?? Date.now();
-  const hourUtc = opts.hourUtc ?? new Date(nowMs).getUTCHours();
+  // Resolve the traveler's local hour via stored timezone (background job: no
+  // client tz offset available). Falls through to UTC when timezone is unknown.
+  const nowUtcDate = new Date(nowMs);
+  const hourUtc = opts.hourUtc !== undefined
+    ? opts.hourUtc
+    : localHourFor(nowUtcDate, null, await fetchUserTimezone(sc, userId));
 
   // Refresh rolling context (records transition events against the previous
   // context so a sequence of checks provably carries context forward).

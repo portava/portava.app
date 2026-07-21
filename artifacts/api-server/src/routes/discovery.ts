@@ -31,6 +31,7 @@ import { discoveryPlaceToCompassItem } from "../compass/CompassDiscoveryAdapter"
 import { getCompassProfile } from "../compass/CompassProfileService";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
 import { rankItemsForDiscovery } from "../compass/CompassFeedBuilder";
+import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime";
 import { isEnabled } from "../compass/flags";
 import { rankCandidates } from "../lib/portavaRank";
 import type { RankCandidate, ViewerContext, ScoredCandidate } from "../lib/portavaRank";
@@ -997,7 +998,8 @@ router.get("/discovery", async (req, res) => {
           const compassFlagOn = await isEnabled(compassSc, "COMPASS_V1_RULE_BASED_ENABLED");
           if (compassFlagOn) {
             const compassProfile = await getCompassProfile(compassSc, callerUserId);
-            const compassContext = buildCompassContext(compassProfile, defaultSignals(compassProfile));
+            const localHour = localHourFor(nowUtcInstant(), null, await fetchUserTimezone(compassSc, callerUserId));
+            const compassContext = buildCompassContext(compassProfile, defaultSignals(compassProfile, localHour));
             const compassItems   = places.map(discoveryPlaceToCompassItem);
 
             // Use the full feed-intelligence stack (pipeline + active-user

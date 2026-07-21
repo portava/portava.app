@@ -16,6 +16,7 @@ import { optimizeRoute, type RouteStyle, type CandidateStop } from "../services/
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine.js";
 import type { CompassContext } from "../compass/types.js";
 import { makeConfidence } from "../lib/liveIntelligence.js";
+import { resolveLocalHour } from "../lib/localTime.js";
 
 const router = Router();
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -101,10 +102,10 @@ router.post("/route-plans", asyncHandler(async (req, res) => {
     category: s.category ?? null,
   }));
 
-  // Derive Compass intent mode from current UTC hour + route style.
+  // Derive Compass intent mode from traveler's local hour + route style.
   // This feeds through to compassExplanation so the AI rationale reflects the
   // user's current situational mode (night_mode vs explore_now, etc.).
-  const hourUtc = new Date().getUTCHours();
+  const hourUtc = await resolveLocalHour(client, user.id, null);
   const contextState = routeStyle === "nightlife"
     ? "night_mode"
     : routeStyle === "scenic"

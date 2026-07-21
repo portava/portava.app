@@ -6,6 +6,7 @@ import { isFlagEnabled } from '../lib/featureFlags';
 import { getCompassProfile } from "../compass/CompassProfileService";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine";
+import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime";
 
 /**
  * Pulse feed routes
@@ -332,7 +333,8 @@ router.get("/pulse", async (req, res) => {
     if ((compassEnabled.data as any)?.enabled) {
       // ── Compass profile for ranking signals ───────────────────────
       const compassProfile = await getCompassProfile(sc, user.id);
-      const compassContext = buildCompassContext(compassProfile, defaultSignals(compassProfile));
+      const localHour = localHourFor(nowUtcInstant(), null, await fetchUserTimezone(sc, user.id));
+      const compassContext = buildCompassContext(compassProfile, defaultSignals(compassProfile, localHour));
       const intentMode     = deriveIntentMode(compassContext);
       const primaryMode    = intentMode.primary;
 
