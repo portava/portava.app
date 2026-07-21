@@ -219,9 +219,10 @@ function seed(extra: Record<string, Row[]> = {}): Record<string, Row[]> {
 
 /** Seed a realistic Cebu-heavy dataset with a thin second city. */
 function seedTravelData(store: Record<string, Row[]>) {
-  // Friday 2026-07-24 evening UTC; Monday 2026-07-20 morning UTC
-  const friEvening = "2026-07-24T19:00:00Z";
-  const monMorning = "2026-07-20T08:00:00Z";
+  // Cebu is UTC+8: Friday 7pm LOCAL = 11am UTC; Monday 8am LOCAL = midnight UTC.
+  // Slices must be computed on the city's local clock, not UTC.
+  const friEvening = "2026-07-24T11:00:00Z"; // Fri 19:00 in Cebu
+  const monMorning = "2026-07-20T00:00:00Z"; // Mon 08:00 in Cebu
 
   store.user_stamps = [
     { user_id: USER_ID, city: "Cebu", country: "Philippines", earned_at: friEvening, is_revoked: false },
@@ -236,7 +237,7 @@ function seedTravelData(store: Record<string, Row[]>) {
   ];
   store.events = [
     { id: "evt-1", city: "Cebu", category: "nightlife", start_at: friEvening },
-    { id: "evt-2", city: "Cebu", category: "nightlife", start_at: "2026-07-17T20:00:00Z" }, // also Fri evening
+    { id: "evt-2", city: "Cebu", category: "nightlife", start_at: "2026-07-17T12:00:00Z" }, // Fri 20:00 Cebu — also Fri evening local
     { id: "evt-3", city: "Cebu", category: "wellness",  start_at: monMorning },
   ];
   store.compass_outcome_events = [
@@ -265,6 +266,23 @@ describe("time slicing", () => {
       timeSliceKey(new Date("2026-07-24T23:30:00Z")),
       timeSliceKey(new Date("2026-07-20T08:00:00Z")),
     );
+  });
+
+  it("uses the city's LOCAL clock — 7pm Cebu is fri:evening even though it is 11am UTC", () => {
+    const sevenPmCebu = new Date("2026-07-24T11:00:00Z"); // Fri 19:00 Asia/Manila
+    assert.equal(timeSliceKey(sevenPmCebu, "Cebu"), "fri:evening");
+    // Without the city, the same instant buckets by UTC (Fri afternoon)
+    assert.equal(timeSliceKey(sevenPmCebu), "fri:afternoon");
+    // Crossing the date line: Fri 23:00 UTC is already Sat morning in Cebu
+    assert.equal(timeSliceKey(new Date("2026-07-24T23:00:00Z"), "Cebu"), "sat:morning");
+    // Case-insensitive city lookup
+    assert.equal(timeSliceKey(sevenPmCebu, "cebu"), "fri:evening");
+  });
+
+  it("falls back to UTC for cities with no known timezone", () => {
+    const at = new Date("2026-07-24T11:00:00Z");
+    assert.equal(timeSliceKey(at, "Nowhereville"), timeSliceKey(at));
+    assert.equal(timeSliceKey(at, null), timeSliceKey(at));
   });
 });
 
@@ -374,8 +392,9 @@ describe("Destination World Model — time-sliced per-city profiles", () => {
     };
     const bar: CompassItem = { id: "bar-1", type: "event", interestTags: ["nightlife"], city: "Cebu" } as CompassItem;
 
-    const friday = worldModelBoostForItem(bar, model, new Date("2026-07-24T20:00:00Z"));
-    const monday = worldModelBoostForItem(bar, model, new Date("2026-07-20T08:00:00Z"));
+    // Instants chosen by CEBU local clock (UTC+8): Fri 20:00 local = 12:00Z
+    const friday = worldModelBoostForItem(bar, model, new Date("2026-07-24T12:00:00Z"));
+    const monday = worldModelBoostForItem(bar, model, new Date("2026-07-20T00:00:00Z"));
 
     assert.ok(friday.boost > 0, "nightlife boosted on Friday evening");
     assert.ok(friday.boost <= WORLD_MODEL_BOOST_MAX);
@@ -395,14 +414,14 @@ describe("Destination World Model — time-sliced per-city profiles", () => {
       builtAt: new Date().toISOString(),
     };
     const item: CompassItem = { id: "x", type: "event", interestTags: ["nightlife"] } as CompassItem;
-    assert.equal(worldModelBoostForItem(item, model, new Date("2026-07-24T20:00:00Z")).boost, 0);
+    assert.equal(worldModelBoostForItem(item, model, new Date("2026-07-24T12:00:00Z")).boost, 0);
     assert.equal(worldModelBoostForItem(item, null, new Date()).boost, 0);
   });
 
   it("pipeline ranking consumes the world model — time slice reorders equal-scored items", async () => {
     const store = seed();
     const now = new Date();
-    const currentSlice = timeSliceKey(now);
+    const currentSlice = timeSliceKey(now, "Cebu"); // boost lookup uses Cebu's local clock
     store.compass_city_models = [{
       city: "Cebu",
       time_slices: { [currentSlice]: { count: 10, categories: { nightlife: 9 } } },
@@ -497,7 +516,7 @@ describe("destination context lines", () => {
   it("emits rhythm + confidence lines with aggregates only — no ids, no coordinates", async () => {
     seedTravelData(fake.store);
     await rebuildIntelligenceGraph(fake.fakeClient);
-    const lines = await buildDestinationContextLines(fake.fakeClient, "Cebu", new Date("2026-07-24T19:30:00Z"));
+    const lines = await buildDestinationContextLines(fake.fakeClient, "Cebu", new Date("2026-07-24T11:30:00Z")); // Fri 19:30 Cebu local
     assert.ok(lines.length >= 2);
     const blob = lines.join("\n");
     assert.match(blob, /Destination rhythm — Cebu/);

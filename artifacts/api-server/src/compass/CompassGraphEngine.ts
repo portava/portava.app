@@ -48,9 +48,91 @@ export function daypartOf(hour: number): Daypart {
   return "night";
 }
 
-/** Slice key like "fri:evening" for a Date (UTC). */
-export function timeSliceKey(at: Date): string {
+// ── Per-city timezone resolution ─────────────────────────────────────────────
+//
+// Time slices must reflect each city's LOCAL clock: a 7pm Cebu event is a
+// "fri:evening" observation even though it is 11am UTC. Static map — no
+// external services. Unknown cities fall back to UTC (honest default).
+
+const CITY_TIMEZONES: Record<string, string> = {
+  // Philippines (primary market)
+  "cebu": "Asia/Manila", "cebu city": "Asia/Manila", "manila": "Asia/Manila",
+  "baguio": "Asia/Manila", "davao": "Asia/Manila", "davao city": "Asia/Manila",
+  "boracay": "Asia/Manila", "palawan": "Asia/Manila", "el nido": "Asia/Manila",
+  "siargao": "Asia/Manila", "iloilo": "Asia/Manila", "bohol": "Asia/Manila",
+  "tagaytay": "Asia/Manila", "makati": "Asia/Manila", "quezon city": "Asia/Manila",
+  "dumaguete": "Asia/Manila", "bacolod": "Asia/Manila", "vigan": "Asia/Manila",
+  "puerto princesa": "Asia/Manila", "la union": "Asia/Manila", "siquijor": "Asia/Manila",
+  // Common regional travel hubs
+  "bangkok": "Asia/Bangkok", "chiang mai": "Asia/Bangkok",
+  "singapore": "Asia/Singapore", "kuala lumpur": "Asia/Kuala_Lumpur",
+  "bali": "Asia/Makassar", "jakarta": "Asia/Jakarta",
+  "ho chi minh city": "Asia/Ho_Chi_Minh", "hanoi": "Asia/Ho_Chi_Minh", "da nang": "Asia/Ho_Chi_Minh",
+  "hong kong": "Asia/Hong_Kong", "taipei": "Asia/Taipei",
+  "tokyo": "Asia/Tokyo", "osaka": "Asia/Tokyo", "kyoto": "Asia/Tokyo",
+  "seoul": "Asia/Seoul",
+  // Other common destinations
+  "sydney": "Australia/Sydney", "melbourne": "Australia/Melbourne",
+  "london": "Europe/London", "paris": "Europe/Paris", "berlin": "Europe/Berlin",
+  "new york": "America/New_York", "los angeles": "America/Los_Angeles",
+  "san francisco": "America/Los_Angeles", "dubai": "Asia/Dubai",
+};
+
+/** Resolve a city's IANA timezone from the static map (null when unknown). */
+export function cityTimezone(city: string | null | undefined): string | null {
+  const key = String(city ?? "").trim().toLowerCase();
+  return key ? CITY_TIMEZONES[key] ?? null : null;
+}
+
+const TZ_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+
+const DOW_SHORT_TO_KEY: Record<string, string> = {
+  Sun: "sun", Mon: "mon", Tue: "tue", Wed: "wed", Thu: "thu", Fri: "fri", Sat: "sat",
+};
+
+/** Day-of-week key, hour, and month of a Date in a specific timezone. */
+function localClockParts(at: Date, tz: string): { dow: string; hour: number; month: string } | null {
+  try {
+    let fmt = TZ_FORMATTERS.get(tz);
+    if (!fmt) {
+      fmt = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz, weekday: "short", hour: "numeric", hourCycle: "h23", month: "2-digit",
+      });
+      TZ_FORMATTERS.set(tz, fmt);
+    }
+    const parts = fmt.formatToParts(at);
+    const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+    const dow = DOW_SHORT_TO_KEY[get("weekday")];
+    const hour = Number(get("hour"));
+    const month = get("month");
+    if (!dow || !Number.isFinite(hour)) return null;
+    return { dow, hour, month };
+  } catch {
+    return null; // unknown/invalid tz → caller falls back to UTC
+  }
+}
+
+/**
+ * Slice key like "fri:evening" for a Date. When a city is provided and its
+ * timezone is known, the slice reflects the city's LOCAL clock; otherwise UTC.
+ */
+export function timeSliceKey(at: Date, city?: string | null): string {
+  const tz = cityTimezone(city);
+  if (tz) {
+    const parts = localClockParts(at, tz);
+    if (parts) return `${parts.dow}:${daypartOf(parts.hour)}`;
+  }
   return `${DOW_KEYS[at.getUTCDay()]}:${daypartOf(at.getUTCHours())}`;
+}
+
+/** Month ("01".."12") of a Date in a city's local timezone (UTC fallback). */
+export function localMonthKey(at: Date, city?: string | null): string {
+  const tz = cityTimezone(city);
+  if (tz) {
+    const parts = localClockParts(at, tz);
+    if (parts?.month) return parts.month;
+  }
+  return String(at.getUTCMonth() + 1).padStart(2, "0");
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -156,7 +238,7 @@ export async function buildGraphFromSources(
       batch.node("city", city, city, { country: r.country ?? null });
       batch.edge({ src_type: "person", src_key: String(r.user_id), dst_type: "city", dst_key: city, edge_type: "visited", at });
       if (at) {
-        const slice = timeSliceKey(new Date(at));
+        const slice = timeSliceKey(new Date(at), city);
         batch.node("time_slice", `${city}|${slice}`, city, { slice });
         batch.edge({ src_type: "city", src_key: city, dst_type: "time_slice", dst_key: `${city}|${slice}`, edge_type: "active_during:exploring", at });
       }
@@ -205,7 +287,7 @@ export async function buildGraphFromSources(
       batch.node("vibe", category.toLowerCase());
       batch.edge({ src_type: "event", src_key: String(r.id), dst_type: "vibe", dst_key: category.toLowerCase(), edge_type: "has_vibe", at });
       if (at) {
-        const slice = timeSliceKey(new Date(at));
+        const slice = timeSliceKey(new Date(at), city);
         batch.node("time_slice", `${city}|${slice}`, city, { slice });
         batch.edge({ src_type: "city", src_key: city, dst_type: "time_slice", dst_key: `${city}|${slice}`, edge_type: `active_during:${category.toLowerCase()}`, at });
       }
@@ -420,7 +502,7 @@ export function worldModelBoostForItem(
 ): WorldModelAnnotation {
   try {
     if (!model) return { boost: 0, factor: null };
-    const slice = model.timeSlices[timeSliceKey(at)];
+    const slice = model.timeSlices[timeSliceKey(at, model.city)];
     if (!slice || slice.count < MIN_SLICE_SAMPLE) return { boost: 0, factor: null };
 
     const tokens = itemCategoryTokens(item);
@@ -439,7 +521,7 @@ export function worldModelBoostForItem(
     const boost = Math.round(share * WORLD_MODEL_BOOST_MAX * 100) / 100;
     if (boost <= 0) return { boost: 0, factor: null };
 
-    const sliceKey = timeSliceKey(at);
+    const sliceKey = timeSliceKey(at, model.city);
     return {
       boost,
       factor: {
@@ -628,7 +710,7 @@ export async function buildDestinationContextLines(
     const lines: string[] = [];
 
     if (model) {
-      const sliceKey = timeSliceKey(at);
+      const sliceKey = timeSliceKey(at, city);
       const slice = model.timeSlices[sliceKey];
       if (slice && slice.count >= MIN_SLICE_SAMPLE) {
         const top = Object.entries(slice.categories)
@@ -643,7 +725,7 @@ export async function buildDestinationContextLines(
           `Destination rhythm — ${city}: not enough history for this exact time slot; overall the city skews toward ${model.topCategories.slice(0, 3).join(", ") || "general exploring"}.`,
         );
       }
-      const month = String(at.getUTCMonth() + 1).padStart(2, "0");
+      const month = localMonthKey(at, city);
       const monthCount = model.monthly[month] ?? 0;
       if (monthCount > 0) {
         lines.push(`Seasonality: ${city} has recorded activity this month in past data (${monthCount} signals).`);
