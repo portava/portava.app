@@ -63,3 +63,12 @@ assertions are stale vs. current product behavior.
 
 **Why:** two full fix waves (9 mobile + 17 standalone files) all reduced to
 these causes; nothing needed product changes or `.skip`.
+
+## Modal-Proxy files: act-wrap presses (July 2026)
+In files using the react-native Modal Proxy mock, a bare `fireEvent.press` can
+dispatch without committing the state update (sheet never appears) even on the
+FIRST press of the file. Wrapping each press in `await act(async () => {
+fireEvent.press(...) })` commits reliably — two such act-wrapped presses in one
+file (open + close) both rendered. The "post-press flush poison" applies to
+standalone `await act(async () => {})` flushes after a press, not to the
+act-wrapped press itself.

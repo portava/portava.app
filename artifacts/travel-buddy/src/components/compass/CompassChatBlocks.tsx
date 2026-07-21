@@ -16,8 +16,8 @@
  * cards expose "Plan" through the existing PlanPicker flow (user-confirmed;
  * mutations never fire from a bare tap).
  */
-import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, Pressable, Modal, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
   MapPin, CalendarClock, ChevronRight, Users, Map as MapIcon, Plus, Star,
@@ -120,21 +120,96 @@ const CONFIDENCE_STYLE: Record<string, { text: string; fg: string; bg: string }>
   ai_inference:       { text: 'AI',         fg: '#7C3AED', bg: '#7C3AED16' },
 };
 
+/** Plain-language explanation for each source class (tap-to-explain sheet). */
+const CONFIDENCE_EXPLANATION: Record<string, string> = {
+  verified_live:      'This info was checked against a live source, so it reflects what\u2019s happening right now.',
+  community_reported: 'This info comes from reports by travelers in the community. It\u2019s usually reliable, but hasn\u2019t been verified live.',
+  historical:         'This info is based on past records. Things like hours or availability may have changed since it was last checked.',
+  ai_inference:       'This info was inferred by AI from general knowledge, not confirmed by a live source or the community. Double-check before relying on it.',
+};
+
+/** "Checked Jul 21, 10:30 AM" — falls back to null when the date is invalid. */
+function formatCheckedAt(iso?: string): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  try {
+    return `Checked ${d.toLocaleString(undefined, {
+      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    })}`;
+  } catch {
+    return `Checked ${d.toISOString()}`;
+  }
+}
+
 function ConfidencePill({ confidence, testID }: {
   confidence?: CompassUiConfidence | null;
   testID: string;
 }) {
+  const [open, setOpen] = useState(false);
   if (!confidence) return null;
   const c = CONFIDENCE_STYLE[confidence.sourceClass];
   if (!c) return null;
+  const checked = formatCheckedAt(confidence.checkedAt);
   return (
-    <Text
-      style={[s.confidencePill, { color: c.fg, backgroundColor: c.bg }]}
-      testID={testID}
-      accessibilityLabel={`Data confidence: ${confidence.label}`}
-    >
-      {c.text}
-    </Text>
+    <>
+      <Pressable
+        onPress={() => setOpen(true)}
+        hitSlop={6}
+        accessibilityRole="button"
+        accessibilityLabel={`Data confidence: ${confidence.label}. Tap to learn what this means.`}
+        testID={testID}
+      >
+        <Text style={[s.confidencePill, { color: c.fg, backgroundColor: c.bg }]}>
+          {c.text}
+        </Text>
+      </Pressable>
+      <Modal
+        visible={open}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setOpen(false)}
+      >
+        <Pressable
+          style={s.confidenceBackdrop}
+          onPress={() => setOpen(false)}
+          testID={`${testID}-sheet-backdrop`}
+        >
+          <View style={s.confidenceSheet} testID={`${testID}-sheet`}>
+            <View style={s.confidenceSheetHead}>
+              <Text style={[s.confidencePill, { color: c.fg, backgroundColor: c.bg }]}>
+                {c.text}
+              </Text>
+              <Text style={s.confidenceSheetTitle} numberOfLines={2}>
+                {confidence.label}
+              </Text>
+            </View>
+            <Text style={s.confidenceSheetBody}>
+              {CONFIDENCE_EXPLANATION[confidence.sourceClass]}
+            </Text>
+            {confidence.dataNote ? (
+              <Text style={s.confidenceSheetNote} testID={`${testID}-sheet-note`}>
+                {confidence.dataNote}
+              </Text>
+            ) : null}
+            {checked ? (
+              <Text style={s.confidenceSheetChecked} testID={`${testID}-sheet-checked`}>
+                {checked}
+              </Text>
+            ) : null}
+            <Pressable
+              style={({ pressed }) => [s.confidenceSheetBtn, pressed && s.pressed]}
+              onPress={() => setOpen(false)}
+              accessibilityRole="button"
+              accessibilityLabel="Close data confidence explanation"
+              testID={`${testID}-sheet-close`}
+            >
+              <Text style={s.confidenceSheetBtnText}>Got it</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
+    </>
   );
 }
 
@@ -383,6 +458,15 @@ const s = StyleSheet.create({
   metaRow:    { flexDirection: 'row', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' },
   metaChip:   { ...t.stamp, fontSize: 10, color: color.signal, backgroundColor: color.signal + '16', paddingHorizontal: space.sm, paddingVertical: 2, borderRadius: radius.pill, textTransform: 'capitalize' },
   confidencePill: { ...t.stamp, fontSize: 9, fontWeight: '700', paddingHorizontal: space.sm, paddingVertical: 2, borderRadius: radius.pill, overflow: 'hidden' },
+  confidenceBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+  confidenceSheet: { backgroundColor: color.paper, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingHorizontal: space.lg, paddingTop: space.lg, paddingBottom: 36, gap: space.sm },
+  confidenceSheetHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  confidenceSheetTitle: { ...t.bodyStrong, color: color.ink, fontSize: 15, flex: 1 },
+  confidenceSheetBody: { ...t.body, color: color.ink, fontSize: 13, lineHeight: 19 },
+  confidenceSheetNote: { ...t.small, fontSize: 12, color: '#B45309', lineHeight: 17 },
+  confidenceSheetChecked: { ...t.small, fontSize: 11, color: color.mute },
+  confidenceSheetBtn: { backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: 12, alignItems: 'center', marginTop: space.sm },
+  confidenceSheetBtnText: { ...t.bodyStrong, color: '#fff', fontSize: 14 },
   inlineMeta: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   metaText:   { ...t.stamp, fontSize: 10, color: color.mute },
   blurb:      { ...t.small, fontSize: 11, color: color.mute, lineHeight: 15 },
