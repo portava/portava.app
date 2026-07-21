@@ -128,6 +128,62 @@ describe('useNotifications hooks — event-bus realtime updates', () => {
     expect(result.current.loading).toBe(false);
   });
 
+  it('useRecentNotifications prepends the event payload instantly, before the refetch resolves', async () => {
+    const { result } = await renderHook(() => useRecentNotifications());
+    await act(async () => { await result.current.reload(); });
+    expect(result.current.notifications).toHaveLength(1);
+
+    // Refetch hangs (simulating SSE→DB read lag); the optimistic prepend must
+    // land regardless.
+    let resolveRecent!: (v: unknown) => void;
+    mockRecent.mockReturnValue(new Promise((res) => { resolveRecent = res; }));
+    await act(async () => {
+      emitNotificationEvent(notif('n2'));
+    });
+
+    expect(result.current.notifications.map((n) => n.id)).toEqual(['n2', 'n1']);
+
+    // Reconciling refetch resolves with the authoritative list.
+    await act(async () => { resolveRecent([notif('n2'), notif('n1')]); });
+    expect(result.current.notifications).toHaveLength(2);
+  });
+
+  it('useRecentNotifications keeps the optimistic entry when a stale refetch omits it', async () => {
+    const { result } = await renderHook(() => useRecentNotifications());
+    await act(async () => { await result.current.reload(); });
+
+    // Server read lags behind SSE: reconciling refetch returns a stale list
+    // that does not yet include n2.
+    mockRecent.mockResolvedValue([notif('n1')]);
+    await act(async () => {
+      emitNotificationEvent(notif('n2'));
+    });
+    await act(async () => {});
+
+    // The optimistic n2 must survive the stale overwrite.
+    expect(result.current.notifications.map((n) => n.id)).toEqual(['n2', 'n1']);
+
+    // A later refetch that includes n2 confirms it (no duplicate, server order).
+    mockRecent.mockResolvedValue([notif('n2'), notif('n1')]);
+    await act(async () => {
+      emitNotificationEvent(notif('n3', null));
+    });
+    await act(async () => {});
+    expect(result.current.notifications.filter((n) => n.id === 'n2')).toHaveLength(1);
+  });
+
+  it('useRecentNotifications does not duplicate a notification already in the list', async () => {
+    const { result } = await renderHook(() => useRecentNotifications());
+    await act(async () => { await result.current.reload(); });
+
+    mockRecent.mockReturnValue(new Promise(() => { /* never resolves */ }));
+    await act(async () => {
+      emitNotificationEvent(notif('n1'));
+    });
+
+    expect(result.current.notifications.map((n) => n.id)).toEqual(['n1']);
+  });
+
   it('useRecentNotifications stops reacting to bus events after unmount', async () => {
     const { result, unmount } = await renderHook(() => useRecentNotifications());
     await act(async () => { await result.current.reload(); });
