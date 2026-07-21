@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { logger as rootLogger } from "../lib/logger";
 import { enrichSpans } from "../lib/enrichSpans";
+import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 
 const postsLogger = rootLogger.child({ route: "posts" });
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity";
@@ -1706,6 +1707,9 @@ router.post("/posts/:postId/like", async (req, res) => {
   // Accurate count + sync
   const { count } = await sc.from("posts_likes").select("id", { count: "exact", head: true }).eq("post_id", postId);
   await sc.from("posts").update({ like_count: count ?? 0 }).eq("id", postId);
+
+  // Phase 14 — link like back to the originating Compass recommendation.
+  void linkOutcomeSignal(sc, user.id, postId, "liked", "route:post_like");
 
   res.status(200).json({ likedByMe: true, likeCount: count ?? 0 });
 });

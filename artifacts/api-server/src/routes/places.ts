@@ -9,6 +9,7 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
+import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 import { reverseGeocode } from "../services/geocodingService";
 import { searchFoursquare } from "../lib/foursquarePlaces";
 import { normalizeLocationName } from "../lib/canonicalLocations";
@@ -383,6 +384,10 @@ router.post("/me/recent-places", async (req, res) => {
     const { error: trimError } = await db.from("user_recent_places").delete().in("id", toDelete);
     if (trimError) logger.warn({ err: trimError }, "recent-places trim delete failed (non-fatal)");
   }
+
+  // Phase 14 — a repeat visit to a recommended place is a "returned" outcome
+  // when the place was previously recommended; linkOutcomeSignal no-ops otherwise.
+  void linkOutcomeSignal(db, user.id, String(place.id), "returned", "route:recent_place");
 
   res.json({ ok: true });
 });

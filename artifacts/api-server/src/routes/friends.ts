@@ -12,6 +12,7 @@ import { getServiceClient } from "../lib/supabase";
 import { syncCircleChatMembers } from "../lib/chatSync";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity";
+import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 
 // NOTE (Section A table-name audit, 2026-07-20): the product spec is
 // follow-only (no friends system) and the original plan called for removing
@@ -672,6 +673,10 @@ router.post("/circle-invites", async (req, res) => {
     .select("id").single();
 
   if (error) { req.log.error({ err: error }, "circle_invites insert failed"); sendError(res, "db_error", error.message); return; }
+  // Phase 14 — inviting a recommended traveler to your circle is a realized
+  // outcome; link it back to the originating Compass recommendation.
+  void linkOutcomeSignal(sc, user.id, recipientId, "invited", "route:circle_invite");
+
   res.status(201).json({ inviteId: (invite as any).id, status: "pending" });
 });
 

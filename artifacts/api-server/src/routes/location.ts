@@ -15,6 +15,7 @@ import { isFlagEnabled } from "../lib/featureFlags.js";
 import { coarsenPosition, effectiveDiscoveryVisibility } from "../lib/mapTravelers.js";
 import { reverseGeocode } from "../services/geocodingService";
 import { checkAndRecordSnapshot, getUserTrustLevel, checkIpCityMismatch } from "../services/location/LocationSafetyService";
+import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
 import { createStamp } from "../services/passport/PassportStampService.js";
 import { createSuggestedMemory } from "../services/passport/PassportMemoryService.js";
 
@@ -295,6 +296,15 @@ router.post("/me/passport-stamps/gps", async (req, res) => {
     req.log.error({ err: error }, "passport-stamps-gps: upsert failed");
     sendError(res, "db_error", error.message);
     return;
+  }
+
+  // Phase 14 — a GPS-verified stamp tied to a recommended trip/postcard is a
+  // "stayed" outcome; linkOutcomeSignal no-ops when nothing was recommended.
+  if (trustLevel === "gps_verified") {
+    void linkOutcomeSignal(
+      getServiceClient(), user.id,
+      relatedTripId ?? relatedPostcardId, "stayed", "route:gps_stamp",
+    );
   }
 
   // Fire-and-forget: also award a city stamp in the new passport_stamps table

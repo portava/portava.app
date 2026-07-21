@@ -584,3 +584,51 @@ State when the standing brief was installed:
   (render, confirm wiring, disabled-flag hiding).
 - Out of scope honored: no booking/paying on the user's behalf; no
   outcome-learning loops (Phase 14).
+
+## Phase 14 — Outcome Learning (2026-07-21)
+
+- Goal: track the full recommendation outcome chain — recommended →
+  viewed → saved → went → stayed → liked → invited → made_memory →
+  returned — compare predicted fit against realized outcomes, feed the
+  delta back into ranking, and establish a "value delivered" north-star
+  signal instead of engagement-time proxies.
+- Outcome capture: `CompassOutcomeEngine.recordOutcome` writes
+  deduplicated rows (one per user + recommendation + stage) to
+  `compass_outcome_events`, each tied to the originating
+  `compass_served_recommendations` row — resolved by the signed
+  recommendationId token or, for organic signals, by the most recent
+  served rec for the entity within 30 days. Never-recommended entities
+  no-op (no phantom rows). Fire-and-forget `linkOutcomeSignal` hooks in
+  existing real-signal routes: profile save (saved), event RSVP/join
+  (went), GPS-verified stamps with a recommended trip/postcard (stayed),
+  post/memory likes (liked), circle invites (invited), memory creation
+  anchored to a recommended event/place/trip (made_memory), repeat
+  recent-place visits (returned), plus the rank-events funnel route
+  (tap→viewed, save→saved, join/rsvp/attended→went). Clients can also
+  report stages directly via POST `/api/compass/outcomes`.
+- Predicted vs actual: the Compass Match persisted at delivery time
+  (`ranking_factors.compassMatch` on the served-rec row) is snapshotted
+  onto each outcome event. Realized score = max stage value reached
+  (viewed 15 … returned 100, same 0–100 scale). When
+  |realized − predicted| ≥ 20, the user's category weight for the item
+  type is nudged ±1 (bounded ±10) in
+  `compass_user_preferences.category_weights` — the same per-user weight
+  surface the feed builder and recommendation engine already read — so
+  prediction error feeds directly back into ranking.
+- Value delivered: `computeValueDelivered` aggregates the outcome chain
+  into per-stage value points (weighted toward real-world outcomes:
+  went 8, stayed 10, made_memory 10, returned 12 vs viewed 1), with
+  served-vs-converted conversion, per-type breakdown, and prediction
+  calibration (avg predicted/realized/delta, over/under-predicted
+  counts). Exposed via admin-only GET `/api/compass/value-delivered`
+  with `basis: "outcome_chain"` — explicitly no chat-length or
+  session-time inputs.
+- Migration `20260729_compass_outcome_learning.sql` applied live
+  (table + indexes + RLS verified via information_schema).
+- Tests: `src/test/compass-outcome-learning.test.ts` (19 tests — chain
+  recording end to end, token + organic linking, dedupe, no phantom
+  rows, realized-score/fit-delta math, ranking weight nudges in both
+  directions with threshold, no-prediction safety, route auth +
+  validation, value-delivered aggregate math and admin gating).
+- Out of scope honored: no new user-facing surfaces; no intelligence
+  graph (Phase 15).

@@ -184,6 +184,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
+import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import { rankCandidates } from "../lib/portavaRank.js";
 import type { RankCandidate, ViewerContext } from "../lib/portavaRank.js";
@@ -2181,6 +2182,11 @@ router.post("/events/:id/rsvp", async (req, res) => {
     })();
   }
 
+  // Phase 14 — link RSVP back to the originating Compass recommendation.
+  if (status === "going") {
+    void linkOutcomeSignal(sc, user.id, id, "went", "route:event_rsvp");
+  }
+
   res.json({ status, eventId: id });
 });
 
@@ -2317,6 +2323,9 @@ router.post("/events/:id/join", async (req, res) => {
     .upsert({ event_id: id, user_id: user.id }, { onConflict: "event_id,user_id" })
     .then(undefined, () => {});
   await logEventActivity(sc, id, user.id, "joined", {});
+
+  // Phase 14 — link join back to the originating Compass recommendation.
+  void linkOutcomeSignal(sc, user.id, id, "went", "route:event_join");
 
   res.json({ ok: true });
 });

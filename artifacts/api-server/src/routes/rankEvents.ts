@@ -15,6 +15,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { asyncHandler } from "../lib/asyncHandler";
+import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 
 const router = Router();
 
@@ -88,6 +89,14 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
     sendError(res, "db_error", updateErr.message);
     return;
   }
+
+  // Phase 14 — map the rank-events funnel outcome onto the Compass outcome
+  // chain and link it back to the originating served recommendation.
+  const stage =
+    outcome === "tap"  ? "viewed" :
+    outcome === "save" ? "saved"  :
+    "went"; // join / rsvp / attended
+  void linkOutcomeSignal(sc, user.id, item_id, stage, `route:rank_event_${outcome}`);
 
   res.json({ ok: true });
 }));

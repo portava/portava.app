@@ -33,6 +33,7 @@ import { isFlagEnabled } from "../lib/featureFlags.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
 import { truncateDisplayName } from "../lib/displayName.js";
+import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -317,6 +318,11 @@ router.post("/memories", async (req, res) => {
       }
     }
   }
+
+  // Phase 14 — a memory made at a recommended event/place is the strongest
+  // realized-outcome signal; link it back to the originating recommendation.
+  const outcomeAnchorId = d.eventId ?? d.placeId ?? d.tripId ?? null;
+  void linkOutcomeSignal(sc, user.id, outcomeAnchorId, "made_memory", "route:memory_create");
 
   res.status(201).json({ memory: mapMemory(memory) });
 });
@@ -805,6 +811,9 @@ router.post("/memories/:id/like", async (req, res) => {
   const { count } = await sc.from("memory_likes").select("memory_id", { count: "exact", head: true }).eq("memory_id", id);
 
   notifyLike(sc, id, memory.owner_id, user.id);
+
+  // Phase 14 — link like back to the originating Compass recommendation.
+  void linkOutcomeSignal(sc, user.id, id, "liked", "route:memory_like");
 
   res.json({ likedByMe: true, likeCount: count ?? 0 });
 });

@@ -19,6 +19,7 @@ import { isUuid } from "../lib/followDecisions";
 import { getServiceClient } from "../lib/supabase";
 import { nameVisibilitySet } from "../lib/publicIdentity";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
+import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 
 const router = Router();
 
@@ -66,6 +67,9 @@ router.post("/users/:userId/save", async (req, res) => {
     sendError(res, "db_error", error.message);
     return;
   }
+
+  // Phase 14 — link save back to the originating Compass recommendation.
+  void linkOutcomeSignal(sc, user.id, targetId, "saved", "route:save_profile");
 
   res.status(200).json({ saved: true, userId: targetId });
 });
