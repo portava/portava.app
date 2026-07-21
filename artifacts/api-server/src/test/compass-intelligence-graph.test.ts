@@ -33,6 +33,7 @@ import {
   timezoneFromCoords,
   cityTimezone,
   buildGraphFromSources,
+  cleanupNonCanonicalCityRows,
   buildCityWorldModels,
   computeCityConfidenceIndex,
   rebuildIntelligenceGraph,
@@ -79,6 +80,7 @@ function makeFakeClient(store: Record<string, Row[]> = {}) {
     let _limit: number | null = null;
     let _lastWritten: Row[] | null = null;
     let _order: { key: string; asc: boolean } | null = null;
+    let _delete = false;
 
     function rows(): Row[] {
       let out = tbl(tableName).filter((r) => filters.every((f) => f(r)));
@@ -102,9 +104,16 @@ function makeFakeClient(store: Record<string, Row[]> = {}) {
     const b: any = new Proxy({}, {
       get(_target, prop: string) {
         if (prop === "then") {
-          return (resolve: Function) =>
-            resolve({ data: result(), error: null, count: result().length });
+          return (resolve: Function) => {
+            if (_delete) {
+              const matched = tbl(tableName).filter((r) => filters.every((f) => f(r)));
+              store[tableName] = tbl(tableName).filter((r) => !matched.includes(r));
+              return resolve({ data: matched, error: null, count: matched.length });
+            }
+            return resolve({ data: result(), error: null, count: result().length });
+          };
         }
+        if (prop === "delete") return () => { _delete = true; return b; };
         if (prop === "maybeSingle" || prop === "single") {
           return () => Promise.resolve({ data: result()[0] ?? null, error: null });
         }
@@ -801,5 +810,118 @@ describe("city timezone persistence", () => {
     assert.ok(cebu);
     assert.equal(cebu!.timezone, "Asia/Manila");
     for (const p of places) assert.equal(typeof p.timezone, "string");
+  });
+});
+
+/* ── One-time cleanup: non-canonical city rows ────────────────────────────── */
+
+/** Seed leftover pre-canonicalization rows across all four graph tables. */
+function seedStaleGraphRows(store: Record<string, Row[]>) {
+  store.compass_graph_nodes = [
+    // Canonical rows — must survive.
+    { id: "n-1", node_type: "city", node_key: "cebu", city: "cebu" },
+    { id: "n-2", node_type: "time_slice", node_key: "cebu|fri:evening", city: "cebu" },
+    { id: "n-3", node_type: "person", node_key: USER_ID, city: null },
+    // Stale variants + junk — must be removed.
+    { id: "n-4", node_type: "city", node_key: "siargoa", city: "siargoa" },
+    { id: "n-5", node_type: "city", node_key: "cebu city", city: "cebu city" },
+    { id: "n-6", node_type: "city", node_key: "san", city: "san" },
+    { id: "n-7", node_type: "time_slice", node_key: "siargoa|fri:evening", city: "siargoa" },
+  ];
+  store.compass_graph_edges = [
+    { id: "e-1", src_type: "person", src_key: USER_ID, dst_type: "city", dst_key: "cebu", edge_type: "visited" },
+    { id: "e-2", src_type: "person", src_key: USER_ID, dst_type: "city", dst_key: "siargoa", edge_type: "visited" },
+    { id: "e-3", src_type: "city", src_key: "siargoa", dst_type: "time_slice", dst_key: "siargoa|fri:evening", edge_type: "active_during:exploring" },
+    { id: "e-4", src_type: "city", src_key: "cebu", dst_type: "time_slice", dst_key: "cebu|fri:evening", edge_type: "active_during:exploring" },
+    { id: "e-5", src_type: "person", src_key: USER_ID, dst_type: "city", dst_key: "san", edge_type: "visited" },
+  ];
+  store.compass_city_models = [
+    { id: "m-1", city: "cebu", time_slices: {}, monthly: {}, top_categories: [], sample_size: 3 },
+    { id: "m-2", city: "siargoa", time_slices: {}, monthly: {}, top_categories: [], sample_size: 1 },
+    { id: "m-3", city: "new york city", time_slices: {}, monthly: {}, top_categories: [], sample_size: 1 },
+  ];
+  store.compass_city_confidence = [
+    { id: "c-1", city: "cebu", depth_score: 40, tier: "moderate" },
+    { id: "c-2", city: "siargoa", depth_score: 5, tier: "thin" },
+    { id: "c-3", city: "san", depth_score: 1, tier: "thin" },
+  ];
+}
+
+describe("cleanup — leftover non-canonical city rows", () => {
+  beforeEach(() => seed());
+
+  it("removes variant/junk city rows from all four tables, keeps canonical rows", async () => {
+    seedStaleGraphRows(fake.store);
+    const report = await cleanupNonCanonicalCityRows(fake.fakeClient);
+
+    const nodeKeys = (fake.store.compass_graph_nodes ?? []).map((n) => n.node_key);
+    assert.deepEqual(nodeKeys.sort(), [USER_ID, "cebu", "cebu|fri:evening"].sort());
+
+    const edgeIds = (fake.store.compass_graph_edges ?? []).map((e) => e.id);
+    assert.deepEqual(edgeIds.sort(), ["e-1", "e-4"]);
+
+    assert.deepEqual((fake.store.compass_city_models ?? []).map((m) => m.city), ["cebu"]);
+    assert.deepEqual((fake.store.compass_city_confidence ?? []).map((c) => c.city), ["cebu"]);
+
+    assert.equal(report.nodesDeleted, 4);
+    assert.equal(report.edgesDeleted, 3);
+    assert.equal(report.modelsDeleted, 2);
+    assert.equal(report.confidenceDeleted, 2);
+    assert.deepEqual(report.removedCityKeys, ["cebu city", "new york city", "san", "siargoa"]);
+  });
+
+  it("is idempotent — a second run finds nothing stale", async () => {
+    seedStaleGraphRows(fake.store);
+    await cleanupNonCanonicalCityRows(fake.fakeClient);
+    const second = await cleanupNonCanonicalCityRows(fake.fakeClient);
+    assert.equal(second.nodesDeleted, 0);
+    assert.equal(second.edgesDeleted, 0);
+    assert.equal(second.modelsDeleted, 0);
+    assert.equal(second.confidenceDeleted, 0);
+    assert.deepEqual(second.removedCityKeys, []);
+  });
+
+  it("rebuild after cleanup leaves only canonical city keys in all four tables", async () => {
+    seedStaleGraphRows(fake.store);
+    seedTravelData(fake.store);
+    // A stamp under a misspelled city — the rebuild must fold it into "siargao".
+    (fake.store.user_stamps ?? []).push(
+      { user_id: USER_B, city: "Siargoa", country: "Philippines", earned_at: "2026-07-24T11:00:00Z", is_revoked: false },
+    );
+
+    await cleanupNonCanonicalCityRows(fake.fakeClient);
+    await rebuildIntelligenceGraph(fake.fakeClient);
+
+    const badKey = (k: unknown) => canonicalCityKey(String(k)) !== String(k);
+    const cityNodes = (fake.store.compass_graph_nodes ?? []).filter((n) => n.node_type === "city");
+    assert.ok(cityNodes.length > 0);
+    assert.ok(cityNodes.every((n) => !badKey(n.node_key)));
+    assert.ok(cityNodes.some((n) => n.node_key === "siargao"));
+
+    const cityEdgeKeys = (fake.store.compass_graph_edges ?? [])
+      .flatMap((e) => [
+        e.src_type === "city" ? e.src_key : null,
+        e.dst_type === "city" ? e.dst_key : null,
+      ])
+      .filter((k): k is string => !!k);
+    assert.ok(cityEdgeKeys.every((k) => !badKey(k)));
+
+    assert.ok((fake.store.compass_city_models ?? []).every((m) => !badKey(m.city)));
+    assert.ok((fake.store.compass_city_confidence ?? []).every((c) => !badKey(c.city)));
+  });
+
+  it("POST /api/compass/graph/cleanup is admin-only and returns cleanup + rebuild reports", async () => {
+    const denied = await api("POST", "/compass/graph/cleanup");
+    assert.equal(denied.status, 403);
+    const unauth = await api("POST", "/compass/graph/cleanup", undefined, "bad-token");
+    assert.equal(unauth.status, 401);
+
+    seedStaleGraphRows(fake.store);
+    seedTravelData(fake.store);
+    const ok = await api("POST", "/compass/graph/cleanup", undefined, "admin-token");
+    assert.equal(ok.status, 200);
+    assert.ok(ok.json.cleanup.nodesDeleted > 0);
+    assert.ok(ok.json.cleanup.removedCityKeys.includes("siargoa"));
+    assert.ok(ok.json.rebuild.nodesUpserted > 0);
   });
 });

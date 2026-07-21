@@ -940,6 +940,132 @@ export async function buildDestinationContextLines(
   }
 }
 
+// ── One-time cleanup: non-canonical city rows ────────────────────────────────
+
+export interface GraphCleanupReport {
+  nodesDeleted: number;
+  edgesDeleted: number;
+  modelsDeleted: number;
+  confidenceDeleted: number;
+  /** Stale keys that were removed (variant or junk city keys). */
+  removedCityKeys: string[];
+}
+
+const CLEANUP_FETCH_LIMIT = 20000;
+const DELETE_CHUNK = 200;
+
+/** True when a stored city key is NOT its own canonical form (or is junk). */
+function isStaleCityKey(key: string): boolean {
+  return canonicalCityKey(key) !== key;
+}
+
+/** City part of a time_slice node key ("cebu|fri:evening" → "cebu"). */
+function timeSliceCity(key: string): string {
+  const i = key.indexOf("|");
+  return i >= 0 ? key.slice(0, i) : key;
+}
+
+async function deleteByIds(db: SupabaseClient, table: string, ids: string[]): Promise<number> {
+  let deleted = 0;
+  for (let i = 0; i < ids.length; i += DELETE_CHUNK) {
+    const chunk = ids.slice(i, i + DELETE_CHUNK);
+    const { error } = await db.from(table).delete().in("id", chunk);
+    if (!error) deleted += chunk.length;
+  }
+  return deleted;
+}
+
+/**
+ * Remove rows written before city-key canonicalization landed: city/time_slice
+ * nodes keyed under variant spellings ("siargoa", "cebu city") or junk
+ * fragments ("san"), the edges touching them, and world-model / confidence
+ * rows for those keys. Canonical rows are left alone — run
+ * rebuildIntelligenceGraph afterwards to repopulate anything the variants
+ * contributed under their canonical keys.
+ */
+export async function cleanupNonCanonicalCityRows(
+  db: SupabaseClient,
+): Promise<GraphCleanupReport> {
+  const removedCityKeys = new Set<string>();
+
+  // 1. Stale city + time_slice nodes.
+  const [{ data: cityNodes }, { data: sliceNodes }] = await Promise.all([
+    db.from("compass_graph_nodes").select("id, node_key")
+      .eq("node_type", "city").limit(CLEANUP_FETCH_LIMIT),
+    db.from("compass_graph_nodes").select("id, node_key")
+      .eq("node_type", "time_slice").limit(CLEANUP_FETCH_LIMIT),
+  ]);
+
+  const staleCityKeys = new Set<string>();
+  const staleNodeIds: string[] = [];
+  for (const r of (cityNodes as any[]) ?? []) {
+    const key = String(r.node_key ?? "");
+    if (key && isStaleCityKey(key)) {
+      staleCityKeys.add(key);
+      removedCityKeys.add(key);
+      staleNodeIds.push(String(r.id));
+    }
+  }
+  const staleSliceKeys = new Set<string>();
+  for (const r of (sliceNodes as any[]) ?? []) {
+    const key = String(r.node_key ?? "");
+    if (key && isStaleCityKey(timeSliceCity(key))) {
+      staleSliceKeys.add(key);
+      removedCityKeys.add(timeSliceCity(key));
+      staleNodeIds.push(String(r.id));
+    }
+  }
+  const nodesDeleted = await deleteByIds(db, "compass_graph_nodes", staleNodeIds);
+
+  // 2. Edges touching a stale city or time_slice key on either endpoint.
+  const { data: edges } = await db
+    .from("compass_graph_edges")
+    .select("id, src_type, src_key, dst_type, dst_key")
+    .limit(CLEANUP_FETCH_LIMIT * 5);
+  const staleEndpoint = (t: string, k: string) =>
+    (t === "city" && isStaleCityKey(k)) ||
+    (t === "time_slice" && isStaleCityKey(timeSliceCity(k)));
+  const staleEdgeIds: string[] = [];
+  for (const r of (edges as any[]) ?? []) {
+    if (
+      staleEndpoint(String(r.src_type ?? ""), String(r.src_key ?? "")) ||
+      staleEndpoint(String(r.dst_type ?? ""), String(r.dst_key ?? ""))
+    ) {
+      staleEdgeIds.push(String(r.id));
+    }
+  }
+  const edgesDeleted = await deleteByIds(db, "compass_graph_edges", staleEdgeIds);
+
+  // 3. World models + confidence rows keyed by a stale city.
+  let modelsDeleted = 0;
+  let confidenceDeleted = 0;
+  for (const table of ["compass_city_models", "compass_city_confidence"] as const) {
+    const { data } = await db.from(table).select("city").limit(CLEANUP_FETCH_LIMIT);
+    const stale = [...new Set(
+      ((data as any[]) ?? [])
+        .map((r) => String(r.city ?? ""))
+        .filter((c) => c && isStaleCityKey(c)),
+    )];
+    for (const c of stale) removedCityKeys.add(c);
+    let deleted = 0;
+    for (let i = 0; i < stale.length; i += DELETE_CHUNK) {
+      const chunk = stale.slice(i, i + DELETE_CHUNK);
+      const { error } = await db.from(table).delete().in("city", chunk);
+      if (!error) deleted += chunk.length;
+    }
+    if (table === "compass_city_models") modelsDeleted = deleted;
+    else confidenceDeleted = deleted;
+  }
+
+  return {
+    nodesDeleted,
+    edgesDeleted,
+    modelsDeleted,
+    confidenceDeleted,
+    removedCityKeys: [...removedCityKeys].sort(),
+  };
+}
+
 // ── Full rebuild orchestrator ─────────────────────────────────────────────────
 
 /** Rebuild graph → world models → confidence index, in order. */

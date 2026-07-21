@@ -20,6 +20,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import {
   rebuildIntelligenceGraph,
+  cleanupNonCanonicalCityRows,
   getCityConfidence,
   cityConfidenceNote,
 } from "../compass/CompassGraphEngine.js";
@@ -54,6 +55,25 @@ router.post("/compass/graph/rebuild", asyncHandler(async (req, res) => {
 
   const report = await rebuildIntelligenceGraph(sc);
   res.json(report);
+}));
+
+// One-time cleanup for rows written before city-key canonicalization: deletes
+// graph nodes/edges, world models, and confidence rows keyed under variant or
+// junk city keys, then rebuilds so the variants' activity lands under the
+// canonical keys. Idempotent — a second run finds nothing stale.
+router.post("/compass/graph/cleanup", asyncHandler(async (req, res) => {
+  const auth = await requireAdmin(req, res);
+  if (!auth) return;
+
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not available");
+    return;
+  }
+
+  const cleanup = await cleanupNonCanonicalCityRows(sc);
+  const rebuild = await rebuildIntelligenceGraph(sc);
+  res.json({ cleanup, rebuild });
 }));
 
 router.get("/compass/graph/status", asyncHandler(async (req, res) => {
