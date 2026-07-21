@@ -4,10 +4,11 @@ import {
 } from 'react-native';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { X, ChevronDown } from 'lucide-react-native';
-import type { TripPlanItem, TripPlanCategory } from '../types/models.ts';
+import type { TripPlanItem, TripPlanCategory, TripPlanLockType } from '../types/models.ts';
 import { createPlanItem } from '../services/tripPlan.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { DatePickerField } from './DateTimePickerField';
+import { LockTypeSelector } from './itinerary/LockTypeSelector.tsx';
 
 // ── Category options ──────────────────────────────────────────────────────────
 
@@ -47,6 +48,7 @@ export function AddToPlanSheet({ visible, tripId, onClose, onAdded, prefill }: A
   const [startsAt, setStartsAt] = useState<Date | null>(null);
   const [locationName, setLocationName] = useState(prefill?.locationName ?? '');
   const [notes, setNotes] = useState('');
+  const [lockType, setLockType] = useState<TripPlanLockType>('flexible');
   const [catPickerOpen, setCatPickerOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -60,6 +62,7 @@ export function AddToPlanSheet({ visible, tripId, onClose, onAdded, prefill }: A
     setStartsAt(null);
     setLocationName(prefill?.locationName ?? '');
     setNotes('');
+    setLockType('flexible');
     setError('');
     setCatPickerOpen(false);
   };
@@ -80,6 +83,7 @@ export function AddToPlanSheet({ visible, tripId, onClose, onAdded, prefill }: A
         startsAt: buildTimestamp(dayDate, startsAt),
         locationName: locationName.trim() || undefined,
         notes: notes.trim() || undefined,
+        lockType,
       });
       onAdded(item);
       reset();
@@ -158,6 +162,9 @@ export function AddToPlanSheet({ visible, tripId, onClose, onAdded, prefill }: A
               placeholder="e.g. Ayala Mall, Cebu"
               placeholderTextColor={color.faint}
             />
+
+            <Text style={sh.label}>Autopilot handling</Text>
+            <LockTypeSelector value={lockType} onChange={setLockType} />
 
             <Text style={sh.label}>Notes <Text style={sh.opt}>(optional)</Text></Text>
             <TextInput

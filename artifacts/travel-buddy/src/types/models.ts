@@ -936,6 +936,11 @@ export type TripPlanSourceType =
   | 'place'
   | 'meetup';
 
+export type TripPlanLockType =
+  | 'fixed'
+  | 'flexible'
+  | 'optional';
+
 export type PlanItemWarning =
   | 'time_overlap'
   | 'duplicate'
@@ -964,6 +969,8 @@ export interface TripPlanItem {
   /** Public-safe longitude. null when locationIsPrivate=true or not set. */
   lng: number | null;
   locationIsPrivate: boolean;
+  /** How Autopilot may treat this item. Server default is 'flexible'. */
+  lockType?: TripPlanLockType;
   /** Advisory warnings computed server-side. Does not block mutations. */
   warnings: PlanItemWarning[];
   createdAt: ISODate;

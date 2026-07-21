@@ -1,5 +1,5 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
-import type { TripPlanItem, TripPlanCategory, TripPlanItemStatus, TripPlanSourceType } from '../types/models.ts';
+import type { TripPlanItem, TripPlanCategory, TripPlanItemStatus, TripPlanSourceType, TripPlanLockType } from '../types/models.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -39,6 +39,7 @@ export interface CreatePlanItemPayload {
   locationIsPrivate?: boolean;
   notes?: string;
   sortOrder?: number;
+  lockType?: TripPlanLockType;
 }
 
 export interface UpdatePlanItemPayload {
@@ -54,6 +55,7 @@ export interface UpdatePlanItemPayload {
   locationIsPrivate?: boolean;
   notes?: string | null;
   sortOrder?: number;
+  lockType?: TripPlanLockType;
 }
 
 export type PlanEditPermission = 'owner_only' | 'all_members' | 'specific_members';

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanCategory, TripPlanItemStatus } from '../../types/models.ts';
 import { removePlanItem, updatePlanItem, reorderPlanItem } from '../../services/tripPlan.ts';
+import { LOCK_LABEL, LOCK_STYLE } from './LockTypeSelector.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
 // ── Category / status maps ─────────────────────────────────────────────────────
@@ -144,6 +145,13 @@ function PlanItemCard({
             <View style={[ic.catBadge, { backgroundColor: cat.bg }]}>
               <Text style={[ic.catText, { color: cat.fg }]}>{cat.label}</Text>
             </View>
+            {item.lockType && item.lockType !== 'flexible' && (
+              <View style={[ic.lockBadge, { backgroundColor: LOCK_STYLE[item.lockType].bg }]}>
+                <Text style={[ic.lockText, { color: LOCK_STYLE[item.lockType].fg }]}>
+                  {LOCK_LABEL[item.lockType]}
+                </Text>
+              </View>
+            )}
             {item.sourceType !== 'manual' && (
               <View style={ic.sourceBadge}>
                 <Tag size={9} color={color.mute} />
@@ -679,6 +687,8 @@ const ic = StyleSheet.create({
   top:         { flexDirection: 'row', alignItems: 'center', gap: 4 },
   catBadge:    { borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 },
   catText:     { fontSize: 10, fontWeight: '700' },
+  lockBadge:   { borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 },
+  lockText:    { fontSize: 10, fontWeight: '700' },
   sourceBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: color.haze, borderRadius: 5, paddingHorizontal: 5, paddingVertical: 2 },
   sourceText:  { fontSize: 10, color: color.mute, fontWeight: '600' },
   statusBadge: { borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 },

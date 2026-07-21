@@ -6,12 +6,13 @@ import {
 import {
   MapPin, Clock, Tag, FileText, AlertTriangle, Pencil, Trash2, X, CheckCircle2, ChevronDown, Shield, ChevronRight,
 } from 'lucide-react-native';
-import type { TripPlanItem, TripPlanItemStatus, TripPlanCategory } from '../../types/models.ts';
+import type { TripPlanItem, TripPlanItemStatus, TripPlanCategory, TripPlanLockType } from '../../types/models.ts';
 import { updatePlanItem, removePlanItem } from '../../services/tripPlan.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { DatePickerField } from '../DateTimePickerField';
 import { GlobalPlacePicker } from '../selectors/GlobalPlacePicker.tsx';
 import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
+import { LockTypeSelector, LOCK_LABEL, LOCK_STYLE } from './LockTypeSelector.tsx';
 
 // ── Category / status maps ────────────────────────────────────────────────────
 
@@ -120,6 +121,7 @@ function EditForm({
   const [locationName, setLocationName] = useState(item.locationName ?? '');
   const [locationPickerOpen, setLocationPickerOpen] = useState(false);
   const [status, setStatus] = useState<TripPlanItemStatus>(item.status);
+  const [lockType, setLockType] = useState<TripPlanLockType>(item.lockType ?? 'flexible');
   const [notes, setNotes] = useState(item.notes ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState('');
@@ -139,6 +141,7 @@ function EditForm({
         startsAt: dateStr && startsAt ? `${dateStr}T${dateToHHMM(startsAt)}:00` : null,
         locationName: locationName.trim() || null,
         status,
+        lockType,
         notes: notes.trim() || null,
       });
       onSaved(updated);
@@ -227,6 +230,9 @@ function EditForm({
           </Pressable>
         ))}
       </View>
+
+      <Text style={ef.label}>Autopilot handling</Text>
+      <LockTypeSelector value={lockType} onChange={setLockType} />
 
       <Text style={ef.label}>Notes <Text style={ef.opt}>(optional)</Text></Text>
       <TextInput
@@ -361,6 +367,13 @@ export function PlanItemSheet({
                   <View style={[sh.badge, { backgroundColor: st.bg }]}>
                     <Text style={[sh.badgeText, { color: st.fg }]}>{STATUS_LABEL[item.status] ?? item.status}</Text>
                   </View>
+                  {item.lockType && item.lockType !== 'flexible' && (
+                    <View style={[sh.badge, { backgroundColor: LOCK_STYLE[item.lockType].bg }]}>
+                      <Text style={[sh.badgeText, { color: LOCK_STYLE[item.lockType].fg }]}>
+                        {LOCK_LABEL[item.lockType]}
+                      </Text>
+                    </View>
+                  )}
                   {item.sourceType !== 'manual' && (
                     <View style={[sh.badge, { backgroundColor: color.haze }]}>
                       <Tag size={10} color={color.mute} />
