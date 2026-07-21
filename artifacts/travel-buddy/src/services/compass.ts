@@ -516,6 +516,9 @@ export interface CompassUiEvent {
   description: string | null;
   /** Phase 8 — data confidence label; absent on older server payloads. */
   confidence?: CompassUiConfidence | null;
+  /** Venue coordinates — hydrated server-side; absent on older payloads. */
+  lat?:        number | null;
+  lng?:        number | null;
 }
 
 export interface CompassUiPerson {

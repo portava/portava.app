@@ -74,6 +74,17 @@ function fakeClient(rows: any[] | null, fail = false) {
   } as any;
 }
 
+/** Table-aware fake client: rowsByTable maps table name → returned rows. */
+function fakeClientByTable(rowsByTable: Record<string, any[]>) {
+  return {
+    from: (table: string) => ({
+      select: () => ({
+        in: async () => ({ data: rowsByTable[table] ?? [], error: null }),
+      }),
+    }),
+  } as any;
+}
+
 // ── A. Candidate index ────────────────────────────────────────────────────────
 
 describe("collectToolCandidates", () => {
@@ -163,6 +174,43 @@ describe("buildUiBlocks coordinate hydration", () => {
     }, toolLog());
     const b = blocks[0] as Extract<CompassUiBlock, { type: "place_cards" }>;
     assert.equal(b.places[0].lat, null);
+  });
+
+  it("attaches venue coordinates to comparison event rows when show_exact_location allows", async () => {
+    const sc = fakeClientByTable({
+      discovery_places: [{ id: PLACE_A, lat: 10.3, lng: 123.9 }],
+      events: [{ id: EVENT_A, location_lat: 10.31, location_lng: 123.91, show_exact_location: true }],
+    });
+    const blocks = await buildUiBlocks(sc, {
+      blocks: [{
+        type: "comparison",
+        columns: ["Vibe"],
+        rows: [
+          { kind: "place", id: PLACE_A, values: ["chill"] },
+          { kind: "event", id: EVENT_A, values: ["party"] },
+        ],
+      }],
+    }, toolLog());
+    const cmp = blocks[0] as Extract<CompassUiBlock, { type: "comparison" }>;
+    assert.equal(cmp.rows[0].place?.lat, 10.3);
+    assert.equal(cmp.rows[1].event?.lat, 10.31);
+    assert.equal(cmp.rows[1].event?.lng, 123.91);
+  });
+
+  it("withholds event coordinates when show_exact_location is false", async () => {
+    const sc = fakeClientByTable({
+      events: [{ id: EVENT_A, location_lat: 10.31, location_lng: 123.91, show_exact_location: false }],
+    });
+    const blocks = await buildUiBlocks(sc, {
+      blocks: [{
+        type: "comparison",
+        columns: ["Vibe"],
+        rows: [{ kind: "event", id: EVENT_A, values: ["party"] }],
+      }],
+    }, toolLog());
+    const cmp = blocks[0] as Extract<CompassUiBlock, { type: "comparison" }>;
+    assert.equal(cmp.rows[0].event?.lat, null);
+    assert.equal(cmp.rows[0].event?.lng, null);
   });
 });
 

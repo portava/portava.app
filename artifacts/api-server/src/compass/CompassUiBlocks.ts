@@ -80,6 +80,9 @@ export interface UiEvent {
   description: string | null;
   /** Phase 8 — confidence label for this event's data. */
   confidence: UiConfidence | null;
+  /** Venue coordinates — hydrated server-side, only when show_exact_location allows. */
+  lat: number | null;
+  lng: number | null;
 }
 
 export interface UiPerson {
@@ -165,6 +168,8 @@ export function collectToolCandidates(toolLog: ToolExecution[]): ToolCandidateIn
       category: e.category ?? null,
       description: e.description ? unwrapUgc(e.description) : null,
       confidence: pickConfidence(e.confidence),
+      lat: null,
+      lng: null,
     });
   };
 
@@ -233,6 +238,7 @@ export async function buildUiBlocks(
   const index = collectToolCandidates(toolLog);
   const blocks: CompassUiBlock[] = [];
   const wantedPlaceIds = new Set<string>();
+  const wantedEventIds = new Set<string>();
 
   for (const raw of rawBlocks) {
     if (blocks.length >= MAX_BLOCKS) break;
@@ -287,6 +293,7 @@ export async function buildUiBlocks(
           } else {
             const event = index.events.get(id);
             if (!event) continue;
+            wantedEventIds.add(event.id);
             rows.push({ kind, id, label: event.title, values, event });
           }
         }
@@ -320,6 +327,33 @@ export async function buildUiBlocks(
       for (const blk of blocks) {
         if (blk.type === "place_cards" || blk.type === "map") blk.places.forEach(apply);
         if (blk.type === "comparison") blk.rows.forEach((r) => { if (r.place) apply(r.place); });
+      }
+    } catch { /* non-fatal — blocks ship without coordinates */ }
+  }
+
+  // ── Coordinate hydration for validated event ids (server-side only) ────────
+  // Privacy: an event's exact venue coordinates are only exposed when the host
+  // allows it (show_exact_location !== false — same rule as the events routes).
+  if (sc && wantedEventIds.size > 0) {
+    try {
+      const { data } = await sc
+        .from("events")
+        .select("id, location_lat, location_lng, show_exact_location")
+        .in("id", [...wantedEventIds]);
+      const coords = new Map<string, { lat: number | null; lng: number | null }>();
+      for (const row of (data ?? []) as any[]) {
+        if (row.show_exact_location === false) continue;
+        coords.set(row.id, {
+          lat: typeof row.location_lat === "number" ? row.location_lat : null,
+          lng: typeof row.location_lng === "number" ? row.location_lng : null,
+        });
+      }
+      const apply = (e: UiEvent) => {
+        const c = coords.get(e.id);
+        if (c) { e.lat = c.lat; e.lng = c.lng; }
+      };
+      for (const blk of blocks) {
+        if (blk.type === "comparison") blk.rows.forEach((r) => { if (r.event) apply(r.event); });
       }
     } catch { /* non-fatal — blocks ship without coordinates */ }
   }
