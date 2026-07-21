@@ -405,8 +405,10 @@ export function DiscoveryMapView({
       </Map>
       </SectionErrorBoundary>
 
-      {/* ── Filter toggle ──────────────────────────────────────────────────── */}
-      <View style={s.filterRow}>
+      {/* ── Filter toggle — hidden in full-screen mode (externalCameraRef set)
+           because MapTopControls owns the top bar there; showing this row too
+           causes two overlapping headers at the notch.                         */}
+      {!externalCameraRef && <View style={s.filterRow}>
         {FILTER_OPTIONS.map((opt) => {
           const active = filter === opt.key;
           return (
@@ -427,7 +429,7 @@ export function DiscoveryMapView({
             </Pressable>
           );
         })}
-      </View>
+      </View>}
 
       {/* ── Reset toast ────────────────────────────────────────────────────── */}
       {resetToast && (

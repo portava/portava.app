@@ -38,9 +38,7 @@ import {
 
 // ── Map style ─────────────────────────────────────────────────────────────────
 
-const MAP_STYLE = process.env.EXPO_PUBLIC_MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${process.env.EXPO_PUBLIC_MAPTILER_KEY}`
-  : 'https://demotiles.maplibre.org/style.json';
+import { MAP_STYLE_URL as MAP_STYLE } from '../constants/mapStyle.ts';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 

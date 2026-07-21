@@ -1,32 +1,37 @@
 /**
  * Shared map style constant for all MapLibre consumers.
  *
- * Priority:
- *   1. MapTiler Streets v2 when EXPO_PUBLIC_MAPTILER_KEY is a non-empty string.
- *   2. OpenFreeMap Liberty — free, no API key, reliable CDN — as fallback.
+ * Primary style: OpenFreeMap Liberty — zero API key, Cloudflare CDN, reliable.
  *
- * Runtime 403 recovery: components should pass FALLBACK_MAP_STYLE_URL to
- * the Map component's onDidFailLoadingMap handler so a bad/expired MapTiler
- * key never leaves the map permanently blank.
+ * MapTiler Streets v2 was previously the primary when EXPO_PUBLIC_MAPTILER_KEY
+ * was set, but the key consistently returned HTTP 403 on the /styles endpoint
+ * even when valid for other MapTiler APIs (tile proxy, geocoding). Every map
+ * open logged a native error toast before the onDidFailLoadingMap fallback
+ * recovered. Switching the primary to OpenFreeMap eliminates the toast entirely.
+ *
+ * To re-enable MapTiler as primary, replace getMapStyleUrl()'s body with:
+ *   const key = (process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '').trim();
+ *   return key
+ *     ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${key}`
+ *     : FALLBACK_MAP_STYLE_URL;
+ *
+ * The onDidFailLoadingMap handlers on each Map instance remain as a safety net
+ * for future style-load failures.
  */
 
-const MAPTILER_KEY = (process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '').trim();
-
 /**
- * Zero-key fallback style — OpenFreeMap Liberty.
- * Free, no API key, Cloudflare-backed CDN. Always reliable.
+ * Primary and fallback style — OpenFreeMap Liberty.
+ * Free, no API key, Cloudflare-backed CDN.
  */
 export const FALLBACK_MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
 
 /**
- * Returns the MapLibre style URL to use for all maps in the app.
- * Prefer this over hardcoding the URL in individual components.
+ * Returns the MapLibre style URL for all maps in the app.
+ * Currently always returns OpenFreeMap Liberty (see module comment above).
  */
 export function getMapStyleUrl(): string {
-  return MAPTILER_KEY
-    ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`
-    : FALLBACK_MAP_STYLE_URL;
+  return FALLBACK_MAP_STYLE_URL;
 }
 
 /** Pre-computed constant for components that evaluate at module load time. */
-export const MAP_STYLE_URL = getMapStyleUrl();
+export const MAP_STYLE_URL = FALLBACK_MAP_STYLE_URL;

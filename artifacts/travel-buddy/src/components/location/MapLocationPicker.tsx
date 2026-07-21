@@ -28,10 +28,7 @@ import type { Place } from '../../lib/location/placeTypes.ts';
 
 // ── Map tile style ─────────────────────────────────────────────────────────────
 
-const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '';
-const MAP_STYLE = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`
-  : 'https://demotiles.maplibre.org/style.json';
+import { MAP_STYLE_URL as MAP_STYLE } from '../../constants/mapStyle.ts';
 
 // ── Default viewport: world overview ──────────────────────────────────────────
 

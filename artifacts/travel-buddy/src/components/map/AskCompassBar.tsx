@@ -55,35 +55,26 @@ const COMPASS_TYPE_MAP: Record<string, MapEntityType> = {
 
 /**
  * Map a CompassRecommendation to a MapEntity.
- * Returns null for unsupported types so callers can filter them out silently.
+ * Returns null for unsupported types or missing coordinates.
+ *
+ * We intentionally do NOT fall back to the user's current location when
+ * data.lat/lng is absent: placing un-geocoded results at the user's dot
+ * causes the camera "fly-to" in map/index.tsx to target where the user
+ * already is, making the camera appear to not move after a city search.
+ * Skipping coordinate-less entities is safer — the caller's geocodeAndFly
+ * moves the camera to the queried location independently.
  */
-function toMapEntity(
-  rec: CompassRecommendation,
-  fallbackLat: number,
-  fallbackLng: number,
-): MapEntity | null {
+function toMapEntity(rec: CompassRecommendation): MapEntity | null {
   const entityType = COMPASS_TYPE_MAP[rec.type ?? ''];
-  if (!entityType) return null; // unsupported type — silently ignored
+  if (!entityType) return null;
 
-  // Prefer coordinates from the recommendation payload; fall back to the
-  // active city centre with a small deterministic offset so markers don't
-  // all stack on the same pixel.
-  const dataLat = typeof rec.data?.lat === 'number' ? rec.data.lat : null;
-  const dataLng = typeof rec.data?.lng === 'number' ? rec.data.lng : null;
+  const lat = typeof rec.data?.lat === 'number' ? rec.data.lat : null;
+  const lng = typeof rec.data?.lng === 'number' ? rec.data.lng : null;
 
-  // If no coordinates at all, skip the entity — a pin at 0,0 is worse than
-  // not showing it.
-  const lat = dataLat ?? fallbackLat;
-  const lng = dataLng ?? fallbackLng;
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  // Skip entities with no real coordinates rather than faking them.
+  if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
 
-  return {
-    id: rec.id,
-    type: entityType,
-    lat,
-    lng,
-    payload: rec,
-  };
+  return { id: rec.id, type: entityType, lat, lng, payload: rec };
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -117,9 +108,6 @@ export function AskCompassBar({
 
   const inputRef = useRef<TextInput>(null);
 
-  const fallbackLat = (userLat != null && Number.isFinite(userLat)) ? userLat : 0;
-  const fallbackLng = (userLng != null && Number.isFinite(userLng)) ? userLng : 0;
-
   async function submit(q: string) {
     const trimmed = q.trim();
     if (!trimmed || loading) return;
@@ -145,10 +133,11 @@ export function AskCompassBar({
 
     const recs = res.data.recommendations ?? [];
     const entities: MapEntity[] = recs
-      .map((r) => toMapEntity(r, fallbackLat, fallbackLng))
+      .map((r) => toMapEntity(r))
       .filter((e): e is MapEntity => e !== null);
 
-    // onResults([]) triggers carousel empty state — intentional for zero results
+    // onResults([]) triggers carousel empty state — intentional for zero results.
+    // Camera fly-to is handled by the parent (geocodeAndFly in map/index.tsx).
     onResults(entities, trimmed);
   }
 
