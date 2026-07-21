@@ -266,6 +266,31 @@ export interface CompassPreferences {
   rent_buddy_discoverable?: boolean;
 }
 
+// ── City confidence ───────────────────────────────────────────────────────────
+
+export interface CityConfidence {
+  city: string;
+  depthScore: number;
+  tier: 'deep' | 'moderate' | 'thin';
+  note: string | null;
+  computedAt: string | null;
+}
+
+export async function fetchCityConfidence(
+  city: string,
+): Promise<{ ok: boolean; data?: CityConfidence; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  if (!city.trim()) return { ok: false, error: 'no_city' };
+  try {
+    const r = await authedFetch(`/api/compass/city-confidence?city=${encodeURIComponent(city.trim())}`);
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    return { ok: true, data: body as CityConfidence };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
 export async function fetchCompassPreferences(): Promise<{ ok: boolean; data?: CompassPreferences; error?: string }> {
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();
   try {

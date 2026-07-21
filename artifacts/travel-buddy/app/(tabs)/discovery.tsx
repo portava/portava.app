@@ -25,6 +25,7 @@ import { listMyTrips } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { getAvailableNow, type BuddyProfile } from '../../src/services/rentABuddy';
 import { CompassBuddyRow } from '../../src/components/compass/CompassBuddyRow';
+import { CityConfidenceBadge } from '../../src/components/compass/CityConfidenceBadge';
 import { useSession } from '../../src/context/SessionContext';
 import { useLocationContext } from '../../src/context/LocationContext';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
@@ -695,6 +696,7 @@ export default function DiscoveryHub() {
       )}
       {activeTab === 'for_you' && (
         <SectionErrorBoundary label="CompassPicks">
+          <CityConfidenceBadge city={currentCity} />
           <CompassBuddyRow city={currentCity} />
         </SectionErrorBoundary>
       )}
