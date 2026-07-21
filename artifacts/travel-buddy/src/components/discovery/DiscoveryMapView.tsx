@@ -68,6 +68,13 @@ export interface DiscoveryMapViewProps {
   onSelectEntity?: (entity: MapEntity) => void;
   /** Called when a cluster bubble is tapped — caller should zoom in. */
   onPressEntityCluster?: (lat: number, lng: number, currentZoom: number) => void;
+  /**
+   * Explicit `top` for the All/Picks/Venues filter row pill.
+   * Used by the full-screen map screen to push the row below MapTopControls
+   * so the two headers don't overlap.  When omitted, the default `top: 14`
+   * from the stylesheet applies (inline map use-case).
+   */
+  filterRowOffset?: number;
 }
 
 // ── Category pin colours ──────────────────────────────────────────────────────
@@ -165,6 +172,7 @@ export function DiscoveryMapView({
   enabledEntityLayers = [],
   onSelectEntity,
   onPressEntityCluster,
+  filterRowOffset,
 }: DiscoveryMapViewProps) {
   // Lazy initialiser reads the module-level memory cache synchronously so
   // remounts (e.g. Expo Router tab navigation) start with the correct filter
@@ -405,10 +413,12 @@ export function DiscoveryMapView({
       </Map>
       </SectionErrorBoundary>
 
-      {/* ── Filter toggle — hidden in full-screen mode (externalCameraRef set)
-           because MapTopControls owns the top bar there; showing this row too
-           causes two overlapping headers at the notch.                         */}
-      {!externalCameraRef && <View style={s.filterRow}>
+      {/* ── Filter toggle (All / Picks / Venues) ──────────────────────────────
+           filterRowOffset is supplied by the full-screen map screen so the row
+           sits just below MapTopControls instead of overlapping it.
+           When filterRowOffset is unset (inline discovery map), the default
+           top:14 from the stylesheet applies.                                 */}
+      <View style={[s.filterRow, filterRowOffset != null ? { top: filterRowOffset } : null]}>
         {FILTER_OPTIONS.map((opt) => {
           const active = filter === opt.key;
           return (
@@ -429,7 +439,7 @@ export function DiscoveryMapView({
             </Pressable>
           );
         })}
-      </View>}
+      </View>
 
       {/* ── Reset toast ────────────────────────────────────────────────────── */}
       {resetToast && (

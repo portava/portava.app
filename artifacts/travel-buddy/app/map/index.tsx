@@ -624,6 +624,7 @@ export default function FullScreenMapScreen() {
         entities={entities}
         enabledEntityLayers={enabledLayers}
         onSelectEntity={handleSelectEntity}
+        filterRowOffset={insets.top + 68}
       />
 
       {/* Floating top controls: Back, Recenter, Filters */}

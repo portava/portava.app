@@ -15,11 +15,14 @@
 import React, {
   forwardRef,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useRef,
+  useState,
 } from 'react';
 import {
   FlatList,
+  PanResponder,
   View,
   Text,
   Pressable,
@@ -30,10 +33,12 @@ import {
   NativeScrollEvent,
   ViewToken,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Animated, {
   useAnimatedScrollHandler,
   useSharedValue,
   useAnimatedStyle,
+  withSpring,
   interpolate,
   Extrapolation,
   type SharedValue,
@@ -41,6 +46,7 @@ import Animated, {
 import { router } from 'expo-router';
 import {
   CalendarDays,
+  ChevronUp,
   Users,
   MapPin,
   Star,
@@ -51,6 +57,7 @@ import {
   Stamp,
   AlertTriangle,
   RefreshCw,
+  X,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
@@ -70,9 +77,111 @@ const CARD_MARGIN = 8; // gap between cards
 const SNAP_INTERVAL = CARD_WIDTH + CARD_MARGIN * 2;
 const CARD_OFFSET = (SCREEN_WIDTH - CARD_WIDTH) / 2; // center first card
 
+// ── Peek-strip / collapse constants ───────────────────────────────────────────
+
+/** Height of the always-visible peek strip (handle bar + entity label row). */
+const PEEK_HEIGHT = 52;
+/**
+ * Maximum height of the scrollable card area below the peek strip.
+ * Sized generously so all card types (regular entities, empty, error) fit.
+ */
+const CARD_AREA_HEIGHT = 164;
+/** Spring config — snappy with a subtle settle. */
+const SPRING_CFG = { damping: 18, stiffness: 220, mass: 0.9 } as const;
+/** AsyncStorage key for persisted expanded/minimised state. */
+const CAROUSEL_STATE_KEY = 'map_carousel_expanded';
+
+// Module-level memory cache — survives re-mounts within the same JS session so
+// the initial render reflects the persisted state without an async round-trip.
+let _cachedCarouselExpanded: boolean | null = null;
+
+function getCachedCarouselExpanded(): boolean {
+  return _cachedCarouselExpanded !== null ? _cachedCarouselExpanded : true;
+}
+
 // ── Animated FlatList ─────────────────────────────────────────────────────────
 
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList<MapEntity>);
+
+// ── Peek-strip helpers ────────────────────────────────────────────────────────
+
+/** Extract a one-line display label from any entity type for the peek strip. */
+function getEntityPeekLabel(entity: MapEntity | undefined): string {
+  if (!entity) return 'Nearby';
+  switch (entity.type) {
+    case 'trips':   return (entity.payload as TripRow).title                 ?? 'Trip';
+    case 'events':  return (entity.payload as EventListItem).title            ?? 'Event';
+    case 'buddies': return (entity.payload as BuddyProfile).displayName       ?? 'Local Buddy';
+    case 'gems':    return (entity.payload as HiddenGem).name                 ?? 'Gem';
+    case 'friends': return (entity.payload as CircleMemberLocation).name      ?? 'Friend nearby';
+    case 'stamps':  return (entity.payload as PassportCountryPayload).country ?? 'Country';
+    default:        return 'Nearby';
+  }
+}
+
+/**
+ * Always-visible strip at the top of the carousel container.
+ * Shows the active entity's type badge + title, a drag handle, and an
+ * expand/collapse toggle (↑ when minimised, ✕ when expanded).
+ *
+ * Receives the PanResponder's panHandlers so dragging anywhere on the strip
+ * triggers the spring snap — a tap (dy < threshold) passes through to the
+ * inner Pressable for expand.
+ */
+function PeekStrip({
+  entity,
+  isExpanded,
+  onExpand,
+  onCollapse,
+  panHandlers,
+}: {
+  entity: MapEntity | undefined;
+  isExpanded: boolean;
+  onExpand: () => void;
+  onCollapse: () => void;
+  panHandlers: Record<string, unknown>;
+}) {
+  const label = getEntityPeekLabel(entity);
+  const cfg = entity ? MAP_LAYER_CONFIG[entity.type] : null;
+
+  return (
+    <View style={cs.peekStrip} {...panHandlers}>
+      {/* Drag handle bar — visual affordance for the gesture */}
+      <View style={cs.handleBar} />
+
+      {/* Label row — tapping expands when minimised; X button always collapses */}
+      <Pressable
+        style={cs.peekRow}
+        onPress={isExpanded ? undefined : onExpand}
+        accessibilityRole="button"
+        accessibilityLabel={isExpanded ? undefined : 'Expand map card'}
+        accessibilityHint={isExpanded ? undefined : 'Double-tap to expand'}
+      >
+        {cfg ? (
+          <View style={[cs.peekBadge, { backgroundColor: cfg.color + '22' }]}>
+            <View style={[cs.peekDot, { backgroundColor: cfg.color }]} />
+            <Text style={[cs.peekBadgeText, { color: cfg.color }]}>{cfg.label}</Text>
+          </View>
+        ) : null}
+        <Text style={cs.peekTitle} numberOfLines={1}>{label}</Text>
+        <View style={cs.peekSpacer} />
+        {/* Toggle: X (dismiss to strip) when expanded, chevron-up when minimised */}
+        <Pressable
+          onPress={isExpanded ? onCollapse : onExpand}
+          hitSlop={10}
+          style={cs.peekActionBtn}
+          accessibilityRole="button"
+          accessibilityLabel={isExpanded ? 'Minimise card' : 'Expand card'}
+        >
+          {isExpanded
+            ? <X size={14} color={color.mute} />
+            : <ChevronUp size={17} color={color.signal} />
+          }
+        </Pressable>
+      </Pressable>
+    </View>
+  );
+}
 
 // ── Per-type mini card bodies ─────────────────────────────────────────────────
 
@@ -546,6 +655,65 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
     const flatListRef = useRef<FlatList<MapEntity>>(null);
     const scrollX = useSharedValue(0);
 
+    // ── Collapse / expand state ──────────────────────────────────────────────
+    // Initialise from the module-level cache so the first render already
+    // reflects the persisted preference, with no visible flash.
+    const initExpanded = getCachedCarouselExpanded();
+    const cardAreaHeight = useSharedValue(initExpanded ? CARD_AREA_HEIGHT : 0);
+    const [isExpanded, setIsExpandedState] = useState(initExpanded);
+
+    /**
+     * Animate to expanded or collapsed state, update React state for
+     * PeekStrip re-render, and persist the preference.
+     */
+    const setExpanded = useCallback((next: boolean) => {
+      _cachedCarouselExpanded = next;
+      cardAreaHeight.value = withSpring(next ? CARD_AREA_HEIGHT : 0, SPRING_CFG);
+      setIsExpandedState(next);
+      AsyncStorage.setItem(CAROUSEL_STATE_KEY, next ? '1' : '0').catch(() => {});
+    // cardAreaHeight is a stable Reanimated ref; setIsExpandedState is stable.
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // On mount: reconcile with AsyncStorage in case the module cache is stale
+    // (e.g. Expo Go reload without JS process restart).
+    useEffect(() => {
+      AsyncStorage.getItem(CAROUSEL_STATE_KEY).then((v) => {
+        const persisted = v !== '0'; // null (key not set) → default: expanded
+        if (persisted !== getCachedCarouselExpanded()) {
+          _cachedCarouselExpanded = persisted;
+          // No spring — restore silently without animating on mount.
+          cardAreaHeight.value = persisted ? CARD_AREA_HEIGHT : 0;
+          setIsExpandedState(persisted);
+        }
+      }).catch(() => {});
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Animated container height: PEEK_HEIGHT when collapsed, PEEK_HEIGHT +
+    // CARD_AREA_HEIGHT when fully expanded.  overflow:'hidden' (in cs.container)
+    // clips the card area so it doesn't bleed below the container when collapsed.
+    const containerAnimStyle = useAnimatedStyle(() => ({
+      height: PEEK_HEIGHT + cardAreaHeight.value,
+    }));
+
+    // PanResponder on the peek strip drag handle.  Uses refs so the stable
+    // PanResponder can call the latest setExpanded without stale closure issues.
+    const setExpandedRef = useRef(setExpanded);
+    setExpandedRef.current = setExpanded;
+
+    const panResponder = useRef(
+      PanResponder.create({
+        // Only claim the gesture if there's clear vertical intent.
+        onStartShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 2,
+        onMoveShouldSetPanResponder:  (_, g) => Math.abs(g.dy) > 5,
+        onPanResponderRelease: (_, g) => {
+          // 30 px threshold — below that it's treated as a tap and falls
+          // through to the inner Pressable.
+          if (g.dy >  30) setExpandedRef.current(false); // drag down → collapse
+          if (g.dy < -30) setExpandedRef.current(true);  // drag up   → expand
+        },
+      }),
+    ).current;
+
     useImperativeHandle(ref, () => ({
       scrollToIndex: (index: number) => {
         flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
@@ -570,31 +738,18 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
       [entities.length, activeIndex, onIndexChange],
     );
 
-    if (entities.length === 0) {
-      // In passport mode, distinguish between loading, error, and genuine empty.
-      if (passportLoading) {
-        return (
-          <View style={[cs.container, style]}>
-            <PassportLoadingCard />
-          </View>
-        );
-      }
-      if (passportError) {
-        return (
-          <View style={[cs.container, style]}>
-            <PassportErrorCard onRetry={onPassportRetry} />
-          </View>
-        );
+    // Active entity for the peek strip label (falls back to first entity when
+    // activeIndex is out of range).
+    const peekEntity = entities[activeIndex] ?? entities[0];
+
+    // Card-area content — same logic as before; empty/loading/error handled here.
+    const renderCardArea = () => {
+      if (entities.length === 0) {
+        if (passportLoading) return <PassportLoadingCard />;
+        if (passportError)   return <PassportErrorCard onRetry={onPassportRetry} />;
+        return <EmptyCard onFiltersPress={onFiltersPress} />;
       }
       return (
-        <View style={[cs.container, style]}>
-          <EmptyCard onFiltersPress={onFiltersPress} />
-        </View>
-      );
-    }
-
-    return (
-      <View style={[cs.container, style]} accessibilityRole="scrollbar">
         <AnimatedFlatList
           ref={flatListRef}
           data={entities}
@@ -627,7 +782,25 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
             />
           )}
         />
-      </View>
+      );
+    };
+
+    return (
+      <Animated.View
+        style={[cs.container, containerAnimStyle, style]}
+        accessibilityRole="scrollbar"
+      >
+        {/* Always-visible peek strip — drag handle + entity label + toggle */}
+        <PeekStrip
+          entity={peekEntity}
+          isExpanded={isExpanded}
+          onExpand={() => setExpanded(true)}
+          onCollapse={() => setExpanded(false)}
+          panHandlers={panResponder.panHandlers as Record<string, unknown>}
+        />
+        {/* Card area — clipped to 0 height when collapsed via overflow:hidden */}
+        {renderCardArea()}
+      </Animated.View>
     );
   },
 );
@@ -636,8 +809,82 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
 
 const cs = StyleSheet.create({
   container: {
-    // Positioned by parent (absolute, bottom + safeArea)
+    // Positioned by parent (absolute, bottom + safeArea).
+    // overflow:'hidden' is required so the card area is clipped to zero height
+    // when the carousel is collapsed — without it cards bleed below the container
+    // on iOS (RN doesn't clip children by default).
+    overflow: 'hidden',
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
   },
+
+  // ── Peek strip ──────────────────────────────────────────────────────────────
+  peekStrip: {
+    height: PEEK_HEIGHT,
+    backgroundColor: color.paperRaised,
+    paddingHorizontal: space.md,
+    paddingTop: 6,
+    paddingBottom: 2,
+    gap: 4,
+    justifyContent: 'center',
+    // Thin rule at the bottom separates strip from card area when expanded.
+    borderBottomWidth: 1,
+    borderBottomColor: color.haze,
+  },
+  handleBar: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: color.haze,
+    alignSelf: 'center',
+    marginBottom: 2,
+  },
+  peekRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    flex: 1,
+    minHeight: 28,
+  },
+  peekBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderRadius: radius.pill,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    flexShrink: 0,
+  },
+  peekDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+  },
+  peekBadgeText: {
+    fontSize: 9,
+    fontWeight: '700' as const,
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.5,
+  },
+  peekTitle: {
+    ...t.bodyStrong,
+    fontSize: 13,
+    color: color.ink,
+    flex: 1,
+  },
+  peekSpacer: {
+    width: space.sm,
+  },
+  peekActionBtn: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: color.haze,
+    flexShrink: 0,
+  },
+  // ── End peek strip ──────────────────────────────────────────────────────────
   cardWrapper: {
     width: CARD_WIDTH,
     marginHorizontal: CARD_MARGIN,
