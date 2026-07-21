@@ -503,6 +503,19 @@ describe("F. mid-conversation block freshness", () => {
     assert.deepEqual(result.people.map((p: any) => p.handle), ["@bob"], "just-muted user must vanish");
   });
 
+  it("get_whos_around: a mid-conversation UNBLOCK/UNMUTE surfaces the person again despite the stale snapshot", async () => {
+    const db = tripFixture([EVE_ID]);
+    db.circle_visibility_settings = [sharingOn(BOB_ID), sharingOn(EVE_ID)];
+    db.circle_presence = [presenceRow(BOB_ID), presenceRow(EVE_ID)];
+    // Stale snapshot still says Eve is blocked AND muted — but the DB rows are gone.
+    const staleProfile = profileFor({ blockedUserIds: [EVE_ID], mutedUserIds: [EVE_ID] });
+    db.blocks = [];
+    db.user_mutes = [];
+    const result: any = await executeCompassTool(makeClient(db), ALICE_ID, staleProfile, "get_whos_around", {});
+    const handles = result.people.map((p: any) => p.handle).sort();
+    assert.deepEqual(handles, ["@bob", "@eve"], "just-unblocked/unmuted user must reappear immediately — fresh DB read replaces the stale snapshot");
+  });
+
   it("get_group_recommendation: a just-blocked fellow MEMBER drops out of the group despite the stale snapshot", async () => {
     const db = groupFixture();
     // Alice blocks Bob mid-conversation — DB row only, snapshot arrays empty.
