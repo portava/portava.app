@@ -6,7 +6,7 @@
  *
  * Accessible from: Profile → Settings → Compass Preferences
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, Pressable, ScrollView, StyleSheet, Switch,
   ActivityIndicator, Alert, SafeAreaView,
@@ -19,7 +19,13 @@ import {
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { useCompassPreferences } from '../src/hooks/compass/useCompassPreferences';
-import { putCompassBoostVisibility } from '../src/services/compass';
+import {
+  putCompassBoostVisibility,
+  fetchCompassSenseSettings,
+  putCompassSenseSettings,
+  type CompassSenseSettings,
+  type CompassSensePresence,
+} from '../src/services/compass';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 import { PlainBottomFiller } from '../src/hooks/useBottomInset';
 
@@ -148,6 +154,88 @@ function ChipSelector({
         );
       })}
     </View>
+  );
+}
+
+// ── Compass Sense section ─────────────────────────────────────────────────────
+
+const SENSE_PRESENCE_LEVELS: { key: CompassSensePresence; label: string; sub: string }[] = [
+  { key: 'passive', label: 'Passive', sub: 'Compass Sense stays silent' },
+  { key: 'aware',   label: 'Aware',   sub: 'Only time-critical nudges (timing, events, weather)' },
+  { key: 'active',  label: 'Active',  sub: 'All helpful nudges, still capped per day' },
+];
+
+const SENSE_CATEGORY_ROWS: { key: string; label: string; sub: string }[] = [
+  { key: 'timing',    label: 'Leave-earlier alerts',   sub: 'When travel time threatens a planned arrival' },
+  { key: 'events',    label: 'Saved events',           sub: 'When an event you saved starts soon' },
+  { key: 'weather',   label: 'Weather changes',        sub: 'When the forecast affects today\u2019s plans' },
+  { key: 'circle',    label: 'Circle plan changes',    sub: 'When a meetup you joined changes' },
+  { key: 'free_time', label: 'Free time suggestions',  sub: 'When a free block opens in your day' },
+];
+
+function SenseSection() {
+  const [sense, setSense] = useState<CompassSenseSettings | null>(null);
+  const [enabled, setEnabled] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const r = await fetchCompassSenseSettings();
+      if (!mounted) return;
+      if (r.ok && r.compassEnabled === false) { setEnabled(false); return; }
+      if (r.ok && r.data) setSense(r.data);
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  const save = useCallback(async (patch: { presenceLevel?: CompassSensePresence; categories?: Record<string, boolean> }) => {
+    if (busy) return;
+    setBusy(true);
+    const r = await putCompassSenseSettings(patch);
+    if (r.ok && r.data) setSense(r.data);
+    setBusy(false);
+  }, [busy]);
+
+  if (!enabled || !sense) return null;
+
+  return (
+    <Section title="Compass Sense" Icon={Bell}>
+      <Text style={s.fieldSubLabel}>
+        Proactive nudges that stay quiet unless something genuinely useful comes up.
+        Everything is enforced server-side with daily caps and quiet hours.
+      </Text>
+      <Text style={[s.fieldLabel, { marginTop: space.sm }]}>Presence level</Text>
+      {SENSE_PRESENCE_LEVELS.map((p) => (
+        <Pressable
+          key={p.key}
+          style={s.radioRow}
+          onPress={() => save({ presenceLevel: p.key })}
+        >
+          <View style={[s.radio, sense.presenceLevel === p.key && s.radioActive]}>
+            {sense.presenceLevel === p.key && <View style={s.radioDot} />}
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={s.radioLabel}>{p.label}</Text>
+            <Text style={s.fieldSubLabel}>{p.sub}</Text>
+          </View>
+        </Pressable>
+      ))}
+      {sense.presenceLevel !== 'passive' && (
+        <>
+          <Text style={[s.fieldLabel, { marginTop: space.md }]}>Nudge categories</Text>
+          {SENSE_CATEGORY_ROWS.map((c) => (
+            <ToggleRow
+              key={c.key}
+              label={c.label}
+              sub={c.sub}
+              value={sense.categories[c.key] !== false}
+              onChange={(v) => save({ categories: { [c.key]: v } })}
+            />
+          ))}
+        </>
+      )}
+    </Section>
   );
 }
 
@@ -401,6 +489,9 @@ export default function CompassPreferencesScreen() {
             />
           ))}
         </Section>
+
+        {/* ── Compass Sense ── */}
+        <SenseSection />
 
         {/* ── Visibility Rewards ── */}
         <Section title="Visibility Rewards" Icon={Zap}>

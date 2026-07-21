@@ -426,3 +426,54 @@ State when the standing brief was installed:
   unchanged and remain covered by the Phase 5–9 fallback precedent.)
 - Out of scope honored: no proactive notifications (Phase 11), no live
   session mode (Phase 12).
+
+## Phase 11 — Compass Sense (2026-07-20)
+
+- New `src/compass/CompassSenseEngine.ts` — proactive intelligence that is
+  silent by default and speaks only on genuine, data-backed signals:
+  - `saved_event_starting` — an explicitly saved event (`event_saves`)
+    starts within 2 hours (cancelled/deleted states excluded).
+  - `leave_earlier` — a pending route stop's planned arrival cannot be met
+    by the remaining leg travel time (+10 min buffer) — `route_plans` /
+    `route_stops` / `route_legs`; one timing nudge per plan.
+  - `weather_change` — rain (or a clear window) in the live Open-Meteo
+    forecast, and only when the in-progress trip has real plan items today
+    (no plans → silence; no forecast → silence).
+  - `circle_plan_change` — a meetup the user RSVPed going/maybe was
+    cancelled/confirmed within the last 2 hours.
+  - `free_time_block` — daytime only, on a planned day, when no plan item
+    starts within 3 hours (labelled `ai_inference`; all others
+    `verified_live` via Phase 8 `makeConfidence`).
+- Presence & permissions, enforced server-side before anything is sent:
+  Passive (default) is fully silent — signals are not even evaluated;
+  Aware allows only time-critical categories (timing/events/weather,
+  3/day cap); Active allows all five (6/day cap). Per-category permissions
+  stored in `compass_sense_settings` are honored regardless of level.
+- Over-notification protections: durable dedupe via `compass_sense_nudges`
+  (same dedupe key never delivers twice in 24 h), per-day caps, and the
+  user's `notification_preferences` quiet window silences every Sense nudge
+  (reuses `isQuietHours`). A simulated 12-signal storm delivers exactly the
+  daily cap and suppresses the rest.
+- Delivery through the existing pathway: `NotificationService.create` +
+  `NotificationRouter.route`, category `compass`, new
+  `compass.sense.*` templates; every nudge deep-links to a real surface
+  (`/event/:id`, `/route-plan/:id`, `/trip/:id`, `/meetup/:id`) with honest
+  copy and the confidence snapshot in metadata.
+- Routes (`src/routes/compassSense.ts`, COMPASS_ENABLED-gated with the
+  honest fallback envelope): GET/PUT `/api/compass/sense/settings`,
+  POST `/api/compass/sense/check`, GET `/api/compass/sense/nudges`.
+- Migration `20260726_compass_sense.sql` (applied live via Management API):
+  `compass_sense_settings` + `compass_sense_nudges` with own-row RLS.
+- Mobile: "Compass Sense" section in `app/compass-preferences.tsx` —
+  presence radio (Passive/Aware/Active) + per-category switches, backed by
+  `fetchCompassSenseSettings` / `putCompassSenseSettings` in
+  `services/compass.ts`; hidden when Compass is disabled.
+- Tests: `src/test/compass-sense.test.ts` (16 tests — auth, disabled-flag
+  fallback, default settings, PUT validation, Passive silence with genuine
+  signals present, no-signal silence, saved-event window + deep link +
+  confidence, leave-earlier genuine-vs-ample-time, weather only with real
+  plans, category permission, aware-vs-active gating, quiet hours, dedupe,
+  12-signal storm bounded at the cap, free-time daytime gate, nudge log).
+  Also registered the previously unregistered `compass-home.test.ts` in the
+  suite. Out of scope (per roadmap): live sessions (Phase 12), re-planning
+  actions (Phase 13) — Sense flags, never fixes.

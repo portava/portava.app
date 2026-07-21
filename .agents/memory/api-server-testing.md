@@ -25,3 +25,6 @@ description: How to run api-server tests without timeouts, and fake-client pitfa
 
 ## Supabase error-return refactors vs partial fakes
 When replacing the try/catch anti-pattern (supabase-js never throws; check `{ error }` instead), any-typed clients exercised by test fakes need care: partial fake clients (e.g. intelligence.test.ts) implement only some builder methods — calling a missing one (`.upsert`) throws a real TypeError. For `client: any` params, keep a narrow try/catch AND the explicit `if (error)` check; for typed `SupabaseClient` params, drop the try/catch entirely.
+
+## Test registration is manual (2026-07-20)
+New `src/test/*.test.ts` files are NOT auto-discovered — they must be appended to the `test` script list in `artifacts/api-server/package.json` or they silently never run (compass-home.test.ts shipped unregistered in Phase 10 and was only caught in Phase 11). Always verify your new file appears in that list.
