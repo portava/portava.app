@@ -554,6 +554,57 @@ function assistantInserts(client: any): any[] {
     .filter((m: any) => m.role === "assistant");
 }
 
+// ── I. Summarise re-prompt empty — plain-text fallback ────────────────────────
+// When the forced-final round AND the summarise re-prompt both return empty
+// content, the handler must substitute an honest plain-text fallback sentence
+// (not the generic "temporarily unavailable" server-outage copy).
+
+describe("I. Summarise re-prompt empty content fallback", () => {
+  it("returns the found-results fallback sentence when both forced-final and summarise re-prompt return empty content", async () => {
+    const client = makeClient();
+    _setTestClient(client, "test-token");
+
+    // All main LLM calls (the tool-calling loop rounds AND the summarise
+    // re-prompt) return null content so finalRaw stays "".
+    // The classifier call (max_completion_tokens=60, temperature=0) gets a
+    // valid reply so it doesn't short-circuit the flow.
+    _setTestOpenAI({
+      chat: {
+        completions: {
+          create: async (opts: any) => {
+            const isClassifier = opts.max_completion_tokens === 60 && opts.temperature === 0;
+            if (isClassifier) {
+              return {
+                choices: [{
+                  message: { content: JSON.stringify({ intent: "question", confidence: 0.9 }), role: "assistant" },
+                }],
+              };
+            }
+            // Forced-final round and summarise re-prompt: return null content.
+            return { choices: [{ message: { content: null, role: "assistant" } }] };
+          },
+        },
+      },
+    } as any);
+
+    const { status, body } = await ask({ prompt: "What is near me?" });
+    assert.equal(status, 200, "should return 200");
+    assert.ok(typeof body.message === "string", "should return a message");
+    // Must be the specific found-results fallback, NOT the server-outage copy.
+    assert.ok(
+      (body.message as string).toLowerCase().includes("found some results") ||
+      (body.message as string).toLowerCase().includes("putting them into words"),
+      `should use found-results fallback, got: "${body.message}"`,
+    );
+    assert.ok(
+      !(body.message as string).toLowerCase().includes("temporarily unavailable"),
+      "must NOT use the server-outage fallback copy",
+    );
+    // Not marked as fallback:true — the model did execute, it just returned no text.
+    assert.ok(!body.fallback, "should not be marked fallback:true");
+  });
+});
+
 describe("H. SSE client disconnect mid-answer", () => {
   it("aborts the upstream model stream and persists no assistant message", async () => {
     const client = makeClient();

@@ -970,6 +970,15 @@ const ALLOWED_QUICK_ACTION_TYPES = new Set([
 const HONEST_FALLBACK_MESSAGE =
   "Compass AI assistant is temporarily unavailable. Please try again shortly.";
 
+/**
+ * Shown when the tool-calling loop found results but both the forced-final
+ * round and the summarise re-prompt returned empty content. Distinct from
+ * HONEST_FALLBACK_MESSAGE (which implies a server outage) — here the model
+ * responded but produced no text, so the phrasing is gentler.
+ */
+const SUMMARISE_EMPTY_FALLBACK_MESSAGE =
+  "I found some results but had trouble putting them into words. Try asking again.";
+
 const askBodySchema = z.object({
   prompt:              z.string().min(1).max(1000),
   city:                z.string().max(80).optional(),
@@ -1481,7 +1490,10 @@ router.post("/compass/ask", async (req, res) => {
         (delta) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify({ delta })}\n\n`); },
         clientAbort.signal,
       );
-      const { message, payload, quickActions } = _parseModelResponse(finalRaw);
+      const _parsed = _parseModelResponse(finalRaw);
+      const message      = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
+      const payload      = _parsed.payload;
+      const quickActions = _parsed.quickActions;
       // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
       // outMeta tracks how many model-declared ids were not found in the tool log
       // (hallucinated references). When no blocks were declared, synthesis runs
@@ -1539,7 +1551,10 @@ router.post("/compass/ask", async (req, res) => {
     const { finalRaw, toolLog, proposals } = await runToolCallingLoop(
       sc, user.id, guardProfile, messages as any, req.log,
     );
-    const { message, payload, quickActions } = _parseModelResponse(finalRaw);
+    const _parsed = _parseModelResponse(finalRaw);
+    const message      = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
+    const payload      = _parsed.payload;
+    const quickActions = _parsed.quickActions;
     // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
     // outMeta tracks how many model-declared ids were not found in the tool log
     // (hallucinated references). When no blocks were declared, synthesis runs
