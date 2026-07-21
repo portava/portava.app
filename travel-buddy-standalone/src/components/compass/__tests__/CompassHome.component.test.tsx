@@ -134,4 +134,28 @@ describe('CompassHome', () => {
     expect(screen.queryByText('Starting soon')).toBeNull();
     expect(screen.getByText('What should I do right now')).toBeTruthy();
   });
+
+  it('refetches when refreshNonce bumps, keeps cards visible, and signals onRefreshed', async () => {
+    mockFetchCompassHome.mockResolvedValue({ ok: true, data: FULL_HOME });
+    const onRefreshed = jest.fn();
+    const view = await render(
+      <CompassHome onAsk={jest.fn()} refreshNonce={0} onRefreshed={onRefreshed} />,
+    );
+    await waitFor(() => expect(screen.getByText('Best next move')).toBeTruthy());
+    expect(mockFetchCompassHome).toHaveBeenCalledTimes(1);
+
+    // Second fetch resolves with an updated payload
+    mockFetchCompassHome.mockResolvedValue({
+      ok: true,
+      data: { ...FULL_HOME, bestNextMove: { ...FULL_HOME.bestNextMove, title: 'Night market crawl' } },
+    });
+    view.rerender(<CompassHome onAsk={jest.fn()} refreshNonce={1} onRefreshed={onRefreshed} />);
+
+    // Existing cards stay visible while refreshing (no flicker to blank)
+    expect(screen.getByText('Rooftop DJ set')).toBeTruthy();
+
+    await waitFor(() => expect(onRefreshed).toHaveBeenCalledTimes(1));
+    expect(mockFetchCompassHome).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('Night market crawl')).toBeTruthy();
+  });
 });

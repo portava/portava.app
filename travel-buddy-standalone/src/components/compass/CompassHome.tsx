@@ -12,8 +12,8 @@
  * Honesty rules: every section is backed by server data; sections with no
  * real data (null/empty) render nothing. No template cards, no placeholders.
  */
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator, AppState } from 'react-native';
 import {
   Compass, Sparkles, Users, CalendarClock, Moon, CloudSun, Sun,
   Zap, Martini, UserPlus, Map as MapIcon, Shuffle, Plane,
@@ -95,18 +95,62 @@ function EventRow({ ev }: { ev: CompassHomeEvent }) {
 
 // ── Public component ──────────────────────────────────────────────────────────
 
-export function CompassHome({ onAsk }: { onAsk: (prompt: string) => void }) {
+/** Content older than this refetches automatically when the app foregrounds. */
+export const HOME_STALE_MS = 5 * 60 * 1000;
+
+export function CompassHome({
+  onAsk,
+  refreshNonce = 0,
+  onRefreshed,
+}: {
+  onAsk: (prompt: string) => void;
+  /** Bump to trigger a silent refetch (pull-to-refresh). Existing cards stay visible. */
+  refreshNonce?: number;
+  /** Called when a nonce-triggered refetch settles (success or failure). */
+  onRefreshed?: () => void;
+}) {
   const [home, setHome] = useState<CompassHomeResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const loadedAt = useRef(0);
+  const inFlight = useRef(false);
+  const onRefreshedRef = useRef(onRefreshed);
+  onRefreshedRef.current = onRefreshed;
 
-  const load = useCallback(() => {
+  // Silent refetch: existing cards stay visible — only the initial load shows a spinner.
+  const load = useCallback((done?: () => void) => {
+    if (inFlight.current) { done?.(); return; }
+    inFlight.current = true;
     fetchCompassHome()
-      .then((r) => { if (r.ok && r.data) setHome(r.data); })
+      .then((r) => {
+        if (r.ok && r.data) {
+          setHome(r.data);
+          loadedAt.current = Date.now();
+        }
+      })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => {
+        inFlight.current = false;
+        setLoading(false);
+        done?.();
+      });
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Pull-to-refresh from the parent scroll view.
+  useEffect(() => {
+    if (refreshNonce > 0) load(() => onRefreshedRef.current?.());
+  }, [refreshNonce, load]);
+
+  // Foreground staleness refetch: returning to the app after a while refreshes quietly.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && loadedAt.current > 0 && Date.now() - loadedAt.current > HOME_STALE_MS) {
+        load();
+      }
+    });
+    return () => sub.remove();
+  }, [load]);
 
   function bestMoveTap() {
     const move = home?.bestNextMove;
