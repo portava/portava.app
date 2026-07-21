@@ -380,6 +380,32 @@ export async function getStampWorkerHealth(): Promise<ApiResult<{
   return adminGet('/api/admin/stamps/worker-health');
 }
 
+// ── Reconciler run history ─────────────────────────────────────────────────────
+
+/**
+ * A single reconciler run as returned by GET /admin/stamps/reconcile/runs.
+ * Counts are parsed server-side from the run-summary log row; `fatalError`
+ * is non-null when the run aborted. `parseError` is set when the stored
+ * summary JSON could not be parsed (counts default to 0 in that case).
+ */
+export interface ReconcilerRun {
+  id: string | null;
+  runId: string | null;
+  ranAt: string | null;
+  resolved: number;
+  flagged: number;
+  skipped: number;
+  enqueued: number;
+  combos: number;
+  fatalError: string | null;
+  ok: boolean;
+  parseError?: boolean;
+}
+
+export async function getReconcilerRuns(limit = 20): Promise<ApiResult<{ runs: ReconcilerRun[]; total: number }>> {
+  return adminGet(`/api/admin/stamps/reconcile/runs?limit=${limit}`);
+}
+
 // ── Public catalog batch fetch ─────────────────────────────────────────────────
 
 export async function batchFetchCatalogEntries(catalogIds: string[]): Promise<ApiResult<{

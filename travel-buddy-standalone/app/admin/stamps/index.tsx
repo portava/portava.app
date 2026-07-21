@@ -14,7 +14,7 @@ import {
   View,
 } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { ArrowLeft, Image as ImageIcon, Clock, CheckCircle, AlertTriangle, XCircle, Activity, MapPin, Copy } from 'lucide-react-native';
+import { ArrowLeft, Image as ImageIcon, Clock, CheckCircle, AlertTriangle, XCircle, Activity, MapPin, Copy, History } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
@@ -217,6 +217,10 @@ export default function StampStudioIndex() {
             <Pressable style={styles.linkRow} onPress={() => router.push('/admin/stamps/failed' as any)}>
               <XCircle size={18} color="#EF4444" strokeWidth={2} />
               <Text style={styles.linkText}>Failed generation jobs ({statusCounts.retryable_failed ?? 0})</Text>
+            </Pressable>
+            <Pressable style={styles.linkRow} onPress={() => router.push('/admin/stamps/reconciler-runs' as any)}>
+              <History size={18} color={color.deep} strokeWidth={2} />
+              <Text style={styles.linkText}>Reconciler run history</Text>
             </Pressable>
             <Pressable style={styles.linkRow} onPress={() => router.push('/admin/stamps/duplicates' as any)}>
               <Copy size={18} color={color.deep} strokeWidth={2} />
