@@ -8,6 +8,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Pressable,
   RefreshControl,
@@ -16,11 +17,15 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
-import { ArrowLeft, CheckCircle2, History, TriangleAlert } from 'lucide-react-native';
+import { ArrowLeft, CheckCircle2, History, Play, TriangleAlert } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
-import { getReconcilerRuns, type ReconcilerRun } from '../../../src/services/adminStamps';
+import {
+  getReconcilerRuns,
+  triggerReconcilerRun,
+  type ReconcilerRun,
+} from '../../../src/services/adminStamps';
 
 const COUNT_FIELDS: Array<{ key: keyof ReconcilerRun; label: string }> = [
   { key: 'resolved', label: 'resolved' },
@@ -38,6 +43,7 @@ export default function ReconcilerRunsScreen() {
   const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError]   = useState<string | null>(null);
+  const [running, setRunning]       = useState(false);
 
   const load = useCallback(async () => {
     const res = await getReconcilerRuns(50);
@@ -54,6 +60,29 @@ export default function ReconcilerRunsScreen() {
   useEffect(() => { load(); }, [load]);
 
   const onRefresh = useCallback(() => { setRefreshing(true); load(); }, [load]);
+
+  const startRun = useCallback(async () => {
+    setRunning(true);
+    const res = await triggerReconcilerRun();
+    if (!res.ok) {
+      Alert.alert('Error', (res as any).error ?? 'Failed to run reconciler');
+    }
+    // Refresh the history either way — a failed run may still have logged a row.
+    await load();
+    setRunning(false);
+  }, [load]);
+
+  const onRunNow = useCallback(() => {
+    if (running) return;
+    Alert.alert(
+      'Run reconciler now?',
+      'This resolves all unlinked stamps against the catalog. It is idempotent and safe to re-run, but may take a moment.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Run now', onPress: () => { startRun(); } },
+      ],
+    );
+  }, [running, startRun]);
 
   const renderRun = ({ item }: { item: ReconcilerRun }) => {
     const failed = !!item.fatalError;
@@ -106,6 +135,20 @@ export default function ReconcilerRunsScreen() {
         </Pressable>
         <Text style={styles.title}>Reconciler Runs</Text>
         <Text style={styles.count}>{runs.length}</Text>
+        <Pressable
+          testID="run-now-btn"
+          onPress={onRunNow}
+          disabled={running}
+          style={[styles.runBtn, running && styles.runBtnDisabled]}
+          accessibilityState={{ disabled: running }}
+        >
+          {running ? (
+            <ActivityIndicator size="small" color="#FFFFFF" testID="run-now-spinner" />
+          ) : (
+            <Play size={14} color="#FFFFFF" strokeWidth={2} />
+          )}
+          <Text style={styles.runBtnText}>{running ? 'Running…' : 'Run now'}</Text>
+        </Pressable>
       </View>
 
       {loading ? (
@@ -139,6 +182,9 @@ const styles = StyleSheet.create({
   backBtn:    { marginRight: space.sm },
   title:      { ...t.heading, color: color.ink, flex: 1 },
   count:      { ...t.small, color: color.mute },
+  runBtn:     { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: color.ink, borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 6, marginLeft: space.sm },
+  runBtnDisabled: { opacity: 0.5 },
+  runBtnText: { fontSize: 12, fontWeight: '700', color: '#FFFFFF' },
   center:     { flex: 1, justifyContent: 'center', alignItems: 'center' },
   row:        { flexDirection: 'row', paddingHorizontal: space.md, paddingVertical: space.md, gap: space.sm },
   rowIcon:    { paddingTop: 2 },
