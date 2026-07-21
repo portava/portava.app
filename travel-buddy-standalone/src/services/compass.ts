@@ -580,6 +580,190 @@ export async function postCompassAsk(
   }
 }
 
+// ── Streaming ask (SSE) ───────────────────────────────────────────────────────
+// The server streams the raw model output (a JSON envelope) as `delta` events,
+// then a `done` event with the parsed/validated fields (conversationId, payload,
+// quickActions, pendingProposals, uiBlocks…). The final message text is NOT on
+// the done event — the client reconstructs it from the accumulated raw stream.
+
+/**
+ * Extract the value of the envelope's "message" field from a PARTIAL raw model
+ * stream, decoding JSON string escapes as far as the stream has progressed.
+ * Returns '' until the message field starts. If the stream doesn't look like a
+ * JSON envelope, the raw text is shown as-is (matches server fallback parse).
+ * Exported for tests.
+ */
+export function extractPartialCompassMessage(raw: string): string {
+  const cleaned = raw.replace(/^\s*```(?:json)?\n?/, '');
+  const trimmed = cleaned.trimStart();
+  if (!trimmed.startsWith('{')) {
+    // Plain-text answer — strip a trailing fence if one has arrived.
+    return cleaned.replace(/\n?```\s*$/, '');
+  }
+  const key = trimmed.indexOf('"message"');
+  if (key === -1) return '';
+  let i = trimmed.indexOf(':', key + 9);
+  if (i === -1) return '';
+  i = trimmed.indexOf('"', i + 1);
+  if (i === -1) return '';
+  let out = '';
+  for (let j = i + 1; j < trimmed.length; j++) {
+    const ch = trimmed[j]!;
+    if (ch === '\\') {
+      const next = trimmed[j + 1];
+      if (next === undefined) break; // dangling escape mid-stream
+      if (next === 'n') out += '\n';
+      else if (next === 't') out += '\t';
+      else if (next === 'r') out += '\r';
+      else if (next === 'u') {
+        const hex = trimmed.slice(j + 2, j + 6);
+        if (hex.length < 4) break; // incomplete \uXXXX mid-stream
+        const code = parseInt(hex, 16);
+        if (!Number.isNaN(code)) out += String.fromCharCode(code);
+        j += 4;
+      } else out += next;
+      j++;
+      continue;
+    }
+    if (ch === '"') break; // message string closed
+    out += ch;
+  }
+  return out;
+}
+
+/**
+ * Finalize the assistant message from the complete raw model output — same
+ * logic as the server's envelope parse (strip fences, JSON.parse, take
+ * .message, else the raw text). Exported for tests.
+ */
+export function finalizeCompassMessage(raw: string): string {
+  const cleaned = raw.trim().replace(/^```(?:json)?\n?/m, '').replace(/\n?```$/m, '');
+  try {
+    const p = JSON.parse(cleaned);
+    if (p && typeof p.message === 'string') return p.message.slice(0, 2000);
+  } catch { /* not JSON — plain message */ }
+  return raw.slice(0, 2000);
+}
+
+/**
+ * Split an SSE text buffer into complete parsed `data:` events plus the
+ * unterminated remainder to carry into the next chunk. Exported for tests.
+ */
+export function splitCompassSseBuffer(buffer: string): { events: Array<Record<string, unknown>>; rest: string } {
+  const parts = buffer.split('\n\n');
+  const rest = parts.pop() ?? '';
+  const events: Array<Record<string, unknown>> = [];
+  for (const part of parts) {
+    for (const line of part.split('\n')) {
+      if (!line.startsWith('data:')) continue;
+      try {
+        const parsed = JSON.parse(line.slice(5).trim());
+        if (parsed && typeof parsed === 'object') events.push(parsed);
+      } catch { /* skip malformed event */ }
+    }
+  }
+  return { events, rest };
+}
+
+/** Streaming-capable fetch: expo/fetch on native (RN's global fetch has no
+ *  response.body streams); the global fetch on web/tests. */
+function getStreamFetch(): typeof fetch | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mod = require('expo/fetch') as { fetch?: typeof fetch };
+    if (typeof mod?.fetch === 'function') return mod.fetch;
+  } catch { /* expo/fetch unavailable (web bundles, node tests) */ }
+  return typeof fetch === 'function' ? fetch : null;
+}
+
+let _testStreamFetch: typeof fetch | null | undefined;
+/** For tests only — override the streaming fetch implementation. */
+export function _setTestStreamFetch(f: typeof fetch | null | undefined): void { _testStreamFetch = f; }
+
+export interface CompassAskStreamHandlers {
+  /** Called with the progressively decoded assistant message (already stripped
+   *  of the JSON envelope scaffolding) each time new delta text arrives. */
+  onDelta?: (messageSoFar: string) => void;
+}
+
+/**
+ * Streaming variant of postCompassAsk. Consumes the SSE delta events for a
+ * progressive-typing UI and finalizes message/quickActions/pendingProposals/
+ * uiBlocks from the done event. On any streaming failure (transport error,
+ * unsupported streams, missing done event, or a server error event) it falls
+ * back to the plain non-streaming postCompassAsk — callers always get the
+ * same result envelope. `streamed` reports whether deltas were live.
+ */
+export async function postCompassAskStream(
+  prompt: string,
+  opts: { city?: string; conversationId?: string } = {},
+  handlers: CompassAskStreamHandlers = {},
+): Promise<{ ok: boolean; data?: CompassAskResponse; error?: string; streamed?: boolean }> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const doFetch = _testStreamFetch !== undefined ? _testStreamFetch : getStreamFetch();
+    if (!doFetch) throw new Error('stream_unsupported');
+    const token = await freshToken();
+    const r = await doFetch(`${apiBase()}/api/compass/ask`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ prompt, ...opts, stream: true }),
+    });
+    if (!r.ok) return { ok: false, error: `http_${r.status}`, streamed: false };
+    const body: any = (r as any).body;
+    if (!body || typeof body.getReader !== 'function') throw new Error('stream_unsupported');
+
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let raw = '';
+    let doneEvent: Record<string, unknown> | null = null;
+    let serverError = false;
+    for (;;) {
+      const { value, done: eof } = await reader.read();
+      if (value) buffer += decoder.decode(value, { stream: true });
+      if (eof) buffer += '\n\n'; // flush a final unterminated event, if any
+      const { events, rest } = splitCompassSseBuffer(buffer);
+      buffer = rest;
+      for (const ev of events) {
+        if (typeof ev['delta'] === 'string') {
+          raw += ev['delta'] as string;
+          if (handlers.onDelta) {
+            const partial = extractPartialCompassMessage(raw);
+            if (partial) handlers.onDelta(partial);
+          }
+        } else if (ev['done']) {
+          doneEvent = ev;
+        } else if (ev['error']) {
+          serverError = true;
+        }
+      }
+      if (eof) break;
+    }
+    if (serverError || !doneEvent) throw new Error('stream_incomplete');
+
+    const data: CompassAskResponse = {
+      conversationId:   (doneEvent['conversationId'] as string | null | undefined) ?? null,
+      message:          finalizeCompassMessage(raw),
+      payload:          (doneEvent['payload'] as CompassAskPayload | null | undefined) ?? null,
+      quickActions:     Array.isArray(doneEvent['quickActions']) ? doneEvent['quickActions'] as CompassQuickAction[] : [],
+      pendingProposals: Array.isArray(doneEvent['pendingProposals']) ? doneEvent['pendingProposals'] as CompassPendingProposal[] : [],
+      uiBlocks:         Array.isArray(doneEvent['uiBlocks']) ? doneEvent['uiBlocks'] as CompassUiBlock[] : [],
+      promptVersion:    typeof doneEvent['promptVersion'] === 'string' ? doneEvent['promptVersion'] as string : '',
+      intent:           (doneEvent['intent'] as CompassAskResponse['intent']) ?? undefined,
+    };
+    return { ok: true, data, streamed: true };
+  } catch {
+    // Non-streaming fallback — same request minus stream:true.
+    const fallback = await postCompassAsk(prompt, opts);
+    return { ...fallback, streamed: false };
+  }
+}
+
 /** Confirm a pending add_to_trip proposal — this is the ONLY path that executes the write. */
 export async function confirmCompassProposal(
   proposalId: string,

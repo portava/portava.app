@@ -8,7 +8,7 @@ import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarC
 import { Sparkles, Send, Plane, MessageCircle, Map, PlusCircle } from 'lucide-react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
-  postCompassFrontloadEvent, postCompassAsk,
+  postCompassFrontloadEvent, postCompassAskStream,
   confirmCompassProposal, declineCompassProposal,
 } from '../../src/services/compass';
 import type { CompassAskResponse, CompassPendingProposal, CompassUiPlace } from '../../src/services/compass';
@@ -24,7 +24,9 @@ type ChatEntry =
   | { kind: 'user';    id: string; text: string }
   | { kind: 'ai_text'; id: string; text: string }
   | { kind: 'rec';     id: string; rec: CompassAskResponse }
-  | { kind: 'typing';  id: string };
+  | { kind: 'typing';  id: string }
+  // Live-streaming assistant reply — replaced by a 'rec' entry on finalize.
+  | { kind: 'stream';  id: string; text: string };
 
 export default function AiChat() {
   const router = useRouter();
@@ -72,10 +74,20 @@ export default function AiChat() {
     setLoading(true);
     scrollToEnd();
 
-    const result = await postCompassAsk(text);
+    // Stream the reply so it types out live; postCompassAskStream falls back
+    // to the plain non-streaming request on any SSE failure.
+    const streamId = 'stream_' + Date.now();
+    const result = await postCompassAskStream(text, {}, {
+      onDelta: (messageSoFar) => {
+        setEntries((prev) => {
+          const without = prev.filter((e) => e.id !== typingId && e.id !== streamId);
+          return [...without, { kind: 'stream', id: streamId, text: messageSoFar }];
+        });
+      },
+    });
 
     setEntries((prev) => {
-      const without = prev.filter((e) => e.id !== typingId);
+      const without = prev.filter((e) => e.id !== typingId && e.id !== streamId);
       if (!result.ok || !result.data) {
         return [
           ...without,
@@ -235,6 +247,17 @@ export default function AiChat() {
                   <Text style={styles.aiHeadText}>AI BUDDY</Text>
                 </View>
                 <ActivityIndicator size="small" color={color.signal} style={{ marginTop: 4 }} />
+              </View>
+            );
+          }
+          if (e.kind === 'stream') {
+            return (
+              <View key={e.id} style={styles.aiBubble}>
+                <View style={styles.aiHead}>
+                  <Sparkles size={15} color={color.signal} />
+                  <Text style={styles.aiHeadText}>AI BUDDY</Text>
+                </View>
+                <Text style={styles.aiText}>{e.text}▌</Text>
               </View>
             );
           }
