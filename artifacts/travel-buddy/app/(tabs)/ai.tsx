@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet,
-  ActivityIndicator, ScrollView,
+  ActivityIndicator, ScrollView, RefreshControl,
 } from 'react-native';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
@@ -35,6 +35,14 @@ export default function AiChat() {
   const [layoverOpen, setLayoverOpen] = useState(false);
   const scroll = useRef<ScrollView>(null);
   const navScrollHandler = useNavBarScrollHandler();
+
+  // Pull-to-refresh for the Compass Home surface (empty-chat state only).
+  const [refreshing, setRefreshing]     = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const onPullRefresh = useCallback(() => {
+    setRefreshing(true);
+    setRefreshNonce((n) => n + 1);
+  }, []);
 
   useFocusEffect(useCallback(() => {
     postCompassFrontloadEvent({ eventType: 'navigation', screen: 'ai_chat' }).catch(() => {});
@@ -180,12 +188,19 @@ export default function AiChat() {
         contentContainerStyle={{ padding: space.lg, gap: space.md }}
         onScroll={navScrollHandler}
         scrollEventThrottle={16}
+        refreshControl={entries.length === 0 ? (
+          <RefreshControl refreshing={refreshing} onRefresh={onPullRefresh} tintColor={color.signal} />
+        ) : undefined}
       >
         {/* Phase 12: live-session surface — explicit start/stop, nudges, summary. */}
         <CompassLive />
         {entries.length === 0 ? (
           // Phase 10: context-aware Compass Home replaces the blank-chat state.
-          <CompassHome onAsk={(prompt) => send(prompt)} />
+          <CompassHome
+            onAsk={(prompt) => send(prompt)}
+            refreshNonce={refreshNonce}
+            onRefreshed={() => setRefreshing(false)}
+          />
         ) : null}
         {entries.map((e) => {
           if (e.kind === 'user') {
