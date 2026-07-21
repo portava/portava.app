@@ -17,6 +17,7 @@ import {
   type FriendRow,
   type FriendResult,
 } from '../services/friends.ts';
+import { onFriendsChanged, emitFriendsChanged } from '../lib/friendEvents.ts';
 
 /** Friend status for a single user (e.g., on their profile page). */
 export function useFriendStatus(userId: string | null | undefined) {
@@ -48,6 +49,9 @@ export function useFriendStatus(userId: string | null | undefined) {
       const outcome = resolveSendFriendRequestOutcome(res.data as any);
       setStatus(outcome.status);
       setRequestId(outcome.requestId);
+      // Auto-accepted: a new friendship exists — refresh already-mounted
+      // friends/requests surfaces so they don't show stale data.
+      if (outcome.autoAccepted) emitFriendsChanged();
     }
     return res;
   }, [userId]);
@@ -55,7 +59,7 @@ export function useFriendStatus(userId: string | null | undefined) {
   const accept = useCallback(async (): Promise<FriendResult<any>> => {
     if (!requestId) return { ok: false, data: null, errorKind: 'config_error' };
     const res = await acceptFriendRequest(requestId);
-    if (res.ok) { setStatus('friends'); setRequestId(undefined); }
+    if (res.ok) { setStatus('friends'); setRequestId(undefined); emitFriendsChanged(); }
     return res;
   }, [requestId]);
 
@@ -92,10 +96,15 @@ export function useIncomingFriendRequests() {
   }, []);
 
   useEffect(() => { reload(); }, [reload]);
+  // Refresh when a friendship changes elsewhere (e.g. auto-accepted request).
+  useEffect(() => onFriendsChanged(reload), [reload]);
 
   const accept = useCallback(async (requestId: string) => {
     const res = await acceptFriendRequest(requestId);
-    if (res.ok) setData((prev) => prev.filter((r) => r.requestId !== requestId));
+    if (res.ok) {
+      setData((prev) => prev.filter((r) => r.requestId !== requestId));
+      emitFriendsChanged();
+    }
     return res;
   }, []);
 
@@ -124,6 +133,8 @@ export function useMyFriends() {
   }, []);
 
   useEffect(() => { reload(); }, [reload]);
+  // Refresh when a friendship changes elsewhere (e.g. auto-accepted request).
+  useEffect(() => onFriendsChanged(reload), [reload]);
 
   return { data, loading, error, reload };
 }
