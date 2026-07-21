@@ -1666,7 +1666,10 @@ export async function fetchCompassHome(): Promise<{
 }> {
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();
   try {
-    const r = await authedFetch('/api/compass/home');
+    // Send the device's real UTC offset so time-of-day buckets follow the
+    // traveler's clock (JS getTimezoneOffset() is inverted: UTC+8 → -480).
+    const tzOffsetMinutes = -new Date().getTimezoneOffset();
+    const r = await authedFetch(`/api/compass/home?tzOffsetMinutes=${tzOffsetMinutes}`);
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     return { ok: true, data: await r.json() };
   } catch {
