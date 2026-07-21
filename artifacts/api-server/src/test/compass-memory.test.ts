@@ -33,6 +33,7 @@ import {
   createMemory,
   scrubMemoryText,
   MEMORY_PROMPT_BUDGET_CHARS,
+  TAUGHT_CONFIDENCE_FLOOR,
 } from "../compass/CompassMemoryService.js";
 
 const ALICE = "a1a1a1a1-aaaa-aaaa-aaaa-000000000001";
@@ -477,6 +478,51 @@ describe("G. Contradiction resolution — newer preference wins", () => {
     assert.equal(client._db.compass_memories.length, 2, "high-confidence older memory kept");
     const older = client._db.compass_memories.find((m: Row) => m.content === "Loves steakhouses");
     assert.equal(older.confidence, 0.5, "older confidence halved");
+  });
+
+  it("repeated low-confidence contradictions never decay a taught memory below the floor", async () => {
+    const client = makeClient();
+    _setTestClient(client, true as any);
+    _setTestOpenAI(openAIError);
+    await createMemory(client, ALICE, {
+      scope: "long_term", category: "food", content: "Loves steakhouses", source: "taught", confidence: 1,
+    });
+
+    _setTestOpenAI(contradictionMock());
+    // Compression keeps re-extracting the same weak contradiction with
+    // slightly different phrasing (dedupe only blocks identical content).
+    for (let i = 0; i < 5; i++) {
+      await createMemory(client, ALICE, {
+        scope: "long_term", category: "food",
+        content: `Seems to prefer vegetarian spots (pass ${i})`,
+        source: "compressed", confidence: 0.4,
+      });
+    }
+
+    const taught = client._db.compass_memories.find((m: Row) => m.content === "Loves steakhouses");
+    assert.ok(taught, "taught memory still present");
+    assert.equal(taught.confidence, TAUGHT_CONFIDENCE_FLOOR, "taught confidence clamped at the floor");
+  });
+
+  it("non-taught memories can still decay below the taught floor", async () => {
+    const client = makeClient();
+    _setTestClient(client, true as any);
+    _setTestOpenAI(openAIError);
+    await createMemory(client, ALICE, {
+      scope: "long_term", category: "food", content: "Loves steakhouses", source: "compressed", confidence: 0.8,
+    });
+
+    _setTestOpenAI(contradictionMock());
+    for (let i = 0; i < 2; i++) {
+      await createMemory(client, ALICE, {
+        scope: "long_term", category: "food",
+        content: `Seems vegetarian (pass ${i})`,
+        source: "inferred", confidence: 0.1,
+      });
+    }
+
+    const older = client._db.compass_memories.find((m: Row) => m.content === "Loves steakhouses");
+    assert.equal(older.confidence, 0.2, "compressed memory decays freely (0.8 → 0.4 → 0.2)");
   });
 
   it("does not touch same-category memories in a different scope or when the model is unavailable", async () => {

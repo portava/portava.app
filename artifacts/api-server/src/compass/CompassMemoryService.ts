@@ -157,9 +157,18 @@ async function findContradictedMemories(
 }
 
 /**
+ * Explicitly taught memories never decay below this floor. Repeated
+ * low-confidence contradictions (e.g. the same weak insight re-extracted by
+ * compression on every pass) must not grind an explicit teaching to ~0
+ * without the user confirming the change.
+ */
+export const TAUGHT_CONFIDENCE_FLOOR = 0.5;
+
+/**
  * Supersede older memories contradicted by a newer one: when the newer memory
  * is at least as confident, the older is deleted; otherwise the older's
  * confidence is halved (decayed) so the newer preference still dominates.
+ * Taught memories never decay below TAUGHT_CONFIDENCE_FLOOR.
  * Per-row failures are non-fatal.
  */
 async function supersedeContradictedMemories(
@@ -173,10 +182,17 @@ async function supersedeContradictedMemories(
       if (newConfidence >= old.confidence) {
         await sc.from("compass_memories").delete().eq("id", old.id).eq("user_id", userId);
       } else {
+        let decayed = Math.round(old.confidence * 0.5 * 100) / 100;
+        // Taught memories are explicit user statements — repeated weak
+        // contradictions must not grind them below the floor.
+        if (old.source === "taught") {
+          decayed = Math.max(decayed, TAUGHT_CONFIDENCE_FLOOR);
+        }
+        if (decayed >= old.confidence) continue; // nothing to decay
         await sc
           .from("compass_memories")
           .update({
-            confidence: Math.round(old.confidence * 0.5 * 100) / 100,
+            confidence: decayed,
             updated_at: new Date().toISOString(),
           })
           .eq("id", old.id)
