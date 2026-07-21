@@ -24,6 +24,7 @@ import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { logger } from "../lib/logger";
 import { clearReminderDedup } from "../lib/tripReminderScheduler";
+import { invalidateCompassHomeCache } from "./compassHome.js";
 import {
   runSchemaDriftCheck,
   getCachedSchemaDriftResult,
@@ -1770,6 +1771,10 @@ router.post("/admin/deletion-requests/:id/execute", async (req, res) => {
   }).eq("id", userId);
 
   if (profileErr) { sendError(res, "db_error", profileErr.message); return; }
+
+  // Profile city/visibility changed — drop any cached Compass Home payload
+  // so the deleted account never serves stale personalised content.
+  invalidateCompassHomeCache(userId);
 
   // Mark state as deleted
   await sc.from("user_account_states")

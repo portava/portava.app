@@ -16,6 +16,7 @@ import { coarsenPosition, effectiveDiscoveryVisibility } from "../lib/mapTravele
 import { reverseGeocode } from "../services/geocodingService";
 import { checkAndRecordSnapshot, getUserTrustLevel, checkIpCityMismatch } from "../services/location/LocationSafetyService";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
+import { invalidateCompassHomeCache } from "./compassHome.js";
 import { createStamp } from "../services/passport/PassportStampService.js";
 import { createSuggestedMemory } from "../services/passport/PassportMemoryService.js";
 
@@ -151,6 +152,13 @@ router.post("/me/location-state", async (req, res) => {
     req.log.error({ err: error }, "location-state: upsert failed");
     sendError(res, "db_error", error.message);
     return;
+  }
+
+  // Compass Home reads currentCity from user_location_state — a city change
+  // (onboarding, manual pick, or GPS move) must be visible on the very next
+  // Home open, not up to the cache TTL later.
+  if (city !== undefined || manualCity !== undefined || country !== undefined) {
+    invalidateCompassHomeCache(user.id);
   }
 
   // Anti-fake GPS: run safety checks asynchronously for GPS fixes — non-blocking
