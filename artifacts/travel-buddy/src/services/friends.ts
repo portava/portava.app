@@ -107,7 +107,23 @@ export async function getFriendStatus(userId: string): Promise<FriendResult<Frie
   return apiGet(`/api/users/${userId}/friend-status`);
 }
 
-export async function sendFriendRequest(userId: string): Promise<FriendResult<{ requestId: string; status: string }>> {
+/**
+ * Resolve the local friend-status transition after a successful
+ * POST /users/:id/friend-request. The API auto-accepts when the other user
+ * already had a pending request to us — in that case the response is
+ * { status: "friends", autoAccepted: true } and the UI must jump straight
+ * to the friends state (no "Request Sent").
+ */
+export function resolveSendFriendRequestOutcome(
+  data: { requestId?: string; status?: string; autoAccepted?: boolean } | null | undefined,
+): { status: FriendStatus; requestId?: string; autoAccepted: boolean } {
+  if (data?.status === 'friends' || data?.autoAccepted) {
+    return { status: 'friends', requestId: undefined, autoAccepted: true };
+  }
+  return { status: 'outgoing_pending', requestId: data?.requestId, autoAccepted: false };
+}
+
+export async function sendFriendRequest(userId: string): Promise<FriendResult<{ requestId?: string; status: string; autoAccepted?: boolean }>> {
   return apiPost(`/api/users/${userId}/friend-request`);
 }
 

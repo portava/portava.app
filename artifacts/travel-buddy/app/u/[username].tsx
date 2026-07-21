@@ -77,8 +77,11 @@ function FriendButton({ userId, isOwn }: { userId: string; isOwn: boolean }) {
 
   async function run(action: () => Promise<any>) {
     setBusy(true);
-    await action();
+    const res = await action();
     setBusy(false);
+    if (res?.ok && (res.data as any)?.autoAccepted) {
+      Alert.alert("You're now friends", 'They had already sent you a request, so you are now connected.');
+    }
   }
 
   if (loading) {
