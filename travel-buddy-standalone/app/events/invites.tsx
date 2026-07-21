@@ -177,7 +177,7 @@ const styles = StyleSheet.create({
   retryText:     { ...t.small, color: color.onInk, fontWeight: '700' },
   emptyTitle:    { ...t.title, color: color.ink, fontSize: 18, fontWeight: '800' },
   emptySub:      { ...t.body, color: color.mute, textAlign: 'center' },
-  list:          { padding: space.lg, gap: space.md, paddingBottom: 60 },
+  list:          { padding: space.lg, gap: space.md, paddingBottom: 130 },
   card:          { backgroundColor: color.paperRaised, borderRadius: radius.lg, padding: space.lg, gap: space.md, ...shadow.card },
   inviterRow:    { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   inviterText:   { ...t.small, color: color.mute, flex: 1 },
