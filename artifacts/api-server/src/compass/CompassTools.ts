@@ -1085,7 +1085,10 @@ export async function executeCompassTool(
       case "get_user_profile":     raw = await toolGetUserProfile(sc, userId); break;
       case "get_current_trip":     raw = await toolGetCurrentTrip(sc, userId); break;
       case "search_places":        raw = await toolSearchPlaces(sc, profile, args); break;
-      case "search_events":        raw = await toolSearchEvents(sc, profile, args); break;
+      // search_events filters event hosts by the hidden-user set, so it must
+      // also re-resolve blocked/muted users per call (same reason as the
+      // Phase 9 social tools below) — a just-blocked host must not surface.
+      case "search_events":        raw = await toolSearchEvents(sc, await refreshHiddenUsers(sc, userId, profile), args); break;
       case "get_place_details":    raw = await toolGetPlaceDetails(sc, args); break;
       case "get_circle_activity":  raw = await toolGetCircleActivity(sc, profile, userId); break;
       case "check_trip_conflicts": raw = await toolCheckTripConflicts(sc, userId, args); break;

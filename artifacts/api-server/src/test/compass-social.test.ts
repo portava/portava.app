@@ -548,6 +548,17 @@ describe("F. mid-conversation block freshness", () => {
     assert.equal(result.compatibility, null, "just-blocked user must not be comparable");
   });
 
+  it("search_events: a just-blocked event HOST's events vanish despite the stale snapshot", async () => {
+    const db = groupFixture();
+    // Eve hosts ev-blocked; Alice blocks Eve mid-conversation (DB row only —
+    // the snapshot arrays are empty, exactly as they'd be mid-conversation).
+    db.blocks = [{ blocker_id: ALICE_ID, blocked_id: EVE_ID }];
+    const result: any = await executeCompassTool(makeClient(db), ALICE_ID, profileFor(), "search_events", { city: "Cebu" });
+    const ids = (result.candidates ?? []).map((c: any) => c.id);
+    assert.ok(!ids.includes("ev-blocked"), "event hosted by the just-blocked user must not surface in plain search");
+    assert.ok(!JSON.stringify(result).includes("Rooftop Party"), "no trace of the just-blocked host's event");
+  });
+
   it("fails safe: if the blocks refresh errors, the snapshot's hidden set still applies", async () => {
     const db = tripFixture([EVE_ID]);
     db.circle_visibility_settings = [sharingOn(BOB_ID), sharingOn(EVE_ID)];

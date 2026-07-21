@@ -221,6 +221,10 @@ describe("C. search_events", () => {
         { id: "ev1", title: "Beach cleanup", city: "Cebu", country: "PH", starts_at: future, category: "outdoors", host_id: BOB_ID, state: "published", visibility: "public" },
         { id: "ev2", title: "Food crawl", city: "Cebu", country: "PH", starts_at: future, category: "food", host_id: "safe-host", state: "published", visibility: "public" },
       ],
+      // search_events re-resolves hidden users from the DB per call (so a
+      // mid-conversation block takes effect) — the blocks table is the source
+      // of truth, not the snapshot arrays.
+      blocks: [{ blocker_id: ALICE_ID, blocked_id: BOB_ID }],
     });
     const profile = profileFor({ blockedUserIds: [BOB_ID] });
     const result: any = await executeCompassTool(makeClient(db), ALICE_ID, profile, "search_events", { city: "Cebu" });
