@@ -38,6 +38,11 @@ export default function AiChat() {
   const scroll = useRef<ScrollView>(null);
   const navScrollHandler = useNavBarScrollHandler();
 
+  // Auto-follow the newest text while a reply streams. Pauses when the user
+  // scrolls up mid-stream; resumes once they return near the bottom.
+  const followBottom = useRef(true);
+  const streamingRef = useRef(false);
+
   // Pull-to-refresh — always available. On the empty chat it refreshes the
   // Compass Home surface; mid-conversation it re-syncs the live-session
   // surface (deliberate semantics: the chat transcript is local and is never
@@ -58,6 +63,24 @@ export default function AiChat() {
     setTimeout(() => scroll.current?.scrollToEnd({ animated: true }), 80);
   }
 
+  // Wraps the nav-bar handler so we can also track whether the user is pinned
+  // to the bottom (within a small threshold) — standard chat auto-follow.
+  const onChatScroll = useCallback((e: any) => {
+    navScrollHandler(e);
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+    const distanceFromBottom =
+      contentSize.height - layoutMeasurement.height - contentOffset.y;
+    followBottom.current = distanceFromBottom < 48;
+  }, [navScrollHandler]);
+
+  // While streaming, keep pinned to the newest text as the content grows —
+  // unless the user has scrolled up.
+  const onContentSizeChange = useCallback(() => {
+    if (streamingRef.current && followBottom.current) {
+      scroll.current?.scrollToEnd({ animated: false });
+    }
+  }, []);
+
   async function send(promptOverride?: string) {
     const text = (promptOverride ?? input).trim();
     if (!text || loading) return;
@@ -72,6 +95,8 @@ export default function AiChat() {
       { kind: 'typing', id: typingId },
     ]);
     setLoading(true);
+    followBottom.current = true;   // a fresh send always re-pins to the bottom
+    streamingRef.current = true;
     scrollToEnd();
 
     // Stream the reply so it types out live; postCompassAskStream falls back
@@ -100,8 +125,9 @@ export default function AiChat() {
       }
       return [...without, { kind: 'rec', id: 'rec_' + Date.now(), rec: result.data }];
     });
+    streamingRef.current = false;
     setLoading(false);
-    scrollToEnd();
+    if (followBottom.current) scrollToEnd();
   }
 
   // Phase 4: confirm/decline an add_to_trip proposal. Nothing is written to a
@@ -212,7 +238,8 @@ export default function AiChat() {
       <ScrollView
         ref={scroll}
         contentContainerStyle={{ padding: space.lg, gap: space.md }}
-        onScroll={navScrollHandler}
+        onScroll={onChatScroll}
+        onContentSizeChange={onContentSizeChange}
         scrollEventThrottle={16}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onPullRefresh} tintColor={color.signal} />
