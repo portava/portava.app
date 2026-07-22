@@ -1,6 +1,7 @@
 packages:
   - artifacts/*
   - lib/*
+  - packages/*
   - scripts
 
 onlyBuiltDependencies:

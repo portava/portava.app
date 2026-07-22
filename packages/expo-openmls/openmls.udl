@@ -1,0 +1,122 @@
+// UniFFI interface definition for expo-openmls.
+// This file is processed by uniffi-bindgen to generate Swift (iOS) and
+// Kotlin (Android) bindings.
+//
+// All byte arrays are passed as base64url-encoded strings to avoid
+// binary/null-byte issues across the FFI boundary.
+
+namespace openmls {
+
+  // ── Key generation ──────────────────────────────────────────────────────────
+
+  [Throws=OpenMlsError]
+  KeyPairBytes generate_identity_key_pair();
+
+  [Throws=OpenMlsError]
+  DeviceKeyPairBytes generate_device_key_pair();
+
+  // ── KeyPackage pool ─────────────────────────────────────────────────────────
+  // A KeyPackage bundles a public key + credential, signed by the identity key.
+  // Consumed one-shot when adding a device to an MLS group.
+
+  [Throws=OpenMlsError]
+  string generate_key_package(
+    string identity_priv_b64,
+    string device_ed25519_priv_b64,
+    string device_x25519_priv_b64
+  );
+
+  // ── Group operations ────────────────────────────────────────────────────────
+
+  // Create a new 2-member MLS group (1:1 thread).
+  // Returns serialised group state + a Welcome message for the recipient.
+  [Throws=OpenMlsError]
+  GroupCreateResult create_group(
+    string my_identity_priv_b64,
+    string my_device_ed25519_priv_b64,
+    string my_device_x25519_priv_b64,
+    string recipient_key_package_b64
+  );
+
+  // Join a group from a Welcome message sent by the initiator.
+  [Throws=OpenMlsError]
+  string process_welcome(
+    string my_identity_priv_b64,
+    string my_device_ed25519_priv_b64,
+    string my_device_x25519_priv_b64,
+    string welcome_b64
+  );
+
+  // ── Message encrypt / decrypt ───────────────────────────────────────────────
+
+  [Throws=OpenMlsError]
+  EncryptResult encrypt_message(
+    string group_state_b64,
+    string plaintext
+  );
+
+  [Throws=OpenMlsError]
+  DecryptResult decrypt_message(
+    string group_state_b64,
+    string ciphertext_b64
+  );
+
+  // ── Safety numbers ──────────────────────────────────────────────────────────
+  // Derive a 60-digit decimal safety number from two Ed25519 identity public keys.
+  // Deterministic: same input order produces the same number on both devices.
+
+  [Throws=OpenMlsError]
+  string derive_safety_number(
+    string identity_pub_a_b64,
+    string identity_pub_b_b64
+  );
+};
+
+// ── Error type ─────────────────────────────────────────────────────────────────
+
+[Error]
+enum OpenMlsError {
+  "KeyGenFailed",
+  "SerializationFailed",
+  "DeserializationFailed",
+  "KeyPackageGenFailed",
+  "GroupCreateFailed",
+  "GroupJoinFailed",
+  "EncryptFailed",
+  "DecryptFailed",
+  "SafetyNumberFailed",
+  "InvalidInput",
+};
+
+// ── Result dictionaries ─────────────────────────────────────────────────────────
+
+dictionary KeyPairBytes {
+  string pub_key_b64;
+  string priv_key_b64;
+};
+
+dictionary DeviceKeyPairBytes {
+  string ed25519_pub_b64;
+  string ed25519_priv_b64;
+  string x25519_pub_b64;
+  string x25519_priv_b64;
+};
+
+// Returned from create_group: group state for storage + Welcome to send to peer.
+dictionary GroupCreateResult {
+  string group_state_b64;
+  string welcome_b64;
+};
+
+// Returned from encrypt_message.
+dictionary EncryptResult {
+  string ciphertext_b64;
+  // Updated group state after MLS epoch advancement (store back to SecureStore).
+  string updated_group_state_b64;
+};
+
+// Returned from decrypt_message.
+dictionary DecryptResult {
+  string plaintext;
+  string updated_group_state_b64;
+};

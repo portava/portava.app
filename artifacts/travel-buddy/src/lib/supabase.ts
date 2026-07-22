@@ -8,14 +8,23 @@
  */
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from '@db-types';
+import { SecureStoreAdapter } from './secureStore.ts';
 
 const url = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
 const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
 
 export const isSupabaseConfigured = Boolean(url && anonKey);
 
+// E-0: auth session stored in iOS Keychain / Android Keystore via SecureStoreAdapter.
+// On web (Expo web preview) the adapter falls back to in-memory — auth won't
+// persist across web reloads, which is acceptable (web is not a production target).
 export const supabase = createClient<Database>(url || 'https://placeholder.supabase.co', anonKey || 'placeholder', {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: false,
+    storage: SecureStoreAdapter,
+  },
 });
 
 /**

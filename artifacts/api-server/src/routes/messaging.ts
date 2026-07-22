@@ -1491,9 +1491,14 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   const { threadId } = req.params;
   if (!isUuid(threadId)) { sendError(res, 'invalid_payload', 'Invalid thread id'); return; }
 
-  const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
-  if (!body) { sendError(res, 'invalid_payload', 'body is required'); return; }
-  if (body.length > 4000) { sendError(res, 'invalid_payload', 'body must be 4000 characters or fewer'); return; }
+  const bodyRaw = typeof req.body?.body === 'string' ? req.body.body.trim() : null;
+  // E-2: ciphertext is accepted for E2EE threads (body must be null in that case).
+  const ciphertext = typeof req.body?.ciphertext === 'string' ? req.body.ciphertext.trim() : null;
+  if (!bodyRaw && !ciphertext) { sendError(res, 'invalid_payload', 'body is required'); return; }
+  if (bodyRaw && bodyRaw.length > 4000) { sendError(res, 'invalid_payload', 'body must be 4000 characters or fewer'); return; }
+  if (ciphertext && ciphertext.length > 65536) { sendError(res, 'invalid_payload', 'ciphertext too large'); return; }
+  // body assignment deferred — E2EE threads force body=null (resolved after is_e2ee check below)
+  let body = bodyRaw;
 
   // Emergency kill switch: disable_messaging — fail-open on DB error
   const flagSc = getServiceClient();
@@ -1519,6 +1524,22 @@ router.post('/threads/:threadId/messages', async (req, res) => {
 
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
   if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
+
+  // E-2: check thread E2EE flag.
+  const { data: threadMeta } = await client
+    .from('message_threads')
+    .select('is_e2ee')
+    .eq('id', threadId)
+    .maybeSingle();
+  const isE2ee = (threadMeta as any)?.is_e2ee === true;
+
+  if (isE2ee) {
+    // E2EE thread: ciphertext required, body must be absent.
+    if (!ciphertext) { sendError(res, 'invalid_payload', 'E2EE thread requires ciphertext; plaintext body not accepted'); return; }
+    body = null; // server NEVER stores plaintext for E2EE messages
+  } else {
+    if (!body) { sendError(res, 'invalid_payload', 'body is required'); return; }
+  }
 
   // Use the authenticated client (= service client in production, fake in tests).
   const sc = client;
@@ -1552,8 +1573,17 @@ router.post('/threads/:threadId/messages', async (req, res) => {
 
   const { data: msg, error: msgErr } = await sc
     .from('messages')
-    .insert({ thread_id: threadId, sender_id: user.id, body, created_at: now, msg_type: msgType, subtype })
-    .select('id, thread_id, sender_id, body, created_at, msg_type, subtype')
+    .insert({
+      thread_id: threadId,
+      sender_id: user.id,
+      // E-2: body is null for E2EE messages; ciphertext carries the opaque blob.
+      body: isE2ee ? null : body,
+      ciphertext: isE2ee ? ciphertext : null,
+      created_at: now,
+      msg_type: msgType,
+      subtype,
+    })
+    .select('id, thread_id, sender_id, body, ciphertext, created_at, msg_type, subtype')
     .single();
 
   if (msgErr || !msg) {
@@ -1563,6 +1593,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   }
 
   // Off-app solicitation detection for buddy booking threads (non-blocking fire-and-forget).
+  // E-2: skip for E2EE threads — server cannot read ciphertext.
   // Scans the message body for off-app payment solicitation phrases. On match:
   //   1. Logs a buddy_booking_events row (event=off_app_solicitation_warning, admin_only).
   //   2. After OFF_APP_SUSPENSION_THRESHOLD cumulative offenses for the buddy, suspends
@@ -1575,7 +1606,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     /\bpay\s+me\s+directly\b/i, /\bcontact\s+me\s+outside\b/i,
     /\bmy\s+whatsapp\b/i, /\bmy\s+telegram\b/i, /\binstagram\s+dm\b/i,
   ];
-  if (OFF_APP_PATTERNS.some((p) => p.test(body))) {
+  if (!isE2ee && body && OFF_APP_PATTERNS.some((p) => p.test(body))) {
     void (async () => {
       try {
         const svcClient = getServiceClient();
@@ -1908,6 +1939,17 @@ router.post('/messages/:messageId/translate/retry', async (req, res) => {
   if (!msgRow) { sendError(res, 'not_found', 'Message not found'); return; }
   const m = msgRow as any;
   if (m.deleted_at) { sendError(res, 'invalid_payload', 'Cannot retry translation on a deleted message'); return; }
+
+  // E-2: refuse translation for E2EE threads — server cannot read ciphertext.
+  const { data: threadMetaForTranslate } = await sc
+    .from('message_threads')
+    .select('is_e2ee')
+    .eq('id', m.thread_id)
+    .maybeSingle();
+  if ((threadMetaForTranslate as any)?.is_e2ee === true) {
+    sendError(res, 'e2ee_thread', 'Translation is unavailable for end-to-end encrypted messages');
+    return;
+  }
 
   const { data: mem } = await client
     .from('message_thread_members')

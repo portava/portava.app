@@ -1,4 +1,6 @@
 import { Router, type IRouter } from "express";
+import devicesRouter from "./devices";
+import keyPackagesRouter from "./keyPackages";
 import healthRouter from "./health";
 import authRouter from "./auth";
 import tripsRouter from "./trips";
@@ -172,5 +174,7 @@ router.use(engagementRouter);
 router.use(circleRouter);
 router.use(rankEventsRouter);
 router.use(callsRouter);
+router.use(devicesRouter);
+router.use(keyPackagesRouter);
 
 export default router;

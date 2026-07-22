@@ -31,6 +31,7 @@ import { AccountStatusGate } from '../src/components/AccountStatusGate';
 import { AgeGate } from '../src/components/AgeGate';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { reportCrash } from '@/src/lib/crashReporter';
+import { useCryptoInit } from '../src/hooks/useCryptoInit';
 
 /**
  * Session-aware root crash boundary. Sits inside SessionProvider so it can
@@ -53,6 +54,11 @@ function RootCrashHandler({ children }: PropsWithChildren) {
 
 function CompassFrontloadSetup() {
   useCompassFrontload();
+  return null;
+}
+
+function CryptoSetup() {
+  useCryptoInit();
   return null;
 }
 
@@ -117,6 +123,7 @@ export default function RootLayout() {
                       <CallProvider bridge={livekitBridge}>
                       <CallRealtimeBinding />
                       <PushSetup />
+                      <CryptoSetup />
                       <CompassFrontloadSetup />
                       <StatusBar style="dark" />
                       <Stack
@@ -132,6 +139,7 @@ export default function RootLayout() {
                         <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
                         <Stack.Screen name="compass-preferences" options={{ presentation: 'card' }} />
                         <Stack.Screen name="compass-memories" options={{ presentation: 'card' }} />
+                        <Stack.Screen name="safety-number" options={{ presentation: 'modal', headerShown: false }} />
                       </Stack>
                       {/* Root-level call UI — overlays any screen, survives navigation */}
                       <CallSurface />

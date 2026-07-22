@@ -23,7 +23,8 @@
   ],
   "exclude": [
     "**/*.test.ts",
-    "**/*.test.tsx"
+    "**/*.test.tsx",
+    "__mocks__/**"
   ],
   "references": [
     {

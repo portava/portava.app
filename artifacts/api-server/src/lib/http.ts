@@ -54,7 +54,9 @@ export type ApiErrorCode =
   | "collection_create_failed"
   | "duplicate_event"
   | "conflict"
-  | "gone";
+  | "gone"
+  | "e2ee_thread"
+  | "no_key_package";
 
 const STATUS: Record<ApiErrorCode, number> = {
   server_not_configured: 503,
@@ -79,6 +81,8 @@ const STATUS: Record<ApiErrorCode, number> = {
   duplicate_event: 409,
   conflict: 409,
   gone: 410,
+  e2ee_thread: 422,
+  no_key_package: 404,
 };
 
 export function sendError(res: Response, code: ApiErrorCode, message?: string) {
