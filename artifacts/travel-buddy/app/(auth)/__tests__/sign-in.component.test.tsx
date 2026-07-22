@@ -13,26 +13,36 @@ import React from 'react';
 import { render, screen } from '@testing-library/react-native';
 
 // ── Router ────────────────────────────────────────────────────────────────────
+// NOTE: intentionally exhaustive — test only exercises push/replace navigation; spreading
+// requireActual would pull in real Expo Router internals that crash the test renderer.
 jest.mock('expo-router', () => ({
   router: { replace: jest.fn(), push: jest.fn() },
 }));
 
 // ── Safe area ─────────────────────────────────────────────────────────────────
+// NOTE: intentionally exhaustive — only the insets hook is used by this screen;
+// requireActual pulls in native modules unavailable in the Jest environment.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
 // ── Session context ───────────────────────────────────────────────────────────
+// NOTE: intentionally exhaustive — the signed-out view requires only this fixed shape;
+// spreading requireActual would import the real context's Supabase subscription.
 jest.mock('../../../src/context/SessionContext', () => ({
   useSession: () => ({ isAuthed: false, loading: false, configured: true }),
 }));
 
 // ── Supabase guard ────────────────────────────────────────────────────────────
+// NOTE: intentionally exhaustive — only the isSupabaseConfigured flag is read here;
+// the real client would attempt a network connection on import.
 jest.mock('../../../src/lib/supabase', () => ({
   isSupabaseConfigured: true,
 }));
 
 // ── Auth services (stub — no network calls) ───────────────────────────────────
+// NOTE: intentionally exhaustive — these are fire-and-forget stubs for the auth flow;
+// spreading requireActual would invoke real Supabase calls in the test environment.
 jest.mock('../../../src/services/auth', () => ({
   signIn:                jest.fn().mockResolvedValue({ error: null }),
   signUp:                jest.fn().mockResolvedValue({ error: null, userId: 'u1' }),
@@ -40,6 +50,8 @@ jest.mock('../../../src/services/auth', () => ({
   lookupUsernameByEmail: jest.fn().mockResolvedValue({ handle: 'traveler', error: null }),
 }));
 
+// NOTE: intentionally exhaustive — only getMyProfile is called after sign-in; the real
+// module would hit the network and requires auth state unavailable in the test renderer.
 jest.mock('../../../src/services/profile', () => ({
   getMyProfile: jest.fn().mockResolvedValue({ ok: true, data: { displayName: 'Test', username: 'test' } }),
 }));
@@ -88,6 +100,8 @@ jest.mock('@expo/vector-icons', () => {
 });
 
 // ── Background images (no network) ───────────────────────────────────────────
+// NOTE: intentionally exhaustive — fixed test images prevent random background rotation
+// from affecting snapshot assertions; spreading requireActual would import real asset URIs.
 jest.mock('../../../constants/loginBackgrounds', () => ({
   LOGIN_BACKGROUNDS: [
     { uri: 'https://example.com/img1.jpg' },

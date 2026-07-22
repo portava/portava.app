@@ -89,6 +89,15 @@ interface RawPost {
   eventEndsAt?: string | null;
   /** Group key for diversity cap: event_id (Path A) or location_place_id (Path B) */
   groupKey: string | null;
+  /**
+   * Coords used for the proximity gate (radiusKm check).
+   * Path A: event.location_lat / event.location_lng
+   * Path B: place.lat / place.lng, falling back to post.public_lat / public_lng
+   * Kept here so the cache can store pre-proximity results and the gate can
+   * be re-applied per-request with the actual viewer lat/lng.
+   */
+  proximityLat: number | null;
+  proximityLng: number | null;
 }
 
 function scorePost(
@@ -144,13 +153,15 @@ function applyDiversityCap(posts: RawPost[], cap = 3): RawPost[] {
   return result;
 }
 
-// ── Common post filters ───────────────────────────────────────────────────────
+// ── Static post filters (viewer-independent) ──────────────────────────────────
+//
+// These are safe to apply before caching: they depend only on the post's own
+// fields (visibility, status, soft-delete, scheduled-delay), not on who is
+// viewing it.  Viewer-specific checks (block list, seen set) are applied after
+// the cache is consulted, in fetchEventPostsForDiscovery.
 
-function postPassesFilters(
-  post: { visibility: string; status: string; post_status: string; deleted_at: string | null; author_id: string; publish_eligible_at: string | null },
-  blockedIds: Set<string>,
-  seenPostIds: Set<string>,
-  postId: string,
+function postPassesStaticFilters(
+  post: { visibility: string; status: string; post_status: string; deleted_at: string | null; publish_eligible_at: string | null },
 ): boolean {
   if (post.visibility !== "public") return false;
   if (post.status !== "active") return false;
@@ -160,25 +171,60 @@ function postPassesFilters(
     if (!post.publish_eligible_at) return false;
     if (new Date(post.publish_eligible_at).getTime() > Date.now()) return false;
   }
-  if (blockedIds.has(post.author_id)) return false;
-  if (seenPostIds.has(postId)) return false;
   return true;
 }
 
+// ── L1 in-memory cache for event-post results ─────────────────────────────────
+//
+// Keyed on (city, radiusKm) — NOT per-viewer.
+//
+// Why not per-viewer? The expensive work is the DB join (Path A: post_event_links
+// → posts → events; Path B: posts → discovery_places with no index on
+// location_place_id = osm_id).  Block lists and seen-post sets differ per viewer
+// but are cheap to apply in-process against the cached slice.  Caching at the
+// city+radius granularity means all viewers for the same city share one fetch,
+// while viewer-specific filtering (blockedIds, seenPostIds) and proximity scoring
+// are applied on the cached results each request.
+//
+// TTL: 5 minutes — short enough that newly created event posts appear quickly,
+// long enough to amortise the join cost across concurrent requests.
+
+const EVENT_POSTS_CACHE_TTL_MS = 5 * 60 * 1_000; // 5 minutes
+
+interface EventPostsCacheEntry {
+  /** Pre-proximity, pre-viewer-filter raw posts — viewer filters applied on read. */
+  posts: RawPost[];
+  cachedAt: number;
+}
+
+const _eventPostsCache = new Map<string, EventPostsCacheEntry>();
+
+function eventPostsCacheKey(city: string | null, radiusKm: number): string {
+  return `${(city ?? "").toLowerCase().trim()}:${radiusKm}`;
+}
+
+function eventPostsCacheIsFresh(entry: EventPostsCacheEntry): boolean {
+  return Date.now() - entry.cachedAt < EVENT_POSTS_CACHE_TTL_MS;
+}
+
+/** Test hook: clear the event-posts cache so each test starts from a fresh state. */
+export function _clearEventPostsCache(): void {
+  _eventPostsCache.clear();
+}
+
 // ── Path A: explicit event link ───────────────────────────────────────────────
+//
+// Fetches raw posts without proximity or viewer filters.  The caller applies
+// those after the cache is consulted (see fetchEventPostsForDiscovery).
 
 async function fetchPathA(
   db: SupabaseClient,
-  lat: number,
-  lng: number,
-  radiusKm: number,
-  blockedIds: Set<string>,
-  seenPostIds: Set<string>,
 ): Promise<RawPost[]> {
   try {
     // Fetch post_event_links joined with posts and events.
-    // We'll filter by event location proximity in application code since
-    // Supabase JS client doesn't support st_distance on raw query easily.
+    // Proximity filtering is deferred to the caller so the result can be cached
+    // and reused across viewers (block lists differ per viewer; proximity coords
+    // differ per viewer within the same city+radius bucket).
     const { data, error } = await db
       .from("post_event_links")
       .select(`
@@ -222,13 +268,7 @@ async function fetchPathA(
       const event = row.events;
       if (!post || !event) continue;
 
-      // Filter by event proximity
-      if (event.location_lat != null && event.location_lng != null) {
-        const dist = haversineKm(lat, lng, event.location_lat, event.location_lng);
-        if (dist > radiusKm) continue;
-      }
-
-      if (!postPassesFilters(post, blockedIds, seenPostIds, post.id)) continue;
+      if (!postPassesStaticFilters(post)) continue;
 
       results.push({
         id: post.id,
@@ -249,6 +289,8 @@ async function fetchPathA(
         eventStartsAt: event.starts_at ?? null,
         eventEndsAt: event.ends_at ?? null,
         groupKey: event.id,
+        proximityLat: event.location_lat ?? null,
+        proximityLng: event.location_lng ?? null,
       });
     }
     return results;
@@ -258,15 +300,13 @@ async function fetchPathA(
 }
 
 // ── Path B: venue category (discovery_places.primary_category = 'events') ─────
+//
+// Fetches raw posts without proximity or viewer filters.  The caller applies
+// those after the cache is consulted (see fetchEventPostsForDiscovery).
 
 async function fetchPathB(
   db: SupabaseClient,
-  lat: number,
-  lng: number,
   city: string | null,
-  radiusKm: number,
-  blockedIds: Set<string>,
-  seenPostIds: Set<string>,
 ): Promise<RawPost[]> {
   try {
     // Join posts → discovery_places via location_place_id = osm_id
@@ -321,15 +361,12 @@ async function fetchPathB(
       if (!place) continue;
       if (place.primary_category !== "events") continue;
 
-      // Proximity filter using place coords if available, else post public coords
-      const placeLat = place.lat ?? post.public_lat;
-      const placeLng = place.lng ?? post.public_lng;
-      if (placeLat != null && placeLng != null) {
-        const dist = haversineKm(lat, lng, placeLat, placeLng);
-        if (dist > radiusKm) continue;
-      }
+      if (!postPassesStaticFilters(post)) continue;
 
-      if (!postPassesFilters(post, blockedIds, seenPostIds, post.id)) continue;
+      // Store the best available proximity coords alongside the post so the
+      // caller can apply the radiusKm gate without another DB round-trip.
+      const proximityLat: number | null = place.lat ?? post.public_lat ?? null;
+      const proximityLng: number | null = place.lng ?? post.public_lng ?? null;
 
       results.push({
         id: post.id,
@@ -348,6 +385,8 @@ async function fetchPathB(
         venueLabel: place.name ?? null,
         sourceKind: "venue_category",
         groupKey: post.location_place_id ?? null,
+        proximityLat,
+        proximityLng,
       });
     }
     return results;
@@ -363,28 +402,69 @@ export async function fetchEventPostsForDiscovery(
 ): Promise<DiscoveryEventPost[]> {
   const { db, lat, lng, city, radiusKm, blockedIds, seenPostIds } = params;
 
-  // Run both paths in parallel
-  const [pathA, pathB] = await Promise.all([
-    fetchPathA(db, lat, lng, radiusKm, blockedIds, seenPostIds),
-    fetchPathB(db, lat, lng, city, radiusKm, blockedIds, seenPostIds),
-  ]);
+  // ── L1 cache lookup ──────────────────────────────────────────────────────────
+  //
+  // The cache stores raw posts that have passed static filters but have NOT yet
+  // had proximity or viewer-specific filters applied.  This lets all viewers
+  // for the same (city, radiusKm) share a single DB fetch while still getting
+  // correct per-viewer results (different block lists, different seen sets,
+  // and potentially slightly different viewer positions within the city).
+  const cacheKey = eventPostsCacheKey(city, radiusKm);
+  let cachedPosts: RawPost[] | null = null;
 
-  // Merge and deduplicate by post id (Path A wins on duplicates for richer metadata)
-  const seenIds = new Set<string>();
-  const merged: RawPost[] = [];
-  for (const post of [...pathA, ...pathB]) {
-    if (!seenIds.has(post.id)) {
-      seenIds.add(post.id);
-      merged.push(post);
+  const existing = _eventPostsCache.get(cacheKey);
+  if (existing && eventPostsCacheIsFresh(existing)) {
+    cachedPosts = existing.posts;
+  }
+
+  if (!cachedPosts) {
+    // Cache miss — run both paths in parallel and store the pre-filter result.
+    const [pathA, pathB] = await Promise.all([
+      fetchPathA(db),
+      fetchPathB(db, city),
+    ]);
+
+    // Merge and deduplicate by post id (Path A wins on duplicates for richer metadata)
+    const seenIds = new Set<string>();
+    const merged: RawPost[] = [];
+    for (const post of [...pathA, ...pathB]) {
+      if (!seenIds.has(post.id)) {
+        seenIds.add(post.id);
+        merged.push(post);
+      }
     }
+
+    _eventPostsCache.set(cacheKey, { posts: merged, cachedAt: Date.now() });
+    cachedPosts = merged;
+  }
+
+  // ── Per-request filters (proximity + viewer-specific) ────────────────────────
+  //
+  // Applied after the cache so that:
+  //   • block lists (differ per viewer) are always current
+  //   • seen-post sets (differ per viewer) are always current
+  //   • proximity uses the actual viewer lat/lng, not the cached requester's coords
+  const filtered: RawPost[] = [];
+  for (const post of cachedPosts) {
+    // Proximity gate — re-applied per request using the viewer's actual position
+    if (post.proximityLat != null && post.proximityLng != null) {
+      const dist = haversineKm(lat, lng, post.proximityLat, post.proximityLng);
+      if (dist > radiusKm) continue;
+    }
+
+    // Viewer-specific filters
+    if (blockedIds.has(post.authorId)) continue;
+    if (seenPostIds.has(post.id)) continue;
+
+    filtered.push(post);
   }
 
   // Score
-  const maxEngagement = merged.reduce(
+  const maxEngagement = filtered.reduce(
     (m, p) => Math.max(m, p.likeCount + p.commentCount * 2),
     0,
   );
-  const scored = merged
+  const scored = filtered
     .map((p) => ({ post: p, score: scorePost(p, lat, lng, maxEngagement) }))
     .sort((a, b) => b.score - a.score)
     .map(({ post }) => post);

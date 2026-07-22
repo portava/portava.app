@@ -17,11 +17,11 @@ import {
   StyleSheet,
   Animated,
   Platform,
-  KeyboardAvoidingView,
   ScrollView,
   Alert,
   Dimensions,
 } from 'react-native';
+import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, {
   Path,
@@ -347,11 +347,7 @@ export default function SignIn() {
       />
 
       {/* ── Scrollable foreground content ── */}
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={0}
-      >
+      <KeyboardSafeScrollView style={{ flex: 1 }}>
         <ScrollView
           contentContainerStyle={[
             s.scroll,
@@ -674,7 +670,7 @@ export default function SignIn() {
           </Text>
 
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardSafeScrollView>
     </View>
   );
 }

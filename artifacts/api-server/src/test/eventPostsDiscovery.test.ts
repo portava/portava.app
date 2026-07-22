@@ -6,9 +6,16 @@ import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   fetchEventPostsForDiscovery,
+  _clearEventPostsCache,
   type FetchEventPostsParams,
   type DiscoveryEventPost,
 } from "../lib/eventPostsDiscovery.js";
+
+// Clear the L1 event-post cache before each test so tests that share the same
+// (city, radiusKm) key ("Barcelona", 10) don't observe each other's DB fakes.
+beforeEach(() => {
+  _clearEventPostsCache();
+});
 
 // ── Fake Supabase client builder ───────────────────────────────────────────────
 
