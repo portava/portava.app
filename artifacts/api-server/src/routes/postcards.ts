@@ -884,4 +884,86 @@ router.get('/postcards/stamp-overlay-options', async (req, res) => {
   res.status(200).json({ suggested, earned });
 });
 
+/* ============================================================================
+ * PUT /api/postcards/:id/event-link — attach or detach an event link on edit
+ * ============================================================================
+ * Allows the owner to link (or unlink) a Portava Event after post creation,
+ * so the Discovery event-post pipeline stays in sync when the user edits.
+ *
+ * Body: { eventId: string | null }
+ *   - string  → upsert post_event_links row (idempotent; safe to re-send)
+ *   - null    → delete the existing row (if any); no-op when absent
+ *
+ * The DB operation is fire-and-forget relative to the 200 response: errors
+ * are logged but never surfaced to the client.  Ownership is verified
+ * synchronously so the 403 guard is not bypassed by swallowing errors.
+ */
+const eventLinkSchema = z.object({
+  eventId: z.string().uuid().nullable(),
+});
+
+router.put('/postcards/:id/event-link', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { id: postId } = req.params;
+
+  if (!isValidUuid(postId)) { sendError(res, 'invalid_payload', 'Invalid postcard id'); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  const parsed = eventLinkSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, 'invalid_payload', parsed.error.issues[0]?.message ?? 'Invalid payload');
+    return;
+  }
+  const { eventId } = parsed.data;
+
+  // Verify post ownership (synchronous gate — must not be bypassed).
+  const { data: postRow, error: postErr } = await sc
+    .from('posts')
+    .select('id, author_id')
+    .eq('id', postId)
+    .eq('status', 'active')
+    .maybeSingle();
+
+  if (postErr) {
+    req.log.error({ err: postErr }, 'postcards event-link: failed to load post');
+    sendError(res, 'db_error', "We couldn't update the event link. Please try again.");
+    return;
+  }
+  if (!postRow) { sendError(res, 'not_found', 'Postcard not found'); return; }
+  if ((postRow as any).author_id !== user.id) { sendError(res, 'forbidden', 'Not your postcard'); return; }
+
+  // Fire-and-forget: replace or remove the event link.
+  // Always delete any existing row(s) for this post first so that changing
+  // from event A to event B leaves only B (upsert on the composite PK would
+  // stack a second row instead of replacing A).
+  // Errors (e.g. unknown event_id, migration not applied) must never block the response.
+  void (async () => {
+    try {
+      const { error: delErr } = await (sc.from('post_event_links' as any)
+        .delete()
+        .eq('post_id', postId) as any);
+      if (delErr) {
+        req.log.warn({ err: delErr, postId }, 'postcards event-link: delete existing links failed (non-fatal)');
+        // Do not attempt insert if delete failed — avoid duplicate key errors.
+        return;
+      }
+      if (eventId) {
+        const { error: insErr } = await (sc.from('post_event_links' as any)
+          .insert({ post_id: postId, event_id: eventId }) as any);
+        if (insErr) {
+          req.log.warn({ err: insErr, postId, eventId }, 'postcards event-link: insert failed (non-fatal)');
+        }
+      }
+    } catch {
+      // Swallow — supplementary operation must never crash the request.
+    }
+  })();
+
+  res.status(200).json({ ok: true });
+});
+
 export default router;
