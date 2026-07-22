@@ -28,6 +28,7 @@ import { hidePost } from '../services/posts.ts';
 import { primaryIdentityText } from '../lib/displayIdentity.ts';
 import { MediaStampOverlay } from './StampOverlayBadge.tsx';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
+import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -466,6 +467,7 @@ function ItineraryCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item:
 
 /* ── Circle Activity ── */
 function CircleCard({ item }: { item: PulseFeedItem }) {
+  const { userId: currentUserId } = useSession();
   return (
     <View style={[s.card, s.circleCard]}>
       <View style={s.circleHead}>
@@ -476,7 +478,19 @@ function CircleCard({ item }: { item: PulseFeedItem }) {
       <View style={s.circleRow}>
         <View style={{ flexDirection: 'row' }}>
           {(item.participants ?? []).slice(0, 4).map((p, i) => (
-            <CachedImage key={p.id} source={{ uri: withStorageParams(p.avatarUrl, 'width=100&quality=80') }} style={[s.circleAvatar, { marginLeft: i === 0 ? 0 : -9, zIndex: 4 - i }]} />
+            <UserIdentityLink
+              key={p.id}
+              userId={p.id}
+              handle={p.username ?? null}
+              currentUserId={currentUserId}
+              style={{ marginLeft: i === 0 ? 0 : -9, zIndex: 4 - i }}
+              testID={`identity-link-${p.id}`}
+            >
+              <CachedImage
+                source={{ uri: withStorageParams(p.avatarUrl, 'width=100&quality=80') }}
+                style={s.circleAvatar}
+              />
+            </UserIdentityLink>
           ))}
         </View>
         <View style={{ flex: 1 }} />
