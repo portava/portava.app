@@ -4,69 +4,6 @@ settings:
   autoInstallPeers: false
   excludeLinksFromLockfile: false
 
-catalogs:
-  default:
-    '@replit/vite-plugin-cartographer':
-      specifier: 0.2.8
-      version: 0.2.8
-    '@replit/vite-plugin-runtime-error-modal':
-      specifier: 0.0.3
-      version: 0.0.3
-    '@tailwindcss/vite':
-      specifier: 4.3.1
-      version: 4.3.1
-    '@tanstack/react-query':
-      specifier: 5.101.2
-      version: 5.101.2
-    '@types/node':
-      specifier: 22.20.0
-      version: 22.20.0
-    '@types/react':
-      specifier: 19.1.17
-      version: 19.1.17
-    '@types/react-dom':
-      specifier: 19.1.11
-      version: 19.1.11
-    '@vitejs/plugin-react':
-      specifier: 4.7.0
-      version: 4.7.0
-    class-variance-authority:
-      specifier: 0.7.1
-      version: 0.7.1
-    clsx:
-      specifier: 2.1.1
-      version: 2.1.1
-    drizzle-orm:
-      specifier: 0.41.0
-      version: 0.41.0
-    framer-motion:
-      specifier: 12.40.0
-      version: 12.40.0
-    lucide-react:
-      specifier: 0.511.0
-      version: 0.511.0
-    react:
-      specifier: 19.1.0
-      version: 19.1.0
-    react-dom:
-      specifier: 19.1.0
-      version: 19.1.0
-    tailwind-merge:
-      specifier: 3.6.0
-      version: 3.6.0
-    tailwindcss:
-      specifier: 4.3.1
-      version: 4.3.1
-    tsx:
-      specifier: 4.22.4
-      version: 4.22.4
-    vite:
-      specifier: 6.4.3
-      version: 6.4.3
-    zod:
-      specifier: 3.25.76
-      version: 3.25.76
-
 importers:
 
   .:
@@ -387,6 +324,9 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.108.2
         version: 2.108.2
+      expo-apple-authentication:
+        specifier: ~7.2.4
+        version: 7.2.4(expo@54.0.35)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0))
       expo-av:
         specifier: ^16.0.8
         version: 16.0.8(expo@54.0.35)(react-native-web@0.21.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
@@ -5012,6 +4952,12 @@ packages:
   expect@29.7.0:
     resolution: {integrity: sha512-2Zks0hf1VLFYI1kbh0I5jP3KHHyCHpkfyHBzsSXRFgl/Bg9mWYfMW8oD+PdMPlEwy5HNsR9JutYy6pMeOh61nw==}
     engines: {node: ^14.15.0 || ^16.10.0 || >=18.0.0}
+
+  expo-apple-authentication@7.2.4:
+    resolution: {integrity: sha512-T2agaLLPT4Ax97FeXImB7BCCEzEJ0gB+ZwlFa/FXBtbp6WFKcGRlTVKiX2YPYLZzN5QjXcmQ9HHJ17jRthNHMg==}
+    peerDependencies:
+      expo: '*'
+      react-native: '*'
 
   expo-application@7.0.8:
     resolution: {integrity: sha512-qFGyxk7VJbrNOQWBbE09XUuGuvkOgFS9QfToaK2FdagM2aQ+x3CvGV2DuVgl/l4ZxPgIf3b/MNh9xHpwSwn74Q==}
@@ -13218,6 +13164,11 @@ snapshots:
       jest-matcher-utils: 29.7.0
       jest-message-util: 29.7.0
       jest-util: 29.7.0
+
+  expo-apple-authentication@7.2.4(expo@54.0.35)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0)):
+    dependencies:
+      expo: 54.0.35(@babel/core@7.29.7)(@expo/metro-runtime@6.1.2)(expo-router@6.0.24)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)(typescript@5.9.3)
+      react-native: 0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0)
 
   expo-application@7.0.8(expo@54.0.35):
     dependencies:

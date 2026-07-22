@@ -118,6 +118,7 @@
         }
       ],
       "expo-dev-client",
+      "expo-apple-authentication",
       "@maplibre/maplibre-react-native",
       "@livekit/react-native-expo-plugin",
       "./plugins/withPortavaNSE"
