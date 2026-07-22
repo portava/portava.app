@@ -22,6 +22,7 @@ import {
   SECURE_KEYS,
   isNative,
 } from './secureStore.ts';
+import { freshToken } from '../services/apiToken.ts';
 
 const KEY_PACKAGE_BATCH_SIZE = 10;
 
@@ -148,16 +149,14 @@ async function _ensureDeviceRegistered(
   if (identityPub && deviceId) {
     const result = await (async () => {
       try {
-        // Use a simple fetch here to avoid circular import with apiPut
         const url = process.env.EXPO_PUBLIC_API_URL ?? '';
-        const { supabase } = require('./supabase.ts');
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) return;
+        const token = await freshToken();
+        if (!token) return;
         await fetch(`${url}/api/me/devices/${deviceId}/public-key`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
+            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({ publicKey: identityPub }),
         });

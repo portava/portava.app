@@ -13,18 +13,18 @@
 
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
-import { runE0Migration } from '../lib/e0Migration';
-import { initCryptoIdentity } from '../lib/cryptoIdentity';
-import { supabase } from '../lib/supabase';
+import { runE0Migration } from '../lib/e0Migration.ts';
+import { initCryptoIdentity } from '../lib/cryptoIdentity.ts';
+import { freshToken } from '../services/apiToken.ts';
 
 const API_BASE = (process.env['EXPO_PUBLIC_API_URL'] ?? '').replace(/\/$/, '');
 
 async function authHeaders(): Promise<Record<string, string> | null> {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.access_token) return null;
+  const token = await freshToken();
+  if (!token) return null;
   return {
     'Content-Type': 'application/json',
-    'Authorization': `Bearer ${session.access_token}`,
+    'Authorization': `Bearer ${token}`,
   };
 }
 

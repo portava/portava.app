@@ -8,6 +8,8 @@ import { runE0Migration } from '../e0Migration.ts';
 import { getSecure, SecureStoreAdapter, SECURE_KEYS } from '../secureStore.ts';
 
 jest.mock('expo-secure-store');
+// NOTE: Exhaustive by design — e0Migration only calls getItem/setItem/removeItem/clear.
+// Spreading requireActual would import the native module and crash in Jest.
 jest.mock('@react-native-async-storage/async-storage', () => ({
   getItem: jest.fn(),
   setItem: jest.fn(),

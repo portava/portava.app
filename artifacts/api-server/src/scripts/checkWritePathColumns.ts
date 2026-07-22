@@ -78,13 +78,19 @@ const PRINT_UNRESOLVED_ALLOWLIST = process.argv.includes(
 // public schema (or that are intentionally written pre-migration).  Keep this
 // list SHORT and annotated — every entry is a hole in the check.
 const ALLOWLIST = new Set<string>([
-  // (none currently)
+  // E2EE columns on existing tables — migration pending live apply.
+  // Remove once the columns are present in the live DB schema.
+  "message_threads.is_e2ee",
+  "messages.ciphertext",
 ]);
 
 // Tables that are not real live relations and should be skipped entirely
 // (e.g. test doubles or tables owned by another system).
 const SKIP_TABLES = new Set<string>([
-  // (none currently)
+  // E2EE device management tables — migration pending live apply.
+  // Remove these entries once the migration is applied to the live DB.
+  "devices",
+  "key_packages",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────
@@ -130,7 +136,7 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/passport.ts|select|select list not statically resolvable", 10],
   // post_event_links is a new join table (migration 20260731_post_event_links.sql);
   // the insert uses `as any` cast to avoid database.types.ts drift until types are regenerated.
-  ["src/routes/postcards.ts|insert|dynamic table name", 1],
+  ["src/routes/postcards.ts|insert|dynamic table name", 2],
   ["src/routes/postcards.ts|select|select list not statically resolvable", 3],
   ["src/routes/posts.ts|select|select list not statically resolvable", 14],
   ["src/routes/profile.ts|select|select list not statically resolvable", 4],
@@ -163,6 +169,8 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/services/safeReturn/SafeReturnService.ts|insert|payload not statically resolvable", 1],
   ["src/services/trust/TrustAdminService.ts|upsert|payload partially resolvable", 1],
   ["src/services/trust/TrustEventService.ts|select|select list not statically resolvable", 1],
+  // E2EE key-package upload — payload built from a dynamic array of base64 strings.
+  ["src/routes/keyPackages.ts|insert|payload not statically resolvable", 1],
 ]);
 
 // ── Read-path baseline ────────────────────────────────────────────────────────

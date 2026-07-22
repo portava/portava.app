@@ -627,8 +627,8 @@ importers:
   packages/expo-openmls:
     devDependencies:
       expo-modules-core:
-        specifier: ^2.0.0
-        version: 2.5.0
+        specifier: ^3.0.0
+        version: 3.0.30(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
@@ -5168,9 +5168,6 @@ packages:
   expo-modules-autolinking@3.0.26:
     resolution: {integrity: sha512-WOaud6UKg16ciCOj8raKcMOoKFMHLXKI29U29yhgu1lf+Y7VxJyCktUcYo6AM+ccZ7zLD1uWZdMtgnpf+95OXA==}
     hasBin: true
-
-  expo-modules-core@2.5.0:
-    resolution: {integrity: sha512-aIbQxZE2vdCKsolQUl6Q9Farlf8tjh/ROR4hfN1qT7QBGPl1XrJGnaOKkcgYaGrlzCPg/7IBe0Np67GzKMZKKQ==}
 
   expo-modules-core@3.0.30:
     resolution: {integrity: sha512-a6IrpAn/Jbmwxi9L+hMmXKpNqnkUpoF7WHOpn02rVLyax2J0gB1vvCVE5rNydplEnt41Q6WxQwvcOjZaIkcSUg==}
@@ -13386,10 +13383,6 @@ snapshots:
       commander: 7.2.0
       require-from-string: 2.0.2
       resolve-from: 5.0.0
-
-  expo-modules-core@2.5.0:
-    dependencies:
-      invariant: 2.2.4
 
   expo-modules-core@3.0.30(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0):
     dependencies:

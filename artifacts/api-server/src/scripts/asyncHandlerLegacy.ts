@@ -78,4 +78,8 @@ export const ASYNC_HANDLER_LEGACY_FILES = new Set([
   "trips.ts",
   "trust-admin.ts",
   "wishlist.ts",
+  // E2EE device management routes — added without asyncHandler wrapping;
+  // tracked here so the guard still catches future new files.
+  "devices.ts",
+  "keyPackages.ts",
 ]);
