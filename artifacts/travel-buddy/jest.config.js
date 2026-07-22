@@ -80,5 +80,12 @@ module.exports = {
     // Without this, Jest cannot find @/components/... imports and test files
     // for screens that use @/ (e.g. Trips, Trip Detail) fail to load.
     '^@/(.*)$': '<rootDir>/$1',
+    // jest-expo@56's setup.js requires expo-modules-core from its own nested
+    // pnpm path where the package is not directly hoisted.  Pin the resolution
+    // to the pnpm store copy so every jest.requireActual/jest.doMock call lands
+    // on the same installed instance (expo-modules-core@3.0.30 for expo@54 /
+    // react-native@0.81.5).
+    '^expo-modules-core$': '<rootDir>/../../node_modules/.pnpm/expo-modules-core@3.0.30_react-native@0.81.5_@babel+core@7.29.7_@types+react@19.1.17_react@19.1.0__react@19.1.0/node_modules/expo-modules-core',
+    '^expo-modules-core/(.*)$': '<rootDir>/../../node_modules/.pnpm/expo-modules-core@3.0.30_react-native@0.81.5_@babel+core@7.29.7_@types+react@19.1.17_react@19.1.0__react@19.1.0/node_modules/expo-modules-core/$1',
   },
 };
