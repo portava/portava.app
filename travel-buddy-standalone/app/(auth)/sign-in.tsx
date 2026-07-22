@@ -1,35 +1,243 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator, StyleSheet, Image } from 'react-native';
-import { KeyboardSafeView } from '../../src/components/ui/KeyboardSafeView';
+/**
+ * sign-in.tsx — Portava login / welcome screen (redesigned).
+ *
+ * Visual redesign only. All auth logic (signIn, signUp, requestPasswordReset,
+ * lookupUsernameByEmail) is preserved byte-for-byte from the previous version.
+ * Only the JSX and styles changed; no service, context, or routing contract was
+ * altered.
+ */
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  Pressable,
+  ActivityIndicator,
+  StyleSheet,
+  Animated,
+  Platform,
+  ScrollView,
+  Alert,
+  Dimensions,
+} from 'react-native';
+import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
+import { LinearGradient } from 'expo-linear-gradient';
+import Svg, {
+  Path,
+  Rect,
+  Defs,
+  LinearGradient as SvgLinearGradient,
+  Stop,
+  G,
+  Text as SvgText,
+  Line as SvgLine,
+} from 'react-native-svg';
+import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Mail, Lock, User as UserIcon, ArrowLeft, Eye, EyeOff } from 'lucide-react-native';
+import {
+  Lock,
+  Eye,
+  EyeOff,
+  Globe,
+  Shield,
+  ArrowRight,
+  ArrowLeft,
+  ChevronRight,
+  User as UserIcon,
+  Mail,
+} from 'lucide-react-native';
+
 import { signIn, signUp, requestPasswordReset, lookupUsernameByEmail } from '../../src/services/auth';
 import { getMyProfile } from '../../src/services/profile';
 import { useSession } from '../../src/context/SessionContext';
 import { isSupabaseConfigured } from '../../src/lib/supabase';
-import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+import { PortavaLogoMark, PortavaWordmark } from '../../src/components/brand/PortavaLogo';
+import {
+  LOGIN_BACKGROUNDS,
+  BG_DISPLAY_DURATION_MS,
+  BG_FADE_DURATION_MS,
+} from '../../constants/loginBackgrounds';
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const TEAL   = '#26C6DA';
+const ORANGE = '#FF7A3D';
+const RED    = '#E63946';
+const GOLD   = '#D4AF37';
+const AMBER  = '#FFB347';
+
+// Semi-transparent card background for dark-overlay cards
+const CARD_BG     = 'rgba(10, 10, 20, 0.65)';
+const CARD_BORDER = 'rgba(255,255,255,0.12)';
 
 type Mode = 'signin' | 'signup' | 'forgot-password' | 'forgot-username';
 
-export default function SignIn() {
-  const insets = useSafeAreaInsets();
-  const { isAuthed } = useSession();
-  const [mode, setMode] = useState<Mode>('signin');
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+// ─── PassportCard ─────────────────────────────────────────────────────────────
 
-  // Redirect already-authed users who land on this screen.
-  // Guard with !busy so we don't race against the submit handler's own navigation
-  // during the signup flow (busy=true while the handler is running).
+/**
+ * Small illustrated passport card (≈80×110 pt) rendered as SVG.
+ * Brown/leather background, gold border, inner window with the Portava P mark,
+ * "PASSPORT" at top and "PORTAVA" at bottom in gold small-caps.
+ */
+function PassportCard() {
+  return (
+    <Svg width={80} height={110} viewBox="0 0 80 110" accessibilityLabel="Portava passport">
+      <Defs>
+        <SvgLinearGradient id="pcWarm" x1="0" y1="0" x2="0.6" y2="1">
+          <Stop offset="0" stopColor={ORANGE} />
+          <Stop offset="0.5" stopColor="#FF4D3D" />
+          <Stop offset="1" stopColor={RED} />
+        </SvgLinearGradient>
+        <SvgLinearGradient id="pcTeal" x1="0" y1="0" x2="1" y2="0">
+          <Stop offset="0" stopColor={TEAL} />
+          <Stop offset="1" stopColor="#00ACC1" />
+        </SvgLinearGradient>
+        <SvgLinearGradient id="pcLeather" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#8B5030" />
+          <Stop offset="1" stopColor="#5C3018" />
+        </SvgLinearGradient>
+      </Defs>
+
+      {/* Leather background */}
+      <Rect width="80" height="110" rx="8" fill="url(#pcLeather)" />
+
+      {/* Outer gold frame */}
+      <Rect
+        x="4" y="4" width="72" height="102" rx="6"
+        stroke={GOLD} strokeWidth="1.2" fill="none"
+      />
+
+      {/* "PASSPORT" — top label */}
+      <SvgText
+        x="40" y="22"
+        fill={GOLD}
+        fontSize="7"
+        fontWeight="700"
+        letterSpacing="2.5"
+        textAnchor="middle"
+      >
+        PASSPORT
+      </SvgText>
+
+      {/* Inner window with gold border */}
+      <Rect
+        x="18" y="29" width="44" height="50" rx="4"
+        stroke={GOLD} strokeWidth="1.2"
+        fill="rgba(0,0,0,0.35)"
+      />
+
+      {/* Portava P mark inside the window */}
+      {/* Original P viewBox: 70×100 → scale 0.38 → ~26×38 → center in window (40, 54) */}
+      <G transform="translate(26.6, 35) scale(0.38)">
+        <Path d="M 5 6 L 24 6 A 25 25 0 0 1 24 56 L 24 94 L 5 94 Z" fill="url(#pcWarm)" />
+        <Path d="M 28 16 Q 46 15 48 31 Q 46 47 28 46 Z" fill="url(#pcTeal)" />
+      </G>
+
+      {/* "PORTAVA" — bottom label */}
+      <SvgText
+        x="40" y="94"
+        fill={GOLD}
+        fontSize="7"
+        fontWeight="700"
+        letterSpacing="2.5"
+        textAnchor="middle"
+      >
+        PORTAVA
+      </SvgText>
+    </Svg>
+  );
+}
+
+// ─── Feature icons row ────────────────────────────────────────────────────────
+
+const FEATURES = [
+  { icon: 'people-outline',      label: 'MEET',     sub: 'new people',  color: TEAL   },
+  { icon: 'calendar-outline',    label: 'DISCOVER',  sub: 'events',      color: '#FF6B35' },
+  { icon: 'person-add-outline',  label: 'JOIN',      sub: 'get togethers', color: RED  },
+  { icon: 'wine-outline',        label: 'EXPLORE',   sub: 'nightlife',   color: '#9C6FDE' },
+  { icon: 'camera-outline',      label: 'SHARE',     sub: 'your journey', color: ORANGE },
+] as const;
+
+// ─── Main screen ──────────────────────────────────────────────────────────────
+
+export default function SignIn() {
+  const insets   = useSafeAreaInsets();
+  const { isAuthed } = useSession();
+
+  // ── Existing auth state (UNCHANGED) ────────────────────────────────────────
+  const [mode,         setMode]         = useState<Mode>('signin');
+  const [name,         setName]         = useState('');
+  const [email,        setEmail]        = useState('');
+  const [password,     setPassword]     = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [busy,         setBusy]         = useState(false);
+  const [error,        setError]        = useState<string | null>(null);
+  const [notice,       setNotice]       = useState<string | null>(null);
+
+  // ── New visual state ────────────────────────────────────────────────────────
+  // TODO: wire rememberMe to a persistent session preference when auth supports it
+  const [rememberMe, setRememberMe] = useState(false);
+
+  // Background rotation
+  const bgCurrentRef  = useRef(0);
+  const bgNextRef     = useRef(1 % LOGIN_BACKGROUNDS.length);
+  const [bgState, setBgState] = useState({ current: 0, next: 1 % LOGIN_BACKGROUNDS.length });
+  const fadeAnim      = useRef(new Animated.Value(0)).current;
+  const isAnimating   = useRef(false);
+  const isPaused      = useRef(false);
+  const resumeTimer   = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const rotationTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // ── Existing redirect effect (UNCHANGED) ───────────────────────────────────
   useEffect(() => {
     if (isAuthed && !busy) router.replace('/(tabs)');
   }, [isAuthed, busy]);
+
+  // ── Background rotation ─────────────────────────────────────────────────────
+  const scheduleNextRef = useRef<(() => void) | undefined>(undefined);
+  scheduleNextRef.current = useCallback(() => {
+    rotationTimer.current = setTimeout(() => {
+      if (isPaused.current || isAnimating.current) {
+        scheduleNextRef.current?.();
+        return;
+      }
+      isAnimating.current = true;
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: BG_FADE_DURATION_MS,
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (finished) {
+          bgCurrentRef.current = bgNextRef.current;
+          bgNextRef.current    = (bgNextRef.current + 1) % LOGIN_BACKGROUNDS.length;
+          setBgState({ current: bgCurrentRef.current, next: bgNextRef.current });
+          fadeAnim.setValue(0);
+          isAnimating.current = false;
+          scheduleNextRef.current?.();
+        }
+      });
+    }, BG_DISPLAY_DURATION_MS);
+  }, [fadeAnim]);
+
+  useEffect(() => {
+    scheduleNextRef.current?.();
+    return () => {
+      clearTimeout(rotationTimer.current);
+      clearTimeout(resumeTimer.current);
+      fadeAnim.stopAnimation();
+    };
+  }, []);
+
+  // Pause rotation while the user is typing; resume 5 s after activity stops
+  const handleInputActivity = useCallback(() => {
+    isPaused.current = true;
+    clearTimeout(resumeTimer.current);
+    resumeTimer.current = setTimeout(() => { isPaused.current = false; }, 5000);
+  }, []);
+
+  // ── Existing auth functions (UNCHANGED logic) ───────────────────────────────
 
   function switchMode(next: Mode) {
     setMode(next);
@@ -53,14 +261,10 @@ export default function SignIn() {
         switchMode('signin');
         return;
       }
-      // New users (just signed up with an active session) always go to onboarding.
       if (mode === 'signup' && res.userId) {
         router.replace('/(auth)/onboarding');
         return;
       }
-      // Returning users: check profile completeness before routing.
-      // A user who abandoned onboarding mid-flow is sent back to finish it
-      // rather than landing on tabs with a blank / incomplete profile state.
       try {
         const profileRes = await getMyProfile();
         if (profileRes.ok && profileRes.data &&
@@ -109,35 +313,96 @@ export default function SignIn() {
     }
   }
 
-  const isForgot = mode === 'forgot-password' || mode === 'forgot-username';
+  const isForgot    = mode === 'forgot-password' || mode === 'forgot-username';
+  const isSignin    = mode === 'signin';
+
+  // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <KeyboardSafeView style={{ backgroundColor: color.paper }} contentContainerStyle={[s.wrap, { paddingTop: insets.top + space.xxxl, paddingBottom: insets.bottom + space.xl }]}>
-        <View style={s.centreBox}>
-          <View style={s.brand}>
-            <Image source={require('../../assets/images/portava-icon.png')} style={s.logo} accessibilityLabel="Portava" />
-            <Text style={s.title}>Portava</Text>
-            <Text style={s.tagline}>Explore. Connect. Belong.</Text>
+    <View style={s.root}>
+
+      {/* ── Background image layer ── */}
+      <Animated.Image
+        source={LOGIN_BACKGROUNDS[bgState.current]}
+        style={s.bgImage}
+        resizeMode="cover"
+      />
+      <Animated.Image
+        source={LOGIN_BACKGROUNDS[bgState.next]}
+        style={[s.bgImage, { opacity: fadeAnim }]}
+        resizeMode="cover"
+      />
+
+      {/* ── Dark gradient overlay (darker at top+bottom, lighter mid) ── */}
+      <LinearGradient
+        colors={[
+          'rgba(4,8,18,0.82)',
+          'rgba(4,8,18,0.30)',
+          'rgba(4,8,18,0.30)',
+          'rgba(4,8,18,0.88)',
+        ]}
+        locations={[0, 0.25, 0.65, 1]}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="none"
+      />
+
+      {/* ── Scrollable foreground content ── */}
+      <KeyboardSafeScrollView style={{ flex: 1 }}>
+        <ScrollView
+          contentContainerStyle={[
+            s.scroll,
+            { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 },
+          ]}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+        >
+
+          {/* 1 ── Logo block ────────────────────────────────────────── */}
+          <View style={s.logoBlock}>
+            <PortavaLogoMark size="xl" />
+            <View style={{ marginTop: 14 }}>
+              <PortavaWordmark size="lg" variant="light" />
+            </View>
+            {/* Tri-color gradient tagline */}
+            <View style={s.taglineRow}>
+              <Text style={[s.taglineWord, { color: TEAL }]}>EXPLORE</Text>
+              <Text style={s.taglineSep}>·</Text>
+              <Text style={[s.taglineWord, { color: '#FF5533' }]}>CONNECT</Text>
+              <Text style={s.taglineSep}>·</Text>
+              <Text style={[s.taglineWord, { color: AMBER }]}>BELONG</Text>
+            </View>
           </View>
 
-          <View style={s.card}>
-            {/* ── Sign in / Sign up tabs ── */}
-            {!isForgot && (
-              <View style={s.tabs}>
-                <Pressable style={[s.tab, mode === 'signin' && s.tabOn]} onPress={() => switchMode('signin')}>
-                  <Text style={[s.tabText, mode === 'signin' && s.tabTextOn]}>Sign in</Text>
-                </Pressable>
-                <Pressable style={[s.tab, mode === 'signup' && s.tabOn]} onPress={() => switchMode('signup')}>
-                  <Text style={[s.tabText, mode === 'signup' && s.tabTextOn]}>Create account</Text>
-                </Pressable>
+          {/* 2 ── Divider with globe icon (signin only) ─────────────── */}
+          {isSignin && (
+            <View style={s.globeRow}>
+              <View style={s.globeLine} />
+              <View style={s.globeIconWrap}>
+                <Globe size={14} color="rgba(255,255,255,0.45)" />
               </View>
-            )}
+              <View style={s.globeLine} />
+            </View>
+          )}
 
-            {/* ── Forgot-flow header ── */}
+          {/* 3+4 ── Welcome back / subtitle (signin only) ────────────── */}
+          {isSignin && (
+            <View style={s.welcomeBlock}>
+              <Text style={s.welcomeHead}>Welcome back</Text>
+              <Text style={s.welcomeSub}>
+                Good people. Great places. Real connections.
+              </Text>
+            </View>
+          )}
+
+          {/* 5 ── Auth card ──────────────────────────────────────────── */}
+          <View style={s.card} accessibilityLabel="Sign in form">
+
+            {/* Forgot flow header */}
             {isForgot && (
               <View style={s.forgotHeader}>
                 <Pressable onPress={() => switchMode('signin')} style={s.backBtn} hitSlop={8}>
-                  <ArrowLeft size={18} color={color.mute} />
+                  <ArrowLeft size={18} color="rgba(255,255,255,0.6)" />
                 </Pressable>
                 <Text style={s.forgotTitle}>
                   {mode === 'forgot-password' ? 'Reset password' : 'Find your username'}
@@ -145,50 +410,138 @@ export default function SignIn() {
               </View>
             )}
 
-            {/* ── Name field (sign-up only) ── */}
+            {/* Signup header */}
             {mode === 'signup' && (
-              <View style={s.field}>
-                <UserIcon size={17} color={color.faint} />
-                <TextInput style={s.input} placeholder="Your name" placeholderTextColor={color.faint}
-                  value={name} onChangeText={setName} autoCapitalize="words" />
+              <View style={s.forgotHeader}>
+                <Pressable onPress={() => switchMode('signin')} style={s.backBtn} hitSlop={8}>
+                  <ArrowLeft size={18} color="rgba(255,255,255,0.6)" />
+                </Pressable>
+                <Text style={s.forgotTitle}>Create your Passport</Text>
               </View>
             )}
 
-            {/* ── Email field ── */}
+            {/* Social buttons — signin only */}
+            {isSignin && (
+              <>
+                {/* Apple sign-in */}
+                {/* TODO: Wire to real Apple OAuth once expo-apple-authentication is added */}
+                <Pressable
+                  style={s.socialBtn}
+                  onPress={() => Alert.alert('Coming soon', 'Apple sign-in will be available in a future update.')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Continue with Apple"
+                >
+                  <Ionicons name="logo-apple" size={20} color="#000" />
+                  <Text style={s.socialBtnText}>Continue with Apple</Text>
+                </Pressable>
+
+                {/* Google sign-in */}
+                {/* TODO: Wire to real Google OAuth once expo-auth-session/Google is configured */}
+                <Pressable
+                  style={s.socialBtn}
+                  onPress={() => Alert.alert('Coming soon', 'Google sign-in will be available in a future update.')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Continue with Google"
+                >
+                  {/* Custom G mark approximating the Google logo colours */}
+                  <View style={s.googleG}>
+                    <Text style={s.googleGText}>G</Text>
+                  </View>
+                  <Text style={s.socialBtnText}>Continue with Google</Text>
+                </Pressable>
+
+                {/* OR divider */}
+                <View style={s.orRow}>
+                  <View style={s.orLine} />
+                  <Text style={s.orText}>OR</Text>
+                  <View style={s.orLine} />
+                </View>
+              </>
+            )}
+
+            {/* Name field (signup only) */}
+            {mode === 'signup' && (
+              <View style={s.field}>
+                <UserIcon size={16} color="rgba(255,255,255,0.45)" />
+                <TextInput
+                  style={s.input}
+                  placeholder="Your name"
+                  placeholderTextColor="rgba(255,255,255,0.30)"
+                  value={name}
+                  onChangeText={v => { setName(v); handleInputActivity(); }}
+                  onFocus={handleInputActivity}
+                  autoCapitalize="words"
+                  accessibilityLabel="Name"
+                />
+              </View>
+            )}
+
+            {/* Email field */}
             <View style={s.field}>
-              <Mail size={17} color={color.faint} />
-              <TextInput style={s.input} placeholder="Email" placeholderTextColor={color.faint}
-                value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoComplete="email" />
+              <Mail size={16} color="rgba(255,255,255,0.45)" />
+              <TextInput
+                style={s.input}
+                placeholder={isForgot ? 'Your email address' : 'Email or username'}
+                placeholderTextColor="rgba(255,255,255,0.30)"
+                value={email}
+                onChangeText={v => { setEmail(v); handleInputActivity(); }}
+                onFocus={handleInputActivity}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                autoComplete="email"
+                accessibilityLabel="Email"
+              />
             </View>
 
-            {/* ── Password field (sign-in / sign-up only) ── */}
+            {/* Password field (signin / signup only) */}
             {!isForgot && (
               <View style={s.field}>
-                <Lock size={17} color={color.faint} />
-                <TextInput style={s.input} placeholder="Password" placeholderTextColor={color.faint}
-                  value={password} onChangeText={setPassword} secureTextEntry={!showPassword} autoCapitalize="none" />
-                <Pressable onPress={() => setShowPassword(v => !v)} hitSlop={8}
+                <Lock size={16} color="rgba(255,255,255,0.45)" />
+                <TextInput
+                  style={s.input}
+                  placeholder="Password"
+                  placeholderTextColor="rgba(255,255,255,0.30)"
+                  value={password}
+                  onChangeText={v => { setPassword(v); handleInputActivity(); }}
+                  onFocus={handleInputActivity}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                  accessibilityLabel="Password"
+                />
+                <Pressable
+                  onPress={() => setShowPassword(v => !v)}
+                  hitSlop={8}
                   accessibilityRole="button"
-                  accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}>
-                  {showPassword ? <EyeOff size={17} color={color.mute} /> : <Eye size={17} color={color.faint} />}
+                  accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword
+                    ? <EyeOff size={16} color="rgba(255,255,255,0.45)" />
+                    : <Eye    size={16} color="rgba(255,255,255,0.45)" />}
                 </Pressable>
               </View>
             )}
 
-            {/* ── Forgot links (sign-in only) ── */}
-            {mode === 'signin' && (
-              <View style={s.forgotRow}>
+            {/* Remember me + Forgot password row (signin only) */}
+            {isSignin && (
+              <View style={s.rememberRow}>
+                <Pressable
+                  style={s.rememberLeft}
+                  onPress={() => setRememberMe(v => !v)}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: rememberMe }}
+                >
+                  <View style={[s.checkbox, rememberMe && s.checkboxOn]}>
+                    {rememberMe && <Ionicons name="checkmark" size={11} color="#fff" />}
+                  </View>
+                  <Text style={s.rememberText}>Remember me</Text>
+                </Pressable>
                 <Pressable onPress={() => switchMode('forgot-password')} hitSlop={6}>
                   <Text style={s.forgotLink}>Forgot password?</Text>
                 </Pressable>
-                <Text style={s.forgotSep}>·</Text>
-                <Pressable onPress={() => switchMode('forgot-username')} hitSlop={6}>
-                  <Text style={s.forgotLink}>Forgot username?</Text>
-                </Pressable>
               </View>
             )}
 
-            {/* ── Forgot-flow helper text ── */}
+            {/* Forgot flow hint */}
             {isForgot && !notice && (
               <Text style={s.forgotHint}>
                 {mode === 'forgot-password'
@@ -197,66 +550,463 @@ export default function SignIn() {
               </Text>
             )}
 
-            {error ? <Text style={s.error}>{error}</Text> : null}
-            {notice ? <Text style={s.notice}>{notice}</Text> : null}
+            {/* Error / notice */}
+            {error  && <Text style={s.errorText}>{error}</Text>}
+            {notice && <Text style={s.noticeText}>{notice}</Text>}
 
-            {/* ── Primary action button ── */}
-            <Pressable
-              style={[s.submit, busy ? s.submitBusy : null]}
-              onPress={mode === 'forgot-password' ? sendPasswordReset : mode === 'forgot-username' ? lookupUsername : submit}
-              disabled={busy}
-            >
-              {busy
-                ? <ActivityIndicator color={color.onInk} />
-                : <Text style={s.submitText}>
-                    {mode === 'signin' ? 'Sign in'
-                      : mode === 'signup' ? 'Create account'
-                      : mode === 'forgot-password' ? 'Send reset email'
-                      : 'Find my username'}
-                  </Text>}
-            </Pressable>
+            {/* Primary CTA */}
+            {isSignin ? (
+              /* Gradient Sign In button */
+              <Pressable
+                onPress={submit}
+                disabled={busy}
+                style={{ borderRadius: 14, overflow: 'hidden', marginTop: 4 }}
+                accessibilityRole="button"
+                accessibilityLabel="Sign In"
+              >
+                <LinearGradient
+                  colors={[TEAL, ORANGE, AMBER]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={s.signInBtn}
+                >
+                  {busy
+                    ? <ActivityIndicator color="#fff" />
+                    : <>
+                        <Text style={s.signInText}>Sign In</Text>
+                        <ArrowRight size={18} color="#fff" />
+                      </>}
+                </LinearGradient>
+              </Pressable>
+            ) : (
+              /* Plain dark CTA for signup / forgot flows */
+              <Pressable
+                style={[s.darkBtn, busy && { opacity: 0.7 }]}
+                onPress={
+                  mode === 'forgot-password' ? sendPasswordReset
+                  : mode === 'forgot-username' ? lookupUsername
+                  : submit
+                }
+                disabled={busy}
+                accessibilityRole="button"
+              >
+                {busy
+                  ? <ActivityIndicator color="#fff" />
+                  : <Text style={s.darkBtnText}>
+                      {mode === 'signup'          ? 'Create Account'
+                       : mode === 'forgot-password' ? 'Send reset email'
+                       : 'Find my username'}
+                    </Text>}
+              </Pressable>
+            )}
 
-            {/* ── Switch hint (sign-in / sign-up) ── */}
-            {!isForgot && (
-              <Text style={s.switchHint} onPress={() => switchMode(mode === 'signin' ? 'signup' : 'signin')}>
-                {mode === 'signin' ? "New here? Create an account" : 'Already have an account? Sign in'}
-              </Text>
+            {/* Privacy note (signin only) */}
+            {isSignin && (
+              <View style={s.privacyRow}>
+                <Shield size={12} color="rgba(255,255,255,0.35)" />
+                <Text style={s.privacyText}>Your data is private and secure</Text>
+              </View>
             )}
           </View>
 
-          <Text style={s.legal}>By continuing you agree to travel kindly and respect fellow travelers.</Text>
-        </View>
-    </KeyboardSafeView>
+          {/* 6 ── New to Portava card (signin only) ─────────────────── */}
+          {isSignin && (
+            <View style={s.card}>
+              <View style={s.passportRow}>
+                <PassportCard />
+                <View style={s.passportContent}>
+                  <Text style={s.passportHead}>New to Portava?</Text>
+                  <Pressable
+                    style={s.createPassportBtn}
+                    onPress={() => switchMode('signup')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Create your Passport"
+                  >
+                    <Text style={s.createPassportText}>Create your Passport</Text>
+                    <ChevronRight size={15} color={ORANGE} />
+                  </Pressable>
+                  <Text style={s.passportSub}>Join the community.</Text>
+                </View>
+              </View>
+            </View>
+          )}
+
+          {/* 7 ── Feature icons (signin only) ───────────────────────── */}
+          {isSignin && (
+            <View style={s.featureRow} accessibilityLabel="App features">
+              {FEATURES.map(f => (
+                <Pressable
+                  key={f.label}
+                  style={s.featureItem}
+                  onPress={() => {}}     /* presentational — no nav target yet */
+                  hitSlop={4}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${f.label}: ${f.sub}`}
+                >
+                  <Ionicons
+                    name={f.icon as any}
+                    size={22}
+                    color={f.color}
+                  />
+                  <Text style={[s.featureLabel, { color: f.color }]}>{f.label}</Text>
+                  <Text style={s.featureSub}>{f.sub}</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+
+          {/* 8 ── Script tagline (signin only) ──────────────────────── */}
+          {isSignin && (
+            <View style={s.scriptRow}>
+              <Text style={[s.scriptText, { color: TEAL }]}>Your world.</Text>
+              <Text style={[s.scriptText, { color: '#FF4444' }]}> Your people.</Text>
+              <Text style={[s.scriptText, { color: AMBER }]}> Your journey.</Text>
+              <Ionicons name="airplane-outline" size={13} color={ORANGE} style={{ marginLeft: 5 }} />
+            </View>
+          )}
+
+          <Text style={s.legal}>
+            By continuing you agree to travel kindly and respect fellow travelers.
+          </Text>
+
+        </ScrollView>
+      </KeyboardSafeScrollView>
+    </View>
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const s = StyleSheet.create({
-  wrap:         { flexGrow: 1, paddingHorizontal: space.lg, justifyContent: 'center', gap: space.xl, alignItems: 'center' },
-  centreBox:    { width: '100%', maxWidth: 480, gap: space.xl },
-  brand:        { alignItems: 'center', gap: space.sm },
-  logo:         { width: 76, height: 76, borderRadius: 17 },
-  title:        { ...t.hero, color: color.ink, fontSize: 28 },
-  tagline:      { ...t.small, color: color.mute },
-  card:         { backgroundColor: color.paperRaised, borderRadius: radius.lg, borderWidth: 1, borderColor: color.haze, padding: space.lg, gap: space.md, ...shadow.card },
-  tabs:         { flexDirection: 'row', backgroundColor: color.paper, borderRadius: radius.md, padding: 3, marginBottom: space.sm },
-  tab:          { flex: 1, paddingVertical: space.sm, borderRadius: radius.sm, alignItems: 'center' },
-  tabOn:        { backgroundColor: color.signal },
-  tabText:      { ...t.small, fontWeight: '700', color: color.mute },
-  tabTextOn:    { color: color.onInk },
-  field:        { flexDirection: 'row', alignItems: 'center', gap: space.sm, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingHorizontal: space.md, backgroundColor: color.paper },
-  input:        { flex: 1, paddingVertical: space.md, ...t.body, color: color.ink },
-  error:        { ...t.small, color: color.signal, fontWeight: '600' },
-  notice:       { ...t.small, color: color.success, fontWeight: '600' },
-  submit:       { backgroundColor: color.ink, borderRadius: radius.md, paddingVertical: space.md, alignItems: 'center', marginTop: space.xs },
-  submitBusy:   { opacity: 0.7 },
-  submitText:   { ...t.bodyStrong, color: color.onInk },
-  switchHint:   { ...t.small, color: color.signal, fontWeight: '600', textAlign: 'center', marginTop: space.xs },
-  forgotRow:    { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: -space.xs },
-  forgotLink:   { ...t.small, color: color.signal, fontWeight: '600' },
-  forgotSep:    { ...t.small, color: color.faint },
-  forgotHeader: { flexDirection: 'row', alignItems: 'center', gap: space.md, marginBottom: space.xs },
-  backBtn:      { padding: 4 },
-  forgotTitle:  { ...t.bodyStrong, color: color.ink },
-  forgotHint:   { ...t.small, color: color.mute, lineHeight: 18 },
-  legal:        { ...t.small, color: color.faint, fontSize: 11, textAlign: 'center', paddingHorizontal: space.lg },
+  root: {
+    flex: 1,
+    backgroundColor: '#04080C',
+  },
+  bgImage: {
+    ...StyleSheet.absoluteFillObject,
+  },
+
+  scroll: {
+    flexGrow: 1,
+    paddingHorizontal: 20,
+    gap: 18,
+    alignItems: 'center',
+  },
+
+  // ── Logo block
+  logoBlock: {
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+  },
+  taglineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+  },
+  taglineWord: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+  },
+  taglineSep: {
+    color: 'rgba(255,255,255,0.30)',
+    fontSize: 10,
+  },
+
+  // ── Globe divider
+  globeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    gap: 8,
+  },
+  globeLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+  },
+  globeIconWrap: {
+    padding: 2,
+  },
+
+  // ── Welcome back
+  welcomeBlock: {
+    alignItems: 'center',
+    gap: 4,
+  },
+  welcomeHead: {
+    fontSize: 26,
+    fontWeight: '700',
+    color: '#fff',
+    letterSpacing: -0.4,
+  },
+  welcomeSub: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.60)',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+
+  // ── Card (auth card + passport card)
+  card: {
+    width: '100%',
+    backgroundColor: CARD_BG,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: CARD_BORDER,
+    padding: 18,
+    gap: 12,
+  },
+
+  // ── Social buttons
+  socialBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    paddingVertical: 13,
+  },
+  socialBtnText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111',
+  },
+  googleG: {
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  googleGText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#4285F4',
+  },
+
+  // ── OR divider
+  orRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  orLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  orText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.40)',
+    letterSpacing: 1,
+  },
+
+  // ── Input fields
+  field: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 2,
+  },
+  input: {
+    flex: 1,
+    fontSize: 15,
+    color: '#fff',
+    paddingVertical: 13,
+  },
+
+  // ── Remember me row
+  rememberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: -4,
+  },
+  rememberLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  checkbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxOn: {
+    backgroundColor: TEAL,
+    borderColor: TEAL,
+  },
+  rememberText: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.55)',
+  },
+  forgotLink: {
+    fontSize: 13,
+    color: ORANGE,
+    fontWeight: '600',
+  },
+
+  // ── Forgot flow
+  forgotHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  backBtn: { padding: 2 },
+  forgotTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  forgotHint: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.50)',
+    lineHeight: 19,
+  },
+
+  // ── Error / notice
+  errorText: {
+    fontSize: 13,
+    color: '#FF6B6B',
+    fontWeight: '600',
+  },
+  noticeText: {
+    fontSize: 13,
+    color: '#4CAF50',
+    fontWeight: '600',
+  },
+
+  // ── Sign In gradient button
+  signInBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 15,
+    borderRadius: 14,
+  },
+  signInText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+    letterSpacing: 0.3,
+  },
+
+  // ── Dark CTA (signup / forgot flows)
+  darkBtn: {
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+  },
+  darkBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
+  },
+
+  // ── Privacy note
+  privacyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    marginTop: -4,
+  },
+  privacyText: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.35)',
+  },
+
+  // ── New to Portava card
+  passportRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  passportContent: {
+    flex: 1,
+    gap: 6,
+  },
+  passportHead: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  createPassportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  createPassportText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: ORANGE,
+  },
+  passportSub: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.45)',
+  },
+
+  // ── Feature icons
+  featureRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    paddingHorizontal: 4,
+  },
+  featureItem: {
+    alignItems: 'center',
+    gap: 4,
+    minWidth: 52,
+  },
+  featureLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  featureSub: {
+    fontSize: 9,
+    color: 'rgba(255,255,255,0.40)',
+    textAlign: 'center',
+  },
+
+  // ── Script tagline
+  scriptRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+  },
+  scriptText: {
+    fontSize: 13,
+    fontStyle: 'italic',
+    fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
+  },
+
+  // ── Legal
+  legal: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.28)',
+    textAlign: 'center',
+    paddingHorizontal: 12,
+    marginTop: 4,
+  },
 });

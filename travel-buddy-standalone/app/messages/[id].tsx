@@ -24,7 +24,7 @@ import {
   ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight,
   CheckCircle, MoreVertical, Info, VolumeX, Languages, Paperclip, Compass,
   Bot, Reply, Copy, Trash2, Flag, CheckCheck, AlertCircle, Search, BookmarkPlus,
-  RefreshCw, Clock, ChevronDown, X, Phone, Video,
+  RefreshCw, Clock, ChevronDown, X, Phone, Video, Lock,
 } from 'lucide-react-native';
 import { useCallState, useCallActions } from '../../src/context/CallContext';
 import { ensureCallMediaPermissions } from '../../src/services/callPermissions';
@@ -1117,6 +1117,8 @@ export default function TelegraphThread() {
   const [showSafetySheet, setShowSafetySheet] = useState(false);
   const [hideAiSuggestions, setHideAiSuggestions] = useState(false);
   const [threadIsMuted, setThreadIsMuted] = useState(false);
+  // E-2: whether the thread uses end-to-end encryption
+  const [isE2ee, setIsE2ee] = useState(false);
   const [showCompassTray, setShowCompassTray] = useState(false);
   const [compassTelegraphEnabled, setCompassTelegraphEnabled] = useState<null | boolean>(null);
   const [dismissedAiMsgIds, setDismissedAiMsgIds] = useState<Set<string>>(new Set());
@@ -1320,6 +1322,17 @@ export default function TelegraphThread() {
   useEffect(() => {
     if (!id) return;
     markThreadRead(id).catch(() => {});
+  }, [id]);
+
+  // E-2: fetch is_e2ee flag once per thread open.
+  useEffect(() => {
+    if (!id) return;
+    supabase
+      .from('message_threads')
+      .select('is_e2ee')
+      .eq('id', id)
+      .maybeSingle()
+      .then(({ data }) => { if ((data as any)?.is_e2ee) setIsE2ee(true); });
   }, [id]);
 
   // Merge: per-thread override takes precedence over global langSettings
@@ -1637,6 +1650,26 @@ export default function TelegraphThread() {
             <Text style={styles.headerName} numberOfLines={1}>{displayName}</Text>
             {isDirect && dmProfile?.name && (
               <CheckCircle size={13} color={color.signal} />
+            )}
+            {/* E-2: lock badge — taps open safety number modal */}
+            {isE2ee && (
+              <Pressable
+                hitSlop={8}
+                accessibilityLabel="End-to-end encrypted. Tap to verify safety number."
+                onPress={() => {
+                  // Navigate to the safety number screen.
+                  // peerIdentityPub is fetched server-side by SafetyNumberScreen.
+                  router.push({
+                    pathname: '/safety-number',
+                    params: {
+                      peerName: displayName,
+                      peerUserId: otherUserId ?? '',
+                    },
+                  });
+                }}
+              >
+                <Lock size={13} color={color.signal} />
+              </Pressable>
             )}
           </View>
           <View style={styles.headerTagRow}>

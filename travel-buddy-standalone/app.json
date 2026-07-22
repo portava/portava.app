@@ -119,7 +119,8 @@
       ],
       "expo-dev-client",
       "@maplibre/maplibre-react-native",
-      "@livekit/react-native-expo-plugin"
+      "@livekit/react-native-expo-plugin",
+      "./plugins/withPortavaNSE"
     ],
     "experiments": {
       "typedRoutes": true,
