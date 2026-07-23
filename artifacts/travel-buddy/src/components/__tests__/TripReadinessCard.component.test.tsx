@@ -96,12 +96,43 @@ describe('TripReadinessCard', () => {
   it('renders nothing when fetchTripReadiness returns null', async () => {
     fetchTripReadiness.mockResolvedValue(null);
 
-    const { queryByTestId, queryByText } = await mountCard();
+    const { queryByTestId, queryByText, toJSON } = await mountCard();
 
     await waitFor(() => {
       expect(queryByTestId('trip-readiness-card')).toBeNull();
     });
+
+    // Entire card subtree must be absent — not just the container testID
     expect(queryByText(/Trip Readiness/)).toBeNull();
+    // Score text
+    expect(queryByText(/\d+%/)).toBeNull();
+    // Category row labels
+    expect(queryByText('Plan')).toBeNull();
+    expect(queryByText('Stay')).toBeNull();
+    expect(queryByText('Transport')).toBeNull();
+    expect(queryByText('Budget')).toBeNull();
+    expect(queryByText('Entry')).toBeNull();
+    expect(queryByText('Documents')).toBeNull();
+    expect(queryByText('Reservations')).toBeNull();
+    // No child nodes at all
+    expect(toJSON()).toBeNull();
+  });
+
+  it('renders nothing when fetchTripReadiness throws (network error)', async () => {
+    fetchTripReadiness.mockRejectedValue(new Error('Network request failed'));
+
+    const { queryByTestId, queryByText, toJSON } = await mountCard();
+
+    await waitFor(() => {
+      expect(queryByTestId('trip-readiness-card')).toBeNull();
+    });
+
+    // Card subtree must be fully absent — throw is treated same as null
+    expect(queryByText(/Trip Readiness/)).toBeNull();
+    expect(queryByText(/\d+%/)).toBeNull();
+    expect(queryByText('Plan')).toBeNull();
+    expect(queryByText('Entry')).toBeNull();
+    expect(toJSON()).toBeNull();
   });
 
   it('shows critical items above the score', async () => {

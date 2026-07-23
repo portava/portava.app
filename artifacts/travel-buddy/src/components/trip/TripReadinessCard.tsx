@@ -125,9 +125,14 @@ export function TripReadinessCard({ tripId, refresh = false }: TripReadinessCard
 
   const load = useCallback(async (forceRefresh: boolean) => {
     setLoading(true);
-    const res = await fetchTripReadiness(tripId, forceRefresh);
-    setSummary(res); // null means flag off → render nothing
-    setLoading(false);
+    try {
+      const res = await fetchTripReadiness(tripId, forceRefresh);
+      setSummary(res); // null means flag off → render nothing
+    } catch {
+      setSummary(null); // network/unexpected error → treat same as feature flag off
+    } finally {
+      setLoading(false);
+    }
   }, [tripId]);
 
   useEffect(() => { load(refresh); }, [load, refresh]);
