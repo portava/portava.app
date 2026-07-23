@@ -1,18 +1,15 @@
 /**
- * Portava brand components — corrected P mark.
+ * Portava brand components — corrected P mark (v2).
  *
- * This file replaces the previous PortavaLogoMark with a version that
- * matches the target artwork (warm outer P with a small chat-bubble
- * tail at the bottom-right of the bowl, cool left descender stroke, and
- * a cool paper-plane inside the bowl).
- *
- * Same exports as before — PortavaLogoMark and PortavaWordmark — with
- * the same size prop, so any consumer of this file keeps working.
+ * The warm P is now rendered as a proper "hollow" ring so the cyan
+ * behind it shows through where the paper-plane sits, matching the
+ * reference artwork. The cool descender is widened to match the
+ * reference weight.
  */
 
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import Svg, { Path, Defs, LinearGradient, Stop } from 'react-native-svg';
+import Svg, { Path, Defs, LinearGradient, Stop, G } from 'react-native-svg';
 
 type Size = 'sm' | 'md' | 'lg' | 'xl';
 
@@ -37,13 +34,13 @@ const WORDMARK_LETTER_SPACING: Record<Size, number> = {
   xl: 12,
 };
 
-// Warm gradient (outer P): coral-red top-left -> orange bottom-right.
+// Warm gradient (outer P ring): coral-red top-left -> orange bottom-right.
 const WARM_STOPS = [
   { offset: '0%', color: '#FF4D57' },
   { offset: '100%', color: '#FFA51F' },
 ];
 
-// Cool gradient (descender + paper-plane): bright teal -> deeper cyan.
+// Cool gradient (descender, paper-plane, wordmark A): teal -> deep cyan.
 const COOL_STOPS = [
   { offset: '0%', color: '#20E3D7' },
   { offset: '100%', color: '#0897B7' },
@@ -67,22 +64,20 @@ export function PortavaLogoMark({ size = 'md' }: { size?: Size }) {
             <Stop key={s.offset} offset={s.offset} stopColor={s.color} />
           ))}
         </LinearGradient>
-
         <LinearGradient
-          id="pmark-cool"
-          x1="340"
+          id="pmark-cool-descender"
+          x1="240"
           y1="300"
-          x2="420"
-          y2="860"
+          x2="360"
+          y2="880"
           gradientUnits="userSpaceOnUse"
         >
           {COOL_STOPS.map((s) => (
             <Stop key={s.offset} offset={s.offset} stopColor={s.color} />
           ))}
         </LinearGradient>
-
         <LinearGradient
-          id="pmark-arrow"
+          id="pmark-cool-plane"
           x1="485"
           y1="390"
           x2="665"
@@ -96,32 +91,60 @@ export function PortavaLogoMark({ size = 'md' }: { size?: Size }) {
       </Defs>
 
       {/*
-        Warm outer P. Bowl at the top opens right, sweeps around, closes
-        back down with a small red curl at the bottom-right corner of the
-        bowl that reads as a chat-bubble tail.
+        Cool descender (drawn FIRST so it sits behind the warm ring at
+        the joint on the left).
+        Substantially widened from v1: now roughly the same weight as
+        the warm ring, ending in an angled point at the bottom-left.
       */}
       <Path
-        d="M 250 230 H 610 C 758 230 840 314 840 450 C 840 600 737 684 595 684 H 520 L 430 770 V 585 H 600 C 675 585 722 538 722 458 C 722 380 670 333 595 333 H 250 Z"
+        d="M 230 340 H 400 V 780 L 230 900 Z"
+        fill="url(#pmark-cool-descender)"
+      />
+
+      {/*
+        Warm outer P as a hollow ring — outer bowl silhouette with a
+        paper-plane-shaped hole in the middle. Uses fillRule evenodd so
+        the inner subpath (the plane) is punched out and the cool layer
+        underneath shows through.
+
+        Subpath 1: outer P bowl silhouette (same shape as v1 outer).
+        Subpath 2: the paper-plane cutout, listed clockwise so evenodd
+        subtracts it.
+      */}
+      <Path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="
+          M 250 230
+          H 610
+          C 758 230 840 314 840 450
+          C 840 600 737 684 595 684
+          H 520
+          L 430 770
+          V 585
+          H 600
+          C 675 585 722 538 722 458
+          C 722 380 670 333 595 333
+          H 250
+          Z
+          M 500 460
+          L 670 388
+          L 612 620
+          L 560 528
+          Z
+        "
         fill="url(#pmark-warm)"
       />
 
       {/*
-        Cool descender: the left vertical stroke of the P, ending in a
-        soft angled point at the bottom-left.
+        Cool paper-plane sits in the same location as the cutout — this
+        gives the plane a slightly darker/more saturated cyan than the
+        descender behind it, matching the reference where the plane
+        looks like its own object rather than just a hole.
       */}
       <Path
-        d="M 245 360 H 355 V 765 L 245 875 Z"
-        fill="url(#pmark-cool)"
-      />
-
-      {/*
-        Paper-plane arrow inside the bowl. Points upper-right, suggesting
-        motion and travel. Same cool gradient as the descender so they
-        read as one continuous cool form.
-      */}
-      <Path
-        d="M 480 468 L 650 392 L 600 610 L 552 520 Z"
-        fill="url(#pmark-arrow)"
+        d="M 500 460 L 670 388 L 612 620 L 560 528 Z"
+        fill="url(#pmark-cool-plane)"
       />
     </Svg>
   );
