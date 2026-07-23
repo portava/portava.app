@@ -195,6 +195,44 @@ describe('DestinationListEditor', () => {
     });
   });
 
+  it('disables the remove button while the DELETE is in-flight and hides the row after resolution', async () => {
+    // Pre-populate with a server row (edit mode).
+    const initialDests: DestinationEntry[] = [
+      { key: 'k1', id: 'dest-slow-99', city: 'Tokyo', country: 'Japan' },
+    ];
+
+    // Deferred promise — lets us control when the delete resolves.
+    let resolveDelete!: (v: boolean) => void;
+    const deletePromise = new Promise<boolean>((res) => { resolveDelete = res; });
+    mockDelete.mockReturnValue(deletePromise);
+
+    const { getByTestId, queryByText } = await render(
+      <Wrapper tripId="trip-slow" initialDestinations={initialDests} />,
+    );
+
+    await screen.findByText('Tokyo, Japan');
+
+    // Fire the remove press — do NOT await full resolution yet.
+    // The async handler sets busyRows immediately, so the button should
+    // be disabled on the very next render.
+    fireEvent.press(getByTestId('remove-dest-0'));
+
+    // Button should be disabled while delete is in-flight.
+    await waitFor(() => {
+      expect(getByTestId('remove-dest-0').props.accessibilityState?.disabled).toBe(true);
+    });
+
+    // Row should still be visible (not yet hidden — waiting on the API).
+    expect(queryByText('Tokyo, Japan')).not.toBeNull();
+
+    // Resolve the delete — the row should now be hidden.
+    resolveDelete(true);
+
+    await waitFor(() => {
+      expect(queryByText('Tokyo, Japan')).toBeNull();
+    });
+  });
+
   it('calls addDestination when a city is picked in edit mode', async () => {
     const { getByTestId, findByTestId, findByText } = await render(
       <Wrapper tripId="trip-xyz" />,
