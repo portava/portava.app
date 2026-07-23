@@ -105,12 +105,26 @@ function norm(s: string | null | undefined): string {
   return (s ?? "").trim().toLowerCase();
 }
 
+/**
+ * City-name variants for identity matching: the name as-is, and with a
+ * trailing " city" stripped ("Cebu City" → "Cebu"). Both sides of a match are
+ * expanded, so "Mexico City" still matches an identity authored as
+ * "Mexico City".
+ */
+export function cityVariants(s: string | null | undefined): string[] {
+  const n = norm(s);
+  if (!n) return [];
+  const stripped = n.replace(/\s+city$/, "");
+  return stripped !== n ? [n, stripped] : [n];
+}
+
 /** Match a catalog entry against the seed identities (city or country-level). */
 export function matchSeedIdentity(entry: IdentityLookupEntry): DestinationIdentity | null {
-  const city = norm(entry.city) || norm(entry.display_name);
+  const cities = cityVariants(entry.city ?? null).concat(cityVariants(entry.display_name ?? null));
   const cc = norm(entry.country_code);
   for (const seed of Object.values(SEED_IDENTITIES)) {
-    if (city && norm(seed.city) === city && (!cc || norm(seed.countryCode) === cc)) {
+    const seedCities = cityVariants(seed.city ?? null);
+    if (cities.some((c) => seedCities.includes(c)) && (!cc || norm(seed.countryCode) === cc)) {
       return { ...seed, source: "seed" };
     }
   }
@@ -162,14 +176,14 @@ export async function resolveIdentity(sc: any, entry: IdentityLookupEntry): Prom
           .maybeSingle();
         if (data && isPalette((data as any).palette)) return rowToIdentity(data);
       }
-      // 2. City + country match.
-      const city = (entry.city ?? entry.display_name ?? "").trim();
+      // 2. City + country match — try the raw name, then with a trailing
+      //    " City" stripped ("Cebu City" catalog entry → "Cebu" identity).
       const cc = (entry.country_code ?? "").trim().toUpperCase();
-      if (city) {
+      for (const cityVariant of cityVariants(entry.city ?? entry.display_name ?? null)) {
         let q = sc
           .from("destination_identities")
           .select("identity_key, city, country, country_code, palette, motif, wide_focus")
-          .ilike("city", city)
+          .ilike("city", cityVariant)
           .eq("status", "active")
           .limit(1);
         if (cc) q = q.eq("country_code", cc);

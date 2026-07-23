@@ -58,6 +58,14 @@ describe("identity resolution", () => {
     assert.equal(m!.source, "seed");
   });
 
+  it('matches "X City" catalog names to the "X" identity (Cebu City → cebu-ph)', () => {
+    const m = matchSeedIdentity({ display_name: "Cebu City", country_code: "PH" });
+    assert.ok(m);
+    assert.equal(m!.identityKey, "cebu-ph");
+    // …without over-stripping: a name that is exactly "City" never matches everything.
+    assert.equal(matchSeedIdentity({ display_name: "City", country_code: "PH" }), null);
+  });
+
   it("falls back to a deterministic curated palette for unknown destinations", () => {
     const a = fallbackIdentity({ canonical_location_key: "city:medellin:co", display_name: "Medellín" });
     const b = fallbackIdentity({ canonical_location_key: "city:medellin:co", display_name: "Medellín" });
