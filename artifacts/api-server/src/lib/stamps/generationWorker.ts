@@ -696,8 +696,8 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
         storage_path:            storagePath,
         public_url:              publicUrl,
         generation_source:       "ai_generated",
-        provider:                (img.metadata.model as string) ?? "openai_dalle3",
-        model_version:           "dall-e-3",
+        provider:                (img.metadata.model as string) ?? "openai_image",
+        model_version:           (img.metadata.model as string) ?? "unknown",
         prompt_used:             prompt,
         prompt_template_version: STYLE_VERSION,
         generation_metadata:     {

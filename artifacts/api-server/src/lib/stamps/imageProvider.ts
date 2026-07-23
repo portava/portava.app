@@ -41,9 +41,22 @@ export function isNonRetryableProviderError(err: any): boolean {
   return code === "content_policy_violation" || code === "invalid_request_error";
 }
 
-// ── DALL-E 3 provider ─────────────────────────────────────────────────────────
-// DALL-E 3 only supports n=1 per call, so we fire CANDIDATE_COUNT calls in
-// parallel and aggregate results.
+// ── OpenAI image provider (gpt-image-1 family) ───────────────────────────────
+// Model is env-configurable via STAMP_IMAGE_MODEL (default "gpt-image-1" —
+// dall-e-3 was deprecated by OpenAI in 2026 and is rejected by the AI proxy).
+// gpt-image-1 returns base64 image data (b64_json) rather than temporary URLs,
+// and supports transparent backgrounds natively — which the stamp prompt
+// requires. We normalize b64 responses into data: URLs so the worker's
+// existing fetch()-based download path works unchanged (Node fetch supports
+// data: URLs). Some proxies may still return `url`; both shapes are accepted.
+// The API supports n>1, but we keep one image per call and fire
+// CANDIDATE_COUNT calls in parallel so a single rejection doesn't sink the
+// whole batch.
+
+export const STAMP_IMAGE_MODEL =
+  process.env.STAMP_IMAGE_MODEL?.trim() || "gpt-image-1";
+export const STAMP_IMAGE_QUALITY =
+  process.env.STAMP_IMAGE_QUALITY?.trim() || "high";
 
 export class DalleProvider implements StampImageProvider {
   async generate(prompt: string, n = CANDIDATE_COUNT): Promise<GeneratedImage[]> {
@@ -51,24 +64,29 @@ export class DalleProvider implements StampImageProvider {
     const calls = Array.from({ length: n }, async (_, i): Promise<GeneratedImage | null> => {
       try {
         const response = await openai.images.generate({
-          model:           "dall-e-3",
+          model:      STAMP_IMAGE_MODEL,
           prompt,
-          n:               1,
-          size:            "1024x1024",
-          quality:         "hd",
-          response_format: "url",
-        });
+          n:          1,
+          size:       "1024x1024",
+          quality:    STAMP_IMAGE_QUALITY,
+          background: "transparent",
+        } as any);
 
-        const item = response.data?.[0];
-        if (!item?.url) return null;
+        const item = response.data?.[0] as
+          | { url?: string; b64_json?: string; revised_prompt?: string }
+          | undefined;
+        const url = item?.url
+          ?? (item?.b64_json ? `data:image/png;base64,${item.b64_json}` : null);
+        if (!url) return null;
 
         return {
-          url: item.url,
+          url,
           metadata: {
-            model:          "dall-e-3",
-            quality:        "hd",
+            model:          STAMP_IMAGE_MODEL,
+            quality:        STAMP_IMAGE_QUALITY,
             size:           "1024x1024",
-            revised_prompt: item.revised_prompt ?? null,
+            background:     "transparent",
+            revised_prompt: item?.revised_prompt ?? null,
             candidate_index: i,
           },
         };
@@ -78,7 +96,7 @@ export class DalleProvider implements StampImageProvider {
         console.error(
           JSON.stringify({
             event:     "stamp.generation.provider_error",
-            provider:  "openai_dalle3",
+            provider:  STAMP_IMAGE_MODEL,
             candidate: i,
             permanent,
             error:     err?.message ?? String(err),

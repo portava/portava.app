@@ -45,6 +45,12 @@ const router = Router();
 // OR disabled, return 503 so callers get a clear error instead of a 500 from
 // "relation stamp_definitions does not exist".
 router.use(async (req, res, next) => {
+  // SCOPE FIX (2026-07-23): this router is mounted path-less in routes/index.ts,
+  // so without this guard the gate below intercepted EVERY request that reached
+  // it — 503ing ~15 unrelated routers registered after it (emergency contacts,
+  // crash reports, discovery search, calls, …) whenever the flag was off.
+  // Gate ONLY stamp routes; let everything else fall through.
+  if (!req.path.startsWith("/stamps")) return next();
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
   try {
