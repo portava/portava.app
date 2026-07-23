@@ -20,7 +20,7 @@ import { CalendarDays, X } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { formatDisplayDate, fromISODate } from '../../lib/dateTime/formatters.ts';
 import type { Place } from '../../lib/location/placeTypes.ts';
-import { addDestination, reorderDestinations, deleteDestination } from '../../services/tripDestinations.ts';
+import { addDestination, reorderDestinations, deleteDestination, patchDestination } from '../../services/tripDestinations.ts';
 
 export interface DestinationEntry {
   /** Local unique key — stable across re-renders. */
@@ -135,10 +135,23 @@ export function DestinationListEditor({ tripId, destinations, onChange }: Props)
   }, [destinations, onChange, tripId]);
 
   // ── Date change for a row ────────────────────────────────────────────────
-  const handleDateChange = useCallback((key: string, start: string | null, end: string | null) => {
+  const handleDateChange = useCallback(async (key: string, start: string | null, end: string | null) => {
+    const entry = destinations.find((d) => d.key === key);
+    if (!entry) return;
+
+    // In edit mode with a persisted server row: PATCH immediately.
+    if (tripId && entry.id) {
+      setBusyRow(key, true);
+      try {
+        await patchDestination(tripId, entry.id, { arrivalDate: start, departureDate: end });
+      } finally {
+        setBusyRow(key, false);
+      }
+    }
+
     onChange(destinations.map((d) => d.key === key ? { ...d, arrivalDate: start, departureDate: end } : d));
     setCalPickerRow(-1);
-  }, [destinations, onChange]);
+  }, [destinations, onChange, tripId]);
 
   // ── Reorder: move up / down ──────────────────────────────────────────────
   const handleMove = useCallback(async (visibleIdx: number, direction: 'up' | 'down') => {
@@ -177,13 +190,6 @@ export function DestinationListEditor({ tripId, destinations, onChange }: Props)
         const hasCity = Boolean(entry.city);
         const startD = entry.arrivalDate ? fromISODate(entry.arrivalDate) : null;
         const endD = entry.departureDate ? fromISODate(entry.departureDate) : null;
-
-        // An "existing server row" in edit mode has an `id` from the server.
-        // No DELETE or PATCH endpoint exists for individual destinations yet, so
-        // we hide remove and date-edit affordances for those rows to prevent
-        // misleading UX (changes that look saved but revert on refresh).
-        // Newly added rows (no `id`) go through POST and can still have dates.
-        const isServerRow = Boolean(tripId && entry.id);
 
         return (
           <View key={entry.key} style={styles.row}>
@@ -224,34 +230,30 @@ export function DestinationListEditor({ tripId, destinations, onChange }: Props)
                 </Text>
               </Pressable>
 
-              {/* Date picker — hidden for existing server rows in edit mode:
-                  no PATCH /destinations/:id endpoint exists yet, so date changes
-                  would not persist and would revert on refresh. */}
-              {!isServerRow && (
-                <Pressable
-                  style={styles.datePicker}
-                  onPress={() => setCalPickerRow(visIdx)}
-                  accessibilityLabel={`Pick dates for stop ${visIdx + 1}`}
-                >
-                  <CalendarDays size={12} color={(entry.arrivalDate || entry.departureDate) ? color.signal : color.faint} />
-                  <Text style={[styles.dateText, !(entry.arrivalDate || entry.departureDate) && styles.pickerPlaceholder]} numberOfLines={1}>
-                    {startD && endD
-                      ? `${formatDisplayDate(startD)} – ${formatDisplayDate(endD)}`
-                      : startD
-                      ? `From ${formatDisplayDate(startD)}`
-                      : 'Dates (optional)'}
-                  </Text>
-                  {(entry.arrivalDate || entry.departureDate) && (
-                    <Pressable
-                      hitSlop={6}
-                      onPress={(e) => { e.stopPropagation?.(); handleDateChange(entry.key, null, null); }}
-                      accessibilityLabel="Clear dates"
-                    >
-                      <X size={12} color={color.mute} />
-                    </Pressable>
-                  )}
-                </Pressable>
-              )}
+              {/* Date picker — shown for all rows; server rows PATCH immediately. */}
+              <Pressable
+                style={styles.datePicker}
+                onPress={() => setCalPickerRow(visIdx)}
+                accessibilityLabel={`Pick dates for stop ${visIdx + 1}`}
+              >
+                <CalendarDays size={12} color={(entry.arrivalDate || entry.departureDate) ? color.signal : color.faint} />
+                <Text style={[styles.dateText, !(entry.arrivalDate || entry.departureDate) && styles.pickerPlaceholder]} numberOfLines={1}>
+                  {startD && endD
+                    ? `${formatDisplayDate(startD)} – ${formatDisplayDate(endD)}`
+                    : startD
+                    ? `From ${formatDisplayDate(startD)}`
+                    : 'Dates (optional)'}
+                </Text>
+                {(entry.arrivalDate || entry.departureDate) && (
+                  <Pressable
+                    hitSlop={6}
+                    onPress={(e) => { e.stopPropagation?.(); handleDateChange(entry.key, null, null); }}
+                    accessibilityLabel="Clear dates"
+                  >
+                    <X size={12} color={color.mute} />
+                  </Pressable>
+                )}
+              </Pressable>
             </View>
 
             {/* Remove button — always shown; in edit mode calls DELETE then hides. */}

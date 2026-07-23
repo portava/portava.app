@@ -59,15 +59,32 @@ jest.mock('../selectors/GlobalPlacePicker', () => {
 });
 
 // NOTE: intentionally exhaustive — GlobalCalendarPicker pulls calendar native modules.
-jest.mock('../selectors/GlobalCalendarPicker', () => ({
-  GlobalCalendarPicker: () => null,
-}));
+// The stub is interactive: when visible it renders a pressable that fires onConfirm
+// with fixed dates (2025-06-01 → 2025-06-07) so date-change flows can be exercised.
+jest.mock('../selectors/GlobalCalendarPicker', () => {
+  const ReactActual = jest.requireActual('react');
+  const { Pressable, Text } = jest.requireActual('react-native');
+  return {
+    GlobalCalendarPicker: ({ visible, onConfirm }: any) =>
+      visible
+        ? ReactActual.createElement(
+            Pressable,
+            {
+              testID: 'mock-cal-picker',
+              onPress: () => onConfirm({ start: '2025-06-01', end: '2025-06-07' }),
+            },
+            ReactActual.createElement(Text, null, 'Pick dates'),
+          )
+        : null,
+  };
+});
 
 // NOTE: intentionally exhaustive — tripDestinations imports apiToken native deps.
 jest.mock('../../services/tripDestinations', () => ({
   addDestination: jest.fn(),
   reorderDestinations: jest.fn(),
   deleteDestination: jest.fn(),
+  patchDestination: jest.fn(),
 }));
 
 // ── Stateful wrapper so onChange propagates back into the component ───────────
@@ -87,6 +104,7 @@ describe('DestinationListEditor', () => {
   let mockAdd: jest.Mock;
   let mockReorder: jest.Mock;
   let mockDelete: jest.Mock;
+  let mockPatch: jest.Mock;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -94,11 +112,13 @@ describe('DestinationListEditor', () => {
     mockAdd = svc.addDestination;
     mockReorder = svc.reorderDestinations;
     mockDelete = svc.deleteDestination;
+    mockPatch = svc.patchDestination;
     mockAdd.mockResolvedValue({
       id: 'dest-server-1', city: 'Tokyo', country: 'Japan', position: 1, created_at: '',
     });
     mockReorder.mockResolvedValue(true);
     mockDelete.mockResolvedValue(true);
+    mockPatch.mockResolvedValue({ id: 'dest-server-99', city: 'Tokyo', arrival_date: '2025-06-01', departure_date: '2025-06-07' });
   });
 
   it('renders the Add stop button with no rows initially', async () => {
@@ -230,6 +250,31 @@ describe('DestinationListEditor', () => {
 
     await waitFor(() => {
       expect(queryByText('Tokyo, Japan')).toBeNull();
+    });
+  });
+
+  it('calls patchDestination with correct destId and dates when dates are changed on a server row', async () => {
+    const initialDests: DestinationEntry[] = [
+      { key: 'k1', id: 'dest-server-99', city: 'Tokyo', country: 'Japan' },
+    ];
+
+    await render(<Wrapper tripId="trip-patch" initialDestinations={initialDests} />);
+    await screen.findByText('Tokyo, Japan');
+
+    // Open the date picker for the first row
+    const dateBtn = screen.getAllByLabelText(/Pick dates for stop/)[0];
+    await fireEvent.press(dateBtn);
+
+    // The mock calendar picker fires onConfirm({ start, end }) when pressed
+    const calPicker = await screen.findByTestId('mock-cal-picker');
+    await fireEvent.press(calPicker);
+
+    await waitFor(() => {
+      expect(mockPatch).toHaveBeenCalledWith(
+        'trip-patch',
+        'dest-server-99',
+        { arrivalDate: '2025-06-01', departureDate: '2025-06-07' },
+      );
     });
   });
 

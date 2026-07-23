@@ -82,6 +82,28 @@ export async function deleteDestination(tripId: string, destId: string): Promise
   return res.ok;
 }
 
+export async function patchDestination(
+  tripId: string,
+  destId: string,
+  fields: {
+    arrivalDate?: string | null;
+    departureDate?: string | null;
+  },
+): Promise<TripDestination | null> {
+  const token = await freshToken();
+  if (!token) return null;
+  const res = await fetch(`${apiBase()}/api/trips/${tripId}/destinations/${destId}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      arrivalDate: fields.arrivalDate,
+      departureDate: fields.departureDate,
+    }),
+  });
+  if (!res.ok) return null;
+  return res.json().catch(() => null) as Promise<TripDestination | null>;
+}
+
 export async function reorderDestinations(tripId: string, order: string[]): Promise<boolean> {
   const token = await freshToken();
   if (!token) return false;

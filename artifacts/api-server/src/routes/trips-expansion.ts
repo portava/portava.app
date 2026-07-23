@@ -1696,6 +1696,73 @@ router.delete("/trips/:tripId/destinations/:destId", async (req, res) => {
 });
 
 // ===========================================================================
+// PATCH /api/trips/:tripId/destinations/:destId  — update arrival/departure dates
+// (owner + co_host + member)
+// ===========================================================================
+const PatchDestinationSchema = z.object({
+  arrivalDate:   z.string().nullable().optional(),
+  departureDate: z.string().nullable().optional(),
+});
+
+router.patch("/trips/:tripId/destinations/:destId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId, destId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid tripId"); return; }
+  if (!UUID_RE.test(destId)) { sendError(res, "invalid_payload", "Invalid destId"); return; }
+
+  const parsed = PatchDestinationSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
+    return;
+  }
+  const b = parsed.data;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  // Require trip membership (owner, co_host, or member)
+  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+
+  const isOwner = (trip as any).owner_id === user.id;
+  if (!isOwner) {
+    const membership = await requireTripMember(sc, tripId, user.id);
+    if (!membership || !["owner", "co_host", "member"].includes(membership.role)) {
+      sendError(res, "forbidden", "Only trip members can update destination dates");
+      return;
+    }
+  }
+
+  // Verify the destination belongs to this trip
+  const { data: dest } = await sc
+    .from("trip_destinations")
+    .select("id")
+    .eq("id", destId)
+    .eq("trip_id", tripId)
+    .maybeSingle();
+
+  if (!dest) { sendError(res, "not_found", "Destination not found"); return; }
+
+  const patch: Record<string, any> = {};
+  if (b.arrivalDate   !== undefined) patch.arrival_date   = b.arrivalDate;
+  if (b.departureDate !== undefined) patch.departure_date = b.departureDate;
+
+  const { data: updated, error } = await sc
+    .from("trip_destinations")
+    .update(patch)
+    .eq("id", destId)
+    .eq("trip_id", tripId)
+    .select("*")
+    .single();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json(updated);
+});
+
+// ===========================================================================
 // Budget routes (owner + co_host only — never public)
 // ===========================================================================
 
