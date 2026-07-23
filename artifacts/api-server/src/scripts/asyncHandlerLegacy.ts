@@ -82,4 +82,6 @@ export const ASYNC_HANDLER_LEGACY_FILES = new Set([
   // tracked here so the guard still catches future new files.
   "devices.ts",
   "keyPackages.ts",
+  // Verification routes — added before asyncHandler was enforced.
+  "verification.ts",
 ]);

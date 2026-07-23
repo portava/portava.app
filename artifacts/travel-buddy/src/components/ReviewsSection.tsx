@@ -14,11 +14,13 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Pressable,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { ReportSheet } from './ReportSheet.tsx';
 import { router, useFocusEffect } from 'expo-router';
 import {
   getTripReviews,
@@ -52,33 +54,39 @@ function Stars({ rating, size = 14 }: { rating: number; size?: number }) {
 
 // ── Review card ───────────────────────────────────────────────────────────────
 
-function ReviewCard({ review }: { review: Review }) {
+function ReviewCard({ review, onReport }: { review: Review; onReport?: (reviewId: string, authorId: string | null) => void }) {
   return (
-    <View style={s.reviewCard}>
-      <View style={s.reviewHeader}>
-        <Stars rating={review.rating} />
-        <Text style={s.reviewDate}>{new Date(review.createdAt).toLocaleDateString()}</Text>
-      </View>
-      {!review.anonymous && review.reviewer ? (
-        <Text style={s.reviewerName}>
-          {review.reviewer.displayName ?? review.reviewer.handle ?? 'Traveler'}
-        </Text>
-      ) : (
-        <Text style={s.reviewerName}>Anonymous</Text>
-      )}
-      {review.body ? (
-        <Text style={s.reviewBody} numberOfLines={4}>{review.body}</Text>
-      ) : null}
-      {review.tags && review.tags.length > 0 && (
-        <View style={s.tagRow}>
-          {review.tags.slice(0, 4).map((tag) => (
-            <View key={tag} style={s.tag}>
-              <Text style={s.tagText}>{tag.replace(/_/g, ' ')}</Text>
-            </View>
-          ))}
+    <Pressable
+      onLongPress={() => onReport?.(review.id, review.reviewer?.id ?? null)}
+      delayLongPress={400}
+      accessible={false}
+    >
+      <View style={s.reviewCard}>
+        <View style={s.reviewHeader}>
+          <Stars rating={review.rating} />
+          <Text style={s.reviewDate}>{new Date(review.createdAt).toLocaleDateString()}</Text>
         </View>
-      )}
-    </View>
+        {!review.anonymous && review.reviewer ? (
+          <Text style={s.reviewerName}>
+            {review.reviewer.displayName ?? review.reviewer.handle ?? 'Traveler'}
+          </Text>
+        ) : (
+          <Text style={s.reviewerName}>Anonymous</Text>
+        )}
+        {review.body ? (
+          <Text style={s.reviewBody} numberOfLines={4}>{review.body}</Text>
+        ) : null}
+        {review.tags && review.tags.length > 0 && (
+          <View style={s.tagRow}>
+            {review.tags.slice(0, 4).map((tag) => (
+              <View key={tag} style={s.tag}>
+                <Text style={s.tagText}>{tag.replace(/_/g, ' ')}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
+    </Pressable>
   );
 }
 
@@ -108,6 +116,8 @@ export function ReviewsSection({
   const [alreadyReviewed, setAlready] = useState(false);
   const [myReviewId, setMyReviewId]   = useState<string | null>(null);
   const [deleting, setDeleting]       = useState(false);
+  const [reportTarget, setReportTarget] = useState<{ reviewId: string; authorId: string | null } | null>(null);
+  const { userId: currentUserId } = useSession();
 
   // Refetch reviews and aggregate stats every time the screen comes into focus
   // so avgRating is fresh after the user writes or edits a review and returns.
@@ -267,11 +277,33 @@ export function ReviewsSection({
           No reviews yet.{canReview && !alreadyReviewed ? ' Be the first to share your experience.' : ''}
         </Text>
       ) : (
-        reviews.map((r) => <ReviewCard key={r.id} review={r} />)
+        reviews.map((r) => (
+          <ReviewCard
+            key={r.id}
+            review={r}
+            onReport={
+              // Only offer report for reviews by other users (not own reviews)
+              r.reviewer?.id && r.reviewer.id !== currentUserId
+                ? (reviewId, authorId) => setReportTarget({ reviewId, authorId })
+                : undefined
+            }
+          />
+        ))
       )}
 
       {total > 5 && (
         <Text style={s.moreText}>+ {total - 5} more reviews</Text>
+      )}
+
+      {reportTarget && (
+        <ReportSheet
+          visible
+          onClose={() => setReportTarget(null)}
+          subjectType="review"
+          subjectId={reportTarget.reviewId}
+          subjectUserId={reportTarget.authorId ?? undefined}
+          onReported={() => setReportTarget(null)}
+        />
       )}
     </View>
   );

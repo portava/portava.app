@@ -21,7 +21,7 @@ import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
 import { useSession } from '../context/SessionContext.tsx';
 import { LocationChip } from './LocationChip.tsx';
 import type { LocationChipVariant } from './LocationChip.tsx';
-import { ReportPostSheet } from './ReportPostSheet.tsx';
+import { ReportSheet } from './ReportSheet.tsx';
 import { SaveButton } from './SaveButton.tsx';
 import { deletePost } from '../services/postEngagement.ts';
 import { hidePost } from '../services/posts.ts';
@@ -169,10 +169,13 @@ function AuthorRow({
         />
       )}
 
-      <ReportPostSheet
-        postId={item.id}
+      <ReportSheet
         visible={reportOpen}
         onClose={() => setReportOpen(false)}
+        subjectType="post"
+        subjectId={item.id}
+        subjectUserId={item.author?.id ?? undefined}
+        subjectName={authorText || undefined}
       />
     </View>
   );

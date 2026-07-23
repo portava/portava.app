@@ -16,6 +16,7 @@ import {
 import {
   SettingsScreen, SettingsSection, SettingsRow, SettingsDivider,
 } from '../../../src/components/settings/SettingsUI';
+import { Flag } from 'lucide-react-native';
 import { PP } from '../../../src/theme/passportTokens';
 import { space, radius, type as t } from '../../../src/theme/tokens';
 import { getMyProfile } from '../../../src/services/profile';
@@ -103,6 +104,16 @@ export default function SafetyVerificationScreen() {
           title="Restricted Users"
           subtitle="Accounts with limited access to you"
           onPress={() => router.push('/restricted-users' as any)}
+        />
+      </SettingsSection>
+
+      {/* Report history */}
+      <SettingsSection title="Reports">
+        <SettingsRow
+          icon={<Flag size={18} color={PP.ink} />}
+          title="Your Reports"
+          subtitle="Reports you've submitted for review"
+          onPress={() => router.push('/profile/edit/reports' as any)}
         />
       </SettingsSection>
 

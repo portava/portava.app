@@ -48,6 +48,7 @@ import { useEventRsvp } from '../../src/hooks/useEventRsvp';
 import { HostDashboardPanel } from '../../src/components/HostDashboardPanel';
 import { EventVoiceRoomCard } from '../../src/components/events/EventVoiceRoomCard.tsx';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
+import { ReportSheet } from '../../src/components/ReportSheet';
 import { SharedVideoPlayer } from '../../src/components/ui/SharedVideoPlayer';
 import { Avatar } from '../../src/components/ui';
 import { useSession } from '../../src/context/SessionContext';
@@ -139,6 +140,7 @@ export default function EventDetailScreen() {
   // hasPendingRequest is seeded from backend on load; optimistically set true
   // when the viewer sends a request in this session.
   const [hasPendingRequest, setHasPendingRequest] = useState(false);
+  const [reportSheetVisible, setReportSheetVisible] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -280,28 +282,7 @@ export default function EventDetailScreen() {
   // ── Report ─────────────────────────────────────────────────────────────────
   function handleReport() {
     if (!event) return;
-    if (Platform.OS === 'ios') {
-      ActionSheetIOS.showActionSheetWithOptions(
-        { options: [...REPORT_REASONS, 'Cancel'], cancelButtonIndex: REPORT_REASONS.length, destructiveButtonIndex: 0, title: 'Report event' },
-        async (idx) => {
-          if (idx < REPORT_REASONS.length) {
-            await reportEvent(event.id, REPORT_REASONS[idx]);
-            Alert.alert('Report submitted', 'Thanks for keeping Travel Buddy safe.');
-          }
-        },
-      );
-    } else {
-      Alert.alert('Report event', 'Why are you reporting this event?', [
-        ...REPORT_REASONS.map((reason) => ({
-          text: reason,
-          onPress: async () => {
-            await reportEvent(event.id, reason);
-            Alert.alert('Report submitted', 'Thanks for keeping Travel Buddy safe.');
-          },
-        })),
-        { text: 'Cancel', style: 'cancel' as const },
-      ]);
-    }
+    setReportSheetVisible(true);
   }
 
   // ── Overflow menu ──────────────────────────────────────────────────────────
@@ -967,6 +948,17 @@ export default function EventDetailScreen() {
           event={event}
           onDismiss={() => setShowDashboard(false)}
           onRefresh={refreshLoad}
+        />
+      )}
+
+      {/* Report event sheet */}
+      {event && (
+        <ReportSheet
+          visible={reportSheetVisible}
+          onClose={() => setReportSheetVisible(false)}
+          subjectType="event"
+          subjectId={event.id}
+          subjectUserId={(event as any).hostId ?? (event as any).creatorId ?? undefined}
         />
       )}
     </View>

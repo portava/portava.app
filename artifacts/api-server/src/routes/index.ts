@@ -87,6 +87,7 @@ import engagementRouter from "./engagement";
 import circleRouter from "./circle";
 import rankEventsRouter from "./rankEvents";
 import callsRouter from "./calls";
+import moderationRouter from "./moderation";
 
 const router: IRouter = Router();
 
@@ -175,6 +176,7 @@ router.use(engagementRouter);
 router.use(circleRouter);
 router.use(rankEventsRouter);
 router.use(callsRouter);
+router.use(moderationRouter);
 router.use(devicesRouter);
 router.use(keyPackagesRouter);
 router.use(verificationRouter);

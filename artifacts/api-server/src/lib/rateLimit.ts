@@ -92,6 +92,24 @@ export function muteRateLimit(userId: string): RateLimitResult {
   return checkRateLimit("mute", userId, MUTE_DAILY_LIMIT, MUTE_WINDOW_MS);
 }
 
+// ── Moderation report rate limit (24-hour window) ─────────────────────────────
+
+export const MODERATION_REPORT_DAILY_LIMIT = parseInt(
+  process.env.MODERATION_REPORT_RATE_LIMIT_PER_DAY ?? "10",
+  10,
+);
+export const MODERATION_REPORT_WINDOW_MS = 24 * 60 * 60 * 1_000; // 24 hours
+
+/** Check the per-user daily moderation-report limit (10 per 24 h). */
+export function moderationReportRateLimit(userId: string): RateLimitResult {
+  return checkRateLimit(
+    "moderation_report",
+    userId,
+    MODERATION_REPORT_DAILY_LIMIT,
+    MODERATION_REPORT_WINDOW_MS,
+  );
+}
+
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
 /**

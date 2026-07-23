@@ -16,7 +16,7 @@ import {
   type BuddyPackage, type BuddyAddon, type BuddyReview, type BuddyAvailability,
   type BuddyBlockedRange,
 } from '../../../src/services/rentABuddy';
-import { reportContent } from '../../../src/services/reports';
+import { ReportSheet } from '../../../src/components/ReportSheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useStickyBarInset } from '../../../src/hooks/useBottomInset';
 import { UserOverflowMenu } from '../../../src/components/interaction/UserOverflowMenu';
@@ -138,6 +138,7 @@ export default function BuddyProfileScreen() {
   const [saved, setSaved] = useState(false);
   const [savingToggle, setSavingToggle] = useState(false);
   const [blockedRanges, setBlockedRanges] = useState<BuddyBlockedRange[]>([]);
+  const [reportSheetVisible, setReportSheetVisible] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -400,39 +401,25 @@ export default function BuddyProfileScreen() {
           />
         )}
 
-        {/* Report */}
+        {/* Report listing */}
         <Pressable
           style={styles.reportRow}
-          onPress={() => {
-            Alert.alert(
-              'Report profile',
-              'Flag this buddy profile for review?',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Report',
-                  style: 'destructive',
-                  onPress: async () => {
-                    const res = await reportContent({
-                      target_type: 'buddy_profile',
-                      target_id: buddy.userId,
-                      reason_code: 'inappropriate_content',
-                    });
-                    if (res.ok) {
-                      Alert.alert('Report submitted', 'Our team will review this profile.');
-                    } else {
-                      Alert.alert('Error', 'Could not submit report. Please try again.');
-                    }
-                  },
-                },
-              ],
-            );
-          }}
+          onPress={() => setReportSheetVisible(true)}
         >
           <Flag size={12} color={color.mute} />
-          <Text style={styles.reportText}>Report this profile</Text>
+          <Text style={styles.reportText}>Report this listing</Text>
         </Pressable>
       </ScrollView>
+
+      {/* Report listing sheet */}
+      <ReportSheet
+        visible={reportSheetVisible}
+        onClose={() => setReportSheetVisible(false)}
+        subjectType="buddy_listing"
+        subjectId={buddy.id}
+        subjectUserId={buddy.userId}
+        subjectName={buddy.displayName ?? 'Local Buddy'}
+      />
 
       {/* Sticky Book */}
       <View style={[styles.stickyBottom, { paddingBottom: insets.bottom + space.md }]} onLayout={onBarLayout}>

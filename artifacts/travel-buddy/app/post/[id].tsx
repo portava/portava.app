@@ -12,7 +12,7 @@ import {
   MapPin, Heart, MessageCircle, UserCircle,
 } from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
-import { ReportPostSheet } from '../../src/components/ReportPostSheet';
+import { ReportSheet } from '../../src/components/ReportSheet';
 import { CommentsSection } from '../../src/components/CommentsSheet';
 import { MediaStampOverlay } from '../../src/components/StampOverlayBadge';
 import { SharedVideoPlayer } from '../../src/components/ui/SharedVideoPlayer';
@@ -313,10 +313,12 @@ export default function PostDetail() {
             onShare={handleShare}
             onReport={() => setReportOpen(true)}
           />
-          <ReportPostSheet
-            postId={post.id}
+          <ReportSheet
             visible={reportOpen}
             onClose={() => setReportOpen(false)}
+            subjectType="post"
+            subjectId={post.id}
+            subjectUserId={post.author?.id ?? undefined}
             onReported={handleReported}
           />
         </>

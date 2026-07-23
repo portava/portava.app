@@ -38,7 +38,9 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { X, SendHorizonal, Trash2, Heart, CornerDownRight } from 'lucide-react-native';
+import { X, SendHorizonal, Trash2, Heart, CornerDownRight, Flag } from 'lucide-react-native';
+import { ReportSheet } from './ReportSheet.tsx';
+import { blockUser } from '../services/blocks.ts';
 import { ProfilePreviewCard } from './ProfilePreviewCard.tsx';
 import { color, space, radius, shadow } from '../theme/tokens.ts';
 import { MentionInput, type MentionInputHandle } from './MentionInput.tsx';
@@ -66,6 +68,7 @@ import { primaryIdentityText } from '../lib/displayIdentity.ts';
 // ── Shared contexts ───────────────────────────────────────────────────────────
 
 const AuthorPressCtx = React.createContext<(handle: string) => void>(() => {});
+const CommentReportCtx = React.createContext<{ onReport: (authorId: string, authorName: string, commentId: string) => void }>({ onReport: () => {} });
 
 /**
  * Controls the hitSlop of like buttons.
@@ -321,15 +324,38 @@ function CommentItem({
   onToggleReplies: (commentId: string) => void;
   onReplyDelete: (commentId: string, replyId: string) => void;
   onReplyLikeChange: (commentId: string, replyId: string, likedByMe: boolean, likeCount: number) => void;
+  onReport?: (authorId: string, authorName: string, commentId: string) => void;
 }) {
   const [liking, setLiking] = useState(false);
   const { userId: currentUserId } = useSession();
   const onAuthorPress = React.useContext(AuthorPressCtx);
   const likeHitSlop = React.useContext(LikeHitSlopCtx);
+  const { onReport: reportComment } = React.useContext(CommentReportCtx);
   const likedByMe = comment.likedByMe ?? false;
   const likeCount = comment.likeCount ?? 0;
   const likeGuardRef = useRef(createLikeToggleGuard());
   const [likerCommentId, setLikerCommentId] = useState<string | null>(null);
+  const isOwner = !!currentUserId && currentUserId === comment.author.id;
+
+  function handleLongPress() {
+    if (isOwner) return;
+    const authorName = primaryIdentityText({ name: comment.author.name, handle: comment.author.handle });
+    Alert.alert('Comment options', undefined, [
+      { text: 'Report', onPress: () => reportComment(comment.author.id, authorName, comment.id) },
+      {
+        text: 'Block author', style: 'destructive',
+        onPress: () => Alert.alert(
+          `Block ${authorName}?`,
+          "They won't be able to see your content.",
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Block', style: 'destructive', onPress: () => blockUser(comment.author.id).catch(() => {}) },
+          ],
+        ),
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }
 
   const handleLike = useCallback(async () => {
     if (likeGuardRef.current.isToggling()) return;
@@ -361,51 +387,57 @@ function CommentItem({
 
   return (
     <View>
-      <View style={s.commentRow}>
-        <CommentAvatar uri={comment.author.avatarUrl} name={primaryIdentityText({ name: comment.author.name, handle: comment.author.handle })} size={32} />
-        <View style={s.commentBody}>
-          <View style={s.commentMeta}>
-            <Pressable onPress={() => onAuthorPress(comment.author.handle)} hitSlop={4}>
-              <Text style={s.commentAuthor}>{primaryIdentityText({ name: comment.author.name, handle: comment.author.handle })}</Text>
+      <Pressable
+        onLongPress={isOwner ? undefined : handleLongPress}
+        delayLongPress={400}
+        accessible={false}
+      >
+        <View style={s.commentRow}>
+          <CommentAvatar uri={comment.author.avatarUrl} name={primaryIdentityText({ name: comment.author.name, handle: comment.author.handle })} size={32} />
+          <View style={s.commentBody}>
+            <View style={s.commentMeta}>
+              <Pressable onPress={() => onAuthorPress(comment.author.handle)} hitSlop={4}>
+                <Text style={s.commentAuthor}>{primaryIdentityText({ name: comment.author.name, handle: comment.author.handle })}</Text>
+              </Pressable>
+              <Text style={s.commentTime}>{timeAgo(comment.createdAt)}</Text>
+            </View>
+            <RichText
+              content={comment.body}
+              tags={comment.tags}
+              hashtagUsages={comment.hashtagUsages}
+              currentUserId={currentUserId ?? undefined}
+              style={s.commentText}
+            />
+            <Pressable hitSlop={6} onPress={() => onReply(comment.id, primaryIdentityText({ name: comment.author.name, handle: comment.author.handle }))} style={s.replyBtn}>
+              <Text style={s.replyBtnText}>Reply</Text>
             </Pressable>
-            <Text style={s.commentTime}>{timeAgo(comment.createdAt)}</Text>
           </View>
-          <RichText
-            content={comment.body}
-            tags={comment.tags}
-            hashtagUsages={comment.hashtagUsages}
-            currentUserId={currentUserId ?? undefined}
-            style={s.commentText}
-          />
-          <Pressable hitSlop={6} onPress={() => onReply(comment.id, primaryIdentityText({ name: comment.author.name, handle: comment.author.handle }))} style={s.replyBtn}>
-            <Text style={s.replyBtnText}>Reply</Text>
-          </Pressable>
-        </View>
-        <View style={s.commentActions}>
-          <Pressable hitSlop={likeHitSlop} onPress={handleLike} disabled={liking} style={s.likeBtn}>
-            <Heart size={13} color={likedByMe ? color.signal : color.faint} fill={likedByMe ? color.signal : 'transparent'} />
-          </Pressable>
-          {likeCount > 0 && (
-            <Pressable onPress={() => setLikerCommentId(comment.id)} hitSlop={5} style={s.likeCountBtn}>
-              <Text style={[s.likeCount, likedByMe && s.likeCountActive]}>{likeCount}</Text>
+          <View style={s.commentActions}>
+            <Pressable hitSlop={likeHitSlop} onPress={handleLike} disabled={liking} style={s.likeBtn}>
+              <Heart size={13} color={likedByMe ? color.signal : color.faint} fill={likedByMe ? color.signal : 'transparent'} />
             </Pressable>
-          )}
-          {comment.canDelete && (
-            <Pressable
-              hitSlop={8}
-              onPress={() =>
-                Alert.alert('Delete comment?', 'This cannot be undone.', [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Delete', style: 'destructive', onPress: () => onDelete(comment.id) },
-                ])
-              }
-              style={s.deleteBtn}
-            >
-              <Trash2 size={13} color={color.faint} />
-            </Pressable>
-          )}
+            {likeCount > 0 && (
+              <Pressable onPress={() => setLikerCommentId(comment.id)} hitSlop={5} style={s.likeCountBtn}>
+                <Text style={[s.likeCount, likedByMe && s.likeCountActive]}>{likeCount}</Text>
+              </Pressable>
+            )}
+            {comment.canDelete && (
+              <Pressable
+                hitSlop={8}
+                onPress={() =>
+                  Alert.alert('Delete comment?', 'This cannot be undone.', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Delete', style: 'destructive', onPress: () => onDelete(comment.id) },
+                  ])
+                }
+                style={s.deleteBtn}
+              >
+                <Trash2 size={13} color={color.faint} />
+              </Pressable>
+            )}
+          </View>
         </View>
-      </View>
+      </Pressable>
 
       <ReplyThread
         replies={replies}
@@ -459,6 +491,7 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
 
   const [previewHandle, setPreviewHandle] = useState<string | null>(null);
   const submitGuardRef = useRef(createSubmitGuard());
+  const [reportTarget, setReportTarget] = useState<{ subjectId: string; authorId: string; authorName: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -597,6 +630,7 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
   return (
     <LikeHitSlopCtx.Provider value={12}>
       <AuthorPressCtx.Provider value={setPreviewHandle}>
+        <CommentReportCtx.Provider value={{ onReport: (authorId, authorName, commentId) => setReportTarget({ subjectId: commentId, authorId, authorName }) }}>
         <Pressable onPress={() => Keyboard.dismiss()} accessible={false}>
           <View style={sec.wrap}>
             {loading ? (
@@ -697,6 +731,18 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
           visible={previewHandle !== null}
           onClose={() => setPreviewHandle(null)}
         />
+
+        {reportTarget && (
+          <ReportSheet
+            visible
+            onClose={() => setReportTarget(null)}
+            subjectType="comment"
+            subjectId={reportTarget.subjectId}
+            subjectUserId={reportTarget.authorId}
+            onReported={() => setReportTarget(null)}
+          />
+        )}
+        </CommentReportCtx.Provider>
       </AuthorPressCtx.Provider>
     </LikeHitSlopCtx.Provider>
   );
@@ -746,6 +792,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
   const [repliesLoading, setRepliesLoading] = useState<Set<string>>(new Set());
   const [previewHandle, setPreviewHandle] = useState<string | null>(null);
   const submitGuardRef = useRef(createSubmitGuard());
+  const [reportTarget, setReportTarget] = useState<{ subjectId: string; authorId: string; authorName: string } | null>(null);
 
   // ── Load comments ───────────────────────────────────────────────────────────
   const load = useCallback(async () => {
@@ -998,6 +1045,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
+    <CommentReportCtx.Provider value={{ onReport: (authorId, authorName, commentId) => setReportTarget({ subjectId: commentId, authorId, authorName }) }}>
     <AuthorPressCtx.Provider value={setPreviewHandle}>
       <Modal
         visible={mounted}
@@ -1166,7 +1214,19 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
         visible={previewHandle !== null}
         onClose={() => setPreviewHandle(null)}
       />
+
+      {reportTarget && (
+        <ReportSheet
+          visible
+          onClose={() => setReportTarget(null)}
+          subjectType="comment"
+          subjectId={reportTarget.subjectId}
+          subjectUserId={reportTarget.authorId}
+          onReported={() => setReportTarget(null)}
+        />
+      )}
     </AuthorPressCtx.Provider>
+    </CommentReportCtx.Provider>
   );
 }
 
