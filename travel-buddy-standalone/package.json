@@ -37,6 +37,7 @@
     "expo-calendar": "~15.0.8",
     "expo-clipboard": "~8.0.8",
     "expo-dev-client": "~6.0.21",
+    "expo-openmls": "file:../packages/expo-openmls",
     "expo-image-manipulator": "~14.0.8",
     "expo-notifications": "~0.32.17",
     "expo-secure-store": "~14.0.1",

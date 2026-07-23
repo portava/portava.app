@@ -14,6 +14,8 @@
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import { hasGroupSession, encryptForThread, decryptFromThread } from '../lib/mlsSession.ts';
+import { upsertLocalMessage } from '../lib/localMessageDb.ts';
 
 export type MessageVerdict = 'allowed' | 'requires_request' | 'denied';
 
@@ -121,6 +123,8 @@ export interface Message {
   senderName: string | null;
   senderAvatarUrl: string | null;
   body: string | null;
+  /** E-2: opaque MLS ciphertext blob; non-null only for E2EE messages. Body is null server-side. */
+  ciphertext?: string | null;
   deleted: boolean;
   createdAt: string;
   editedAt: string | null;
@@ -391,7 +395,13 @@ export async function getThreadMessages(
   before?: string,
 ): Promise<MsgResult<{ messages: Message[]; threadId: string }>> {
   const qs = before ? `?before=${encodeURIComponent(before)}` : '';
-  return apiGet(`/api/threads/${threadId}/messages${qs}`);
+  const result = await apiGet<{ messages: Message[]; threadId: string }>(
+    `/api/threads/${threadId}/messages${qs}`,
+  );
+  if (!result.ok || !result.data?.messages?.length) return result;
+  // E-2: decrypt any E2EE messages and surface plaintext via body (never sent back to server).
+  const messages = await _decryptMessageBatch(threadId, result.data.messages);
+  return { ...result, data: { ...result.data, messages } };
 }
 
 export async function sendMessage(
@@ -399,7 +409,73 @@ export async function sendMessage(
   body: string,
   opts?: { msgType?: string; subtype?: string; clientId?: string; replyToId?: string },
 ): Promise<MsgResult<Message>> {
+  // E-2: if an MLS session exists for this thread, encrypt before sending.
+  try {
+    const isE2ee = await hasGroupSession(threadId);
+    if (isE2ee) {
+      const enc = await encryptForThread(threadId, body);
+      if (enc) {
+        // ciphertext replaces body; server enforces body=null on E2EE threads.
+        return apiPost(`/api/threads/${threadId}/messages`, {
+          body: null,
+          ciphertext: enc.ciphertextB64,
+          ...opts,
+        });
+      }
+      // encryptForThread returned null → native module unavailable (Expo Go / web preview).
+      // Log and fall through to plaintext so the app never hard-crashes.
+      console.log(
+        '[messaging] sendMessage: E2EE session exists but encryption unavailable — EAS build required. Falling back to plaintext.',
+      );
+    }
+  } catch {
+    // mlsSession threw unexpectedly; fall through to plaintext.
+  }
   return apiPost(`/api/threads/${threadId}/messages`, { body, ...opts });
+}
+
+/**
+ * Decrypt a batch of server messages that carry ciphertext.
+ * Decrypted plaintext is cached in the local SQLCipher DB and surfaced via `body`;
+ * it is NEVER written back to the server.
+ */
+async function _decryptMessageBatch(threadId: string, messages: Message[]): Promise<Message[]> {
+  const needsDecrypt = messages.some(m => m.ciphertext && !m.body);
+  if (!needsDecrypt) return messages;
+
+  return Promise.all(
+    messages.map(async (msg) => {
+      if (!msg.ciphertext || msg.body) return msg;
+      try {
+        const plaintext = await decryptFromThread(threadId, msg.ciphertext);
+        if (plaintext) {
+          // Cache in local SQLCipher store — plaintext never leaves the device.
+          await upsertLocalMessage({
+            id: msg.id,
+            thread_id: msg.threadId,
+            sender_id: msg.senderId,
+            body: plaintext,
+            msg_type: msg.msgType,
+            subtype: msg.subtype ?? null,
+            created_at: msg.createdAt,
+            decrypted_at: new Date().toISOString(),
+            is_e2ee: 1,
+          });
+          return { ...msg, body: plaintext, displayBody: plaintext };
+        }
+        // Decryption unavailable (no native module / no group state).
+        // Return message with null body so the UI can show a placeholder.
+        console.log(
+          '[messaging] _decryptMessageBatch: could not decrypt message',
+          msg.id,
+          '— EAS build required or MLS session not yet established.',
+        );
+      } catch {
+        // Decryption threw; leave body null.
+      }
+      return msg;
+    }),
+  );
 }
 
 export async function saveMessage(
