@@ -19,6 +19,10 @@ import { StampGrid } from './stamps/StampGrid.tsx';
 import { toLegacy } from './stamps/StampCard.tsx';
 import { UniversalStampArtwork } from './stamps/UniversalStampArtwork.tsx';
 import { StampDetailModal } from './stamps/StampDetailModal.tsx';
+import { StampShowcaseRow, StampShowcaseEmptyCard } from './stamps/StampShowcaseRow.tsx';
+import { StampShowcaseCurationSheet } from './stamps/StampShowcaseCurationSheet.tsx';
+import { getMyShowcase } from '../services/stampShowcase.ts';
+import type { ShowcaseStamp } from '../services/stampShowcase.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 
 /** Client-side category filter — maps filter pills to actual DB category values.
@@ -125,6 +129,10 @@ export function StampsTab({
   const [category, setCategory]       = useState<StampCategory>('');
   const [selected, setSelected]       = useState<PassportStampNew | null>(null);
   const [progress, setProgress]       = useState<StampProgress | null>(null);
+  // Showcase: null = feature flag off (no UI change), [] = flag on but empty,
+  // items = flag on with curated stamps.
+  const [showcase, setShowcase]       = useState<ShowcaseStamp[] | null>(null);
+  const [showCuration, setShowCuration] = useState(false);
   // Pagination (owner view only — the public profile endpoint is unpaginated).
   const [serverTotal, setServerTotal] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -207,6 +215,14 @@ export function StampsTab({
   useEffect(() => {
     if (!isOwner || viewingUsername) return;
     getMyProgress().then((res) => { if (res.ok) setProgress(res.data); }).catch(() => {});
+  }, [isOwner, viewingUsername]);
+
+  // Fetch showcase on mount for the owner's own passport only.
+  // external mode is intentionally NOT excluded — the main passport tab mounts
+  // StampsTab with data={stampsNew} (external=true) and still needs showcase.
+  useEffect(() => {
+    if (!isOwner || viewingUsername) return;
+    getMyShowcase().then((result) => { setShowcase(result); }).catch(() => {});
   }, [isOwner, viewingUsername]);
 
   // Effective values — external mode reads the parent-owned pipeline.
@@ -297,6 +313,23 @@ export function StampsTab({
       {/* Category filter strip (shown for both views so public profiles can browse) */}
       <StampCategoryFilter selected={category} onCategoryChange={setCategory} />
 
+      {/* Showcase: curated stamps — only shown to the owner when flag is on */}
+      {isOwner && !viewingUsername && showcase !== null && (
+        showcase.length > 0 ? (
+          <StampShowcaseRow
+            items={showcase}
+            onPress={(item) => {
+              // Find the corresponding PassportStampNew to open the detail modal.
+              const match = effStamps.find((s) => s.id === item.userStampId);
+              if (match) setSelected(match);
+            }}
+            onEdit={() => setShowCuration(true)}
+          />
+        ) : (
+          <StampShowcaseEmptyCard onEdit={() => setShowCuration(true)} />
+        )
+      )}
+
       {/* Featured: most recent stamp (1x on top of the grid) */}
       {featured ? (() => {
         const legacy = toLegacy(featured);
@@ -357,6 +390,47 @@ export function StampsTab({
         onStampUpdated={handleStampUpdated}
         username={viewingUsername ?? null}
       />
+
+      {/* Showcase curation sheet (owner only, when feature flag is on) */}
+      {isOwner && !viewingUsername && showcase !== null && (
+        <StampShowcaseCurationSheet
+          visible={showCuration}
+          stamps={effStamps}
+          currentIds={showcase.map((s) => s.userStampId)}
+          onClose={() => setShowCuration(false)}
+          onSaved={(orderedIds) => {
+            // Optimistic update: rebuild a ShowcaseStamp[] from the local stamps list.
+            const updatedShowcase: ShowcaseStamp[] = orderedIds
+              .map((id, idx) => {
+                const prev = showcase.find((s) => s.userStampId === id);
+                if (prev) return { ...prev, rank: idx + 1 };
+                const stamp = effStamps.find((s) => s.id === id);
+                if (!stamp) return null;
+                return {
+                  userStampId: id,
+                  rank: idx + 1,
+                  earnedAt: stamp.earnedAt,
+                  city: stamp.city,
+                  country: stamp.country,
+                  titleOverride: stamp.titleOverride ?? null,
+                  definition: stamp.definition
+                    ? {
+                        slug: stamp.definition.slug,
+                        name: stamp.definition.name,
+                        rarity: stamp.definition.rarity,
+                        stampType: stamp.definition.stampType,
+                        category: stamp.definition.category ?? '',
+                        artworkUrl: stamp.activeArtworkUrl ?? null,
+                      }
+                    : null,
+                } satisfies ShowcaseStamp;
+              })
+              .filter((x): x is ShowcaseStamp => x !== null);
+            setShowcase(updatedShowcase);
+            setShowCuration(false);
+          }}
+        />
+      )}
     </View>
   );
 }
