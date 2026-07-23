@@ -1,0 +1,1891 @@
+diff -ruN a/artifacts/api-server/src/lib/stamps/artDirection.ts b/artifacts/api-server/src/lib/stamps/artDirection.ts
+--- a/artifacts/api-server/src/lib/stamps/artDirection.ts	2026-07-16 17:02:15.000000000 +0000
++++ b/artifacts/api-server/src/lib/stamps/artDirection.ts	2026-07-23 17:31:44.994675496 +0000
+@@ -183,3 +183,87 @@
+ 
+   return sections.join("\n\n");
+ }
++
++// ═══ Prompt v2 — HERO ART ONLY (Stamp Wave 1, premium composition) ═══════════
++//
++// The composition engine (lib/stamps/composition/) owns borders, typography,
++// rarity treatments, edition labels, and authenticity marks as vector layers.
++// The AI paints ONLY the hero destination artwork — spec Part 16 explicitly
++// forbids asking image models to render text, which they garble.
++//
++// Palette injection: colors come from the destination identity (deliberate,
++// per-destination), never invented per-generation.
++//
++// STYLE_VERSION note: rows generated through the premium path still record
++// STYLE_VERSION (the stale-sweep comparator). HERO_PROMPT_VERSION is captured
++// inside generation_metadata/composition instead. When the premium pipeline
++// becomes the default, bump STYLE_VERSION deliberately — that is the
++// intentional mass-regeneration lever (dev/prod share the queue; coordinate).
++
++export const HERO_PROMPT_VERSION = "hero-v2.0";
++
++export interface IdentityForPrompt {
++  palette: {
++    primary: string;
++    secondary: string;
++    accent: string;
++    background: string;
++    highlight: string;
++  };
++  motif: string;
++  city?: string | null;
++  country?: string | null;
++}
++
++const HERO_PREAMBLE = `
++Create the hero artwork for a premium collectible travel stamp: a single vibrant
++destination illustration with a strong iconic silhouette, recognizable cultural and
++geographic motifs, flat modern vector-poster style with subtle texture, premium finish.
++This artwork will be placed inside a stamp frame by a separate compositor — generate
++ONLY the scene artwork, edge to edge, on a square canvas.
++`.trim();
++
++const HERO_NO_TEXT = `
++ABSOLUTELY NO TEXT of any kind: no letters, no words, no numbers, no typography,
++no signage, no captions, no watermarks, no logos, no calligraphy. If the scene would
++naturally contain signs or banners, render them blank. No frames, no borders,
++no badge shapes, no circular vignettes — the composition must fill the full square.
++`.trim();
++
++const HERO_SUFFIX = `
++Output: one square 1024×1024 illustration, edge-to-edge scene, no transparent cutout
++shape, no UI elements, illustration only (no photography).
++`.trim();
++
++/**
++ * Build the hero-art-only prompt for the premium composition pipeline.
++ * Identity palette + motif steer color and subject; the scene carries no text.
++ */
++export function buildHeroArtPrompt(
++  entry: CatalogEntryForPrompt,
++  identity: IdentityForPrompt,
++): string {
++  const destinationLabel =
++    entry.display_name ?? entry.city ?? entry.region ?? "a travel destination";
++
++  const parts: string[] = [`Destination: ${destinationLabel}`];
++  if (entry.country) parts.push(`Country: ${entry.country}`);
++
++  const p = identity.palette;
++  parts.push(
++    `Color palette (use these exact tones as the dominant scheme): ` +
++    `primary ${p.primary}, secondary ${p.secondary}, accent ${p.accent}, ` +
++    `background ${p.background}, highlight ${p.highlight}.`
++  );
++
++  if (identity.motif && identity.motif !== "generic") {
++    parts.push(`Scene motif: the destination's "${identity.motif}" identity — its most iconic landmark, landscape, and cultural symbols.`);
++  } else {
++    parts.push(`Scene motif: the destination's most iconic landmark or natural feature, rendered as the dominant element.`);
++  }
++
++  const lm = landmarkHint(entry);
++  if (lm) parts.push(lm);
++
++  return [HERO_PREAMBLE, parts.join("\n"), HERO_NO_TEXT, HERO_SUFFIX].join("\n\n");
++}
+diff -ruN a/artifacts/api-server/src/lib/stamps/composition/compositor.ts b/artifacts/api-server/src/lib/stamps/composition/compositor.ts
+--- a/artifacts/api-server/src/lib/stamps/composition/compositor.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/lib/stamps/composition/compositor.ts	2026-07-23 17:26:55.526682117 +0000
+@@ -0,0 +1,476 @@
++/**
++ * Stamp composition engine — Stamp Wave 1 (the pivot of the premium upgrade).
++ *
++ * The AI provider supplies HERO ART ONLY (no text — see buildHeroArtPrompt).
++ * Every other layer is Portava-controlled vector work, so typography is never
++ * garbled and rarity/edition/authenticity marks are always consistent:
++ *
++ *   glow halo (epic+) → perforated silhouette mask → frame material (rarity)
++ *   → authenticity/edition micro-text → identity band → typography
++ *   → hero art (AI image, or procedural vector fallback) → art rim
++ *   → foil sheen (uncommon+)
++ *
++ * Five template families (spec Part 5): seal, portrait, landscape, square,
++ * pennant. Rarity changes the FRAME MATERIAL only; identity (palette+motif)
++ * and shape never change with rarity.
++ *
++ * Deliberately excluded from shared catalog artwork: per-user data (earn
++ * date, edition number). Those are client-side overlay concerns — catalog
++ * art is shared by every earner of the stamp.
++ *
++ * Output is an SVG document + a layer manifest (persisted to
++ * stamp_artwork_versions.composition); rasterization lives in rasterize.ts.
++ */
++
++import type { DestinationIdentity, StampPalette } from "./identities.js";
++import { heroScene } from "./heroScenes.js";
++
++export const COMPOSITION_ENGINE_VERSION = "compose-v1";
++
++const FONT = "Poppins";
++
++// ── Template families ────────────────────────────────────────────────────────
++
++export type TemplateFamily = "seal" | "portrait" | "landscape" | "square" | "pennant";
++
++export const TEMPLATE_FAMILIES: Record<TemplateFamily, { w: number; h: number }> = {
++  seal:      { w: 1000, h: 1000 },
++  portrait:  { w: 780,  h: 1000 },
++  landscape: { w: 1000, h: 780 },
++  square:    { w: 1000, h: 1000 },
++  pennant:   { w: 1000, h: 1000 },
++};
++
++/** Default family per stamp_type (definition.template_family overrides). */
++export function templateFamilyForType(stampType: string | null | undefined): TemplateFamily {
++  switch (stampType) {
++    case "country":       return "portrait";
++    case "region":        return "landscape";
++    case "neighborhood":  return "square";
++    case "special_event": return "pennant";
++    case "hidden_gem":    return "pennant";
++    case "landmark":      return "portrait";
++    case "city":
++    case "check_in":
++    default:              return "seal";
++  }
++}
++
++// ── Rarity materials ─────────────────────────────────────────────────────────
++
++export type StampRarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
++
++const METALS: Record<string, string[]> = {
++  bronze: ["#5C3A1E", "#B5793C", "#8A5526", "#E2A968", "#5C3A1E"],
++  silver: ["#5B6B7C", "#E8EFF6", "#8FA0B0", "#C7D3DE", "#5B6B7C"],
++  gold:   ["#8C6A1D", "#F6DE8D", "#B8860B", "#FFEDB0", "#8C6A1D"],
++  royal:  ["#7A5A10", "#FFE9A0", "#D4A017", "#FFF6CE", "#9C7414"],
++};
++
++interface RarityTreatment {
++  label: string;
++  metal: string | null;
++  glow: number;
++  sheen: number;
++  halo?: boolean;
++}
++
++export const RARITY_TREATMENTS: Record<StampRarity, RarityTreatment> = {
++  common:    { label: "COMMON",    metal: null,     glow: 0,    sheen: 0 },
++  uncommon:  { label: "UNCOMMON",  metal: "bronze", glow: 0,    sheen: 0.14 },
++  rare:      { label: "RARE",      metal: "silver", glow: 0,    sheen: 0.16 },
++  epic:      { label: "EPIC",      metal: "gold",   glow: 0.38, sheen: 0.2 },
++  legendary: { label: "LEGENDARY", metal: "royal",  glow: 0.72, sheen: 0.26, halo: true },
++};
++
++const MICRO_INK: Record<string, string> = {
++  bronze: "#F7E9D4", silver: "#26313D", gold: "#3D2E08", royal: "#3D2E08",
++};
++
++export function normalizeRarity(value: string | null | undefined): StampRarity {
++  const v = (value ?? "").toLowerCase();
++  return (["common", "uncommon", "rare", "epic", "legendary"].includes(v) ? v : "common") as StampRarity;
++}
++
++// ── Shared helpers ───────────────────────────────────────────────────────────
++
++function esc(s: string): string {
++  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
++}
++
++function perfHoles(edges: number[][][], r = 11, spacing = 33): string {
++  let out = "";
++  for (const [[x1, y1], [x2, y2]] of edges) {
++    const len = Math.hypot(x2 - x1, y2 - y1);
++    const n = Math.max(1, Math.round(len / spacing));
++    for (let i = 0; i < n; i++) {
++      const t = i / n;
++      out += `<circle cx="${(x1 + (x2 - x1) * t).toFixed(1)}" cy="${(y1 + (y2 - y1) * t).toFixed(1)}" r="${r}" fill="#000"/>`;
++    }
++  }
++  return out;
++}
++
++/**
++ * Hero layer for a window: AI raster (cover-fit, focus-biased) when provided,
++ * procedural vector scene otherwise.
++ */
++function heroLayer(
++  hero: string | null,
++  identity: DestinationIdentity,
++  wx: number, wy: number, ww: number, wh: number,
++  focusY: number,
++): { markup: string; kind: "ai" | "procedural" } {
++  const s = Math.max(ww, wh) / 1000;
++  const ox = wx - (1000 * s - ww) / 2;
++  const oy = wy - (1000 * s - wh) * focusY;
++  if (hero) {
++    return {
++      kind: "ai",
++      markup: `<image href="${hero}" x="${ox.toFixed(1)}" y="${oy.toFixed(1)}" width="${(1000 * s).toFixed(1)}" height="${(1000 * s).toFixed(1)}" preserveAspectRatio="xMidYMid slice"/>`,
++    };
++  }
++  return {
++    kind: "procedural",
++    markup: `<g transform="translate(${ox.toFixed(1)} ${oy.toFixed(1)}) scale(${s.toFixed(4)})">${heroScene(identity.motif, identity.palette)}</g>`,
++  };
++}
++
++function fitFont(text: string, maxW: number, base: number): number {
++  const n = [...text].length;
++  return Math.min(base, maxW / (0.66 * n + 0.18 * Math.max(0, n - 1)));
++}
++
++function txt(
++  text: string, x: number, y: number,
++  o: { fs: number; fill: string; weight?: number; ls?: number; opacity?: number },
++): string {
++  const ls = o.ls ?? 0;
++  return `<text x="${x + ls / 2}" y="${y}" font-family="${FONT}" font-size="${o.fs.toFixed(1)}" font-weight="${o.weight ?? 700}" letter-spacing="${ls}" fill="${o.fill}" opacity="${o.opacity ?? 1}" text-anchor="middle">${esc(text)}</text>`;
++}
++
++function arcLetters(
++  text: string,
++  o: { cx: number; cy: number; r: number; centerDeg: number; fontSize: number; fill: string; weight?: number; invert?: boolean; opacity?: number; maxSpread?: number },
++): string {
++  const chars = [...text];
++  if (!chars.length) return "";
++  const maxSpread = o.maxSpread ?? 150;
++  let step = ((o.fontSize * 1.12) / o.r) * (180 / Math.PI);
++  if ((chars.length - 1) * step > maxSpread) step = maxSpread / (chars.length - 1);
++  const spread = (chars.length - 1) * step;
++  const dir = o.invert ? -1 : 1;
++  const start = o.centerDeg - dir * (spread / 2);
++  const dy = o.fontSize * 0.35;
++  let out = `<g font-family="${FONT}" font-size="${o.fontSize}" font-weight="${o.weight ?? 700}" fill="${o.fill}" opacity="${o.opacity ?? 1}" text-anchor="middle">`;
++  chars.forEach((ch, i) => {
++    if (ch === " ") return;
++    const a = start + dir * i * step;
++    const rad = (a * Math.PI) / 180;
++    const x = o.cx + o.r * Math.cos(rad);
++    const y = o.cy + o.r * Math.sin(rad);
++    const rot = o.invert ? a - 90 : a + 90;
++    out += `<text x="${x.toFixed(1)}" y="${(y + dy).toFixed(1)}" transform="rotate(${rot.toFixed(1)} ${x.toFixed(1)} ${y.toFixed(1)})">${esc(ch)}</text>`;
++  });
++  return out + `</g>`;
++}
++
++function cornerDiamond(x: number, y: number, size: number, fill: string): string {
++  return `<rect x="${-size / 2}" y="${-size / 2}" width="${size}" height="${size}" transform="translate(${x} ${y}) rotate(45)" fill="${fill}"/>`;
++}
++
++function rarityDefs(uid: string, t: RarityTreatment, P: StampPalette, rarity: StampRarity, W: number, H: number): string {
++  let defs = "";
++  if (t.metal) {
++    const stops = METALS[t.metal]
++      .map((c, i, a) => `<stop offset="${(i / (a.length - 1)).toFixed(2)}" stop-color="${c}"/>`)
++      .join("");
++    defs += `<linearGradient id="ring-${uid}" x1="0" y1="0" x2="1" y2="1">${stops}</linearGradient>`;
++  }
++  if (t.sheen > 0) {
++    const s = t.sheen;
++    const span = Math.max(W, H) * 1.02;
++    defs += `<linearGradient id="sheen-${uid}" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="${span}" y2="0" gradientTransform="rotate(-22 ${W / 2} ${H / 2})">
++      <stop offset="0" stop-color="#fff" stop-opacity="0"/>
++      <stop offset="0.3" stop-color="#fff" stop-opacity="0"/>
++      <stop offset="0.4" stop-color="#fff" stop-opacity="${s}"/>
++      <stop offset="0.5" stop-color="#fff" stop-opacity="0"/>
++      <stop offset="0.56" stop-color="#fff" stop-opacity="0"/>
++      <stop offset="0.61" stop-color="#fff" stop-opacity="${(s * 0.55).toFixed(3)}"/>
++      <stop offset="0.67" stop-color="#fff" stop-opacity="0"/>
++      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
++    </linearGradient>`;
++  }
++  if (t.glow > 0) {
++    defs += `<filter id="gblur-${uid}" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="18"/></filter>`;
++  }
++  return defs;
++}
++
++function glowColorFor(rarity: StampRarity, P: StampPalette): string {
++  return rarity === "legendary" ? P.accent : "#F3D77C";
++}
++
++// ── Compose options / result ─────────────────────────────────────────────────
++
++export interface ComposeOptions {
++  identity: DestinationIdentity;
++  /** Uppercased headline (city or stamp display name). */
++  title: string;
++  /** Secondary line (country). Empty string → subtitle band still renders, text omitted. */
++  subtitle: string;
++  family?: TemplateFamily;
++  rarity?: StampRarity;
++  /** data:image/png;base64,… hero art. Null → procedural vector fallback. */
++  heroImageDataUrl?: string | null;
++  /** Edition line: from stamp_definitions (is_limited + edition_size). */
++  isLimited?: boolean;
++  editionSize?: number | null;
++  /** Unique id prefix so multiple stamps can share one SVG doc. */
++  uid?: string;
++}
++
++export interface CompositionManifest {
++  engine: string;
++  family: TemplateFamily;
++  rarity: StampRarity;
++  identity_key: string;
++  identity_source: string;
++  motif: string;
++  hero: "ai" | "procedural";
++  edition: string;
++  fonts: string[];
++  layers: string[];
++}
++
++export interface ComposedStamp {
++  svg: string;
++  width: number;
++  height: number;
++  manifest: CompositionManifest;
++}
++
++function editionLine(o: ComposeOptions, t: RarityTreatment): string {
++  if (o.isLimited && o.editionSize && o.editionSize > 0) {
++    return `LIMITED EDITION OF ${o.editionSize} • ${t.label}`;
++  }
++  return `OPEN EDITION • ${t.label}`;
++}
++
++// ── Seal ─────────────────────────────────────────────────────────────────────
++
++function buildSeal(o: ComposeOptions, uid: string): { body: string; hero: "ai" | "procedural" } {
++  const P = o.identity.palette;
++  const rarity = o.rarity ?? "common";
++  const t = RARITY_TREATMENTS[rarity];
++  const CX = 500, CY = 500;
++  const R_EDGE = 478, R_RING_IN = 434, R_BAND_OUT = 426, R_BAND_IN = 330, R_ART = 322, R_TEXT = 378, R_MICRO = 456;
++  const ringFill = t.metal ? `url(#ring-${uid})` : P.border;
++  const microInk = t.metal ? MICRO_INK[t.metal] : P.paper;
++
++  const holes: string[] = [];
++  for (let i = 0; i < 60; i++) {
++    const a = (i * 6 * Math.PI) / 180;
++    holes.push(`<circle cx="${(CX + R_EDGE * Math.cos(a)).toFixed(1)}" cy="${(CY + R_EDGE * Math.sin(a)).toFixed(1)}" r="12" fill="#000"/>`);
++  }
++
++  const hero = heroLayer(o.heroImageDataUrl ?? null, o.identity, CX - R_ART, CY - R_ART, R_ART * 2, R_ART * 2, 0.48);
++  const glow = t.glow > 0
++    ? `<g filter="url(#gblur-${uid})"><circle cx="${CX}" cy="${CY}" r="${R_EDGE + 4}" fill="none" stroke="${glowColorFor(rarity, P)}" stroke-width="30" opacity="${Math.min(1, t.glow * 0.85).toFixed(2)}"/></g>` +
++      (t.halo ? `<circle cx="${CX}" cy="${CY}" r="${R_EDGE + 16}" fill="none" stroke="#F6DE8D" stroke-width="3" opacity="0.55"/>` : "")
++    : "";
++  const sheen = t.sheen > 0 ? `<rect x="0" y="0" width="1000" height="1000" fill="url(#sheen-${uid})"/>` : "";
++
++  const body = `<g>
++    <defs>
++      <mask id="perf-${uid}" maskUnits="userSpaceOnUse" x="-40" y="-40" width="1080" height="1080">
++        <circle cx="${CX}" cy="${CY}" r="${R_EDGE}" fill="#fff"/>${holes.join("")}
++      </mask>
++      <clipPath id="art-${uid}"><circle cx="${CX}" cy="${CY}" r="${R_ART}"/></clipPath>
++      ${rarityDefs(uid, t, P, rarity, 1000, 1000)}
++    </defs>
++    ${glow}
++    <g mask="url(#perf-${uid})">
++      <circle cx="${CX}" cy="${CY}" r="${R_EDGE}" fill="${ringFill}"/>
++      <circle cx="${CX}" cy="${CY}" r="470" fill="none" stroke="${microInk}" stroke-width="1.5" opacity="0.5" stroke-dasharray="2 6"/>
++      ${arcLetters("• PORTAVA AUTHENTIC •", { cx: CX, cy: CY, r: R_MICRO, centerDeg: -90, fontSize: 19, fill: microInk, weight: 600, opacity: 0.92 })}
++      ${arcLetters(editionLine(o, t), { cx: CX, cy: CY, r: R_MICRO, centerDeg: 90, fontSize: 19, fill: microInk, weight: 600, opacity: 0.92, invert: true })}
++      <circle cx="${CX}" cy="${CY}" r="${R_RING_IN}" fill="${P.paper}"/>
++      <circle cx="${CX}" cy="${CY}" r="${R_BAND_OUT}" fill="${P.primary}"/>
++      ${arcLetters(o.title, { cx: CX, cy: CY, r: R_TEXT, centerDeg: -90, fontSize: 62, fill: P.paper })}
++      ${o.subtitle ? arcLetters(o.subtitle, { cx: CX, cy: CY, r: R_TEXT, centerDeg: 90, fontSize: 36, fill: P.paper, weight: 600, opacity: 0.95, invert: true }) : ""}
++      ${cornerDiamond(CX - R_TEXT, CY, 18, P.accent)}
++      ${cornerDiamond(CX + R_TEXT, CY, 18, P.accent)}
++      <circle cx="${CX}" cy="${CY}" r="${R_BAND_IN}" fill="${P.paper}"/>
++      <g clip-path="url(#art-${uid})">${hero.markup}</g>
++      <circle cx="${CX}" cy="${CY}" r="${R_ART}" fill="none" stroke="${P.primary}" stroke-width="7"/>
++      <circle cx="${CX}" cy="${CY}" r="${R_ART + 6}" fill="none" stroke="${P.paper}" stroke-width="2.5"/>
++      ${sheen}
++    </g>
++  </g>`;
++  return { body, hero: hero.kind };
++}
++
++// ── Rect family (portrait / landscape / square) ──────────────────────────────
++
++function buildRect(o: ComposeOptions, uid: string, W: number, H: number): { body: string; hero: "ai" | "procedural" } {
++  const P = o.identity.palette;
++  const rarity = o.rarity ?? "common";
++  const t = RARITY_TREATMENTS[rarity];
++  const ringFill = t.metal ? `url(#ring-${uid})` : P.border;
++  const M = 22, F = 30, IN = M + F + 14;
++  const topBandH = 92, bottomBandH = 100;
++  const cw = W - 2 * IN;
++  const artY0 = IN + topBandH + 8;
++  const artY1 = H - IN - bottomBandH - 8;
++  const artH = artY1 - artY0;
++  const focusY = cw / artH > 1.4 ? o.identity.wideFocus : 0.48;
++
++  const edges = [[[0, 0], [W, 0]], [[W, 0], [W, H]], [[W, H], [0, H]], [[0, H], [0, 0]]];
++  const titleFs = fitFont(o.title, cw - 60, 56);
++  const microLine = `PORTAVA AUTHENTIC  •  ${editionLine(o, t)}`;
++
++  const hero = heroLayer(o.heroImageDataUrl ?? null, o.identity, IN, artY0, cw, artH, focusY);
++  const glow = t.glow > 0
++    ? `<g filter="url(#gblur-${uid})"><rect x="1" y="1" width="${W - 2}" height="${H - 2}" rx="14" fill="none" stroke="${glowColorFor(rarity, P)}" stroke-width="30" opacity="${Math.min(1, t.glow * 0.85).toFixed(2)}"/></g>` +
++      (t.halo ? `<rect x="-8" y="-8" width="${W + 16}" height="${H + 16}" rx="20" fill="none" stroke="#F6DE8D" stroke-width="3" opacity="0.55"/>` : "")
++    : "";
++  const sheen = t.sheen > 0 ? `<rect x="0" y="0" width="${W}" height="${H}" fill="url(#sheen-${uid})"/>` : "";
++
++  const body = `<g>
++    <defs>
++      <mask id="perf-${uid}" maskUnits="userSpaceOnUse" x="-40" y="-40" width="${W + 80}" height="${H + 80}">
++        <rect x="0" y="0" width="${W}" height="${H}" rx="6" fill="#fff"/>${perfHoles(edges)}
++      </mask>
++      <clipPath id="art-${uid}"><rect x="${IN}" y="${artY0}" width="${cw}" height="${artH}" rx="10"/></clipPath>
++      ${rarityDefs(uid, t, P, rarity, W, H)}
++    </defs>
++    ${glow}
++    <g mask="url(#perf-${uid})">
++      <rect x="0" y="0" width="${W}" height="${H}" fill="${P.paper}"/>
++      <rect x="${M + F / 2}" y="${M + F / 2}" width="${W - 2 * M - F}" height="${H - 2 * M - F}" rx="12" fill="none" stroke="${ringFill}" stroke-width="${F}"/>
++      <rect x="${M + F + 5}" y="${M + F + 5}" width="${W - 2 * (M + F + 5)}" height="${H - 2 * (M + F + 5)}" rx="8" fill="none" stroke="${P.primary}" stroke-width="2.5" opacity="0.55"/>
++      ${cornerDiamond(M + F / 2, M + F / 2, 17, P.accent)}
++      ${cornerDiamond(W - M - F / 2, M + F / 2, 17, P.accent)}
++      ${cornerDiamond(M + F / 2, H - M - F / 2, 17, P.accent)}
++      ${cornerDiamond(W - M - F / 2, H - M - F / 2, 17, P.accent)}
++      <rect x="${IN}" y="${IN}" width="${cw}" height="${topBandH}" rx="10" fill="${P.primary}"/>
++      ${txt(o.title, W / 2, IN + topBandH / 2 + titleFs * 0.36, { fs: titleFs, fill: P.paper, ls: titleFs * 0.22 })}
++      ${cornerDiamond(IN + 34, IN + topBandH / 2, 14, P.accent)}
++      ${cornerDiamond(W - IN - 34, IN + topBandH / 2, 14, P.accent)}
++      <g clip-path="url(#art-${uid})">${hero.markup}</g>
++      <rect x="${IN}" y="${artY0}" width="${cw}" height="${artH}" rx="10" fill="none" stroke="${P.primary}" stroke-width="6"/>
++      <rect x="${IN + 4}" y="${artY0 + 4}" width="${cw - 8}" height="${artH - 8}" rx="8" fill="none" stroke="${P.paper}" stroke-width="2" opacity="0.9"/>
++      <rect x="${IN}" y="${H - IN - bottomBandH}" width="${cw}" height="${bottomBandH}" rx="10" fill="${P.primary}"/>
++      ${o.subtitle ? txt(o.subtitle, W / 2, H - IN - bottomBandH + 44, { fs: 33, fill: P.paper, weight: 600, ls: 7 }) : ""}
++      ${txt(microLine, W / 2, H - IN - bottomBandH + 78, { fs: 15.5, fill: P.paper, weight: 500, ls: 1.5, opacity: 0.85 })}
++      ${sheen}
++    </g>
++  </g>`;
++  return { body, hero: hero.kind };
++}
++
++// ── Pennant (triangle) ───────────────────────────────────────────────────────
++
++function trianglePath(pts: number[][]): string {
++  return `M${pts[0][0]} ${pts[0][1]} L${pts[1][0]} ${pts[1][1]} L${pts[2][0]} ${pts[2][1]} Z`;
++}
++
++function shrinkTri(pts: number[][], k: number): number[][] {
++  const cx = (pts[0][0] + pts[1][0] + pts[2][0]) / 3;
++  const cy = (pts[0][1] + pts[1][1] + pts[2][1]) / 3;
++  return pts.map(([x, y]) => [cx + (x - cx) * k, cy + (y - cy) * k]);
++}
++
++function buildPennant(o: ComposeOptions, uid: string): { body: string; hero: "ai" | "procedural" } {
++  const P = o.identity.palette;
++  const rarity = o.rarity ?? "common";
++  const t = RARITY_TREATMENTS[rarity];
++  const ringFill = t.metal ? `url(#ring-${uid})` : P.border;
++  const T = [[500, 64], [946, 892], [54, 892]];
++  const frameT = shrinkTri(T, 0.94);
++  const pinT = shrinkTri(T, 0.875);
++  const artT = [[500, 168], [812, 748], [188, 748]];
++  const titleFs = fitFont(o.title, 520, 46);
++
++  const hero = heroLayer(o.heroImageDataUrl ?? null, o.identity, 188, 168, 624, 580, 0.42);
++  const glow = t.glow > 0
++    ? `<g filter="url(#gblur-${uid})"><path d="${trianglePath(T)}" fill="none" stroke="${glowColorFor(rarity, P)}" stroke-width="30" stroke-linejoin="round" opacity="${Math.min(1, t.glow * 0.85).toFixed(2)}"/></g>` +
++      (t.halo ? `<path d="${trianglePath(shrinkTri(T, 1.015))}" fill="none" stroke="#F6DE8D" stroke-width="3" opacity="0.55" stroke-linejoin="round"/>` : "")
++    : "";
++  const sheen = t.sheen > 0 ? `<rect x="0" y="0" width="1000" height="1000" fill="url(#sheen-${uid})"/>` : "";
++  const edges = [[T[0], T[1]], [T[1], T[2]], [T[2], T[0]]];
++
++  const body = `<g>
++    <defs>
++      <mask id="perf-${uid}" maskUnits="userSpaceOnUse" x="-40" y="-40" width="1080" height="1080">
++        <path d="${trianglePath(T)}" fill="#fff"/>${perfHoles(edges)}
++      </mask>
++      <clipPath id="art-${uid}"><path d="${trianglePath(artT)}"/></clipPath>
++      ${rarityDefs(uid, t, P, rarity, 1000, 1000)}
++    </defs>
++    ${glow}
++    <g mask="url(#perf-${uid})">
++      <path d="${trianglePath(T)}" fill="${P.paper}"/>
++      <path d="${trianglePath(frameT)}" fill="none" stroke="${ringFill}" stroke-width="26" stroke-linejoin="round"/>
++      <path d="${trianglePath(pinT)}" fill="none" stroke="${P.primary}" stroke-width="2.5" opacity="0.55" stroke-linejoin="round"/>
++      <g clip-path="url(#art-${uid})">${hero.markup}</g>
++      <path d="${trianglePath(artT)}" fill="none" stroke="${P.primary}" stroke-width="6" stroke-linejoin="round"/>
++      ${txt(o.title, 500, 788 + titleFs * 0.36, { fs: titleFs, fill: P.primary, ls: titleFs * 0.2 })}
++      ${txt(`${o.subtitle ? o.subtitle + "  •  " : ""}${editionLine(o, t)}`, 500, 846, { fs: 19, fill: P.primary, weight: 600, ls: 2, opacity: 0.85 })}
++      ${sheen}
++    </g>
++  </g>`;
++  return { body, hero: hero.kind };
++}
++
++// ── Public API ───────────────────────────────────────────────────────────────
++
++export function composeStamp(o: ComposeOptions): ComposedStamp {
++  const family = o.family ?? "seal";
++  const dims = TEMPLATE_FAMILIES[family];
++  if (!dims) throw new Error(`unknown template family: ${family}`);
++  const rarity = o.rarity ?? "common";
++  const t = RARITY_TREATMENTS[rarity];
++  const uid = (o.uid ?? "s0").replace(/[^a-zA-Z0-9_-]/g, "");
++
++  let built: { body: string; hero: "ai" | "procedural" };
++  if (family === "seal") built = buildSeal(o, uid);
++  else if (family === "pennant") built = buildPennant(o, uid);
++  else built = buildRect(o, uid, dims.w, dims.h);
++
++  // Pad so glow/halo fades inside the canvas instead of clipping.
++  const PAD = 64;
++  const svg =
++    `<svg xmlns="http://www.w3.org/2000/svg" width="${dims.w + PAD * 2}" height="${dims.h + PAD * 2}" viewBox="${-PAD} ${-PAD} ${dims.w + PAD * 2} ${dims.h + PAD * 2}">${built.body}</svg>`;
++
++  const layers = [
++    ...(t.glow > 0 ? ["glow"] : []),
++    "perforation-mask",
++    "frame-material",
++    "micro-text",
++    "identity-band",
++    "typography",
++    `hero:${built.hero}`,
++    "art-rim",
++    ...(t.sheen > 0 ? ["foil-sheen"] : []),
++  ];
++
++  return {
++    svg,
++    width: dims.w + PAD * 2,
++    height: dims.h + PAD * 2,
++    manifest: {
++      engine: COMPOSITION_ENGINE_VERSION,
++      family,
++      rarity,
++      identity_key: o.identity.identityKey,
++      identity_source: o.identity.source,
++      motif: o.identity.motif,
++      hero: built.hero,
++      edition: editionLine(o, t),
++      fonts: [FONT],
++      layers,
++    },
++  };
++}
+diff -ruN a/artifacts/api-server/src/lib/stamps/composition/heroScenes.ts b/artifacts/api-server/src/lib/stamps/composition/heroScenes.ts
+--- a/artifacts/api-server/src/lib/stamps/composition/heroScenes.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/lib/stamps/composition/heroScenes.ts	2026-07-23 17:25:10.094684528 +0000
+@@ -0,0 +1,199 @@
++/**
++ * Procedural vector hero scenes — the fallback tier of the composition engine.
++ *
++ * When AI hero art is unavailable (provider down, QC-failed candidate, or
++ * pre-generation preview), the compositor drops one of these deterministic
++ * vector scenes into the art window instead. Scenes for the five launch
++ * identities were approved in the 2026-07-23 composition prototype; every
++ * other motif renders the 'generic' scene tinted by the identity palette.
++ *
++ * Each function returns SVG markup for a 1000×1000 viewBox, later clipped to
++ * the stamp's art window.
++ */
++
++import type { StampPalette } from "./identities.js";
++
++export function heroScene(motif: string, P: StampPalette): string {
++  switch (motif) {
++    case "tokyo": return tokyo(P);
++    case "cebu": return cebu(P);
++    case "paris": return paris(P);
++    case "bangkok": return bangkok(P);
++    case "iceland": return iceland(P);
++    default: return generic(P);
++  }
++}
++
++function generic(P: StampPalette): string {
++  // Sun over layered hills — palette-tinted, deliberately destination-neutral.
++  return `
++  <defs>
++    <linearGradient id="sky-gen" x1="0" y1="0" x2="0" y2="1">
++      <stop offset="0" stop-color="${P.background}"/>
++      <stop offset="1" stop-color="${P.secondary}"/>
++    </linearGradient>
++  </defs>
++  <rect x="0" y="0" width="1000" height="1000" fill="url(#sky-gen)"/>
++  <circle cx="500" cy="430" r="170" fill="${P.accent}" opacity="0.95"/>
++  <g fill="${P.highlight}" opacity="0.85">
++    <circle cx="240" cy="230" r="6"/><circle cx="770" cy="200" r="5"/><circle cx="640" cy="140" r="4"/>
++  </g>
++  <path d="M0 640 Q250 520 500 610 T1000 600 L1000 1000 L0 1000 Z" fill="${P.primary}" opacity="0.85"/>
++  <path d="M0 730 Q300 640 620 720 T1000 700 L1000 1000 L0 1000 Z" fill="${P.primary}"/>
++  <rect x="0" y="840" width="1000" height="160" fill="${P.border}"/>`;
++}
++
++function tokyo(P: StampPalette): string {
++  return `
++  <defs>
++    <linearGradient id="sky-tokyo" x1="0" y1="0" x2="0" y2="1">
++      <stop offset="0" stop-color="${P.background}"/>
++      <stop offset="0.55" stop-color="#3D4E8C"/>
++      <stop offset="1" stop-color="#8A5B7A"/>
++    </linearGradient>
++  </defs>
++  <rect x="0" y="0" width="1000" height="1000" fill="url(#sky-tokyo)"/>
++  <circle cx="500" cy="400" r="200" fill="${P.secondary}" opacity="0.92"/>
++  <path d="M120 720 L420 380 Q500 320 580 380 L880 720 Z" fill="#232C52"/>
++  <path d="M395 405 Q500 330 605 405 L560 455 Q545 430 520 447 Q500 425 480 447 Q455 430 440 455 Z" fill="#F1EFF7"/>
++  <g fill="#1B2340" opacity="0.9">
++    <rect x="90" y="640" width="46" height="80"/><rect x="150" y="600" width="34" height="120"/>
++    <rect x="806" y="628" width="42" height="92"/><rect x="862" y="596" width="30" height="124"/>
++  </g>
++  <g fill="${P.secondary}">
++    <path d="M300 520 Q500 470 700 520 L700 556 Q500 508 300 556 Z"/>
++    <rect x="330" y="548" width="340" height="26" rx="4"/>
++    <rect x="368" y="548" width="34" height="240"/>
++    <rect x="598" y="548" width="34" height="240"/>
++  </g>
++  <rect x="0" y="770" width="1000" height="230" fill="#151B38"/>
++  <g fill="${P.accent}">
++    <circle cx="220" cy="260" r="13"/><circle cx="268" cy="312" r="9"/><circle cx="180" cy="350" r="7"/>
++    <circle cx="784" cy="240" r="12"/><circle cx="742" cy="300" r="8"/><circle cx="826" cy="330" r="7"/>
++    <circle cx="620" cy="200" r="7"/><circle cx="380" cy="190" r="8"/>
++  </g>`;
++}
++
++function cebu(P: StampPalette): string {
++  return `
++  <defs>
++    <linearGradient id="sky-cebu" x1="0" y1="0" x2="0" y2="1">
++      <stop offset="0" stop-color="#0E7490"/>
++      <stop offset="0.5" stop-color="#2FB0BF"/>
++      <stop offset="1" stop-color="#FBD38D"/>
++    </linearGradient>
++    <linearGradient id="sea-cebu" x1="0" y1="0" x2="0" y2="1">
++      <stop offset="0" stop-color="#0E7490"/>
++      <stop offset="1" stop-color="#065666"/>
++    </linearGradient>
++  </defs>
++  <rect x="0" y="0" width="1000" height="1000" fill="url(#sky-cebu)"/>
++  <circle cx="500" cy="470" r="150" fill="${P.accent}"/>
++  <path d="M240 620 Q380 560 520 610 Q660 560 790 618 L790 640 L240 640 Z" fill="#0A4A5C"/>
++  <g stroke="#0A4A5C" stroke-width="16" fill="none" stroke-linecap="round">
++    <path d="M370 616 Q360 520 330 470"/>
++  </g>
++  <g fill="#0E5F72">
++    <path d="M330 470 Q250 430 190 470 Q260 462 330 492 Z"/>
++    <path d="M330 470 Q280 380 210 370 Q290 400 322 478 Z"/>
++    <path d="M330 470 Q360 380 440 366 Q370 404 340 480 Z"/>
++    <path d="M330 470 Q410 428 470 462 Q400 456 336 492 Z"/>
++  </g>
++  <rect x="0" y="640" width="1000" height="360" fill="url(#sea-cebu)"/>
++  <g stroke="${P.paper}" stroke-width="14" fill="none" opacity="0.85" stroke-linecap="round">
++    <path d="M120 730 Q180 700 240 730 T360 730"/>
++    <path d="M560 780 Q620 750 680 780 T800 780"/>
++    <path d="M300 860 Q360 830 420 860 T540 860"/>
++  </g>
++  <g fill="#083A47">
++    <path d="M600 690 Q670 712 740 690 L724 664 L616 664 Z"/>
++    <rect x="664" y="596" width="10" height="70"/>
++    <path d="M669 596 L724 640 L669 640 Z" fill="${P.paper}"/>
++  </g>`;
++}
++
++function paris(P: StampPalette): string {
++  return `
++  <rect x="0" y="0" width="1000" height="1000" fill="${P.background}"/>
++  <circle cx="500" cy="470" r="230" fill="none" stroke="${P.accent}" stroke-width="6" opacity="0.5"/>
++  <g fill="${P.primary}" opacity="0.85">
++    <rect x="90" y="700" width="130" height="145"/><path d="M90 700 L155 652 L220 700 Z"/>
++    <rect x="180" y="666" width="10" height="34"/>
++    <rect x="760" y="716" width="150" height="130"/>
++    <path d="M835 626 A62 62 0 0 1 897 688 L773 688 A62 62 0 0 1 835 626 Z"/>
++    <rect x="773" y="688" width="124" height="28"/>
++    <rect x="830" y="596" width="10" height="30"/>
++  </g>
++  <g fill="${P.primary}">
++    <rect x="490" y="150" width="20" height="56" rx="6"/>
++    <path d="M478 206 L522 206 L546 470 L454 470 Z"/>
++    <rect x="436" y="470" width="128" height="24" rx="6"/>
++    <path d="M456 494 L544 494 L578 646 L422 646 Z"/>
++    <rect x="398" y="646" width="204" height="26" rx="6"/>
++    <path fill-rule="evenodd" d="M412 672 L588 672 L700 845 L300 845 Z M402 845 Q500 692 598 845 Z"/>
++  </g>
++  <g stroke="${P.background}" stroke-width="7" opacity="0.65">
++    <line x1="466" y1="330" x2="534" y2="330"/><line x1="459" y1="400" x2="541" y2="400"/>
++    <line x1="440" y1="570" x2="560" y2="570"/>
++  </g>
++  <g fill="${P.accent}">
++    <circle cx="250" cy="250" r="7"/><circle cx="760" cy="220" r="6"/><circle cx="700" cy="330" r="5"/>
++    <circle cx="300" cy="360" r="5"/>
++  </g>
++  <rect x="0" y="845" width="1000" height="155" fill="${P.primary}" opacity="0.16"/>`;
++}
++
++function bangkok(P: StampPalette): string {
++  return `
++  <defs>
++    <linearGradient id="sky-bkk" x1="0" y1="0" x2="0" y2="1">
++      <stop offset="0" stop-color="#7A2412"/>
++      <stop offset="0.55" stop-color="#C2570F"/>
++      <stop offset="1" stop-color="${P.accent}"/>
++    </linearGradient>
++  </defs>
++  <rect x="0" y="0" width="1000" height="1000" fill="url(#sky-bkk)"/>
++  <circle cx="500" cy="430" r="170" fill="${P.highlight}" opacity="0.9"/>
++  <g fill="#4A1208">
++    <path d="M500 170 L512 320 L488 320 Z"/>
++    <path d="M470 320 L530 320 L548 400 L452 400 Z"/>
++    <path d="M440 400 L560 400 L585 480 L415 480 Z"/>
++    <path d="M400 480 L600 480 L630 570 L370 570 Z"/>
++    <path d="M340 570 L660 570 L660 620 L340 620 Z"/>
++    <path d="M300 620 L700 620 L700 700 L300 700 Z"/>
++    <path d="M240 700 L760 700 L760 740 L240 740 Z"/>
++    <path d="M255 560 L275 470 L295 560 Z"/><rect x="248" y="560" width="54" height="140"/>
++    <path d="M705 560 L725 470 L745 560 Z"/><rect x="698" y="560" width="54" height="140"/>
++  </g>
++  <rect x="0" y="740" width="1000" height="260" fill="#3A0E06"/>
++  <g fill="${P.accent}">
++    <path d="M120 790 l22 -26 l22 26 l-22 26 Z"/><path d="M190 790 l22 -26 l22 26 l-22 26 Z"/>
++    <path d="M746 790 l22 -26 l22 26 l-22 26 Z"/><path d="M816 790 l22 -26 l22 26 l-22 26 Z"/>
++  </g>`;
++}
++
++function iceland(P: StampPalette): string {
++  return `
++  <rect x="0" y="0" width="1000" height="1000" fill="${P.background}"/>
++  <g fill="none" stroke-linecap="round" opacity="0.85">
++    <path d="M120 380 Q320 180 520 320 T900 240" stroke="${P.accent}" stroke-width="64" opacity="0.55"/>
++    <path d="M80 460 Q300 260 540 400 T940 320" stroke="${P.secondary}" stroke-width="42" opacity="0.6"/>
++    <path d="M160 320 Q360 140 560 260 T920 180" stroke="${P.highlight}" stroke-width="22" opacity="0.5"/>
++  </g>
++  <circle cx="705" cy="250" r="58" fill="#DCE9F2"/>
++  <circle cx="685" cy="235" r="12" fill="#B9CFDD"/><circle cx="722" cy="268" r="8" fill="#B9CFDD"/>
++  <g fill="${P.highlight}">
++    <circle cx="200" cy="200" r="5"/><circle cx="850" cy="160" r="4"/><circle cx="600" cy="120" r="4"/>
++    <circle cx="330" cy="130" r="3"/><circle cx="880" cy="420" r="4"/>
++  </g>
++  <path d="M40 720 L270 420 L420 650 L570 380 L790 720 Z" fill="#0F2233"/>
++  <path d="M548 412 L570 380 L592 412 L575 430 Z" fill="${P.highlight}"/>
++  <path d="M258 454 L270 420 L288 458 L272 472 Z" fill="${P.highlight}"/>
++  <path d="M380 720 L620 510 L950 720 Z" fill="#132B40"/>
++  <rect x="0" y="720" width="1000" height="280" fill="#0C1F30"/>
++  <g fill="${P.highlight}" opacity="0.9">
++    <path d="M140 820 l40 -20 l40 20 l-40 18 Z"/>
++    <path d="M700 850 l52 -24 l52 24 l-52 22 Z"/>
++    <path d="M420 880 l34 -16 l34 16 l-34 15 Z"/>
++  </g>`;
++}
+diff -ruN a/artifacts/api-server/src/lib/stamps/composition/identities.ts b/artifacts/api-server/src/lib/stamps/composition/identities.ts
+--- a/artifacts/api-server/src/lib/stamps/composition/identities.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/lib/stamps/composition/identities.ts	2026-07-23 17:24:17.738685726 +0000
+@@ -0,0 +1,197 @@
++/**
++ * Destination identity resolution — Stamp Wave 1.
++ *
++ * Every stamp's colors are DELIBERATE, never invented per-generation:
++ *   1. catalog.identity_key override → destination_identities row
++ *   2. city/country match against destination_identities
++ *   3. deterministic curated fallback palette (hash of the location key picks
++ *      one of eight hand-built palettes — same destination always gets the
++ *      same palette, and every palette was chosen by a human)
++ *
++ * HONESTY NOTE: fallback palettes are labeled source:'fallback' in the
++ * composition manifest so admin tooling can surface which destinations still
++ * need a hand-authored identity.
++ */
++
++export interface StampPalette {
++  primary: string;
++  secondary: string;
++  accent: string;
++  background: string;
++  border: string;
++  highlight: string;
++  paper: string;
++}
++
++export interface DestinationIdentity {
++  identityKey: string;
++  city: string | null;
++  country: string | null;
++  countryCode: string | null;
++  palette: StampPalette;
++  motif: string;
++  wideFocus: number;
++  /** 'db' = destination_identities row; 'seed' = built-in launch identity; 'fallback' = curated generic palette */
++  source: "db" | "seed" | "fallback";
++}
++
++// ── Launch seeds (mirror the 0177 destination_identities seed rows) ──────────
++// Kept in code as well so composition works even before 0177 has run, and in
++// tests without a DB. DB rows always win when present.
++
++export const SEED_IDENTITIES: Record<string, Omit<DestinationIdentity, "source">> = {
++  "tokyo-jp": {
++    identityKey: "tokyo-jp", city: "Tokyo", country: "Japan", countryCode: "JP",
++    palette: { primary: "#2B3A67", secondary: "#C63D2F", accent: "#F5B7C5", background: "#1A2447", border: "#2B3A67", highlight: "#E8B04B", paper: "#F6F1E7" },
++    motif: "tokyo", wideFocus: 0.48,
++  },
++  "cebu-ph": {
++    identityKey: "cebu-ph", city: "Cebu", country: "Philippines", countryCode: "PH",
++    palette: { primary: "#0E7490", secondary: "#14B8A6", accent: "#F4A73B", background: "#0A5A73", border: "#0E7490", highlight: "#FCD34D", paper: "#F4FAF8" },
++    motif: "cebu", wideFocus: 0.52,
++  },
++  "paris-fr": {
++    identityKey: "paris-fr", city: "Paris", country: "France", countryCode: "FR",
++    palette: { primary: "#1F2A50", secondary: "#7C2D3E", accent: "#C9A227", background: "#EFE7D5", border: "#1F2A50", highlight: "#C9A227", paper: "#F7F2E6" },
++    motif: "paris", wideFocus: 0.66,
++  },
++  "bangkok-th": {
++    identityKey: "bangkok-th", city: "Bangkok", country: "Thailand", countryCode: "TH",
++    palette: { primary: "#8C2F1B", secondary: "#D97706", accent: "#EBB434", background: "#5C1A10", border: "#8C2F1B", highlight: "#F3C969", paper: "#FBF4E4" },
++    motif: "bangkok", wideFocus: 0.5,
++  },
++  "reykjavik-is": {
++    identityKey: "reykjavik-is", city: "Reykjavík", country: "Iceland", countryCode: "IS",
++    palette: { primary: "#0B3B5A", secondary: "#0FA3B1", accent: "#7CE577", background: "#071B2E", border: "#0B3B5A", highlight: "#B7F0EE", paper: "#EFF6F9" },
++    motif: "iceland", wideFocus: 0.45,
++  },
++};
++
++// ── Curated fallback palettes ────────────────────────────────────────────────
++// Eight hand-built palettes spanning warm/cool/neutral moods. A destination
++// without an authored identity hashes onto one of these deterministically.
++
++const FALLBACK_PALETTES: StampPalette[] = [
++  { primary: "#1E3A5F", secondary: "#3B82A0", accent: "#E8B04B", background: "#152C49", border: "#1E3A5F", highlight: "#9FD0E8", paper: "#F2F6F8" }, // harbor blue
++  { primary: "#5B3A29", secondary: "#A0653B", accent: "#E0A94F", background: "#402818", border: "#5B3A29", highlight: "#F0C987", paper: "#F8F2E9" }, // terracotta
++  { primary: "#284B3C", secondary: "#3F7D5C", accent: "#D9A441", background: "#1B3A2C", border: "#284B3C", highlight: "#A8D5B9", paper: "#F1F7F2" }, // rainforest
++  { primary: "#4A2C5B", secondary: "#7B4B9E", accent: "#E8C24B", background: "#351F44", border: "#4A2C5B", highlight: "#CBA8E0", paper: "#F6F2F8" }, // dusk violet
++  { primary: "#7A2E35", secondary: "#B04A4A", accent: "#E8B85A", background: "#571F26", border: "#7A2E35", highlight: "#F0A8A0", paper: "#FAF2EE" }, // spice red
++  { primary: "#1F5F63", secondary: "#2E8C8C", accent: "#F0A345", background: "#144548", border: "#1F5F63", highlight: "#8FD8D0", paper: "#F0F8F7" }, // lagoon teal
++  { primary: "#3D4A21", secondary: "#6B7F3A", accent: "#D9B23D", background: "#2B3517", border: "#3D4A21", highlight: "#C2CF8F", paper: "#F6F8EE" }, // olive grove
++  { primary: "#33415C", secondary: "#5C6B8C", accent: "#D98E4A", background: "#242E42", border: "#33415C", highlight: "#AEBBD6", paper: "#F3F5F8" }, // slate coast
++];
++
++/** Deterministic non-crypto hash (FNV-1a) so palette choice is stable per key. */
++export function stableHash(input: string): number {
++  let h = 0x811c9dc5;
++  for (let i = 0; i < input.length; i++) {
++    h ^= input.charCodeAt(i);
++    h = Math.imul(h, 0x01000193);
++  }
++  return h >>> 0;
++}
++
++export interface IdentityLookupEntry {
++  identity_key?: string | null;
++  display_name?: string | null;
++  city?: string | null;
++  country?: string | null;
++  country_code?: string | null;
++  canonical_location_key?: string | null;
++}
++
++function norm(s: string | null | undefined): string {
++  return (s ?? "").trim().toLowerCase();
++}
++
++/** Match a catalog entry against the seed identities (city or country-level). */
++export function matchSeedIdentity(entry: IdentityLookupEntry): DestinationIdentity | null {
++  const city = norm(entry.city) || norm(entry.display_name);
++  const cc = norm(entry.country_code);
++  for (const seed of Object.values(SEED_IDENTITIES)) {
++    if (city && norm(seed.city) === city && (!cc || norm(seed.countryCode) === cc)) {
++      return { ...seed, source: "seed" };
++    }
++  }
++  return null;
++}
++
++/** Deterministic curated fallback identity for destinations without an authored one. */
++export function fallbackIdentity(entry: IdentityLookupEntry): DestinationIdentity {
++  const key =
++    norm(entry.canonical_location_key) ||
++    `${norm(entry.display_name)}|${norm(entry.country_code)}` ||
++    "unknown";
++  const palette = FALLBACK_PALETTES[stableHash(key) % FALLBACK_PALETTES.length];
++  return {
++    identityKey: `fallback:${key}`,
++    city: entry.city ?? entry.display_name ?? null,
++    country: entry.country ?? null,
++    countryCode: entry.country_code?.toUpperCase() ?? null,
++    palette,
++    motif: "generic",
++    wideFocus: 0.45,
++    source: "fallback",
++  };
++}
++
++function isPalette(v: unknown): v is StampPalette {
++  if (!v || typeof v !== "object") return false;
++  const p = v as Record<string, unknown>;
++  return ["primary", "secondary", "accent", "background", "border", "highlight", "paper"]
++    .every((k) => typeof p[k] === "string" && /^#[0-9a-fA-F]{6}$/.test(p[k] as string));
++}
++
++/**
++ * Resolve the identity for a catalog entry. `sc` may be null (tests / pre-0177
++ * environments) — resolution then uses seeds + fallback only. Any DB error
++ * degrades silently to seed/fallback (composition must never fail on identity
++ * lookup).
++ */
++export async function resolveIdentity(sc: any, entry: IdentityLookupEntry): Promise<DestinationIdentity> {
++  if (sc) {
++    try {
++      // 1. Explicit identity_key override on the catalog row.
++      if (entry.identity_key) {
++        const { data } = await sc
++          .from("destination_identities")
++          .select("identity_key, city, country, country_code, palette, motif, wide_focus")
++          .eq("identity_key", entry.identity_key)
++          .eq("status", "active")
++          .maybeSingle();
++        if (data && isPalette((data as any).palette)) return rowToIdentity(data);
++      }
++      // 2. City + country match.
++      const city = (entry.city ?? entry.display_name ?? "").trim();
++      const cc = (entry.country_code ?? "").trim().toUpperCase();
++      if (city) {
++        let q = sc
++          .from("destination_identities")
++          .select("identity_key, city, country, country_code, palette, motif, wide_focus")
++          .ilike("city", city)
++          .eq("status", "active")
++          .limit(1);
++        if (cc) q = q.eq("country_code", cc);
++        const { data } = await q.maybeSingle();
++        if (data && isPalette((data as any).palette)) return rowToIdentity(data);
++      }
++    } catch {
++      // fall through to seed/fallback
++    }
++  }
++  return matchSeedIdentity(entry) ?? fallbackIdentity(entry);
++}
++
++function rowToIdentity(row: any): DestinationIdentity {
++  return {
++    identityKey: row.identity_key,
++    city: row.city ?? null,
++    country: row.country ?? null,
++    countryCode: row.country_code ?? null,
++    palette: row.palette as StampPalette,
++    motif: row.motif ?? "generic",
++    wideFocus: typeof row.wide_focus === "number" ? row.wide_focus : Number(row.wide_focus ?? 0.45),
++    source: "db",
++  };
++}
+diff -ruN a/artifacts/api-server/src/lib/stamps/composition/rasterize.ts b/artifacts/api-server/src/lib/stamps/composition/rasterize.ts
+--- a/artifacts/api-server/src/lib/stamps/composition/rasterize.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/lib/stamps/composition/rasterize.ts	2026-07-23 17:27:24.330681458 +0000
+@@ -0,0 +1,149 @@
++/**
++ * Rasterization + QC for the stamp composition engine (sharp/libvips).
++ *
++ * - rasterizeStamp: composed SVG → full PNG (1024w) + thumbnail PNG (256w).
++ * - validateHeroBuffer: QC gate on AI hero art BEFORE composition
++ *   (dimensions, alpha, decodable, format).
++ * - validateComposedPng: sanity gate on the composed output.
++ *
++ * Font handling: librsvg (inside libvips) resolves fonts through fontconfig.
++ * If the host has no Poppins, ensureFontconfig() points FONTCONFIG_PATH at
++ * the repo's bundled assets/fonts (Poppins Regular/Medium/Bold + fonts.conf)
++ * so stamp typography renders identically everywhere. Called lazily before
++ * the first rasterization; a host with Poppins already installed wins.
++ */
++
++import { existsSync } from "node:fs";
++import { execFileSync } from "node:child_process";
++import path from "node:path";
++import { fileURLToPath } from "node:url";
++import sharp from "sharp";
++
++const FULL_WIDTH = 1024;
++const THUMB_WIDTH = 256;
++
++let fontconfigEnsured = false;
++
++/** Repo-bundled fonts dir (artifacts/api-server/assets/fonts). */
++export function bundledFontsDir(): string {
++  const here = path.dirname(fileURLToPath(import.meta.url));
++  // src/lib/stamps/composition → ../../../../assets/fonts
++  return path.resolve(here, "../../../../assets/fonts");
++}
++
++function hostHasPoppins(): boolean {
++  try {
++    const out = execFileSync("fc-list", [":family"], { timeout: 3000 }).toString();
++    return /poppins/i.test(out);
++  } catch {
++    return false; // no fc-list → assume no usable fontconfig
++  }
++}
++
++export function ensureFontconfig(): void {
++  if (fontconfigEnsured) return;
++  fontconfigEnsured = true;
++  if (process.env.FONTCONFIG_PATH) return; // operator override wins
++  if (hostHasPoppins()) return;
++  const dir = bundledFontsDir();
++  if (existsSync(path.join(dir, "fonts.conf"))) {
++    process.env.FONTCONFIG_PATH = dir;
++    console.log(JSON.stringify({ event: "stamp.compose.fontconfig", dir }));
++  }
++}
++
++export interface RasterizedStamp {
++  full: Buffer;       // PNG, FULL_WIDTH wide
++  thumbnail: Buffer;  // PNG, THUMB_WIDTH wide
++  width: number;
++  height: number;
++}
++
++/** Render a composed SVG to the dual PNG assets (full + thumbnail). */
++export async function rasterizeStamp(svg: string): Promise<RasterizedStamp> {
++  ensureFontconfig();
++  const input = Buffer.from(svg);
++  const full = await sharp(input, { density: 96 })
++    .resize({ width: FULL_WIDTH })
++    .png()
++    .toBuffer();
++  const meta = await sharp(full).metadata();
++  const thumbnail = await sharp(input, { density: 96 })
++    .resize({ width: THUMB_WIDTH })
++    .png()
++    .toBuffer();
++  return { full, thumbnail, width: meta.width ?? FULL_WIDTH, height: meta.height ?? FULL_WIDTH };
++}
++
++// ── QC ───────────────────────────────────────────────────────────────────────
++
++export interface QcResult {
++  passed: boolean;
++  checks: Record<string, boolean>;
++  width: number | null;
++  height: number | null;
++  format: string | null;
++  reason: string | null;
++}
++
++/**
++ * QC gate for AI hero art before composition. Rejects candidates that are
++ * undecodable, tiny, or non-square-ish; admins never see garbage candidates.
++ */
++export async function validateHeroBuffer(buffer: Buffer): Promise<QcResult> {
++  const checks: Record<string, boolean> = {};
++  let width: number | null = null;
++  let height: number | null = null;
++  let format: string | null = null;
++  try {
++    const meta = await sharp(buffer).metadata();
++    width = meta.width ?? null;
++    height = meta.height ?? null;
++    format = meta.format ?? null;
++    checks.decodable = true;
++    checks.format_supported = ["png", "webp", "jpeg", "jpg"].includes(meta.format ?? "");
++    checks.min_size = (meta.width ?? 0) >= 512 && (meta.height ?? 0) >= 512;
++    const ratio = (meta.width ?? 1) / Math.max(1, meta.height ?? 1);
++    checks.aspect_square = ratio > 0.8 && ratio < 1.25;
++  } catch {
++    checks.decodable = false;
++  }
++  const failed = Object.entries(checks).filter(([, ok]) => !ok).map(([k]) => k);
++  return {
++    passed: failed.length === 0,
++    checks,
++    width,
++    height,
++    format,
++    reason: failed.length ? `hero_qc_failed: ${failed.join(",")}` : null,
++  };
++}
++
++/** Sanity gate on the composed PNG (decodable, expected width, has alpha). */
++export async function validateComposedPng(buffer: Buffer): Promise<QcResult> {
++  const checks: Record<string, boolean> = {};
++  let width: number | null = null;
++  let height: number | null = null;
++  let format: string | null = null;
++  try {
++    const meta = await sharp(buffer).metadata();
++    width = meta.width ?? null;
++    height = meta.height ?? null;
++    format = meta.format ?? null;
++    checks.decodable = true;
++    checks.is_png = meta.format === "png";
++    checks.full_width = (meta.width ?? 0) === FULL_WIDTH;
++    checks.has_alpha = meta.hasAlpha === true;
++  } catch {
++    checks.decodable = false;
++  }
++  const failed = Object.entries(checks).filter(([, ok]) => !ok).map(([k]) => k);
++  return {
++    passed: failed.length === 0,
++    checks,
++    width,
++    height,
++    format,
++    reason: failed.length ? `composed_qc_failed: ${failed.join(",")}` : null,
++  };
++}
+diff -ruN a/artifacts/api-server/src/lib/stamps/generationWorker.ts b/artifacts/api-server/src/lib/stamps/generationWorker.ts
+--- a/artifacts/api-server/src/lib/stamps/generationWorker.ts	2026-07-23 16:05:33.000000000 +0000
++++ b/artifacts/api-server/src/lib/stamps/generationWorker.ts	2026-07-23 17:30:12.942677601 +0000
+@@ -13,10 +13,13 @@
+ 
+ import { randomUUID } from "crypto";
+ import { getServiceClient } from "../supabase.js";
+-import { buildStampPrompt, STYLE_VERSION, CANDIDATE_COUNT } from "./artDirection.js";
++import { buildStampPrompt, buildHeroArtPrompt, STYLE_VERSION, HERO_PROMPT_VERSION, CANDIDATE_COUNT } from "./artDirection.js";
+ import { getStampImageProvider } from "./imageProvider.js";
+ import type { CatalogEntryForPrompt } from "./artDirection.js";
+ import { invalidateCatalogCache } from "./StampCatalogService.js";
++import { resolveIdentity } from "./composition/identities.js";
++import { composeStamp, templateFamilyForType, normalizeRarity } from "./composition/compositor.js";
++import { rasterizeStamp, validateHeroBuffer, validateComposedPng } from "./composition/rasterize.js";
+ 
+ const WORKER_ID = `worker-${randomUUID()}`;
+ const LOCK_DURATION_MS = 5 * 60 * 1_000; // 5 min pessimistic lock
+@@ -421,14 +424,42 @@
+   return Buffer.from(ab);
+ }
+ 
+-async function uploadToStorage(
++/**
++ * Classify a provider candidate URL.
++ *
++ *   placeholder — data:image/svg SVG from the dev PlaceholderProvider; stored
++ *                 as-is, never uploaded (legacy behavior).
++ *   data_image  — base64 data: URL carrying REAL raster art (gpt-image-1
++ *                 returns b64_json normalized to data:image/png). Must be
++ *                 decoded and uploaded to storage like remote art — treating
++ *                 it as a placeholder would stuff megabytes of base64 into
++ *                 public_url and skip storage entirely.
++ *   remote      — http(s) URL to download.
++ *
++ * Exported for tests.
++ */
++export function classifyCandidateUrl(url: string): "placeholder" | "data_image" | "remote" {
++  if (url.startsWith("data:image/svg")) return "placeholder";
++  if (url.startsWith("data:")) return "data_image";
++  return "remote";
++}
++
++/** Decode a base64 image data: URL into a raster buffer. */
++export function decodeDataImageUrl(url: string): Buffer {
++  const comma = url.indexOf(",");
++  if (comma === -1) throw new Error("invalid data url");
++  const meta = url.slice(0, comma);
++  const payload = url.slice(comma + 1);
++  if (!/;base64$/i.test(meta)) throw new Error("data url is not base64-encoded");
++  return Buffer.from(payload, "base64");
++}
++
++async function uploadBufferToPath(
+   sc: any,
+-  catalogId: string,
+-  versionId: string,
++  path: string,
+   buffer: Buffer,
+   contentType = "image/png",
+ ): Promise<string> {
+-  const path = `catalog/${catalogId}/${versionId}.png`;
+   const { error } = await sc.storage
+     .from(STORAGE_BUCKET)
+     .upload(path, buffer, {
+@@ -445,6 +476,56 @@
+   return urlData?.publicUrl ?? path;
+ }
+ 
++async function uploadToStorage(
++  sc: any,
++  catalogId: string,
++  versionId: string,
++  buffer: Buffer,
++  contentType = "image/png",
++): Promise<string> {
++  return uploadBufferToPath(sc, `catalog/${catalogId}/${versionId}.png`, buffer, contentType);
++}
++
++// ── Premium composition support (Stamp Wave 1) ───────────────────────────────
++
++/**
++ * True when the premium composition pipeline is enabled. Defensive: any error
++ * (flag table missing, pre-0177 DB) → false, legacy path runs.
++ */
++async function premiumRenderingEnabled(sc: any): Promise<boolean> {
++  try {
++    const { data, error } = await sc
++      .from("feature_flags")
++      .select("enabled")
++      .eq("flag", "stamp_premium_rendering_enabled")
++      .maybeSingle();
++    if (error) return false;
++    return (data as any)?.enabled === true;
++  } catch {
++    return false;
++  }
++}
++
++/**
++ * Rarity for composition: the linked definition's rarity when exactly one
++ * definition references this catalog entry; otherwise 'common'. (Rarity is a
++ * definition-level concept; catalog artwork is shared. Per-definition rarity
++ * variants are a later wave — hero_path is kept so recomposition is cheap.)
++ */
++async function rarityForCatalog(sc: any, catalogId: string): Promise<string> {
++  try {
++    const { data, error } = await sc
++      .from("stamp_definitions")
++      .select("rarity")
++      .eq("catalog_id", catalogId)
++      .limit(2);
++    if (error || !Array.isArray(data) || data.length !== 1) return "common";
++    return (data[0] as any)?.rarity ?? "common";
++  } catch {
++    return "common";
++  }
++}
++
+ // ── Orphan-cleanup error persistence ─────────────────────────────────────────
+ 
+ /**
+@@ -644,7 +725,15 @@
+     }
+ 
+     const entry: CatalogEntryForPrompt = catalogRow as any;
+-    const prompt = buildStampPrompt(entry);
++
++    // Premium composition path (Stamp Wave 1): AI paints hero art only; the
++    // composition engine owns typography/borders/rarity. Flag-gated — when
++    // off, the legacy full-stamp prompt + flat-raster path runs unchanged.
++    const premium = await premiumRenderingEnabled(sc);
++    const identity = premium ? await resolveIdentity(sc, { ...(catalogRow as any) }) : null;
++    const prompt = premium && identity
++      ? buildHeroArtPrompt(entry, identity)
++      : buildStampPrompt(entry);
+ 
+     // Generate candidates
+     const provider = getStampImageProvider();
+@@ -667,34 +756,99 @@
+       }));
+     }
+ 
++    // Rarity treatment for premium composition (definition-level concept;
++    // 'common' when the catalog entry has zero or several linked definitions).
++    const compositionRarity = premium ? normalizeRarity(await rarityForCatalog(sc, catalogId)) : "common";
++
+     // Upload each candidate and insert artwork version rows
+     const versionInserts: any[] = [];
+ 
+     for (const img of images) {
+       const versionId = randomUUID();
++      const urlKind = classifyCandidateUrl(img.url);
+ 
+-      // Download image buffer (skip for placeholder data-URLs)
+       let storagePath: string;
+       let publicUrl: string;
++      const extraColumns: Record<string, unknown> = {};
+ 
+-      if (img.url.startsWith("data:")) {
+-        // Placeholder provider — store URL as-is
++      if (urlKind === "placeholder") {
++        // Dev placeholder SVG — store URL as-is (legacy behavior).
+         storagePath = `placeholder/${catalogId}/${versionId}.svg`;
+         publicUrl   = img.url;
+       } else {
+-        const buffer = await downloadImageBuffer(img.url);
+-        publicUrl   = await uploadToStorage(sc, catalogId, versionId, buffer);
+-        storagePath = `catalog/${catalogId}/${versionId}.png`;
+-        // Track so we can clean up on failure later in this batch.
+-        uploadedStoragePaths.push(storagePath);
++        // Real raster art: remote URL to download, or base64 data: URL from
++        // gpt-image-1 (b64_json). Both become a hero buffer.
++        const heroBuffer = urlKind === "data_image"
++          ? decodeDataImageUrl(img.url)
++          : await downloadImageBuffer(img.url);
++
++        if (premium && identity) {
++          // ── Premium: QC hero → compose → rasterize → QC → dual upload ──
++          const heroQc = await validateHeroBuffer(heroBuffer);
++          if (!heroQc.passed) {
++            console.warn(JSON.stringify({
++              event: "stamp.generation.hero_qc_failed",
++              job_id: jobId, catalog_id: catalogId, reason: heroQc.reason,
++            }));
++            continue; // skip candidate; shortfall handling below
++          }
++
++          const composed = composeStamp({
++            identity,
++            title:    (entry.display_name ?? entry.city ?? "DESTINATION").toUpperCase(),
++            subtitle: (entry.country ?? "").toUpperCase(),
++            family:   templateFamilyForType(entry.stamp_type),
++            rarity:   compositionRarity,
++            heroImageDataUrl: `data:image/png;base64,${heroBuffer.toString("base64")}`,
++            uid: versionId.slice(0, 8),
++          });
++          const raster = await rasterizeStamp(composed.svg);
++          const composedQc = await validateComposedPng(raster.full);
++          if (!composedQc.passed) {
++            console.warn(JSON.stringify({
++              event: "stamp.generation.composed_qc_failed",
++              job_id: jobId, catalog_id: catalogId, reason: composedQc.reason,
++            }));
++            continue;
++          }
++
++          const heroPath  = `hero/${catalogId}/${versionId}.png`;
++          const thumbPath = `catalog/${catalogId}/${versionId}_thumb.png`;
++          storagePath     = `catalog/${catalogId}/${versionId}.png`;
++
++          await uploadBufferToPath(sc, heroPath, heroBuffer);
++          uploadedStoragePaths.push(heroPath);
++          publicUrl = await uploadBufferToPath(sc, storagePath, raster.full);
++          uploadedStoragePaths.push(storagePath);
++          const thumbUrl = await uploadBufferToPath(sc, thumbPath, raster.thumbnail);
++          uploadedStoragePaths.push(thumbPath);
++
++          Object.assign(extraColumns, {
++            width:          raster.width,
++            height:         raster.height,
++            format:         "png",
++            hero_path:      heroPath,
++            thumbnail_path: thumbPath,
++            thumbnail_url:  thumbUrl,
++            qc_status:      "passed",
++            qc_metadata:    { hero: heroQc.checks, composed: composedQc.checks },
++            composition:    { ...composed.manifest, hero_prompt_version: HERO_PROMPT_VERSION },
++          });
++        } else {
++          // ── Legacy: upload the flat raster as-is ──
++          publicUrl   = await uploadToStorage(sc, catalogId, versionId, heroBuffer);
++          storagePath = `catalog/${catalogId}/${versionId}.png`;
++          // Track so we can clean up on failure later in this batch.
++          uploadedStoragePaths.push(storagePath);
++        }
+       }
+ 
+       versionInserts.push({
+         id:                      versionId,
+         catalog_id:              catalogId,
+         status:                  "candidate",
+-        storage_path:            storagePath,
+-        public_url:              publicUrl,
++        storage_path:            storagePath!,
++        public_url:              publicUrl!,
+         generation_source:       "ai_generated",
+         provider:                (img.metadata.model as string) ?? "openai_image",
+         model_version:           (img.metadata.model as string) ?? "unknown",
+@@ -705,9 +859,16 @@
+           candidates_expected: CANDIDATE_COUNT,
+           candidates_produced: images.length,
+         },
++        ...extraColumns,
+       });
+     }
+ 
++    // Premium QC can reject candidates after generation: zero survivors is a
++    // retryable failure (never insert an empty batch / never review nothing).
++    if (versionInserts.length === 0) {
++      throw new Error("all_candidates_failed_qc");
++    }
++
+     const { error: insertErr } = await sc
+       .from("stamp_artwork_versions")
+       .insert(versionInserts);
+diff -ruN a/artifacts/api-server/src/migrations/0176_moderation_reports.sql b/artifacts/api-server/src/migrations/0176_moderation_reports.sql
+--- a/artifacts/api-server/src/migrations/0176_moderation_reports.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/migrations/0176_moderation_reports.sql	2026-07-23 17:06:12.454710548 +0000
+@@ -0,0 +1,68 @@
++-- Migration 0176: moderation_reports — DDL reconcile
++--
++-- The UI wave (2026-07-23) shipped routes/moderation.ts (user-facing reporting:
++-- POST /api/moderation/report, GET /api/moderation/reports/mine) but no
++-- migration created its table — it existed only ad-hoc in the dev database.
++-- This migration is the canonical DDL, written to match the route exactly.
++--
++-- Safe to re-run, and safe if the table already exists in some form:
++-- IF NOT EXISTS throughout + ADD COLUMN IF NOT EXISTS for every column.
++--
++-- status is deliberately unconstrained TEXT (default 'open'): the reporter
++-- route only ever writes 'open'; admin triage flows own the rest of the
++-- lifecycle and should not be fought by a CHECK here.
++
++CREATE TABLE IF NOT EXISTS moderation_reports (
++  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
++  reporter_id     UUID        NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
++  subject_type    TEXT        NOT NULL CHECK (subject_type IN
++                    ('user','post','comment','message','event','review','buddy_listing')),
++  subject_id      UUID        NOT NULL,
++  subject_user_id UUID        REFERENCES profiles(id) ON DELETE SET NULL,
++  category        TEXT        NOT NULL CHECK (category IN
++                    ('impersonation','harassment','scam_fraud','inappropriate_content',
++                     'safety_concern','underage','spam','other')),
++  details         TEXT,
++  thread_id       UUID,
++  status          TEXT        NOT NULL DEFAULT 'open',
++  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
++);
++
++-- Reconcile columns if an ad-hoc version of the table already existed.
++ALTER TABLE moderation_reports ADD COLUMN IF NOT EXISTS subject_user_id UUID;
++ALTER TABLE moderation_reports ADD COLUMN IF NOT EXISTS details         TEXT;
++ALTER TABLE moderation_reports ADD COLUMN IF NOT EXISTS thread_id       UUID;
++ALTER TABLE moderation_reports ADD COLUMN IF NOT EXISTS status          TEXT NOT NULL DEFAULT 'open';
++ALTER TABLE moderation_reports ADD COLUMN IF NOT EXISTS created_at      TIMESTAMPTZ NOT NULL DEFAULT now();
++
++-- Dedup lookup used by POST /api/moderation/report (open-report collapse).
++CREATE INDEX IF NOT EXISTS modrep_dedup_idx
++  ON moderation_reports (reporter_id, subject_type, subject_id, status);
++
++-- Reporter history (GET /reports/mine) and admin triage.
++CREATE INDEX IF NOT EXISTS modrep_reporter_idx ON moderation_reports (reporter_id, created_at DESC);
++CREATE INDEX IF NOT EXISTS modrep_status_idx   ON moderation_reports (status, created_at DESC);
++
++ALTER TABLE moderation_reports ENABLE ROW LEVEL SECURITY;
++
++-- Reporters may read their own reports (API uses service role; this protects
++-- any future PostgREST/direct access path).
++DO $$ BEGIN
++  IF NOT EXISTS (
++    SELECT 1 FROM pg_policies
++    WHERE tablename = 'moderation_reports' AND policyname = 'modrep_reporter_read'
++  ) THEN
++    CREATE POLICY modrep_reporter_read ON moderation_reports FOR SELECT
++      USING (reporter_id = auth.uid());
++  END IF;
++END $$;
++
++DO $$ BEGIN
++  IF NOT EXISTS (
++    SELECT 1 FROM pg_policies
++    WHERE tablename = 'moderation_reports' AND policyname = 'modrep_svc'
++  ) THEN
++    CREATE POLICY modrep_svc ON moderation_reports FOR ALL
++      USING (auth.role() = 'service_role');
++  END IF;
++END $$;
+diff -ruN a/artifacts/api-server/src/migrations/0177_stamp_premium_foundation.sql b/artifacts/api-server/src/migrations/0177_stamp_premium_foundation.sql
+--- a/artifacts/api-server/src/migrations/0177_stamp_premium_foundation.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/migrations/0177_stamp_premium_foundation.sql	2026-07-23 17:23:32.950686750 +0000
+@@ -0,0 +1,119 @@
++-- Migration 0177: Stamp premium foundation (Stamp Wave 1)
++--
++-- Phase 1 of the Stamp System Master Upgrade (per the 2026-07-23 Phase 0
++-- stamp audit): destination identity metadata, premium fields on the
++-- canonical v2 tables, artwork QC/thumbnail/composition columns, and the
++-- rollout flag. NO behavior changes until stamp_premium_rendering_enabled
++-- is turned on — the generation worker keeps its legacy path when off.
++--
++-- Safe to re-run: IF NOT EXISTS / ON CONFLICT DO NOTHING throughout.
++
++-- ── 1. destination_identities ────────────────────────────────────────────────
++-- One deliberate palette + motif per destination. The composition engine
++-- refuses to invent colors: catalog entries resolve to one of these rows,
++-- or to a deterministic curated fallback palette in code.
++
++CREATE TABLE IF NOT EXISTS destination_identities (
++  id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
++  identity_key TEXT        NOT NULL UNIQUE,          -- e.g. 'tokyo-jp'
++  city         TEXT,                                  -- display city (null for country-level identities)
++  country      TEXT        NOT NULL,
++  country_code TEXT        NOT NULL,                  -- ISO-3166 alpha-2, uppercase
++  palette      JSONB       NOT NULL,                  -- {primary, secondary, accent, background, border, highlight, paper}
++  motif        TEXT        NOT NULL DEFAULT 'generic',-- hero-scene / prompt motif key
++  wide_focus   NUMERIC     NOT NULL DEFAULT 0.45,     -- vertical crop focus for wide (landscape) windows
++  status       TEXT        NOT NULL DEFAULT 'active', -- active | draft | retired
++  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
++  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
++);
++
++CREATE INDEX IF NOT EXISTS di_country_city_idx ON destination_identities (country_code, city);
++
++ALTER TABLE destination_identities ENABLE ROW LEVEL SECURITY;
++
++-- Reference data: readable by any authenticated user; writes via service role only.
++DO $$ BEGIN
++  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'destination_identities' AND policyname = 'di_read') THEN
++    CREATE POLICY di_read ON destination_identities FOR SELECT USING (auth.role() IN ('authenticated', 'service_role'));
++  END IF;
++END $$;
++DO $$ BEGIN
++  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'destination_identities' AND policyname = 'di_svc') THEN
++    CREATE POLICY di_svc ON destination_identities FOR ALL USING (auth.role() = 'service_role');
++  END IF;
++END $$;
++
++-- Launch identity seeds (palettes match the approved composition prototype).
++INSERT INTO destination_identities (identity_key, city, country, country_code, palette, motif, wide_focus) VALUES
++  ('tokyo-jp', 'Tokyo', 'Japan', 'JP',
++   '{"primary":"#2B3A67","secondary":"#C63D2F","accent":"#F5B7C5","background":"#1A2447","border":"#2B3A67","highlight":"#E8B04B","paper":"#F6F1E7"}',
++   'tokyo', 0.48),
++  ('cebu-ph', 'Cebu', 'Philippines', 'PH',
++   '{"primary":"#0E7490","secondary":"#14B8A6","accent":"#F4A73B","background":"#0A5A73","border":"#0E7490","highlight":"#FCD34D","paper":"#F4FAF8"}',
++   'cebu', 0.52),
++  ('paris-fr', 'Paris', 'France', 'FR',
++   '{"primary":"#1F2A50","secondary":"#7C2D3E","accent":"#C9A227","background":"#EFE7D5","border":"#1F2A50","highlight":"#C9A227","paper":"#F7F2E6"}',
++   'paris', 0.66),
++  ('bangkok-th', 'Bangkok', 'Thailand', 'TH',
++   '{"primary":"#8C2F1B","secondary":"#D97706","accent":"#EBB434","background":"#5C1A10","border":"#8C2F1B","highlight":"#F3C969","paper":"#FBF4E4"}',
++   'bangkok', 0.5),
++  ('reykjavik-is', 'Reykjavík', 'Iceland', 'IS',
++   '{"primary":"#0B3B5A","secondary":"#0FA3B1","accent":"#7CE577","background":"#071B2E","border":"#0B3B5A","highlight":"#B7F0EE","paper":"#EFF6F9"}',
++   'iceland', 0.45)
++ON CONFLICT (identity_key) DO NOTHING;
++
++-- ── 2. universal_stamp_catalog: identity link ────────────────────────────────
++-- Nullable override; when null the composition engine resolves by city/country
++-- match, then falls back to the deterministic curated palette.
++
++ALTER TABLE universal_stamp_catalog ADD COLUMN IF NOT EXISTS identity_key TEXT;
++
++-- ── 3. stamp_definitions: premium fields + 5-tier rarity ─────────────────────
++
++ALTER TABLE stamp_definitions ADD COLUMN IF NOT EXISTS template_family  TEXT;    -- seal|portrait|landscape|square|pennant (null → derived from stamp_type)
++ALTER TABLE stamp_definitions ADD COLUMN IF NOT EXISTS edition_size     INTEGER; -- null → open edition
++ALTER TABLE stamp_definitions ADD COLUMN IF NOT EXISTS is_limited       BOOLEAN NOT NULL DEFAULT FALSE;
++ALTER TABLE stamp_definitions ADD COLUMN IF NOT EXISTS display_priority INTEGER NOT NULL DEFAULT 0;
++
++-- Unify rarity to the 5-tier enum (adds 'epic' between rare and legendary).
++-- Drops whatever CHECK currently constrains rarity (name unknown across
++-- environments) and installs the canonical 5-tier check.
++DO $$
++DECLARE c RECORD;
++BEGIN
++  FOR c IN
++    SELECT con.conname
++    FROM pg_constraint con
++    JOIN pg_class rel ON rel.oid = con.conrelid
++    WHERE rel.relname = 'stamp_definitions'
++      AND con.contype = 'c'
++      AND pg_get_constraintdef(con.oid) ILIKE '%rarity%'
++  LOOP
++    EXECUTE format('ALTER TABLE stamp_definitions DROP CONSTRAINT %I', c.conname);
++  END LOOP;
++  BEGIN
++    ALTER TABLE stamp_definitions ADD CONSTRAINT stamp_definitions_rarity_check
++      CHECK (rarity IN ('common', 'uncommon', 'rare', 'epic', 'legendary'));
++  EXCEPTION WHEN duplicate_object THEN NULL;
++  END;
++END $$;
++
++-- ── 4. stamp_artwork_versions: QC / thumbnails / composition manifest ────────
++
++ALTER TABLE stamp_artwork_versions ADD COLUMN IF NOT EXISTS width          INTEGER;
++ALTER TABLE stamp_artwork_versions ADD COLUMN IF NOT EXISTS height         INTEGER;
++ALTER TABLE stamp_artwork_versions ADD COLUMN IF NOT EXISTS format         TEXT;
++ALTER TABLE stamp_artwork_versions ADD COLUMN IF NOT EXISTS thumbnail_path TEXT;
++ALTER TABLE stamp_artwork_versions ADD COLUMN IF NOT EXISTS thumbnail_url  TEXT;
++ALTER TABLE stamp_artwork_versions ADD COLUMN IF NOT EXISTS hero_path      TEXT;   -- raw AI hero art (pre-composition), kept for recomposition
++ALTER TABLE stamp_artwork_versions ADD COLUMN IF NOT EXISTS qc_status      TEXT NOT NULL DEFAULT 'unchecked'; -- unchecked | passed | failed
++ALTER TABLE stamp_artwork_versions ADD COLUMN IF NOT EXISTS qc_metadata    JSONB;
++ALTER TABLE stamp_artwork_versions ADD COLUMN IF NOT EXISTS composition    JSONB;  -- layer manifest (engine version, shape, rarity, identity_key, layers)
++
++-- ── 5. Rollout flag ──────────────────────────────────────────────────────────
++-- feature_flags PK column is `flag` (NOT `key` — see 0166 / featureFlagColumnGuard).
++
++INSERT INTO feature_flags (flag, enabled, description) VALUES
++  ('stamp_premium_rendering_enabled', FALSE,
++   'Stamp premium composition engine: AI hero art + server-composited borders/typography/rarity layers, QC, thumbnails')
++ON CONFLICT (flag) DO NOTHING;
+diff -ruN a/artifacts/api-server/src/test/stampComposition.test.ts b/artifacts/api-server/src/test/stampComposition.test.ts
+--- a/artifacts/api-server/src/test/stampComposition.test.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/test/stampComposition.test.ts	2026-07-23 17:32:26.134674555 +0000
+@@ -0,0 +1,257 @@
++/**
++ * Stamp Wave 1 — composition engine tests.
++ *
++ * Covers: identity resolution (seed match, deterministic fallback), the
++ * composition engine (families, rarity treatments, manifest, text layers),
++ * hero-art prompt v2 (no-text guarantees), candidate URL classification
++ * (the gpt-image-1 b64 fix), and rasterization + QC (real sharp).
++ */
++
++import { describe, it } from "node:test";
++import assert from "node:assert/strict";
++import sharp from "sharp";
++
++import {
++  SEED_IDENTITIES,
++  matchSeedIdentity,
++  fallbackIdentity,
++  resolveIdentity,
++  stableHash,
++} from "../lib/stamps/composition/identities.js";
++import {
++  composeStamp,
++  templateFamilyForType,
++  normalizeRarity,
++  RARITY_TREATMENTS,
++  TEMPLATE_FAMILIES,
++  COMPOSITION_ENGINE_VERSION,
++} from "../lib/stamps/composition/compositor.js";
++import {
++  rasterizeStamp,
++  validateHeroBuffer,
++  validateComposedPng,
++} from "../lib/stamps/composition/rasterize.js";
++import { buildHeroArtPrompt, buildStampPrompt, HERO_PROMPT_VERSION } from "../lib/stamps/artDirection.js";
++import { classifyCandidateUrl, decodeDataImageUrl } from "../lib/stamps/generationWorker.js";
++
++const CEBU = { ...SEED_IDENTITIES["cebu-ph"], source: "seed" as const };
++
++const ENTRY = {
++  id: "00000000-0000-0000-0000-000000000001",
++  display_name: "Cebu",
++  country: "Philippines",
++  country_code: "PH",
++  city: "Cebu",
++  region: null,
++  neighborhood: null,
++  stamp_type: "city",
++  canonical_location_key: "city:cebu:ph",
++};
++
++// ── Identity resolution ──────────────────────────────────────────────────────
++
++describe("identity resolution", () => {
++  it("matches seed identities by city + country code", () => {
++    const m = matchSeedIdentity({ city: "cebu", country_code: "ph" });
++    assert.ok(m);
++    assert.equal(m!.identityKey, "cebu-ph");
++    assert.equal(m!.source, "seed");
++  });
++
++  it("falls back to a deterministic curated palette for unknown destinations", () => {
++    const a = fallbackIdentity({ canonical_location_key: "city:medellin:co", display_name: "Medellín" });
++    const b = fallbackIdentity({ canonical_location_key: "city:medellin:co", display_name: "Medellín" });
++    assert.deepEqual(a.palette, b.palette); // same destination → same palette, always
++    assert.equal(a.source, "fallback");
++    assert.equal(a.motif, "generic");
++  });
++
++  it("different destinations can get different fallback palettes (hash spread)", () => {
++    const keys = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
++    const distinct = new Set(keys.map((k) => fallbackIdentity({ canonical_location_key: k }).palette.primary));
++    assert.ok(distinct.size > 1);
++  });
++
++  it("stableHash is deterministic", () => {
++    assert.equal(stableHash("portava"), stableHash("portava"));
++    assert.notEqual(stableHash("portava"), stableHash("portava2"));
++  });
++
++  it("resolveIdentity prefers DB rows, degrades to seed on DB error, and works with null client", async () => {
++    // Null client → seed match.
++    const viaSeed = await resolveIdentity(null, { city: "Tokyo", country_code: "JP" });
++    assert.equal(viaSeed.identityKey, "tokyo-jp");
++    assert.equal(viaSeed.source, "seed");
++
++    // Fake DB with an identity row → db source wins.
++    const dbRow = {
++      identity_key: "tokyo-jp", city: "Tokyo", country: "Japan", country_code: "JP",
++      palette: CEBU.palette, motif: "tokyo", wide_focus: 0.48,
++    };
++    const fakeSc = {
++      from: () => ({
++        select: () => ({
++          eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }),
++          ilike: () => ({
++            eq: () => ({ limit: () => ({ eq: () => ({ maybeSingle: async () => ({ data: dbRow }) }), maybeSingle: async () => ({ data: dbRow }) }) }),
++          }),
++        }),
++      }),
++    };
++    const viaDb = await resolveIdentity(fakeSc, { city: "Tokyo", country_code: "JP" });
++    assert.equal(viaDb.source, "db");
++
++    // Throwing DB → silent seed fallback.
++    const throwingSc = { from: () => { throw new Error("boom"); } };
++    const degraded = await resolveIdentity(throwingSc, { city: "Tokyo", country_code: "JP" });
++    assert.equal(degraded.source, "seed");
++  });
++});
++
++// ── Composition engine ───────────────────────────────────────────────────────
++
++describe("composition engine", () => {
++  it("derives template families from stamp types", () => {
++    assert.equal(templateFamilyForType("city"), "seal");
++    assert.equal(templateFamilyForType("country"), "portrait");
++    assert.equal(templateFamilyForType("region"), "landscape");
++    assert.equal(templateFamilyForType("neighborhood"), "square");
++    assert.equal(templateFamilyForType("special_event"), "pennant");
++    assert.equal(templateFamilyForType("anything_else"), "seal");
++  });
++
++  it("normalizes rarity to the 5-tier enum", () => {
++    assert.equal(normalizeRarity("epic"), "epic");
++    assert.equal(normalizeRarity("LEGENDARY"), "legendary");
++    assert.equal(normalizeRarity("weird"), "common");
++    assert.equal(normalizeRarity(null), "common");
++  });
++
++  it("composes every family × every rarity without throwing, with correct manifest", () => {
++    for (const family of Object.keys(TEMPLATE_FAMILIES) as (keyof typeof TEMPLATE_FAMILIES)[]) {
++      for (const rarity of Object.keys(RARITY_TREATMENTS) as (keyof typeof RARITY_TREATMENTS)[]) {
++        const out = composeStamp({
++          identity: CEBU, title: "CEBU", subtitle: "PHILIPPINES",
++          family, rarity, uid: `t-${family}-${rarity}`,
++        });
++        assert.ok(out.svg.startsWith("<svg"));
++        assert.equal(out.manifest.engine, COMPOSITION_ENGINE_VERSION);
++        assert.equal(out.manifest.family, family);
++        assert.equal(out.manifest.rarity, rarity);
++        assert.equal(out.manifest.hero, "procedural"); // no AI art supplied
++        assert.ok(out.manifest.layers.includes("typography"));
++        // Rarity drives the frame: metals/sheen only above common.
++        if (rarity === "common") {
++          assert.ok(!out.svg.includes("sheen-"));
++        } else {
++          assert.ok(out.svg.includes(`ring-t-${family}-${rarity}`));
++        }
++      }
++    }
++  });
++
++  it("is deterministic for identical inputs", () => {
++    const a = composeStamp({ identity: CEBU, title: "CEBU", subtitle: "PHILIPPINES", family: "seal", rarity: "epic", uid: "same" });
++    const b = composeStamp({ identity: CEBU, title: "CEBU", subtitle: "PHILIPPINES", family: "seal", rarity: "epic", uid: "same" });
++    assert.equal(a.svg, b.svg);
++  });
++
++  it("renders title letters and authenticity micro-text as vector layers", () => {
++    const out = composeStamp({ identity: CEBU, title: "CEBU", subtitle: "PHILIPPINES", family: "seal", uid: "txt" });
++    for (const ch of ["C", "E", "B", "U"]) assert.ok(out.svg.includes(`>${ch}</text>`));
++    // Micro-text renders letter-by-letter along the arc — assert its letters exist.
++    for (const ch of ["P", "O", "R", "T", "V"]) assert.ok(out.svg.includes(`>${ch}</text>`));
++  });
++
++  it("embeds AI hero art as an image layer when provided", () => {
++    const dataUrl = "data:image/png;base64,AAAA";
++    const out = composeStamp({ identity: CEBU, title: "CEBU", subtitle: "PHILIPPINES", family: "portrait", heroImageDataUrl: dataUrl, uid: "ai" });
++    assert.equal(out.manifest.hero, "ai");
++    assert.ok(out.svg.includes(`href="${dataUrl}"`));
++    assert.ok(out.manifest.layers.includes("hero:ai"));
++  });
++
++  it("labels limited editions from definition fields (no per-user data in shared art)", () => {
++    const out = composeStamp({
++      identity: CEBU, title: "CEBU", subtitle: "PHILIPPINES", family: "seal",
++      rarity: "legendary", isLimited: true, editionSize: 25, uid: "ed",
++    });
++    assert.ok(out.manifest.edition.includes("LIMITED EDITION OF 25"));
++    assert.ok(!/N[ºo]\s*\d/.test(out.manifest.edition)); // never a per-user edition number
++  });
++});
++
++// ── Hero prompt v2 ───────────────────────────────────────────────────────────
++
++describe("hero art prompt v2", () => {
++  it("forbids text and injects the identity palette", () => {
++    const prompt = buildHeroArtPrompt(ENTRY, CEBU as any);
++    assert.ok(/NO TEXT/i.test(prompt));
++    assert.ok(prompt.includes(CEBU.palette.primary));
++    assert.ok(prompt.includes(CEBU.palette.accent));
++    // The legacy prompt's typography instructions must NOT leak in.
++    assert.ok(!/serif font|Typography:|name in bold/i.test(prompt));
++    assert.ok(!prompt.includes("transparent PNG background"));
++  });
++
++  it("legacy prompt still asks for full stamp (unchanged behavior when flag off)", () => {
++    const prompt = buildStampPrompt(ENTRY);
++    assert.ok(/Typography/i.test(prompt));
++  });
++
++  it("exposes a hero prompt version for metadata", () => {
++    assert.match(HERO_PROMPT_VERSION, /^hero-v/);
++  });
++});
++
++// ── Candidate URL classification (gpt-image-1 b64 fix) ───────────────────────
++
++describe("candidate URL classification", () => {
++  it("classifies placeholder SVG, base64 raster, and remote URLs correctly", () => {
++    assert.equal(classifyCandidateUrl("data:image/svg+xml,%3Csvg%3E"), "placeholder");
++    assert.equal(classifyCandidateUrl("data:image/png;base64,AAAA"), "data_image");
++    assert.equal(classifyCandidateUrl("https://example.com/x.png"), "remote");
++  });
++
++  it("decodes base64 data URLs into buffers", () => {
++    const payload = Buffer.from("portava").toString("base64");
++    const buf = decodeDataImageUrl(`data:image/png;base64,${payload}`);
++    assert.equal(buf.toString(), "portava");
++    assert.throws(() => decodeDataImageUrl("data:image/png,notbase64"));
++  });
++});
++
++// ── Rasterization + QC (real sharp) ──────────────────────────────────────────
++
++describe("rasterization and QC", () => {
++  it("hero QC passes a valid 1024² PNG and fails small or corrupt buffers", async () => {
++    const good = await sharp({ create: { width: 1024, height: 1024, channels: 4, background: { r: 10, g: 20, b: 30, alpha: 1 } } }).png().toBuffer();
++    const goodQc = await validateHeroBuffer(good);
++    assert.equal(goodQc.passed, true);
++    assert.equal(goodQc.width, 1024);
++
++    const tiny = await sharp({ create: { width: 100, height: 100, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 } } }).png().toBuffer();
++    const tinyQc = await validateHeroBuffer(tiny);
++    assert.equal(tinyQc.passed, false);
++    assert.equal(tinyQc.checks.min_size, false);
++
++    const corrupt = await validateHeroBuffer(Buffer.from("not an image"));
++    assert.equal(corrupt.passed, false);
++    assert.equal(corrupt.checks.decodable, false);
++  });
++
++  it("rasterizes a composed stamp to dual PNG assets that pass composed QC", async () => {
++    const composed = composeStamp({ identity: CEBU, title: "CEBU", subtitle: "PHILIPPINES", family: "seal", rarity: "epic", uid: "raster" });
++    const raster = await rasterizeStamp(composed.svg);
++
++    const fullMeta = await sharp(raster.full).metadata();
++    assert.equal(fullMeta.format, "png");
++    assert.equal(fullMeta.width, 1024);
++
++    const thumbMeta = await sharp(raster.thumbnail).metadata();
++    assert.equal(thumbMeta.width, 256);
++
++    const qc = await validateComposedPng(raster.full);
++    assert.equal(qc.passed, true, qc.reason ?? "expected composed QC to pass");
++  });
++});
+--- a/artifacts/api-server/package.json	2026-07-23 14:22:36.000000000 +0000
++++ b/artifacts/api-server/package.json	2026-07-23 17:31:23.338415743 +0000
+@@ -14,7 +14,7 @@
+     "check:migration-prefixes": "node --import tsx/esm src/scripts/checkMigrationPrefixes.ts",
+     "check:write-path-columns": "node --env-file-if-exists=.env --import tsx/esm src/scripts/checkWritePathColumns.ts",
+     "test:circle-locations": "node --import tsx/esm --test src/test/circleLocations.test.ts",
+-    "test": "node --import tsx/esm --test --test-force-exit src/test/universalStamps.test.ts src/test/eventsCirclesOwner.test.ts src/test/circleLocations.test.ts src/test/collections.test.ts src/test/accessControl.test.ts src/test/adminGeo.test.ts src/test/adminModeration.test.ts src/test/ageEligibility.test.ts src/test/airport.test.ts src/test/availability.test.ts src/test/blockExclusion.test.ts src/test/circleInviteAge.test.ts src/test/cleanupHealth.test.ts src/test/compass-active-reward.test.ts src/test/compass-admin.test.ts src/test/compass-cache.test.ts src/test/compass-memory.test.ts src/test/compass-context.test.ts src/test/compass-feed.test.ts src/test/compassServedDedup.test.ts src/test/compass-pipeline.test.ts src/test/compass-ux.test.ts src/test/coreActions.test.ts src/test/dailyBriefCleanup.test.ts src/test/delayedGeotag.test.ts src/test/emergencyFlags.test.ts src/test/events.test.ts src/test/featureFlagsAdmin.test.ts src/test/followDecisions.test.ts src/test/friendDecisions.test.ts src/test/geofenceAdminSettings.test.ts src/test/geofence.test.ts src/test/groupChat.test.ts src/test/hashtags.test.ts src/test/hiddenGems.test.ts src/test/hiddenGemCheckin.test.ts src/test/intelligence.test.ts src/test/interactionPermissions.test.ts src/test/itineraryTimeline.test.ts src/test/locationGps.test.ts src/test/locationVerify.test.ts src/test/meetupAgeRsvp.test.ts src/test/meetups.test.ts src/test/notifications.test.ts src/test/passportStamps.test.ts src/test/passportStampsPagination.test.ts src/test/passportStampsCountFallback.test.ts src/test/postInteractions.test.ts src/test/posts.test.ts src/test/postcards.test.ts src/test/pulseGps.test.ts src/test/pushDelivery.test.ts src/test/rentBuddyRequestPush.test.ts src/test/pushRetryQueue.test.ts src/test/pushWithRetry.test.ts src/test/tripReminderPush.test.ts src/test/tripReminderResetAudit.test.ts src/test/rateLimits.test.ts src/test/rentABuddyRollout.test.ts src/test/rentABuddy.test.ts src/test/rentBuddyReliabilityCounters.test.ts src/test/rentBuddyReliabilityRoutes.test.ts src/test/requests.test.ts src/test/friendRequestUpdateFailure.test.ts src/test/inviteUpdateFailure.test.ts src/test/routeMinimapView.test.ts src/test/routeOptimizer.test.ts src/test/routePlanHook.test.ts src/test/routePlanMembers.test.ts src/test/routePlan.test.ts src/test/safeReturnAdmin.test.ts src/test/safeReturn.test.ts src/test/stampHelper.test.ts src/test/tagging.test.ts src/test/telegraphChat.test.ts src/test/telegraphRealtime.test.ts src/test/telegraphStreamEndpoints.test.ts src/test/tripCompletion.test.ts src/test/tripCrewLocation.test.ts src/test/tripPlan.test.ts src/test/tripMembers.test.ts src/test/tripInviteRespond.test.ts src/test/trust-integration.test.ts src/test/trust.test.ts src/test/memories.test.ts src/test/stories.test.ts src/test/userSuggestions.test.ts src/test/eventWaitlistSweeper.test.ts src/lib/messagingPermissions.test.ts src/test/appeals.test.ts src/test/reviews.test.ts src/test/tripsExpansion.test.ts src/test/crashReport.test.ts src/test/wishlist.test.ts src/test/discoverySort.test.ts src/test/stamps-integration.test.ts src/test/stampRevoke.test.ts src/test/engagement.test.ts src/test/profileSystem.test.ts src/test/profileSchemaDrift.test.ts src/test/adminCompassSchemaDrift.test.ts src/test/adminGeoModerationSchemaDrift.test.ts src/test/adminRemainingDashboardsSchemaDrift.test.ts src/test/trustAdminAuditInsertSchemaDrift.test.ts src/test/inviteLinkPreview.test.ts src/test/inviteLinkPreviewFull.test.ts src/test/inviteLinkTripFull.test.ts src/test/stampArtworkEnrichment.test.ts src/test/ogImageVisibility.test.ts src/test/canonicalLocations.test.ts src/test/publicIdentity.test.ts src/test/privacySettings.test.ts src/test/discoveryPrivacy.test.ts src/test/stampPreviewVisibility.test.ts src/test/stampCountryLookup.test.ts src/test/stampCountryGeocoder.test.ts src/test/stampQueueRequeue.test.ts src/test/stampGenerationCycle.test.ts src/test/stampGenerationLockTiming.test.ts src/test/stampQueueRequeueRoute.test.ts src/test/rentABuddyAvailabilitySave.test.ts src/test/rentABuddySpecRebook.test.ts src/test/rentABuddySpecRequest.test.ts src/test/rentABuddySpecNoShow.test.ts src/test/rentABuddyDisputeTerminal.test.ts src/test/stampWorkerHealthMonitor.test.ts src/test/stampCatalogDefinition.test.ts src/test/stampOwnershipBackfill.test.ts src/test/adminGeocode.test.ts src/test/stampCatalogListEnrichment.test.ts src/test/stampCatalogActiveQueueStatus.test.ts src/test/notificationRouterCredentials.test.ts src/test/stampGeocodeStaleEviction.test.ts src/test/stampGeocodeDeletionPropagation.test.ts src/test/stampCatalogRequeueBadge.test.ts src/test/adminTripReminderReset.test.ts src/test/adminTripIdGuard.test.ts src/test/stampCatalogRegenDedup.test.ts src/test/stampCatalogDetailBadge.test.ts src/test/stampCatalogVersionArchive.test.ts src/test/stampCatalogRegenAuditLog.test.ts src/test/stampCatalogRegenAfterComplete.test.ts src/test/stampCatalogRegenAfterReviewRequired.test.ts src/test/pushTokenCleanup.test.ts src/test/rentABuddyHalfPairCoords.test.ts src/test/rentABuddySearchCoordGuard.test.ts src/test/adminVenueModeration.test.ts src/test/adminVenueQueue.test.ts src/test/rentABuddyAdminResolveDisputeGuard.test.ts src/test/rentABuddyAdminResolveDisputeFavorTraveler.test.ts src/test/stampGeocodeTombstoneRead.test.ts src/test/stampCatalogStyleVersionBadge.test.ts src/test/adminEventModeration.test.ts src/test/profileSelect.test.ts src/test/stampCatalogAdminActionDedup.test.ts src/test/stampCatalogAuditLogFilter.test.ts src/test/stampCatalogNullDisplayName.test.ts src/test/styleVersionSync.test.ts src/test/stampCatalogCountryCodeType.test.ts src/test/stampCatalogRegenPreexistingQueue.test.ts src/test/stampQueueClearCleanupAudit.test.ts src/test/stampAuditWriteFailure.test.ts src/test/stampAuditWriteFailureMergeReject.test.ts src/test/stampCatalogRegenArchiveObservability.test.ts src/test/stampCatalogRegenMultiFailedReset.test.ts src/test/stampCatalogConflictCollapse.test.ts src/test/stampCatalogRegenArchiveExtrasDbError.test.ts src/test/stampCatalogRegenSurvivorResetDbError.test.ts src/test/notificationDisplayNameCap.test.ts src/test/splitClockGuard.test.ts src/test/adminGeofenceSettingsNotFound.test.ts src/test/stampQueueConstraintSync.test.ts src/test/rankEventsOutcome.test.ts src/test/impressionLogFireAndForget.test.ts src/test/callSystem.test.ts src/test/callRoutes.test.ts src/test/callHardening.test.ts src/test/callAnalytics.test.ts src/test/tripInvitesPending.test.ts src/test/weatherCacheCleanupRoute.test.ts src/test/appHardening.test.ts src/test/corsAllowedOrigins.test.ts src/test/ageGate.test.ts src/test/rentABuddyLifecycle.test.ts src/test/reconcileRunSummary.test.ts src/test/reconcileRunHistory.test.ts src/test/schemaDriftCheck.test.ts src/test/adminPhase12.test.ts src/test/blocks.test.ts src/test/discoveryCommunityCoordinateBounds.test.ts src/test/discoveryCommunityCoords.test.ts src/test/discoveryCommunityRating.test.ts src/test/discoveryCommunitySortBy.test.ts src/test/discoverySearch.test.ts src/test/discoverySearchIntelligence.test.ts src/test/events-extension.test.ts src/test/passportProfileAccess.test.ts src/test/profileEnsure.test.ts src/test/pulseRanking.test.ts src/test/stampEarnedNotification.test.ts src/test/friendRequestReactivate.test.ts src/test/compass-ask.test.ts src/test/compass-structured-context.test.ts src/test/compass-tools.test.ts src/test/compass-ui-blocks.test.ts src/test/compass-recommendation-engine.test.ts src/test/compass-live-intel.test.ts src/test/compass-social.test.ts src/test/compass-home.test.ts src/test/compass-sense.test.ts src/test/compass-sense-scheduler.test.ts src/test/compass-live.test.ts src/test/compass-autopilot.test.ts src/test/compass-outcome-learning.test.ts src/test/compass-intelligence-graph.test.ts src/test/intelligenceGraphScheduler.test.ts src/test/placesLiveStatus.test.ts src/test/compass-local-time.test.ts src/test/eventPostsDiscovery.test.ts src/test/verification.test.ts src/test/moderation.test.ts src/test/featureFlagColumnGuard.test.ts src/test/entryRequirements.test.ts src/test/tripReadiness.test.ts src/test/tripBudgetIntel.test.ts src/test/tripReservations.test.ts src/test/tripDraft.test.ts src/test/neighborhoodMatch.test.ts src/test/compass-trip-context.test.ts",
++    "test": "node --import tsx/esm --test --test-force-exit src/test/universalStamps.test.ts src/test/eventsCirclesOwner.test.ts src/test/circleLocations.test.ts src/test/collections.test.ts src/test/accessControl.test.ts src/test/adminGeo.test.ts src/test/adminModeration.test.ts src/test/ageEligibility.test.ts src/test/airport.test.ts src/test/availability.test.ts src/test/blockExclusion.test.ts src/test/circleInviteAge.test.ts src/test/cleanupHealth.test.ts src/test/compass-active-reward.test.ts src/test/compass-admin.test.ts src/test/compass-cache.test.ts src/test/compass-memory.test.ts src/test/compass-context.test.ts src/test/compass-feed.test.ts src/test/compassServedDedup.test.ts src/test/compass-pipeline.test.ts src/test/compass-ux.test.ts src/test/coreActions.test.ts src/test/dailyBriefCleanup.test.ts src/test/delayedGeotag.test.ts src/test/emergencyFlags.test.ts src/test/events.test.ts src/test/featureFlagsAdmin.test.ts src/test/followDecisions.test.ts src/test/friendDecisions.test.ts src/test/geofenceAdminSettings.test.ts src/test/geofence.test.ts src/test/groupChat.test.ts src/test/hashtags.test.ts src/test/hiddenGems.test.ts src/test/hiddenGemCheckin.test.ts src/test/intelligence.test.ts src/test/interactionPermissions.test.ts src/test/itineraryTimeline.test.ts src/test/locationGps.test.ts src/test/locationVerify.test.ts src/test/meetupAgeRsvp.test.ts src/test/meetups.test.ts src/test/notifications.test.ts src/test/passportStamps.test.ts src/test/passportStampsPagination.test.ts src/test/passportStampsCountFallback.test.ts src/test/postInteractions.test.ts src/test/posts.test.ts src/test/postcards.test.ts src/test/pulseGps.test.ts src/test/pushDelivery.test.ts src/test/rentBuddyRequestPush.test.ts src/test/pushRetryQueue.test.ts src/test/pushWithRetry.test.ts src/test/tripReminderPush.test.ts src/test/tripReminderResetAudit.test.ts src/test/rateLimits.test.ts src/test/rentABuddyRollout.test.ts src/test/rentABuddy.test.ts src/test/rentBuddyReliabilityCounters.test.ts src/test/rentBuddyReliabilityRoutes.test.ts src/test/requests.test.ts src/test/friendRequestUpdateFailure.test.ts src/test/inviteUpdateFailure.test.ts src/test/routeMinimapView.test.ts src/test/routeOptimizer.test.ts src/test/routePlanHook.test.ts src/test/routePlanMembers.test.ts src/test/routePlan.test.ts src/test/safeReturnAdmin.test.ts src/test/safeReturn.test.ts src/test/stampHelper.test.ts src/test/tagging.test.ts src/test/telegraphChat.test.ts src/test/telegraphRealtime.test.ts src/test/telegraphStreamEndpoints.test.ts src/test/tripCompletion.test.ts src/test/tripCrewLocation.test.ts src/test/tripPlan.test.ts src/test/tripMembers.test.ts src/test/tripInviteRespond.test.ts src/test/trust-integration.test.ts src/test/trust.test.ts src/test/memories.test.ts src/test/stories.test.ts src/test/userSuggestions.test.ts src/test/eventWaitlistSweeper.test.ts src/lib/messagingPermissions.test.ts src/test/appeals.test.ts src/test/reviews.test.ts src/test/tripsExpansion.test.ts src/test/crashReport.test.ts src/test/wishlist.test.ts src/test/discoverySort.test.ts src/test/stamps-integration.test.ts src/test/stampRevoke.test.ts src/test/engagement.test.ts src/test/profileSystem.test.ts src/test/profileSchemaDrift.test.ts src/test/adminCompassSchemaDrift.test.ts src/test/adminGeoModerationSchemaDrift.test.ts src/test/adminRemainingDashboardsSchemaDrift.test.ts src/test/trustAdminAuditInsertSchemaDrift.test.ts src/test/inviteLinkPreview.test.ts src/test/inviteLinkPreviewFull.test.ts src/test/inviteLinkTripFull.test.ts src/test/stampArtworkEnrichment.test.ts src/test/ogImageVisibility.test.ts src/test/canonicalLocations.test.ts src/test/publicIdentity.test.ts src/test/privacySettings.test.ts src/test/discoveryPrivacy.test.ts src/test/stampPreviewVisibility.test.ts src/test/stampCountryLookup.test.ts src/test/stampCountryGeocoder.test.ts src/test/stampQueueRequeue.test.ts src/test/stampGenerationCycle.test.ts src/test/stampGenerationLockTiming.test.ts src/test/stampQueueRequeueRoute.test.ts src/test/rentABuddyAvailabilitySave.test.ts src/test/rentABuddySpecRebook.test.ts src/test/rentABuddySpecRequest.test.ts src/test/rentABuddySpecNoShow.test.ts src/test/rentABuddyDisputeTerminal.test.ts src/test/stampWorkerHealthMonitor.test.ts src/test/stampCatalogDefinition.test.ts src/test/stampOwnershipBackfill.test.ts src/test/adminGeocode.test.ts src/test/stampCatalogListEnrichment.test.ts src/test/stampCatalogActiveQueueStatus.test.ts src/test/notificationRouterCredentials.test.ts src/test/stampGeocodeStaleEviction.test.ts src/test/stampGeocodeDeletionPropagation.test.ts src/test/stampCatalogRequeueBadge.test.ts src/test/adminTripReminderReset.test.ts src/test/adminTripIdGuard.test.ts src/test/stampCatalogRegenDedup.test.ts src/test/stampCatalogDetailBadge.test.ts src/test/stampCatalogVersionArchive.test.ts src/test/stampCatalogRegenAuditLog.test.ts src/test/stampCatalogRegenAfterComplete.test.ts src/test/stampCatalogRegenAfterReviewRequired.test.ts src/test/pushTokenCleanup.test.ts src/test/rentABuddyHalfPairCoords.test.ts src/test/rentABuddySearchCoordGuard.test.ts src/test/adminVenueModeration.test.ts src/test/adminVenueQueue.test.ts src/test/rentABuddyAdminResolveDisputeGuard.test.ts src/test/rentABuddyAdminResolveDisputeFavorTraveler.test.ts src/test/stampGeocodeTombstoneRead.test.ts src/test/stampCatalogStyleVersionBadge.test.ts src/test/adminEventModeration.test.ts src/test/profileSelect.test.ts src/test/stampCatalogAdminActionDedup.test.ts src/test/stampCatalogAuditLogFilter.test.ts src/test/stampCatalogNullDisplayName.test.ts src/test/styleVersionSync.test.ts src/test/stampCatalogCountryCodeType.test.ts src/test/stampCatalogRegenPreexistingQueue.test.ts src/test/stampQueueClearCleanupAudit.test.ts src/test/stampAuditWriteFailure.test.ts src/test/stampAuditWriteFailureMergeReject.test.ts src/test/stampCatalogRegenArchiveObservability.test.ts src/test/stampCatalogRegenMultiFailedReset.test.ts src/test/stampCatalogConflictCollapse.test.ts src/test/stampCatalogRegenArchiveExtrasDbError.test.ts src/test/stampCatalogRegenSurvivorResetDbError.test.ts src/test/notificationDisplayNameCap.test.ts src/test/splitClockGuard.test.ts src/test/adminGeofenceSettingsNotFound.test.ts src/test/stampQueueConstraintSync.test.ts src/test/rankEventsOutcome.test.ts src/test/impressionLogFireAndForget.test.ts src/test/callSystem.test.ts src/test/callRoutes.test.ts src/test/callHardening.test.ts src/test/callAnalytics.test.ts src/test/tripInvitesPending.test.ts src/test/weatherCacheCleanupRoute.test.ts src/test/appHardening.test.ts src/test/corsAllowedOrigins.test.ts src/test/ageGate.test.ts src/test/rentABuddyLifecycle.test.ts src/test/reconcileRunSummary.test.ts src/test/reconcileRunHistory.test.ts src/test/schemaDriftCheck.test.ts src/test/adminPhase12.test.ts src/test/blocks.test.ts src/test/discoveryCommunityCoordinateBounds.test.ts src/test/discoveryCommunityCoords.test.ts src/test/discoveryCommunityRating.test.ts src/test/discoveryCommunitySortBy.test.ts src/test/discoverySearch.test.ts src/test/discoverySearchIntelligence.test.ts src/test/events-extension.test.ts src/test/passportProfileAccess.test.ts src/test/profileEnsure.test.ts src/test/pulseRanking.test.ts src/test/stampEarnedNotification.test.ts src/test/friendRequestReactivate.test.ts src/test/compass-ask.test.ts src/test/compass-structured-context.test.ts src/test/compass-tools.test.ts src/test/compass-ui-blocks.test.ts src/test/compass-recommendation-engine.test.ts src/test/compass-live-intel.test.ts src/test/compass-social.test.ts src/test/compass-home.test.ts src/test/compass-sense.test.ts src/test/compass-sense-scheduler.test.ts src/test/compass-live.test.ts src/test/compass-autopilot.test.ts src/test/compass-outcome-learning.test.ts src/test/compass-intelligence-graph.test.ts src/test/intelligenceGraphScheduler.test.ts src/test/placesLiveStatus.test.ts src/test/compass-local-time.test.ts src/test/eventPostsDiscovery.test.ts src/test/verification.test.ts src/test/moderation.test.ts src/test/featureFlagColumnGuard.test.ts src/test/entryRequirements.test.ts src/test/tripReadiness.test.ts src/test/tripBudgetIntel.test.ts src/test/tripReservations.test.ts src/test/tripDraft.test.ts src/test/neighborhoodMatch.test.ts src/test/compass-trip-context.test.ts src/test/stampComposition.test.ts",
+     "test:app-hardening": "node --import tsx/esm --test src/test/appHardening.test.ts",
+     "test:cors-allowed-origins": "node --import tsx/esm --test src/test/corsAllowedOrigins.test.ts",
+     "test:interaction": "node --import tsx/esm --test src/test/interactionPermissions.test.ts src/test/coreActions.test.ts src/test/followDecisions.test.ts src/test/blockExclusion.test.ts src/test/accessControl.test.ts src/test/adminModeration.test.ts src/test/emergencyFlags.test.ts src/test/userSuggestions.test.ts",
+@@ -77,4 +77,4 @@
+     "thread-stream": "3.1.0",
+     "tsx": "catalog:"
+   }
+-}
++}
+\ No newline at end of file
+--- a/docs/migrations.md	2026-07-21 01:44:44.000000000 +0000
++++ b/docs/migrations.md	2026-07-23 17:33:46.470672717 +0000
+@@ -740,3 +740,20 @@
+ - Stale allowlist entry `passport_memories.trip_id` removed (column now exists live).
+ 
+ **Verify:** `cd artifacts/api-server && pnpm run audit:schema -- --include-legacy` — exits 0.
++
++## 2026-07-23 — Trip Brain + Stamp Premium waves (0166–0177)
++
++Applied in Supabase SQL editor by owner on 2026-07-23 (all re-run-safe):
++
++- `0166_feature_flags_reseed` — reseeds all flags through the live `flag` column (ON CONFLICT DO NOTHING).
++- `0167_safety_ddl_reconcile` — Safe Return + emergency-contacts DDL reconcile. Historical note: initial cut carried a legacy `key`-column flag INSERT; removed (0166 seeds those flags), fixed file is canonical.
++- `0168_discovery_cache` — discovery_cache + discovery_geocode_cache.
++- `0169_passport_entry_intelligence` — traveler_passports, trip_traveler_passports, entry_requirements (confidence: curated|provider honesty tiers), flag `passport_entry_intelligence_enabled`.
++- `0170_trip_readiness` — trip_readiness_items + `trip_readiness_enabled`.
++- `0171_price_baselines` — price_baselines + `budget_intelligence_enabled`.
++- `0172_trip_reservations` — trip_reservations + `reservation_import_enabled` + `nl_trip_creation_enabled`.
++- `0173_neighborhoods` — neighborhood_areas + trip_area_preferences + `neighborhood_match_enabled`.
++- `0174_reference_data` — fx_rates + country_metadata (bulk-loaded 2026-07-23: 29 currencies, 250 countries; entry_requirements bulk-loaded with 39,401 provider-confidence corridors, curated rows preserved).
++- `0175_trip_readiness_snapshots` — daily readiness score snapshots (previousScore delta), added by the Replit UI wave.
++- `0176_moderation_reports` — canonical DDL for the UI wave's moderation_reports (was ad-hoc only).
++- `0177_stamp_premium_foundation` — Stamp Wave 1: destination_identities (+5 launch seeds), catalog identity_key, stamp_definitions premium fields (template_family, edition_size, is_limited, display_priority) + unified 5-tier rarity CHECK (adds 'epic'), stamp_artwork_versions QC/thumbnail/hero/composition columns, flag `stamp_premium_rendering_enabled` (default FALSE — worker keeps legacy path until enabled).
