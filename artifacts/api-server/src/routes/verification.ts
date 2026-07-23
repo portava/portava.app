@@ -18,6 +18,7 @@
 import { Router } from "express";
 import express from "express";
 import { z } from "zod";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { getServiceClient } from "../lib/supabase.js";
@@ -120,7 +121,7 @@ async function persistResult(
 }
 
 // ── POST /verification/session ────────────────────────────────────────────────
-router.post("/verification/session", async (req, res) => {
+router.post("/verification/session", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user, client } = auth;
@@ -222,7 +223,7 @@ router.post("/verification/session", async (req, res) => {
     providerSessionId: (existing as any).provider_session_id,
     expiresAt:         (existing as any).expires_at,
   });
-});
+}));
 
 // ── POST /verification/webhook (raw body — parser injected in app.ts) ─────────
 // This handler is exported separately so app.ts can mount it with
@@ -278,7 +279,7 @@ export const webhookHandler = async (req: any, res: any) => {
 // It is NOT re-registered here to avoid double-handling.
 
 // ── GET /verification/status ──────────────────────────────────────────────────
-router.get("/verification/status", async (req, res) => {
+router.get("/verification/status", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -313,6 +314,6 @@ router.get("/verification/status", async (req, res) => {
     verificationLevel: (profile as any)?.verification_level ?? "none",
     verifiedAt:        (profile as any)?.verified_at ?? null,
   });
-});
+}));
 
 export default router;
