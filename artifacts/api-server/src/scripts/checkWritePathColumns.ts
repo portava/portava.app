@@ -154,6 +154,8 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/requests.ts|select|select list not statically resolvable", 1],
   ["src/routes/routePlan.ts|insert|payload not statically resolvable", 2],
   ["src/routes/stampCatalog.ts|select|select list not statically resolvable", 4],
+  ["src/routes/stampShowcase.ts|insert|payload not statically resolvable", 1],
+  ["src/routes/stampShowcase.ts|select|select list not statically resolvable", 1],
   ["src/routes/stamps.ts|select|select list not statically resolvable", 10],
   ["src/routes/stories.ts|select|select list not statically resolvable", 3],
   ["src/routes/telegraphChat.ts|insert|payload not statically resolvable", 1],

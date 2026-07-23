@@ -17,6 +17,7 @@ import { stampToLegacy, makeStampShareLinks } from '../../services/stampShareUti
 import type { NewStampVisibility } from '../../services/stamps.ts';
 import type { PassportStampNew } from '../../services/passportStamps.ts';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
+import { StampAdmireBlock } from './StampAdmireBlock.tsx';
 
 const RARITY_COLORS: Record<string, string> = {
   common:    '#6B7280',
@@ -169,6 +170,9 @@ export function StampDetailModal({ stamp, isOwner, visible, onClose, onStampUpda
                 })}
               </Text>
             </View>
+
+            {/* Admire block */}
+            <StampAdmireBlock userStampId={stamp.id} isOwner={isOwner} />
 
             {/* Revoked notice */}
             {stamp.isRevoked && (
