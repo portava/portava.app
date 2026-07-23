@@ -35,6 +35,22 @@ import {
   type ReadinessSummary,
 } from "../lib/tripReadiness.js";
 
+/** Return today's UTC date string (YYYY-MM-DD). */
+function todayUtc(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Derive the score from a set of stored rows using summarizeReadiness.
+ * Returns null when rows is empty (no prior snapshot).
+ */
+function scoreFromRows(rows: any[]): number | null {
+  if (rows.length === 0) return null;
+  const items = rows.map(rowToItem);
+  const fakeAt = (rows[0] as any).computed_at ?? new Date().toISOString();
+  return summarizeReadiness(items, fakeAt, null).score;
+}
+
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 
@@ -103,8 +119,20 @@ async function loadOrComputeSummary(
   const stale = rows.length === 0 || Date.now() - newestMs > READINESS_STALE_MS;
 
   if (forceRefresh || stale) {
+    // Capture the previous score from stored rows when they come from a
+    // different calendar day — that makes the delta "since yesterday" honest.
+    // Same-day cached rows yield null (no meaningful delta yet).
+    let previousScore: number | null = null;
+    if (rows.length > 0) {
+      const cachedDay = new Date(newestMs).toISOString().slice(0, 10);
+      if (cachedDay !== todayUtc()) {
+        previousScore = scoreFromRows(rows);
+      }
+    }
+
     try {
-      return await computeReadiness(sc, tripId);
+      const fresh = await computeReadiness(sc, tripId);
+      return { ...fresh, previousScore };
     } catch (e: any) {
       if (e?.code === "not_found") { sendError(res, "not_found", "Trip not found"); return null; }
       sendError(res, "db_error", e?.message ?? "Failed to compute readiness");
@@ -113,7 +141,7 @@ async function loadOrComputeSummary(
   }
 
   const items = rows.map(rowToItem);
-  return summarizeReadiness(items, new Date(newestMs).toISOString());
+  return summarizeReadiness(items, new Date(newestMs).toISOString(), null);
 }
 
 const ReadinessQuerySchema = z.object({ refresh: z.string().optional() }).passthrough();

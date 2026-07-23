@@ -467,6 +467,81 @@ describe("trip readiness routes", () => {
     assert.equal(unknown.title, "No verified entry data yet");
   });
 
+  // ── previousScore population ───────────────────────────────────────────────
+
+  it("sets previousScore to null when no prior items exist", async () => {
+    const { client } = makeFakeClient({
+      trips: { rows: [baseTrip()] },
+      trip_members: { rows: [ownerMemberRow()] },
+      feature_flags: flagOn(),
+      // trip_readiness_items starts empty — first-time computation
+    });
+    _setTestClient(client, true);
+
+    const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+    assert.equal(r.status, 200);
+    assert.strictEqual(r.body.previousScore, null, "no prior snapshot → previousScore must be null");
+  });
+
+  it("sets previousScore to null when stored items are from today (same-day recompute)", async () => {
+    // Items computed less than a minute ago — same UTC day, so no prior-day delta.
+    const todayIso = new Date().toISOString();
+    const { client } = makeFakeClient({
+      trips: { rows: [baseTrip()] },
+      trip_members: { rows: [ownerMemberRow()] },
+      trip_readiness_items: { rows: [
+        { id: "r1", trip_id: TRIP_ID, user_id: null, category: "stay",
+          status: "action_needed", severity: "normal",
+          title: "No accommodation", detail: null, due_at: null,
+          action_ref: null, dedupe_key: "stay:none", computed_at: todayIso },
+      ]},
+      feature_flags: flagOn(),
+    });
+    _setTestClient(client, true);
+
+    // Force refresh to trigger recompute even though items are fresh
+    const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness?refresh=1`, { token: "owner-token" });
+    assert.equal(r.status, 200);
+    assert.strictEqual(r.body.previousScore, null,
+      "same-day cached items → previousScore must be null even on forced recompute");
+  });
+
+  it("sets previousScore to the old score when stored items are from a prior day", async () => {
+    // Items from yesterday — all action_needed → old score = 0.
+    const yesterdayIso = new Date(Date.now() - 25 * 3600 * 1000).toISOString();
+    const makeOldRow = (category: string, key: string) => ({
+      id: `old-${key}`, trip_id: TRIP_ID, user_id: null, category,
+      status: "action_needed", severity: "normal",
+      title: `Old ${category}`, detail: null, due_at: null,
+      action_ref: null, dedupe_key: key, computed_at: yesterdayIso,
+    });
+    const { client } = makeFakeClient({
+      trips: { rows: [baseTrip()] },
+      trip_members: { rows: [ownerMemberRow()] },
+      trip_readiness_items: { rows: [
+        makeOldRow("plan",         "plan:dates"),
+        makeOldRow("stay",         "stay:none"),
+        makeOldRow("transport",    "transport:none"),
+        makeOldRow("budget",       "budget:none"),
+        makeOldRow("entry",        "entry:old"),
+        makeOldRow("documents",    "documents:none"),
+        makeOldRow("reservations", "reservations:old"),
+      ]},
+      feature_flags: flagOn(),
+    });
+    _setTestClient(client, true);
+
+    // Stale (yesterday) → triggers recompute; previousScore = 0 (all action_needed = 0 ready-ish)
+    const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+    assert.equal(r.status, 200);
+    assert.strictEqual(r.body.previousScore, 0,
+      "all-action_needed prior rows → previousScore must be 0");
+    // Fresh score must differ (base trip has some ready categories)
+    assert.ok(r.body.score !== null, "fresh score must be present");
+    assert.ok(r.body.previousScore !== r.body.score,
+      "fresh score must differ from prior-day score when trip state changed");
+  });
+
   it("sweeps stale rows on recompute (resolved items disappear from storage)", async () => {
     const { client, db } = makeFakeClient({
       trips: { rows: [baseTrip()] },

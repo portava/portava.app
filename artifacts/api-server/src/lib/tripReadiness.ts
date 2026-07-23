@@ -58,6 +58,11 @@ export interface ReadinessSummary {
   computedAt: string;
   /** Mechanical: round(100 × share of categories with zero action_needed/incomplete items). */
   score: number;
+  /**
+   * Score from the most recent prior snapshot (e.g. yesterday's computation).
+   * Null when no prior snapshot exists or the score is being served from cache.
+   */
+  previousScore: number | null;
   /** Category-level counts by worst status (sums to 7). */
   counts: { ready: number; actionNeeded: number; incomplete: number; unknown: number };
   /** FULL list of critical items — never truncated (critical-visibility rule). */
@@ -200,7 +205,11 @@ const STATUS_RANK: Record<ReadinessStatus, number> = {
   action_needed: 3,
 };
 
-export function summarizeReadiness(items: ReadinessItem[], computedAt: string): ReadinessSummary {
+export function summarizeReadiness(
+  items: ReadinessItem[],
+  computedAt: string,
+  previousScore: number | null = null,
+): ReadinessSummary {
   const categories = {} as Record<ReadinessCategory, ReadinessStatus>;
   for (const c of READINESS_CATEGORIES) categories[c] = "ready";
   for (const item of items) {
@@ -225,7 +234,7 @@ export function summarizeReadiness(items: ReadinessItem[], computedAt: string): 
   // score, always and untruncated — a high score must never bury a critical.
   const criticalItems = items.filter((i) => i.severity === "critical");
 
-  return { computedAt, score, counts, criticalItems, categories, items };
+  return { computedAt, score, previousScore, counts, criticalItems, categories, items };
 }
 
 // ---------------------------------------------------------------------------

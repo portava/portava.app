@@ -39,6 +39,8 @@ export interface ReadinessItem {
 export interface ReadinessSummary {
   computedAt: string;
   score: number;
+  /** Score from the previous snapshot (e.g. yesterday). Null when no prior data exists. */
+  previousScore: number | null;
   counts: Record<string, number>;
   criticalItems: ReadinessItem[];
   categories: Record<string, string>;

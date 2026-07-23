@@ -16,6 +16,9 @@ import {
   HelpCircle,
   AlertTriangle,
   ShieldAlert,
+  TrendingUp,
+  TrendingDown,
+  Minus,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { fetchTripReadiness, type ReadinessSummary, type ReadinessItem } from '../../services/tripIntel.ts';
@@ -108,13 +111,43 @@ function CategoryRow({ label, status }: { label: string; status: ItemStatus | nu
   );
 }
 
-function ScoreHeader({ score }: { score: number }) {
-  const pct = Math.round(score * 100);
+function ScoreDelta({ current, previous }: { current: number; previous: number }) {
+  // scores are integers (0–100); delta is in percentage points
+  const delta = Math.round(current) - Math.round(previous);
+  if (delta === 0) {
+    return (
+      <View style={s.deltaRow}>
+        <Minus size={12} color={color.mute} />
+        <Text style={[s.deltaText, { color: color.mute }]}>no change since yesterday</Text>
+      </View>
+    );
+  }
+  const isUp = delta > 0;
+  const deltaColor = isUp ? color.success : color.signal;
+  const sign = isUp ? '+' : '';
+  return (
+    <View style={s.deltaRow}>
+      {isUp
+        ? <TrendingUp size={12} color={deltaColor} />
+        : <TrendingDown size={12} color={deltaColor} />}
+      <Text style={[s.deltaText, { color: deltaColor }]}>
+        {sign}{delta}% since yesterday
+      </Text>
+    </View>
+  );
+}
+
+function ScoreHeader({ score, previousScore }: { score: number; previousScore: number | null }) {
+  // score is an integer (0–100) from the API
+  const pct = Math.round(score);
   const scoreColor = pct >= 80 ? color.success : pct >= 50 ? color.warn : color.signal;
   return (
     <View style={s.scoreArea}>
       <Text style={[s.scoreNumber, { color: scoreColor }]}>{pct}%</Text>
       <Text style={s.scoreLabel}>Trip Readiness</Text>
+      {previousScore !== null && (
+        <ScoreDelta current={score} previous={previousScore} />
+      )}
     </View>
   );
 }
@@ -168,7 +201,7 @@ export function TripReadinessCard({ tripId, refresh = false }: TripReadinessCard
       )}
 
       {/* Score */}
-      <ScoreHeader score={summary.score} />
+      <ScoreHeader score={summary.score} previousScore={summary.previousScore ?? null} />
 
       {/* Category rows */}
       <View style={s.categories}>
@@ -243,6 +276,16 @@ const s = StyleSheet.create({
     marginTop: space.xs,
     letterSpacing: 1,
     textTransform: 'uppercase',
+  },
+  deltaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: space.xs,
+  },
+  deltaText: {
+    ...t.stamp,
+    fontWeight: '600',
   },
   categories: {
     paddingVertical: space.sm,

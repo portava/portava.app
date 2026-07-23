@@ -57,7 +57,7 @@ const PLAN_ITEM = {
 
 const FULL_SUMMARY = {
   computedAt: '2026-07-23T00:00:00Z',
-  score: 0.72,
+  score: 72, // integer (0–100) matching server contract
   counts: { ready: 5, action_needed: 1, incomplete: 1, unknown: 0 },
   criticalItems: [CRITICAL_ITEM],
   categories: {
@@ -193,6 +193,46 @@ describe('TripReadinessCard', () => {
 
     await waitFor(() => {
       expect(fetchTripReadiness).toHaveBeenCalledWith(TRIP_ID, true);
+    });
+  });
+
+  // ── Score delta (previousScore) ───────────────────────────────────────────
+
+  it('shows "+8% since yesterday" when score increased by 8 points', async () => {
+    // scores are integers (0–100) on the wire; delta = current − previous
+    fetchTripReadiness.mockResolvedValue({ ...FULL_SUMMARY, score: 72, previousScore: 64 });
+
+    const { findByText } = await mountCard();
+
+    const delta = await findByText('+8% since yesterday');
+    expect(delta).toBeTruthy();
+  });
+
+  it('shows "-8% since yesterday" when score decreased by 8 points', async () => {
+    fetchTripReadiness.mockResolvedValue({ ...FULL_SUMMARY, score: 64, previousScore: 72 });
+
+    const { findByText } = await mountCard();
+
+    const delta = await findByText('-8% since yesterday');
+    expect(delta).toBeTruthy();
+  });
+
+  it('shows "no change since yesterday" when score is identical to previousScore', async () => {
+    fetchTripReadiness.mockResolvedValue({ ...FULL_SUMMARY, score: 72, previousScore: 72 });
+
+    const { findByText } = await mountCard();
+
+    const delta = await findByText('no change since yesterday');
+    expect(delta).toBeTruthy();
+  });
+
+  it('shows no delta when previousScore is null', async () => {
+    fetchTripReadiness.mockResolvedValue({ ...FULL_SUMMARY, previousScore: null });
+
+    const { queryByText } = await mountCard();
+
+    await waitFor(() => {
+      expect(queryByText(/since yesterday/)).toBeNull();
     });
   });
 });
