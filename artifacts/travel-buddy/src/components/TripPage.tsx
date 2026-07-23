@@ -118,11 +118,41 @@ function Action({ icon, label, onPress }: { icon: React.ReactNode; label: string
 }
 
 /* ── Today / Next Up ── */
-export function TodayNextUp({ nextUp, tripId }: { nextUp: any | null; tripId?: string }) {
+export function TodayNextUp({ nextUp, tripId, action }: {
+  nextUp: any | null;
+  tripId?: string;
+  /** Next-best-action payload from useNextBestAction (Trip Brain wave). */
+  action?: {
+    title: string;
+    detail: string | null;
+    category: string;
+    severity: string;
+    dueAt: string | null;
+  } | null;
+}) {
   return (
     <View style={section.wrap}>
       <SectionHead title="Today / Next Up" onViewAll={nextUp ? () => router.push('/(tabs)/trips') : undefined} />
-      {!nextUp ? (
+      {!nextUp && action ? (
+        // Next-best-action card (readiness-driven; server flag-gated — absent flag
+        // means `action` is null and the empty state below renders as before).
+        <View style={nx.card}>
+          <View style={nx.body}>
+            <View style={nx.badgeRow}>
+              <View style={nx.badge}><Text style={nx.badgeText}>{(action.category ?? 'next').toUpperCase()}</Text></View>
+              {action.dueAt ? <Text style={nx.time}>{new Date(action.dueAt).toLocaleDateString()}</Text> : null}
+            </View>
+            <Text style={nx.title}>{action.title}</Text>
+            {action.detail ? (
+              <View style={nx.metaRow}><Text style={nx.meta}>{action.detail}</Text></View>
+            ) : null}
+            <View style={nx.btns}>
+              <Pressable style={nx.primary} onPress={() => router.push('/(tabs)/trips')}><Text style={nx.primaryText}>View Plan</Text></Pressable>
+              <Pressable style={nx.ghost} onPress={() => router.push('/(tabs)/ai')}><Text style={nx.ghostText}>Ask Compass</Text></Pressable>
+            </View>
+          </View>
+        </View>
+      ) : !nextUp ? (
         <View style={nx.empty}>
           <Text style={nx.emptyText}>Nothing planned yet. Add a plan or ask Compass to build your first night.</Text>
           <Pressable style={nx.emptyBtn} onPress={() => router.push('/(tabs)/ai')}><Text style={nx.emptyBtnText}>Ask Compass</Text></Pressable>

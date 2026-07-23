@@ -64,7 +64,7 @@ async function isFeatureEnabled(db: ReturnType<typeof getServiceClient>): Promis
     const { data } = await db
       .from("feature_flags")
       .select("enabled")
-      .eq("key", "plan_geofence_enabled")
+      .eq("flag", "plan_geofence_enabled")
       .maybeSingle();
     return Boolean((data as any)?.enabled);
   } catch {
@@ -565,7 +565,7 @@ router.post("/trips/:tripId/geofence/check-in", async (req, res) => {
       const { data: flagRow } = await sc
         .from("feature_flags")
         .select("enabled")
-        .eq("key", "passport_stamps_enabled")
+        .eq("flag", "passport_stamps_enabled")
         .maybeSingle();
       if (!(flagRow as any)?.enabled) return;
       const result = await createStamp(sc, {
@@ -581,7 +581,7 @@ router.post("/trips/:tripId/geofence/check-in", async (req, res) => {
         const { data: memFlagRow } = await sc
           .from("feature_flags")
           .select("enabled")
-          .eq("key", "passport_memories_enabled")
+          .eq("flag", "passport_memories_enabled")
           .maybeSingle();
         if ((memFlagRow as any)?.enabled) {
           await createSuggestedMemory(sc, {

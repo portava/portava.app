@@ -88,6 +88,12 @@ import circleRouter from "./circle";
 import rankEventsRouter from "./rankEvents";
 import callsRouter from "./calls";
 import moderationRouter from "./moderation";
+import entryRequirementsRouter from "./entryRequirements";
+import tripReadinessRouter from "./tripReadiness";
+import tripBudgetIntelRouter from "./tripBudgetIntel";
+import tripReservationsRouter from "./tripReservations";
+import tripDraftRouter from "./tripDraft";
+import neighborhoodsRouter from "./neighborhoods";
 
 const router: IRouter = Router();
 
@@ -180,5 +186,11 @@ router.use(moderationRouter);
 router.use(devicesRouter);
 router.use(keyPackagesRouter);
 router.use(verificationRouter);
+router.use(entryRequirementsRouter);
+router.use(tripReadinessRouter);
+router.use(tripBudgetIntelRouter);
+router.use(tripReservationsRouter);
+router.use(tripDraftRouter);
+router.use(neighborhoodsRouter);
 
 export default router;

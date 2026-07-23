@@ -47,7 +47,7 @@ export async function getCompassGemContext(
     const { data: flag } = await db
       .from("feature_flags")
       .select("enabled")
-      .eq("key", "hidden_gems_compass_enabled")
+      .eq("flag", "hidden_gems_compass_enabled")
       .maybeSingle();
 
     if (!(flag as any)?.enabled) return empty;

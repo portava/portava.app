@@ -53,7 +53,7 @@ async function isTrustEnabled(db: SupabaseClient): Promise<boolean> {
     const { data } = await db
       .from("feature_flags")
       .select("enabled")
-      .eq("key", "trust_engine_enabled")
+      .eq("flag", "trust_engine_enabled")
       .maybeSingle();
     return Boolean((data as any)?.enabled);
   } catch {

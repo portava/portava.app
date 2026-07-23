@@ -68,8 +68,6 @@ if ((ksvGuard.status ?? 1) !== 0) {
 // all introduced by the sign-in / E2EE tasks before this one.
 const KNOWN_BROKEN = [
   // react-native@0.81.5 esbuild "Unexpected typeof" — cannot run in Node
-  'src/components/__tests__/LivePulseRail.test.ts',
-  'src/services/__tests__/media.upload.test.ts',
   'src/components/__tests__/MemoryComposer.duration.test.ts',
   'src/components/__tests__/PostcardComposer.duration.test.ts',
   'src/hooks/__tests__/useMessageMediaPicker.validation.test.ts',

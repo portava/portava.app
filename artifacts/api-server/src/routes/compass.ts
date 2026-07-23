@@ -89,6 +89,7 @@ import {
   type MemoryScope,
 } from "../compass/CompassMemoryService.js";
 import { buildLiveChatContextLines }             from "../compass/CompassLiveEngine.js";
+import { buildTripContextLines }                 from "../compass/CompassTripContext.js";
 import { getOpenAI }                             from "../lib/openai.js";
 import { COMPASS_ASK_PROMPT, COMPASS_ASK_PROMPT_VERSION } from "../lib/prompts/compass-v1.js";
 import {
@@ -951,8 +952,8 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
 // Changes from the legacy handler:
 //   • Real multi-turn history via compass_conversations + compass_conversation_messages
 //   • Actual LLM call (gpt-5-mini) with full history + context block — no string templates
-//   • Intent classifier shadow mode: runs alongside legacy keyword routing; logs disagreements
-//   • 'action' intent (≥0.6 confidence) short-circuits with a graceful explanation
+//   • Intent classifier decides routing: "itinerary" at ≥0.6 confidence takes the
+//     itinerary branch; everything else takes the conversation/tool loop
 //   • Dynamic quick-actions proposed by the model, validated against a server-side whitelist
 //   • Versioned system prompt (COMPASS_ASK_PROMPT_VERSION logged per request)
 //   • Honest fallbacks — no canned fake recommendations on any error path
@@ -978,6 +979,15 @@ const HONEST_FALLBACK_MESSAGE =
  */
 const SUMMARISE_EMPTY_FALLBACK_MESSAGE =
   "I found some results but had trouble putting them into words. Try asking again.";
+
+/**
+ * Injected as a system message when the intent classifier decides "itinerary"
+ * (confidence ≥ 0.6). Steers the model into the structured itinerary payload
+ * path already defined in COMPASS_ASK_PROMPT (payload type "itinerary" —
+ * destination + days). All other intents take the normal conversation/tool loop.
+ */
+const ITINERARY_INTENT_DIRECTIVE =
+  'The user is asking for an itinerary. Build a day-by-day plan and set payload to the "itinerary" type from the response format (destination + days, each day with a label and highlights). Use tools first when you need real places to ground the plan.';
 
 const askBodySchema = z.object({
   prompt:              z.string().min(1).max(1000),
@@ -1297,34 +1307,19 @@ router.post("/compass/ask", async (req, res) => {
     history = await loadHistory(sc, conversationId);
   } catch { /* non-fatal — proceed with empty history */ }
 
-  // ── Intent classifier (shadow mode) ──────────────────────────────────────
-  // Shadow: runs alongside legacy keyword check and logs disagreements.
-  // Exception: 'action' intent at ≥0.6 confidence is handled immediately.
+  // ── Intent classification (classifier decides) ────────────────────────────
+  // Promoted out of shadow mode: "itinerary" at ≥0.6 confidence takes the
+  // itinerary branch (structured day-by-day payload); everything else —
+  // including classifier null/error/low confidence — falls through to the
+  // normal conversation/tool loop.
   let intentResult: IntentClassification | null = null;
   try {
     intentResult = await classifyIntent(prompt);
-    if (intentResult) {
-      const legacyIsItinerary =
-        /itinerary|day[\s-]by[\s-]day|day\s+trip|schedule|full\s+plan|\d+[\s-]day/i.test(prompt);
-      const legacyIntent = legacyIsItinerary ? "itinerary" : "recommendation";
-      if (
-        intentResult.confidence >= 0.6 &&
-        (intentResult.intent === "recommendation" || intentResult.intent === "itinerary") &&
-        intentResult.intent !== legacyIntent
-      ) {
-        req.log.info(
-          {
-            userId:     user.id,
-            legacyIntent,
-            newIntent:  intentResult.intent,
-            confidence: intentResult.confidence,
-            prompt:     prompt.slice(0, 80),
-          },
-          "compass/ask: classifier vs keyword disagreement (shadow mode)",
-        );
-      }
-    }
-  } catch { /* non-fatal */ }
+  } catch { /* non-fatal — treated as no classification */ }
+  const isItineraryIntent =
+    intentResult !== null &&
+    intentResult.intent === "itinerary" &&
+    intentResult.confidence >= 0.6;
 
   // ── Action intent (Phase 4) ───────────────────────────────────────────────
   // Actions no longer short-circuit: the tool-calling loop lets the model
@@ -1408,6 +1403,21 @@ router.post("/compass/ask", async (req, res) => {
     ctxLines.push(`Weather: ${weatherBrief}`);
   if (topItemsContext.length > 0)
     ctxLines.push(`Verified nearby places:\n${topItemsContext.join("\n")}`);
+
+  // ── Always-on trip grounding ──────────────────────────────────────────────
+  // Grounds every chat turn in the user's active/upcoming trip. Skipped while
+  // a Compass Live session is active: live-session lines (fetched here,
+  // appended below in their usual slot) already ground the chat in the current
+  // trip — don't double-ground. Never fatal.
+  let liveLines: string[] = [];
+  try { liveLines = await buildLiveChatContextLines(sc, user.id); } catch { /* non-fatal */ }
+  if (liveLines.length === 0) {
+    try {
+      const tripLines = await buildTripContextLines(sc, user.id);
+      if (tripLines.length > 0) ctxLines.push("[Trip context]", ...tripLines);
+    } catch { /* non-fatal — proceed without trip context */ }
+  }
+
   ctxLines.push(...structuredLines);
   ctxLines.push(...modeWeightingLines);
 
@@ -1434,12 +1444,10 @@ router.post("/compass/ask", async (req, res) => {
 
   // ── Phase 12: live-session grounding ──────────────────────────────────────
   // While a live session is active, chat answers are grounded in the rolling
-  // session context (current stop, next plan item, timing). Empty outside a
-  // session — chat is unchanged when Live is off. Never fatal.
-  try {
-    const liveLines = await buildLiveChatContextLines(sc, user.id);
-    ctxLines.push(...liveLines);
-  } catch { /* non-fatal — proceed without live context */ }
+  // session context (current stop, next plan item, timing). Fetched above so
+  // the trip block can defer to it; appended here to keep its position. Empty
+  // outside a session — chat is unchanged when Live is off. Never fatal.
+  ctxLines.push(...liveLines);
 
   const userMessageWithContext = `${prompt}\n\n${ctxLines.join("\n")}`;
 
@@ -1447,6 +1455,10 @@ router.post("/compass/ask", async (req, res) => {
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: COMPASS_ASK_PROMPT },
     { role: "system", content: COMPASS_TOOLS_PROMPT_ADDENDUM },
+    // Itinerary branch: classifier-decided (see intent classification above).
+    ...(isItineraryIntent
+      ? [{ role: "system" as const, content: ITINERARY_INTENT_DIRECTIVE }]
+      : []),
     ...history.map((h) => ({ role: h.role as "user" | "assistant", content: h.content })),
     { role: "user",   content: userMessageWithContext },
   ];

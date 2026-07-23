@@ -37,7 +37,7 @@ async function isGamingDetectionEnabled(db: SupabaseClient): Promise<boolean> {
   const { data, error } = await db
     .from("feature_flags")
     .select("enabled")
-    .eq("key", "trust_gaming_detection_enabled")
+    .eq("flag", "trust_gaming_detection_enabled")
     .maybeSingle();
   if (error) {
     logger.warn({ err: error }, "isGamingDetectionEnabled flag read failed — treating as disabled");

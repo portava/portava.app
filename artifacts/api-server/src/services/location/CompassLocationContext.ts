@@ -98,7 +98,7 @@ export async function buildCompassContext(
       const { data: compassFlag } = await db
         .from("feature_flags")
         .select("enabled")
-        .eq("key", "hidden_gems_compass_enabled")
+        .eq("flag", "hidden_gems_compass_enabled")
         .maybeSingle();
 
       if ((compassFlag as any)?.enabled && city) {

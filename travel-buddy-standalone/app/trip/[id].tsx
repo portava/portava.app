@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, Share2, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users, BookImage, CalendarClock, MapPin, ShieldCheck, Radio, Link2 } from 'lucide-react-native';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
+import { useNextBestAction } from '../../src/hooks/useNextBestAction';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import {
   TripHero, TodayNextUp, SavedIdeas, TripSavedPlacesSection,
@@ -48,6 +49,9 @@ function TripDetailScreen() {
   const bottomInset = usePlainBottomInset();
   const live = configured && isAuthed;
   const { data: realTrip, loading, error: tripError, reload: reloadTrip } = useTrip(live ? id : undefined);
+  // Next best action (Trip Brain wave) — fail-soft null when the server flag
+  // is off or the request fails, so TodayNextUp keeps its empty state.
+  const { action: nextBestAction } = useNextBestAction(live ? id : null);
 
   // Perf timing: fire on every focus cycle when trip data is loaded.
   // epoch increments on each focus so warm opens fire even without data changes.
@@ -351,7 +355,7 @@ function TripDetailScreen() {
           <DailyBriefCard tripId={trip.id} date={todayDate} onGapDays={handleGapDays} />
         ) : null}
 
-        <TodayNextUp nextUp={null} tripId={trip.id} />
+        <TodayNextUp nextUp={null} tripId={trip.id} action={nextBestAction} />
 
         {/* ── Gap-day nudge ── */}
         {live && gapDays.length > 0 && trip.status !== 'planning' && (

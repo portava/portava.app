@@ -102,7 +102,7 @@ Rules:
       const { data: flag } = await sc
         .from("feature_flags")
         .select("enabled")
-        .eq("key", "compass_location_context_enabled")
+        .eq("flag", "compass_location_context_enabled")
         .maybeSingle();
       if ((flag as any)?.enabled) {
         compassCtx = await buildCompassContext(auth.client, auth.user.id);
