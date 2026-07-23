@@ -19,7 +19,7 @@ import {
   Platform,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
-import { X, MapPin, Star, AlertTriangle, Check, Map, List } from 'lucide-react-native';
+import { X, MapPin, Star, AlertTriangle, Check, Map, List, Maximize2 } from 'lucide-react-native';
 import { LocationCheckMapPicker } from './LocationCheckMapPicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
@@ -184,7 +184,9 @@ export function LocationCheckSheet({
   const [loading, setLoading] = useState(false);
   const [verdict, setVerdict] = useState<LocationVerdict | null>(null);
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
+  const [mapFullScreen, setMapFullScreen] = useState(false);
 
+  const insets = useSafeAreaInsets();
   const { places, loading: placesLoading } = useTripSavedPlaces(tripId);
   // Only show places that have coordinates
   const geoPlaces = places.filter((p) => p.lat != null && p.lng != null);
@@ -340,24 +342,69 @@ export function LocationCheckSheet({
         </View>
       ) : canShowMap && viewMode === 'map' ? (
         /* ── Map picker view ── */
-        <View style={styles.mapPickerSection}>
-          {placesLoading ? (
-            <View style={styles.mapPickerContainer}>
-              <ActivityIndicator size="small" color={color.signal} />
+        <>
+          <View style={styles.mapPickerSection}>
+            {placesLoading ? (
+              <View style={styles.mapPickerContainer}>
+                <ActivityIndicator size="small" color={color.signal} />
+              </View>
+            ) : (
+              <View style={styles.mapPickerContainer}>
+                <LocationCheckMapPicker
+                  places={geoPlaces}
+                  selectedId={selectedPlaceId}
+                  onSelect={handleSelectPlace}
+                />
+                {/* Expand button — top-right corner of the map */}
+                <Pressable
+                  style={styles.mapExpandBtn}
+                  onPress={() => setMapFullScreen(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Expand map to full screen"
+                  hitSlop={8}
+                >
+                  <Maximize2 size={14} color="#fff" />
+                </Pressable>
+              </View>
+            )}
+            <Text style={styles.mapPickerHint}>
+              Tap a pin, then "Use this location" to pre-fill coordinates.
+            </Text>
+          </View>
+
+          {/* ── Full-screen map modal ── */}
+          <Modal
+            visible={mapFullScreen}
+            animationType="slide"
+            presentationStyle="fullScreen"
+            onRequestClose={() => setMapFullScreen(false)}
+          >
+            <View style={[styles.fullScreenModal, { paddingTop: insets.top }]}>
+              {/* Header */}
+              <View style={styles.fullScreenHeader}>
+                <Text style={styles.fullScreenHeaderTitle}>Pick a location</Text>
+                <Pressable
+                  onPress={() => setMapFullScreen(false)}
+                  hitSlop={8}
+                  accessibilityLabel="Close full-screen map"
+                >
+                  <X size={22} color={color.mute} />
+                </Pressable>
+              </View>
+              {/* Map fills remaining space */}
+              <View style={styles.fullScreenMapContainer}>
+                <LocationCheckMapPicker
+                  places={geoPlaces}
+                  selectedId={selectedPlaceId}
+                  onSelect={(place) => {
+                    handleSelectPlace(place);
+                    setMapFullScreen(false);
+                  }}
+                />
+              </View>
             </View>
-          ) : (
-            <View style={styles.mapPickerContainer}>
-              <LocationCheckMapPicker
-                places={geoPlaces}
-                selectedId={selectedPlaceId}
-                onSelect={handleSelectPlace}
-              />
-            </View>
-          )}
-          <Text style={styles.mapPickerHint}>
-            Tap a pin, then "Use this location" to pre-fill coordinates.
-          </Text>
-        </View>
+          </Modal>
+        </>
       ) : (
         /* ── List + manual entry view ── */
         <ScrollView showsVerticalScrollIndicator={false}>
@@ -1000,6 +1047,38 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: color.faint,
     textAlign: 'center',
+  },
+  mapExpandBtn: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Full-screen map modal
+  fullScreenModal: {
+    flex: 1,
+    backgroundColor: color.paper,
+  },
+  fullScreenHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+    borderBottomWidth: 1,
+    borderBottomColor: color.haze,
+  },
+  fullScreenHeaderTitle: {
+    ...t.heading,
+    color: color.ink,
+    flex: 1,
+  },
+  fullScreenMapContainer: {
+    flex: 1,
   },
   // Saved places picker (inside LocationCheckSheet)
   savedPlacesSection: {
