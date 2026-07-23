@@ -20,6 +20,7 @@ import { MissedCheckinPrompt } from '../../src/components/safeReturn/MissedCheck
 import { getActiveSession, type SafeReturnSession } from '../../src/services/safeReturn';
 import { TripPlanSection } from '../../src/components/TripPlanSection';
 import { TripAvailabilitySection } from '../../src/components/TripAvailabilitySection';
+import { TripReservationsSection } from '../../src/components/trip/TripReservationsSection';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { TripBudgetSection } from '../../src/components/trip/TripBudgetSection';
 import { DailyBriefCard } from '../../src/components/DailyBriefCard';
@@ -421,6 +422,9 @@ function TripDetailScreen() {
           tripEndDate={realTrip?.endDate ?? undefined}
           pageScrollRef={pageScrollRef}
         />
+        {live && trip.id ? (
+          <TripReservationsSection tripId={trip.id} />
+        ) : null}
         {live && trip.id ? (
           <TripAvailabilitySection
             tripId={trip.id}

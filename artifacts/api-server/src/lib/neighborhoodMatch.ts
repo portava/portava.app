@@ -395,11 +395,11 @@ export async function refreshCityNeighborhoods(
     stored = [];
   }
 
+  const nowMs = Date.now();
   const newest = stored.reduce((acc, r) => {
     const t = r.computed_at ? Date.parse(r.computed_at) : 0;
     return Number.isFinite(t) && t > acc ? t : acc;
   }, 0);
-  const nowMs = Date.now();
   const fresh = newest > 0 && nowMs - newest < REFRESH_TTL_MS;
   if (stored.length > 0 && fresh && !opts.force) return stored;
 
@@ -413,7 +413,6 @@ export async function refreshCityNeighborhoods(
     const computed = computeAreas(seeds, pois);
     if (computed.length === 0) return stored;
 
-    const nowMs = Date.now();
     const nowIso = new Date(nowMs).toISOString();
     const rows = computed.map((a) => ({
       city_name:       city,

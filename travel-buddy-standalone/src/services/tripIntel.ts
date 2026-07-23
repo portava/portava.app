@@ -252,16 +252,16 @@ export async function runBudgetSandbox(
 
 // ── Reservations ─────────────────────────────────────────────────────────────
 
-export async function listReservations(tripId: string, status?: string): Promise<TripReservation[]> {
-  if (!isSupabaseConfigured || !apiBase()) return [];
+export async function listReservations(tripId: string, status?: string): Promise<TripReservation[] | null> {
+  if (!isSupabaseConfigured || !apiBase()) return null;
   try {
     const qs = status ? `?status=${encodeURIComponent(status)}` : '';
     const res = await authedFetch(`${apiBase()}/api/trips/${tripId}/reservations${qs}`);
-    if (!res.ok) return [];
+    if (!res.ok) return null; // 404 feature_disabled or other error → honest null
     const json = await res.json();
     return (json.reservations ?? []) as TripReservation[];
   } catch {
-    return [];
+    return null;
   }
 }
 

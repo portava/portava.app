@@ -259,6 +259,10 @@ STANDALONE_OWNED_FILES=(
   "src/components/discovery/__tests__/DiscoveryScreen.component.test.tsx"
   # Standalone copy keeps the DestinationsTab maplibre mock (ESM import crash)
   "src/components/__tests__/PassportContent.focusTTL.component.test.tsx"
+  # Standalone owns its own test-runner config so it can KNOWN_BROKEN
+  # standalone-only node:test files (LivePulseRail, media.upload) that use
+  # react-native internals incompatible with esbuild in Node.
+  "scripts/run-node-tests.mjs"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.
