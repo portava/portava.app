@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, Pressable, ActivityIndicator,
-  ScrollView, StyleSheet, Alert, Image,
+  ScrollView, StyleSheet, Alert, Image, Switch,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
@@ -14,6 +14,8 @@ import { uploadMedia, type PickedMedia } from '../../src/services/media';
 import { VIDEO_MAX_DURATION_SECONDS } from '../../src/constants/mediaLimits';
 import { GlobalCalendarPicker } from '../../src/components/selectors/GlobalCalendarPicker';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
+import { DestinationListEditor, type DestinationEntry } from '../../src/components/trip/DestinationListEditor';
+import { listDestinations } from '../../src/services/tripDestinations';
 import { VideoThumbnail } from '../../src/components/ui/VideoThumbnail';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { formatDisplayDate, fromISODate } from '../../src/lib/dateTime/formatters';
@@ -49,6 +51,10 @@ export default function EditTrip() {
   const [calOpen, setCalOpen] = useState(false);
   const [placeOpen, setPlaceOpen] = useState(false);
 
+  // ── Multi-city ────────────────────────────────────────────────────────────
+  const [multiCity, setMultiCity] = useState(false);
+  const [destinations, setDestinations] = useState<DestinationEntry[]>([]);
+
   // Synchronous guard: prevents re-entry on a rapid double-tap before the
   // setBusy(true) state update has caused a re-render and updated the
   // Pressable's `disabled` prop. Unlike the React state flag, a ref update
@@ -78,6 +84,26 @@ export default function EditTrip() {
       setLoading(false);
     }).catch(() => { setLoadError('Could not load trip.'); setLoading(false); });
   }, [id, live, userId]);
+
+  // Load existing destinations when multi-city is toggled on
+  useEffect(() => {
+    if (!multiCity || !id || !live) return;
+    listDestinations(id).then((rows) => {
+      if (rows.length > 0) {
+        setDestinations(rows.map((r) => ({
+          key: `loaded-${r.id}`,
+          id: r.id,
+          city: r.city,
+          country: r.country,
+          lat: r.lat,
+          lng: r.lng,
+          placeId: r.place_id,
+          arrivalDate: r.arrival_date,
+          departureDate: r.departure_date,
+        })));
+      }
+    }).catch(() => {});
+  }, [multiCity, id, live]);
 
   const pickCover = useCallback(async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -227,18 +253,39 @@ export default function EditTrip() {
         </View>
 
         <View>
-          <Text style={styles.label}>Destination</Text>
-          <Pressable style={styles.pickerField} onPress={() => setPlaceOpen(true)}>
-            <MapPin size={15} color={place ? color.signal : color.faint} />
-            <Text style={[styles.pickerText, !place && styles.pickerPlaceholder]} numberOfLines={1}>
-              {place ? place.displayName : 'Choose a city…'}
-            </Text>
-            {place && (
-              <Pressable hitSlop={8} onPress={() => setPlace(null)}>
-                <X size={14} color={color.mute} />
-              </Pressable>
-            )}
-          </Pressable>
+          <View style={styles.destinationHeader}>
+            <Text style={styles.label}>Destination</Text>
+            <View style={styles.multiCityRow}>
+              <Text style={styles.multiCityLabel}>Multi-city</Text>
+              <Switch
+                value={multiCity}
+                onValueChange={setMultiCity}
+                trackColor={{ true: color.signal, false: color.haze }}
+                thumbColor={color.paperRaised}
+                accessibilityLabel="Toggle multi-city mode"
+              />
+            </View>
+          </View>
+
+          {multiCity ? (
+            <DestinationListEditor
+              tripId={id}
+              destinations={destinations}
+              onChange={setDestinations}
+            />
+          ) : (
+            <Pressable style={styles.pickerField} onPress={() => setPlaceOpen(true)}>
+              <MapPin size={15} color={place ? color.signal : color.faint} />
+              <Text style={[styles.pickerText, !place && styles.pickerPlaceholder]} numberOfLines={1}>
+                {place ? place.displayName : 'Choose a city…'}
+              </Text>
+              {place && (
+                <Pressable hitSlop={8} onPress={() => setPlace(null)}>
+                  <X size={14} color={color.mute} />
+                </Pressable>
+              )}
+            </Pressable>
+          )}
         </View>
 
         <View>
@@ -419,6 +466,9 @@ const styles = StyleSheet.create({
   },
   coverBtnRemove: { borderColor: color.haze },
   coverBtnText: { ...t.small, color: color.signal, fontWeight: '600' },
+  destinationHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: space.sm },
+  multiCityRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  multiCityLabel: { ...t.small, color: color.mute, fontWeight: '600' },
   errorText: { ...t.small, color: color.signal, fontWeight: '600' },
   saveBtn: {
     backgroundColor: color.ink, paddingVertical: space.md,
