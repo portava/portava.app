@@ -64,6 +64,14 @@ interface LocationVerdict {
   thresholdNote?: string;
 }
 
+// ── Session memory ────────────────────────────────────────────────────────────
+
+// Remembers the last map-size preference within a session (no persistence
+// across app restarts needed).  Starts compact; flips to true the first time
+// the user expands to full-screen, stays true so subsequent sheet opens skip
+// straight to full-screen.
+let _sessionMapFullScreen = false;
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const SLEEP_OPTIONS: Array<{ value: SleepVsPlay; label: string; sub: string }> = [
@@ -191,7 +199,7 @@ export function LocationCheckSheet({
   // Ephemeral session override — set to 'list' after a map-pin selection so the
   // user lands on the coordinate-entry form; cleared when they tap "Check another".
   const [sessionOverride, setSessionOverride] = useState<'list' | null>(null);
-  const [mapFullScreen, setMapFullScreen] = useState(false);
+  const [mapFullScreen, setMapFullScreen] = useState(_sessionMapFullScreen);
 
   const insets = useSafeAreaInsets();
   const { places, loading: placesLoading } = useTripSavedPlaces(tripId);
@@ -384,7 +392,7 @@ export function LocationCheckSheet({
                 {/* Expand button — top-right corner of the map */}
                 <Pressable
                   style={styles.mapExpandBtn}
-                  onPress={() => setMapFullScreen(true)}
+                  onPress={() => { _sessionMapFullScreen = true; setMapFullScreen(true); }}
                   accessibilityRole="button"
                   accessibilityLabel="Expand map to full screen"
                   hitSlop={8}
