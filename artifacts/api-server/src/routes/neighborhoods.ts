@@ -16,6 +16,7 @@ import { z } from "zod";
 import { getServiceClient } from "../lib/supabase.js";
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import {
   CATEGORIES,
   refreshCityNeighborhoods,
@@ -95,7 +96,7 @@ const CityQuerySchema = z.object({
   lng:  z.coerce.number().min(-180).max(180),
 });
 
-router.get("/cities/neighborhoods", async (req, res) => {
+router.get("/cities/neighborhoods", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
 
@@ -123,7 +124,7 @@ router.get("/cities/neighborhoods", async (req, res) => {
     areas: areas.map(toPublicArea),
     disclaimer: DISCLAIMER,
   });
-});
+}));
 
 // ---------------------------------------------------------------------------
 // PUT /api/trips/:tripId/area-preferences
@@ -138,7 +139,7 @@ const PreferencesSchema = z.object({
   priorities:  PrioritySchema.optional(),
 });
 
-router.put("/trips/:tripId/area-preferences", async (req, res) => {
+router.put("/trips/:tripId/area-preferences", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -199,12 +200,12 @@ router.put("/trips/:tripId/area-preferences", async (req, res) => {
     priorities:  s.priorities ?? {},
     updatedAt:   s.updated_at ?? row.updated_at,
   });
-});
+}));
 
 // ---------------------------------------------------------------------------
 // POST /api/trips/:tripId/neighborhood-match
 // ---------------------------------------------------------------------------
-router.post("/trips/:tripId/neighborhood-match", async (req, res) => {
+router.post("/trips/:tripId/neighborhood-match", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -284,7 +285,7 @@ router.post("/trips/:tripId/neighborhood-match", async (req, res) => {
     compassPick,
     disclaimer: DISCLAIMER,
   });
-});
+}));
 
 // ---------------------------------------------------------------------------
 // POST /api/trips/:tripId/location-check  (no flag — pure math over trip data)
@@ -299,7 +300,7 @@ const GOOD_FIT_KM  = 2.5;
 const FAR_KM       = 6;
 const MIN_POINTS   = 3;
 
-router.post("/trips/:tripId/location-check", async (req, res) => {
+router.post("/trips/:tripId/location-check", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -429,6 +430,6 @@ router.post("/trips/:tripId/location-check", async (req, res) => {
       `good_fit ≤ ${GOOD_FIT_KM} km from the center of gravity of your ${points.length} located trip points; ` +
       `consider_alternatives > ${FAR_KM} km; insufficient_data below ${MIN_POINTS} located points.`,
   });
-});
+}));
 
 export default router;

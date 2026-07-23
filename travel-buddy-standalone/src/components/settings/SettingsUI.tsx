@@ -233,12 +233,13 @@ export function ToggleRow({
 export type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
 export function SaveButton({
-  state, onPress, disabled, label = 'Save',
+  state, onPress, disabled, label = 'Save', testID,
 }: {
   state: SaveState;
   onPress: () => void;
   disabled?: boolean;
   label?: string;
+  testID?: string;
 }) {
   const isDisabled = disabled || state === 'saving' || state === 'saved';
   return (
@@ -253,6 +254,7 @@ export function SaveButton({
       disabled={isDisabled}
       accessibilityRole="button"
       accessibilityLabel={label}
+      testID={testID}
     >
       {state === 'saving' ? (
         <ActivityIndicator size="small" color={PP.paper} />

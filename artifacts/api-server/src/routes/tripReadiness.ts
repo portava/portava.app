@@ -21,6 +21,7 @@ import { z } from "zod";
 import { getServiceClient } from "../lib/supabase.js";
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import {
   READINESS_FLAG,
   READINESS_STALE_MS,
@@ -120,7 +121,7 @@ const ReadinessQuerySchema = z.object({ refresh: z.string().optional() }).passth
 // ---------------------------------------------------------------------------
 // GET /trips/:tripId/readiness
 // ---------------------------------------------------------------------------
-router.get("/trips/:tripId/readiness", async (req, res) => {
+router.get("/trips/:tripId/readiness", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -143,7 +144,7 @@ router.get("/trips/:tripId/readiness", async (req, res) => {
   const summary = await loadOrComputeSummary(sc, res, tripId, refresh);
   if (!summary) return;
   res.json(summary);
-});
+}));
 
 // ---------------------------------------------------------------------------
 // GET /trips/:tripId/next-best-action
@@ -176,7 +177,7 @@ function byDueThenTitle(a: ReadinessItem, b: ReadinessItem): number {
   return a.title.localeCompare(b.title);
 }
 
-router.get("/trips/:tripId/next-best-action", async (req, res) => {
+router.get("/trips/:tripId/next-best-action", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -245,12 +246,12 @@ router.get("/trips/:tripId/next-best-action", async (req, res) => {
     alternatives: ranked.slice(1, 4),
     computedAt: summary.computedAt,
   });
-});
+}));
 
 // ---------------------------------------------------------------------------
 // GET /trips/:tripId/arrival-board  (membership only — no feature flag)
 // ---------------------------------------------------------------------------
-router.get("/trips/:tripId/arrival-board", async (req, res) => {
+router.get("/trips/:tripId/arrival-board", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -312,6 +313,6 @@ router.get("/trips/:tripId/arrival-board", async (req, res) => {
     board,
     note: sparse ? "Add flight reservations to populate the arrival board." : null,
   });
-});
+}));
 
 export default router;

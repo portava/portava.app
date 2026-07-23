@@ -6,7 +6,7 @@ import React from 'react';
 import { router } from 'expo-router';
 import {
   User, Camera, LayoutGrid, Heart, Compass, Eye, Shield,
-  Bell, MapPin, Link2, KeyRound, Phone,
+  Bell, MapPin, Link2, KeyRound, Phone, BookMarked,
 } from 'lucide-react-native';
 import {
   SettingsScreen, SettingsSection, SettingsRow, SettingsDivider,
@@ -54,6 +54,13 @@ export default function EditSettingsHub() {
           title="Travel Profile"
           subtitle="Pace, budget, planning style, meetups"
           onPress={go('/profile/edit/travel-profile')}
+        />
+        <SettingsDivider />
+        <SettingsRow
+          icon={<BookMarked size={ICON} color={PP.ink} />}
+          title="Passports"
+          subtitle="Saved for trip entry and visa checks"
+          onPress={go('/profile/edit/passports')}
         />
       </SettingsSection>
 
