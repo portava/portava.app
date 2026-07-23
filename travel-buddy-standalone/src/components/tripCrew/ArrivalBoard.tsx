@@ -20,6 +20,8 @@ import type { CrewMemberCard } from '../../services/tripCrewLocation.ts';
 
 type ArrivalRow = {
   userId: string;
+  /** Handle returned by the arrival-board endpoint — used for profile navigation on fallback rows. */
+  handle?: string | null;
   arrival: { time: string; label: string } | null;
 };
 
@@ -122,7 +124,11 @@ function ArrivalRow({ row, member }: { row: ArrivalRow; member?: CrewMemberCard 
             </View>
           </UserIdentityLink>
         ) : (
-          <>
+          <UserIdentityLink
+            userId={row.userId}
+            handle={row.handle ?? null}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, flex: 1 }}
+          >
             <StatusDot arrived={arrived} />
             <View style={s.rowBody}>
               <Text style={s.memberName} numberOfLines={1}>{memberLabel}</Text>
@@ -135,7 +141,7 @@ function ArrivalRow({ row, member }: { row: ArrivalRow; member?: CrewMemberCard 
                 <Text style={[s.timeText, arrived && s.timeTextArrived]}>{timeLabel}</Text>
               </View>
             </View>
-          </>
+          </UserIdentityLink>
         )}
       </View>
     </View>

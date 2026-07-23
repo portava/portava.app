@@ -277,6 +277,7 @@ function TripDetailScreen() {
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       <ScrollView
         ref={pageScrollRef}
+        testID="trip-detail-scroll"
         contentContainerStyle={{ paddingBottom: bottomInset }}
         showsVerticalScrollIndicator={false}
         onScroll={navBarScrollHandler}
