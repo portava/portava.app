@@ -5,7 +5,7 @@
  * Step 2 — Ranked areas: neighborhood cards with compass pick highlighted,
  *           OSM disclaimer, and "Check this location" CTA.
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -30,6 +30,8 @@ import {
   type NeighborhoodArea,
 } from '../../services/neighborhoods.ts';
 import { useTripSavedPlaces } from '../../hooks/useTripSavedPlaces.ts';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { loadViewMode, saveViewMode } from './locationCheckViewModeStorage.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -183,7 +185,12 @@ export function LocationCheckSheet({
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [verdict, setVerdict] = useState<LocationVerdict | null>(null);
-  const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
+  // The persisted user preference — loaded from AsyncStorage, updated when the
+  // toggle is pressed.  Defaults to 'map' until storage resolves.
+  const [preferredMode, setPreferredMode] = useState<'map' | 'list'>('map');
+  // Ephemeral session override — set to 'list' after a map-pin selection so the
+  // user lands on the coordinate-entry form; cleared when they tap "Check another".
+  const [sessionOverride, setSessionOverride] = useState<'list' | null>(null);
   const [mapFullScreen, setMapFullScreen] = useState(false);
 
   const insets = useSafeAreaInsets();
@@ -194,6 +201,21 @@ export function LocationCheckSheet({
   // Show the map toggle only on native where MapLibre is available.
   const canShowMap = Platform.OS !== 'web' && geoPlaces.length > 0;
 
+  // Derive the actual display mode:
+  //  • sessionOverride wins (e.g. after selecting a pin from the map)
+  //  • otherwise respect preferredMode when the map is available
+  //  • fall back to 'list' when the map cannot be shown
+  const viewMode: 'map' | 'list' = sessionOverride ?? (canShowMap ? preferredMode : 'list');
+
+  // Load the stored preference once on mount.  Because we derive viewMode from
+  // preferredMode + canShowMap, there is no race with the async place-fetch:
+  // as soon as both resolve the derived value is correct without a second effect.
+  useEffect(() => {
+    loadViewMode(AsyncStorage, tripId).then(setPreferredMode);
+    // tripId is stable for the lifetime of this sheet instance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tripId]);
+
   function handleSelectPlace(place: { id?: string; name: string; lat?: number | null; lng?: number | null }) {
     setLat(String(place.lat ?? ''));
     setLng(String(place.lng ?? ''));
@@ -201,7 +223,9 @@ export function LocationCheckSheet({
     setSelectedPlaceId(place.id ?? null);
     // After picking from the map, drop into list mode so the user can
     // confirm the pre-filled coordinates and hit "Check location".
-    setViewMode('list');
+    // Use a session override (not preferredMode) so the persisted preference
+    // is unaffected — "Check another" will restore it.
+    setSessionOverride('list');
   }
 
   async function handleCheck() {
@@ -231,7 +255,9 @@ export function LocationCheckSheet({
     setLng('');
     setSelectedPlaceName(null);
     setSelectedPlaceId(null);
-    setViewMode(canShowMap ? 'map' : 'list');
+    // Clear the session override so viewMode falls back to the persisted
+    // preference (or 'list' when the map is unavailable).
+    setSessionOverride(null);
   }
 
   return (
@@ -248,7 +274,7 @@ export function LocationCheckSheet({
         <View style={styles.viewModeToggle}>
           <Pressable
             style={[styles.viewModeBtn, viewMode === 'map' && styles.viewModeBtnActive]}
-            onPress={() => setViewMode('map')}
+            onPress={() => { setPreferredMode('map'); setSessionOverride(null); saveViewMode(AsyncStorage, tripId, 'map'); }}
             accessibilityRole="tab"
             accessibilityState={{ selected: viewMode === 'map' }}
             accessibilityLabel="Map view"
@@ -260,7 +286,7 @@ export function LocationCheckSheet({
           </Pressable>
           <Pressable
             style={[styles.viewModeBtn, viewMode === 'list' && styles.viewModeBtnActive]}
-            onPress={() => setViewMode('list')}
+            onPress={() => { setPreferredMode('list'); setSessionOverride(null); saveViewMode(AsyncStorage, tripId, 'list'); }}
             accessibilityRole="tab"
             accessibilityState={{ selected: viewMode === 'list' }}
             accessibilityLabel="List view"
