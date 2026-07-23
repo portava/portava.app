@@ -49,7 +49,8 @@ import {
   Mail,
 } from 'lucide-react-native';
 
-import { signIn, signUp, requestPasswordReset, lookupUsernameByEmail } from '../../src/services/auth';
+import { signIn, signUp, requestPasswordReset, lookupUsernameByEmail, ensureProfile } from '../../src/services/auth';
+import { signInWithApple, signInWithGoogle } from '../../src/services/ssoAuth';
 import { getMyProfile } from '../../src/services/profile';
 import { useSession } from '../../src/context/SessionContext';
 import { isSupabaseConfigured } from '../../src/lib/supabase';
@@ -173,6 +174,7 @@ export default function SignIn() {
   const [password,     setPassword]     = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [busy,         setBusy]         = useState(false);
+  const [oauthBusy,    setOauthBusy]    = useState<'apple' | 'google' | null>(null);
   const [error,        setError]        = useState<string | null>(null);
   const [notice,       setNotice]       = useState<string | null>(null);
 
@@ -190,10 +192,11 @@ export default function SignIn() {
   const resumeTimer   = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const rotationTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  // ── Existing redirect effect (UNCHANGED) ───────────────────────────────────
+  // ── Redirect once authenticated (suppressed during any in-flight SSO request
+  //    so the handler can make onboarding/tabs routing decisions itself) ───────
   useEffect(() => {
-    if (isAuthed && !busy) router.replace('/(tabs)');
-  }, [isAuthed, busy]);
+    if (isAuthed && !busy && !oauthBusy) router.replace('/(tabs)');
+  }, [isAuthed, busy, oauthBusy]);
 
   // ── Background rotation ─────────────────────────────────────────────────────
   const scheduleNextRef = useRef<(() => void) | undefined>(undefined);
@@ -313,6 +316,78 @@ export default function SignIn() {
     }
   }
 
+  // ── OAuth handlers ──────────────────────────────────────────────────────────
+
+  /**
+   * Post-SSO routing helper — shared by Apple and Google handlers.
+   * Calls ensureProfile (non-fatal) then routes to onboarding or tabs.
+   */
+  async function _finishSSOSignIn(
+    userId: string,
+    email: string,
+    displayName: string | undefined,
+  ) {
+    try {
+      await ensureProfile(userId, email, { name: displayName });
+    } catch {
+      // Non-fatal: profile row may already exist, or SessionContext will recover.
+    }
+    try {
+      const profileRes = await getMyProfile();
+      if (
+        profileRes.ok &&
+        profileRes.data &&
+        (!profileRes.data.displayName || !profileRes.data.username)
+      ) {
+        router.replace('/(auth)/onboarding');
+        return;
+      }
+    } catch {
+      // Non-fatal: if the check fails, proceed to tabs normally.
+    }
+    router.replace('/(tabs)');
+  }
+
+  async function handleAppleSignIn() {
+    if (busy || oauthBusy) return;
+    setError(null);
+    setNotice(null);
+    setOauthBusy('apple');
+    try {
+      const result = await signInWithApple();
+      if (result.cancelled) return;   // user dismissed — silent
+      if (!result.userId || result.error) {
+        setError(result.error ?? 'Apple sign-in failed. Please try again.');
+        return;
+      }
+      await _finishSSOSignIn(result.userId, result.email ?? '', result.displayName);
+    } catch (e: any) {
+      setError(e?.message ?? 'Apple sign-in failed. Please try again.');
+    } finally {
+      setOauthBusy(null);
+    }
+  }
+
+  async function handleGoogleSignIn() {
+    if (busy || oauthBusy) return;
+    setError(null);
+    setNotice(null);
+    setOauthBusy('google');
+    try {
+      const result = await signInWithGoogle();
+      if (result.cancelled) return;   // user dismissed — silent
+      if (!result.userId || result.error) {
+        setError(result.error ?? 'Google sign-in failed. Please try again.');
+        return;
+      }
+      await _finishSSOSignIn(result.userId, result.email ?? '', result.displayName);
+    } catch (e: any) {
+      setError(e?.message ?? 'Google sign-in failed. Please try again.');
+    } finally {
+      setOauthBusy(null);
+    }
+  }
+
   const isForgot    = mode === 'forgot-password' || mode === 'forgot-username';
   const isSignin    = mode === 'signin';
 
@@ -423,30 +498,39 @@ export default function SignIn() {
             {/* Social buttons — signin only */}
             {isSignin && (
               <>
-                {/* Apple sign-in */}
-                {/* TODO: Wire to real Apple OAuth once expo-apple-authentication is added */}
-                <Pressable
-                  style={s.socialBtn}
-                  onPress={() => Alert.alert('Coming soon', 'Apple sign-in will be available in a future update.')}
-                  accessibilityRole="button"
-                  accessibilityLabel="Continue with Apple"
-                >
-                  <Ionicons name="logo-apple" size={20} color="#000" />
-                  <Text style={s.socialBtnText}>Continue with Apple</Text>
-                </Pressable>
+                {/* Apple sign-in — iOS only
+                    Android: Apple web OAuth not implemented; button hidden.
+                    See completion report for why and how to add it later. */}
+                {Platform.OS === 'ios' && (
+                  <Pressable
+                    style={[s.socialBtn, (busy || !!oauthBusy) && s.socialBtnDisabled]}
+                    onPress={handleAppleSignIn}
+                    disabled={busy || !!oauthBusy}
+                    accessibilityRole="button"
+                    accessibilityLabel="Continue with Apple"
+                    accessibilityState={{ busy: oauthBusy === 'apple' }}
+                  >
+                    {oauthBusy === 'apple'
+                      ? <ActivityIndicator size="small" color="#000" style={{ width: 20 }} />
+                      : <Ionicons name="logo-apple" size={20} color="#000" />
+                    }
+                    <Text style={s.socialBtnText}>Continue with Apple</Text>
+                  </Pressable>
+                )}
 
-                {/* Google sign-in */}
-                {/* TODO: Wire to real Google OAuth once expo-auth-session/Google is configured */}
+                {/* Google sign-in — iOS and Android */}
                 <Pressable
-                  style={s.socialBtn}
-                  onPress={() => Alert.alert('Coming soon', 'Google sign-in will be available in a future update.')}
+                  style={[s.socialBtn, (busy || !!oauthBusy) && s.socialBtnDisabled]}
+                  onPress={handleGoogleSignIn}
+                  disabled={busy || !!oauthBusy}
                   accessibilityRole="button"
                   accessibilityLabel="Continue with Google"
+                  accessibilityState={{ busy: oauthBusy === 'google' }}
                 >
-                  {/* Custom G mark approximating the Google logo colours */}
-                  <View style={s.googleG}>
-                    <Text style={s.googleGText}>G</Text>
-                  </View>
+                  {oauthBusy === 'google'
+                    ? <ActivityIndicator size="small" color="#4285F4" style={{ width: 20, height: 20 }} />
+                    : <View style={s.googleG}><Text style={s.googleGText}>G</Text></View>
+                  }
                   <Text style={s.socialBtnText}>Continue with Google</Text>
                 </Pressable>
 
@@ -559,7 +643,7 @@ export default function SignIn() {
               /* Gradient Sign In button */
               <Pressable
                 onPress={submit}
-                disabled={busy}
+                disabled={busy || !!oauthBusy}
                 style={{ borderRadius: 14, overflow: 'hidden', marginTop: 4 }}
                 accessibilityRole="button"
                 accessibilityLabel="Sign In"
@@ -581,13 +665,13 @@ export default function SignIn() {
             ) : (
               /* Plain dark CTA for signup / forgot flows */
               <Pressable
-                style={[s.darkBtn, busy && { opacity: 0.7 }]}
+                style={[s.darkBtn, (busy || !!oauthBusy) && { opacity: 0.7 }]}
                 onPress={
                   mode === 'forgot-password' ? sendPasswordReset
                   : mode === 'forgot-username' ? lookupUsername
                   : submit
                 }
-                disabled={busy}
+                disabled={busy || !!oauthBusy}
                 accessibilityRole="button"
               >
                 {busy
@@ -770,6 +854,9 @@ const s = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 12,
     paddingVertical: 13,
+  },
+  socialBtnDisabled: {
+    opacity: 0.55,
   },
   socialBtnText: {
     fontSize: 15,
