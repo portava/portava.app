@@ -18,10 +18,12 @@
       "bundleIdentifier": "com.passporttravelbuddy.app",
       "buildNumber": "2",
       "associatedDomains": [
+        "applinks:df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev",
         "applinks:df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev"
       ],
       "infoPlist": {
         "LSApplicationQueriesSchemes": [
+          "travelbuddy",
           "travelbuddy"
         ],
         "NSCalendarsUsageDescription": "Travel Buddy adds confirmed meetups to your calendar so you never miss a plan.",
@@ -30,7 +32,8 @@
         "NSCameraUsageDescription": "Travel Buddy uses your camera for video calls and so you can add photos to posts and your passport.",
         "NSPhotoLibraryUsageDescription": "Travel Buddy accesses your photo library so you can upload trip photos and profile pictures.",
         "NSMicrophoneUsageDescription": "Travel Buddy uses your microphone for voice and video calls with your travel contacts, and for video content attached to posts.",
-        "NSUserNotificationsUsageDescription": "Travel Buddy sends notifications for trip invites, messages, and travel reminders."
+        "NSUserNotificationsUsageDescription": "Travel Buddy sends notifications for trip invites, messages, and travel reminders.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -119,8 +122,7 @@
       ],
       "expo-dev-client",
       "@maplibre/maplibre-react-native",
-      "@livekit/react-native-expo-plugin",
-      "./plugins/withPortavaNSE"
+      "@livekit/react-native-expo-plugin"
     ],
     "experiments": {
       "typedRoutes": true,
