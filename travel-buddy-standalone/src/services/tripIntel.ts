@@ -265,7 +265,11 @@ export async function listReservations(tripId: string, status?: string): Promise
   }
 }
 
-export async function importReservations(tripId: string, text: string): Promise<{
+export async function importReservations(
+  tripId: string,
+  text: string,
+  signal?: AbortSignal,
+): Promise<{
   reservations: TripReservation[];
   error?: string;
 } | null> {
@@ -274,10 +278,12 @@ export async function importReservations(tripId: string, text: string): Promise<
     const res = await authedFetch(`${apiBase()}/api/trips/${tripId}/reservations/import`, {
       method: 'POST',
       body: JSON.stringify({ text }),
+      signal,
     });
     if (!res.ok) return null;
     return await res.json();
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') throw err;
     return null;
   }
 }

@@ -271,6 +271,7 @@ export function ImportSheet({
   const [loading, setLoading] = useState(false);
   const [extractionError, setExtractionError] = useState<string | null>(null);
   const [rows, setRows] = useState<DraftRow[]>([]);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Reset on open
   useEffect(() => {
@@ -283,11 +284,28 @@ export function ImportSheet({
     }
   }, [visible]);
 
+  function handleCancel() {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    setLoading(false);
+  }
+
   async function handleImport() {
     if (!text.trim()) return;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     setLoading(true);
     setExtractionError(null);
-    const result = await importReservations(tripId, text.trim());
+    let result: Awaited<ReturnType<typeof importReservations>>;
+    try {
+      result = await importReservations(tripId, text.trim(), controller.signal);
+    } catch {
+      // AbortError — user cancelled; text is preserved, just stop loading
+      abortControllerRef.current = null;
+      setLoading(false);
+      return;
+    }
+    abortControllerRef.current = null;
     setLoading(false);
     if (!result) {
       setExtractionError('Could not reach the server. Check your connection and try again.');
@@ -379,17 +397,32 @@ export function ImportSheet({
                   <Text style={sh.errorText}>{extractionError}</Text>
                 </View>
               ) : null}
-              <Pressable
-                style={[sh.submitBtn, (!text.trim() || loading) && { opacity: 0.5 }]}
-                onPress={handleImport}
-                disabled={!text.trim() || loading}
-                testID="extract-button"
-              >
-                {loading
-                  ? <ActivityIndicator size="small" color={color.onInk} />
-                  : <ClipboardPaste size={16} color={color.onInk} />}
-                <Text style={sh.submitText}>{loading ? 'Extracting…' : 'Extract reservations'}</Text>
-              </Pressable>
+              {loading ? (
+                <View style={sh.extractingRow}>
+                  <View style={[sh.submitBtn, sh.extractingBtn]}>
+                    <ActivityIndicator size="small" color={color.onInk} />
+                    <Text style={sh.submitText}>Extracting…</Text>
+                  </View>
+                  <Pressable
+                    style={sh.cancelBtn}
+                    onPress={handleCancel}
+                    testID="cancel-extract-button"
+                  >
+                    <X size={14} color={color.mute} />
+                    <Text style={sh.cancelBtnText}>Cancel</Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <Pressable
+                  style={[sh.submitBtn, !text.trim() && { opacity: 0.5 }]}
+                  onPress={handleImport}
+                  disabled={!text.trim()}
+                  testID="extract-button"
+                >
+                  <ClipboardPaste size={16} color={color.onInk} />
+                  <Text style={sh.submitText}>Extract reservations</Text>
+                </Pressable>
+              )}
             </View>
           ) : (
             <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: space.xl }}>
@@ -722,6 +755,25 @@ const sh = StyleSheet.create({
     paddingVertical: space.md,
   },
   submitText: { ...t.bodyStrong, color: color.onInk },
+  extractingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  extractingBtn: {
+    flex: 1,
+  },
+  cancelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: space.md,
+    paddingHorizontal: space.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: color.haze,
+  },
+  cancelBtnText: { ...t.body, color: color.mute },
   allDoneBox: {
     alignItems: 'center',
     gap: space.md,
