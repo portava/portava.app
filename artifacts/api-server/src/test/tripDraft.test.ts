@@ -125,6 +125,25 @@ const FENCED_DRAFT =
   }) +
   "\n```";
 
+const MULTI_CITY_DRAFT =
+  "```json\n" +
+  JSON.stringify({
+    draft: {
+      title: "Japan trip",
+      destinationCity: "Tokyo",
+      destinationCountry: "Japan",
+      destinations: [
+        { city: "Tokyo", country: "Japan" },
+        { city: "Kyoto", country: "Japan" },
+        { city: "Osaka", country: "Japan" },
+      ],
+      startDate: "2026-10-01",
+      endDate: "2026-10-21",
+      vibe: "culture and food",
+    },
+  }) +
+  "\n```";
+
 // ── Server setup (router mounted directly; index.ts is not edited) ────────────
 
 let app: Express;
@@ -203,6 +222,27 @@ describe("POST /trips/draft-from-text", () => {
     assert.ok(userMsg.content.includes(text));
     assert.equal(sent.model, "gpt-5-mini");
     assert.equal(sent.temperature, 0);
+  });
+
+  it("extracts a destinations[] array for multi-city trips", async () => {
+    const { client, insertCalls } = makeFakeClient(flagOn(true));
+    _setTestClient(client, true);
+    _setTestOpenAI(makeOpenAIMock(MULTI_CITY_DRAFT));
+
+    const text = "Three weeks in Japan — Tokyo then Kyoto then Osaka, October 1–21 2026";
+    const r = await draftFromText({ text });
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.confirmed, false);
+    assert.ok(Array.isArray(r.body.draft.destinations), "destinations must be an array");
+    assert.equal(r.body.draft.destinations.length, 3);
+    assert.equal(r.body.draft.destinations[0].city, "Tokyo");
+    assert.equal(r.body.draft.destinations[1].city, "Kyoto");
+    assert.equal(r.body.draft.destinations[2].city, "Osaka");
+    assert.equal(r.body.draft.destinationCity, "Tokyo");
+    assert.equal(r.body.draft.startDate, "2026-10-01");
+    assert.equal(r.body.draft.endDate, "2026-10-21");
+    assert.equal(insertCalls.length, 0, "draft extraction must NEVER insert anything");
   });
 
   it("is gated by the nl_trip_creation_enabled flag", async () => {

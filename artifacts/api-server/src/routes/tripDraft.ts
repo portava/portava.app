@@ -29,17 +29,24 @@ Rules — follow ALL of them:
 - Extract ONLY facts literally present in the text. NEVER invent, infer, or guess values (no made-up dates, cities, or durations). Omit any field that is not explicitly stated.
 - Dates must be ISO 8601 (YYYY-MM-DD). durationDays is a whole number of days ONLY when the text states a duration.
 - vibe is a short phrase describing the stated mood/style of the trip; notes captures other stated details.
+- Multi-city: if the text describes two or more distinct cities or stops, populate "destinations" as an ordered array of {city, country} objects (one per stop). Also set destinationCity/destinationCountry to the first stop. If only one city is mentioned, omit "destinations" and use only destinationCity/destinationCountry.
 
 Return ONLY valid JSON with this exact shape and nothing else — no prose, no fences:
-{"draft":{"title":"...","destinationCity":"...","destinationCountry":"...","startDate":"YYYY-MM-DD","endDate":"YYYY-MM-DD","durationDays":0,"vibe":"...","notes":"..."}}
+{"draft":{"title":"...","destinationCity":"...","destinationCountry":"...","destinations":[{"city":"...","country":"..."}],"startDate":"YYYY-MM-DD","endDate":"YYYY-MM-DD","durationDays":0,"vibe":"...","notes":"..."}}
 Omit unknown fields. If nothing usable is present, return {"draft":{}}.`;
 
 const clamped = (max: number) => z.string().transform((s) => s.slice(0, max));
+
+const DestinationItemSchema = z.object({
+  city:    clamped(120),
+  country: clamped(120).optional(),
+});
 
 const DraftSchema = z.object({
   title:              clamped(200).optional(),
   destinationCity:    clamped(120).optional(),
   destinationCountry: clamped(120).optional(),
+  destinations:       z.array(DestinationItemSchema).max(20).optional(),
   startDate:          clamped(10).optional(),
   endDate:            clamped(10).optional(),
   durationDays:       z
