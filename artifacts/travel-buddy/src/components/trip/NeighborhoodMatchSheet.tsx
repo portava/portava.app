@@ -16,9 +16,11 @@ import {
   ActivityIndicator,
   TextInput,
   Alert,
+  Platform,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
-import { X, MapPin, Star, AlertTriangle, Check } from 'lucide-react-native';
+import { X, MapPin, Star, AlertTriangle, Check, Map, List } from 'lucide-react-native';
+import { LocationCheckMapPicker } from './LocationCheckMapPicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import {
@@ -178,17 +180,26 @@ export function LocationCheckSheet({
   const [lat, setLat] = useState('');
   const [lng, setLng] = useState('');
   const [selectedPlaceName, setSelectedPlaceName] = useState<string | null>(null);
+  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [verdict, setVerdict] = useState<LocationVerdict | null>(null);
+  const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
 
   const { places, loading: placesLoading } = useTripSavedPlaces(tripId);
   // Only show places that have coordinates
   const geoPlaces = places.filter((p) => p.lat != null && p.lng != null);
 
-  function handleSelectPlace(place: { name: string; lat?: number | null; lng?: number | null }) {
+  // Show the map toggle only on native where MapLibre is available.
+  const canShowMap = Platform.OS !== 'web' && geoPlaces.length > 0;
+
+  function handleSelectPlace(place: { id?: string; name: string; lat?: number | null; lng?: number | null }) {
     setLat(String(place.lat ?? ''));
     setLng(String(place.lng ?? ''));
     setSelectedPlaceName(place.name);
+    setSelectedPlaceId(place.id ?? null);
+    // After picking from the map, drop into list mode so the user can
+    // confirm the pre-filled coordinates and hit "Check location".
+    setViewMode('list');
   }
 
   async function handleCheck() {
@@ -217,6 +228,8 @@ export function LocationCheckSheet({
     setLat('');
     setLng('');
     setSelectedPlaceName(null);
+    setSelectedPlaceId(null);
+    setViewMode(canShowMap ? 'map' : 'list');
   }
 
   return (
@@ -227,6 +240,36 @@ export function LocationCheckSheet({
           <X size={20} color={color.mute} />
         </Pressable>
       </View>
+
+      {/* ── Map / List toggle (only when geo places exist on native) ── */}
+      {!verdict && canShowMap && (
+        <View style={styles.viewModeToggle}>
+          <Pressable
+            style={[styles.viewModeBtn, viewMode === 'map' && styles.viewModeBtnActive]}
+            onPress={() => setViewMode('map')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: viewMode === 'map' }}
+            accessibilityLabel="Map view"
+          >
+            <Map size={14} color={viewMode === 'map' ? color.onInk : color.mute} />
+            <Text style={[styles.viewModeBtnText, viewMode === 'map' && styles.viewModeBtnTextActive]}>
+              Map
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.viewModeBtn, viewMode === 'list' && styles.viewModeBtnActive]}
+            onPress={() => setViewMode('list')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: viewMode === 'list' }}
+            accessibilityLabel="List view"
+          >
+            <List size={14} color={viewMode === 'list' ? color.onInk : color.mute} />
+            <Text style={[styles.viewModeBtnText, viewMode === 'list' && styles.viewModeBtnTextActive]}>
+              List
+            </Text>
+          </Pressable>
+        </View>
+      )}
 
       {verdict ? (
         <View style={styles.verdictCard}>
@@ -295,7 +338,28 @@ export function LocationCheckSheet({
             <Text style={styles.locationCheckBtnText}>Check another</Text>
           </Pressable>
         </View>
+      ) : canShowMap && viewMode === 'map' ? (
+        /* ── Map picker view ── */
+        <View style={styles.mapPickerSection}>
+          {placesLoading ? (
+            <View style={styles.mapPickerContainer}>
+              <ActivityIndicator size="small" color={color.signal} />
+            </View>
+          ) : (
+            <View style={styles.mapPickerContainer}>
+              <LocationCheckMapPicker
+                places={geoPlaces}
+                selectedId={selectedPlaceId}
+                onSelect={handleSelectPlace}
+              />
+            </View>
+          )}
+          <Text style={styles.mapPickerHint}>
+            Tap a pin, then "Use this location" to pre-fill coordinates.
+          </Text>
+        </View>
       ) : (
+        /* ── List + manual entry view ── */
         <ScrollView showsVerticalScrollIndicator={false}>
           {/* ── Saved places picker ── */}
           {placesLoading ? (
@@ -348,7 +412,7 @@ export function LocationCheckSheet({
               <Text style={styles.selectedPlacePillText} numberOfLines={1}>{selectedPlaceName}</Text>
               <Pressable
                 hitSlop={8}
-                onPress={() => setSelectedPlaceName(null)}
+                onPress={() => { setSelectedPlaceName(null); setSelectedPlaceId(null); }}
                 accessibilityLabel="Clear selected place"
               >
                 <X size={13} color={color.mute} />
@@ -362,7 +426,7 @@ export function LocationCheckSheet({
               placeholderTextColor={color.faint}
               keyboardType="decimal-pad"
               value={lat}
-              onChangeText={(v) => { setLat(v); setSelectedPlaceName(null); }}
+              onChangeText={(v) => { setLat(v); setSelectedPlaceName(null); setSelectedPlaceId(null); }}
               accessibilityLabel="Latitude"
             />
             <TextInput
@@ -371,7 +435,7 @@ export function LocationCheckSheet({
               placeholderTextColor={color.faint}
               keyboardType="decimal-pad"
               value={lng}
-              onChangeText={(v) => { setLng(v); setSelectedPlaceName(null); }}
+              onChangeText={(v) => { setLng(v); setSelectedPlaceName(null); setSelectedPlaceId(null); }}
               accessibilityLabel="Longitude"
             />
           </View>
@@ -889,6 +953,53 @@ const styles = StyleSheet.create({
     ...t.small,
     color: color.ink,
     fontWeight: '700',
+  },
+  // View mode toggle (Map / List)
+  viewModeToggle: {
+    flexDirection: 'row',
+    backgroundColor: color.haze,
+    borderRadius: radius.sm,
+    padding: 3,
+    marginBottom: space.md,
+    alignSelf: 'center',
+  },
+  viewModeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: space.lg,
+    paddingVertical: 6,
+    borderRadius: radius.sm - 2,
+  },
+  viewModeBtnActive: {
+    backgroundColor: color.signal,
+  },
+  viewModeBtnText: {
+    ...t.small,
+    fontWeight: '600',
+    color: color.mute,
+    fontSize: 13,
+  },
+  viewModeBtnTextActive: {
+    color: color.onInk,
+  },
+  // Map picker section
+  mapPickerSection: {
+    flex: 1,
+    gap: space.sm,
+  },
+  mapPickerContainer: {
+    flex: 1,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+    marginHorizontal: -space.lg,
+    minHeight: 240,
+  },
+  mapPickerHint: {
+    ...t.small,
+    fontSize: 11,
+    color: color.faint,
+    textAlign: 'center',
   },
   // Saved places picker (inside LocationCheckSheet)
   savedPlacesSection: {
