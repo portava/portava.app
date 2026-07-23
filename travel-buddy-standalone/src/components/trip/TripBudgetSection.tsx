@@ -517,7 +517,16 @@ export function TripBudgetSection({ tripId, isOwnerOrCohost, isOwner }: TripBudg
   }
 
   async function handleSaveBreakdown(breakdown: Record<string, number>) {
-    const updated = await updateManualBudget(tripId, { breakdown });
+    const sum = Object.values(breakdown).reduce((acc, v) => acc + v, 0);
+    const currentTotal = budget?.totalBudget ?? null;
+    const data: Parameters<typeof updateManualBudget>[1] = { breakdown };
+    // Auto-fill totalBudget from the category sum when it differs from the
+    // current value (or when no total has been set yet), so owners don't have
+    // to type it twice.
+    if (sum > 0 && sum !== currentTotal) {
+      data.totalBudget = sum;
+    }
+    const updated = await updateManualBudget(tripId, data);
     if (updated) setBudget(updated);
   }
 
