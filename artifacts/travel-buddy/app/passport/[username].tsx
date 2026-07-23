@@ -11,6 +11,7 @@ import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, MoreVertical } from 'lucide-react-native';
 import { getPublicProfile, getPublicPostcards } from '../../src/services/profile';
+import { getPublicShowcase, type ShowcaseStamp } from '../../src/services/stampShowcase';
 import { blockUser } from '../../src/services/blocks';
 import { submitReport, type ReportReason } from '../../src/services/reports';
 import { useSession } from '../../src/context/SessionContext';
@@ -30,6 +31,7 @@ import { PP, PP_LABEL } from '../../src/theme/passportTokens';
 import { resolveAvailabilityChip } from '../../src/lib/availabilityChip';
 
 // New passport design components
+import { PublicStampShowcaseSection } from '../../src/components/stamps/PublicStampShowcaseSection';
 import { PassportIdentityCard, PassportStatsRow } from '../../src/components/passport/PassportIdentityCard';
 import { PassportDivider } from '../../src/components/passport/PassportDivider';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
@@ -115,6 +117,7 @@ export default function PassportDeepLinkScreen() {
   const isOwner = !!profile && !!viewerUserId && profile.id === viewerUserId;
   const follow = useFollow(profile?.id ?? null);
   const ringState = useHighlightRingState(profile?.id ?? null);
+  const [showcaseItems, setShowcaseItems] = useState<ShowcaseStamp[] | null>(null);
   const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
   const [tab, setTab] = useState<PassportTabKey>('postcards');
   const [statsIconOnly, setStatsIconOnly] = useState(false);
@@ -134,6 +137,20 @@ export default function PassportDeepLinkScreen() {
         showHomeCity: !!(profile.homeCity),
       })
     : null;
+
+  // Fetch the public showcase after profile is resolved.
+  // Reset to null immediately so switching between users never shows stale stamps.
+  useEffect(() => {
+    if (!profile || !username) return;
+    let alive = true;
+    setShowcaseItems(null);
+    getPublicShowcase(username).then((items) => {
+      if (alive) setShowcaseItems(items);
+    }).catch(() => {
+      if (alive) setShowcaseItems(null);
+    });
+    return () => { alive = false; };
+  }, [profile, username]);
 
   const handleScroll = useCallback((e: any) => {
     navBarScrollHandler(e);
@@ -334,6 +351,16 @@ export default function PassportDeepLinkScreen() {
           }}
           iconOnly={statsIconOnly}
         />
+
+        {/* ── Featured stamps showcase (public, read-only) ── */}
+        {showcaseItems && showcaseItems.length > 0 && (
+          <PublicStampShowcaseSection
+            items={showcaseItems}
+            onPress={(item) => {
+              router.push(`/stamp/${item.userStampId}` as any);
+            }}
+          />
+        )}
 
         {/* ── Document-style tab bar — order from owner's saved preference ── */}
         {(() => {
