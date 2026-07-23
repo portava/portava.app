@@ -256,7 +256,7 @@ router.get("/trips/:id/reviews", asyncHandler(async (req, res) => {
 
   const { data: reviews, error } = await sc
     .from("reviews")
-    .select("id, rating, body, tags, visibility, created_at, reviewer_id, profiles!reviewer_id(handle, display_name, avatar_url)")
+    .select("id, rating, body, tags, visibility, created_at, reviewer_id, profiles!reviewer_id(handle, display_name, avatar_url, verification_level)")
     .eq("entity_type", "trip")
     .eq("entity_id", id)
     .eq("state", "published")
@@ -297,12 +297,13 @@ router.get("/trips/:id/reviews", asyncHandler(async (req, res) => {
       anonymous:  r.visibility === "anonymous",
       createdAt:  r.created_at,
       reviewer:   r.visibility === "anonymous" ? null : {
-        id:          r.reviewer_id,
-        handle:      r.profiles?.handle ?? null,
-        displayName: (r.reviewer_id === auth.user.id || allowedNames.has(r.reviewer_id))
+        id:              r.reviewer_id,
+        handle:          r.profiles?.handle ?? null,
+        displayName:     (r.reviewer_id === auth.user.id || allowedNames.has(r.reviewer_id))
           ? (r.profiles?.display_name ?? null)
           : null,
-        avatarUrl:   r.profiles?.avatar_url ?? null,
+        avatarUrl:       r.profiles?.avatar_url ?? null,
+        verificationLevel: r.profiles?.verification_level ?? null,
       },
     })),
     avgRating,
@@ -332,7 +333,7 @@ router.get("/places/:id/reviews", asyncHandler(async (req, res) => {
 
   const { data: reviews, error } = await sc
     .from("reviews")
-    .select("id, rating, body, tags, visibility, created_at, reviewer_id, profiles!reviewer_id(handle, display_name, avatar_url)")
+    .select("id, rating, body, tags, visibility, created_at, reviewer_id, profiles!reviewer_id(handle, display_name, avatar_url, verification_level)")
     .eq("entity_type", "place")
     .eq("entity_id", id)
     .eq("state", "published")
@@ -372,12 +373,13 @@ router.get("/places/:id/reviews", asyncHandler(async (req, res) => {
       anonymous:  r.visibility === "anonymous",
       createdAt:  r.created_at,
       reviewer:   r.visibility === "anonymous" ? null : {
-        id:          r.reviewer_id,
-        handle:      r.profiles?.handle ?? null,
-        displayName: ((viewerId && r.reviewer_id === viewerId) || allowedNames.has(r.reviewer_id))
+        id:              r.reviewer_id,
+        handle:          r.profiles?.handle ?? null,
+        displayName:     ((viewerId && r.reviewer_id === viewerId) || allowedNames.has(r.reviewer_id))
           ? (r.profiles?.display_name ?? null)
           : null,
-        avatarUrl:   r.profiles?.avatar_url ?? null,
+        avatarUrl:       r.profiles?.avatar_url ?? null,
+        verificationLevel: r.profiles?.verification_level ?? null,
       },
     })),
     avgRating,
@@ -430,7 +432,7 @@ router.get("/users/:id/reviews", asyncHandler(async (req, res) => {
   const [tripReviewsRes, eventReviewsRes] = await Promise.all([
     // All trip reviews for aggregate
     tripIds.length > 0
-      ? sc.from("reviews").select("id, rating, body, tags, visibility, entity_type, entity_id, created_at, reviewer_id, profiles!reviewer_id(handle, display_name, avatar_url)")
+      ? sc.from("reviews").select("id, rating, body, tags, visibility, entity_type, entity_id, created_at, reviewer_id, profiles!reviewer_id(handle, display_name, avatar_url, verification_level)")
           .or(tripOrParts.join(","))
           .eq("state", "published")
           .order("created_at", { ascending: false })
@@ -438,7 +440,7 @@ router.get("/users/:id/reviews", asyncHandler(async (req, res) => {
 
     // All event reviews from legacy event_reviews table
     eventIds.length > 0
-      ? sc.from("event_reviews").select("id, rating, body, anonymous, event_id, reviewer_id, created_at, profiles!reviewer_id(handle, display_name, avatar_url)")
+      ? sc.from("event_reviews").select("id, rating, body, anonymous, event_id, reviewer_id, created_at, profiles!reviewer_id(handle, display_name, avatar_url, verification_level)")
           .in("event_id", eventIds)
           .order("created_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
@@ -486,10 +488,11 @@ router.get("/users/:id/reviews", asyncHandler(async (req, res) => {
       anonymous:  r.visibility === "anonymous",
       createdAt:  r.created_at as string,
       reviewer:   r.visibility === "anonymous" ? null : {
-        id:          r.reviewer_id,
-        handle:      r.profiles?.handle ?? null,
-        displayName: displayNameFor(r),
-        avatarUrl:   r.profiles?.avatar_url ?? null,
+        id:              r.reviewer_id,
+        handle:          r.profiles?.handle ?? null,
+        displayName:     displayNameFor(r),
+        avatarUrl:       r.profiles?.avatar_url ?? null,
+        verificationLevel: r.profiles?.verification_level ?? null,
       },
     })),
     ...eventRows.map((r: any) => ({
@@ -502,10 +505,11 @@ router.get("/users/:id/reviews", asyncHandler(async (req, res) => {
       anonymous:  r.anonymous ?? false,
       createdAt:  r.created_at as string,
       reviewer:   r.anonymous ? null : {
-        id:          r.reviewer_id,
-        handle:      r.profiles?.handle ?? null,
-        displayName: displayNameFor(r),
-        avatarUrl:   r.profiles?.avatar_url ?? null,
+        id:              r.reviewer_id,
+        handle:          r.profiles?.handle ?? null,
+        displayName:     displayNameFor(r),
+        avatarUrl:       r.profiles?.avatar_url ?? null,
+        verificationLevel: r.profiles?.verification_level ?? null,
       },
     })),
   ]

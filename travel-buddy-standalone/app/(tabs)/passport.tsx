@@ -558,6 +558,8 @@ function PassportContent({
         noSafetyFlags={noSafetyFlags}
         isOwner
         onPrivacySettings={() => openSettings('safety')}
+        verificationLevel={profile.verificationLevel ?? 'none'}
+        onGetVerified={() => router.push('/verification' as any)}
       />
       <View style={{ height: 24 }} />
     </>

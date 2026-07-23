@@ -25,6 +25,8 @@ export interface ReviewAuthor {
   handle: string | null;
   displayName: string | null;
   avatarUrl: string | null;
+  /** Populated when the API returns it (Phase V-2+); undefined for older response shapes. */
+  verificationLevel?: 'none' | 'id_verified' | 'id_selfie_verified' | null;
 }
 
 export interface Review {

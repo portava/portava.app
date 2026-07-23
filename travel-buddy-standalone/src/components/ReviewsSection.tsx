@@ -32,6 +32,7 @@ import {
   type ReviewEntityType,
 } from '../services/reviews.ts';
 import { useSession } from '../context/SessionContext.tsx';
+import { VerifiedBadge } from './VerifiedBadge.tsx';
 
 // ── Star display ──────────────────────────────────────────────────────────────
 
@@ -60,9 +61,14 @@ function ReviewCard({ review }: { review: Review }) {
         <Text style={s.reviewDate}>{new Date(review.createdAt).toLocaleDateString()}</Text>
       </View>
       {!review.anonymous && review.reviewer ? (
-        <Text style={s.reviewerName}>
-          {review.reviewer.displayName ?? review.reviewer.handle ?? 'Traveler'}
-        </Text>
+        <View style={s.reviewerRow}>
+          <Text style={s.reviewerName}>
+            {review.reviewer.displayName ?? review.reviewer.handle ?? 'Traveler'}
+          </Text>
+          {(review.reviewer.verificationLevel === 'id_verified' || review.reviewer.verificationLevel === 'id_selfie_verified')
+            ? <VerifiedBadge level={review.reviewer.verificationLevel} size={14} />
+            : null}
+        </View>
       ) : (
         <Text style={s.reviewerName}>Anonymous</Text>
       )}
@@ -330,7 +336,8 @@ const s = StyleSheet.create({
     marginBottom: 4,
   },
   reviewDate:   { fontSize: 11, color: '#9CA3AF' },
-  reviewerName: { fontSize: 12, fontWeight: '600', color: '#6B7280', marginBottom: 4 },
+  reviewerRow:  { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 },
+  reviewerName: { fontSize: 12, fontWeight: '600', color: '#6B7280' },
   reviewBody:   { fontSize: 13, color: '#374151', lineHeight: 18 },
 
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },

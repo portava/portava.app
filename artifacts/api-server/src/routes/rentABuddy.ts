@@ -259,7 +259,7 @@ const BUDDY_PUBLIC_COLUMNS =
   "cover_photo_url, gallery_urls, vibe_tags, safety_badges, buddy_level, category_approvals, " +
   "new_buddy_public_only, new_buddy_daytime_only, new_buddy_max_hours, max_group_size, " +
   "preferred_meetup_zones, availability_blocks, meetup_base_lat, meetup_base_lng, featured, available_now, cancel_count, no_show_count, " +
-  "favorites_count, created_at, updated_at";
+  "favorites_count, created_at, updated_at, profiles!user_id(verification_level)";
 
 function mapProfile(row: any) {
   if (!row) return null;
@@ -298,6 +298,7 @@ function mapProfile(row: any) {
     meetupBaseLng: typeof row.meetup_base_lng === "number" ? row.meetup_base_lng : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    verificationLevel: (row.profiles?.verification_level as string) ?? null,
   };
 }
 

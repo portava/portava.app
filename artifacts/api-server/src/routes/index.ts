@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import verificationRouter from "./verification.js";
 import devicesRouter from "./devices";
 import keyPackagesRouter from "./keyPackages";
 import healthRouter from "./health";
@@ -176,5 +177,6 @@ router.use(rankEventsRouter);
 router.use(callsRouter);
 router.use(devicesRouter);
 router.use(keyPackagesRouter);
+router.use(verificationRouter);
 
 export default router;

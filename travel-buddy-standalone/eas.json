@@ -6,14 +6,12 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "prebuildCommand": "bash ../../scripts/eas-install-rust.sh",
       "ios": {
         "resourceClass": "m-medium"
       }
     },
     "preview": {
       "distribution": "internal",
-      "prebuildCommand": "bash ../../scripts/eas-install-rust.sh",
       "ios": {
         "resourceClass": "m-medium"
       }

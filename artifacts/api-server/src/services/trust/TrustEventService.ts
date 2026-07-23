@@ -280,6 +280,9 @@ export const TRUST_EVENT_TYPES = {
   MUTUAL_REPORT:            { category: "community_value" as TrustCategory, delta: -3, severity: "minor" as TrustSeverity },
   // Local Guide / Hidden Gems
   GEM_VERIFIED_BY_GUIDE:    { category: "guide_accuracy" as TrustCategory,  delta: 4,  severity: "minor" as TrustSeverity },
+
+  /** Emitted when a user completes Portava Verified (id or id_selfie tier). */
+  IDENTITY_VERIFIED:        { category: "respect_safety" as TrustCategory,  delta: 10, severity: "minor" as TrustSeverity },
   GEM_DISPUTED:             { category: "guide_accuracy" as TrustCategory,  delta: -5, severity: "moderate" as TrustSeverity },
   // Passport
   STAMP_VERIFIED:           { category: "passport_authenticity" as TrustCategory, delta: 3,  severity: "minor" as TrustSeverity },

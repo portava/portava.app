@@ -5,6 +5,7 @@ import { Plane, MapPin, MoreHorizontal, Camera, ShieldCheck, Calendar } from 'lu
 import type { OwnProfile, PublicProfile } from '../types/models.ts';
 import { PassportMonogramWatermark, PassportInkStamp, PassportHeroBackdrop } from './PassportMarks.tsx';
 import { isTravelBuddyVerified, getVerificationOwnerPrompt } from '../lib/verification.ts';
+import { VerifiedBadge } from './VerifiedBadge.tsx';
 import { resolveAvatarUrl, fallbackInitials } from '../utils/identity.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
@@ -117,6 +118,8 @@ export function PassportHero({
   const avatarUrl = resolveAvatarUrl(profile.avatarUrl);
   const initials = fallbackInitials(profile);
   const isVerified = isTravelBuddyVerified(profile);
+  const newVL      = (profile.verificationLevel === 'id_verified' || profile.verificationLevel === 'id_selfie_verified')
+    ? profile.verificationLevel : null;
   const verificationStatus = 'verificationStatus' in profile ? profile.verificationStatus : undefined;
   const ownerPrompt = isOwner ? getVerificationOwnerPrompt(verificationStatus) : null;
 
@@ -202,6 +205,7 @@ export function PassportHero({
           <View style={styles.nameRow}>
             <Text style={styles.name} numberOfLines={2}>{resolvedName}</Text>
             {isVerified ? <InlineVerifiedStamp size={22} /> : null}
+            {newVL ? <VerifiedBadge level={newVL} size={20} /> : null}
           </View>
           {handleSubline ? <Text style={styles.handle}>{handleSubline}</Text> : null}
           {bio ? <Text style={styles.bio} numberOfLines={2}>{bio}</Text> : null}

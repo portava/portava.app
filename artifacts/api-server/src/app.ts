@@ -7,6 +7,7 @@ import { logger } from "./lib/logger";
 import { specAliasRewrite } from "./lib/specAliasRewrite";
 import { BOOT_HRTIME } from "./lib/bootTime";
 import { callsWebhookHandler, callsWebhookRawParser } from "./routes/callsWebhook";
+import { webhookHandler as verificationWebhookHandler, webhookRawParser as verificationWebhookRawParser } from "./routes/verification.js";
 
 const app: Express = express();
 
@@ -104,6 +105,10 @@ app.use(coldStartMiddleware);
 // LiveKit webhook needs the RAW body for signature verification — must be
 // registered BEFORE the global JSON parser consumes it.
 app.post("/api/calls/webhook", callsWebhookRawParser, callsWebhookHandler);
+
+// Identity-verification webhook: raw body for future real-provider signature verification.
+// Registered before the global JSON parser so the raw body is preserved.
+app.post("/api/verification/webhook", verificationWebhookRawParser, verificationWebhookHandler);
 
 // ── Body parsers ──────────────────────────────────────────────────────────────
 // Explicit 256 kb limit; the Express default is 100 kb but we make it

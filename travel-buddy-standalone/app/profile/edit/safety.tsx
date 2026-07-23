@@ -30,11 +30,13 @@ const VERIF_STATUS_LABEL: Record<OwnProfile['verificationStatus'], { label: stri
 };
 
 const LEVEL_LABEL: Record<NonNullable<OwnProfile['verificationLevel']>, string> = {
-  none: 'None',
-  basic_verified: 'Basic verified',
-  trusted_traveler: 'Trusted traveler',
-  host_verified: 'Host verified',
-  buddy_verified: 'Buddy verified',
+  none:               'None',
+  id_verified:        'ID Verified',
+  id_selfie_verified: 'ID + Selfie Verified',
+  basic_verified:     'Basic verified',
+  trusted_traveler:   'Trusted traveler',
+  host_verified:      'Host verified',
+  buddy_verified:     'Buddy verified',
 };
 
 function fmtDate(iso: string | null | undefined): string {
