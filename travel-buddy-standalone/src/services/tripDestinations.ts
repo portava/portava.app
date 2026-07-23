@@ -72,6 +72,16 @@ export async function addDestination(
   return res.json().catch(() => null) as Promise<TripDestination | null>;
 }
 
+export async function deleteDestination(tripId: string, destId: string): Promise<boolean> {
+  const token = await freshToken();
+  if (!token) return false;
+  const res = await fetch(`${apiBase()}/api/trips/${tripId}/destinations/${destId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return res.ok;
+}
+
 export async function reorderDestinations(tripId: string, order: string[]): Promise<boolean> {
   const token = await freshToken();
   if (!token) return false;

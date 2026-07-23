@@ -5,8 +5,9 @@
  * the `destinations` prop via the onChange callback and persists after trip creation.
  *
  * In EDIT mode (tripId provided): each add calls POST /api/trips/:id/destinations
- * immediately; reorder calls POST /api/trips/:id/destinations/reorder immediately.
- * Removed rows are hidden locally (no server DELETE endpoint exists yet).
+ * immediately; reorder calls POST /api/trips/:id/destinations/reorder immediately;
+ * remove calls DELETE /api/trips/:id/destinations/:destId immediately (rows with a
+ * server ID). Rows without an ID (not yet persisted) are hidden locally only.
  */
 import React, { useState, useCallback } from 'react';
 import {
@@ -19,7 +20,7 @@ import { CalendarDays, X } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { formatDisplayDate, fromISODate } from '../../lib/dateTime/formatters.ts';
 import type { Place } from '../../lib/location/placeTypes.ts';
-import { addDestination, reorderDestinations } from '../../services/tripDestinations.ts';
+import { addDestination, reorderDestinations, deleteDestination } from '../../services/tripDestinations.ts';
 
 export interface DestinationEntry {
   /** Local unique key — stable across re-renders. */
@@ -72,9 +73,23 @@ export function DestinationListEditor({ tripId, destinations, onChange }: Props)
   }, [destinations, onChange]);
 
   // ── Remove a row ─────────────────────────────────────────────────────────
-  const handleRemove = useCallback((key: string) => {
+  const handleRemove = useCallback(async (key: string) => {
+    const entry = destinations.find((d) => d.key === key);
+    if (!entry) return;
+
+    // In edit mode with a persisted server row: DELETE immediately, then hide.
+    if (tripId && entry.id) {
+      setBusyRow(key, true);
+      try {
+        await deleteDestination(tripId, entry.id);
+      } finally {
+        setBusyRow(key, false);
+      }
+    }
+
+    // Always hide locally (covers create mode and the optimistic edit-mode update).
     onChange(destinations.map((d) => d.key === key ? { ...d, removed: true } : d));
-  }, [destinations, onChange]);
+  }, [destinations, onChange, tripId]);
 
   // ── Place selected for a row ─────────────────────────────────────────────
   const handlePlaceSelect = useCallback(async (visibleIdx: number, place: Place) => {
@@ -235,19 +250,17 @@ export function DestinationListEditor({ tripId, destinations, onChange }: Props)
               )}
             </View>
 
-            {/* Remove button — hidden for existing server rows in edit mode:
-                no DELETE /destinations/:id endpoint exists yet. */}
-            {!isServerRow && (
-              <Pressable
-                onPress={() => handleRemove(entry.key)}
-                hitSlop={8}
-                accessibilityLabel={`Remove stop ${visIdx + 1}`}
-                style={({ pressed }) => [styles.removeBtn, pressed && { opacity: 0.6 }]}
-                testID={`remove-dest-${visIdx}`}
-              >
-                <Trash2 size={15} color={color.mute} />
-              </Pressable>
-            )}
+            {/* Remove button — always shown; in edit mode calls DELETE then hides. */}
+            <Pressable
+              onPress={() => handleRemove(entry.key)}
+              disabled={busyRows[entry.key] ?? false}
+              hitSlop={8}
+              accessibilityLabel={`Remove stop ${visIdx + 1}`}
+              style={({ pressed }) => [styles.removeBtn, pressed && { opacity: 0.6 }]}
+              testID={`remove-dest-${visIdx}`}
+            >
+              <Trash2 size={15} color={color.mute} />
+            </Pressable>
           </View>
         );
       })}
