@@ -121,15 +121,34 @@ async function loadPreviousSnapshotScore(sc: any, tripId: string): Promise<numbe
 /**
  * Persist today's score snapshot (upsert by trip_id + snapshot_date).
  * Best-effort: failures are swallowed so a snapshot write never breaks the response.
+ * Also prunes snapshot rows older than 30 days for this trip (same best-effort policy).
  */
 async function persistTodaySnapshot(sc: any, tripId: string, score: number): Promise<void> {
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const todayStr = nowIso.slice(0, 10);
+
   try {
     await sc
       .from("trip_readiness_snapshots")
       .upsert(
-        { trip_id: tripId, snapshot_date: todayUtc(), score, computed_at: new Date().toISOString() },
+        { trip_id: tripId, snapshot_date: todayStr, score, computed_at: nowIso },
         { onConflict: "trip_id,snapshot_date" },
       )
+      .then(undefined, () => {});
+  } catch {
+    // best-effort — never propagate
+  }
+
+  // Prune rows older than 30 days for this trip so the table doesn't grow unbounded.
+  // Only the most recent prior-day row is ever read; anything beyond ~30 days is dead weight.
+  try {
+    const cutoff = new Date(nowMs - 30 * 864e5).toISOString().slice(0, 10);
+    await sc
+      .from("trip_readiness_snapshots")
+      .delete()
+      .eq("trip_id", tripId)
+      .lt("snapshot_date", cutoff)
       .then(undefined, () => {});
   } catch {
     // best-effort — never propagate

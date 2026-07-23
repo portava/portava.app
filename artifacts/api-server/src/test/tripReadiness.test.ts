@@ -563,6 +563,44 @@ describe("trip readiness routes", () => {
     assert.equal(snap.score, r.body.score, "snapshot score must match the returned score");
   });
 
+  it("prunes snapshot rows older than 30 days on recompute, keeping recent ones", async () => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    // 31 days ago — must be deleted
+    const oldDate = new Date(Date.now() - 31 * 864e5).toISOString().slice(0, 10);
+    // 29 days ago — must be kept (within the 30-day window)
+    const recentDate = new Date(Date.now() - 29 * 864e5).toISOString().slice(0, 10);
+
+    const { client, db } = makeFakeClient({
+      trips: { rows: [baseTrip()] },
+      trip_members: { rows: [ownerMemberRow()] },
+      trip_readiness_snapshots: { rows: [
+        { id: "s-old",    trip_id: TRIP_ID, snapshot_date: oldDate,    score: 10,
+          computed_at: new Date(Date.now() - 31 * 864e5).toISOString() },
+        { id: "s-recent", trip_id: TRIP_ID, snapshot_date: recentDate, score: 40,
+          computed_at: new Date(Date.now() - 29 * 864e5).toISOString() },
+      ]},
+      feature_flags: flagOn(),
+    });
+    _setTestClient(client, true);
+
+    const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+    assert.equal(r.status, 200);
+
+    const snapRows = db.trip_readiness_snapshots.rows;
+    assert.ok(
+      !snapRows.some((s) => s.snapshot_date === oldDate),
+      "snapshot older than 30 days must be pruned",
+    );
+    assert.ok(
+      snapRows.some((s) => s.snapshot_date === recentDate),
+      "snapshot within 30 days must be kept",
+    );
+    assert.ok(
+      snapRows.some((s) => s.snapshot_date === todayStr),
+      "today's snapshot must still be written",
+    );
+  });
+
   it("reads previousScore from trip_readiness_snapshots on a same-day second recompute", async () => {
     // Simulate: yesterday's snapshot exists; items are fresh from today (same-day).
     // The first recompute already ran today and stored a snapshot. A second
