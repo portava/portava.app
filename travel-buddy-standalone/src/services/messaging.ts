@@ -113,6 +113,8 @@ export interface GroupThread {
   lastMessageAt: string | null;
   createdAt: string | null;
   memberAccess: 'active' | 'removed';
+  /** E-2: true when the thread has an active MLS E2EE session. */
+  is_e2ee?: boolean | null;
 }
 
 export interface Message {

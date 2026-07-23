@@ -5,6 +5,7 @@
  * Controls:
  *  - Hide AI suggestions toggle (AsyncStorage per-thread)
  *  - Mute notifications toggle (API call)
+ *  - Verify safety number (E2EE 1:1 DM only) — opens SafetyNumberScreen inline
  *  - Block user (DM only) — destructive
  *  - Report conversation — reason picker
  *  - Leave group (trip/circle only) — destructive
@@ -30,8 +31,10 @@ import {
   LogOut,
   Trash2,
   X,
+  ShieldCheck,
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { SafetyNumberScreen } from '../screens/SafetyNumberScreen.tsx';
 
 interface Props {
   visible: boolean;
@@ -46,6 +49,12 @@ interface Props {
   onLeave?: () => void;
   onDeleteForMe?: () => void;
   onReport?: (reason: string) => Promise<void>;
+  /** E-2: set true for 1:1 E2EE DM threads to reveal "Verify safety number" row. */
+  isE2ee?: boolean;
+  /** E-2: display name of the other user — shown inside SafetyNumberScreen. */
+  peerName?: string;
+  /** E-2: peer's Ed25519 identity public key (base64) from /api/users/:id/devices. */
+  peerIdentityPubB64?: string;
 }
 
 const REPORT_REASONS = [
@@ -120,9 +129,13 @@ export function ThreadSafetySheet({
   onLeave,
   onDeleteForMe,
   onReport,
+  isE2ee,
+  peerName,
+  peerIdentityPubB64,
 }: Props) {
   const [mutingBusy, setMutingBusy] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const [showSafetyNumber, setShowSafetyNumber] = useState(false);
 
   async function handleToggleMute() {
     setMutingBusy(true);
@@ -163,6 +176,19 @@ export function ThreadSafetySheet({
         { text: 'Cancel', style: 'cancel' },
         { text: 'Delete', style: 'destructive', onPress: onDeleteForMe },
       ],
+    );
+  }
+
+  // SafetyNumberScreen is a full-screen modal layered on top of this sheet.
+  if (showSafetyNumber && peerIdentityPubB64) {
+    return (
+      <Modal visible={visible} animationType="slide" onRequestClose={() => setShowSafetyNumber(false)}>
+        <SafetyNumberScreen
+          peerName={peerName ?? 'Contact'}
+          peerIdentityPubB64={peerIdentityPubB64}
+          onDismiss={() => setShowSafetyNumber(false)}
+        />
+      </Modal>
     );
   }
 
@@ -219,6 +245,17 @@ export function ThreadSafetySheet({
                 />
               )}
             </View>
+
+            {/* Verify safety number — E2EE 1:1 DM only */}
+            {isE2ee && threadType === 'direct' && peerIdentityPubB64 && (
+              <Pressable style={sh.row} onPress={() => setShowSafetyNumber(true)}>
+                <ShieldCheck size={18} color="#2A7A4B" />
+                <View style={sh.rowTextBlock}>
+                  <Text style={[sh.rowLabel, { color: '#2A7A4B' }]}>Verify safety number</Text>
+                  <Text style={sh.rowSub}>Confirm this conversation is end-to-end encrypted</Text>
+                </View>
+              </Pressable>
+            )}
 
             <View style={sh.divider} />
 
@@ -292,6 +329,7 @@ const sh = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: color.haze,
   },
+  rowTextBlock: { flex: 1 },
   rowLabel: { ...t.body, color: color.ink },
   rowSub: { ...t.small, color: color.mute, fontSize: 11, marginTop: 1 },
   destructive: { color: '#EF4444' },
