@@ -292,12 +292,14 @@ interface BreakdownEditSheetProps {
   visible: boolean;
   initialBreakdown: Record<string, number> | null;
   currency: string;
+  /** The owner's currently saved totalBudget, used to show a delta indicator. */
+  currentTotal?: number | null;
   onClose: () => void;
   onSave: (breakdown: Record<string, number>) => Promise<void>;
 }
 
 function BreakdownEditSheet({
-  visible, initialBreakdown, currency, onClose, onSave,
+  visible, initialBreakdown, currency, currentTotal, onClose, onSave,
 }: BreakdownEditSheetProps) {
   const [values, setValues] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
@@ -383,7 +385,26 @@ function BreakdownEditSheet({
             {total > 0 && (
               <View style={styles.breakdownTotalRow}>
                 <Text style={styles.breakdownTotalLabel}>Total entered</Text>
-                <Text style={styles.breakdownTotalValue}>{fmt(total)}</Text>
+                <View style={styles.breakdownTotalRight}>
+                  <Text style={styles.breakdownTotalValue}>{fmt(total)}</Text>
+                  {currentTotal != null && (() => {
+                    const delta = total - currentTotal;
+                    const isMatch = Math.abs(delta) < 1;
+                    const label = isMatch
+                      ? '= budget'
+                      : delta > 0
+                        ? `+${fmt(delta)} over`
+                        : `–${fmt(Math.abs(delta))} under`;
+                    const labelStyle = isMatch
+                      ? styles.deltaMatch
+                      : delta > 0
+                        ? styles.deltaOver
+                        : styles.deltaUnder;
+                    return (
+                      <Text style={[styles.deltaText, labelStyle]}>{label}</Text>
+                    );
+                  })()}
+                </View>
               </View>
             )}
           </ScrollView>
@@ -685,6 +706,7 @@ export function TripBudgetSection({ tripId, isOwnerOrCohost, isOwner }: TripBudg
           visible={breakdownEditOpen}
           initialBreakdown={budget?.breakdown ?? null}
           currency={budget?.currency ?? 'USD'}
+          currentTotal={budget?.totalBudget ?? null}
           onClose={() => setBreakdownEditOpen(false)}
           onSave={handleSaveBreakdown}
         />
@@ -829,10 +851,28 @@ const styles = StyleSheet.create({
     color: color.mute,
     fontWeight: '600',
   },
+  breakdownTotalRight: {
+    alignItems: 'flex-end',
+    gap: 2,
+  },
   breakdownTotalValue: {
     ...t.bodyStrong,
     color: color.ink,
     fontVariant: ['tabular-nums'],
+  },
+  deltaText: {
+    fontSize: 11,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  deltaMatch: {
+    color: color.mute,
+  },
+  deltaOver: {
+    color: '#BF360C',
+  },
+  deltaUnder: {
+    color: '#2E7D32',
   },
 
   // Estimate card
