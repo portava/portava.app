@@ -367,6 +367,7 @@ export function TripBudgetSection({ tripId, isOwnerOrCohost, isOwner }: TripBudg
   const [budget, setBudget] = useState<ManualBudget | null>(null);
   const [sandboxOpen, setSandboxOpen] = useState(false);
   const [assumptionsOpen, setAssumptionsOpen] = useState(false);
+  const [breakdownOpen, setBreakdownOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -408,7 +409,43 @@ export function TripBudgetSection({ tripId, isOwnerOrCohost, isOwner }: TripBudg
 
       {/* Manual budget row — owner/co-host only */}
       {isOwnerOrCohost && (
-        <ManualBudgetRow budget={budget} isOwner={isOwner} onSave={handleSaveBudget} />
+        <>
+          <ManualBudgetRow budget={budget} isOwner={isOwner} onSave={handleSaveBudget} />
+
+          {/* Spending breakdown — shown when breakdown data exists */}
+          {budget?.breakdown && Object.keys(budget.breakdown).length > 0 && (
+            <View style={styles.breakdownCard}>
+              <Pressable
+                style={styles.breakdownToggle}
+                onPress={() => setBreakdownOpen((v) => !v)}
+                accessibilityRole="button"
+                accessibilityLabel={breakdownOpen ? 'Collapse breakdown' : 'Expand breakdown'}
+              >
+                <Text style={styles.breakdownToggleText}>Breakdown</Text>
+                {breakdownOpen
+                  ? <ChevronUp size={14} color={color.mute} />
+                  : <ChevronDown size={14} color={color.mute} />}
+              </Pressable>
+
+              {breakdownOpen && (
+                <View style={styles.breakdownList}>
+                  {(Object.entries(budget.breakdown) as [string, number][])
+                    .filter(([, v]) => typeof v === 'number')
+                    .map(([cat, amount]) => (
+                      <View key={cat} style={styles.breakdownRow}>
+                        <Text style={styles.breakdownLabel}>
+                          {cat.charAt(0).toUpperCase() + cat.slice(1)}
+                        </Text>
+                        <Text style={styles.breakdownValue}>
+                          {formatCurrency(amount, budget.currency ?? 'USD')}
+                        </Text>
+                      </View>
+                    ))}
+                </View>
+              )}
+            </View>
+          )}
+        </>
       )}
 
       {/* Cost estimate */}
@@ -540,6 +577,46 @@ const styles = StyleSheet.create({
     minWidth: 120,
     textAlign: 'right',
     paddingVertical: space.xs,
+  },
+
+  // Breakdown
+  breakdownCard: {
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: color.haze,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    marginBottom: space.md,
+    ...shadow.card,
+  },
+  breakdownToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  breakdownToggleText: {
+    ...t.small,
+    color: color.mute,
+    fontWeight: '600',
+  },
+  breakdownList: {
+    gap: space.xs,
+    paddingTop: space.sm,
+  },
+  breakdownRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  breakdownLabel: {
+    ...t.body,
+    color: color.ink,
+  },
+  breakdownValue: {
+    ...t.bodyStrong,
+    color: color.ink,
+    fontVariant: ['tabular-nums'],
   },
 
   // Estimate card

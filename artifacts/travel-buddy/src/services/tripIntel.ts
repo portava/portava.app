@@ -158,7 +158,7 @@ export interface ManualBudget {
   currency: string | null;
   totalBudget: number | null;
   spent: number | null;
-  breakdown: Record<string, unknown> | null;
+  breakdown: Record<string, number> | null;
   updatedAt: string | null;
 }
 
@@ -185,7 +185,7 @@ export async function fetchManualBudget(tripId: string): Promise<ManualBudget | 
 
 export async function updateManualBudget(
   tripId: string,
-  data: { currency?: string; totalBudget?: number | null },
+  data: { currency?: string; totalBudget?: number | null; breakdown?: Record<string, number> },
 ): Promise<ManualBudget | null> {
   if (!isSupabaseConfigured || !apiBase()) return null;
   try {
