@@ -9,10 +9,12 @@
  *  - rows present but no arrival data, or empty → shows service's honest `note`
  */
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, Image, StyleSheet, ActivityIndicator } from 'react-native';
 import { Clock, CheckCircle2, CalendarClock } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { fetchArrivalBoard } from '../../services/tripIntel.ts';
+import { UserIdentityLink } from '../interaction/UserIdentityLink.tsx';
+import type { CrewMemberCard } from '../../services/tripCrewLocation.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -74,30 +76,67 @@ function StatusDot({ arrived }: { arrived: boolean }) {
   );
 }
 
+// ── Avatar for arrival row ────────────────────────────────────────────────────
+
+function MemberAvatar({ member }: { member: CrewMemberCard }) {
+  const initial = (member.name?.[0] ?? member.handle?.[0] ?? '?').toUpperCase();
+  if (member.avatarUrl) {
+    return <Image source={{ uri: member.avatarUrl }} style={s.avatar} />;
+  }
+  return (
+    <View style={[s.avatar, s.avatarFallback]}>
+      <Text style={s.avatarInitial}>{initial}</Text>
+    </View>
+  );
+}
+
 // ── Single arrival row ────────────────────────────────────────────────────────
 
-function ArrivalRow({ row }: { row: ArrivalRow }) {
+function ArrivalRow({ row, member }: { row: ArrivalRow; member?: CrewMemberCard }) {
   if (!row.arrival) return null;
 
   const arrived = isArrived(row.arrival.time);
   const timeLabel = humaniseArrival(row.arrival.time);
-  const memberLabel = row.arrival.label || `Member`;
+  const memberLabel = member?.name ?? member?.handle ?? row.arrival.label ?? 'Member';
 
   return (
     <View style={s.row}>
       <View style={s.rowLeft}>
-        <StatusDot arrived={arrived} />
-        <View style={s.rowBody}>
-          <Text style={s.memberName} numberOfLines={1}>{memberLabel}</Text>
-          <View style={s.timeRow}>
-            {arrived ? (
-              <CheckCircle2 size={11} color={color.success} />
-            ) : (
-              <Clock size={11} color={color.mute} />
-            )}
-            <Text style={[s.timeText, arrived && s.timeTextArrived]}>{timeLabel}</Text>
-          </View>
-        </View>
+        {member ? (
+          <UserIdentityLink
+            userId={member.userId}
+            handle={member.handle ?? null}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, flex: 1 }}
+          >
+            <MemberAvatar member={member} />
+            <View style={s.rowBody}>
+              <Text style={s.memberName} numberOfLines={1}>{memberLabel}</Text>
+              <View style={s.timeRow}>
+                {arrived ? (
+                  <CheckCircle2 size={11} color={color.success} />
+                ) : (
+                  <Clock size={11} color={color.mute} />
+                )}
+                <Text style={[s.timeText, arrived && s.timeTextArrived]}>{timeLabel}</Text>
+              </View>
+            </View>
+          </UserIdentityLink>
+        ) : (
+          <>
+            <StatusDot arrived={arrived} />
+            <View style={s.rowBody}>
+              <Text style={s.memberName} numberOfLines={1}>{memberLabel}</Text>
+              <View style={s.timeRow}>
+                {arrived ? (
+                  <CheckCircle2 size={11} color={color.success} />
+                ) : (
+                  <Clock size={11} color={color.mute} />
+                )}
+                <Text style={[s.timeText, arrived && s.timeTextArrived]}>{timeLabel}</Text>
+              </View>
+            </View>
+          </>
+        )}
       </View>
     </View>
   );
@@ -107,9 +146,15 @@ function ArrivalRow({ row }: { row: ArrivalRow }) {
 
 interface Props {
   tripId: string;
+  /** Optional crew member list from useTripCrewMap — used to show avatars alongside arrival times. */
+  members?: CrewMemberCard[];
 }
 
-export function ArrivalBoard({ tripId }: Props) {
+export function ArrivalBoard({ tripId, members }: Props) {
+  const memberMap = React.useMemo<Map<string, CrewMemberCard>>(() => {
+    if (!members) return new Map();
+    return new Map(members.map((m) => [m.userId, m]));
+  }, [members]);
   const [board, setBoard] = useState<BoardResponse | null | undefined>(undefined); // undefined = loading
 
   useEffect(() => {
@@ -150,7 +195,7 @@ export function ArrivalBoard({ tripId }: Props) {
         <Text style={s.headerText}>Arrivals</Text>
       </View>
       {rowsWithArrival.map((row) => (
-        <ArrivalRow key={row.userId} row={row} />
+        <ArrivalRow key={row.userId} row={row} member={memberMap.get(row.userId)} />
       ))}
     </View>
   );
@@ -235,5 +280,21 @@ const s = StyleSheet.create({
     color: color.mute,
     flex: 1,
     lineHeight: 18,
+  },
+  avatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: color.haze,
+  },
+  avatarFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarInitial: {
+    ...t.small,
+    fontWeight: '700',
+    color: color.ink,
+    fontSize: 11,
   },
 });

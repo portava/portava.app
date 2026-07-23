@@ -266,7 +266,7 @@ export function CrewMapSection({ tripId, refreshKey = 0 }: Props) {
       </View>
 
       {/* Arrival board — degrades by content; hidden when null or no data */}
-      <ArrivalBoard tripId={tripId} />
+      <ArrivalBoard tripId={tripId} members={members} />
 
       <LiveShareSheet
         visible={liveShareOpen}
