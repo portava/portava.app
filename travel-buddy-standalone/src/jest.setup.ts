@@ -57,11 +57,16 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const _originalConsoleError = console.error.bind(console);
 console.error = (...args: Parameters<typeof console.error>) => {
-  if (
-    typeof args[0] === 'string' &&
-    args[0].includes('overlapping act() calls')
-  ) {
-    return; // suppress — cosmetic artifact of React 19 + RNTL v14 scheduling
+  if (typeof args[0] === 'string') {
+    // Both warnings are cosmetic artifacts of the React 19 concurrent-mode
+    // scheduler racing with RNTL's waitFor / act() scopes.  They carry no
+    // signal about real test failures and are documented in this file's header.
+    if (
+      args[0].includes('overlapping act() calls') ||
+      args[0].includes('not configured to support act(')
+    ) {
+      return;
+    }
   }
   _originalConsoleError(...args);
 };

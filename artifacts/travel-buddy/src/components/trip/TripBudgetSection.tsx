@@ -281,6 +281,130 @@ function WhatIfSandboxSheet({ tripId, visible, onClose }: SandboxSheetProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Breakdown edit sheet
+// ---------------------------------------------------------------------------
+
+const BREAKDOWN_CATEGORIES = [
+  'accommodation', 'food', 'transport', 'activities', 'shopping', 'misc',
+] as const;
+
+interface BreakdownEditSheetProps {
+  visible: boolean;
+  initialBreakdown: Record<string, number> | null;
+  currency: string;
+  onClose: () => void;
+  onSave: (breakdown: Record<string, number>) => Promise<void>;
+}
+
+function BreakdownEditSheet({
+  visible, initialBreakdown, currency, onClose, onSave,
+}: BreakdownEditSheetProps) {
+  const [values, setValues] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const cat of BREAKDOWN_CATEGORIES) {
+      init[cat] = initialBreakdown?.[cat] != null ? String(initialBreakdown[cat]) : '';
+    }
+    return init;
+  });
+  const [saving, setSaving] = useState(false);
+
+  // Re-initialise when sheet is opened with new data.
+  useEffect(() => {
+    if (visible) {
+      const init: Record<string, string> = {};
+      for (const cat of BREAKDOWN_CATEGORIES) {
+        init[cat] = initialBreakdown?.[cat] != null ? String(initialBreakdown[cat]) : '';
+      }
+      setValues(init);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  function handleChange(cat: string, raw: string) {
+    setValues((prev) => ({ ...prev, [cat]: raw }));
+  }
+
+  async function handleSave() {
+    const breakdown: Record<string, number> = {};
+    for (const cat of BREAKDOWN_CATEGORIES) {
+      const parsed = parseFloat(values[cat] ?? '');
+      if (!isNaN(parsed) && parsed >= 0) breakdown[cat] = parsed;
+    }
+    setSaving(true);
+    await onSave(breakdown);
+    setSaving(false);
+    onClose();
+  }
+
+  const fmt = (n: number) =>
+    new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 0 }).format(n);
+
+  const total = BREAKDOWN_CATEGORIES.reduce((acc, cat) => {
+    const v = parseFloat(values[cat] ?? '');
+    return acc + (isNaN(v) ? 0 : v);
+  }, 0);
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        style={styles.sandboxOverlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <View style={styles.sandboxSheet}>
+          {/* Header */}
+          <View style={styles.sandboxHeader}>
+            <Text style={styles.sandboxTitle}>Budget breakdown</Text>
+            <Pressable onPress={onClose} hitSlop={8} accessibilityLabel="Close">
+              <X size={20} color={color.ink} />
+            </Pressable>
+          </View>
+          <Text style={styles.sandboxSub}>
+            Enter planned amounts per category. Leave blank to exclude a category.
+          </Text>
+
+          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+            {BREAKDOWN_CATEGORIES.map((cat) => (
+              <View key={cat} style={styles.sandboxInputGroup}>
+                <Text style={styles.inputLabel}>
+                  {cat.charAt(0).toUpperCase() + cat.slice(1)}
+                </Text>
+                <TextInput
+                  style={styles.sandboxInput}
+                  value={values[cat]}
+                  onChangeText={(v) => handleChange(cat, v)}
+                  keyboardType="numeric"
+                  placeholder="e.g. 500"
+                  placeholderTextColor={color.faint}
+                  accessibilityLabel={`${cat} budget`}
+                />
+              </View>
+            ))}
+
+            {total > 0 && (
+              <View style={styles.breakdownTotalRow}>
+                <Text style={styles.breakdownTotalLabel}>Total entered</Text>
+                <Text style={styles.breakdownTotalValue}>{fmt(total)}</Text>
+              </View>
+            )}
+          </ScrollView>
+
+          <Pressable
+            style={[styles.sandboxRunBtn, saving && { opacity: 0.6 }]}
+            onPress={handleSave}
+            disabled={saving}
+            accessibilityRole="button"
+          >
+            {saving
+              ? <ActivityIndicator color={color.onInk} size="small" />
+              : <Text style={styles.sandboxRunBtnText}>Save breakdown</Text>}
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Manual budget row
 // ---------------------------------------------------------------------------
 
@@ -368,6 +492,7 @@ export function TripBudgetSection({ tripId, isOwnerOrCohost, isOwner }: TripBudg
   const [sandboxOpen, setSandboxOpen] = useState(false);
   const [assumptionsOpen, setAssumptionsOpen] = useState(false);
   const [breakdownOpen, setBreakdownOpen] = useState(false);
+  const [breakdownEditOpen, setBreakdownEditOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -388,6 +513,11 @@ export function TripBudgetSection({ tripId, isOwnerOrCohost, isOwner }: TripBudg
 
   async function handleSaveBudget(amount: number | null) {
     const updated = await updateManualBudget(tripId, { totalBudget: amount });
+    if (updated) setBudget(updated);
+  }
+
+  async function handleSaveBreakdown(breakdown: Record<string, number>) {
+    const updated = await updateManualBudget(tripId, { breakdown });
     if (updated) setBudget(updated);
   }
 
@@ -412,20 +542,32 @@ export function TripBudgetSection({ tripId, isOwnerOrCohost, isOwner }: TripBudg
         <>
           <ManualBudgetRow budget={budget} isOwner={isOwner} onSave={handleSaveBudget} />
 
-          {/* Spending breakdown — shown when breakdown data exists */}
-          {budget?.breakdown && Object.keys(budget.breakdown).length > 0 && (
+          {/* Spending breakdown — shown when breakdown data exists, or owner can create one */}
+          {(budget?.breakdown && Object.keys(budget.breakdown).length > 0) ? (
             <View style={styles.breakdownCard}>
-              <Pressable
-                style={styles.breakdownToggle}
-                onPress={() => setBreakdownOpen((v) => !v)}
-                accessibilityRole="button"
-                accessibilityLabel={breakdownOpen ? 'Collapse breakdown' : 'Expand breakdown'}
-              >
-                <Text style={styles.breakdownToggleText}>Breakdown</Text>
-                {breakdownOpen
-                  ? <ChevronUp size={14} color={color.mute} />
-                  : <ChevronDown size={14} color={color.mute} />}
-              </Pressable>
+              <View style={styles.breakdownToggleRow}>
+                <Pressable
+                  style={styles.breakdownToggle}
+                  onPress={() => setBreakdownOpen((v) => !v)}
+                  accessibilityRole="button"
+                  accessibilityLabel={breakdownOpen ? 'Collapse breakdown' : 'Expand breakdown'}
+                >
+                  <Text style={styles.breakdownToggleText}>Breakdown</Text>
+                  {breakdownOpen
+                    ? <ChevronUp size={14} color={color.mute} />
+                    : <ChevronDown size={14} color={color.mute} />}
+                </Pressable>
+                {isOwner && (
+                  <Pressable
+                    onPress={() => setBreakdownEditOpen(true)}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Edit budget breakdown"
+                  >
+                    <Text style={styles.breakdownEditLink}>Edit</Text>
+                  </Pressable>
+                )}
+              </View>
 
               {breakdownOpen && (
                 <View style={styles.breakdownList}>
@@ -444,7 +586,16 @@ export function TripBudgetSection({ tripId, isOwnerOrCohost, isOwner }: TripBudg
                 </View>
               )}
             </View>
-          )}
+          ) : isOwner ? (
+            <Pressable
+              style={styles.setBreakdownBtn}
+              onPress={() => setBreakdownEditOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Set budget breakdown by category"
+            >
+              <Text style={styles.setBreakdownBtnText}>+ Set breakdown by category</Text>
+            </Pressable>
+          ) : null}
         </>
       )}
 
@@ -519,6 +670,16 @@ export function TripBudgetSection({ tripId, isOwnerOrCohost, isOwner }: TripBudg
         visible={sandboxOpen}
         onClose={() => setSandboxOpen(false)}
       />
+
+      {isOwner && (
+        <BreakdownEditSheet
+          visible={breakdownEditOpen}
+          initialBreakdown={budget?.breakdown ?? null}
+          currency={budget?.currency ?? 'USD'}
+          onClose={() => setBreakdownEditOpen(false)}
+          onSave={handleSaveBreakdown}
+        />
+      )}
     </View>
   );
 }
@@ -590,6 +751,11 @@ const styles = StyleSheet.create({
     marginBottom: space.md,
     ...shadow.card,
   },
+  breakdownToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   breakdownToggle: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -598,6 +764,11 @@ const styles = StyleSheet.create({
   breakdownToggleText: {
     ...t.small,
     color: color.mute,
+    fontWeight: '600',
+  },
+  breakdownEditLink: {
+    ...t.small,
+    color: color.signal,
     fontWeight: '600',
   },
   breakdownList: {
@@ -614,6 +785,42 @@ const styles = StyleSheet.create({
     color: color.ink,
   },
   breakdownValue: {
+    ...t.bodyStrong,
+    color: color.ink,
+    fontVariant: ['tabular-nums'],
+  },
+  // "Set breakdown" button when no breakdown exists yet
+  setBreakdownBtn: {
+    alignSelf: 'flex-start',
+    marginBottom: space.md,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: color.haze,
+    backgroundColor: color.paperRaised,
+  },
+  setBreakdownBtnText: {
+    ...t.small,
+    color: color.mute,
+    fontWeight: '600',
+  },
+  // Breakdown edit sheet total row
+  breakdownTotalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: space.md,
+    paddingTop: space.sm,
+    borderTopWidth: 1,
+    borderTopColor: color.haze,
+  },
+  breakdownTotalLabel: {
+    ...t.small,
+    color: color.mute,
+    fontWeight: '600',
+  },
+  breakdownTotalValue: {
     ...t.bodyStrong,
     color: color.ink,
     fontVariant: ['tabular-nums'],
