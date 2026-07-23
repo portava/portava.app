@@ -158,6 +158,7 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/telegraphChat.ts|update|payload not statically resolvable", 1],
   ["src/routes/tripReservations.ts|insert|payload not statically resolvable", 1],
   ["src/routes/trips-expansion.ts|insert|payload not statically resolvable", 1],
+  ["src/routes/tripReservations.ts|insert|payload not statically resolvable", 1],
   ["src/routes/trips.ts|insert|payload not statically resolvable", 1],
   ["src/routes/trips.ts|select|select list not statically resolvable", 3],
   ["src/routes/trust-admin.ts|update|payload partially resolvable", 1],

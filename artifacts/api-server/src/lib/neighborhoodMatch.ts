@@ -413,6 +413,7 @@ export async function refreshCityNeighborhoods(
     const computed = computeAreas(seeds, pois);
     if (computed.length === 0) return stored;
 
+    const nowMs = Date.now();
     const nowIso = new Date(nowMs).toISOString();
     const rows = computed.map((a) => ({
       city_name:       city,

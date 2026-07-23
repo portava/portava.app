@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
-import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, Share, Image, Modal, type LayoutChangeEvent } from 'react-native';
+import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, Share, Image, Modal, RefreshControl, type LayoutChangeEvent } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, Share2, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users, BookImage, CalendarClock, MapPin, ShieldCheck, Radio, Link2 } from 'lucide-react-native';
@@ -22,6 +22,7 @@ import { TripPlanSection } from '../../src/components/TripPlanSection';
 import { TripAvailabilitySection } from '../../src/components/TripAvailabilitySection';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { DailyBriefCard } from '../../src/components/DailyBriefCard';
+import { TripReadinessCard } from '../../src/components/trip/TripReadinessCard';
 import { ConciergeCommandBar, type ConciergeCommandBarHandle } from '../../src/components/ConciergeCommandBar';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { TripInviteSheet } from '../../src/components/TripInviteSheet';
@@ -77,6 +78,18 @@ function TripDetailScreen() {
   const [showMissedPrompt, setShowMissedPrompt] = useState(false);
   const [completingTrip, setCompletingTrip] = useState(false);
   const [shareLoading, setShareLoading] = useState(false);
+  const [pageRefreshing, setPageRefreshing] = useState(false);
+  const [readinessRefresh, setReadinessRefresh] = useState(false);
+
+  const handlePageRefresh = useCallback(async () => {
+    setPageRefreshing(true);
+    setReadinessRefresh(true);
+    await reloadTrip();
+    setPageRefreshing(false);
+    // Reset refresh flag after a tick so the card re-uses cached data on next render
+    setTimeout(() => setReadinessRefresh(false), 100);
+  }, [reloadTrip]);
+
   const handleGapDays = useCallback((days: string[], dest: string) => {
     setGapDays(days);
     setGapDestination(dest);
@@ -259,7 +272,16 @@ function TripDetailScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <ScrollView ref={pageScrollRef} contentContainerStyle={{ paddingBottom: bottomInset }} showsVerticalScrollIndicator={false} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
+      <ScrollView
+        ref={pageScrollRef}
+        contentContainerStyle={{ paddingBottom: bottomInset }}
+        showsVerticalScrollIndicator={false}
+        onScroll={navBarScrollHandler}
+        scrollEventThrottle={16}
+        refreshControl={
+          <RefreshControl refreshing={pageRefreshing} onRefresh={handlePageRefresh} />
+        }
+      >
         {/* Back nav + action bar — scrolls with page content */}
         <View style={[styles.topBar, { paddingTop: insets.top + space.sm }]}>
           <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
@@ -353,6 +375,11 @@ function TripDetailScreen() {
         {/* ── Daily Brief (accepted members only; graceful fallback for others) ── */}
         {live && trip.id ? (
           <DailyBriefCard tripId={trip.id} date={todayDate} onGapDays={handleGapDays} />
+        ) : null}
+
+        {/* ── Trip Readiness — renders nothing when flag is off (null response) ── */}
+        {live && trip.id ? (
+          <TripReadinessCard tripId={trip.id} refresh={readinessRefresh} />
         ) : null}
 
         <TodayNextUp nextUp={null} tripId={trip.id} action={nextBestAction} />
