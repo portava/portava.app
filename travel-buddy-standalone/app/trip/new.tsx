@@ -65,7 +65,37 @@ export default function NewTrip() {
       }
       const draft = result.draft as Record<string, unknown>;
       if (typeof draft.title === 'string' && draft.title) setTitle(draft.title);
-      if (typeof draft.destinationCity === 'string' && draft.destinationCity) {
+
+      // ── Destination pre-fill: multi-city takes priority over single ──────────
+      const rawDestinations = Array.isArray(draft.destinations) ? draft.destinations : null;
+      const validDestinations = rawDestinations
+        ? (rawDestinations as Array<Record<string, unknown>>)
+            .filter((d) => typeof d.city === 'string' && d.city)
+        : null;
+
+      if (validDestinations && validDestinations.length > 1) {
+        // Multi-city: switch toggle on and populate DestinationListEditor
+        setMultiCity(true);
+        setDestinations(
+          validDestinations.map((d) => ({
+            key: `dest-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            city: d.city as string,
+            country: typeof d.country === 'string' && d.country ? d.country : undefined,
+          })),
+        );
+      } else if (validDestinations && validDestinations.length === 1) {
+        // Single destination from the array — stay in single mode
+        const d = validDestinations[0];
+        const city = d.city as string;
+        const country = typeof d.country === 'string' && d.country ? d.country : undefined;
+        setPlace({
+          name: city,
+          city,
+          country,
+          displayName: country ? `${city}, ${country}` : city,
+        } as Place);
+      } else if (typeof draft.destinationCity === 'string' && draft.destinationCity) {
+        // Existing single-destination fallback path (unchanged)
         const city = draft.destinationCity as string;
         const country = typeof draft.destinationCountry === 'string' ? draft.destinationCountry : undefined;
         setPlace({
@@ -75,6 +105,7 @@ export default function NewTrip() {
           displayName: country ? `${city}, ${country}` : city,
         } as Place);
       }
+
       if (typeof draft.startDate === 'string') setStartDate(draft.startDate);
       if (typeof draft.endDate === 'string') setEndDate(draft.endDate);
       if (typeof draft.notes === 'string') setTripNotes(draft.notes);
