@@ -97,6 +97,46 @@ function newestComputedAtMs(rows: any[]): number {
 }
 
 /**
+ * Fetch the most recent snapshot score for this trip from a prior UTC day.
+ * Returns null when no such snapshot exists (first-ever compute or table
+ * absent). Defensive: any DB error silently returns null.
+ */
+async function loadPreviousSnapshotScore(sc: any, tripId: string): Promise<number | null> {
+  try {
+    const { data, error } = await sc
+      .from("trip_readiness_snapshots")
+      .select("score, snapshot_date")
+      .eq("trip_id", tripId)
+      .lt("snapshot_date", todayUtc())
+      .order("snapshot_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return typeof (data as any).score === "number" ? (data as any).score : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist today's score snapshot (upsert by trip_id + snapshot_date).
+ * Best-effort: failures are swallowed so a snapshot write never breaks the response.
+ */
+async function persistTodaySnapshot(sc: any, tripId: string, score: number): Promise<void> {
+  try {
+    await sc
+      .from("trip_readiness_snapshots")
+      .upsert(
+        { trip_id: tripId, snapshot_date: todayUtc(), score, computed_at: new Date().toISOString() },
+        { onConflict: "trip_id,snapshot_date" },
+      )
+      .then(undefined, () => {});
+  } catch {
+    // best-effort — never propagate
+  }
+}
+
+/**
  * Serve stored items when fresh (<10 min), else recompute (also on
  * forceRefresh). Returns null after writing an error response.
  */
@@ -119,11 +159,12 @@ async function loadOrComputeSummary(
   const stale = rows.length === 0 || Date.now() - newestMs > READINESS_STALE_MS;
 
   if (forceRefresh || stale) {
-    // Capture the previous score from stored rows when they come from a
-    // different calendar day — that makes the delta "since yesterday" honest.
-    // Same-day cached rows yield null (no meaningful delta yet).
-    let previousScore: number | null = null;
-    if (rows.length > 0) {
+    // 1. Read the most recent prior-day score from the snapshots table.
+    //    This survives same-day recomputes (unlike relying on items rows).
+    //    Fall back to deriving from today's stale items when no snapshot
+    //    exists yet but the items are from a prior day (migration path).
+    let previousScore: number | null = await loadPreviousSnapshotScore(sc, tripId);
+    if (previousScore === null && rows.length > 0) {
       const cachedDay = new Date(newestMs).toISOString().slice(0, 10);
       if (cachedDay !== todayUtc()) {
         previousScore = scoreFromRows(rows);
@@ -132,6 +173,8 @@ async function loadOrComputeSummary(
 
     try {
       const fresh = await computeReadiness(sc, tripId);
+      // 2. Persist today's score so future recomputes can read it as "previous".
+      await persistTodaySnapshot(sc, tripId, fresh.score);
       return { ...fresh, previousScore };
     } catch (e: any) {
       if (e?.code === "not_found") { sendError(res, "not_found", "Trip not found"); return null; }

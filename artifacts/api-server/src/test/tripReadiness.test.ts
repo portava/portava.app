@@ -52,11 +52,12 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}, opts: FakeOpts =
     trip_reservations:        tables.trip_reservations        ?? { rows: [] },
     trip_traveler_passports:  tables.trip_traveler_passports  ?? { rows: [] },
     entry_requirements:       tables.entry_requirements       ?? { rows: [] },
-    trip_autopilot_proposals: tables.trip_autopilot_proposals ?? { rows: [] },
-    trip_destinations:        tables.trip_destinations        ?? { rows: [] },
-    feature_flags:            tables.feature_flags            ?? { rows: [] },
-    profiles:                 tables.profiles                 ?? { rows: [] },
-    blocks:                   tables.blocks                   ?? { rows: [] },
+    trip_autopilot_proposals:  tables.trip_autopilot_proposals  ?? { rows: [] },
+    trip_destinations:         tables.trip_destinations         ?? { rows: [] },
+    trip_readiness_snapshots:  tables.trip_readiness_snapshots  ?? { rows: [] },
+    feature_flags:             tables.feature_flags             ?? { rows: [] },
+    profiles:                  tables.profiles                  ?? { rows: [] },
+    blocks:                    tables.blocks                    ?? { rows: [] },
     ...tables,
   };
   const throwOn = opts.throwOnTables ?? [];
@@ -540,6 +541,58 @@ describe("trip readiness routes", () => {
     assert.ok(r.body.score !== null, "fresh score must be present");
     assert.ok(r.body.previousScore !== r.body.score,
       "fresh score must differ from prior-day score when trip state changed");
+  });
+
+  it("persists today's score to trip_readiness_snapshots on recompute", async () => {
+    const { client, db } = makeFakeClient({
+      trips: { rows: [baseTrip()] },
+      trip_members: { rows: [ownerMemberRow()] },
+      feature_flags: flagOn(),
+    });
+    _setTestClient(client, true);
+
+    const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+    assert.equal(r.status, 200);
+
+    const snapshots = db.trip_readiness_snapshots.rows;
+    assert.equal(snapshots.length, 1, "exactly one snapshot row should be written");
+    const snap = snapshots[0];
+    const todayStr = new Date().toISOString().slice(0, 10);
+    assert.equal(snap.trip_id, TRIP_ID);
+    assert.equal(snap.snapshot_date, todayStr, "snapshot_date must be today (UTC)");
+    assert.equal(snap.score, r.body.score, "snapshot score must match the returned score");
+  });
+
+  it("reads previousScore from trip_readiness_snapshots on a same-day second recompute", async () => {
+    // Simulate: yesterday's snapshot exists; items are fresh from today (same-day).
+    // The first recompute already ran today and stored a snapshot. A second
+    // forced refresh must read yesterday's snapshot — not derive from today's items.
+    const yesterdayStr = new Date(Date.now() - 25 * 3600 * 1000).toISOString().slice(0, 10);
+    const todayIso = new Date().toISOString();
+
+    const { client } = makeFakeClient({
+      trips: { rows: [baseTrip()] },
+      trip_members: { rows: [ownerMemberRow()] },
+      // Today's items are fresh — same-day, would normally suppress previousScore
+      trip_readiness_items: { rows: [
+        { id: "r1", trip_id: TRIP_ID, user_id: null, category: "stay",
+          status: "action_needed", severity: "normal",
+          title: "No accommodation", detail: null, due_at: null,
+          action_ref: null, dedupe_key: "stay:none", computed_at: todayIso },
+      ]},
+      // Yesterday's snapshot carries a known prior score
+      trip_readiness_snapshots: { rows: [
+        { id: "s1", trip_id: TRIP_ID, snapshot_date: yesterdayStr, score: 57,
+          computed_at: new Date(Date.now() - 25 * 3600 * 1000).toISOString() },
+      ]},
+      feature_flags: flagOn(),
+    });
+    _setTestClient(client, true);
+
+    const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness?refresh=1`, { token: "owner-token" });
+    assert.equal(r.status, 200);
+    assert.strictEqual(r.body.previousScore, 57,
+      "previousScore must come from yesterday's snapshot even on a same-day forced recompute");
   });
 
   it("sweeps stale rows on recompute (resolved items disappear from storage)", async () => {
