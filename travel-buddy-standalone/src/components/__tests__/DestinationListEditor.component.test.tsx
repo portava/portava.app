@@ -215,13 +215,13 @@ describe('DestinationListEditor', () => {
     });
   });
 
-  it('disables the remove button while the DELETE is in-flight and hides the row after resolution', async () => {
+  it('hides the row immediately on remove (optimistic) and fires DELETE in the background', async () => {
     // Pre-populate with a server row (edit mode).
     const initialDests: DestinationEntry[] = [
       { key: 'k1', id: 'dest-slow-99', city: 'Tokyo', country: 'Japan' },
     ];
 
-    // Deferred promise — lets us control when the delete resolves.
+    // Deferred promise — lets us verify DELETE fires before it resolves.
     let resolveDelete!: (v: boolean) => void;
     const deletePromise = new Promise<boolean>((res) => { resolveDelete = res; });
     mockDelete.mockReturnValue(deletePromise);
@@ -232,22 +232,19 @@ describe('DestinationListEditor', () => {
 
     await screen.findByText('Tokyo, Japan');
 
-    // Fire the remove press — do NOT await full resolution yet.
-    // The async handler sets busyRows immediately, so the button should
-    // be disabled on the very next render.
-    fireEvent.press(getByTestId('remove-dest-0'));
+    // Fire the remove — the optimistic handler hides the row immediately.
+    await fireEvent.press(getByTestId('remove-dest-0'));
 
-    // Button should be disabled while delete is in-flight.
+    // Row should vanish instantly without waiting for the API.
     await waitFor(() => {
-      expect(getByTestId('remove-dest-0').props.accessibilityState?.disabled).toBe(true);
+      expect(queryByText('Tokyo, Japan')).toBeNull();
     });
 
-    // Row should still be visible (not yet hidden — waiting on the API).
-    expect(queryByText('Tokyo, Japan')).not.toBeNull();
+    // DELETE should have been fired in the background.
+    expect(mockDelete).toHaveBeenCalledWith('trip-slow', 'dest-slow-99');
 
-    // Resolve the delete — the row should now be hidden.
+    // Resolving the deferred promise must not crash or resurface the row.
     resolveDelete(true);
-
     await waitFor(() => {
       expect(queryByText('Tokyo, Japan')).toBeNull();
     });

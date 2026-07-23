@@ -80,6 +80,10 @@ module.exports = {
     // Without this, Jest cannot find @/components/... imports and test files
     // for screens that use @/ (e.g. Trips, Trip Detail) fail to load.
     '^@/(.*)$': '<rootDir>/$1',
+    // react-native-draggable-flatlist pulls gesture-handler / reanimated native
+    // modules; stub it out so component tests can assert on list content.
+    '^react-native-draggable-flatlist$':
+      '<rootDir>/src/__mocks__/react-native-draggable-flatlist.tsx',
     // jest-expo@56's setup.js requires expo-modules-core from its own nested
     // pnpm path where the package is not directly hoisted.  Pin the resolution
     // to the pnpm store copy so every jest.requireActual/jest.doMock call lands

@@ -46,5 +46,9 @@ module.exports = {
     // override this global stub when they need to assert on map behaviour.
     '^@maplibre/maplibre-react-native$':
       '<rootDir>/src/__mocks__/maplibre-react-native.tsx',
+    // react-native-draggable-flatlist pulls gesture-handler / reanimated native
+    // modules; stub it out so component tests can assert on list content.
+    '^react-native-draggable-flatlist$':
+      '<rootDir>/src/__mocks__/react-native-draggable-flatlist.tsx',
   },
 };
