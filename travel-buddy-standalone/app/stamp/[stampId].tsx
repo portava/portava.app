@@ -25,6 +25,7 @@ import {
 import type { PassportStampNew, NewStampVisibility } from '../../src/services/stamps';
 import { stampToLegacy, makeStampShareLinks } from '../../src/services/stampShareUtils';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+import { StampAdmireBlock } from '../../src/components/stamps/StampAdmireBlock';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 
@@ -150,6 +151,9 @@ function StampDetailContent({
             })}
           </Text>
         </View>
+
+        {/* Admire block */}
+        <StampAdmireBlock userStampId={stamp.id} isOwner={isOwner} />
 
         {stamp.isRevoked && (
           <View style={styles.revokedBanner}>
