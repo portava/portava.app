@@ -213,6 +213,7 @@ STANDALONE_OWNED_FILES=(
   "src/components/LivePulseCard.tsx"
   "src/components/LivePulseRail.tsx"
   "src/components/LivePulseRail.machine.ts"
+  "scripts/run-node-tests.mjs"
   "src/components/__tests__/LivePulseRail.test.ts"
   "src/components/compass/CompassBuddyRow.tsx"
   "src/components/compass/CompassTravelerRow.tsx"

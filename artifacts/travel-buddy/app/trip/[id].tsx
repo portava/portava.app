@@ -23,6 +23,7 @@ import { TripAvailabilitySection } from '../../src/components/TripAvailabilitySe
 import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { DailyBriefCard } from '../../src/components/DailyBriefCard';
 import { TripReadinessCard } from '../../src/components/trip/TripReadinessCard';
+import { TripEntrySection } from '../../src/components/trip/TripEntrySection';
 import { ConciergeCommandBar, type ConciergeCommandBarHandle } from '../../src/components/ConciergeCommandBar';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { TripInviteSheet } from '../../src/components/TripInviteSheet';
@@ -380,6 +381,11 @@ function TripDetailScreen() {
         {/* ── Trip Readiness — renders nothing when flag is off (null response) ── */}
         {live && trip.id ? (
           <TripReadinessCard tripId={trip.id} refresh={readinessRefresh} />
+        ) : null}
+
+        {/* ── Entry & visas — renders nothing when flag is off (null response) ── */}
+        {live && trip.id ? (
+          <TripEntrySection tripId={trip.id} />
         ) : null}
 
         <TodayNextUp nextUp={null} tripId={trip.id} action={nextBestAction} />
