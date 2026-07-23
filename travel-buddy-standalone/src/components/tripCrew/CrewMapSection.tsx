@@ -20,6 +20,7 @@ import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
 import { CrewMemberCard } from './CrewMemberCard.tsx';
 import { CrewCallCard } from './CrewCallCard.tsx';
 import { LiveShareSheet } from './LiveShareSheet.tsx';
+import { ArrivalBoard } from './ArrivalBoard.tsx';
 import { useTripCrewMap } from '../../hooks/useTripCrewMap.ts';
 import { enableGhostMode, disableGhostMode, updateCrewPreferences } from '../../services/tripCrewLocation.ts';
 import type { CrewMemberCard as CrewMemberCardType } from '../../services/tripCrewLocation.ts';
@@ -263,6 +264,9 @@ export function CrewMapSection({ tripId, refreshKey = 0 }: Props) {
           </View>
         )}
       </View>
+
+      {/* Arrival board — degrades by content; hidden when null or no data */}
+      <ArrivalBoard tripId={tripId} />
 
       <LiveShareSheet
         visible={liveShareOpen}

@@ -532,8 +532,9 @@ describe("POST /api/reviews", () => {
   it("trust event review_submitted is recorded, no direct trust_profiles write", async () => {
     const tables = {
       ...completedTripTables(),
-      // Trust engine requires this flag to be on; without it recordTrustEvent is a no-op
-      feature_flags: { rows: [{ key: "trust_engine_enabled", enabled: true }] },
+      // Trust engine requires this flag to be on; without it recordTrustEvent is a no-op.
+      // The feature_flags table uses "flag" as the column name, not "key".
+      feature_flags: { rows: [{ flag: "trust_engine_enabled", enabled: true }] },
     };
     server = await startServer(tables);
     await fetchPost(server.url, "/api/reviews", "reviewer-token", {

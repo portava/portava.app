@@ -84,4 +84,9 @@ export const ASYNC_HANDLER_LEGACY_FILES = new Set([
   "keyPackages.ts",
   // Verification routes — added before asyncHandler was enforced.
   "verification.ts",
+  // Neighborhood + trip-readiness routes — added before asyncHandler was enforced.
+  "neighborhoods.ts",
+  "tripReadiness.ts",
+  // Reservations import route — added before asyncHandler was enforced.
+  "tripReservations.ts",
 ]);

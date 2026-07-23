@@ -127,8 +127,9 @@ function makeTrustClient(tables: FakeTables) {
 function makeTables(): FakeTables {
   return {
     feature_flags: [
-      { key: "trust_engine_enabled",          enabled: true },
-      { key: "trust_gaming_detection_enabled", enabled: true },
+      // The feature_flags table uses "flag" as the column name, not "key".
+      { flag: "trust_engine_enabled",          enabled: true },
+      { flag: "trust_gaming_detection_enabled", enabled: true },
     ],
     trust_settings: [{
       id: 1,
