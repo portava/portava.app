@@ -145,9 +145,13 @@ export async function fetchArrivalBoard(tripId: string): Promise<{
   try {
     const res = await authedFetch(`${apiBase()}/api/trips/${tripId}/arrival-board`);
     if (!res.ok) return null;
-    const json = await res.json();
-    // API returns { tripId, destination, board: [...], note }; normalise to { arrivals, note }
-    return { arrivals: json.board ?? [], note: json.note ?? undefined };
+    const json = await res.json() as Record<string, unknown>;
+    // Backend returns { board: [...], note } — normalise to { arrivals: [...], note }.
+    const arrivals = (json.arrivals ?? json.board ?? []) as Array<{
+      userId: string;
+      arrival: { time: string; label: string } | null;
+    }>;
+    return { arrivals, note: json.note as string | undefined };
   } catch {
     return null;
   }

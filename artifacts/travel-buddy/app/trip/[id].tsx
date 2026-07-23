@@ -19,6 +19,7 @@ import { SafeReturnSetupSheet } from '../../src/components/safeReturn/SafeReturn
 import { MissedCheckinPrompt } from '../../src/components/safeReturn/MissedCheckinPrompt';
 import { getActiveSession, type SafeReturnSession } from '../../src/services/safeReturn';
 import { TripPlanSection } from '../../src/components/TripPlanSection';
+import { NeighborhoodMatchSection } from '../../src/components/trip/NeighborhoodMatchSection';
 import { TripAvailabilitySection } from '../../src/components/TripAvailabilitySection';
 import { TripReservationsSection } from '../../src/components/trip/TripReservationsSection';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
@@ -442,6 +443,10 @@ function TripDetailScreen() {
 
         <SavedIdeas ideas={[]} tripId={trip.id} />
         <TripSavedPlacesSection tripId={trip.id} />
+
+        {live && trip.id ? (
+          <NeighborhoodMatchSection tripId={trip.id} />
+        ) : null}
 
         {live && (
           <TripCircle

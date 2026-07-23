@@ -1,0 +1,806 @@
+/**
+ * NeighborhoodMatchSheet — two-step sheet for the "Where should I stay?" flow.
+ *
+ * Step 1 — Preferences: sleep-vs-play selector + five priority sliders.
+ * Step 2 — Ranked areas: neighborhood cards with compass pick highlighted,
+ *           OSM disclaimer, and "Check this location" CTA.
+ */
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  ActivityIndicator,
+  TextInput,
+  Alert,
+} from 'react-native';
+import Slider from '@react-native-community/slider';
+import { X, MapPin, Star, AlertTriangle } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
+import {
+  setTripAreaPreferences,
+  fetchNeighborhoodMatch,
+  runLocationCheck,
+  type NeighborhoodArea,
+} from '../../services/neighborhoods.ts';
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type SleepVsPlay = 'inside' | 'close' | 'away';
+
+interface Prefs {
+  sleepVsPlay: SleepVsPlay | null;
+  priorities: {
+    nightlife: number;
+    food: number;
+    culture: number;
+    shopping: number;
+    quiet: number;
+  };
+}
+
+interface MatchResult {
+  areas: NeighborhoodArea[];
+  compassPick?: { name: string; why: string } | null;
+  disclaimer?: string;
+}
+
+interface LocationVerdict {
+  verdict: 'good_fit' | 'moderate' | 'consider_alternatives' | 'insufficient_data';
+  distanceToCenterOfGravityKm: number | null;
+  areaFit: { areaName: string; matchScore?: number } | null;
+  nearestSavedPlaces: Array<{ name: string; distanceKm: number }>;
+  centerOfGravity: { lat: number; lng: number; shares?: Record<string, number> } | null;
+  locatedPoints: number;
+  thresholdNote?: string;
+}
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const SLEEP_OPTIONS: Array<{ value: SleepVsPlay; label: string; sub: string }> = [
+  { value: 'inside', label: 'Inside the Action', sub: 'Stay where it all happens' },
+  { value: 'close', label: 'Close to the Action', sub: 'Easy access, quieter nights' },
+  { value: 'away', label: 'Away from the Action', sub: 'Peaceful, then venture out' },
+];
+
+const PRIORITY_KEYS: Array<{ key: keyof Prefs['priorities']; label: string }> = [
+  { key: 'nightlife', label: 'Nightlife' },
+  { key: 'food', label: 'Food & Dining' },
+  { key: 'culture', label: 'Culture & Arts' },
+  { key: 'shopping', label: 'Shopping' },
+  { key: 'quiet', label: 'Quiet & Green Space' },
+];
+
+const DEFAULT_PREFS: Prefs = {
+  sleepVsPlay: null,
+  priorities: { nightlife: 50, food: 50, culture: 50, shopping: 50, quiet: 50 },
+};
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+function StepIndicator({ step }: { step: 1 | 2 }) {
+  return (
+    <View style={styles.stepRow}>
+      {[1, 2].map((n) => (
+        <View
+          key={n}
+          style={[styles.stepDot, n === step && styles.stepDotActive, n < step && styles.stepDotDone]}
+        />
+      ))}
+    </View>
+  );
+}
+
+function AreaCard({
+  area,
+  isCompassPick,
+  compassWhy,
+}: {
+  area: NeighborhoodArea;
+  isCompassPick: boolean;
+  compassWhy?: string;
+}) {
+  const matchPct = area.matchScore != null ? Math.round(area.matchScore) : null;
+  const lowConf = area.confidence === 'low';
+
+  return (
+    <View style={[styles.areaCard, isCompassPick && styles.areaCardCompass]}>
+      <View style={styles.areaCardHeader}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.areaName}>{area.name}</Text>
+          {isCompassPick && (
+            <View style={styles.compassBadge}>
+              <Star size={11} color={color.deep} />
+              <Text style={styles.compassBadgeText}>Compass Pick</Text>
+            </View>
+          )}
+        </View>
+        {matchPct != null && (
+          <View style={styles.matchBadge}>
+            <Text style={styles.matchBadgeText}>{matchPct}%</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Factor tags */}
+      {area.factors && area.factors.length > 0 && (
+        <View style={styles.factorRow}>
+          {area.factors.map((f) => (
+            <View key={f.key} style={styles.factorTag}>
+              <Text style={styles.factorTagText}>
+                {f.label} ({Math.round(f.contribution)}/100)
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Day / Night description */}
+      {Object.entries(area.dayNight).map(([period, desc]) => (
+        <Text key={period} style={styles.dayNightLine}>
+          <Text style={styles.dayNightPeriod}>{period === 'day' ? '☀ Day' : '🌙 Night'}: </Text>
+          {desc}
+        </Text>
+      ))}
+
+      {/* Compass pick "why" */}
+      {isCompassPick && compassWhy ? (
+        <View style={styles.compassWhy}>
+          <Text style={styles.compassWhyText}>{compassWhy}</Text>
+        </View>
+      ) : null}
+
+      {/* Low-confidence caveat */}
+      {lowConf && (
+        <View style={styles.caveatRow}>
+          <AlertTriangle size={12} color={color.warn} />
+          <Text style={styles.caveatText}>
+            {area.caveat ?? 'Limited data — treat this as a rough guide.'}
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+export function LocationCheckSheet({
+  tripId,
+  onClose,
+}: {
+  tripId: string;
+  onClose: () => void;
+}) {
+  const [lat, setLat] = useState('');
+  const [lng, setLng] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [verdict, setVerdict] = useState<LocationVerdict | null>(null);
+
+  async function handleCheck() {
+    const latNum = parseFloat(lat);
+    const lngNum = parseFloat(lng);
+    if (isNaN(latNum) || isNaN(lngNum)) {
+      Alert.alert('Invalid coordinates', 'Enter valid latitude and longitude numbers.');
+      return;
+    }
+    setLoading(true);
+    const result = await runLocationCheck(tripId, { lat: latNum, lng: lngNum });
+    setLoading(false);
+    if (result) {
+      setVerdict(result as unknown as LocationVerdict);
+    } else {
+      Alert.alert('Check failed', 'Could not verify this location. Try again.');
+    }
+  }
+
+  return (
+    <View style={styles.locationSheet}>
+      <View style={styles.locationSheetHeader}>
+        <Text style={styles.locationSheetTitle}>Check this location</Text>
+        <Pressable onPress={onClose} hitSlop={8}>
+          <X size={20} color={color.mute} />
+        </Pressable>
+      </View>
+
+      {verdict ? (
+        <View style={styles.verdictCard}>
+          {/* Verdict label */}
+          <Text style={styles.verdictLabel} testID="verdict-label">
+            Fit:{' '}
+            <Text style={styles.verdictValue}>
+              {verdict.verdict === 'good_fit' ? '✓ Good fit'
+                : verdict.verdict === 'moderate' ? '~ Moderate fit'
+                : verdict.verdict === 'consider_alternatives' ? '⚠ Consider alternatives'
+                : 'Insufficient data'}
+            </Text>
+          </Text>
+
+          {/* Distance to center of gravity */}
+          {verdict.distanceToCenterOfGravityKm != null && (
+            <Text style={styles.verdictLabel}>
+              Distance to trip center:{' '}
+              <Text style={styles.verdictValue}>{verdict.distanceToCenterOfGravityKm} km</Text>
+            </Text>
+          )}
+
+          {/* Area fit */}
+          {verdict.areaFit != null && (
+            <Text style={styles.verdictLabel}>
+              Nearest area:{' '}
+              <Text style={styles.verdictValue}>
+                {verdict.areaFit.areaName}
+                {verdict.areaFit.matchScore != null ? ` (${Math.round(verdict.areaFit.matchScore * 100)}% match)` : ''}
+              </Text>
+            </Text>
+          )}
+
+          {/* Nearest saved places */}
+          {verdict.nearestSavedPlaces.length > 0 && (
+            <>
+              <Text style={[styles.verdictLabel, { marginTop: space.xs }]}>Nearby saved places:</Text>
+              {verdict.nearestSavedPlaces.slice(0, 3).map((p) => (
+                <Text key={p.name} style={styles.verdictLabel}>
+                  {'  '}<Text style={styles.verdictValue}>{p.name}</Text> — {p.distanceKm} km
+                </Text>
+              ))}
+            </>
+          )}
+
+          {/* Center-of-gravity shares */}
+          {verdict.centerOfGravity?.shares && Object.keys(verdict.centerOfGravity.shares).length > 0 && (
+            <>
+              <Text style={[styles.verdictLabel, { marginTop: space.xs }]}>Trip gravity breakdown:</Text>
+              {Object.entries(verdict.centerOfGravity.shares).map(([k, v]) => (
+                <Text key={k} style={styles.verdictLabel}>
+                  {'  '}{k}: <Text style={styles.verdictValue}>{Math.round(Number(v) * 100)}%</Text>
+                </Text>
+              ))}
+            </>
+          )}
+
+          <Pressable style={styles.locationCheckBtn} onPress={() => { setVerdict(null); setLat(''); setLng(''); }}>
+            <Text style={styles.locationCheckBtnText}>Check another</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <>
+          <Text style={styles.locationSheetSub}>Enter coordinates to check how this spot fits your trip preferences.</Text>
+          <View style={styles.coordRow}>
+            <TextInput
+              style={styles.coordInput}
+              placeholder="Latitude"
+              placeholderTextColor={color.faint}
+              keyboardType="decimal-pad"
+              value={lat}
+              onChangeText={setLat}
+              accessibilityLabel="Latitude"
+            />
+            <TextInput
+              style={styles.coordInput}
+              placeholder="Longitude"
+              placeholderTextColor={color.faint}
+              keyboardType="decimal-pad"
+              value={lng}
+              onChangeText={setLng}
+              accessibilityLabel="Longitude"
+            />
+          </View>
+          <Pressable
+            style={[styles.locationCheckBtn, loading && { opacity: 0.6 }]}
+            onPress={handleCheck}
+            disabled={loading}
+          >
+            {loading
+              ? <ActivityIndicator size="small" color={color.onInk} />
+              : <Text style={styles.locationCheckBtnText}>Check location</Text>}
+          </Pressable>
+        </>
+      )}
+    </View>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
+export interface NeighborhoodMatchSheetProps {
+  visible: boolean;
+  tripId: string;
+  onClose: () => void;
+}
+
+export function NeighborhoodMatchSheet({ visible, tripId, onClose }: NeighborhoodMatchSheetProps) {
+  const insets = useSafeAreaInsets();
+  const [step, setStep] = useState<1 | 2>(1);
+  const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<MatchResult | null>(null);
+  const [locationCheckOpen, setLocationCheckOpen] = useState(false);
+
+  function handleClose() {
+    setStep(1);
+    setPrefs(DEFAULT_PREFS);
+    setResult(null);
+    setLocationCheckOpen(false);
+    onClose();
+  }
+
+  async function handleSubmitPrefs() {
+    setSubmitting(true);
+    // Backend expects priorities as 0..1 floats; sliders store 0..100 integers.
+    const scaledPriorities = Object.fromEntries(
+      Object.entries(prefs.priorities).map(([k, v]) => [k, v / 100]),
+    ) as Record<string, number>;
+    await setTripAreaPreferences(tripId, {
+      sleepVsPlay: prefs.sleepVsPlay,
+      priorities: scaledPriorities,
+    });
+    const match = await fetchNeighborhoodMatch(tripId);
+    setSubmitting(false);
+    setResult(match);
+    setStep(2);
+  }
+
+  function setPriority(key: keyof Prefs['priorities'], value: number) {
+    setPrefs((p) => ({ ...p, priorities: { ...p.priorities, [key]: Math.round(value) } }));
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={handleClose}>
+      <View style={[styles.container, { paddingTop: insets.top + space.sm }]}>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>
+            {step === 1 ? 'Where should I stay?' : 'Neighborhood matches'}
+          </Text>
+          <Pressable onPress={handleClose} hitSlop={8} accessibilityLabel="Close">
+            <X size={22} color={color.mute} />
+          </Pressable>
+        </View>
+
+        <StepIndicator step={step} />
+
+        {/* ── Step 1: Preferences ── */}
+        {step === 1 && (
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.step1Content} showsVerticalScrollIndicator={false}>
+            <Text style={styles.sectionLabel}>Sleep style</Text>
+            {SLEEP_OPTIONS.map((opt) => (
+              <Pressable
+                key={opt.value}
+                style={[styles.sleepOption, prefs.sleepVsPlay === opt.value && styles.sleepOptionActive]}
+                onPress={() => setPrefs((p) => ({ ...p, sleepVsPlay: opt.value }))}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: prefs.sleepVsPlay === opt.value }}
+              >
+                <Text style={[styles.sleepOptionLabel, prefs.sleepVsPlay === opt.value && styles.sleepOptionLabelActive]}>
+                  {opt.label}
+                </Text>
+                <Text style={[styles.sleepOptionSub, prefs.sleepVsPlay === opt.value && styles.sleepOptionSubActive]}>
+                  {opt.sub}
+                </Text>
+              </Pressable>
+            ))}
+
+            <Text style={[styles.sectionLabel, { marginTop: space.xl }]}>Priorities</Text>
+            {PRIORITY_KEYS.map(({ key, label }) => (
+              <View key={key} style={styles.sliderRow}>
+                <View style={styles.sliderLabelRow}>
+                  <Text style={styles.sliderLabel}>{label}</Text>
+                  <Text style={styles.sliderValue}>{prefs.priorities[key]}</Text>
+                </View>
+                <Slider
+                  minimumValue={0}
+                  maximumValue={100}
+                  step={1}
+                  value={prefs.priorities[key]}
+                  onValueChange={(v) => setPriority(key, v)}
+                  minimumTrackTintColor={color.signal}
+                  maximumTrackTintColor={color.haze}
+                  thumbTintColor={color.signal}
+                  accessibilityLabel={label}
+                />
+              </View>
+            ))}
+
+            <Pressable
+              style={[styles.submitBtn, submitting && { opacity: 0.6 }]}
+              onPress={handleSubmitPrefs}
+              disabled={submitting}
+            >
+              {submitting
+                ? <ActivityIndicator size="small" color={color.onInk} />
+                : <Text style={styles.submitBtnText}>Find neighborhoods →</Text>}
+            </Pressable>
+          </ScrollView>
+        )}
+
+        {/* ── Step 2: Ranked areas ── */}
+        {step === 2 && (
+          <>
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.step2Content} showsVerticalScrollIndicator={false}>
+              {result && result.areas.length > 0 ? (
+                result.areas.map((area, i) => {
+                  const isCompassPick = !!(result.compassPick && result.compassPick.name === area.name);
+                  return (
+                    <AreaCard
+                      key={`${area.name}-${i}`}
+                      area={area}
+                      isCompassPick={isCompassPick}
+                      compassWhy={isCompassPick ? result.compassPick?.why : undefined}
+                    />
+                  );
+                })
+              ) : (
+                <View style={styles.emptyState}>
+                  <MapPin size={28} color={color.mute} />
+                  <Text style={styles.emptyStateText}>No area data available for this trip.</Text>
+                </View>
+              )}
+
+              {result?.disclaimer ? (
+                <Text style={styles.disclaimer}>{result.disclaimer}</Text>
+              ) : null}
+            </ScrollView>
+
+            {/* Check this location CTA */}
+            <View style={[styles.step2Footer, { paddingBottom: insets.bottom + space.md }]}>
+              <Pressable style={styles.locationCheckCta} onPress={() => setLocationCheckOpen(true)}>
+                <MapPin size={15} color={color.signal} />
+                <Text style={styles.locationCheckCtaText}>Check this location</Text>
+              </Pressable>
+              <Pressable style={styles.backBtn} onPress={() => setStep(1)}>
+                <Text style={styles.backBtnText}>← Adjust preferences</Text>
+              </Pressable>
+            </View>
+
+            {/* Location-check sub-sheet */}
+            <Modal
+              visible={locationCheckOpen}
+              animationType="slide"
+              presentationStyle="formSheet"
+              onRequestClose={() => setLocationCheckOpen(false)}
+            >
+              <LocationCheckSheet tripId={tripId} onClose={() => setLocationCheckOpen(false)} />
+            </Modal>
+          </>
+        )}
+      </View>
+    </Modal>
+  );
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: color.paper,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: space.lg,
+    paddingBottom: space.md,
+    borderBottomWidth: 1,
+    borderBottomColor: color.haze,
+  },
+  headerTitle: {
+    ...t.heading,
+    color: color.ink,
+    flex: 1,
+  },
+  stepRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.sm,
+    paddingVertical: space.md,
+  },
+  stepDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: color.haze,
+  },
+  stepDotActive: {
+    backgroundColor: color.signal,
+    width: 20,
+    borderRadius: 4,
+  },
+  stepDotDone: {
+    backgroundColor: color.deep,
+  },
+  // Step 1
+  step1Content: {
+    paddingHorizontal: space.lg,
+    paddingBottom: space.xxxl,
+  },
+  sectionLabel: {
+    ...t.stamp,
+    color: color.deep,
+    letterSpacing: 1.2,
+    marginBottom: space.sm,
+    fontFamily: 'Courier',
+  },
+  sleepOption: {
+    borderWidth: 1.5,
+    borderColor: color.haze,
+    borderRadius: radius.md,
+    padding: space.lg,
+    marginBottom: space.sm,
+    backgroundColor: color.paperRaised,
+  },
+  sleepOptionActive: {
+    borderColor: color.signal,
+    backgroundColor: '#FFF5F3',
+  },
+  sleepOptionLabel: {
+    ...t.bodyStrong,
+    color: color.ink,
+  },
+  sleepOptionLabelActive: {
+    color: color.signal,
+  },
+  sleepOptionSub: {
+    ...t.small,
+    color: color.mute,
+    marginTop: 2,
+  },
+  sleepOptionSubActive: {
+    color: color.signal,
+    opacity: 0.8,
+  },
+  sliderRow: {
+    marginBottom: space.md,
+  },
+  sliderLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  sliderLabel: {
+    ...t.small,
+    color: color.ink,
+    fontWeight: '600',
+  },
+  sliderValue: {
+    ...t.stamp,
+    color: color.deep,
+    fontFamily: 'Courier',
+  },
+  submitBtn: {
+    backgroundColor: color.signal,
+    borderRadius: radius.md,
+    paddingVertical: space.md,
+    alignItems: 'center',
+    marginTop: space.xl,
+  },
+  submitBtnText: {
+    ...t.bodyStrong,
+    color: color.onInk,
+  },
+  // Step 2
+  step2Content: {
+    padding: space.lg,
+    paddingBottom: space.xxl,
+    gap: space.md,
+  },
+  areaCard: {
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: color.haze,
+    padding: space.lg,
+    gap: space.sm,
+    ...shadow.card,
+  },
+  areaCardCompass: {
+    borderColor: color.deep,
+    borderWidth: 2,
+    backgroundColor: '#F0F7F9',
+  },
+  areaCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.sm,
+  },
+  areaName: {
+    ...t.heading,
+    color: color.ink,
+    fontSize: 17,
+  },
+  compassBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  compassBadgeText: {
+    ...t.stamp,
+    color: color.deep,
+    fontFamily: 'Courier',
+    fontSize: 10,
+    letterSpacing: 1,
+  },
+  matchBadge: {
+    backgroundColor: color.signal,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.sm,
+    paddingVertical: 3,
+    alignSelf: 'flex-start',
+  },
+  matchBadgeText: {
+    ...t.stamp,
+    color: color.onInk,
+    fontFamily: 'Courier',
+    fontSize: 12,
+  },
+  factorRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.xs,
+  },
+  factorTag: {
+    backgroundColor: color.paper,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: color.haze,
+    paddingHorizontal: space.sm,
+    paddingVertical: 3,
+  },
+  factorTagText: {
+    ...t.stamp,
+    color: color.deep,
+    fontFamily: 'Courier',
+    fontSize: 10,
+  },
+  dayNightLine: {
+    ...t.small,
+    color: color.mute,
+  },
+  dayNightPeriod: {
+    fontWeight: '600',
+    color: color.ink,
+  },
+  compassWhy: {
+    backgroundColor: color.paper,
+    borderRadius: radius.sm,
+    padding: space.sm,
+    borderLeftWidth: 3,
+    borderLeftColor: color.deep,
+  },
+  compassWhyText: {
+    ...t.small,
+    color: color.ink,
+    fontStyle: 'italic',
+  },
+  caveatRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.xs,
+  },
+  caveatText: {
+    ...t.stamp,
+    color: color.warn,
+    fontFamily: 'Courier',
+    flex: 1,
+    fontSize: 11,
+  },
+  disclaimer: {
+    ...t.small,
+    color: color.mute,
+    textAlign: 'center',
+    paddingHorizontal: space.md,
+    marginTop: space.md,
+    lineHeight: 18,
+  },
+  emptyState: {
+    padding: space.xxl,
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  emptyStateText: {
+    ...t.small,
+    color: color.mute,
+    textAlign: 'center',
+  },
+  step2Footer: {
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    borderTopWidth: 1,
+    borderTopColor: color.haze,
+    gap: space.sm,
+  },
+  locationCheckCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.sm,
+    borderWidth: 1.5,
+    borderColor: color.signal,
+    borderRadius: radius.md,
+    paddingVertical: space.md,
+    backgroundColor: color.paperRaised,
+  },
+  locationCheckCtaText: {
+    ...t.bodyStrong,
+    color: color.signal,
+  },
+  backBtn: {
+    alignItems: 'center',
+    paddingVertical: space.sm,
+  },
+  backBtnText: {
+    ...t.small,
+    color: color.mute,
+    fontWeight: '600',
+  },
+  // Location check sub-sheet
+  locationSheet: {
+    flex: 1,
+    backgroundColor: color.paper,
+    padding: space.lg,
+  },
+  locationSheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: space.md,
+  },
+  locationSheetTitle: {
+    ...t.heading,
+    color: color.ink,
+  },
+  locationSheetSub: {
+    ...t.small,
+    color: color.mute,
+    marginBottom: space.lg,
+  },
+  coordRow: {
+    flexDirection: 'row',
+    gap: space.md,
+    marginBottom: space.lg,
+  },
+  coordInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: color.haze,
+    borderRadius: radius.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    ...t.body,
+    color: color.ink,
+    backgroundColor: color.paperRaised,
+  },
+  locationCheckBtn: {
+    backgroundColor: color.signal,
+    borderRadius: radius.md,
+    paddingVertical: space.md,
+    alignItems: 'center',
+  },
+  locationCheckBtnText: {
+    ...t.bodyStrong,
+    color: color.onInk,
+  },
+  verdictCard: {
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: color.haze,
+    padding: space.lg,
+    gap: space.sm,
+    ...shadow.card,
+  },
+  verdictLabel: {
+    ...t.small,
+    color: color.mute,
+  },
+  verdictValue: {
+    ...t.small,
+    color: color.ink,
+    fontWeight: '700',
+  },
+});

@@ -93,6 +93,9 @@ const KNOWN_BROKEN = [
   // standalone-only files that hit the same esbuild "Unexpected typeof" wall
   'src/components/__tests__/LivePulseRail.test.ts',
   'src/services/__tests__/media.upload.test.ts',
+  // react-native@0.81.5 esbuild "Unexpected typeof" — cannot run via tsx in Node
+  'src/components/__tests__/LivePulseRail.test.ts',
+  'src/services/__tests__/media.upload.test.ts',
   // expo-modules-core@3.0.30 requires native sweet/setUpJsLogger.fx — not in Node
   'src/lib/__tests__/cryptoIdentity.e1.test.ts',
   'src/lib/__tests__/e0Migration.test.ts',
