@@ -33,7 +33,7 @@ import { router } from 'expo-router';
 import {
   ArrowLeft, Send, Users, Globe, Info, VolumeX, Languages, Paperclip,
   Compass, Bot, Copy, Trash2, Flag, Reply, Check, CheckCheck, Search, BookmarkPlus, X,
-  AlertCircle, RefreshCw, CalendarClock, Clock, MoreHorizontal,
+  AlertCircle, RefreshCw, CalendarClock, Clock,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGroupChat } from '../hooks/useGroupChat.ts';
@@ -53,8 +53,6 @@ import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import { MessageEntrance, useMessageEntranceGate } from './MessageEntrance.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
-import { E2eeBadge } from './E2eeBadge.tsx';
-import { ThreadSafetySheet } from './ThreadSafetySheet.tsx';
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
@@ -473,7 +471,6 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   const [defaultShowOriginal, setDefaultShowOriginal] = useState(false);
   const [showTranslationSheet, setShowTranslationSheet] = useState(false);
   const [showMembersSheet, setShowMembersSheet] = useState(false);
-  const [showSafetySheet, setShowSafetySheet] = useState(false);
   const [memberPreview, setMemberPreview] = useState<FriendUser[]>([]);
   const [memberCount, setMemberCount] = useState<number | null>(null);
   const listRef = useRef<FlatList>(null);
@@ -646,7 +643,6 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
               ? `${memberCount} ${memberCount === 1 ? 'member' : 'members'}`
               : (memberLabel ?? 'Members')}
           </Text>
-          {thread?.is_e2ee && <E2eeBadge />}
         </View>
       </Pressable>
       <View style={styles.headerActions}>
@@ -669,14 +665,6 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           }}
         >
           <VolumeX size={18} color={threadMuted ? color.signal : color.mute} />
-        </Pressable>
-        <Pressable
-          hitSlop={8}
-          style={styles.headerIconBtn}
-          accessibilityLabel="Chat settings"
-          onPress={() => setShowSafetySheet(true)}
-        >
-          <MoreHorizontal size={18} color={color.mute} />
         </Pressable>
       </View>
     </View>
@@ -1061,22 +1049,6 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           onDismiss={() => setShowMembersSheet(false)}
         />
       )}
-
-      {/* Thread settings / safety sheet */}
-      <ThreadSafetySheet
-        visible={showSafetySheet}
-        onClose={() => setShowSafetySheet(false)}
-        threadType={type}
-        isMuted={threadMuted}
-        onToggleMute={async () => {
-          const next = !threadMuted;
-          const res = await muteThread(id, next);
-          if (res.ok) setThreadMuted(next);
-        }}
-        hideAiSuggestions={false}
-        onToggleHideAi={() => {}}
-        isE2ee={thread?.is_e2ee ?? false}
-      />
     </KeyboardSafeScrollView>
   );
 }

@@ -52,7 +52,7 @@ import { TelegraphRecommendationCard } from '../../src/components/TelegraphRecom
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 import { blockUser } from '../../src/services/blocks';
 import { sendFeedback } from '../../src/services/intelligence';
-import { reportContent, type ReasonCode } from '../../src/services/reports';
+import { ReportSheet } from '../../src/components/ReportSheet';
 import { TripWishlistPicker, type AddToTripPayload } from '../../src/components/discovery/TripWishlistPicker';
 import { TranslationSettingsSheet } from '../../src/components/TranslationSettingsSheet';
 import { MentionInput, type MentionInputHandle } from '../../src/components/MentionInput';
@@ -125,19 +125,10 @@ const dd = StyleSheet.create({
 
 // ── Long-press action sheet ───────────────────────────────────────────────────
 
-const REPORT_MSG_REASONS: { code: ReasonCode; label: string }[] = [
-  { code: 'spam',           label: 'Spam or misleading' },
-  { code: 'harassment',     label: 'Harassment or bullying' },
-  { code: 'hate_speech',    label: 'Hate speech' },
-  { code: 'violence',       label: 'Violent or dangerous content' },
-  { code: 'nudity',         label: 'Nudity or sexual content' },
-  { code: 'misinformation', label: 'Misinformation' },
-  { code: 'other',          label: 'Something else' },
-];
-
 function LongPressActionSheet({
   message,
   mine,
+  threadId,
   onClose,
   onDeleteForMe,
   onReply,
@@ -145,6 +136,7 @@ function LongPressActionSheet({
 }: {
   message: Message | null;
   mine: boolean;
+  threadId?: string;
   onClose: () => void;
   onDeleteForMe: (id: string) => Promise<void>;
   onReply: (msg: Message) => void;
@@ -152,132 +144,82 @@ function LongPressActionSheet({
 }) {
   const plainInsetForSheets = usePlainBottomInset();
   const [showReport, setShowReport] = useState(false);
-  const [reportReason, setReportReason] = useState<ReasonCode | null>(null);
-  const [reportDetail, setReportDetail] = useState('');
-  const [reportSending, setReportSending] = useState(false);
-
-  async function submitReport() {
-    if (!reportReason || !message) return;
-    setReportSending(true);
-    const detail = reportDetail.trim();
-    const result = await reportContent({
-      target_type: 'message',
-      target_id: message.id,
-      reason_code: reportReason,
-      ...(detail ? { reason_detail: detail } : {}),
-    }).catch(() => ({ ok: false as const }));
-    setReportSending(false);
-    if (result.ok) {
-      setShowReport(false);
-      onClose();
-      Alert.alert('Report submitted', 'Thank you. Our team will review this message.');
-    } else {
-      Alert.alert('Error', (result as any).error ?? 'Could not submit report');
-    }
-  }
 
   if (!message) return null;
   const text = message.displayBody ?? message.body ?? '';
   return (
-    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
-      <Pressable style={las.overlay} onPress={onClose} />
-      <View style={[las.sheet, { paddingBottom: plainInsetForSheets }]}>
-        <View style={las.handle} />
-        {showReport ? (
-          <>
-            <Text style={las.reportTitle}>Report this message</Text>
-            <Text style={las.reportSub}>What's wrong with this message?</Text>
-            {REPORT_MSG_REASONS.map((r) => (
-              <Pressable
-                key={r.code}
-                style={[las.reasonOption, reportReason === r.code && las.reasonSelected]}
-                onPress={() => setReportReason(r.code)}
-              >
-                <Text style={[las.reasonText, reportReason === r.code && las.reasonTextSelected]}>{r.label}</Text>
-                {reportReason === r.code && <Text style={las.reasonCheck}>✓</Text>}
-              </Pressable>
-            ))}
-            {reportReason !== null && (
-              <TextInput
-                style={las.detailInput}
-                value={reportDetail}
-                onChangeText={setReportDetail}
-                placeholder="Tell us more (optional)"
-                placeholderTextColor={color.mute}
-                multiline
-                maxLength={500}
-              />
-            )}
+    <>
+      <Modal visible animationType="slide" transparent onRequestClose={onClose}>
+        <Pressable style={las.overlay} onPress={onClose} />
+        <View style={[las.sheet, { paddingBottom: plainInsetForSheets }]}>
+          <View style={las.handle} />
+          {text.length > 0 && (
+            <Text style={las.preview} numberOfLines={2}>{text}</Text>
+          )}
+          {([
+            // 'translate' removed — translations are automatic per language
+            // settings; a menu item that only explained that was a dead end.
+            ['reply',     'Reply',         Reply        ],
+            ['copy',      'Copy text',     Copy         ],
+            ['save',      'Save message',  BookmarkPlus ],
+            ...(!mine ? [['report', 'Report', Flag]] : []),
+          ] as [string, string, React.ComponentType<{ size: number; color: string }>][]).map(([key, label, Icon]) => (
             <Pressable
-              style={[las.reportBtn, (!reportReason || reportSending) && las.reportBtnDisabled]}
-              onPress={submitReport}
-              disabled={!reportReason || reportSending}
-            >
-              {reportSending
-                ? <ActivityIndicator size="small" color={color.onInk} />
-                : <Text style={las.reportBtnLabel}>Submit Report</Text>}
-            </Pressable>
-            <Pressable style={las.backBtn} onPress={() => setShowReport(false)}>
-              <Text style={las.backLabel}>Back</Text>
-            </Pressable>
-          </>
-        ) : (
-          <>
-            {text.length > 0 && (
-              <Text style={las.preview} numberOfLines={2}>{text}</Text>
-            )}
-            {([
-              // 'translate' removed — translations are automatic per language
-              // settings; a menu item that only explained that was a dead end.
-              ['reply',     'Reply',         Reply        ],
-              ['copy',      'Copy text',     Copy         ],
-              ['save',      'Save message',  BookmarkPlus ],
-              ['report',    'Report',        Flag         ],
-            ] as [string, string, React.ComponentType<{ size: number; color: string }>][]).map(([key, label, Icon]) => (
-              <Pressable
-                key={key}
-                style={las.row}
-                onPress={async () => {
-                  if (key === 'copy') {
-                    onClose();
-                    await Clipboard.setStringAsync(text);
-                    Alert.alert('Copied', 'Message copied to clipboard.');
-                  } else if (key === 'report') {
-                    setShowReport(true);
-                  } else if (key === 'reply') {
-                    onReply(message);
-                  } else if (key === 'save') {
-                    onClose();
-                    onSave(message);
-                  } else {
-                    onClose();
-                    Alert.alert(label, 'This feature is coming soon.');
-                  }
-                }}
-              >
-                <Icon size={18} color={color.ink} />
-                <Text style={las.rowLabel}>{label}</Text>
-              </Pressable>
-            ))}
-            {mine && (
-              <Pressable
-                style={las.row}
-                onPress={() => {
+              key={key}
+              style={las.row}
+              onPress={async () => {
+                if (key === 'copy') {
                   onClose();
-                  Alert.alert('Delete message', 'Remove this message for you? Others will still see it.', [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Delete', style: 'destructive', onPress: () => onDeleteForMe(message.id) },
-                  ]);
-                }}
-              >
-                <Trash2 size={18} color="#EF4444" />
-                <Text style={[las.rowLabel, { color: '#EF4444' }]}>Delete for me</Text>
-              </Pressable>
-            )}
-          </>
-        )}
-      </View>
-    </Modal>
+                  await Clipboard.setStringAsync(text);
+                  Alert.alert('Copied', 'Message copied to clipboard.');
+                } else if (key === 'report') {
+                  setShowReport(true);
+                } else if (key === 'reply') {
+                  onReply(message);
+                } else if (key === 'save') {
+                  onClose();
+                  onSave(message);
+                } else {
+                  onClose();
+                  Alert.alert(label, 'This feature is coming soon.');
+                }
+              }}
+            >
+              <Icon size={18} color={color.ink} />
+              <Text style={las.rowLabel}>{label}</Text>
+            </Pressable>
+          ))}
+          {mine && (
+            <Pressable
+              style={las.row}
+              onPress={() => {
+                onClose();
+                Alert.alert('Delete message', 'Remove this message for you? Others will still see it.', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Delete', style: 'destructive', onPress: () => onDeleteForMe(message.id) },
+                ]);
+              }}
+            >
+              <Trash2 size={18} color="#EF4444" />
+              <Text style={[las.rowLabel, { color: '#EF4444' }]}>Delete for me</Text>
+            </Pressable>
+          )}
+        </View>
+      </Modal>
+
+      {/* Unified report sheet for non-mine messages */}
+      {!mine && (
+        <ReportSheet
+          visible={showReport}
+          onClose={() => { setShowReport(false); onClose(); }}
+          subjectType="message"
+          subjectId={message.id}
+          subjectUserId={message.senderId}
+          threadId={threadId}
+          onReported={() => { setShowReport(false); onClose(); }}
+        />
+      )}
+    </>
   );
 }
 const las = StyleSheet.create({
@@ -2217,6 +2159,7 @@ export default function TelegraphThread() {
       <LongPressActionSheet
         message={actionMsg}
         mine={actionMsgMine}
+        threadId={id ?? undefined}
         onClose={() => setActionMsg(null)}
         onDeleteForMe={handleDeleteForMe}
         onReply={(msg) => { setReplyingTo(msg); setActionMsg(null); }}

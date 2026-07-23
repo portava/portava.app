@@ -31,6 +31,7 @@ import { blockUser, getBlockStatus, unblockUser } from '../../src/services/block
 import { muteUser, unmuteUser, getMuteStatus } from '../../src/services/mutes';
 import { saveProfile, unsaveProfile, getSaveStatus } from '../../src/services/saves';
 import { submitReport, type ReportReason } from '../../src/services/reports';
+import { ReportSheet } from '../../src/components/ReportSheet';
 import { getUserReviews, type Review } from '../../src/services/reviews';
 import { getBuddyProfileByUserId, type BuddyProfile } from '../../src/services/rentABuddy';
 import type { PublicProfile } from '../../src/types/models';
@@ -262,11 +263,7 @@ function KebabMenu({
   const [statusLoading, setStatusLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const [reportOpen, setReportOpen] = useState(false);
-  const [reportReason, setReportReason] = useState<ReportReason | null>(null);
-  const [reportDetail, setReportDetail] = useState('');
-  const [reportSubmitting, setReportSubmitting] = useState(false);
-  const [reportDone, setReportDone] = useState(false);
+  const [reportSheetVisible, setReportSheetVisible] = useState(false);
 
   const displayName = truncateDisplayName(resolveDisplayName({ name, handle }));
 
@@ -335,27 +332,7 @@ function KebabMenu({
 
   function handleReport() {
     setOpen(false);
-    setReportReason(null);
-    setReportDetail('');
-    setReportDone(false);
-    setReportOpen(true);
-  }
-
-  async function handleSubmitReport() {
-    if (!reportReason) return;
-    setReportSubmitting(true);
-    const res = await submitReport({
-      targetUserId: userId,
-      reason: reportReason,
-      details: reportDetail.trim() || undefined,
-    });
-    setReportSubmitting(false);
-    if (res.ok) {
-      setReportDone(true);
-      setTimeout(() => setReportOpen(false), 2500);
-    } else {
-      Alert.alert('Error', res.error ?? 'Could not submit report');
-    }
+    setReportSheetVisible(true);
   }
 
   return (
@@ -404,70 +381,14 @@ function KebabMenu({
         </Pressable>
       </Modal>
 
-      {/* Report sub-modal */}
-      <Modal visible={reportOpen} transparent animationType="slide" onRequestClose={() => setReportOpen(false)}>
-        <View style={st.modalOverlay}>
-          <View style={[st.modalCard, { maxHeight: '80%' }]}>
-            <View style={st.modalHeader}>
-              <Text style={st.modalTitle}>Report {displayName}</Text>
-              <Pressable onPress={() => setReportOpen(false)} hitSlop={8}>
-                <X size={20} color={color.ink} />
-              </Pressable>
-            </View>
-
-            {reportDone ? (
-              <View style={st.reportDoneWrap}>
-                <Text style={st.reportDoneIcon}>✓</Text>
-                <Text style={st.reportDoneTitle}>Report submitted</Text>
-                <Text style={st.reportDoneSub}>
-                  Thank you — our team will review this shortly.
-                </Text>
-              </View>
-            ) : (
-              <>
-                <Text style={st.reportSubLabel}>Why are you reporting this account?</Text>
-                <ScrollView showsVerticalScrollIndicator={false}>
-                  {REPORT_REASONS.map((r) => (
-                    <Pressable
-                      key={r.code}
-                      style={[
-                        st.reasonRow,
-                        reportReason === r.code && { backgroundColor: `${color.signal}08` },
-                      ]}
-                      onPress={() => setReportReason(r.code)}
-                    >
-                      <View style={[st.reasonRadio, reportReason === r.code && st.reasonRadioSelected]} />
-                      <Text style={st.reasonLabel}>{r.label}</Text>
-                    </Pressable>
-                  ))}
-                  <TextInput
-                    style={[st.composerInput, { marginTop: space.md }]}
-                    placeholder="Additional details (optional)"
-                    placeholderTextColor={color.faint}
-                    value={reportDetail}
-                    onChangeText={setReportDetail}
-                    maxLength={500}
-                    multiline
-                    numberOfLines={3}
-                  />
-                </ScrollView>
-                <Pressable
-                  style={[
-                    st.actionBtn, st.addFriendBtnStyle,
-                    { marginTop: space.md, opacity: reportReason ? 1 : 0.45 },
-                  ]}
-                  disabled={!reportReason || reportSubmitting}
-                  onPress={handleSubmitReport}
-                >
-                  <Text style={[st.btnText, { color: '#fff' }]}>
-                    {reportSubmitting ? 'Submitting…' : 'Submit Report'}
-                  </Text>
-                </Pressable>
-              </>
-            )}
-          </View>
-        </View>
-      </Modal>
+      <ReportSheet
+        visible={reportSheetVisible}
+        onClose={() => setReportSheetVisible(false)}
+        subjectType="user"
+        subjectId={userId}
+        subjectUserId={userId}
+        subjectName={displayName}
+      />
     </>
   );
 }

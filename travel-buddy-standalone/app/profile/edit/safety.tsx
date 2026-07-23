@@ -16,6 +16,7 @@ import {
 import {
   SettingsScreen, SettingsSection, SettingsRow, SettingsDivider,
 } from '../../../src/components/settings/SettingsUI';
+import { Flag } from 'lucide-react-native';
 import { PP } from '../../../src/theme/passportTokens';
 import { space, radius, type as t } from '../../../src/theme/tokens';
 import { getMyProfile } from '../../../src/services/profile';
@@ -30,13 +31,11 @@ const VERIF_STATUS_LABEL: Record<OwnProfile['verificationStatus'], { label: stri
 };
 
 const LEVEL_LABEL: Record<NonNullable<OwnProfile['verificationLevel']>, string> = {
-  none:               'None',
-  id_verified:        'ID Verified',
-  id_selfie_verified: 'ID + Selfie Verified',
-  basic_verified:     'Basic verified',
-  trusted_traveler:   'Trusted traveler',
-  host_verified:      'Host verified',
-  buddy_verified:     'Buddy verified',
+  none: 'None',
+  basic_verified: 'Basic verified',
+  trusted_traveler: 'Trusted traveler',
+  host_verified: 'Host verified',
+  buddy_verified: 'Buddy verified',
 };
 
 function fmtDate(iso: string | null | undefined): string {
@@ -105,6 +104,16 @@ export default function SafetyVerificationScreen() {
           title="Restricted Users"
           subtitle="Accounts with limited access to you"
           onPress={() => router.push('/restricted-users' as any)}
+        />
+      </SettingsSection>
+
+      {/* Report history */}
+      <SettingsSection title="Reports">
+        <SettingsRow
+          icon={<Flag size={18} color={PP.ink} />}
+          title="Your Reports"
+          subtitle="Reports you've submitted for review"
+          onPress={() => router.push('/profile/edit/reports' as any)}
         />
       </SettingsSection>
 

@@ -49,8 +49,6 @@ export interface BuddyProfile {
   /** Approximate (neighbourhood-level) meetup-base pin, when the buddy has set one. */
   meetupBaseLat?: number | null;
   meetupBaseLng?: number | null;
-  /** Portava Verified level — populated when the API includes the profiles join (Phase V-2+). */
-  verificationLevel?: 'none' | 'id_verified' | 'id_selfie_verified' | null;
 }
 
 export interface BuddyPackage {

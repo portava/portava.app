@@ -8,7 +8,6 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { ShieldCheck, Shield } from 'lucide-react-native';
 import type { VerificationLevelStatus } from '../VerificationLevelsRail.tsx';
 import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
-import { VerifiedBadge } from '../VerifiedBadge.tsx';
 
 interface Props {
   levels: VerificationLevelStatus;
@@ -17,10 +16,6 @@ interface Props {
   noSafetyFlags?: boolean;
   isOwner?: boolean;
   onPrivacySettings?: () => void;
-  /** Phase V-2: new Portava Verified level from profiles.verification_level. */
-  verificationLevel?: string | null;
-  /** Phase V-2: callback when owner taps "Get verified". */
-  onGetVerified?: () => void;
 }
 
 interface LevelRowProps {
@@ -83,34 +78,11 @@ const r = StyleSheet.create({
   badgeTextActive: { color: TEAL },
 });
 
-// Styles for Phase V-2 Portava Verified affordance (separate from the r.* namespace above)
-const v = StyleSheet.create({
-  vBadgeRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    marginTop: 10, paddingTop: 10,
-    borderTopWidth: 1, borderTopColor: PP.borderLight,
-  },
-  vBadgeText: {
-    ...PP_LABEL, fontSize: 9, color: TEAL, letterSpacing: 0.8,
-  },
-  getVerifiedBtn: {
-    marginTop: 10, paddingTop: 10,
-    borderTopWidth: 1, borderTopColor: PP.borderLight,
-    alignSelf: 'flex-start',
-  },
-  getVerifiedText: {
-    ...PP_LABEL, fontSize: 9, color: PP.inkMuted, letterSpacing: 0.8,
-    textDecorationLine: 'underline',
-  },
-});
-
 export function PassportSafetySection({
   levels, trustScore, trustLabel, noSafetyFlags = true, isOwner, onPrivacySettings,
-  verificationLevel, onGetVerified,
 }: Props) {
   const hasAnyActive = levels.basicVerified || levels.trustedTraveler
     || levels.hostVerified || levels.buddyVerified;
-  const isNewVerified = verificationLevel === 'id_verified' || verificationLevel === 'id_selfie_verified';
 
   return (
     <View style={s.section}>
@@ -175,23 +147,6 @@ export function PassportSafetySection({
           {noSafetyFlags ? 'No active safety flags' : 'Safety record under review'}
         </Text>
       </View>
-
-      {/* Phase V-2: Portava Verified — new ID-verification system. */}
-      {isNewVerified ? (
-        <View style={v.vBadgeRow}>
-          <VerifiedBadge
-            level={verificationLevel as 'id_verified' | 'id_selfie_verified'}
-            size={18}
-          />
-          <Text style={v.vBadgeText}>
-            {verificationLevel === 'id_selfie_verified' ? 'ID + Selfie Verified' : 'ID Verified'}
-          </Text>
-        </View>
-      ) : isOwner && onGetVerified ? (
-        <Pressable style={v.getVerifiedBtn} onPress={onGetVerified}>
-          <Text style={v.getVerifiedText}>Get Verified →</Text>
-        </Pressable>
-      ) : null}
     </View>
   );
 }

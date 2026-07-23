@@ -8,7 +8,6 @@ import type { BuddyProfile } from '../services/rentABuddy.ts';
 import { saveBuddy, unsaveBuddy } from '../services/rentABuddy.ts';
 import { CompassFeedbackMenu } from './compass/CompassFeedbackMenu.tsx';
 import { CompassWhySheet } from './compass/CompassWhySheet.tsx';
-import { VerifiedBadge } from './VerifiedBadge.tsx';
 
 /** "650 m away" / "2.3 km away" / "12 km away" */
 export function formatDistanceAway(km: number): string {
@@ -117,12 +116,7 @@ export function BuddyCard({
       {/* Body */}
       <View style={styles.body}>
         <View style={styles.nameRow}>
-          <View style={styles.nameAndBadge}>
-            <Text style={styles.name} numberOfLines={1}>{buddy.displayName ?? 'Local Buddy'}</Text>
-            {(buddy.verificationLevel === 'id_verified' || buddy.verificationLevel === 'id_selfie_verified')
-              ? <VerifiedBadge level={buddy.verificationLevel} size={16} />
-              : null}
-          </View>
+          <Text style={styles.name} numberOfLines={1}>{buddy.displayName ?? 'Local Buddy'}</Text>
           <View style={styles.ratingRow}>
             <Star size={11} color={color.warn} fill={color.warn} />
             <Text style={styles.rating}>{stars}</Text>
@@ -276,8 +270,7 @@ const styles = StyleSheet.create({
   availChipSoon: { backgroundColor: 'rgba(250,249,246,0.9)', borderWidth: 1, borderColor: color.haze },
   availText: { fontSize: 9, fontWeight: '800', color: '#fff', fontFamily: 'Courier', letterSpacing: 0.5 },
   body: { padding: space.md, gap: space.xs },
-  nameRow:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  nameAndBadge:   { flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1, minWidth: 0 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   name: { ...t.bodyStrong, color: color.ink, flex: 1, marginRight: space.sm },
   ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   rating: { ...t.small, fontWeight: '700', color: color.ink },

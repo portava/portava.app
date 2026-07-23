@@ -528,7 +528,7 @@ export interface PublicProfile {
   stamps?: PassportStamp[];
   trustScore?: number | null;
   trustLabel?: string | null;
-  verificationLevel?: 'none' | 'id_verified' | 'id_selfie_verified' | 'basic_verified' | 'trusted_traveler' | 'host_verified' | 'buddy_verified' | null;
+  verificationLevel?: 'none' | 'basic_verified' | 'trusted_traveler' | 'host_verified' | 'buddy_verified' | null;
   /** Owner's preferred passport tab order; null/absent = canonical order. */
   passportTabOrder?: string[] | null;
   /**
@@ -586,7 +586,7 @@ export interface OwnProfile {
   ageGateRequired?: boolean;
   trustScore?: number | null;
   trustLabel?: string | null;
-  verificationLevel?: 'none' | 'id_verified' | 'id_selfie_verified' | 'basic_verified' | 'trusted_traveler' | 'host_verified' | 'buddy_verified' | null;
+  verificationLevel?: 'none' | 'basic_verified' | 'trusted_traveler' | 'host_verified' | 'buddy_verified' | null;
   idVerifiedAt?: ISODate | null;
   selfieVerifiedAt?: ISODate | null;
   homeCountryVerifiedAt?: ISODate | null;

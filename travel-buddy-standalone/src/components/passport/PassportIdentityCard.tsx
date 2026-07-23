@@ -20,7 +20,6 @@ import type { OwnProfile, PublicProfile } from '../../types/models.ts';
 import { resolveAvatarUrl, fallbackInitials, truncateDisplayName } from '../../utils/identity.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity.ts';
 import { isTravelBuddyVerified } from '../../lib/verification.ts';
-import { VerifiedBadge } from '../VerifiedBadge.tsx';
 import { HighlightRing } from '../HighlightRing.tsx';
 import { getPassportStats } from '../../services/passportStamps.ts';
 import type { PassportStats } from '../../services/passportStamps.ts';
@@ -282,8 +281,6 @@ export function PassportIdentityCard({
   const avatarUrl     = resolveAvatarUrl(profile.avatarUrl);
   const initials      = fallbackInitials(profile);
   const isVerified    = isTravelBuddyVerified(profile);
-  const newVL         = (profile.verificationLevel === 'id_verified' || profile.verificationLevel === 'id_selfie_verified')
-    ? profile.verificationLevel : null;
 
   // Location: prefer currentCity, then homeCity + homeCountry
   const homeCity    = 'homeCity'    in profile ? (profile.homeCity    ?? null) : null;
@@ -389,14 +386,12 @@ export function PassportIdentityCard({
               <Text style={s.travelerLabel}>TRAVELER ★</Text>
 
               {/* Name row — verified stamp replaces CheckCircle2.
-                  Mixed case per the approved identity design.
-                  VerifiedBadge (new system) appears after the old stamp. */}
+                  Mixed case per the approved identity design. */}
               <View style={s.nameRow}>
                 <Text style={s.displayName} numberOfLines={1}>
                   {resolvedName}
                 </Text>
                 {isVerified ? <PassportVerifiedStamp /> : null}
-                {newVL ? <VerifiedBadge level={newVL} size={20} /> : null}
               </View>
 
               {handleSubline ? (
