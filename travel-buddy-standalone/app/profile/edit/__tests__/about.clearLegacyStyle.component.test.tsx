@@ -62,7 +62,7 @@ describe('AboutScreen — legacy travel style clearing', () => {
       data: profileWith({ travelStyle: null }),
     });
 
-    await render(<AboutScreen />);
+    render(<AboutScreen />);
     await waitFor(() => expect(screen.getByText('Legacy travel style')).toBeTruthy());
 
     // Deselect the legacy chip.
@@ -89,7 +89,7 @@ describe('AboutScreen — legacy travel style clearing', () => {
     });
     mockUpdateMyProfile.mockResolvedValue({ ok: true, data: profileWith() });
 
-    await render(<AboutScreen />);
+    render(<AboutScreen />);
     await waitFor(() => expect(screen.getByText('Legacy travel style')).toBeTruthy());
 
     // Deselect then re-select — form is back to original, save stays disabled.
@@ -110,7 +110,7 @@ describe('AboutScreen — legacy travel style clearing', () => {
     mockGetMyProfile.mockResolvedValue({ ok: true, data: profileWith() });
     mockUpdateMyProfile.mockResolvedValue({ ok: true, data: profileWith() });
 
-    await render(<AboutScreen />);
+    render(<AboutScreen />);
     await waitFor(() => expect(screen.getByText('Travel Style')).toBeTruthy());
     expect(screen.queryByText('Legacy travel style')).toBeNull();
 
