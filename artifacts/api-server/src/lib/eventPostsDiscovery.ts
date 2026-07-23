@@ -179,8 +179,8 @@ function postPassesStaticFilters(
 // Keyed on (city, radiusKm) — NOT per-viewer.
 //
 // Why not per-viewer? The expensive work is the DB join (Path A: post_event_links
-// → posts → events; Path B: posts → discovery_places with no index on
-// location_place_id = osm_id).  Block lists and seen-post sets differ per viewer
+// → posts → events; Path B: posts → discovery_places via idx_discovery_places_osm_id
+// on osm_id = location_place_id).  Block lists and seen-post sets differ per viewer
 // but are cheap to apply in-process against the cached slice.  Caching at the
 // city+radius granularity means all viewers for the same city share one fetch,
 // while viewer-specific filtering (blockedIds, seenPostIds) and proximity scoring
