@@ -54,3 +54,12 @@ app.json.bak
 # TypeScript build cache
 *.tsbuildinfo
 .env.missing.runtime
+
+.local/
+.cache/
+.npm/
+.pnpm-store/
+*.tar.gz
+*.zip
+screenshots/
+attached_assets/
