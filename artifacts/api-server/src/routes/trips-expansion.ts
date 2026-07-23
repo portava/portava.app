@@ -1812,7 +1812,14 @@ router.put("/trips/:tripId/budget", async (req, res) => {
 
   const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can update the budget"); return; }
+
+  const isPutOwner = (trip as any).owner_id === user.id;
+  if (!isPutOwner) {
+    const membership = await requireTripMember(sc, tripId, user.id);
+    if (!membership || !["owner", "co_host"].includes(membership.role)) {
+      sendError(res, "forbidden", "Only the trip owner or co-host can update the budget"); return;
+    }
+  }
 
   const BudgetSchema = z.object({
     currency:    z.string().max(3).optional(),

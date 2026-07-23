@@ -606,7 +606,7 @@ function TripDetailScreen() {
             isOwnerOrCohost={realTrip
               ? userId === realTrip.ownerId || memberRole === 'co_host'
               : false}
-            isOwner={realTrip ? userId === realTrip.ownerId : false}
+            isOwner={realTrip ? userId === realTrip.ownerId || memberRole === 'co_host' : false}
           />
         ) : null}
         {live && trip.id ? (
