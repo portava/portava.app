@@ -1647,6 +1647,55 @@ router.post("/trips/:tripId/destinations/reorder", handleDestinationsReorder);
 router.post("/trips/:tripId/items/reorder", handleDestinationsReorder);
 
 // ===========================================================================
+// DELETE /api/trips/:tripId/destinations/:destId  — remove a destination
+// (owner + co_host only)
+// ===========================================================================
+router.delete("/trips/:tripId/destinations/:destId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId, destId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid tripId"); return; }
+  if (!UUID_RE.test(destId)) { sendError(res, "invalid_payload", "Invalid destId"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+
+  const isOwner = (trip as any).owner_id === user.id;
+  if (!isOwner) {
+    const membership = await requireTripMember(sc, tripId, user.id);
+    if (!membership || !["owner", "co_host"].includes(membership.role)) {
+      sendError(res, "forbidden", "Only the trip owner or co-host can remove destinations");
+      return;
+    }
+  }
+
+  // Verify the destination belongs to this trip before deleting.
+  const { data: dest } = await sc
+    .from("trip_destinations")
+    .select("id")
+    .eq("id", destId)
+    .eq("trip_id", tripId)
+    .maybeSingle();
+
+  if (!dest) { sendError(res, "not_found", "Destination not found"); return; }
+
+  const { error } = await sc
+    .from("trip_destinations")
+    .delete()
+    .eq("id", destId)
+    .eq("trip_id", tripId);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  await logActivity(sc, tripId, user.id, "destination_removed", { destId });
+  res.json({ status: "deleted", destId });
+});
+
+// ===========================================================================
 // Budget routes (owner + co_host only — never public)
 // ===========================================================================
 

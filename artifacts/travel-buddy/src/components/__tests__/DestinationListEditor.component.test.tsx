@@ -67,6 +67,7 @@ jest.mock('../selectors/GlobalCalendarPicker', () => ({
 jest.mock('../../services/tripDestinations', () => ({
   addDestination: jest.fn(),
   reorderDestinations: jest.fn(),
+  deleteDestination: jest.fn(),
 }));
 
 // ── Stateful wrapper so onChange propagates back into the component ───────────
@@ -85,16 +86,19 @@ function Wrapper({
 describe('DestinationListEditor', () => {
   let mockAdd: jest.Mock;
   let mockReorder: jest.Mock;
+  let mockDelete: jest.Mock;
 
   beforeEach(() => {
     jest.clearAllMocks();
     const svc = require('../../services/tripDestinations.ts') as any;
     mockAdd = svc.addDestination;
     mockReorder = svc.reorderDestinations;
+    mockDelete = svc.deleteDestination;
     mockAdd.mockResolvedValue({
       id: 'dest-server-1', city: 'Tokyo', country: 'Japan', position: 1, created_at: '',
     });
     mockReorder.mockResolvedValue(true);
+    mockDelete.mockResolvedValue(true);
   });
 
   it('renders the Add stop button with no rows initially', async () => {
@@ -164,6 +168,30 @@ describe('DestinationListEditor', () => {
 
     await waitFor(() => {
       expect(mockReorder).toHaveBeenCalledWith('trip-abc', ['dest-2', 'dest-1']);
+    });
+  });
+
+  it('calls deleteDestination with the correct destId when a server row is removed in edit mode', async () => {
+    // Pre-populate with a row that already has a server ID (edit mode).
+    const initialDests: DestinationEntry[] = [
+      { key: 'k1', id: 'dest-server-99', city: 'Tokyo', country: 'Japan' },
+    ];
+
+    const { getByTestId, queryByText } = await render(
+      <Wrapper tripId="trip-edit" initialDestinations={initialDests} />,
+    );
+
+    await screen.findByText('Tokyo, Japan');
+
+    await fireEvent.press(getByTestId('remove-dest-0'));
+
+    await waitFor(() => {
+      expect(mockDelete).toHaveBeenCalledWith('trip-edit', 'dest-server-99');
+    });
+
+    // Row should also disappear from the UI.
+    await waitFor(() => {
+      expect(queryByText('Tokyo, Japan')).toBeNull();
     });
   });
 
