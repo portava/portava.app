@@ -115,8 +115,9 @@ jest.mock('../../../src/services/events', () => ({
 }));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/trips', () => ({
-  updateTrip:       jest.fn(),
-  createInviteLink: jest.fn(),
+  updateTrip:           jest.fn(),
+  createInviteLink:     jest.fn(),
+  getTripMemberRole:    jest.fn().mockResolvedValue(null),
 }));
 
 // ── ScreenErrorBoundary — passthrough ─────────────────────────────────────────

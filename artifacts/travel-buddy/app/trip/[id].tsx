@@ -37,7 +37,7 @@ import { useTrip, usePendingTripInvites } from '../../src/hooks/useBackend';
 import { openTripChat } from '../../src/services/messaging';
 import { getTripMemory, createTripMemory, type Memory } from '../../src/services/memories';
 import { getEventsNearTrip, type EventSummary } from '../../src/services/events';
-import { updateTrip, createInviteLink } from '../../src/services/trips';
+import { updateTrip, createInviteLink, getTripMemberRole } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
@@ -84,6 +84,7 @@ function TripDetailScreen() {
   const [shareLoading, setShareLoading] = useState(false);
   const [pageRefreshing, setPageRefreshing] = useState(false);
   const [readinessRefresh, setReadinessRefresh] = useState(false);
+  const [memberRole, setMemberRole] = useState<string | null>(null);
 
   const handlePageRefresh = useCallback(async () => {
     setPageRefreshing(true);
@@ -106,6 +107,12 @@ function TripDetailScreen() {
   }, []);
 
   const handleSafeReturnClose = useCallback(() => setSafeReturnSetupOpen(false), []);
+
+  // Resolve the current user's membership role so co-hosts can access the budget.
+  useEffect(() => {
+    if (!live || !id) return;
+    getTripMemberRole(id).then((role) => setMemberRole(role)).catch(() => {});
+  }, [live, id]);
 
   useEffect(() => {
     if (!live) return;
@@ -596,7 +603,9 @@ function TripDetailScreen() {
         {live && trip.id ? (
           <TripBudgetSection
             tripId={trip.id}
-            isOwnerOrCohost={realTrip ? userId === realTrip.ownerId : false}
+            isOwnerOrCohost={realTrip
+              ? userId === realTrip.ownerId || memberRole === 'co_host'
+              : false}
             isOwner={realTrip ? userId === realTrip.ownerId : false}
           />
         ) : null}

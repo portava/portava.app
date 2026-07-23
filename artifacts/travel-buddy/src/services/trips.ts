@@ -124,6 +124,25 @@ export async function getTrip(id: string): Promise<TripRow | null> {
   return mapTrip(data);
 }
 
+/**
+ * Returns the current user's role in a trip, or null if they are not a member.
+ * Possible values: 'owner', 'co_host', 'member', 'invited'.
+ */
+export async function getTripMemberRole(tripId: string): Promise<string | null> {
+  if (!isSupabaseConfigured) return null;
+  const { data: { session } } = await supabase.auth.getSession();
+  const userId = session?.user?.id;
+  if (!userId) return null;
+  const { data, error } = await supabase
+    .from('trip_members')
+    .select('role')
+    .eq('trip_id', tripId)
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return (data as any).role as string;
+}
+
 export interface CreateTripInput {
   title: string;
   destinationCity: string;
