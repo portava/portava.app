@@ -81,6 +81,8 @@ export default function NewTrip() {
             key: `dest-${Date.now()}-${Math.random().toString(36).slice(2)}`,
             city: d.city as string,
             country: typeof d.country === 'string' && d.country ? d.country : undefined,
+            arrivalDate: typeof d.arrivalDate === 'string' && d.arrivalDate ? d.arrivalDate : undefined,
+            departureDate: typeof d.departureDate === 'string' && d.departureDate ? d.departureDate : undefined,
           })),
         );
       } else if (validDestinations && validDestinations.length === 1) {

@@ -77,17 +77,21 @@ export function DestinationListEditor({ tripId, destinations, onChange }: Props)
     const entry = destinations.find((d) => d.key === key);
     if (!entry) return;
 
-    // In edit mode with a persisted server row: DELETE immediately, then hide.
+    // In edit mode with a persisted server row: DELETE first; only hide locally
+    // if the server accepted it. On failure, leave the row visible so the user
+    // isn't shown a false-success that reverts on refresh.
     if (tripId && entry.id) {
       setBusyRow(key, true);
+      let ok = false;
       try {
-        await deleteDestination(tripId, entry.id);
+        ok = await deleteDestination(tripId, entry.id);
       } finally {
         setBusyRow(key, false);
       }
+      if (!ok) return; // Server rejected — leave row visible, don't hide locally.
     }
 
-    // Always hide locally (covers create mode and the optimistic edit-mode update).
+    // Hide locally (create mode, or edit mode after confirmed server delete).
     onChange(destinations.map((d) => d.key === key ? { ...d, removed: true } : d));
   }, [destinations, onChange, tripId]);
 
