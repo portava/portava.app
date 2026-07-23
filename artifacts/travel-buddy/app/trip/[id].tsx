@@ -21,6 +21,7 @@ import { getActiveSession, type SafeReturnSession } from '../../src/services/saf
 import { TripPlanSection } from '../../src/components/TripPlanSection';
 import { TripAvailabilitySection } from '../../src/components/TripAvailabilitySection';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
+import { TripBudgetSection } from '../../src/components/trip/TripBudgetSection';
 import { DailyBriefCard } from '../../src/components/DailyBriefCard';
 import { TripReadinessCard } from '../../src/components/trip/TripReadinessCard';
 import { TripEntrySection } from '../../src/components/trip/TripEntrySection';
@@ -580,6 +581,13 @@ function TripDetailScreen() {
             tripId={trip.id}
             isOwner={realTrip ? userId === realTrip.ownerId : false}
             tripStatus={realTrip?.status}
+          />
+        ) : null}
+        {live && trip.id ? (
+          <TripBudgetSection
+            tripId={trip.id}
+            isOwnerOrCohost={realTrip ? userId === realTrip.ownerId : false}
+            isOwner={realTrip ? userId === realTrip.ownerId : false}
           />
         ) : null}
         {live && trip.id ? (

@@ -18,10 +18,10 @@
 import { Router } from "express";
 import type { Response } from "express";
 import { z } from "zod";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
-import { asyncHandler } from "../lib/asyncHandler.js";
 import {
   READINESS_FLAG,
   READINESS_STALE_MS,
