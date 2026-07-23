@@ -45,10 +45,10 @@ export function useTripSavedPlaces(tripId: string): UseTripSavedPlacesResult {
 
   const load = useCallback(() => {
     setLoading(true);
-    listSaved()
+    listSaved(tripId)
       .then((all) => { setPlaces(all); setLoading(false); })
       .catch(() => { setLoading(false); });
-  }, []);
+  }, [tripId]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 

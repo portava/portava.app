@@ -18,7 +18,7 @@ import {
   Alert,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
-import { X, MapPin, Star, AlertTriangle } from 'lucide-react-native';
+import { X, MapPin, Star, AlertTriangle, Check } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import {
@@ -27,6 +27,7 @@ import {
   runLocationCheck,
   type NeighborhoodArea,
 } from '../../services/neighborhoods.ts';
+import { useTripSavedPlaces } from '../../hooks/useTripSavedPlaces.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -176,8 +177,19 @@ export function LocationCheckSheet({
 }) {
   const [lat, setLat] = useState('');
   const [lng, setLng] = useState('');
+  const [selectedPlaceName, setSelectedPlaceName] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [verdict, setVerdict] = useState<LocationVerdict | null>(null);
+
+  const { places, loading: placesLoading } = useTripSavedPlaces(tripId);
+  // Only show places that have coordinates
+  const geoPlaces = places.filter((p) => p.lat != null && p.lng != null);
+
+  function handleSelectPlace(place: { name: string; lat?: number | null; lng?: number | null }) {
+    setLat(String(place.lat ?? ''));
+    setLng(String(place.lng ?? ''));
+    setSelectedPlaceName(place.name);
+  }
 
   async function handleCheck() {
     const latNum = parseFloat(lat);
@@ -187,13 +199,24 @@ export function LocationCheckSheet({
       return;
     }
     setLoading(true);
-    const result = await runLocationCheck(tripId, { lat: latNum, lng: lngNum });
+    const result = await runLocationCheck(tripId, {
+      lat: latNum,
+      lng: lngNum,
+      ...(selectedPlaceName ? { name: selectedPlaceName } : {}),
+    });
     setLoading(false);
     if (result) {
       setVerdict(result as unknown as LocationVerdict);
     } else {
       Alert.alert('Check failed', 'Could not verify this location. Try again.');
     }
+  }
+
+  function handleCheckAnother() {
+    setVerdict(null);
+    setLat('');
+    setLng('');
+    setSelectedPlaceName(null);
   }
 
   return (
@@ -207,6 +230,13 @@ export function LocationCheckSheet({
 
       {verdict ? (
         <View style={styles.verdictCard}>
+          {/* Checked place name */}
+          {selectedPlaceName ? (
+            <Text style={[styles.verdictLabel, { marginBottom: space.xs }]}>
+              Checking: <Text style={styles.verdictValue}>{selectedPlaceName}</Text>
+            </Text>
+          ) : null}
+
           {/* Verdict label */}
           <Text style={styles.verdictLabel} testID="verdict-label">
             Fit:{' '}
@@ -261,13 +291,70 @@ export function LocationCheckSheet({
             </>
           )}
 
-          <Pressable style={styles.locationCheckBtn} onPress={() => { setVerdict(null); setLat(''); setLng(''); }}>
+          <Pressable style={styles.locationCheckBtn} onPress={handleCheckAnother}>
             <Text style={styles.locationCheckBtnText}>Check another</Text>
           </Pressable>
         </View>
       ) : (
-        <>
-          <Text style={styles.locationSheetSub}>Enter coordinates to check how this spot fits your trip preferences.</Text>
+        <ScrollView showsVerticalScrollIndicator={false}>
+          {/* ── Saved places picker ── */}
+          {placesLoading ? (
+            <ActivityIndicator size="small" color={color.signal} style={{ marginBottom: space.md }} />
+          ) : geoPlaces.length > 0 ? (
+            <View style={styles.savedPlacesSection}>
+              <Text style={styles.savedPlacesSectionLabel}>Pick a saved place</Text>
+              {geoPlaces.map((place) => {
+                const isSelected = selectedPlaceName === place.name;
+                return (
+                  <Pressable
+                    key={place.id}
+                    style={[styles.savedPlaceRow, isSelected && styles.savedPlaceRowSelected]}
+                    onPress={() => handleSelectPlace(place)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Select ${place.name}`}
+                  >
+                    <View style={styles.savedPlaceIconWrap}>
+                      <MapPin size={14} color={isSelected ? color.onInk : color.signal} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.savedPlaceName, isSelected && styles.savedPlaceNameSelected]} numberOfLines={1}>
+                        {place.name}
+                      </Text>
+                      {place.category ? (
+                        <Text style={styles.savedPlaceCategory} numberOfLines={1}>{place.category}</Text>
+                      ) : null}
+                    </View>
+                    {isSelected && <Check size={16} color={color.onInk} />}
+                  </Pressable>
+                );
+              })}
+              <View style={styles.savedPlacesDivider}>
+                <View style={styles.savedPlacesDividerLine} />
+                <Text style={styles.savedPlacesDividerText}>or enter manually</Text>
+                <View style={styles.savedPlacesDividerLine} />
+              </View>
+            </View>
+          ) : null}
+
+          {/* ── Manual coordinate entry ── */}
+          <Text style={styles.locationSheetSub}>
+            {geoPlaces.length > 0
+              ? 'Adjust coordinates or type new ones below.'
+              : 'Enter coordinates to check how this spot fits your trip preferences.'}
+          </Text>
+          {selectedPlaceName ? (
+            <View style={styles.selectedPlacePill}>
+              <MapPin size={12} color={color.signal} />
+              <Text style={styles.selectedPlacePillText} numberOfLines={1}>{selectedPlaceName}</Text>
+              <Pressable
+                hitSlop={8}
+                onPress={() => setSelectedPlaceName(null)}
+                accessibilityLabel="Clear selected place"
+              >
+                <X size={13} color={color.mute} />
+              </Pressable>
+            </View>
+          ) : null}
           <View style={styles.coordRow}>
             <TextInput
               style={styles.coordInput}
@@ -275,7 +362,7 @@ export function LocationCheckSheet({
               placeholderTextColor={color.faint}
               keyboardType="decimal-pad"
               value={lat}
-              onChangeText={setLat}
+              onChangeText={(v) => { setLat(v); setSelectedPlaceName(null); }}
               accessibilityLabel="Latitude"
             />
             <TextInput
@@ -284,7 +371,7 @@ export function LocationCheckSheet({
               placeholderTextColor={color.faint}
               keyboardType="decimal-pad"
               value={lng}
-              onChangeText={setLng}
+              onChangeText={(v) => { setLng(v); setSelectedPlaceName(null); }}
               accessibilityLabel="Longitude"
             />
           </View>
@@ -297,7 +384,7 @@ export function LocationCheckSheet({
               ? <ActivityIndicator size="small" color={color.onInk} />
               : <Text style={styles.locationCheckBtnText}>Check location</Text>}
           </Pressable>
-        </>
+        </ScrollView>
       )}
     </View>
   );
@@ -802,5 +889,91 @@ const styles = StyleSheet.create({
     ...t.small,
     color: color.ink,
     fontWeight: '700',
+  },
+  // Saved places picker (inside LocationCheckSheet)
+  savedPlacesSection: {
+    marginBottom: space.sm,
+  },
+  savedPlacesSectionLabel: {
+    ...t.stamp,
+    color: color.deep,
+    letterSpacing: 1.1,
+    fontFamily: 'Courier',
+    marginBottom: space.sm,
+  },
+  savedPlaceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingVertical: space.sm,
+    paddingHorizontal: space.sm,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: color.haze,
+    backgroundColor: color.paperRaised,
+    marginBottom: space.xs,
+  },
+  savedPlaceRowSelected: {
+    borderColor: color.signal,
+    backgroundColor: color.signal,
+  },
+  savedPlaceIconWrap: {
+    width: 26,
+    height: 26,
+    borderRadius: 6,
+    backgroundColor: `${color.signal}15`,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  savedPlaceName: {
+    ...t.bodyStrong,
+    fontSize: 13,
+    color: color.ink,
+  },
+  savedPlaceNameSelected: {
+    color: color.onInk,
+  },
+  savedPlaceCategory: {
+    ...t.small,
+    fontSize: 11,
+    color: color.mute,
+    textTransform: 'capitalize',
+  },
+  savedPlacesDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginTop: space.sm,
+    marginBottom: space.md,
+  },
+  savedPlacesDividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: color.haze,
+  },
+  savedPlacesDividerText: {
+    ...t.small,
+    color: color.faint,
+    fontSize: 11,
+  },
+  selectedPlacePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    backgroundColor: `${color.signal}12`,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.sm,
+    paddingVertical: 5,
+    alignSelf: 'flex-start',
+    marginBottom: space.sm,
+    borderWidth: 1,
+    borderColor: `${color.signal}30`,
+  },
+  selectedPlacePillText: {
+    ...t.small,
+    color: color.signal,
+    fontWeight: '600',
+    maxWidth: 200,
   },
 });

@@ -18,9 +18,12 @@ import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
-// NOTE: exhaustive — LocationCheckSheet doesn't use expo-router
+// NOTE: exhaustive — LocationCheckSheet itself doesn't use expo-router; useFocusEffect
+// is included because useTripSavedPlaces (now called by LocationCheckSheet) calls it.
+// Spreading jest.requireActual would pull in native modules that crash the test runner.
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn() },
+  useFocusEffect: (cb: () => void) => { cb(); },
 }));
 
 // NOTE: exhaustive — LocationCheckSheet only uses useSafeAreaInsets
@@ -34,6 +37,13 @@ jest.mock('../../services/neighborhoods.ts', () => ({
   fetchNeighborhoodMatch: jest.fn(),
   setTripAreaPreferences: jest.fn(),
   runLocationCheck: jest.fn(),
+}));
+
+// NOTE: exhaustive — only useTripSavedPlaces is needed; the real module imports
+// AsyncStorage and native Supabase packages that crash the test runner. Returning
+// empty places keeps this test focused on verdict-card rendering, not the picker.
+jest.mock('../../hooks/useTripSavedPlaces.ts', () => ({
+  useTripSavedPlaces: () => ({ places: [], loading: false }),
 }));
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
