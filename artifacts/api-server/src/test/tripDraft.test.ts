@@ -144,6 +144,24 @@ const MULTI_CITY_DRAFT =
   }) +
   "\n```";
 
+const MULTI_CITY_WITH_DATES_DRAFT =
+  "```json\n" +
+  JSON.stringify({
+    draft: {
+      title: "Japan multi-stop",
+      destinationCity: "Tokyo",
+      destinationCountry: "Japan",
+      destinations: [
+        { city: "Tokyo", country: "Japan", arrivalDate: "2026-10-01", departureDate: "2026-10-08" },
+        { city: "Kyoto", country: "Japan", arrivalDate: "2026-10-08", departureDate: "2026-10-11" },
+      ],
+      startDate: "2026-10-01",
+      endDate: "2026-10-11",
+      vibe: "culture",
+    },
+  }) +
+  "\n```";
+
 // ── Server setup (router mounted directly; index.ts is not edited) ────────────
 
 let app: Express;
@@ -242,6 +260,34 @@ describe("POST /trips/draft-from-text", () => {
     assert.equal(r.body.draft.destinationCity, "Tokyo");
     assert.equal(r.body.draft.startDate, "2026-10-01");
     assert.equal(r.body.draft.endDate, "2026-10-21");
+    assert.equal(insertCalls.length, 0, "draft extraction must NEVER insert anything");
+  });
+
+  it("extracts per-stop arrivalDate/departureDate for multi-city trips", async () => {
+    const { client, insertCalls } = makeFakeClient(flagOn(true));
+    _setTestClient(client, true);
+    _setTestOpenAI(makeOpenAIMock(MULTI_CITY_WITH_DATES_DRAFT));
+
+    const text = "Tokyo for a week then Kyoto for 3 days, Oct 1–11 2026";
+    const r = await draftFromText({ text });
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.confirmed, false);
+    assert.ok(Array.isArray(r.body.draft.destinations), "destinations must be an array");
+    assert.equal(r.body.draft.destinations.length, 2);
+
+    const tokyo = r.body.draft.destinations[0];
+    assert.equal(tokyo.city, "Tokyo");
+    assert.equal(tokyo.arrivalDate, "2026-10-01");
+    assert.equal(tokyo.departureDate, "2026-10-08");
+
+    const kyoto = r.body.draft.destinations[1];
+    assert.equal(kyoto.city, "Kyoto");
+    assert.equal(kyoto.arrivalDate, "2026-10-08");
+    assert.equal(kyoto.departureDate, "2026-10-11");
+
+    assert.equal(r.body.draft.startDate, "2026-10-01");
+    assert.equal(r.body.draft.endDate, "2026-10-11");
     assert.equal(insertCalls.length, 0, "draft extraction must NEVER insert anything");
   });
 
