@@ -1,0 +1,1224 @@
+diff -ruN a/artifacts/api-server/src/migrations/0178_stamp_showcase_admire.sql b/artifacts/api-server/src/migrations/0178_stamp_showcase_admire.sql
+--- a/artifacts/api-server/src/migrations/0178_stamp_showcase_admire.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/migrations/0178_stamp_showcase_admire.sql	2026-07-23 20:06:43.994137279 +0000
+@@ -0,0 +1,70 @@
++-- Migration 0178: Stamp Wave 2 — showcase + admire
++--
++-- Showcase (spec Part 11): a user curates up to 8 stamps to feature on their
++-- passport, with explicit ordering — including the public passport page.
++-- Admire (spec Part 13): lightweight appreciation on someone's stamp.
++--
++-- Both flag-gated (default FALSE). Safe to re-run.
++
++-- ── user_stamp_showcase ──────────────────────────────────────────────────────
++-- rank is 0-based display order. No UNIQUE(user_id, rank): the API replaces a
++-- user's whole set atomically (delete + ranked insert), which a rank
++-- constraint would fight during reorders. Cap (8) is enforced by the API.
++
++CREATE TABLE IF NOT EXISTS user_stamp_showcase (
++  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
++  user_id       UUID        NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
++  user_stamp_id UUID        NOT NULL REFERENCES user_stamps(id) ON DELETE CASCADE,
++  rank          INTEGER     NOT NULL DEFAULT 0,
++  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
++  UNIQUE (user_id, user_stamp_id)
++);
++
++CREATE INDEX IF NOT EXISTS uss_user_rank_idx ON user_stamp_showcase (user_id, rank);
++
++ALTER TABLE user_stamp_showcase ENABLE ROW LEVEL SECURITY;
++
++DO $$ BEGIN
++  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'user_stamp_showcase' AND policyname = 'uss_owner_all') THEN
++    CREATE POLICY uss_owner_all ON user_stamp_showcase FOR ALL USING (user_id = auth.uid());
++  END IF;
++END $$;
++DO $$ BEGIN
++  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'user_stamp_showcase' AND policyname = 'uss_svc') THEN
++    CREATE POLICY uss_svc ON user_stamp_showcase FOR ALL USING (auth.role() = 'service_role');
++  END IF;
++END $$;
++
++-- ── stamp_admires ────────────────────────────────────────────────────────────
++
++CREATE TABLE IF NOT EXISTS stamp_admires (
++  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
++  user_stamp_id UUID        NOT NULL REFERENCES user_stamps(id) ON DELETE CASCADE,
++  admirer_id    UUID        NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
++  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
++  UNIQUE (user_stamp_id, admirer_id)
++);
++
++CREATE INDEX IF NOT EXISTS sa_stamp_idx   ON stamp_admires (user_stamp_id, created_at DESC);
++CREATE INDEX IF NOT EXISTS sa_admirer_idx ON stamp_admires (admirer_id, created_at DESC);
++
++ALTER TABLE stamp_admires ENABLE ROW LEVEL SECURITY;
++
++DO $$ BEGIN
++  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'stamp_admires' AND policyname = 'sa_admirer_write') THEN
++    CREATE POLICY sa_admirer_write ON stamp_admires FOR ALL USING (admirer_id = auth.uid());
++  END IF;
++END $$;
++DO $$ BEGIN
++  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'stamp_admires' AND policyname = 'sa_svc') THEN
++    CREATE POLICY sa_svc ON stamp_admires FOR ALL USING (auth.role() = 'service_role');
++  END IF;
++END $$;
++
++-- ── Flags ────────────────────────────────────────────────────────────────────
++-- feature_flags PK column is `flag` (NOT `key`).
++
++INSERT INTO feature_flags (flag, enabled, description) VALUES
++  ('stamp_showcase_enabled', FALSE, 'Stamp showcase: user-curated featured stamps (≤8, ordered) on own + public passport'),
++  ('stamp_admire_enabled',   FALSE, 'Stamp admire: lightweight appreciation on visible stamps, with owner notification')
++ON CONFLICT (flag) DO NOTHING;
+diff -ruN a/artifacts/api-server/src/routes/events.ts b/artifacts/api-server/src/routes/events.ts
+--- a/artifacts/api-server/src/routes/events.ts	2026-07-21 01:23:16.000000000 +0000
++++ b/artifacts/api-server/src/routes/events.ts	2026-07-23 20:09:46.294148116 +0000
+@@ -2187,6 +2187,37 @@
+     void linkOutcomeSignal(sc, user.id, id, "went", "route:event_rsvp");
+   }
+ 
++  // Stamp Wave 2 (closes Task #1041 for RSVPs): first_event_joined on a
++  // "going" RSVP. Fire-and-forget; awardStamp is fully idempotent via
++  // (user:def:events:eventId) so repeat RSVPs never double-award.
++  if (status === "going") {
++    void (async () => {
++      try {
++        const { awardStamp } = await import("../services/passport/StampAwardEngine.js");
++        const r = await awardStamp(sc, {
++          userId: user.id,
++          definitionSlug: "first_event_joined",
++          sourceType: "events",
++          sourceId: id,
++        });
++        if (r.awarded && r.userStampId) {
++          const { NotificationService } = await import("../services/notifications/NotificationService.js");
++          const { NotificationRouter } = await import("../services/notifications/NotificationRouter.js");
++          const notifSvc = new NotificationService(sc);
++          const notifRouter = new NotificationRouter(sc);
++          const row = await notifSvc.create({
++            userId: user.id,
++            eventType: "passport.stamp_earned",
++            sourceType: "events",
++            sourceId: id,
++            params: { location: "joining your first event", stampId: r.userStampId },
++          });
++          if (row) await notifRouter.route(row);
++        }
++      } catch {}
++    })();
++  }
++
+   res.json({ status, eventId: id });
+ });
+ 
+@@ -3785,12 +3816,35 @@
+     } catch {}
+   })();
+ 
+-  // TODO(Task #1041): award category event stamps (first_event_joined,
+-  // first_event_hosted, and event-category variants such as food/music/outdoor)
+-  // via StampAwardEngine.awardStamp() here once definitions and eligibility
+-  // rules are finalised. Pattern: see trips.ts awardTripCompletionStamps().
+-  // Trigger points: POST /events/:id/publish (host), POST /events/:id/rsvp Going
+-  // status, POST /events/:id/complete (event concluded).
++  // Stamp Wave 2 (closes Task #1041 for hosting): first_event_hosted on
++  // publish. Fire-and-forget; idempotent via (user:def:events:eventId).
++  // (first_event_joined is wired at the RSVP-going site. Event-category
++  // variants — food/music/outdoor — wait for the criteria engine wave.)
++  void (async () => {
++    try {
++      const { awardStamp } = await import("../services/passport/StampAwardEngine.js");
++      const r = await awardStamp(sc, {
++        userId: user.id,
++        definitionSlug: "first_event_hosted",
++        sourceType: "events",
++        sourceId: id,
++      });
++      if (r.awarded && r.userStampId) {
++        const { NotificationService } = await import("../services/notifications/NotificationService.js");
++        const { NotificationRouter } = await import("../services/notifications/NotificationRouter.js");
++        const notifSvc = new NotificationService(sc);
++        const notifRouter = new NotificationRouter(sc);
++        const row = await notifSvc.create({
++          userId: user.id,
++          eventType: "passport.stamp_earned",
++          sourceType: "events",
++          sourceId: id,
++          params: { location: "hosting your first event", stampId: r.userStampId },
++        });
++        if (row) await notifRouter.route(row);
++      }
++    } catch {}
++  })();
+ 
+   // Viewer is the host → always participant view
+   res.json(formatEvent(updated as any, user.id, { goingRsvp: true }));
+diff -ruN a/artifacts/api-server/src/routes/index.ts b/artifacts/api-server/src/routes/index.ts
+--- a/artifacts/api-server/src/routes/index.ts	2026-07-23 14:22:36.000000000 +0000
++++ b/artifacts/api-server/src/routes/index.ts	2026-07-23 20:08:03.406142000 +0000
+@@ -94,6 +94,8 @@
+ import tripReservationsRouter from "./tripReservations";
+ import tripDraftRouter from "./tripDraft";
+ import neighborhoodsRouter from "./neighborhoods";
++import stampShowcaseRouter from "./stampShowcase";
++import stampAdmireRouter from "./stampAdmire";
+ 
+ const router: IRouter = Router();
+ 
+@@ -192,5 +194,9 @@
+ router.use(tripReservationsRouter);
+ router.use(tripDraftRouter);
+ router.use(neighborhoodsRouter);
++// Stamp Wave 2 (2026-07-23): showcase + admire. Registered after stampsRouter
++// so the stamp_system_v2_enabled gate (path-scoped to /stamps*) governs them.
++router.use(stampShowcaseRouter);
++router.use(stampAdmireRouter);
+ 
+ export default router;
+diff -ruN a/artifacts/api-server/src/routes/stampAdmire.ts b/artifacts/api-server/src/routes/stampAdmire.ts
+--- a/artifacts/api-server/src/routes/stampAdmire.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/routes/stampAdmire.ts	2026-07-23 20:07:46.626141002 +0000
+@@ -0,0 +1,195 @@
++/**
++ * Stamp Admire — Stamp Wave 2 (spec Part 13).
++ *
++ *   POST   /api/stamps/:userStampId/admire     — admire a visible stamp
++ *   DELETE /api/stamps/:userStampId/admire     — remove own admire
++ *   GET    /api/stamps/:userStampId/admirers   — admirer list + count + admiredByMe
++ *
++ * Rules:
++ *   - Flag-gated by stamp_admire_enabled.
++ *   - You cannot admire your own stamp.
++ *   - The stamp must be admirable by the caller: not revoked AND
++ *     (visibility='public' OR caller is the owner). friends_only/private
++ *     stamps are not admirable by others in this wave.
++ *   - Duplicate admires collapse silently (idempotent 200).
++ *   - First-time admire notifies the owner (passport.stamp_admired) —
++ *     fire-and-forget, never blocks the response.
++ *   - Admirer list is visible to the stamp owner and to anyone the stamp is
++ *     public to.
++ */
++
++import { Router } from "express";
++import { asyncHandler } from "../lib/asyncHandler.js";
++import { requireUser, sendError } from "../lib/http.js";
++import { getServiceClient } from "../lib/supabase.js";
++import { isFlagEnabled } from "../lib/featureFlags.js";
++
++const FLAG = "stamp_admire_enabled";
++const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
++
++const router = Router();
++
++interface StampRow {
++  id: string;
++  user_id: string;
++  visibility: string;
++  is_revoked: boolean;
++  city: string | null;
++  country: string | null;
++  title_override: string | null;
++}
++
++async function loadStamp(sc: any, id: string): Promise<StampRow | null> {
++  const { data, error } = await sc
++    .from("user_stamps")
++    .select("id, user_id, visibility, is_revoked, city, country, title_override")
++    .eq("id", id)
++    .maybeSingle();
++  if (error || !data) return null;
++  return data as StampRow;
++}
++
++function canSee(stamp: StampRow, viewerId: string): boolean {
++  if (stamp.is_revoked) return false;
++  if (stamp.user_id === viewerId) return true;
++  return stamp.visibility === "public";
++}
++
++// ── POST /api/stamps/:userStampId/admire ─────────────────────────────────────
++
++router.post("/stamps/:userStampId/admire", asyncHandler(async (req, res) => {
++  const auth = await requireUser(req, res);
++  if (!auth) return;
++  const { user } = auth;
++  const sc = getServiceClient();
++  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
++  if (!(await isFlagEnabled(sc, FLAG))) {
++    sendError(res, "feature_disabled", "Stamp admire is not enabled");
++    return;
++  }
++
++  const id = String(req.params.userStampId ?? "");
++  if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid stamp id"); return; }
++
++  const stamp = await loadStamp(sc, id);
++  if (!stamp || !canSee(stamp, user.id)) {
++    sendError(res, "not_found", "Stamp not found");
++    return;
++  }
++  if (stamp.user_id === user.id) {
++    sendError(res, "invalid_payload", "You cannot admire your own stamp");
++    return;
++  }
++
++  // Idempotent: duplicate admires are a silent 200.
++  const { data: existing } = await sc
++    .from("stamp_admires")
++    .select("id")
++    .eq("user_stamp_id", id)
++    .eq("admirer_id", user.id)
++    .maybeSingle();
++  if (existing) {
++    res.json({ admired: true, duplicate: true });
++    return;
++  }
++
++  const { error: insErr } = await sc
++    .from("stamp_admires")
++    .insert({ user_stamp_id: id, admirer_id: user.id });
++  if (insErr) { sendError(res, "db_error", insErr.message); return; }
++
++  // Notify the owner — fire-and-forget.
++  void (async () => {
++    try {
++      const { NotificationService } = await import("../services/notifications/NotificationService.js");
++      const { NotificationRouter } = await import("../services/notifications/NotificationRouter.js");
++      const label = stamp.title_override ?? stamp.city ?? stamp.country ?? "travel";
++      const notifSvc = new NotificationService(sc);
++      const notifRouter = new NotificationRouter(sc);
++      const row = await notifSvc.create({
++        userId: stamp.user_id,
++        eventType: "passport.stamp_admired",
++        actorId: user.id,
++        sourceType: "stamp_admire",
++        sourceId: id,
++        params: { stamp: String(label), stampId: id },
++      });
++      if (row) await notifRouter.route(row);
++    } catch {}
++  })();
++
++  res.status(201).json({ admired: true });
++}));
++
++// ── DELETE /api/stamps/:userStampId/admire ───────────────────────────────────
++
++router.delete("/stamps/:userStampId/admire", asyncHandler(async (req, res) => {
++  const auth = await requireUser(req, res);
++  if (!auth) return;
++  const { user } = auth;
++  const sc = getServiceClient();
++  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
++  if (!(await isFlagEnabled(sc, FLAG))) {
++    sendError(res, "feature_disabled", "Stamp admire is not enabled");
++    return;
++  }
++
++  const id = String(req.params.userStampId ?? "");
++  if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid stamp id"); return; }
++
++  const { error } = await sc
++    .from("stamp_admires")
++    .delete()
++    .eq("user_stamp_id", id)
++    .eq("admirer_id", user.id);
++  if (error) { sendError(res, "db_error", error.message); return; }
++
++  res.json({ admired: false });
++}));
++
++// ── GET /api/stamps/:userStampId/admirers ────────────────────────────────────
++
++router.get("/stamps/:userStampId/admirers", asyncHandler(async (req, res) => {
++  const auth = await requireUser(req, res);
++  if (!auth) return;
++  const { user } = auth;
++  const sc = getServiceClient();
++  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
++  if (!(await isFlagEnabled(sc, FLAG))) {
++    res.json({ count: 0, admiredByMe: false, admirers: [], enabled: false });
++    return;
++  }
++
++  const id = String(req.params.userStampId ?? "");
++  if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid stamp id"); return; }
++
++  const stamp = await loadStamp(sc, id);
++  if (!stamp || !canSee(stamp, user.id)) {
++    sendError(res, "not_found", "Stamp not found");
++    return;
++  }
++
++  const { data, error } = await sc
++    .from("stamp_admires")
++    .select("admirer_id, created_at, profiles:admirer_id ( id, username, display_name, avatar_url )")
++    .eq("user_stamp_id", id)
++    .order("created_at", { ascending: false })
++    .limit(100);
++  if (error) { sendError(res, "db_error", error.message); return; }
++
++  const rows = (data ?? []) as any[];
++  res.json({
++    count: rows.length,
++    admiredByMe: rows.some((r) => r.admirer_id === user.id),
++    admirers: rows.map((r) => ({
++      userId: r.admirer_id,
++      admiredAt: r.created_at,
++      username: r.profiles?.username ?? null,
++      displayName: r.profiles?.display_name ?? null,
++      avatarUrl: r.profiles?.avatar_url ?? null,
++    })),
++    enabled: true,
++  });
++}));
++
++export default router;
+diff -ruN a/artifacts/api-server/src/routes/stampCatalog.ts b/artifacts/api-server/src/routes/stampCatalog.ts
+--- a/artifacts/api-server/src/routes/stampCatalog.ts	2026-07-21 03:02:56.000000000 +0000
++++ b/artifacts/api-server/src/routes/stampCatalog.ts	2026-07-23 20:08:57.578145220 +0000
+@@ -1050,6 +1050,130 @@
+   res.status(201).json({ version: versionRow });
+ }));
+ 
++// ── POST /admin/stamps/catalog/:id/recompose ──────────────────────────────────
++// Stamp Wave 2: re-run the COMPOSITION ONLY (no AI call, no queue) from a
++// version's stored hero art — e.g. to try a different rarity treatment or
++// template family, or after a compositor upgrade. Produces a NEW candidate
++// version (never mutates the source); normal admin review applies.
++//
++// Body: { versionId?, rarity?, family? } — versionId defaults to the active
++// version; it must carry hero_path (i.e. was generated by the premium path).
++
++router.post("/admin/stamps/catalog/:id/recompose", asyncHandler(async (req, res) => {
++  const { id } = req.params;
++  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid catalog id"); return; }
++
++  const admin = await requireAdmin(req, res);
++  if (!admin) return;
++  const { userId: adminId, sc } = admin;
++
++  const { versionId: bodyVersionId, rarity: bodyRarity, family: bodyFamily } = req.body ?? {};
++
++  const { data: catalogRow, error: catErr } = await sc
++    .from("universal_stamp_catalog")
++    .select("id, canonical_location_key, stamp_type, display_name, country, country_code, region, city, neighborhood, identity_key, active_version_id")
++    .eq("id", id)
++    .maybeSingle();
++  if (catErr || !catalogRow) { sendError(res, "not_found", "Catalog entry not found"); return; }
++
++  const sourceVersionId = typeof bodyVersionId === "string" && isUuid(bodyVersionId)
++    ? bodyVersionId
++    : (catalogRow as any).active_version_id;
++  if (!sourceVersionId) {
++    sendError(res, "invalid_payload", "No versionId given and catalog has no active version");
++    return;
++  }
++
++  const { data: sourceVersion, error: vErr } = await sc
++    .from("stamp_artwork_versions")
++    .select("id, catalog_id, hero_path, composition")
++    .eq("id", sourceVersionId)
++    .eq("catalog_id", id)
++    .maybeSingle();
++  if (vErr || !sourceVersion) { sendError(res, "not_found", "Source version not found"); return; }
++  if (!(sourceVersion as any).hero_path) {
++    sendError(res, "invalid_payload", "Source version has no stored hero art (pre-premium version) — regenerate instead");
++    return;
++  }
++
++  // Download the stored hero art.
++  const { data: heroFile, error: dlErr } = await sc.storage
++    .from("stamp-artwork")
++    .download((sourceVersion as any).hero_path);
++  if (dlErr || !heroFile) {
++    sendError(res, "db_error", `Hero art download failed: ${dlErr?.message ?? "not found"}`);
++    return;
++  }
++  const heroBuffer = Buffer.from(await heroFile.arrayBuffer());
++
++  const { resolveIdentity } = await import("../lib/stamps/composition/identities.js");
++  const { composeStamp, templateFamilyForType, normalizeRarity, TEMPLATE_FAMILIES } =
++    await import("../lib/stamps/composition/compositor.js");
++  const { rasterizeStamp, validateComposedPng } = await import("../lib/stamps/composition/rasterize.js");
++
++  const family = typeof bodyFamily === "string" && bodyFamily in TEMPLATE_FAMILIES
++    ? (bodyFamily as keyof typeof TEMPLATE_FAMILIES)
++    : templateFamilyForType((catalogRow as any).stamp_type);
++  const rarity = normalizeRarity(typeof bodyRarity === "string" ? bodyRarity : null);
++
++  const identity = await resolveIdentity(sc, catalogRow as any);
++  const newVersionId = randomUUID();
++  const composed = composeStamp({
++    identity,
++    title:    ((catalogRow as any).display_name ?? (catalogRow as any).city ?? "DESTINATION").toUpperCase(),
++    subtitle: ((catalogRow as any).country ?? "").toUpperCase(),
++    family,
++    rarity,
++    heroImageDataUrl: `data:image/png;base64,${heroBuffer.toString("base64")}`,
++    uid: newVersionId.slice(0, 8),
++  });
++  const raster = await rasterizeStamp(composed.svg);
++  const qc = await validateComposedPng(raster.full);
++  if (!qc.passed) { sendError(res, "db_error", qc.reason ?? "Composed QC failed"); return; }
++
++  const fullPath  = `catalog/${id}/${newVersionId}.png`;
++  const thumbPath = `catalog/${id}/${newVersionId}_thumb.png`;
++  const up1 = await sc.storage.from("stamp-artwork").upload(fullPath, raster.full, { contentType: "image/png", upsert: false });
++  if (up1.error) { sendError(res, "db_error", `Storage upload failed: ${up1.error.message}`); return; }
++  const up2 = await sc.storage.from("stamp-artwork").upload(thumbPath, raster.thumbnail, { contentType: "image/png", upsert: false });
++  if (up2.error) { sendError(res, "db_error", `Storage upload failed: ${up2.error.message}`); return; }
++  const publicUrl = sc.storage.from("stamp-artwork").getPublicUrl(fullPath).data?.publicUrl ?? fullPath;
++  const thumbUrl  = sc.storage.from("stamp-artwork").getPublicUrl(thumbPath).data?.publicUrl ?? thumbPath;
++
++  const { data: versionRow, error: insErr } = await sc
++    .from("stamp_artwork_versions")
++    .insert({
++      id:                  newVersionId,
++      catalog_id:          id,
++      status:              "candidate",
++      storage_path:        fullPath,
++      public_url:          publicUrl,
++      generation_source:   "recomposed",
++      created_by_admin_id: adminId,
++      width:               raster.width,
++      height:              raster.height,
++      format:              "png",
++      hero_path:           (sourceVersion as any).hero_path,
++      thumbnail_path:      thumbPath,
++      thumbnail_url:       thumbUrl,
++      qc_status:           "passed",
++      qc_metadata:         { composed: qc.checks },
++      composition:         { ...composed.manifest, recomposed_from: sourceVersionId },
++      generation_metadata: { recomposed_from: sourceVersionId, rarity, family },
++    })
++    .select()
++    .single();
++  if (insErr) { sendError(res, "db_error", insErr.message); return; }
++
++  await writeAuditLog(sc, adminId, "recompose", {
++    catalogId: id,
++    versionId: newVersionId,
++    notes:     `Recomposed from ${sourceVersionId} (family=${family}, rarity=${rarity})`,
++  });
++
++  res.status(201).json({ version: versionRow });
++}));
++
+ // ── POST /admin/stamps/catalog/:id/merge-into/:targetId ──────────────────────
+ 
+ router.post("/admin/stamps/catalog/:id/merge-into/:targetId", asyncHandler(async (req, res) => {
+diff -ruN a/artifacts/api-server/src/routes/stampShowcase.ts b/artifacts/api-server/src/routes/stampShowcase.ts
+--- a/artifacts/api-server/src/routes/stampShowcase.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/routes/stampShowcase.ts	2026-07-23 20:07:18.246139315 +0000
+@@ -0,0 +1,204 @@
++/**
++ * Stamp Showcase — Stamp Wave 2 (spec Part 11).
++ *
++ * A user curates up to MAX_SHOWCASE stamps, explicitly ordered, featured on
++ * their passport and on their PUBLIC passport page.
++ *
++ *   GET /api/stamps/showcase                    — own showcase (ordered)
++ *   PUT /api/stamps/showcase                    — replace set: { userStampIds: [...] } (order = rank)
++ *   GET /api/users/:username/stamp-showcase     — public view (visibility-filtered)
++ *
++ * Rules:
++ *   - Flag-gated by stamp_showcase_enabled (404 feature_not_found style 503 when off).
++ *   - PUT validates every stamp is caller-owned and not revoked; cap 8; replaces atomically.
++ *   - Public view only ever exposes visibility='public', non-revoked stamps —
++ *     a stale showcase row pointing at a stamp made private later is silently
++ *     hidden, never leaked. lat/lng are never selected.
++ */
++
++import { Router } from "express";
++import { z } from "zod";
++import { asyncHandler } from "../lib/asyncHandler.js";
++import { requireUser, sendError } from "../lib/http.js";
++import { getServiceClient } from "../lib/supabase.js";
++import { isFlagEnabled } from "../lib/featureFlags.js";
++
++export const MAX_SHOWCASE = 8;
++const FLAG = "stamp_showcase_enabled";
++const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
++
++const router = Router();
++
++const STAMP_FIELDS =
++  "id, user_id, stamp_definition_id, source_type, earned_at, city, country, title_override, visibility, is_revoked, " +
++  "stamp_definitions ( slug, name, rarity, stamp_type, category, universal_artwork_url )";
++
++function formatShowcaseStamp(row: any, rank: number) {
++  return {
++    userStampId: row.id,
++    rank,
++    earnedAt: row.earned_at,
++    city: row.city,
++    country: row.country,
++    titleOverride: row.title_override,
++    definition: row.stamp_definitions
++      ? {
++          slug: row.stamp_definitions.slug,
++          name: row.stamp_definitions.name,
++          rarity: row.stamp_definitions.rarity,
++          stampType: row.stamp_definitions.stamp_type,
++          category: row.stamp_definitions.category,
++          artworkUrl: row.stamp_definitions.universal_artwork_url ?? null,
++        }
++      : null,
++  };
++}
++
++async function loadShowcaseRows(sc: any, userId: string): Promise<any[]> {
++  const { data, error } = await sc
++    .from("user_stamp_showcase")
++    .select("user_stamp_id, rank")
++    .eq("user_id", userId)
++    .order("rank", { ascending: true });
++  if (error) throw new Error(error.message);
++  return data ?? [];
++}
++
++async function loadStamps(sc: any, ids: string[]): Promise<Map<string, any>> {
++  if (ids.length === 0) return new Map();
++  const { data, error } = await sc
++    .from("user_stamps")
++    .select(STAMP_FIELDS)
++    .in("id", ids);
++  if (error) throw new Error(error.message);
++  return new Map(((data ?? []) as any[]).map((r) => [r.id, r]));
++}
++
++// ── GET /api/stamps/showcase ─────────────────────────────────────────────────
++
++router.get("/stamps/showcase", asyncHandler(async (req, res) => {
++  const auth = await requireUser(req, res);
++  if (!auth) return;
++  const { user } = auth;
++  const sc = getServiceClient();
++  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
++  if (!(await isFlagEnabled(sc, FLAG))) {
++    sendError(res, "feature_disabled", "Stamp showcase is not enabled");
++    return;
++  }
++
++  const rows = await loadShowcaseRows(sc, user.id);
++  const stamps = await loadStamps(sc, rows.map((r) => r.user_stamp_id));
++  const items = rows
++    .map((r, i) => {
++      const s = stamps.get(r.user_stamp_id);
++      return s && !s.is_revoked ? formatShowcaseStamp(s, i) : null;
++    })
++    .filter(Boolean);
++
++  res.json({ items, max: MAX_SHOWCASE });
++}));
++
++// ── PUT /api/stamps/showcase ─────────────────────────────────────────────────
++
++const PutSchema = z.object({
++  userStampIds: z.array(z.string().regex(UUID_RE, "invalid user stamp id")).max(MAX_SHOWCASE),
++});
++
++router.put("/stamps/showcase", asyncHandler(async (req, res) => {
++  const auth = await requireUser(req, res);
++  if (!auth) return;
++  const { user } = auth;
++  const sc = getServiceClient();
++  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
++  if (!(await isFlagEnabled(sc, FLAG))) {
++    sendError(res, "feature_disabled", "Stamp showcase is not enabled");
++    return;
++  }
++
++  const parsed = PutSchema.safeParse(req.body ?? {});
++  if (!parsed.success) {
++    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
++    return;
++  }
++  const ids = parsed.data.userStampIds;
++  if (new Set(ids).size !== ids.length) {
++    sendError(res, "invalid_payload", "Duplicate stamps in showcase");
++    return;
++  }
++
++  // Ownership + revocation validation — every stamp must be the caller's.
++  if (ids.length > 0) {
++    const { data, error } = await sc
++      .from("user_stamps")
++      .select("id, user_id, is_revoked")
++      .in("id", ids);
++    if (error) { sendError(res, "db_error", error.message); return; }
++    const byId = new Map(((data ?? []) as any[]).map((r) => [r.id, r]));
++    for (const id of ids) {
++      const row = byId.get(id);
++      if (!row || row.user_id !== user.id) {
++        sendError(res, "invalid_payload", "Showcase can only contain your own stamps");
++        return;
++      }
++      if (row.is_revoked) {
++        sendError(res, "invalid_payload", "Revoked stamps cannot be showcased");
++        return;
++      }
++    }
++  }
++
++  // Replace the set atomically from the caller's perspective: wipe then insert.
++  const { error: delErr } = await sc
++    .from("user_stamp_showcase")
++    .delete()
++    .eq("user_id", user.id);
++  if (delErr) { sendError(res, "db_error", delErr.message); return; }
++
++  if (ids.length > 0) {
++    const { error: insErr } = await sc.from("user_stamp_showcase").insert(
++      ids.map((userStampId, rank) => ({ user_id: user.id, user_stamp_id: userStampId, rank })),
++    );
++    if (insErr) { sendError(res, "db_error", insErr.message); return; }
++  }
++
++  res.json({ saved: true, count: ids.length, max: MAX_SHOWCASE });
++}));
++
++// ── GET /api/users/:username/stamp-showcase ──────────────────────────────────
++// Public, but still authenticated (consistent with other profile surfaces).
++
++router.get("/users/:username/stamp-showcase", asyncHandler(async (req, res) => {
++  const auth = await requireUser(req, res);
++  if (!auth) return;
++  const sc = getServiceClient();
++  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
++  if (!(await isFlagEnabled(sc, FLAG))) {
++    res.json({ items: [], enabled: false });
++    return;
++  }
++
++  const username = String(req.params.username ?? "").trim();
++  if (!username) { sendError(res, "invalid_payload", "Username required"); return; }
++
++  const { data: profile, error: pErr } = await sc
++    .from("profiles")
++    .select("id, username")
++    .eq("username", username)
++    .maybeSingle();
++  if (pErr) { sendError(res, "db_error", pErr.message); return; }
++  if (!profile) { sendError(res, "not_found", "User not found"); return; }
++
++  const rows = await loadShowcaseRows(sc, (profile as any).id);
++  const stamps = await loadStamps(sc, rows.map((r) => r.user_stamp_id));
++
++  // Public filter: visibility must be public AND not revoked. Order preserved.
++  const items = rows
++    .map((r) => stamps.get(r.user_stamp_id))
++    .filter((s): s is any => Boolean(s) && s.visibility === "public" && !s.is_revoked)
++    .map((s, i) => formatShowcaseStamp(s, i));
++
++  res.json({ items, enabled: true });
++}));
++
++export default router;
+diff -ruN a/artifacts/api-server/src/services/notifications/NotificationTemplateService.ts b/artifacts/api-server/src/services/notifications/NotificationTemplateService.ts
+--- a/artifacts/api-server/src/services/notifications/NotificationTemplateService.ts	2026-07-21 00:10:10.000000000 +0000
++++ b/artifacts/api-server/src/services/notifications/NotificationTemplateService.ts	2026-07-23 20:08:22.230143119 +0000
+@@ -437,6 +437,15 @@
+     actionUrl: ({ stampId }) => stampId ? `/stamp/${stampId}` : '/(tabs)/passport?tab=stamps',
+   }),
+   tpl({
++    eventType: 'passport.stamp_admired',
++    category: 'passport',
++    defaultPriority: 'low',
++    defaultChannels: ['in_app'],
++    title: () => 'Your stamp was admired ✨',
++    body: ({ stamp }) => `Someone admired your ${stamp ?? 'travel'} stamp`,
++    actionUrl: ({ stampId }) => stampId ? `/stamp/${stampId}` : '/(tabs)/passport?tab=stamps',
++  }),
++  tpl({
+     eventType: 'passport.milestone',
+     category: 'passport',
+     defaultPriority: 'important',
+diff -ruN a/artifacts/api-server/src/test/stampShowcaseAdmire.test.ts b/artifacts/api-server/src/test/stampShowcaseAdmire.test.ts
+--- a/artifacts/api-server/src/test/stampShowcaseAdmire.test.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/test/stampShowcaseAdmire.test.ts	2026-07-23 20:11:41.402154958 +0000
+@@ -0,0 +1,297 @@
++/**
++ * Stamp Wave 2 — showcase + admire route tests.
++ *
++ * In-memory fake Supabase client (chainable builder), routers mounted in
++ * isolation (same pattern as moderation.test.ts). Notification side effects
++ * are fire-and-forget in the routes and intentionally not asserted here.
++ */
++
++import { describe, it, before, after, beforeEach } from "node:test";
++import assert from "node:assert/strict";
++import http from "node:http";
++import express from "express";
++import { randomUUID } from "node:crypto";
++
++import { _setTestClient, _clearTestClient } from "../lib/http.js";
++import { _setTestServiceClient } from "../lib/supabase.js";
++import stampShowcaseRouter from "../routes/stampShowcase.js";
++import stampAdmireRouter from "../routes/stampAdmire.js";
++
++const ALICE = "11111111-1111-4111-8111-111111111111";
++const BOB = "22222222-2222-4222-8222-222222222222";
++const S_PUB = "33333333-3333-4333-8333-333333333333";   // Alice's public stamp
++const S_PRIV = "44444444-4444-4444-8444-444444444444";  // Alice's private stamp
++const S_REV = "55555555-5555-4555-8555-555555555555";   // Alice's revoked stamp
++const S_BOB = "66666666-6666-4666-8666-666666666666";   // Bob's public stamp
++
++type Db = Record<string, any[]>;
++
++function baseDb(): Db {
++  return {
++    feature_flags: [
++      { flag: "stamp_showcase_enabled", enabled: true },
++      { flag: "stamp_admire_enabled", enabled: true },
++    ],
++    profiles: [
++      { id: ALICE, username: "alice", display_name: "Alice" },
++      { id: BOB, username: "bob", display_name: "Bob" },
++    ],
++    user_stamps: [
++      { id: S_PUB, user_id: ALICE, visibility: "public", is_revoked: false, city: "Cebu", country: "Philippines", title_override: null, earned_at: "2026-07-01T00:00:00Z", stamp_definitions: { slug: "city_cebu", name: "Cebu", rarity: "rare", stamp_type: "city", category: "travel", universal_artwork_url: "https://x/cebu.png" } },
++      { id: S_PRIV, user_id: ALICE, visibility: "private", is_revoked: false, city: "Tokyo", country: "Japan", title_override: null, earned_at: "2026-07-02T00:00:00Z", stamp_definitions: { slug: "city_tokyo", name: "Tokyo", rarity: "epic", stamp_type: "city", category: "travel", universal_artwork_url: null } },
++      { id: S_REV, user_id: ALICE, visibility: "public", is_revoked: true, city: "Paris", country: "France", title_override: null, earned_at: "2026-07-03T00:00:00Z", stamp_definitions: { slug: "city_paris", name: "Paris", rarity: "common", stamp_type: "city", category: "travel", universal_artwork_url: null } },
++      { id: S_BOB, user_id: BOB, visibility: "public", is_revoked: false, city: "Bangkok", country: "Thailand", title_override: null, earned_at: "2026-07-04T00:00:00Z", stamp_definitions: { slug: "city_bkk", name: "Bangkok", rarity: "uncommon", stamp_type: "city", category: "travel", universal_artwork_url: null } },
++    ],
++    user_stamp_showcase: [],
++    stamp_admires: [],
++    notifications: [],
++  };
++}
++
++function makeClient(db: Db, userId: string) {
++  function builder(table: string) {
++    const filters: Array<[string, any]> = [];
++    let inFilter: { key: string; vals: any[] } | null = null;
++    let limitN = Infinity;
++    let mode: "select" | "delete" = "select";
++
++    const matching = () =>
++      (db[table] ?? []).filter(
++        (r) =>
++          filters.every(([k, v]) => r[k] === v) &&
++          (!inFilter || inFilter.vals.includes(r[inFilter.key])),
++      );
++
++    const api: any = {
++      select: () => api,
++      eq: (k: string, v: any) => { filters.push([k, v]); return api; },
++      in: (k: string, vals: any[]) => { inFilter = { key: k, vals }; return api; },
++      order: () => api,
++      limit: (n: number) => { limitN = n; return api; },
++      maybeSingle: async () => ({ data: matching()[0] ?? null, error: null }),
++      single: async () => ({ data: matching()[0] ?? null, error: null }),
++      delete: () => { mode = "delete"; return api; },
++      insert: (vals: any) => {
++        const arr = (Array.isArray(vals) ? vals : [vals]).map((v) => ({ id: v.id ?? randomUUID(), created_at: new Date().toISOString(), ...v }));
++        db[table] = [...(db[table] ?? []), ...arr];
++        const res = { data: arr[0], error: null };
++        return {
++          select: () => ({ single: async () => res }),
++          then: (resolve: any) => resolve({ error: null }),
++        };
++      },
++      then: (resolve: any) => {
++        if (mode === "delete") {
++          const keep = (db[table] ?? []).filter(
++            (r) => !(filters.every(([k, v]) => r[k] === v) && (!inFilter || inFilter.vals.includes(r[inFilter.key]))),
++          );
++          db[table] = keep;
++          resolve({ error: null });
++        } else {
++          resolve({ data: matching().slice(0, limitN), error: null });
++        }
++      },
++    };
++    return api;
++  }
++
++  return {
++    auth: {
++      getUser: async (token: string) =>
++        token
++          ? { data: { user: { id: userId } }, error: null }
++          : { data: { user: null }, error: { message: "no token" } },
++    },
++    from: (table: string) => builder(table),
++  } as any;
++}
++
++function buildApp() {
++  const app = express();
++  app.use(express.json());
++  app.use((req: any, _res: any, next: any) => {
++    req.log = req.log ?? { error: () => {}, warn: () => {}, info: () => {}, debug: () => {} };
++    next();
++  });
++  app.use("/api", stampShowcaseRouter);
++  app.use("/api", stampAdmireRouter);
++  return app;
++}
++
++function req(server: http.Server, method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> {
++  return new Promise((resolve, reject) => {
++    const addr = server.address() as any;
++    const payload = body !== undefined ? JSON.stringify(body) : undefined;
++    const hdrs: Record<string, string> = { "content-type": "application/json", authorization: "Bearer test-token" };
++    if (payload) hdrs["content-length"] = String(Buffer.byteLength(payload));
++    const r = http.request({ hostname: "127.0.0.1", port: addr.port, path, method, headers: hdrs }, (res) => {
++      let raw = "";
++      res.on("data", (c) => (raw += c));
++      res.on("end", () => {
++        let parsed: any;
++        try { parsed = JSON.parse(raw); } catch { parsed = raw; }
++        resolve({ status: res.statusCode ?? 0, body: parsed });
++      });
++    });
++    r.on("error", reject);
++    if (payload) r.write(payload);
++    r.end();
++  });
++}
++
++let server: http.Server;
++let db: Db;
++
++function useClient(userId: string) {
++  const client = makeClient(db, userId);
++  _setTestClient(client, true);
++  _setTestServiceClient(client);
++}
++
++before(async () => {
++  const app = buildApp();
++  server = http.createServer(app);
++  await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
++});
++
++after(async () => {
++  _clearTestClient();
++  _setTestServiceClient(null as any);
++  await new Promise<void>((res) => server.close(() => res()));
++});
++
++beforeEach(() => {
++  db = baseDb();
++});
++
++// ── Showcase ─────────────────────────────────────────────────────────────────
++
++describe("Stamp showcase routes", () => {
++  it("is flag-gated", async () => {
++    db.feature_flags = db.feature_flags.map((f) =>
++      f.flag === "stamp_showcase_enabled" ? { ...f, enabled: false } : f,
++    );
++    useClient(ALICE);
++    const { status, body } = await req(server, "GET", "/api/stamps/showcase");
++    assert.notEqual(status, 200);
++    assert.equal(body.error, "feature_disabled");
++  });
++
++  it("PUT saves an ordered set and GET returns it in rank order", async () => {
++    useClient(ALICE);
++    const put = await req(server, "PUT", "/api/stamps/showcase", { userStampIds: [S_PRIV, S_PUB] });
++    assert.equal(put.status, 200);
++    assert.equal(put.body.count, 2);
++
++    const get = await req(server, "GET", "/api/stamps/showcase");
++    assert.equal(get.status, 200);
++    assert.equal(get.body.items.length, 2);
++    assert.equal(get.body.items[0].userStampId, S_PRIV); // rank 0 = first in PUT order
++    assert.equal(get.body.items[1].userStampId, S_PUB);
++    assert.equal(get.body.max, 8);
++  });
++
++  it("PUT replaces the previous set (reorder)", async () => {
++    useClient(ALICE);
++    await req(server, "PUT", "/api/stamps/showcase", { userStampIds: [S_PRIV, S_PUB] });
++    await req(server, "PUT", "/api/stamps/showcase", { userStampIds: [S_PUB] });
++    const get = await req(server, "GET", "/api/stamps/showcase");
++    assert.equal(get.body.items.length, 1);
++    assert.equal(get.body.items[0].userStampId, S_PUB);
++  });
++
++  it("PUT rejects someone else's stamp, revoked stamps, duplicates, and >8", async () => {
++    useClient(ALICE);
++    const foreign = await req(server, "PUT", "/api/stamps/showcase", { userStampIds: [S_BOB] });
++    assert.equal(foreign.body.error, "invalid_payload");
++
++    const revoked = await req(server, "PUT", "/api/stamps/showcase", { userStampIds: [S_REV] });
++    assert.equal(revoked.body.error, "invalid_payload");
++
++    const dup = await req(server, "PUT", "/api/stamps/showcase", { userStampIds: [S_PUB, S_PUB] });
++    assert.equal(dup.body.error, "invalid_payload");
++
++    const nine = Array.from({ length: 9 }, () => randomUUID());
++    const over = await req(server, "PUT", "/api/stamps/showcase", { userStampIds: nine });
++    assert.equal(over.body.error, "invalid_payload");
++  });
++
++  it("public view filters private and revoked stamps, preserves order", async () => {
++    useClient(ALICE);
++    // Alice showcases private + public + revoked
++    await req(server, "PUT", "/api/stamps/showcase", { userStampIds: [S_PRIV, S_PUB] });
++    db.user_stamp_showcase.push({ id: randomUUID(), user_id: ALICE, user_stamp_id: S_REV, rank: 2 });
++
++    useClient(BOB); // Bob views Alice's public showcase
++    const { status, body } = await req(server, "GET", "/api/users/alice/stamp-showcase");
++    assert.equal(status, 200);
++    assert.equal(body.items.length, 1); // only the public, non-revoked stamp
++    assert.equal(body.items[0].userStampId, S_PUB);
++  });
++
++  it("public view 404s for unknown usernames", async () => {
++    useClient(BOB);
++    const { body } = await req(server, "GET", "/api/users/nobody/stamp-showcase");
++    assert.equal(body.error, "not_found");
++  });
++});
++
++// ── Admire ───────────────────────────────────────────────────────────────────
++
++describe("Stamp admire routes", () => {
++  it("is flag-gated", async () => {
++    db.feature_flags = db.feature_flags.map((f) =>
++      f.flag === "stamp_admire_enabled" ? { ...f, enabled: false } : f,
++    );
++    useClient(BOB);
++    const { body } = await req(server, "POST", `/api/stamps/${S_PUB}/admire`);
++    assert.equal(body.error, "feature_disabled");
++  });
++
++  it("admires a public stamp once; duplicates collapse to 200", async () => {
++    useClient(BOB);
++    const first = await req(server, "POST", `/api/stamps/${S_PUB}/admire`);
++    assert.equal(first.status, 201);
++    assert.equal(first.body.admired, true);
++
++    const second = await req(server, "POST", `/api/stamps/${S_PUB}/admire`);
++    assert.equal(second.status, 200);
++    assert.equal(second.body.duplicate, true);
++    assert.equal(db.stamp_admires.length, 1);
++  });
++
++  it("rejects self-admire", async () => {
++    useClient(ALICE);
++    const { body } = await req(server, "POST", `/api/stamps/${S_PUB}/admire`);
++    assert.equal(body.error, "invalid_payload");
++    assert.equal(db.stamp_admires.length, 0);
++  });
++
++  it("hides private and revoked stamps from other users (404)", async () => {
++    useClient(BOB);
++    const priv = await req(server, "POST", `/api/stamps/${S_PRIV}/admire`);
++    assert.equal(priv.body.error, "not_found");
++    const rev = await req(server, "POST", `/api/stamps/${S_REV}/admire`);
++    assert.equal(rev.body.error, "not_found");
++  });
++
++  it("unadmire removes the row; admirers reflects count and admiredByMe", async () => {
++    useClient(BOB);
++    await req(server, "POST", `/api/stamps/${S_PUB}/admire`);
++    db.stamp_admires[0].profiles = { id: BOB, username: "bob", display_name: "Bob", avatar_url: null };
++
++    const list = await req(server, "GET", `/api/stamps/${S_PUB}/admirers`);
++    assert.equal(list.status, 200);
++    assert.equal(list.body.count, 1);
++    assert.equal(list.body.admiredByMe, true);
++    assert.equal(list.body.admirers[0].username, "bob");
++
++    const del = await req(server, "DELETE", `/api/stamps/${S_PUB}/admire`);
++    assert.equal(del.status, 200);
++    assert.equal(db.stamp_admires.length, 0);
++
++    const after2 = await req(server, "GET", `/api/stamps/${S_PUB}/admirers`);
++    assert.equal(after2.body.count, 0);
++    assert.equal(after2.body.admiredByMe, false);
++  });
++});
+--- a/artifacts/api-server/package.json	2026-07-23 17:34:12.824855742 +0000
++++ b/artifacts/api-server/package.json	2026-07-23 20:11:51.113425998 +0000
+@@ -14,7 +14,7 @@
+     "check:migration-prefixes": "node --import tsx/esm src/scripts/checkMigrationPrefixes.ts",
+     "check:write-path-columns": "node --env-file-if-exists=.env --import tsx/esm src/scripts/checkWritePathColumns.ts",
+     "test:circle-locations": "node --import tsx/esm --test src/test/circleLocations.test.ts",
+-    "test": "node --import tsx/esm --test --test-force-exit src/test/universalStamps.test.ts src/test/eventsCirclesOwner.test.ts src/test/circleLocations.test.ts src/test/collections.test.ts src/test/accessControl.test.ts src/test/adminGeo.test.ts src/test/adminModeration.test.ts src/test/ageEligibility.test.ts src/test/airport.test.ts src/test/availability.test.ts src/test/blockExclusion.test.ts src/test/circleInviteAge.test.ts src/test/cleanupHealth.test.ts src/test/compass-active-reward.test.ts src/test/compass-admin.test.ts src/test/compass-cache.test.ts src/test/compass-memory.test.ts src/test/compass-context.test.ts src/test/compass-feed.test.ts src/test/compassServedDedup.test.ts src/test/compass-pipeline.test.ts src/test/compass-ux.test.ts src/test/coreActions.test.ts src/test/dailyBriefCleanup.test.ts src/test/delayedGeotag.test.ts src/test/emergencyFlags.test.ts src/test/events.test.ts src/test/featureFlagsAdmin.test.ts src/test/followDecisions.test.ts src/test/friendDecisions.test.ts src/test/geofenceAdminSettings.test.ts src/test/geofence.test.ts src/test/groupChat.test.ts src/test/hashtags.test.ts src/test/hiddenGems.test.ts src/test/hiddenGemCheckin.test.ts src/test/intelligence.test.ts src/test/interactionPermissions.test.ts src/test/itineraryTimeline.test.ts src/test/locationGps.test.ts src/test/locationVerify.test.ts src/test/meetupAgeRsvp.test.ts src/test/meetups.test.ts src/test/notifications.test.ts src/test/passportStamps.test.ts src/test/passportStampsPagination.test.ts src/test/passportStampsCountFallback.test.ts src/test/postInteractions.test.ts src/test/posts.test.ts src/test/postcards.test.ts src/test/pulseGps.test.ts src/test/pushDelivery.test.ts src/test/rentBuddyRequestPush.test.ts src/test/pushRetryQueue.test.ts src/test/pushWithRetry.test.ts src/test/tripReminderPush.test.ts src/test/tripReminderResetAudit.test.ts src/test/rateLimits.test.ts src/test/rentABuddyRollout.test.ts src/test/rentABuddy.test.ts src/test/rentBuddyReliabilityCounters.test.ts src/test/rentBuddyReliabilityRoutes.test.ts src/test/requests.test.ts src/test/friendRequestUpdateFailure.test.ts src/test/inviteUpdateFailure.test.ts src/test/routeMinimapView.test.ts src/test/routeOptimizer.test.ts src/test/routePlanHook.test.ts src/test/routePlanMembers.test.ts src/test/routePlan.test.ts src/test/safeReturnAdmin.test.ts src/test/safeReturn.test.ts src/test/stampHelper.test.ts src/test/tagging.test.ts src/test/telegraphChat.test.ts src/test/telegraphRealtime.test.ts src/test/telegraphStreamEndpoints.test.ts src/test/tripCompletion.test.ts src/test/tripCrewLocation.test.ts src/test/tripPlan.test.ts src/test/tripMembers.test.ts src/test/tripInviteRespond.test.ts src/test/trust-integration.test.ts src/test/trust.test.ts src/test/memories.test.ts src/test/stories.test.ts src/test/userSuggestions.test.ts src/test/eventWaitlistSweeper.test.ts src/lib/messagingPermissions.test.ts src/test/appeals.test.ts src/test/reviews.test.ts src/test/tripsExpansion.test.ts src/test/crashReport.test.ts src/test/wishlist.test.ts src/test/discoverySort.test.ts src/test/stamps-integration.test.ts src/test/stampRevoke.test.ts src/test/engagement.test.ts src/test/profileSystem.test.ts src/test/profileSchemaDrift.test.ts src/test/adminCompassSchemaDrift.test.ts src/test/adminGeoModerationSchemaDrift.test.ts src/test/adminRemainingDashboardsSchemaDrift.test.ts src/test/trustAdminAuditInsertSchemaDrift.test.ts src/test/inviteLinkPreview.test.ts src/test/inviteLinkPreviewFull.test.ts src/test/inviteLinkTripFull.test.ts src/test/stampArtworkEnrichment.test.ts src/test/ogImageVisibility.test.ts src/test/canonicalLocations.test.ts src/test/publicIdentity.test.ts src/test/privacySettings.test.ts src/test/discoveryPrivacy.test.ts src/test/stampPreviewVisibility.test.ts src/test/stampCountryLookup.test.ts src/test/stampCountryGeocoder.test.ts src/test/stampQueueRequeue.test.ts src/test/stampGenerationCycle.test.ts src/test/stampGenerationLockTiming.test.ts src/test/stampQueueRequeueRoute.test.ts src/test/rentABuddyAvailabilitySave.test.ts src/test/rentABuddySpecRebook.test.ts src/test/rentABuddySpecRequest.test.ts src/test/rentABuddySpecNoShow.test.ts src/test/rentABuddyDisputeTerminal.test.ts src/test/stampWorkerHealthMonitor.test.ts src/test/stampCatalogDefinition.test.ts src/test/stampOwnershipBackfill.test.ts src/test/adminGeocode.test.ts src/test/stampCatalogListEnrichment.test.ts src/test/stampCatalogActiveQueueStatus.test.ts src/test/notificationRouterCredentials.test.ts src/test/stampGeocodeStaleEviction.test.ts src/test/stampGeocodeDeletionPropagation.test.ts src/test/stampCatalogRequeueBadge.test.ts src/test/adminTripReminderReset.test.ts src/test/adminTripIdGuard.test.ts src/test/stampCatalogRegenDedup.test.ts src/test/stampCatalogDetailBadge.test.ts src/test/stampCatalogVersionArchive.test.ts src/test/stampCatalogRegenAuditLog.test.ts src/test/stampCatalogRegenAfterComplete.test.ts src/test/stampCatalogRegenAfterReviewRequired.test.ts src/test/pushTokenCleanup.test.ts src/test/rentABuddyHalfPairCoords.test.ts src/test/rentABuddySearchCoordGuard.test.ts src/test/adminVenueModeration.test.ts src/test/adminVenueQueue.test.ts src/test/rentABuddyAdminResolveDisputeGuard.test.ts src/test/rentABuddyAdminResolveDisputeFavorTraveler.test.ts src/test/stampGeocodeTombstoneRead.test.ts src/test/stampCatalogStyleVersionBadge.test.ts src/test/adminEventModeration.test.ts src/test/profileSelect.test.ts src/test/stampCatalogAdminActionDedup.test.ts src/test/stampCatalogAuditLogFilter.test.ts src/test/stampCatalogNullDisplayName.test.ts src/test/styleVersionSync.test.ts src/test/stampCatalogCountryCodeType.test.ts src/test/stampCatalogRegenPreexistingQueue.test.ts src/test/stampQueueClearCleanupAudit.test.ts src/test/stampAuditWriteFailure.test.ts src/test/stampAuditWriteFailureMergeReject.test.ts src/test/stampCatalogRegenArchiveObservability.test.ts src/test/stampCatalogRegenMultiFailedReset.test.ts src/test/stampCatalogConflictCollapse.test.ts src/test/stampCatalogRegenArchiveExtrasDbError.test.ts src/test/stampCatalogRegenSurvivorResetDbError.test.ts src/test/notificationDisplayNameCap.test.ts src/test/splitClockGuard.test.ts src/test/adminGeofenceSettingsNotFound.test.ts src/test/stampQueueConstraintSync.test.ts src/test/rankEventsOutcome.test.ts src/test/impressionLogFireAndForget.test.ts src/test/callSystem.test.ts src/test/callRoutes.test.ts src/test/callHardening.test.ts src/test/callAnalytics.test.ts src/test/tripInvitesPending.test.ts src/test/weatherCacheCleanupRoute.test.ts src/test/appHardening.test.ts src/test/corsAllowedOrigins.test.ts src/test/ageGate.test.ts src/test/rentABuddyLifecycle.test.ts src/test/reconcileRunSummary.test.ts src/test/reconcileRunHistory.test.ts src/test/schemaDriftCheck.test.ts src/test/adminPhase12.test.ts src/test/blocks.test.ts src/test/discoveryCommunityCoordinateBounds.test.ts src/test/discoveryCommunityCoords.test.ts src/test/discoveryCommunityRating.test.ts src/test/discoveryCommunitySortBy.test.ts src/test/discoverySearch.test.ts src/test/discoverySearchIntelligence.test.ts src/test/events-extension.test.ts src/test/passportProfileAccess.test.ts src/test/profileEnsure.test.ts src/test/pulseRanking.test.ts src/test/stampEarnedNotification.test.ts src/test/friendRequestReactivate.test.ts src/test/compass-ask.test.ts src/test/compass-structured-context.test.ts src/test/compass-tools.test.ts src/test/compass-ui-blocks.test.ts src/test/compass-recommendation-engine.test.ts src/test/compass-live-intel.test.ts src/test/compass-social.test.ts src/test/compass-home.test.ts src/test/compass-sense.test.ts src/test/compass-sense-scheduler.test.ts src/test/compass-live.test.ts src/test/compass-autopilot.test.ts src/test/compass-outcome-learning.test.ts src/test/compass-intelligence-graph.test.ts src/test/intelligenceGraphScheduler.test.ts src/test/placesLiveStatus.test.ts src/test/compass-local-time.test.ts src/test/eventPostsDiscovery.test.ts src/test/verification.test.ts src/test/moderation.test.ts src/test/featureFlagColumnGuard.test.ts src/test/entryRequirements.test.ts src/test/tripReadiness.test.ts src/test/tripBudgetIntel.test.ts src/test/tripReservations.test.ts src/test/tripDraft.test.ts src/test/neighborhoodMatch.test.ts src/test/compass-trip-context.test.ts src/test/stampComposition.test.ts",
++    "test": "node --import tsx/esm --test --test-force-exit src/test/universalStamps.test.ts src/test/eventsCirclesOwner.test.ts src/test/circleLocations.test.ts src/test/collections.test.ts src/test/accessControl.test.ts src/test/adminGeo.test.ts src/test/adminModeration.test.ts src/test/ageEligibility.test.ts src/test/airport.test.ts src/test/availability.test.ts src/test/blockExclusion.test.ts src/test/circleInviteAge.test.ts src/test/cleanupHealth.test.ts src/test/compass-active-reward.test.ts src/test/compass-admin.test.ts src/test/compass-cache.test.ts src/test/compass-memory.test.ts src/test/compass-context.test.ts src/test/compass-feed.test.ts src/test/compassServedDedup.test.ts src/test/compass-pipeline.test.ts src/test/compass-ux.test.ts src/test/coreActions.test.ts src/test/dailyBriefCleanup.test.ts src/test/delayedGeotag.test.ts src/test/emergencyFlags.test.ts src/test/events.test.ts src/test/featureFlagsAdmin.test.ts src/test/followDecisions.test.ts src/test/friendDecisions.test.ts src/test/geofenceAdminSettings.test.ts src/test/geofence.test.ts src/test/groupChat.test.ts src/test/hashtags.test.ts src/test/hiddenGems.test.ts src/test/hiddenGemCheckin.test.ts src/test/intelligence.test.ts src/test/interactionPermissions.test.ts src/test/itineraryTimeline.test.ts src/test/locationGps.test.ts src/test/locationVerify.test.ts src/test/meetupAgeRsvp.test.ts src/test/meetups.test.ts src/test/notifications.test.ts src/test/passportStamps.test.ts src/test/passportStampsPagination.test.ts src/test/passportStampsCountFallback.test.ts src/test/postInteractions.test.ts src/test/posts.test.ts src/test/postcards.test.ts src/test/pulseGps.test.ts src/test/pushDelivery.test.ts src/test/rentBuddyRequestPush.test.ts src/test/pushRetryQueue.test.ts src/test/pushWithRetry.test.ts src/test/tripReminderPush.test.ts src/test/tripReminderResetAudit.test.ts src/test/rateLimits.test.ts src/test/rentABuddyRollout.test.ts src/test/rentABuddy.test.ts src/test/rentBuddyReliabilityCounters.test.ts src/test/rentBuddyReliabilityRoutes.test.ts src/test/requests.test.ts src/test/friendRequestUpdateFailure.test.ts src/test/inviteUpdateFailure.test.ts src/test/routeMinimapView.test.ts src/test/routeOptimizer.test.ts src/test/routePlanHook.test.ts src/test/routePlanMembers.test.ts src/test/routePlan.test.ts src/test/safeReturnAdmin.test.ts src/test/safeReturn.test.ts src/test/stampHelper.test.ts src/test/tagging.test.ts src/test/telegraphChat.test.ts src/test/telegraphRealtime.test.ts src/test/telegraphStreamEndpoints.test.ts src/test/tripCompletion.test.ts src/test/tripCrewLocation.test.ts src/test/tripPlan.test.ts src/test/tripMembers.test.ts src/test/tripInviteRespond.test.ts src/test/trust-integration.test.ts src/test/trust.test.ts src/test/memories.test.ts src/test/stories.test.ts src/test/userSuggestions.test.ts src/test/eventWaitlistSweeper.test.ts src/lib/messagingPermissions.test.ts src/test/appeals.test.ts src/test/reviews.test.ts src/test/tripsExpansion.test.ts src/test/crashReport.test.ts src/test/wishlist.test.ts src/test/discoverySort.test.ts src/test/stamps-integration.test.ts src/test/stampRevoke.test.ts src/test/engagement.test.ts src/test/profileSystem.test.ts src/test/profileSchemaDrift.test.ts src/test/adminCompassSchemaDrift.test.ts src/test/adminGeoModerationSchemaDrift.test.ts src/test/adminRemainingDashboardsSchemaDrift.test.ts src/test/trustAdminAuditInsertSchemaDrift.test.ts src/test/inviteLinkPreview.test.ts src/test/inviteLinkPreviewFull.test.ts src/test/inviteLinkTripFull.test.ts src/test/stampArtworkEnrichment.test.ts src/test/ogImageVisibility.test.ts src/test/canonicalLocations.test.ts src/test/publicIdentity.test.ts src/test/privacySettings.test.ts src/test/discoveryPrivacy.test.ts src/test/stampPreviewVisibility.test.ts src/test/stampCountryLookup.test.ts src/test/stampCountryGeocoder.test.ts src/test/stampQueueRequeue.test.ts src/test/stampGenerationCycle.test.ts src/test/stampGenerationLockTiming.test.ts src/test/stampQueueRequeueRoute.test.ts src/test/rentABuddyAvailabilitySave.test.ts src/test/rentABuddySpecRebook.test.ts src/test/rentABuddySpecRequest.test.ts src/test/rentABuddySpecNoShow.test.ts src/test/rentABuddyDisputeTerminal.test.ts src/test/stampWorkerHealthMonitor.test.ts src/test/stampCatalogDefinition.test.ts src/test/stampOwnershipBackfill.test.ts src/test/adminGeocode.test.ts src/test/stampCatalogListEnrichment.test.ts src/test/stampCatalogActiveQueueStatus.test.ts src/test/notificationRouterCredentials.test.ts src/test/stampGeocodeStaleEviction.test.ts src/test/stampGeocodeDeletionPropagation.test.ts src/test/stampCatalogRequeueBadge.test.ts src/test/adminTripReminderReset.test.ts src/test/adminTripIdGuard.test.ts src/test/stampCatalogRegenDedup.test.ts src/test/stampCatalogDetailBadge.test.ts src/test/stampCatalogVersionArchive.test.ts src/test/stampCatalogRegenAuditLog.test.ts src/test/stampCatalogRegenAfterComplete.test.ts src/test/stampCatalogRegenAfterReviewRequired.test.ts src/test/pushTokenCleanup.test.ts src/test/rentABuddyHalfPairCoords.test.ts src/test/rentABuddySearchCoordGuard.test.ts src/test/adminVenueModeration.test.ts src/test/adminVenueQueue.test.ts src/test/rentABuddyAdminResolveDisputeGuard.test.ts src/test/rentABuddyAdminResolveDisputeFavorTraveler.test.ts src/test/stampGeocodeTombstoneRead.test.ts src/test/stampCatalogStyleVersionBadge.test.ts src/test/adminEventModeration.test.ts src/test/profileSelect.test.ts src/test/stampCatalogAdminActionDedup.test.ts src/test/stampCatalogAuditLogFilter.test.ts src/test/stampCatalogNullDisplayName.test.ts src/test/styleVersionSync.test.ts src/test/stampCatalogCountryCodeType.test.ts src/test/stampCatalogRegenPreexistingQueue.test.ts src/test/stampQueueClearCleanupAudit.test.ts src/test/stampAuditWriteFailure.test.ts src/test/stampAuditWriteFailureMergeReject.test.ts src/test/stampCatalogRegenArchiveObservability.test.ts src/test/stampCatalogRegenMultiFailedReset.test.ts src/test/stampCatalogConflictCollapse.test.ts src/test/stampCatalogRegenArchiveExtrasDbError.test.ts src/test/stampCatalogRegenSurvivorResetDbError.test.ts src/test/notificationDisplayNameCap.test.ts src/test/splitClockGuard.test.ts src/test/adminGeofenceSettingsNotFound.test.ts src/test/stampQueueConstraintSync.test.ts src/test/rankEventsOutcome.test.ts src/test/impressionLogFireAndForget.test.ts src/test/callSystem.test.ts src/test/callRoutes.test.ts src/test/callHardening.test.ts src/test/callAnalytics.test.ts src/test/tripInvitesPending.test.ts src/test/weatherCacheCleanupRoute.test.ts src/test/appHardening.test.ts src/test/corsAllowedOrigins.test.ts src/test/ageGate.test.ts src/test/rentABuddyLifecycle.test.ts src/test/reconcileRunSummary.test.ts src/test/reconcileRunHistory.test.ts src/test/schemaDriftCheck.test.ts src/test/adminPhase12.test.ts src/test/blocks.test.ts src/test/discoveryCommunityCoordinateBounds.test.ts src/test/discoveryCommunityCoords.test.ts src/test/discoveryCommunityRating.test.ts src/test/discoveryCommunitySortBy.test.ts src/test/discoverySearch.test.ts src/test/discoverySearchIntelligence.test.ts src/test/events-extension.test.ts src/test/passportProfileAccess.test.ts src/test/profileEnsure.test.ts src/test/pulseRanking.test.ts src/test/stampEarnedNotification.test.ts src/test/friendRequestReactivate.test.ts src/test/compass-ask.test.ts src/test/compass-structured-context.test.ts src/test/compass-tools.test.ts src/test/compass-ui-blocks.test.ts src/test/compass-recommendation-engine.test.ts src/test/compass-live-intel.test.ts src/test/compass-social.test.ts src/test/compass-home.test.ts src/test/compass-sense.test.ts src/test/compass-sense-scheduler.test.ts src/test/compass-live.test.ts src/test/compass-autopilot.test.ts src/test/compass-outcome-learning.test.ts src/test/compass-intelligence-graph.test.ts src/test/intelligenceGraphScheduler.test.ts src/test/placesLiveStatus.test.ts src/test/compass-local-time.test.ts src/test/eventPostsDiscovery.test.ts src/test/verification.test.ts src/test/moderation.test.ts src/test/featureFlagColumnGuard.test.ts src/test/entryRequirements.test.ts src/test/tripReadiness.test.ts src/test/tripBudgetIntel.test.ts src/test/tripReservations.test.ts src/test/tripDraft.test.ts src/test/neighborhoodMatch.test.ts src/test/compass-trip-context.test.ts src/test/stampComposition.test.ts src/test/stampShowcaseAdmire.test.ts",
+     "test:app-hardening": "node --import tsx/esm --test src/test/appHardening.test.ts",
+     "test:cors-allowed-origins": "node --import tsx/esm --test src/test/corsAllowedOrigins.test.ts",
+     "test:interaction": "node --import tsx/esm --test src/test/interactionPermissions.test.ts src/test/coreActions.test.ts src/test/followDecisions.test.ts src/test/blockExclusion.test.ts src/test/accessControl.test.ts src/test/adminModeration.test.ts src/test/emergencyFlags.test.ts src/test/userSuggestions.test.ts",
+diff -ruN a/artifacts/travel-buddy/src/services/stampAdmire.ts b/artifacts/travel-buddy/src/services/stampAdmire.ts
+--- a/artifacts/travel-buddy/src/services/stampAdmire.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/travel-buddy/src/services/stampAdmire.ts	2026-07-23 20:10:18.734150044 +0000
+@@ -0,0 +1,75 @@
++/**
++ * stampAdmire.ts — client for stamp admiration (Stamp Wave 2).
++ * Fail-soft: null/false when the API is unconfigured or the flag is off, so
++ * detail surfaces simply hide the admire affordance.
++ */
++import { isSupabaseConfigured } from '../lib/supabase.ts';
++import { freshToken as freshApiToken } from './apiToken.ts';
++
++const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
++
++async function authedFetch(url: string, opts: RequestInit = {}): Promise<Response> {
++  const token = await freshApiToken();
++  return fetch(url, {
++    ...opts,
++    headers: {
++      'Content-Type': 'application/json',
++      ...(token ? { Authorization: `Bearer ${token}` } : {}),
++      ...(opts.headers ?? {}),
++    },
++  });
++}
++
++export interface StampAdmirer {
++  userId: string;
++  admiredAt: string;
++  username: string | null;
++  displayName: string | null;
++  avatarUrl: string | null;
++}
++
++export interface AdmirersResult {
++  count: number;
++  admiredByMe: boolean;
++  admirers: StampAdmirer[];
++}
++
++/** Admire a stamp. True on success (idempotent server-side). */
++export async function admireStamp(userStampId: string): Promise<boolean> {
++  if (!isSupabaseConfigured || !apiBase() || !userStampId) return false;
++  try {
++    const res = await authedFetch(`${apiBase()}/api/stamps/${userStampId}/admire`, { method: 'POST' });
++    return res.ok;
++  } catch {
++    return false;
++  }
++}
++
++/** Remove own admire. */
++export async function unadmireStamp(userStampId: string): Promise<boolean> {
++  if (!isSupabaseConfigured || !apiBase() || !userStampId) return false;
++  try {
++    const res = await authedFetch(`${apiBase()}/api/stamps/${userStampId}/admire`, { method: 'DELETE' });
++    return res.ok;
++  } catch {
++    return false;
++  }
++}
++
++/** Admirer list + count + whether the caller admires it. Null = feature unavailable. */
++export async function getAdmirers(userStampId: string): Promise<AdmirersResult | null> {
++  if (!isSupabaseConfigured || !apiBase() || !userStampId) return null;
++  try {
++    const res = await authedFetch(`${apiBase()}/api/stamps/${userStampId}/admirers`);
++    if (!res.ok) return null;
++    const body = await res.json();
++    if (body?.enabled === false) return null;
++    return {
++      count: Number(body?.count ?? 0),
++      admiredByMe: body?.admiredByMe === true,
++      admirers: Array.isArray(body?.admirers) ? body.admirers : [],
++    };
++  } catch {
++    return null;
++  }
++}
+diff -ruN a/artifacts/travel-buddy/src/services/stampShowcase.ts b/artifacts/travel-buddy/src/services/stampShowcase.ts
+--- a/artifacts/travel-buddy/src/services/stampShowcase.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/travel-buddy/src/services/stampShowcase.ts	2026-07-23 20:10:10.378149547 +0000
+@@ -0,0 +1,83 @@
++/**
++ * stampShowcase.ts — client for the curated stamp showcase (Stamp Wave 2).
++ * Fail-soft: returns null/[] when the API is unconfigured or the feature flag
++ * is off server-side, so passport surfaces keep their existing states.
++ */
++import { isSupabaseConfigured } from '../lib/supabase.ts';
++import { freshToken as freshApiToken } from './apiToken.ts';
++
++const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
++
++async function authedFetch(url: string, opts: RequestInit = {}): Promise<Response> {
++  const token = await freshApiToken();
++  return fetch(url, {
++    ...opts,
++    headers: {
++      'Content-Type': 'application/json',
++      ...(token ? { Authorization: `Bearer ${token}` } : {}),
++      ...(opts.headers ?? {}),
++    },
++  });
++}
++
++export const MAX_SHOWCASE = 8;
++
++export interface ShowcaseStamp {
++  userStampId: string;
++  rank: number;
++  earnedAt: string;
++  city: string | null;
++  country: string | null;
++  titleOverride: string | null;
++  definition: {
++    slug: string;
++    name: string;
++    rarity: string;
++    stampType: string;
++    category: string;
++    artworkUrl: string | null;
++  } | null;
++}
++
++/** Own showcase, ordered. Null when the feature is unavailable. */
++export async function getMyShowcase(): Promise<ShowcaseStamp[] | null> {
++  if (!isSupabaseConfigured || !apiBase()) return null;
++  try {
++    const res = await authedFetch(`${apiBase()}/api/stamps/showcase`);
++    if (!res.ok) return null; // 503 = flag off → callers keep default UI
++    const body = await res.json();
++    return Array.isArray(body?.items) ? (body.items as ShowcaseStamp[]) : [];
++  } catch {
++    return null;
++  }
++}
++
++/** Replace the showcase set. Order of ids = display order. */
++export async function saveShowcase(userStampIds: string[]): Promise<boolean> {
++  if (!isSupabaseConfigured || !apiBase()) return false;
++  try {
++    const res = await authedFetch(`${apiBase()}/api/stamps/showcase`, {
++      method: 'PUT',
++      body: JSON.stringify({ userStampIds: userStampIds.slice(0, MAX_SHOWCASE) }),
++    });
++    return res.ok;
++  } catch {
++    return false;
++  }
++}
++
++/** Public showcase for a username. Null = unavailable; [] = none/hidden. */
++export async function getPublicShowcase(username: string): Promise<ShowcaseStamp[] | null> {
++  if (!isSupabaseConfigured || !apiBase() || !username) return null;
++  try {
++    const res = await authedFetch(
++      `${apiBase()}/api/users/${encodeURIComponent(username)}/stamp-showcase`,
++    );
++    if (!res.ok) return null;
++    const body = await res.json();
++    if (body?.enabled === false) return null;
++    return Array.isArray(body?.items) ? (body.items as ShowcaseStamp[]) : [];
++  } catch {
++    return null;
++  }
++}
+--- a/docs/migrations.md	2026-07-23 17:34:12.824855742 +0000
++++ b/docs/migrations.md	2026-07-23 20:12:49.326158996 +0000
+@@ -757,3 +757,4 @@
+ - `0175_trip_readiness_snapshots` — daily readiness score snapshots (previousScore delta), added by the Replit UI wave.
+ - `0176_moderation_reports` — canonical DDL for the UI wave's moderation_reports (was ad-hoc only).
+ - `0177_stamp_premium_foundation` — Stamp Wave 1: destination_identities (+5 launch seeds), catalog identity_key, stamp_definitions premium fields (template_family, edition_size, is_limited, display_priority) + unified 5-tier rarity CHECK (adds 'epic'), stamp_artwork_versions QC/thumbnail/hero/composition columns, flag `stamp_premium_rendering_enabled` (default FALSE — worker keeps legacy path until enabled).
++- `0178_stamp_showcase_admire` — Stamp Wave 2: user_stamp_showcase (≤8 curated, ranked; cap enforced in API), stamp_admires (unique per admirer+stamp), flags `stamp_showcase_enabled` + `stamp_admire_enabled` (default FALSE).
