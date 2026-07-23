@@ -136,7 +136,7 @@ export async function fetchNextBestAction(tripId: string): Promise<NextBestActio
 }
 
 export async function fetchArrivalBoard(tripId: string): Promise<{
-  arrivals: Array<{ userId: string; arrival: { time: string; label: string } | null }>;
+  arrivals: Array<{ userId: string; handle?: string | null; arrival: { time: string; label: string } | null }>;
   note?: string;
 } | null> {
   if (!isSupabaseConfigured || !apiBase()) return null;

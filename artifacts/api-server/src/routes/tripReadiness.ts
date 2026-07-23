@@ -281,6 +281,16 @@ router.get("/trips/:tripId/arrival-board", asyncHandler(async (req, res) => {
 
   const memberIds = await loadAcceptedMemberIds(sc, tripId, (trip as any).owner_id ?? null);
 
+  // Resolve handles for all members in one query — used for profile navigation on the client.
+  const profileRows = memberIds.length > 0
+    ? await safeSelect(sc, (c) =>
+        c.from("profiles").select("id, handle").in("id", memberIds),
+      )
+    : [];
+  const handleMap = new Map<string, string | null>(
+    profileRows.map((p) => [(p as any).id as string, (p as any).handle as string | null ?? null]),
+  );
+
   // Flight reservations — defensive: the table may not exist yet.
   const flights = (
     await safeSelect(sc, (c) => c.from("trip_reservations").select("*").eq("trip_id", tripId))
@@ -301,7 +311,11 @@ router.get("/trips/:tripId/arrival-board", asyncHandler(async (req, res) => {
         best = { timeMs: t, time: new Date(t).toISOString(), label: (r as any).title ?? null };
       }
     }
-    return { userId: uid, arrival: best ? { time: best.time, label: best.label } : null };
+    return {
+      userId: uid,
+      handle: handleMap.get(uid) ?? null,
+      arrival: best ? { time: best.time, label: best.label } : null,
+    };
   });
 
   // Honest note when the board is sparse instead of pretending it's complete.
