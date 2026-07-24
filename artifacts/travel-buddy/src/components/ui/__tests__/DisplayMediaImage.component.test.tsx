@@ -21,13 +21,26 @@ import TestRenderer, { act } from 'react-test-renderer';
 import { DisplayMediaImage, AvatarImage } from '../DisplayMediaImage.tsx';
 import * as MediaSourceModule from '../../../lib/mediaSource.ts';
 
+// ── mediaSource mock ─────────────────────────────────────────────────────────
+// Default: flag-OFF fast path — returns { uri } unchanged.
+// Individual tests override this to simulate flag-ON relay behaviour.
+
+const mockMediaSource = jest.fn(async (url: string | null | undefined) =>
+  url ? { uri: url } : { uri: '' },
+);
+
+jest.mock('../../../lib/mediaSource.ts', () => ({
+  ...jest.requireActual('../../../lib/mediaSource.ts'),
+  mediaSource: (...args: any[]) => mockMediaSource(...args),
+}));
+
 // ── expo-image mock ──────────────────────────────────────────────────────────
 
 jest.mock('expo-image', () => {
   const React = require('react');
   const { View } = require('react-native');
   // Named export "Image" — accepts onError/onLoad so we can call them in tests.
-  function MockExpoImage({ onError, onLoad, accessibilityLabel, testID }: any) {
+  function MockExpoImage({ onError, onLoad, accessibilityLabel, testID, source }: any) {
     return (
       <View
         testID={testID ?? 'mock-expo-image'}
@@ -35,7 +48,12 @@ jest.mock('expo-image', () => {
         // Store callbacks on the node so TestRenderer can inspect them.
         onLayout={undefined}
         // Custom data props for test inspection (camelCase to avoid RN warnings)
-        {...{ 'data-on-error': onError, 'data-on-load': onLoad }}
+        {...{
+          'data-on-error': onError,
+          'data-on-load': onLoad,
+          // Serialise source so tests can verify relay URL + headers.
+          'data-source': JSON.stringify(source ?? null),
+        }}
       />
     );
   }
@@ -186,6 +204,13 @@ describe('DisplayMediaImage', () => {
 // ── AvatarImage ──────────────────────────────────────────────────────────────
 
 describe('AvatarImage', () => {
+  beforeEach(() => {
+    // Restore default flag-OFF behaviour between tests.
+    mockMediaSource.mockImplementation(async (url: string | null | undefined) =>
+      url ? { uri: url } : { uri: '' },
+    );
+  });
+
   it('renders initials when uri is null and user has a name', () => {
     const tr = create(
       <AvatarImage uri={null} user={{ displayName: 'Maria Santos' }} size={40} />,
@@ -236,6 +261,131 @@ describe('AvatarImage', () => {
 
     // Initials shown after error
     expect(textContent(tr.root)).toContain('JL');
+    expect(findExpoImages(tr.root).length).toBe(0);
+  });
+
+  it('passes relay URL + auth headers to expo-image when flag is ON', async () => {
+    // Simulate flag-ON: mediaSource rewrites to the relay endpoint and adds auth.
+    const relayUrl = 'https://api.example.com/api/media/file/avatars/user123.jpg';
+    mockMediaSource.mockResolvedValueOnce({
+      uri: relayUrl,
+      headers: { Authorization: 'Bearer test-token' },
+    });
+
+    let tr!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      tr = TestRenderer.create(
+        <AvatarImage
+          uri="https://supabase.example.com/storage/v1/object/public/avatars/user123.jpg"
+          user={{ displayName: 'Alex Kim' }}
+          size={40}
+        />,
+      );
+      // Allow the mediaSource() promise to settle.
+      await Promise.resolve();
+    });
+
+    const imgs = findExpoImages(tr.root);
+    expect(imgs.length).toBeGreaterThan(0);
+    // The source prop should use the relay URL, not the original Supabase URL.
+    const src = JSON.parse(imgs[0].props['data-source'] ?? 'null') as {
+      uri: string;
+      headers?: Record<string, string>;
+    };
+    expect(src?.uri).toBe(relayUrl);
+    expect(src?.headers?.Authorization).toBe('Bearer test-token');
+    // Initials must not be shown.
+    expect(textContent(tr.root)).not.toContain('AK');
+  });
+
+  it('never shows the previous URI relay source after uri prop changes to a new URI', async () => {
+    // Simulate flag-ON for both URIs, each with distinct relay URLs.
+    const relayA = 'https://api.example.com/api/media/file/avatars/a.jpg';
+    const relayB = 'https://api.example.com/api/media/file/avatars/b.jpg';
+
+    let resolveA!: (v: { uri: string; headers: { Authorization: string } }) => void;
+    let resolveB!: (v: { uri: string; headers: { Authorization: string } }) => void;
+    const promiseA = new Promise<{ uri: string; headers: { Authorization: string } }>(
+      (res) => { resolveA = res; },
+    );
+    const promiseB = new Promise<{ uri: string; headers: { Authorization: string } }>(
+      (res) => { resolveB = res; },
+    );
+
+    mockMediaSource
+      .mockReturnValueOnce(promiseA)
+      .mockReturnValueOnce(promiseB);
+
+    let tr!: TestRenderer.ReactTestRenderer;
+
+    // Mount with URI A — resolvedSource reset to plain { uri: uriA }.
+    await act(async () => {
+      tr = TestRenderer.create(
+        <AvatarImage uri="https://supabase.example.com/storage/v1/object/public/avatars/a.jpg" size={40} />,
+      );
+    });
+
+    // Update to URI B before A's relay promise resolves.
+    await act(async () => {
+      tr.update(
+        <AvatarImage uri="https://supabase.example.com/storage/v1/object/public/avatars/b.jpg" size={40} />,
+      );
+    });
+
+    // Now resolve A — should be ignored (cancelled).
+    await act(async () => {
+      resolveA({ uri: relayA, headers: { Authorization: 'Bearer token-a' } });
+      await Promise.resolve();
+    });
+
+    // Source must not be the stale relay URL for A.
+    const imgs = findExpoImages(tr.root);
+    expect(imgs.length).toBeGreaterThan(0);
+    const srcAfterA = JSON.parse(imgs[0].props['data-source'] ?? 'null') as { uri: string } | null;
+    expect(srcAfterA?.uri).not.toBe(relayA);
+
+    // Resolve B — should be applied.
+    await act(async () => {
+      resolveB({ uri: relayB, headers: { Authorization: 'Bearer token-b' } });
+      await Promise.resolve();
+    });
+
+    const imgsAfterB = findExpoImages(tr.root);
+    expect(imgsAfterB.length).toBeGreaterThan(0);
+    const srcAfterB = JSON.parse(imgsAfterB[0].props['data-source'] ?? 'null') as {
+      uri: string;
+      headers?: Record<string, string>;
+    } | null;
+    expect(srcAfterB?.uri).toBe(relayB);
+    expect(srcAfterB?.headers?.Authorization).toBe('Bearer token-b');
+  });
+
+  it('falls back to initials when relay returns 403 (flag ON, onError fires)', async () => {
+    mockMediaSource.mockResolvedValueOnce({
+      uri: 'https://api.example.com/api/media/file/avatars/private.jpg',
+      headers: { Authorization: 'Bearer test-token' },
+    });
+
+    let tr!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      tr = TestRenderer.create(
+        <AvatarImage
+          uri="https://supabase.example.com/storage/v1/object/public/avatars/private.jpg"
+          user={{ displayName: 'Sam Rivera' }}
+          size={40}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    // Image is shown (relay URL in place).
+    expect(findExpoImages(tr.root).length).toBeGreaterThan(0);
+
+    // Relay returns 403 — onError fires.
+    fireOnError(tr.root);
+
+    // Initials chip shown instead of broken circle.
+    expect(textContent(tr.root)).toContain('SR');
     expect(findExpoImages(tr.root).length).toBe(0);
   });
 });

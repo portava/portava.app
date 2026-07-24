@@ -264,18 +264,49 @@ export interface AvatarImageProps {
 /**
  * Circular avatar that degrades to an initials chip instead of a blank circle.
  * Covers three cases: null URL, broken URL, and missing user data.
+ *
+ * The avatar URL is resolved through mediaSource() so that when the
+ * `media_private_buckets_enabled` flag is ON the relay endpoint and auth
+ * headers are used — preventing broken circles for private-bucket profile
+ * photos. When the flag is OFF (default) this resolves synchronously to
+ * { uri: resolvedUri } with effectively zero overhead.
  */
 export function AvatarImage({ uri, user, size, style, bg, testID }: AvatarImageProps) {
   const resolvedUri = resolveDisplayMedia([uri, user?.avatarUrl ?? undefined]);
   const initials = user ? fallbackInitials(user) : (uri ? '?' : '?');
   const [imgError, setImgError] = useState(false);
 
-  // Reset error state when the URI changes.
+  // Resolve the media source through the private-bucket relay when the flag
+  // is ON. Initialized synchronously with the plain URI so the image mounts
+  // immediately on the flag-OFF fast path (and in component tests). The
+  // useEffect updates to the relay URL + auth headers when the flag is ON.
+  const [resolvedSource, setResolvedSource] = useState<ResolvedMediaSource | null>(
+    resolvedUri ? { uri: resolvedUri } : null,
+  );
+
+  // Reset error state AND resolvedSource when the URI changes so that a stale
+  // relay URL from the previous avatar is never briefly shown for the new one.
+  // Resetting resolvedSource to the plain URI keeps the image visible
+  // immediately (flag-OFF fast path) and avoids a blank flash while the async
+  // mediaSource() call resolves the relay URL for the new URI (flag-ON path).
   const prevUri = useRef(resolvedUri);
   if (prevUri.current !== resolvedUri) {
     prevUri.current = resolvedUri;
     setImgError(false);
+    setResolvedSource(resolvedUri ? { uri: resolvedUri } : null);
   }
+
+  useEffect(() => {
+    if (!resolvedUri) {
+      setResolvedSource(null);
+      return;
+    }
+    let cancelled = false;
+    mediaSource(resolvedUri).then((src) => {
+      if (!cancelled) setResolvedSource(src);
+    });
+    return () => { cancelled = true; };
+  }, [resolvedUri]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const showImage = !!resolvedUri && !imgError;
   const bgColor = bg ?? color.deep;
@@ -290,9 +321,9 @@ export function AvatarImage({ uri, user, size, style, bg, testID }: AvatarImageP
       ]}
       testID={testID}
     >
-      {showImage ? (
+      {showImage && resolvedSource ? (
         <ExpoImage
-          source={{ uri: resolvedUri! }}
+          source={resolvedSource}
           style={[StyleSheet.absoluteFill, { borderRadius: size / 2 }]}
           contentFit="cover"
           cachePolicy="memory-disk"
