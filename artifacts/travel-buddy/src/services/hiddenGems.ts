@@ -48,6 +48,7 @@ export interface HiddenGem {
   verificationLevel: GemVerificationLevel;
   status: GemStatus;
   submittedBy: string | null;
+  imageUrl: string | null;
   saveCount: number;
   visitCount: number;
   createdAt: string;
@@ -126,6 +127,7 @@ function mapGem(r: any): HiddenGem {
     verificationLevel:     r.verification_level ?? r.verificationLevel ?? 'unverified',
     status:                r.status ?? 'active',
     submittedBy:           r.submitted_by ?? r.submittedBy ?? null,
+    imageUrl:              r.image_url ?? r.imageUrl ?? null,
     saveCount:             r.save_count ?? r.saveCount ?? 0,
     visitCount:            r.visit_count ?? r.visitCount ?? 0,
     createdAt:             r.created_at ?? r.createdAt ?? '',

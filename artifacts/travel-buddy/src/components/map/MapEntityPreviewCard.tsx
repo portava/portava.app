@@ -152,7 +152,9 @@ function GemCard({ entity, onClose }: { entity: MapEntity<HiddenGem>; onClose: (
     <>
       <View style={s.topRow}>
         <View style={[s.iconCircle, { backgroundColor: cfg.color }]}>
-          <Sparkles size={20} color="#fff" />
+          {gem.imageUrl
+            ? <DisplayMediaImage uri={gem.imageUrl} width={46} height={46} style={s.iconImg} fallbackIcon={<Sparkles size={20} color="#fff" />} fallbackBg={cfg.color} />
+            : <Sparkles size={20} color="#fff" />}
         </View>
         <View style={s.topText}>
           <Text style={s.primaryText} numberOfLines={1}>{gem.name}</Text>
