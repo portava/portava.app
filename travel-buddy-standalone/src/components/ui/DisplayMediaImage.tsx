@@ -9,6 +9,11 @@
  *   - Never render a blank rectangle — onError → designed fallback
  *   - Respect reduce-motion (skeleton omits pulse animation when enabled)
  *   - Forward accessibilityLabel from alt / title
+ *
+ * Media sources are resolved through mediaSource() so that when the
+ * `media_private_buckets_enabled` flag is ON, images are served via the
+ * auth-bearing relay endpoint. When the flag is OFF (default) the original
+ * URL is used with no overhead.
  */
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -25,6 +30,7 @@ import type { ImageContentFit } from 'expo-image';
 import { color, radius, space, type as t } from '../../theme/tokens.ts';
 import { type IdentityInput, fallbackInitials } from '../../utils/identity.ts';
 import { resolveDisplayMedia } from '../../lib/displayMedia.ts';
+import { mediaSource, type ResolvedMediaSource } from '../../lib/mediaSource.ts';
 
 // ── Skeleton pulse ──────────────────────────────────────────────────────────
 
@@ -153,6 +159,29 @@ export function DisplayMediaImage({
     setPhase(resolved ? 'loading' : 'error');
   }
 
+  // Resolve the media source through the private-bucket relay when the flag
+  // is ON. When the flag is OFF (default) this resolves to { uri: resolved }
+  // with effectively zero overhead.
+  //
+  // Initialized with the plain URI so ExpoImage mounts immediately (correct for
+  // flag-OFF, the common case, and required for component tests). The useEffect
+  // updates to the relay URL + auth headers when the flag is ON.
+  const [resolvedSource, setResolvedSource] = useState<ResolvedMediaSource | null>(
+    resolved ? { uri: resolved } : null,
+  );
+
+  useEffect(() => {
+    if (!resolved) {
+      setResolvedSource(null);
+      return;
+    }
+    let cancelled = false;
+    mediaSource(resolved).then((src) => {
+      if (!cancelled) setResolvedSource(src);
+    });
+    return () => { cancelled = true; };
+  }, [resolved]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const label = alt ?? title;
   const contentFit = FIT_MAP[resizeMode] ?? 'cover';
 
@@ -167,16 +196,17 @@ export function DisplayMediaImage({
 
   return (
     <View style={[{ width, height, overflow: 'hidden' }, style]} testID={testID}>
-      {/* Skeleton shown while image is loading */}
+      {/* Skeleton shown while image is loading or source is being resolved */}
       {phase === 'loading' && <SkeletonBox style={StyleSheet.absoluteFill} />}
 
-      {/* Fallback shown when uri is null or image errors */}
+      {/* Fallback shown when uri is null or the image errors (incl. 403) */}
       {phase === 'error' && renderedFallback}
 
-      {/* Image — always mounted while loading so we get onLoad/onError callbacks */}
-      {phase !== 'error' && resolved && (
+      {/* Image — mounted only once the source has been resolved so the relay
+          URL and auth headers are available before the first network request */}
+      {phase !== 'error' && resolved && resolvedSource && (
         <ExpoImage
-          source={{ uri: resolved }}
+          source={resolvedSource}
           style={StyleSheet.absoluteFill}
           contentFit={contentFit}
           cachePolicy="memory-disk"
