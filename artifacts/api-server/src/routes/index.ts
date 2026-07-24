@@ -97,6 +97,7 @@ import neighborhoodsRouter from "./neighborhoods";
 import stampShowcaseRouter from "./stampShowcase";
 import stampAdmireRouter from "./stampAdmire";
 import countryEssentialsRouter from "./countryEssentials";
+import mapSearchRouter from "./mapSearch";
 import fsqPlacesRouter from "./fsqPlaces";
 
 const router: IRouter = Router();
@@ -202,5 +203,6 @@ router.use(stampShowcaseRouter);
 router.use(stampAdmireRouter);
 router.use(countryEssentialsRouter);
 router.use(fsqPlacesRouter);
+router.use(mapSearchRouter);
 
 export default router;
