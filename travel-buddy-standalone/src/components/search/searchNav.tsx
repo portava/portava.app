@@ -76,7 +76,15 @@ export function resolveRoute(result: UnifiedSearchResult): string | null {
   }
 
   const countryMatch = destinationRoute.match(/^\/country\/(.+)$/);
-  if (countryMatch) return `/destination/${countryMatch[1]}`;
+  if (countryMatch) {
+    // For country results the country name is in result.title; fall back to
+    // humanising the slug (e.g. "philippines" → "Philippines") so toFsqCityKey
+    // can build the correct FSQ city key on the destination screen.
+    const country = result.title?.trim()
+      || countryMatch[1].replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    const countrySuffix = country ? `?country=${encodeURIComponent(country)}` : '';
+    return `/destination/${countryMatch[1]}${countrySuffix}`;
+  }
 
   // Stamps: /stamps/:slug (plural backend) → /stamp/:slug (singular app file)
   const stampsMatch = destinationRoute.match(/^\/stamps\/(.+)$/);
