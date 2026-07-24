@@ -18,7 +18,6 @@ import React, {
   useEffect,
   useImperativeHandle,
   useRef,
-  useState,
 } from 'react';
 import {
   FlatList,
@@ -29,16 +28,16 @@ import {
   Image,
   StyleSheet,
   Dimensions,
+  AccessibilityInfo,
   NativeSyntheticEvent,
   NativeScrollEvent,
-  ViewToken,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import Animated, {
   useAnimatedScrollHandler,
   useSharedValue,
   useAnimatedStyle,
   withSpring,
+  withTiming,
   interpolate,
   Extrapolation,
   type SharedValue,
@@ -60,6 +59,8 @@ import {
   X,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
+import { useMapStore } from '../../stores/mapStore.tsx';
+import type { PreviewDetent } from '../../stores/mapStore.tsx';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
 import type { MapEntity, PassportCountryPayload } from '../../types/mapTypes.ts';
 import type { BuddyProfile } from '../../services/rentABuddy.ts';
@@ -77,7 +78,7 @@ const CARD_MARGIN = 8; // gap between cards
 const SNAP_INTERVAL = CARD_WIDTH + CARD_MARGIN * 2;
 const CARD_OFFSET = (SCREEN_WIDTH - CARD_WIDTH) / 2; // center first card
 
-// ── Peek-strip / collapse constants ───────────────────────────────────────────
+// ── Peek-strip / collapse / detent constants ───────────────────────────────────
 
 /** Height of the always-visible peek strip (handle bar + entity label row). */
 const PEEK_HEIGHT = 52;
@@ -88,15 +89,23 @@ const PEEK_HEIGHT = 52;
 const CARD_AREA_HEIGHT = 164;
 /** Spring config — snappy with a subtle settle. */
 const SPRING_CFG = { damping: 18, stiffness: 220, mass: 0.9 } as const;
-/** AsyncStorage key for persisted expanded/minimised state. */
-const CAROUSEL_STATE_KEY = 'map_carousel_expanded';
 
-// Module-level memory cache — survives re-mounts within the same JS session so
-// the initial render reflects the persisted state without an async round-trip.
-let _cachedCarouselExpanded: boolean | null = null;
+/**
+ * Total container height for each of the three detent positions.
+ *
+ *  collapsed — only the peek strip (handle + label row)
+ *  medium    — peek strip + card carousel (current default)
+ *  full      — peek strip + cards + extended entity detail (~72% of screen)
+ */
+const SCREEN_HEIGHT = Dimensions.get('window').height;
+const DETENT_COLLAPSED_H = PEEK_HEIGHT;                        // 52 px
+const DETENT_MEDIUM_H    = PEEK_HEIGHT + CARD_AREA_HEIGHT;    // 216 px
+const DETENT_FULL_H      = Math.round(SCREEN_HEIGHT * 0.72);  // ≈ 600 px
 
-function getCachedCarouselExpanded(): boolean {
-  return _cachedCarouselExpanded !== null ? _cachedCarouselExpanded : true;
+function detentToHeight(d: PreviewDetent): number {
+  if (d === 'collapsed') return DETENT_COLLAPSED_H;
+  if (d === 'full')      return DETENT_FULL_H;
+  return DETENT_MEDIUM_H;
 }
 
 // ── Animated FlatList ─────────────────────────────────────────────────────────
@@ -121,41 +130,46 @@ function getEntityPeekLabel(entity: MapEntity | undefined): string {
 
 /**
  * Always-visible strip at the top of the carousel container.
- * Shows the active entity's type badge + title, a drag handle, and an
- * expand/collapse toggle (↑ when minimised, ✕ when expanded).
+ * Shows the active entity's type badge + title, a drag handle, and a
+ * detent toggle button.
+ *
+ * Three-detent behaviour:
+ *   collapsed → ChevronUp → medium
+ *   medium    → ChevronUp → full   (strip tap also expands)
+ *   full      → X         → medium
  *
  * Receives the PanResponder's panHandlers so dragging anywhere on the strip
  * triggers the spring snap — a tap (dy < threshold) passes through to the
- * inner Pressable for expand.
+ * inner Pressable.
  */
 function PeekStrip({
   entity,
-  isExpanded,
-  onExpand,
-  onCollapse,
+  detent,
+  onMoveToDetent,
   panHandlers,
 }: {
   entity: MapEntity | undefined;
-  isExpanded: boolean;
-  onExpand: () => void;
-  onCollapse: () => void;
+  detent: PreviewDetent;
+  onMoveToDetent: (d: PreviewDetent) => void;
   panHandlers: Record<string, unknown>;
 }) {
   const label = getEntityPeekLabel(entity);
   const cfg = entity ? MAP_LAYER_CONFIG[entity.type] : null;
+  const isAtFull = detent === 'full';
+  const isAtCollapsed = detent === 'collapsed';
 
   return (
     <View style={cs.peekStrip} {...panHandlers}>
       {/* Drag handle bar — visual affordance for the gesture */}
       <View style={cs.handleBar} />
 
-      {/* Label row — tapping expands when minimised; X button always collapses */}
+      {/* Label row — tapping when collapsed → medium */}
       <Pressable
         style={cs.peekRow}
-        onPress={isExpanded ? undefined : onExpand}
+        onPress={isAtCollapsed ? () => onMoveToDetent('medium') : undefined}
         accessibilityRole="button"
-        accessibilityLabel={isExpanded ? undefined : 'Expand map card'}
-        accessibilityHint={isExpanded ? undefined : 'Double-tap to expand'}
+        accessibilityLabel={isAtCollapsed ? 'Expand map card' : undefined}
+        accessibilityHint={isAtCollapsed ? 'Double-tap to expand' : undefined}
       >
         {cfg ? (
           <View style={[cs.peekBadge, { backgroundColor: cfg.color + '22' }]}>
@@ -165,15 +179,20 @@ function PeekStrip({
         ) : null}
         <Text style={cs.peekTitle} numberOfLines={1}>{label}</Text>
         <View style={cs.peekSpacer} />
-        {/* Toggle: X (dismiss to strip) when expanded, chevron-up when minimised */}
+        {/* Toggle: X collapses from full → medium; ChevronUp expands to next detent */}
         <Pressable
-          onPress={isExpanded ? onCollapse : onExpand}
+          onPress={() => {
+            if (isAtFull) onMoveToDetent('medium');
+            else if (isAtCollapsed) onMoveToDetent('medium');
+            else onMoveToDetent('full');
+          }}
           hitSlop={10}
           style={cs.peekActionBtn}
           accessibilityRole="button"
-          accessibilityLabel={isExpanded ? 'Minimise card' : 'Expand card'}
+          accessibilityLabel={isAtFull ? 'Collapse card' : 'Expand card'}
+          testID="peek-detent-btn"
         >
-          {isExpanded
+          {isAtFull
             ? <X size={14} color={color.mute} />
             : <ChevronUp size={17} color={color.signal} />
           }
@@ -499,6 +518,104 @@ function PassportErrorCard({
   );
 }
 
+// ── Full-detent extended entity detail ───────────────────────────────────────
+//
+// Shown only when previewDetent === 'full'. Surfaces description, extra stats,
+// and address-like fields that are already present in the payload but don't
+// fit in the medium card area. No new data fetching required.
+
+function EntityFullDetail({ entity }: { entity: MapEntity }) {
+  switch (entity.type) {
+    case 'buddies': {
+      const buddy = entity.payload as BuddyProfile;
+      return (
+        <View style={cs.fullDetail}>
+          {buddy.bio ? (
+            <Text style={cs.fullDetailText} numberOfLines={5}>{buddy.bio}</Text>
+          ) : null}
+          {buddy.languages.length > 0 && (
+            <View style={cs.fullDetailRow}>
+              <Text style={cs.fullDetailLabel}>Languages</Text>
+              <Text style={cs.fullDetailValue}>{buddy.languages.join(', ')}</Text>
+            </View>
+          )}
+          {buddy.responseTimeH != null && (
+            <View style={cs.fullDetailRow}>
+              <Text style={cs.fullDetailLabel}>Response time</Text>
+              <Text style={cs.fullDetailValue}>~{buddy.responseTimeH}h</Text>
+            </View>
+          )}
+          {buddy.country ? (
+            <View style={cs.fullDetailRow}>
+              <MapPin size={11} color={color.mute} />
+              <Text style={cs.fullDetailValue}>{buddy.city}, {buddy.country}</Text>
+            </View>
+          ) : null}
+        </View>
+      );
+    }
+    case 'events': {
+      const ev = entity.payload as EventListItem;
+      const description = (ev as any).description as string | null | undefined;
+      const address = (ev as any).address as string | null | undefined;
+      if (!description && !address) return null;
+      return (
+        <View style={cs.fullDetail}>
+          {description ? (
+            <Text style={cs.fullDetailText} numberOfLines={5}>{description}</Text>
+          ) : null}
+          {address ? (
+            <View style={cs.fullDetailRow}>
+              <MapPin size={11} color={color.mute} />
+              <Text style={cs.fullDetailValue}>{address}</Text>
+            </View>
+          ) : null}
+        </View>
+      );
+    }
+    case 'gems': {
+      const gem = entity.payload as HiddenGem;
+      return (
+        <View style={cs.fullDetail}>
+          {gem.description ? (
+            <Text style={cs.fullDetailText} numberOfLines={5}>{gem.description}</Text>
+          ) : null}
+          {gem.bestTimeToGo ? (
+            <View style={cs.fullDetailRow}>
+              <Text style={cs.fullDetailLabel}>Best time</Text>
+              <Text style={cs.fullDetailValue}>{gem.bestTimeToGo}</Text>
+            </View>
+          ) : null}
+          {gem.priceRange ? (
+            <View style={cs.fullDetailRow}>
+              <Text style={cs.fullDetailLabel}>Price range</Text>
+              <Text style={cs.fullDetailValue}>{gem.priceRange}</Text>
+            </View>
+          ) : null}
+          {gem.neighborhood ? (
+            <View style={cs.fullDetailRow}>
+              <MapPin size={11} color={color.mute} />
+              <Text style={cs.fullDetailValue}>{gem.neighborhood}, {gem.city}</Text>
+            </View>
+          ) : null}
+        </View>
+      );
+    }
+    case 'trips': {
+      const trip = entity.payload as TripRow;
+      const description = (trip as any).description as string | null | undefined;
+      if (!description) return null;
+      return (
+        <View style={cs.fullDetail}>
+          <Text style={cs.fullDetailText} numberOfLines={5}>{description}</Text>
+        </View>
+      );
+    }
+    default:
+      return null;
+  }
+}
+
 // ── Single animated card wrapper ──────────────────────────────────────────────
 
 function MapEntityCard({
@@ -655,50 +772,60 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
     const flatListRef = useRef<FlatList<MapEntity>>(null);
     const scrollX = useSharedValue(0);
 
-    // ── Collapse / expand state ──────────────────────────────────────────────
-    // Initialise from the module-level cache so the first render already
-    // reflects the persisted preference, with no visible flash.
-    const initExpanded = getCachedCarouselExpanded();
-    const cardAreaHeight = useSharedValue(initExpanded ? CARD_AREA_HEIGHT : 0);
-    const [isExpanded, setIsExpandedState] = useState(initExpanded);
+    // ── Store integration ────────────────────────────────────────────────────
+    // previewDetent is the single source of truth for the sheet height tier.
+    // Phase 2D (back-navigation) will call setPreviewDetent from outside to
+    // restore state; Phase 2C (this file) is the only writer of the animation.
+    const { previewDetent, setPreviewDetent } = useMapStore();
 
-    /**
-     * Animate to expanded or collapsed state, update React state for
-     * PeekStrip re-render, and persist the preference.
-     */
-    const setExpanded = useCallback((next: boolean) => {
-      _cachedCarouselExpanded = next;
-      cardAreaHeight.value = withSpring(next ? CARD_AREA_HEIGHT : 0, SPRING_CFG);
-      setIsExpandedState(next);
-      AsyncStorage.setItem(CAROUSEL_STATE_KEY, next ? '1' : '0').catch(() => {});
-    // cardAreaHeight is a stable Reanimated ref; setIsExpandedState is stable.
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-    // On mount: reconcile with AsyncStorage in case the module cache is stale
-    // (e.g. Expo Go reload without JS process restart).
+    // ── Reduce-motion detection ──────────────────────────────────────────────
+    // Mirror the pattern used by StampEarnedToast: read once on mount and
+    // subscribe to changes so runtime accessibility changes are respected.
+    const reduceMotionRef = useRef(false);
     useEffect(() => {
-      AsyncStorage.getItem(CAROUSEL_STATE_KEY).then((v) => {
-        const persisted = v !== '0'; // null (key not set) → default: expanded
-        if (persisted !== getCachedCarouselExpanded()) {
-          _cachedCarouselExpanded = persisted;
-          // No spring — restore silently without animating on mount.
-          cardAreaHeight.value = persisted ? CARD_AREA_HEIGHT : 0;
-          setIsExpandedState(persisted);
-        }
-      }).catch(() => {});
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+      AccessibilityInfo.isReduceMotionEnabled().then((v) => {
+        reduceMotionRef.current = v;
+      });
+      const sub = AccessibilityInfo.addEventListener(
+        'reduceMotionChanged',
+        (v) => { reduceMotionRef.current = v; },
+      );
+      return () => sub.remove();
+    }, []);
 
-    // Animated container height: PEEK_HEIGHT when collapsed, PEEK_HEIGHT +
-    // CARD_AREA_HEIGHT when fully expanded.  overflow:'hidden' (in cs.container)
-    // clips the card area so it doesn't bleed below the container when collapsed.
+    // ── Animated height ──────────────────────────────────────────────────────
+    // Total container height (not card area) so overflow:hidden clips cleanly.
+    const animHeight = useSharedValue(detentToHeight(previewDetent));
+
+    // isMounted guard — skip the animation on the very first effect run since
+    // animHeight is already initialised to the correct value.
+    const isMountedRef = useRef(false);
+    useEffect(() => {
+      if (!isMountedRef.current) {
+        isMountedRef.current = true;
+        return;
+      }
+      const target = detentToHeight(previewDetent);
+      if (reduceMotionRef.current) {
+        animHeight.value = withTiming(target, { duration: 0 });
+      } else {
+        animHeight.value = withSpring(target, SPRING_CFG);
+      }
+      // animHeight and reduceMotionRef are stable Reanimated / React refs.
+    }, [previewDetent]); // eslint-disable-line react-hooks/exhaustive-deps
+
     const containerAnimStyle = useAnimatedStyle(() => ({
-      height: PEEK_HEIGHT + cardAreaHeight.value,
+      height: animHeight.value,
     }));
 
-    // PanResponder on the peek strip drag handle.  Uses refs so the stable
-    // PanResponder can call the latest setExpanded without stale closure issues.
-    const setExpandedRef = useRef(setExpanded);
-    setExpandedRef.current = setExpanded;
+    // ── PanResponder (three-detent) ──────────────────────────────────────────
+    // Uses refs so the stable PanResponder always sees the latest state without
+    // being recreated on every render.
+    const setPreviewDetentRef = useRef(setPreviewDetent);
+    setPreviewDetentRef.current = setPreviewDetent;
+
+    const currentDetentRef = useRef<PreviewDetent>(previewDetent);
+    useEffect(() => { currentDetentRef.current = previewDetent; }, [previewDetent]);
 
     const panResponder = useRef(
       PanResponder.create({
@@ -706,10 +833,17 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
         onStartShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 2,
         onMoveShouldSetPanResponder:  (_, g) => Math.abs(g.dy) > 5,
         onPanResponderRelease: (_, g) => {
-          // 30 px threshold — below that it's treated as a tap and falls
-          // through to the inner Pressable.
-          if (g.dy >  30) setExpandedRef.current(false); // drag down → collapse
-          if (g.dy < -30) setExpandedRef.current(true);  // drag up   → expand
+          const curr = currentDetentRef.current;
+          // Drag up past 30 px threshold → advance to next detent.
+          if (g.dy < -30) {
+            if (curr === 'collapsed') setPreviewDetentRef.current('medium');
+            else if (curr === 'medium') setPreviewDetentRef.current('full');
+          }
+          // Drag down past 30 px threshold → step back to previous detent.
+          else if (g.dy > 30) {
+            if (curr === 'full') setPreviewDetentRef.current('medium');
+            else if (curr === 'medium') setPreviewDetentRef.current('collapsed');
+          }
         },
       }),
     ).current;
@@ -742,7 +876,8 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
     // activeIndex is out of range).
     const peekEntity = entities[activeIndex] ?? entities[0];
 
-    // Card-area content — same logic as before; empty/loading/error handled here.
+    // Card-area content — same as before; empty/loading/error handled here.
+    // Visible only when detent > collapsed (overflow:hidden clips the card area).
     const renderCardArea = () => {
       if (entities.length === 0) {
         if (passportLoading) return <PassportLoadingCard />;
@@ -790,16 +925,19 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
         style={[cs.container, containerAnimStyle, style]}
         accessibilityRole="scrollbar"
       >
-        {/* Always-visible peek strip — drag handle + entity label + toggle */}
+        {/* Always-visible peek strip — drag handle + entity label + detent toggle */}
         <PeekStrip
           entity={peekEntity}
-          isExpanded={isExpanded}
-          onExpand={() => setExpanded(true)}
-          onCollapse={() => setExpanded(false)}
+          detent={previewDetent}
+          onMoveToDetent={setPreviewDetent}
           panHandlers={panResponder.panHandlers as Record<string, unknown>}
         />
-        {/* Card area — clipped to 0 height when collapsed via overflow:hidden */}
+        {/* Card carousel — clipped to zero when collapsed via overflow:hidden */}
         {renderCardArea()}
+        {/* Full-detent extended detail — only rendered in the full state */}
+        {previewDetent === 'full' && peekEntity ? (
+          <EntityFullDetail entity={peekEntity} />
+        ) : null}
       </Animated.View>
     );
   },
@@ -1089,5 +1227,41 @@ const cs = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+
+  // ── Full-detent extended detail section ──────────────────────────────────────
+  fullDetail: {
+    paddingHorizontal: space.md,
+    paddingTop: space.sm,
+    paddingBottom: space.md,
+    gap: space.xs,
+    backgroundColor: color.paperRaised,
+    borderTopWidth: 1,
+    borderTopColor: color.haze,
+  },
+  fullDetailText: {
+    ...t.body,
+    fontSize: 13,
+    color: color.mute,
+    lineHeight: 19,
+  },
+  fullDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  fullDetailLabel: {
+    ...t.small,
+    fontSize: 11,
+    fontWeight: '600' as const,
+    color: color.mute,
+    textTransform: 'capitalize' as const,
+    minWidth: 80,
+  },
+  fullDetailValue: {
+    ...t.small,
+    fontSize: 12,
+    color: color.ink,
+    flex: 1,
   },
 });
