@@ -9,7 +9,7 @@ import React, { useState, useCallback } from 'react';
 import { RouteBuilderSheet } from '../../src/components/RouteBuilderSheet';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator, Alert, Modal, TextInput, FlatList,
+  ActivityIndicator, Alert, Modal, TextInput, FlatList, Image,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -315,6 +315,11 @@ export default function GemDetailScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Cover photo */}
+        {gem.imageUrl ? (
+          <Image source={{ uri: gem.imageUrl }} style={styles.coverImage} resizeMode="cover" />
+        ) : null}
+
         {/* Name + meta */}
         <View style={styles.section}>
           <View style={styles.categoryPill}>
@@ -541,6 +546,7 @@ const styles = StyleSheet.create({
   },
   backBtn: { padding: 4 },
   saveBtn: { padding: 4 },
+  coverImage: { width: '100%', height: 220 },
 
   section: { paddingHorizontal: 20, paddingBottom: 20 },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: '#E8F0FE', marginBottom: 10 },

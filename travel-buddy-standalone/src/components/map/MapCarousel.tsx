@@ -324,7 +324,9 @@ function GemCardBody({ entity }: { entity: MapEntity<HiddenGem> }) {
     <>
       <View style={cs.topRow}>
         <View style={[cs.iconCircle, { backgroundColor: MAP_LAYER_CONFIG.gems.color }]}>
-          <Sparkles size={18} color="#fff" />
+          {gem.imageUrl
+            ? <Image source={{ uri: gem.imageUrl }} style={cs.iconImg} />
+            : <Sparkles size={18} color="#fff" />}
         </View>
         <View style={cs.topText}>
           <Text style={cs.primaryText} numberOfLines={1}>{gem.name}</Text>
