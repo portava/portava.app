@@ -754,17 +754,20 @@ router.get("/events", async (req, res) => {
     return true;
   });
 
-  // Fetch user RSVPs for these events
+  // Fetch user RSVPs and waitlist positions for these events
   const eventIds = filtered.map((e: any) => e.id as string);
   let rsvpMap: Record<string, string> = {};
+  let waitlistPositionMap: Record<string, number> = {};
   if (eventIds.length > 0) {
-    const { data: rsvps } = await sc
-      .from("event_rsvps")
-      .select("event_id, status")
-      .eq("user_id", user.id)
-      .in("event_id", eventIds);
-    for (const r of (rsvps as any[]) ?? []) {
+    const [rsvpResult, waitlistResult] = await Promise.all([
+      sc.from("event_rsvps").select("event_id, status").eq("user_id", user.id).in("event_id", eventIds),
+      sc.from("event_waitlist").select("event_id, position").eq("user_id", user.id).in("event_id", eventIds),
+    ]);
+    for (const r of ((rsvpResult as any).data as any[]) ?? []) {
       rsvpMap[(r as any).event_id as string] = (r as any).status as string;
+    }
+    for (const w of ((waitlistResult as any).data as any[]) ?? []) {
+      waitlistPositionMap[(w as any).event_id as string] = (w as any).position as number;
     }
   }
 
@@ -876,8 +879,9 @@ router.get("/events", async (req, res) => {
   res.json({
     events: pagedEvents.map((ev: any) => ({
       ...formatEvent(ev, user.id, { hostProfile: hostProfileMap[ev.host_id as string] }),
-      myRsvp:  rsvpMap[ev.id] ?? null,
-      isSaved: savedEventIds.has(ev.id as string),
+      myRsvp:              rsvpMap[ev.id] ?? null,
+      myWaitlistPosition:  waitlistPositionMap[ev.id] ?? null,
+      isSaved:             savedEventIds.has(ev.id as string),
     })),
     page,
     limit,

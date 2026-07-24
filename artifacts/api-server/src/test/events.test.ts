@@ -841,7 +841,7 @@ describe("Events — listing excludes internal-only columns", () => {
     "country", "showExactLocation", "rsvpClosed", "tags", "isHost",
     "createdAt", "updatedAt",
     // listing extras appended by the route handlers
-    "myRsvp", "isSaved",
+    "myRsvp", "myWaitlistPosition", "isSaved",
   ]);
 
   // Event row carrying internal-only DB columns that must never reach clients.

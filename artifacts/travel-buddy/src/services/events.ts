@@ -94,6 +94,7 @@ export interface EventDetail extends EventSummary {
 
 export interface EventListItem extends EventSummary {
   myRsvp: EventRsvpStatus | null;
+  myWaitlistPosition?: number | null;
   isSaved?: boolean;
   distanceKm?: number;
 }
