@@ -262,6 +262,23 @@ export default function ApplyToBeBuddy() {
       if (photoComposer.items.some((i) => i.uploadState === 'idle')) {
         await photoComposer.uploadAll();
       }
+
+      // Warn if any photos failed to upload — don't silently drop them
+      const failedPhotoCount = photoComposer.items.filter((i) => i.uploadState === 'error').length;
+      if (failedPhotoCount > 0) {
+        const proceed = await new Promise<boolean>((resolve) => {
+          Alert.alert(
+            'Some photos failed to upload',
+            `${failedPhotoCount} photo${failedPhotoCount > 1 ? 's' : ''} couldn't be uploaded. You can go back and retry, or continue your application without them.`,
+            [
+              { text: 'Go back and retry', style: 'cancel', onPress: () => resolve(false) },
+              { text: 'Continue without photos', onPress: () => resolve(true) },
+            ],
+          );
+        });
+        if (!proceed) return;
+      }
+
       const photoUrls = photoComposer.items
         .filter((i) => i.uploadState === 'done' && i.uploadedUrl)
         .map((i) => i.uploadedUrl as string);
