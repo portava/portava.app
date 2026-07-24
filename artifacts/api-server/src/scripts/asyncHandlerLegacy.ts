@@ -89,4 +89,6 @@ export const ASYNC_HANDLER_LEGACY_FILES = new Set([
   "tripReadiness.ts",
   // Reservations import route — added before asyncHandler was enforced.
   "tripReservations.ts",
+  // Canonical places routes — added before asyncHandler was enforced.
+  "placesCanonical.ts",
 ]);
