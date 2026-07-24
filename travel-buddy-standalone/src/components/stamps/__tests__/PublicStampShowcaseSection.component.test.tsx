@@ -13,7 +13,6 @@
  */
 
 import React from 'react';
-import { Image } from 'react-native';
 import TestRenderer, { act } from 'react-test-renderer';
 import { PublicStampShowcaseSection } from '../PublicStampShowcaseSection.tsx';
 import type { ShowcaseStamp } from '../../../services/stampShowcase.ts';
@@ -35,12 +34,10 @@ jest.mock('../../../lib/stampRarity.ts', () => ({
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** All RN Image elements in the tree that have a URI source (artwork images). */
+/** All expo-image elements in the tree that have a URI source (artwork images). */
 function findArtworkImages(root: TestRenderer.ReactTestInstance) {
   try {
-    return root
-      .findAllByType(Image as any)
-      .filter((node) => node.props.source?.uri !== undefined);
+    return root.findAllByProps({ testID: 'stamp-artwork-image' });
   } catch {
     return [];
   }

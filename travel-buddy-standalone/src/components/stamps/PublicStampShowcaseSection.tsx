@@ -8,8 +8,9 @@
  */
 import React from 'react';
 import {
-  View, ScrollView, Image, Text, Pressable, StyleSheet,
+  View, ScrollView, Text, Pressable, StyleSheet,
 } from 'react-native';
+import { Image } from 'expo-image';
 import type { ShowcaseStamp } from '../../services/stampShowcase.ts';
 import { color, space, radius } from '../../theme/tokens.ts';
 import { RARITY_COLORS, normalizeRarity, hasGlowRing } from '../../lib/stampRarity.ts';
@@ -40,9 +41,11 @@ function ShowcaseCard({ item, onPress }: { item: ShowcaseStamp; onPress: () => v
           <Image
             source={{ uri: artworkUrl }}
             style={styles.artImage}
-            resizeMode="cover"
+            contentFit="contain"
+            cachePolicy="memory-disk"
             accessibilityIgnoresInvertColors
             accessibilityLabel={`${label} — ${rarity} stamp`}
+            testID="stamp-artwork-image"
           />
         ) : (
           <View style={styles.artPlaceholder} />
