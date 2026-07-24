@@ -8,9 +8,14 @@
  * When the `media_private_buckets_enabled` flag is OFF the function returns
  * all original URLs immediately (zero network calls).
  *
+ * The cache is LRU-bounded to MAX_CACHE_SIZE entries. On each cache hit the
+ * entry is moved to the tail (most-recently-used position). When a new entry
+ * would exceed the cap the oldest (head) entry is evicted first.
+ *
  * Exports:
  *   batchSignUrls(urls)      — resolve signed/relay URLs for a list of sources
  *   _resetBatchSignCache()   — clear the cache (tests only)
+ *   _getCacheSize()          — current cache size (tests only)
  */
 
 import { _resolveMediaFlag } from './mediaSource.ts';
@@ -18,6 +23,7 @@ import { _resolveMediaFlag } from './mediaSource.ts';
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 const BATCH_SIZE = 50;
 const CACHE_TTL_MS = 45 * 60 * 1000; // 45 minutes
+const MAX_CACHE_SIZE = 500;
 
 interface CacheEntry {
   url: string;
@@ -29,6 +35,49 @@ const _cache = new Map<string, CacheEntry>();
 /** Clear the signed-URL cache. For use in tests only. */
 export function _resetBatchSignCache(): void {
   _cache.clear();
+}
+
+/** Return the current number of cached entries. For use in tests only. */
+export function _getCacheSize(): number {
+  return _cache.size;
+}
+
+/**
+ * Insert or refresh an entry in the LRU cache.
+ * - If the key already exists, delete it first so the re-inserted entry
+ *   moves to the tail (most-recently-used position).
+ * - If inserting would exceed MAX_CACHE_SIZE, evict the oldest (head) entry.
+ */
+function _cacheSet(key: string, entry: CacheEntry): void {
+  if (_cache.has(key)) {
+    // Move to tail by deleting and re-inserting.
+    _cache.delete(key);
+  } else if (_cache.size >= MAX_CACHE_SIZE) {
+    // Evict the least-recently-used (head) entry.
+    const oldest = _cache.keys().next().value;
+    if (oldest !== undefined) {
+      _cache.delete(oldest);
+    }
+  }
+  _cache.set(key, entry);
+}
+
+/**
+ * Look up an entry and, on a valid hit, promote it to the tail (LRU refresh).
+ * Returns the entry if present and not expired, otherwise undefined.
+ */
+function _cacheGet(key: string, now: number): CacheEntry | undefined {
+  const entry = _cache.get(key);
+  if (!entry) return undefined;
+  if (now >= entry.expiresAt) {
+    // Lazily evict expired entry.
+    _cache.delete(key);
+    return undefined;
+  }
+  // Promote to tail (most-recently-used).
+  _cache.delete(key);
+  _cache.set(key, entry);
+  return entry;
 }
 
 /**
@@ -57,8 +106,8 @@ export async function batchSignUrls(urls: string[]): Promise<Map<string, string>
   // Partition: cached vs. needs fetch
   const toFetch: string[] = [];
   for (const url of urls) {
-    const entry = _cache.get(url);
-    if (entry && now < entry.expiresAt) {
+    const entry = _cacheGet(url, now);
+    if (entry) {
       result.set(url, entry.url);
     } else {
       toFetch.push(url);
@@ -86,7 +135,7 @@ export async function batchSignUrls(urls: string[]): Promise<Map<string, string>
       for (const url of batch) {
         const signedUrl = body.signed?.[url] ?? null;
         if (signedUrl) {
-          _cache.set(url, { url: signedUrl, expiresAt });
+          _cacheSet(url, { url: signedUrl, expiresAt });
           result.set(url, signedUrl);
         } else {
           // null = unauthorized or unrecognized — fall back to original per-URL
