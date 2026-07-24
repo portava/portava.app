@@ -569,7 +569,8 @@ function FullScreenMapScreenInner() {
   const pushedToDetailRef = useRef(false);
   // Guards useFocusEffect from running the tab-switch path on the very first
   // mount — the entities effect already handles proximity on mount, and calling
-  // scrollToIndex(_, false) before selection is established breaks tests.
+  // scrollToIndex(_, false) before selection is established breaks the
+  // backNavRestoration tests.
   const hasFocusedOnceRef = useRef(false);
 
   // Auto-select closest entity whenever the entities list changes.
