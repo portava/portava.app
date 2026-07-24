@@ -563,6 +563,15 @@ function FullScreenMapScreenInner() {
   // focusId snap) must not run again when the screen re-focuses after a detail
   // push/pop. useFocusEffect handles restoration; this guards the entities effect.
   const hasInitializedRef = useRef(false);
+  // Set to true immediately before a detail-screen push (via onBeforeNavigate).
+  // Lets useFocusEffect distinguish a back-nav re-focus (restore) from a
+  // tab-switch re-focus (clear stale selection + re-run proximity).
+  const pushedToDetailRef = useRef(false);
+  // Guards useFocusEffect from running the tab-switch path on the very first
+  // mount — the entities effect already handles proximity on mount, and calling
+  // scrollToIndex(_, false) before selection is established breaks the
+  // backNavRestoration tests.
+  const hasFocusedOnceRef = useRef(false);
 
   // Auto-select closest entity whenever the entities list changes.
   // If focusId is set and not yet applied, prefer that entity over proximity.
@@ -698,19 +707,78 @@ function FullScreenMapScreenInner() {
     [entities, handleSelectEntity],
   );
 
-  // ── Back-navigation state restoration ──────────────────────────────────────
-  // When the user returns from a detail screen, useFocusEffect fires and snaps
-  // the carousel to the stored index without animation (instant restore, not a
-  // spring). previewDetent and enabledLayers are automatically correct because
-  // MapCarousel and the filter sheet both read directly from the store — no
-  // extra write is needed here. Camera position was stored in Phase 1.
+  // ── Back-navigation state restoration / tab-switch stale-selection clear ──
+  // useFocusEffect fires every time the screen gains focus — both after a
+  // back-nav from a detail screen and after a tab switch.
+  //
+  // We use pushedToDetailRef to tell these two cases apart:
+  //   • true  → the focus came from popping a detail push → restore
+  //   • false → the focus came from a tab switch (or first mount) → clear
+  //
+  // IMPORTANT — empty deps / ref-backed values:
+  // React Navigation re-fires useFocusEffect whenever the callback reference
+  // changes, even while the screen is already focused.  A non-empty dep array
+  // would therefore run the stale-selection clear on every selection change or
+  // entity refresh — not just on real tab-switch focus events.  All dynamic
+  // values are mirrored into refs so the callback is always the same object.
+  const _fe_selectedEntityId = useRef(selectedEntityId);
+  _fe_selectedEntityId.current = selectedEntityId;
+  const _fe_activeIndex = useRef(activeIndex);
+  _fe_activeIndex.current = activeIndex;
+  const _fe_entities = useRef(entities);
+  _fe_entities.current = entities;
+  const _fe_userLat = useRef(userLat);
+  _fe_userLat.current = userLat;
+  const _fe_userLng = useRef(userLng);
+  _fe_userLng.current = userLng;
+  const _fe_setSelectedEntityId = useRef(setSelectedEntityId);
+  _fe_setSelectedEntityId.current = setSelectedEntityId;
+  const _fe_setActiveIndex = useRef(setActiveIndex);
+  _fe_setActiveIndex.current = setActiveIndex;
+
   useFocusEffect(
     useCallback(() => {
-      if (!selectedEntityId) return;
-      // Snap carousel to the stored position without a visible scroll animation
-      // so there is no flash of a wrong card before the correct one appears.
-      carouselRef.current?.scrollToIndex(activeIndex, false);
-    }, [selectedEntityId, activeIndex]),
+      if (!hasFocusedOnceRef.current) {
+        hasFocusedOnceRef.current = true;
+        // First mount: entities effect owns proximity selection. The only
+        // restoration that can happen here is if selectedEntityId was already
+        // set in the store before mount (tests simulate this; production always
+        // starts null). Never run the tab-switch clear on first mount.
+        if (!_fe_selectedEntityId.current) return;
+        carouselRef.current?.scrollToIndex(_fe_activeIndex.current, false);
+        return;
+      }
+
+      if (pushedToDetailRef.current) {
+        // Back-nav: restore the previously selected entity's carousel position.
+        pushedToDetailRef.current = false;
+        if (!_fe_selectedEntityId.current) return;
+        carouselRef.current?.scrollToIndex(_fe_activeIndex.current, false);
+      } else {
+        // Tab-switch: clear any stale selectedEntityId so the map doesn't open
+        // with a ghost highlight, then snap the carousel to the
+        // proximity-nearest entity.
+        _fe_setSelectedEntityId.current(null);
+        const ents = _fe_entities.current;
+        if (ents.length === 0) return;
+        let bestIndex = 0;
+        const lat = _fe_userLat.current;
+        const lng = _fe_userLng.current;
+        if (lat != null && lng != null) {
+          let bestDist = Infinity;
+          ents.forEach((e, i) => {
+            const d = haversineKm(lat, lng, e.lat, e.lng);
+            if (d < bestDist) { bestDist = d; bestIndex = i; }
+          });
+        }
+        _fe_setActiveIndex.current(bestIndex);
+        carouselRef.current?.scrollToIndex(bestIndex, false);
+      }
+    // Empty deps — all dynamic values read through refs above. Keeps the
+    // callback stable so useFocusEffect fires ONLY on true navigation focus
+    // transitions, never on in-focus dep changes (selection updates, entity refreshes).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []),
   );
 
   // Web: show static placeholder.
@@ -771,6 +839,7 @@ function FullScreenMapScreenInner() {
         activeIndex={activeIndex}
         onIndexChange={handleCarouselIndexChange}
         onFiltersPress={() => setFilterSheetOpen(true)}
+        onBeforeNavigate={() => { pushedToDetailRef.current = true; }}
         passportLoading={mode === 'passport' ? passportLoading : undefined}
         passportError={mode === 'passport' ? passportError : undefined}
         onPassportRetry={mode === 'passport' ? handlePassportRetry : undefined}

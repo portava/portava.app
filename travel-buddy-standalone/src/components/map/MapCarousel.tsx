@@ -591,7 +591,13 @@ function PassportErrorCard({
 // and address-like fields that are already present in the payload but don't
 // fit in the medium card area. No new data fetching required.
 
-function EntityFullDetail({ entity }: { entity: MapEntity }) {
+function EntityFullDetail({
+  entity,
+  onBeforeNavigate,
+}: {
+  entity: MapEntity;
+  onBeforeNavigate?: () => void;
+}) {
   // Build type-specific extended content (description, stats, etc.).
   const typeContent = (() => {
     switch (entity.type) {
@@ -694,7 +700,7 @@ function EntityFullDetail({ entity }: { entity: MapEntity }) {
       {typeContent}
       {/* Primary action buttons — reuse MapEntityActionRow so handlers and
           visibility rules (permissions, caps) are consistent with the card row. */}
-      <MapEntityActionRow entity={entity} />
+      <MapEntityActionRow entity={entity} onBeforeNavigate={onBeforeNavigate} />
     </View>
   );
 }
@@ -705,11 +711,14 @@ export function MapEntityCard({
   entity,
   index,
   scrollX,
+  onBeforeNavigate,
   onPress,
 }: {
   entity: MapEntity;
   index: number;
   scrollX: SharedValue<number>;
+  /** Called before any detail push so the map screen can record the nav origin. */
+  onBeforeNavigate?: () => void;
   onPress: () => void;
 }) {
   const { setSelectedEntityId, previewDetent } = useMapStore();
@@ -764,44 +773,54 @@ export function MapEntityCard({
     // user navigates back, useFocusEffect can restore the map to this entity.
     setSelectedEntityId(entity.id);
 
+    // onBeforeNavigate is called at each individual push site — not at the top
+    // of this function — so that a failed async path (e.g. friends thread lookup)
+    // never sets the back-nav flag when no push actually occurs.
     switch (entity.type) {
       case 'buddies': {
         const b = entity.payload as BuddyProfile;
+        onBeforeNavigate?.();
         router.push(`/(rent-a-buddy)/buddy/${b.id}` as any);
         break;
       }
       case 'events': {
         const ev = entity.payload as EventListItem;
+        onBeforeNavigate?.();
         router.push(`/event/${ev.id}` as any);
         break;
       }
       case 'gems': {
         const gem = entity.payload as HiddenGem;
+        onBeforeNavigate?.();
         router.push(`/gems/${gem.id}` as any);
         break;
       }
       case 'trips': {
         const trip = entity.payload as TripRow;
+        onBeforeNavigate?.();
         router.push(`/trip/${trip.id}` as any);
         break;
       }
       case 'friends': {
         const loc = entity.payload as CircleMemberLocation;
         // Resolve the direct thread first — /messages/[id] takes a THREAD id, not a user id.
+        // onBeforeNavigate fires only inside the callback, after push is confirmed.
         void openDirectThread(loc.userId).then((res) => {
           if (res.ok && res.data?.threadId) {
+            onBeforeNavigate?.();
             router.push(`/messages/${res.data.threadId}?threadType=direct&otherUserId=${encodeURIComponent(loc.userId)}` as any);
           }
         });
         break;
       }
       case 'stamps':
-        // Navigate to the user's passport tab to see their country stamps.
+        onBeforeNavigate?.();
         router.push('/(tabs)/passport' as any);
         break;
       case 'places':
         // Navigate to the canonical place detail screen when a detailRoute is
         // present (e.g. /place/abc123), otherwise fall back to the Discover tab.
+        onBeforeNavigate?.();
         router.push((entity.detailRoute ?? '/(tabs)/discover') as any);
         break;
     }
@@ -824,7 +843,7 @@ export function MapEntityCard({
           <Text style={[cs.typeLabel, { color: cfg.color }]}>{typeLabel}</Text>
         </View>
         {renderBody()}
-        {isExpanded && <MapEntityActionRow entity={entity} />}
+        {isExpanded && <MapEntityActionRow entity={entity} onBeforeNavigate={onBeforeNavigate} />}
       </Pressable>
     </Animated.View>
   );
@@ -855,6 +874,12 @@ interface MapCarouselProps {
   passportError?: string | null;
   /** Passport mode: called when the user taps "Retry". */
   onPassportRetry?: () => void;
+  /**
+   * Called immediately before any card detail push (router.push). The map
+   * screen uses this to distinguish a back-nav re-focus from a tab-switch
+   * re-focus so it can decide whether to restore or clear selectedEntityId.
+   */
+  onBeforeNavigate?: () => void;
   style?: any;
 }
 
@@ -868,6 +893,7 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
       passportLoading,
       passportError,
       onPassportRetry,
+      onBeforeNavigate,
       style,
     },
     ref,
@@ -1014,6 +1040,7 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
               entity={item}
               index={index}
               scrollX={scrollX}
+              onBeforeNavigate={onBeforeNavigate}
               onPress={() => {
                 if (index !== activeIndex) onIndexChange(index);
               }}
@@ -1039,7 +1066,7 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
         {renderCardArea()}
         {/* Full-detent extended detail — only rendered in the full state */}
         {previewDetent === 'full' && peekEntity ? (
-          <EntityFullDetail entity={peekEntity} />
+          <EntityFullDetail entity={peekEntity} onBeforeNavigate={onBeforeNavigate} />
         ) : null}
       </Animated.View>
     );

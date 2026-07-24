@@ -138,22 +138,25 @@ function ActionBtn({ testID, icon, label, onPress, disabled, destructive }: Acti
 
 interface MapEntityActionRowProps {
   entity: MapEntity;
+  /** Called immediately before any detail push so the map screen can record
+   *  the navigation origin and restore state correctly on back-nav. */
+  onBeforeNavigate?: () => void;
 }
 
-export function MapEntityActionRow({ entity }: MapEntityActionRowProps) {
+export function MapEntityActionRow({ entity, onBeforeNavigate }: MapEntityActionRowProps) {
   const caps = entity.actionCapabilities ?? [];
 
   // Render nothing when there are no capabilities.
   if (caps.length === 0) return null;
 
-  return <ActionRowInner entity={entity} />;
+  return <ActionRowInner entity={entity} onBeforeNavigate={onBeforeNavigate} />;
 }
 
 /**
  * Inner component so hooks are always called in the same order (the outer
  * early-return guard cannot be above hook calls in React).
  */
-function ActionRowInner({ entity }: { entity: MapEntity }) {
+function ActionRowInner({ entity, onBeforeNavigate }: { entity: MapEntity; onBeforeNavigate?: () => void }) {
   const baseCaps = entity.actionCapabilities ?? [];
   const perms = entity.permissions;
   const isPersonEntity = PERSON_TYPES.includes(entity.type);
@@ -231,13 +234,16 @@ function ActionRowInner({ entity }: { entity: MapEntity }) {
     if (!userId) return;
     const res = await openDirectThread(userId);
     if (res.ok && res.data?.threadId) {
+      // Call only when push is confirmed — a failed lookup must not set the
+      // back-nav flag and cause the next tab-switch to skip stale-selection clearing.
+      onBeforeNavigate?.();
       router.push(
         `/messages/${res.data.threadId}?threadType=direct&otherUserId=${encodeURIComponent(userId)}` as any,
       );
     } else {
       Alert.alert('Could not open conversation', 'Please try again.');
     }
-  }, [userId]);
+  }, [userId, onBeforeNavigate]);
 
   const handleJoin = useCallback(async () => {
     const res = await rsvpEvent(rawEntityId, 'going');
@@ -373,7 +379,7 @@ function ActionRowInner({ entity }: { entity: MapEntity }) {
             testID="map-action-book"
             icon={<Briefcase size={15} color={color.signal} />}
             label="Book"
-            onPress={() => router.push(`/(rent-a-buddy)/buddy/${entityPayload.id}` as any)}
+            onPress={() => { onBeforeNavigate?.(); router.push(`/(rent-a-buddy)/buddy/${entityPayload.id}` as any); }}
           />
         )}
         {showMessage && (
