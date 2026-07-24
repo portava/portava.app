@@ -1,0 +1,249 @@
+/**
+ * Upload-hardening routes — kill-switch coverage, content sniffing, size caps,
+ * EXIF strip on /media/upload, storage-origin validation on events/messaging
+ * media, and story-expiry file deletion.
+ * Run: node --import tsx/esm --test src/test/mediaUploadHardening.test.ts
+ */
+import { describe, it, before, after } from "node:test";
+import assert from "node:assert/strict";
+import http from "node:http";
+import express from "express";
+import sharp from "sharp";
+import { _setTestClient } from "../lib/http.js";
+import { _setTestServiceClient } from "../lib/supabase.js";
+import postsRouter from "../routes/posts.js";
+import eventsRouter from "../routes/events.js";
+import { sweepExpiredStories } from "../routes/stories.js";
+
+let server: http.Server;
+let base: string;
+const TOKEN = "media-hardening-token";
+const USER_ID = "d0000000-0000-4000-a000-000000000001";
+const EVENT_ID = "d0000000-0000-4000-a000-0000000000e1";
+
+const OLD_SUPABASE_URL = process.env.SUPABASE_URL;
+const SB = "http://sb.example.test";
+
+function rawReq(method: string, path: string, body: Buffer | null, contentType: string): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(path, base);
+    const headers: Record<string, string> = { authorization: `Bearer ${TOKEN}`, "content-type": contentType };
+    if (body) headers["content-length"] = String(body.length);
+    const r = http.request({ hostname: url.hostname, port: Number(url.port), path: url.pathname, method, headers }, (res) => {
+      let raw = ""; res.on("data", (c) => (raw += c));
+      res.on("end", () => { let p: any; try { p = JSON.parse(raw); } catch { p = raw; } resolve({ status: res.statusCode ?? 0, body: p }); });
+    });
+    r.on("error", reject);
+    if (body) r.write(body);
+    r.end();
+  });
+}
+const jsonReq = (method: string, path: string, obj: any) =>
+  rawReq(method, path, Buffer.from(JSON.stringify(obj)), "application/json");
+
+interface FakeState {
+  flags?: Record<string, boolean>;
+  events?: any[];
+  eventRoles?: any[];
+  rsvps?: any[];
+}
+
+function makeClient(state: FakeState = {}) {
+  const uploads: Array<{ bucket: string; path: string; buf: Buffer; contentType: string }> = [];
+  const removed: Array<{ bucket: string; paths: string[] }> = [];
+  const inserted: Array<{ table: string; row: any }> = [];
+
+  function builder(table: string) {
+    const filters: Array<(r: any) => boolean> = [];
+    let pending: any = null;
+    const rows = () => {
+      const src =
+        table === "feature_flags" ? Object.entries(state.flags ?? {}).map(([flag, enabled]) => ({ flag, enabled })) :
+        table === "events" ? state.events ?? [] :
+        table === "event_roles" ? state.eventRoles ?? [] :
+        table === "event_rsvps" ? state.rsvps ?? [] : [];
+      return src.filter((r: any) => filters.every((f) => f(r)));
+    };
+    const b: any = {
+      select() { return b; },
+      insert(row: any) { pending = row; inserted.push({ table, row }); return b; },
+      update() { return b; },
+      eq(col: string, val: any) { filters.push((r) => r[col] === val); return b; },
+      neq(col: string, val: any) { filters.push((r) => r[col] !== val); return b; },
+      in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return b; },
+      is() { return b; }, not() { return b; }, or() { return b; },
+      gte() { return b; }, lte() { return b; }, gt() { return b; }, lt() { return b; },
+      order() { return b; }, limit() { return b; }, range() { return b; },
+      maybeSingle() { return Promise.resolve({ data: rows()[0] ?? null, error: null }); },
+      single() {
+        if (pending) return Promise.resolve({ data: { id: "new-row-id", ...pending }, error: null });
+        return Promise.resolve({ data: rows()[0] ?? null, error: null });
+      },
+      then(onF: any, onR: any) { return Promise.resolve({ data: rows(), error: null }).then(onF, onR); },
+    };
+    return b;
+  }
+
+  const client: any = {
+    from: builder,
+    storage: {
+      from(bucket: string) {
+        return {
+          async upload(path: string, buf: Buffer, opts: any) {
+            uploads.push({ bucket, path, buf, contentType: opts?.contentType });
+            return { data: { path }, error: null };
+          },
+          getPublicUrl(path: string) {
+            return { data: { publicUrl: `${SB}/storage/v1/object/public/${bucket}/${path}` } };
+          },
+          async remove(paths: string[]) { removed.push({ bucket, paths }); return { data: paths, error: null }; },
+          async download() { return { data: null, error: { message: "not implemented" } }; },
+        };
+      },
+    },
+    auth: {
+      getUser: async (t: string) => t === TOKEN
+        ? { data: { user: { id: USER_ID } }, error: null }
+        : { data: { user: null }, error: { message: "bad token" } },
+    },
+    _uploads: uploads,
+    _removed: removed,
+    _inserted: inserted,
+  };
+  return client;
+}
+
+function setClients(c: any) { _setTestClient(c, true); _setTestServiceClient(c); }
+
+before(() => {
+  process.env.SUPABASE_URL = SB;
+  const app = express();
+  app.use(express.json());
+  app.use((r: any, _res: any, next: any) => { r.log = { error() {}, info() {}, warn() {}, debug() {} }; next(); });
+  app.use("/api", postsRouter);
+  app.use("/api", eventsRouter);
+  return new Promise<void>((resolve) => {
+    server = app.listen(0, () => { base = `http://127.0.0.1:${(server.address() as any).port}`; resolve(); });
+  });
+});
+
+after(() => {
+  process.env.SUPABASE_URL = OLD_SUPABASE_URL;
+  return new Promise<void>((r) => server.close(() => r()));
+});
+
+describe("POST /api/media/upload — hardening", () => {
+  it("kill switch: disable_media_uploads now blocks this path (audit gap)", async () => {
+    setClients(makeClient({ flags: { disable_media_uploads: true } }));
+    const jpeg = await sharp({ create: { width: 8, height: 8, channels: 3, background: "#111" } }).jpeg().toBuffer();
+    const r = await rawReq("POST", "/api/media/upload", jpeg, "image/jpeg");
+    assert.equal(r.body.error, "feature_disabled");
+  });
+
+  it("rejects bytes that are not real media even with a valid header", async () => {
+    setClients(makeClient());
+    const junk = Buffer.from("this is definitely not an image, whatever the header says");
+    const r = await rawReq("POST", "/api/media/upload", junk, "image/jpeg");
+    assert.equal(r.body.error, "invalid_payload");
+    assert.match(String(r.body.message ?? r.body.detail ?? JSON.stringify(r.body)), /Unrecognized|corrupt/i);
+  });
+
+  it("uploads a valid jpeg: EXIF stripped, thumbnail created, additive response fields", async () => {
+    const client = makeClient();
+    setClients(client);
+    const withExif = await sharp({ create: { width: 900, height: 600, channels: 3, background: "#3a5" } })
+      .jpeg()
+      .withExif({ IFD0: { Copyright: "x" }, GPS: { GPSLatitudeRef: "N" } } as any)
+      .toBuffer();
+    const r = await rawReq("POST", "/api/media/upload", withExif, "image/jpeg");
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.ok(r.body.url.includes("/post-media/"));
+    assert.equal(r.body.processed, true);
+    assert.equal(r.body.width, 900);
+    assert.ok(r.body.thumbnailUrl, "server thumbnail URL expected");
+    // two storage writes: main + .thumb.jpg
+    assert.equal(client._uploads.length, 2);
+    const main = client._uploads.find((u: any) => !u.path.includes(".thumb."));
+    const meta = await sharp(main.buf).metadata();
+    assert.equal(meta.exif, undefined, "stored bytes must carry NO EXIF/GPS");
+    const thumb = client._uploads.find((u: any) => u.path.includes(".thumb."));
+    const tMeta = await sharp(thumb.buf).metadata();
+    assert.ok(Math.max(tMeta.width!, tMeta.height!) <= 400);
+  });
+
+  it("rejects an oversized video without uploading", async () => {
+    const client = makeClient();
+    setClients(client);
+    const bigVideo = Buffer.concat([
+      Buffer.from([0, 0, 0, 24]), Buffer.from("ftypisom"),
+      Buffer.alloc(101 * 1024 * 1024, 1),
+    ]);
+    const r = await rawReq("POST", "/api/media/upload", bigVideo, "video/mp4");
+    assert.equal(r.body.error, "invalid_payload");
+    assert.equal(client._uploads.length, 0);
+  });
+});
+
+describe("POST /api/events/:id/media — storage-origin validation", () => {
+  const hostState: FakeState = {
+    flags: {},
+    events: [{ id: EVENT_ID, state: "published", host_id: USER_ID }],
+    eventRoles: [{ event_id: EVENT_ID, user_id: USER_ID, role: "host" }],
+    rsvps: [{ event_id: EVENT_ID, user_id: USER_ID, status: "going" }],
+  };
+
+  it("rejects an external URL (previous injection hole)", async () => {
+    setClients(makeClient(hostState));
+    const r = await jsonReq("POST", `/api/events/${EVENT_ID}/media`, {
+      mediaUrl: "https://evil.example.com/tracker.jpg", mediaType: "image",
+    });
+    assert.equal(r.body.error, "invalid_payload");
+    assert.match(String(JSON.stringify(r.body)), /app media URL/i);
+  });
+
+  it("accepts an app-storage URL", async () => {
+    const client = makeClient(hostState);
+    setClients(client);
+    const r = await jsonReq("POST", `/api/events/${EVENT_ID}/media`, {
+      mediaUrl: `${SB}/storage/v1/object/public/post-media/${USER_ID}/123.jpg`, mediaType: "image",
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.ok(client._inserted.some((i: any) => i.table === "event_media"));
+  });
+
+  it("kill switch blocks event media too", async () => {
+    setClients(makeClient({ ...hostState, flags: { disable_media_uploads: true } }));
+    const r = await jsonReq("POST", `/api/events/${EVENT_ID}/media`, {
+      mediaUrl: `${SB}/storage/v1/object/public/post-media/${USER_ID}/123.jpg`,
+    });
+    assert.equal(r.body.error, "feature_disabled");
+  });
+});
+
+describe("sweepExpiredStories — expired files are actually deleted", () => {
+  it("removes the storage objects of expired (non-highlighted) stories", async () => {
+    const removed: Array<{ bucket: string; paths: string[] }> = [];
+    const fake: any = {
+      from() {
+        const b: any = {
+          update() { return b; }, eq() { return b; }, lt() { return b; }, is() { return b; },
+          select() {
+            return Promise.resolve({
+              data: [
+                { id: "s1", media_url: `${SB}/storage/v1/object/public/post-media/stories/u1/a.jpg` },
+                { id: "s2", media_url: "https://elsewhere.example.com/x.jpg" }, // foreign → skipped
+              ],
+              error: null,
+            });
+          },
+        };
+        return b;
+      },
+      storage: { from: (bucket: string) => ({ remove: async (paths: string[]) => { removed.push({ bucket, paths }); return { data: paths, error: null }; } }) },
+    };
+    const n = await sweepExpiredStories(fake);
+    assert.equal(n, 2);
+    assert.equal(removed.length, 1);
+    assert.deepEqual(removed[0], { bucket: "post-media", paths: ["stories/u1/a.jpg"] });
+  });
+});

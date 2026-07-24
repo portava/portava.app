@@ -20,6 +20,16 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import app from '../app.js';
 import { _setTestClient } from '../lib/http.js';
+import sharp from 'sharp';
+
+// Tiny valid JPEG served by the fake storage download (built once).
+let __jpegPromise: Promise<Buffer> | null = null;
+function __testJpeg(): Promise<Buffer> {
+  if (!__jpegPromise) {
+    __jpegPromise = sharp({ create: { width: 32, height: 24, channels: 3, background: '#357' } }).jpeg().toBuffer();
+  }
+  return __jpegPromise;
+}
 
 // ── Stable fake IDs ───────────────────────────────────────────────────────────
 
@@ -241,6 +251,13 @@ function buildFakeClient(tokenToId: Record<string, string>) {
             data: { publicUrl: `https://cdn.test/post-media/${path}` },
           }),
           remove: async (_paths: string[]) => ({ data: null, error: null }),
+          // /complete now downloads image bytes server-side to strip EXIF and
+          // measure real dimensions — serve a valid jpeg for image paths.
+          download: async (_path: string) => ({
+            data: new Blob([new Uint8Array(await __testJpeg())]),
+            error: null,
+          }),
+          upload: async (_path: string, _buf: unknown, _opts?: unknown) => ({ data: { path: _path }, error: null }),
         };
       },
     },

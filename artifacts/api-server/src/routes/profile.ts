@@ -5,6 +5,27 @@ import { getServiceClient } from "../lib/supabase";
 import { retranslateForUser } from "../services/messageTranslation";
 import { isFlagEnabled } from "../lib/featureFlags";
 import { invalidateCompassHomeCache } from "./compassHome";
+import { sniffMedia, processImage, type ProcessedImage, type SniffResult } from "../lib/mediaProcessing";
+
+/**
+ * Sniff + strip-EXIF/auto-orient an avatar/cover image. Returns the processed
+ * buffer + real mime/ext, or a string error message. Avatars/covers previously
+ * stored raw client bytes — including embedded GPS EXIF (audit privacy fix).
+ */
+async function prepareProfileImage(
+  rawBody: Buffer,
+  maxDim: number,
+): Promise<{ img: ProcessedImage } | { error: string }> {
+  const sniffed: SniffResult | null = sniffMedia(rawBody);
+  if (!sniffed || sniffed.kind !== "image") {
+    return { error: "File content is not a supported image (jpeg, png, webp)" };
+  }
+  try {
+    return { img: await processImage(rawBody, sniffed, maxDim) };
+  } catch {
+    return { error: "Corrupt or undecodable image file" };
+  }
+}
 
 const router = Router();
 
@@ -766,15 +787,19 @@ router.post(
       return;
     }
 
+    // Strip EXIF/GPS + auto-orient + cap dimensions (audit privacy fix).
+    const prepped = await prepareProfileImage(rawBody, 1024);
+    if ("error" in prepped) { sendError(res, "invalid_payload", prepped.error); return; }
+
     await ensureStorageBucket(sc, AVATAR_BUCKET, req);
 
     const { randomUUID } = await import("crypto");
     const uuid = randomUUID();
-    const path = `avatars/${user.id}/${uuid}.${ext}`;
+    const path = `avatars/${user.id}/${uuid}.${prepped.img.ext}`;
 
     const { error } = await sc.storage
       .from(AVATAR_BUCKET)
-      .upload(path, rawBody, { contentType: mimeType, upsert: true });
+      .upload(path, prepped.img.buffer, { contentType: prepped.img.mime, upsert: true });
 
     if (error) {
       req.log.error({ err: error, path }, "Avatar upload failed");
@@ -836,13 +861,17 @@ router.post(
       return;
     }
 
+    // Strip EXIF/GPS + auto-orient + cap dimensions (audit privacy fix).
+    const prepped = await prepareProfileImage(rawBody, 2048);
+    if ("error" in prepped) { sendError(res, "invalid_payload", prepped.error); return; }
+
     await ensureStorageBucket(sc, AVATAR_BUCKET, req);
 
-    const path = `covers/${user.id}/cover.${ext}`;
+    const path = `covers/${user.id}/cover.${prepped.img.ext}`;
 
     const { error } = await sc.storage
       .from(AVATAR_BUCKET)
-      .upload(path, rawBody, { contentType: mimeType, upsert: true });
+      .upload(path, prepped.img.buffer, { contentType: prepped.img.mime, upsert: true });
 
     if (error) {
       req.log.error({ err: error, path }, "Cover upload failed");

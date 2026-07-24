@@ -182,6 +182,11 @@ function ActionRowInner({ entity }: { entity: MapEntity }) {
   const [wishlistOpen, setWishlistOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
 
+  // Optimistic RSVP state — flips to true after a successful rsvpEvent call.
+  // Resets when the component unmounts (user navigated away); server is source
+  // of truth on re-mount.
+  const [rsvpDone, setRsvpDone] = useState(false);
+
   // ── Button visibility ─────────────────────────────────────────────────────
   const showSave       = caps.includes('save');
   const showShare      = caps.includes('share');
@@ -225,6 +230,7 @@ function ActionRowInner({ entity }: { entity: MapEntity }) {
     if (!res.ok) {
       Alert.alert('Could not RSVP', (res as any).message ?? 'Please try again.');
     } else {
+      setRsvpDone(true);
       Alert.alert("You're going!", 'Your RSVP has been confirmed.');
       // Remove 'join' from capabilities so the button is hidden on remount
       // (the user has already RSVPed and shouldn't see the button again).
@@ -297,9 +303,14 @@ function ActionRowInner({ entity }: { entity: MapEntity }) {
         {showJoin && (
           <ActionBtn
             testID="map-action-join"
-            icon={<CalendarCheck size={15} color={color.mute} />}
-            label="Join"
+            icon={
+              rsvpDone
+                ? <CalendarCheck size={15} color={color.signal} />
+                : <CalendarPlus size={15} color={color.mute} />
+            }
+            label={rsvpDone ? 'Going' : 'Join'}
             onPress={handleJoin}
+            disabled={rsvpDone}
           />
         )}
         {showFollow && (

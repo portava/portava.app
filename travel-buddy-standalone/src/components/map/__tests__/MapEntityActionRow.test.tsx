@@ -341,6 +341,53 @@ describe('MapEntityActionRow', () => {
     });
   });
 
+  // ── Join → Going flip ───────────────────────────────────────────────────────
+
+  it('flips Join button to Going after a successful RSVP', async () => {
+    const { rsvpEvent } = require('../../../services/events.ts');
+    rsvpEvent.mockResolvedValue({ ok: true });
+
+    await render(<MapEntityActionRow entity={makeEventEntity()} />);
+
+    // Button starts as "Join"
+    expect(screen.getByText('Join')).toBeTruthy();
+    expect(screen.queryByText('Going')).toBeNull();
+
+    fireEvent.press(screen.getByTestId('map-action-join'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Going')).toBeTruthy();
+      expect(screen.queryByText('Join')).toBeNull();
+    });
+  });
+
+  it('disables the Join button after a successful RSVP', async () => {
+    const { rsvpEvent } = require('../../../services/events.ts');
+    rsvpEvent.mockResolvedValue({ ok: true });
+
+    await render(<MapEntityActionRow entity={makeEventEntity()} />);
+    fireEvent.press(screen.getByTestId('map-action-join'));
+
+    await waitFor(() => {
+      const btn = screen.getByTestId('map-action-join');
+      expect(btn.props.accessibilityState?.disabled ?? btn.props.disabled).toBeTruthy();
+    });
+  });
+
+  it('keeps Join label when rsvpEvent returns an error', async () => {
+    const { rsvpEvent } = require('../../../services/events.ts');
+    rsvpEvent.mockResolvedValue({ ok: false, message: 'Something went wrong' });
+    jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+
+    await render(<MapEntityActionRow entity={makeEventEntity()} />);
+    fireEvent.press(screen.getByTestId('map-action-join'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Join')).toBeTruthy();
+      expect(screen.queryByText('Going')).toBeNull();
+    });
+  });
+
   // ── Grep assertion: no duplicate mutations in src/components/map/ ───────────
 
   it('contains no duplicate save/share/report/block mutation logic in src/components/map/', () => {

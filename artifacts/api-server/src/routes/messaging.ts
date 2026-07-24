@@ -30,6 +30,7 @@ import { nameVisibilitySet, sanitizeIdentity } from '../lib/publicIdentity';
 import { getServiceClient } from '../lib/supabase';
 import { resolveInteractionPermissions } from '../services/interactionPermissions.js';
 import { isFlagEnabled } from '../lib/featureFlags.js';
+import { appStorageUrlInfo } from '../lib/mediaUrl.js';
 import { isUuid } from '../lib/followDecisions';
 import {
   translateMessageForThread,
@@ -1813,10 +1814,25 @@ router.post('/threads/:threadId/media', async (req, res) => {
 
   const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId.slice(0, 64) : null;
 
-  // Emergency kill switch
+  // Emergency kill switches (media one previously ignored here — audit).
   const flagSc = getServiceClient();
   if (flagSc && await isFlagEnabled(flagSc, 'disable_messaging')) {
     sendError(res, 'feature_disabled', 'Messaging is temporarily disabled');
+    return;
+  }
+  if (flagSc && await isFlagEnabled(flagSc, 'disable_media_uploads')) {
+    sendError(res, 'feature_disabled', 'Media uploads are temporarily disabled');
+    return;
+  }
+
+  // Audit security fix: previously ANY external URL was accepted (hotlink/
+  // tracker/other-user-object injection). Media must live in our own storage.
+  if (!appStorageUrlInfo(mediaUrl)) {
+    sendError(res, 'invalid_payload', 'mediaUrl must be an uploaded app media URL (use /api/media/upload first)');
+    return;
+  }
+  if (thumbnailUrl && !appStorageUrlInfo(thumbnailUrl)) {
+    sendError(res, 'invalid_payload', 'thumbnailUrl must be an uploaded app media URL');
     return;
   }
 

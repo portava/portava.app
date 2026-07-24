@@ -19,6 +19,8 @@ import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http.js';
 import { getServiceClient } from '../lib/supabase.js';
 import { processTagging } from '../services/tagging/TaggingService.js';
+import { isFlagEnabled } from '../lib/featureFlags.js';
+import { sniffMedia, processImage } from '../lib/mediaProcessing.js';
 
 const router = Router();
 
@@ -375,6 +377,12 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
+  // Emergency media kill switch (audit: this path previously ignored it).
+  if (await isFlagEnabled(sc, 'disable_media_uploads')) {
+    sendError(res, 'feature_disabled', 'Media uploads are temporarily disabled');
+    return;
+  }
+
   const parsed = uploadUrlSchema.safeParse(req.body);
   if (!parsed.success) {
     sendError(res, 'invalid_payload', parsed.error.issues[0]?.message ?? 'Invalid payload');
@@ -550,6 +558,35 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
   const { data: urlData } = sc.storage.from(STORAGE_BUCKET).getPublicUrl(storagePath);
   const publicUrl = (urlData as any)?.publicUrl ?? '';
 
+  // Audit privacy fix: postcard media goes DIRECT to storage via signed URL, so
+  // the server never saw the bytes — EXIF/GPS survived and width/height were
+  // client-declared. For images: download, strip EXIF/auto-orient, re-upload in
+  // place, and measure real dimensions server-side. Fail-closed for images —
+  // a corrupt image rejects completion (retryable) rather than skipping the
+  // GPS strip. Videos are untouched (no transcode tier; documented).
+  let measuredWidth: number | null = null;
+  let measuredHeight: number | null = null;
+  if ((mediaRow as any).media_type === 'image') {
+    try {
+      const dl = await sc.storage.from(STORAGE_BUCKET).download(storagePath);
+      if ((dl as any).error || !(dl as any).data) throw new Error((dl as any).error?.message ?? 'download failed');
+      const rawBuf = Buffer.from(await (dl as any).data.arrayBuffer());
+      const sniffed = sniffMedia(rawBuf);
+      if (!sniffed || sniffed.kind !== 'image') throw new Error('uploaded bytes are not an image');
+      const img = await processImage(rawBuf, sniffed);
+      const { error: reErr } = await sc.storage
+        .from(STORAGE_BUCKET)
+        .upload(storagePath, img.buffer, { contentType: img.mime, upsert: true });
+      if (reErr) throw new Error(reErr.message);
+      measuredWidth = img.width;
+      measuredHeight = img.height;
+    } catch (err) {
+      req.log.error({ err, mediaId }, 'postcards: image processing failed — completion rejected (retryable)');
+      sendError(res, 'invalid_payload', 'Image could not be processed. Please re-upload.');
+      return;
+    }
+  }
+
   // Compute thumbnail public URL if client supplied a thumbnail path
   let thumbnailUrl: string | null = null;
   if (p.thumbnailPath) {
@@ -586,8 +623,9 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     mime_type:              p.mimeType,
     file_size_bytes:        p.fileSizeBytes,
     duration_seconds:       p.durationSeconds ?? null,
-    width:                  p.width ?? null,
-    height:                 p.height ?? null,
+    // Server-measured dimensions win over client-declared (audit trust fix).
+    width:                  measuredWidth ?? p.width ?? null,
+    height:                 measuredHeight ?? p.height ?? null,
     thumbnail_url:          thumbnailUrl,
     thumbnail_storage_path: p.thumbnailPath ?? null,
     updated_at:             new Date().toISOString(),

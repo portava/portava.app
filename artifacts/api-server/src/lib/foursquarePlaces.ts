@@ -85,6 +85,9 @@ export async function searchFoursquare(q: string, opts: FoursquareOptions = {}):
           lng: typeof geo.longitude === "number" ? geo.longitude : null,
           timezone: null,
           source: "foursquare" as const,
+          // License requirement: any surface showing this result must display
+          // this attribution (audit: the live-v3 path previously emitted none).
+          attribution: "Powered by Foursquare",
           address: loc.address ?? null,
           postalCode: loc.postcode ?? null,
           formattedAddress: loc.formatted_address ?? null,

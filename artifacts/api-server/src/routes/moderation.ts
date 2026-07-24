@@ -25,7 +25,7 @@ const router = Router();
 // ── Enum constants ─────────────────────────────────────────────────────────────
 
 const SUBJECT_TYPES = [
-  "user", "post", "comment", "message", "event", "review", "buddy_listing",
+  "user", "post", "comment", "message", "event", "review", "buddy_listing", "media",
 ] as const;
 
 const CATEGORIES = [
@@ -100,6 +100,16 @@ async function resolveSubjectUserId(
           .eq("id", subjectId)
           .maybeSingle();
         return (data as any)?.reviewer_id ?? null;
+      }
+
+      case "media": {
+        // Canonical media asset (migration 0189) — owner is the accountable user.
+        const { data } = await sc
+          .from("media_assets")
+          .select("owner_user_id")
+          .eq("id", subjectId)
+          .maybeSingle();
+        return (data as any)?.owner_user_id ?? null;
       }
 
       case "buddy_listing": {

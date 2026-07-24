@@ -39,10 +39,15 @@ import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEng
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import { sniffMedia, processImage, makeThumbnail } from "../lib/mediaProcessing.js";
+import { recordMediaAsset } from "../lib/mediaAssets.js";
 
 const router = Router();
 
 const STORAGE_BUCKET = "post-media";
+/** Pre-processing size caps for /media/upload (this path had NONE — audit). */
+const MAX_UPLOAD_IMAGE_BYTES = 15 * 1024 * 1024;   // 15 MB
+const MAX_UPLOAD_VIDEO_BYTES = 100 * 1024 * 1024;  // 100 MB
 const ALLOWED_MIME: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/jpg": "jpg",
@@ -74,10 +79,26 @@ router.post(
     if (!auth) return;
     const { user } = auth;
 
-    const mimeType = (req.headers["content-type"] ?? "").split(";")[0].trim();
-    const ext = ALLOWED_MIME[mimeType];
-    if (!ext) {
-      sendError(res, "invalid_payload", `Unsupported media type: ${mimeType}`);
+    const sc = getServiceClient();
+    if (!sc) { sendError(res, "server_not_configured", "Storage not configured"); return; }
+
+    // Emergency kill switch — this endpoint previously ignored it (audit).
+    if (await isFlagEnabled(sc, "disable_media_uploads")) {
+      sendError(res, "feature_disabled", "Media uploads are temporarily disabled");
+      return;
+    }
+
+    // Upload-flood guard (audit: no rate limit + no size cap on this path).
+    const rl = checkRateLimit("media_upload", user.id, 30, 5 * 60_000);
+    if (!rl.allowed) {
+      res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+      sendError(res, "rate_limited", "Too many uploads. Please wait a moment.");
+      return;
+    }
+
+    const declaredMime = (req.headers["content-type"] ?? "").split(";")[0].trim();
+    if (!ALLOWED_MIME[declaredMime]) {
+      sendError(res, "invalid_payload", `Unsupported media type: ${declaredMime}`);
       return;
     }
     const rawBody: Buffer = (req as any).rawBody;
@@ -85,20 +106,101 @@ router.post(
       sendError(res, "invalid_payload", "Empty file body");
       return;
     }
-    const path = `${user.id}/${Date.now()}.${ext}`;
-    const sc = getServiceClient();
-    if (!sc) { sendError(res, "server_not_configured", "Storage not configured"); return; }
+
+    // Content sniffing: the bytes decide the real type — the header is untrusted.
+    const sniffed = sniffMedia(rawBody);
+    if (!sniffed) {
+      sendError(res, "invalid_payload", "Unrecognized or corrupt media file");
+      return;
+    }
+    const sizeCap = sniffed.kind === "video" ? MAX_UPLOAD_VIDEO_BYTES : MAX_UPLOAD_IMAGE_BYTES;
+    if (rawBody.length > sizeCap) {
+      sendError(res, "invalid_payload",
+        `File too large (${Math.round(rawBody.length / 1024 / 1024)}MB; max ${Math.round(sizeCap / 1024 / 1024)}MB)`);
+      return;
+    }
+
+    let uploadBuf = rawBody;
+    let uploadMime = sniffed.mime;
+    let uploadExt = sniffed.ext;
+    let width: number | null = null;
+    let height: number | null = null;
+    let thumb: { buffer: Buffer; mime: string } | null = null;
+    let processed = false;
+
+    if (sniffed.kind === "image") {
+      try {
+        // Strip EXIF/GPS + auto-orient + cap dimensions, and build a real
+        // server-side thumbnail. Closes the audit's top EXIF/GPS leak.
+        const img = await processImage(rawBody, sniffed);
+        uploadBuf = img.buffer;
+        uploadMime = img.mime;
+        uploadExt = img.ext;
+        width = img.width;
+        height = img.height;
+        const t = await makeThumbnail(img.buffer);
+        thumb = { buffer: t.buffer, mime: t.mime };
+        processed = true;
+      } catch (err) {
+        if (sniffed.mime === "image/heic") {
+          // HEIC decode depends on the libvips build — store as-is rather than
+          // break older clients. (Mobile sends jpeg/png/webp; documented gap.)
+          req.log.warn({ err }, "HEIC processing unavailable — storing original");
+        } else {
+          // A jpeg/png/webp sharp cannot decode is corrupt → reject (spec:
+          // 'Reject corrupt files'; storing it would also skip the GPS strip).
+          sendError(res, "invalid_payload", "Corrupt or undecodable image file");
+          return;
+        }
+      }
+    }
+
+    const basePath = `${user.id}/${Date.now()}`;
+    const path = `${basePath}.${uploadExt}`;
 
     const { error } = await sc.storage
       .from(STORAGE_BUCKET)
-      .upload(path, rawBody, { contentType: mimeType, upsert: false });
+      .upload(path, uploadBuf, { contentType: uploadMime, upsert: false });
     if (error) {
       req.log.error({ err: error, path }, "Storage upload failed");
       sendError(res, "db_error", `Upload failed: ${error.message}`);
       return;
     }
+
+    let thumbnailUrl: string | null = null;
+    let thumbnailPath: string | null = null;
+    if (thumb) {
+      thumbnailPath = `${basePath}.thumb.jpg`;
+      const { error: tErr } = await sc.storage
+        .from(STORAGE_BUCKET)
+        .upload(thumbnailPath, thumb.buffer, { contentType: thumb.mime, upsert: false });
+      if (tErr) {
+        req.log.warn({ err: tErr }, "Thumbnail upload failed — continuing without");
+        thumbnailPath = null;
+      } else {
+        thumbnailUrl = sc.storage.from(STORAGE_BUCKET).getPublicUrl(thumbnailPath).data.publicUrl;
+      }
+    }
+
     const { data: urlData } = sc.storage.from(STORAGE_BUCKET).getPublicUrl(path);
-    res.status(201).json({ url: urlData.publicUrl, path });
+
+    // Canonical dual-write (flag-gated OFF; fail-soft — legacy flow unaffected).
+    void recordMediaAsset(sc, {
+      ownerUserId: user.id,
+      storageBucket: STORAGE_BUCKET,
+      storagePath: path,
+      publicUrl: urlData.publicUrl,
+      mediaType: sniffed.kind,
+      mimeType: uploadMime,
+      sizeBytes: uploadBuf.length,
+      width,
+      height,
+      thumbnailPath,
+      thumbnailUrl,
+    });
+
+    // Response stays backward-compatible ({url, path}); new fields are additive.
+    res.status(201).json({ url: urlData.publicUrl, path, thumbnailUrl, width, height, processed });
   },
 );
 

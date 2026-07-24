@@ -183,6 +183,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import { appStorageUrlInfo } from "../lib/mediaUrl.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
@@ -4959,12 +4960,25 @@ router.post("/events/:id/media", async (req, res) => {
     if ((rsvp as any)?.status !== "going") { sendError(res, "forbidden", "Only Going attendees can upload media"); return; }
   }
 
+  // Emergency media kill switch (audit: this path previously ignored it).
+  if (await isFlagEnabled(sc, "disable_media_uploads")) {
+    sendError(res, "feature_disabled", "Media uploads are temporarily disabled");
+    return;
+  }
+
   const parsed = z.object({
     mediaUrl:  z.string().url(),
     mediaType: z.enum(["image","video"]).default("image"),
     caption:   z.string().max(500).optional(),
   }).safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+
+  // Audit security fix: previously ANY external URL was accepted here (hotlink/
+  // tracker/other-user-object injection). Media must live in our own storage.
+  if (!appStorageUrlInfo(parsed.data.mediaUrl)) {
+    sendError(res, "invalid_payload", "mediaUrl must be an uploaded app media URL (use /api/media/upload first)");
+    return;
+  }
 
   const { data: item, error } = await sc.from("event_media").insert({
     event_id:    id,

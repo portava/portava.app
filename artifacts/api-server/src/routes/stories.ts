@@ -18,6 +18,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import { appStorageUrlInfo } from "../lib/mediaUrl.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -615,9 +616,28 @@ export async function sweepExpiredStories(sc: any): Promise<number> {
     .eq("state", "active")
     .lt("expires_at", now)
     .is("saved_to_highlight_id", null)
-    .select("id");
+    .select("id, media_url");
   if (error) throw error;
-  return (data ?? []).length;
+  const rows: any[] = data ?? [];
+
+  // Audit privacy fix: "ephemeral" 24h stories previously expired in STATE only
+  // — the file stayed publicly fetchable at its URL forever. Delete the storage
+  // objects for the stories just expired. Safe: the saved_to_highlight_id IS
+  // NULL filter above guarantees no highlight references this media. Best-effort
+  // (a storage failure never breaks the sweep; rows are already expired).
+  const paths: string[] = [];
+  for (const r of rows) {
+    const ref = appStorageUrlInfo(String(r.media_url ?? ""));
+    if (ref && ref.bucket === "post-media") paths.push(ref.path);
+  }
+  if (paths.length > 0) {
+    try {
+      await sc.storage.from("post-media").remove(paths);
+    } catch {
+      /* best-effort */
+    }
+  }
+  return rows.length;
 }
 
 export default router;
