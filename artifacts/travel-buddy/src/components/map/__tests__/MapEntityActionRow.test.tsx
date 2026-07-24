@@ -388,6 +388,56 @@ describe('MapEntityActionRow', () => {
     });
   });
 
+  // ── Join → Waitlisted flip ──────────────────────────────────────────────────
+
+  it('shows Waitlisted (disabled) when rsvpEvent returns waitlisted status', async () => {
+    const { rsvpEvent } = require('../../../services/events.ts');
+    rsvpEvent.mockResolvedValue({ ok: true, data: { status: 'waitlisted', message: 'Event is full' } });
+    jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+
+    await render(<MapEntityActionRow entity={makeEventEntity()} />);
+    expect(screen.getByText('Join')).toBeTruthy();
+
+    fireEvent.press(screen.getByTestId('map-action-join'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Waitlisted')).toBeTruthy();
+      expect(screen.queryByText('Going')).toBeNull();
+      expect(screen.queryByText('Join')).toBeNull();
+    });
+    const btn = screen.getByTestId('map-action-join');
+    expect(btn.props.accessibilityState?.disabled ?? btn.props.disabled).toBeTruthy();
+  });
+
+  it('shows Going (not Waitlisted) when rsvpEvent returns a non-waitlisted ok response', async () => {
+    const { rsvpEvent } = require('../../../services/events.ts');
+    rsvpEvent.mockResolvedValue({ ok: true, data: { status: 'going', eventId: 'ev-1' } });
+    jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+
+    await render(<MapEntityActionRow entity={makeEventEntity()} />);
+    fireEvent.press(screen.getByTestId('map-action-join'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Going')).toBeTruthy();
+      expect(screen.queryByText('Waitlisted')).toBeNull();
+    });
+  });
+
+  it('mounts showing Waitlisted (disabled) when payload.myWaitlistPosition is set', async () => {
+    const entity = makeEventEntity({
+      payload: {
+        id: 'ev-1', title: 'Jazz Night', startsAt: null, goingCount: 10,
+        priceType: 'free', myRsvp: null, myWaitlistPosition: 3,
+      },
+    });
+    await render(<MapEntityActionRow entity={entity} />);
+    expect(screen.getByText('Waitlisted')).toBeTruthy();
+    expect(screen.queryByText('Join')).toBeNull();
+    expect(screen.queryByText('Going')).toBeNull();
+    const btn = screen.getByTestId('map-action-join');
+    expect(btn.props.accessibilityState?.disabled ?? btn.props.disabled).toBeTruthy();
+  });
+
   // ── Join seeded from payload.myRsvp ────────────────────────────────────────
 
   it('mounts showing Going (disabled) when payload.myRsvp is going', async () => {

@@ -191,10 +191,15 @@ function ActionRowInner({ entity }: { entity: MapEntity }) {
 
   // Optimistic RSVP state — seeded from the entity payload so that re-opening
   // the same card within a session (after a successful RSVP) still shows
-  // 'Going'.  For events the payload is EventListItem which carries myRsvp.
-  const [rsvpDone, setRsvpDone] = useState(
-    () => entity.type === 'events' && entityPayload.myRsvp === 'going',
-  );
+  // 'Going' or 'Waitlisted'.  For events the payload is EventListItem which
+  // carries myRsvp; myWaitlistPosition (present on EventDetail payloads) seeds
+  // the waitlisted branch when the user was previously placed on the waitlist.
+  const [rsvpState, setRsvpState] = useState<'going' | 'waitlisted' | null>(() => {
+    if (entity.type !== 'events') return null;
+    if (entityPayload.myRsvp === 'going') return 'going';
+    if (entityPayload.myWaitlistPosition != null && entityPayload.myWaitlistPosition > 0) return 'waitlisted';
+    return null;
+  });
 
   // ── Button visibility ─────────────────────────────────────────────────────
   const showSave       = caps.includes('save');
@@ -238,8 +243,19 @@ function ActionRowInner({ entity }: { entity: MapEntity }) {
     const res = await rsvpEvent(rawEntityId, 'going');
     if (!res.ok) {
       Alert.alert('Could not RSVP', (res as any).message ?? 'Please try again.');
+    } else if ((res.data as any)?.status === 'waitlisted') {
+      // Event is full — user was placed on the waitlist instead of confirmed.
+      setRsvpState('waitlisted');
+      const pos: number | undefined = (res.data as any)?.position ?? (res.data as any)?.myWaitlistPosition;
+      const posText = pos != null ? ` You are #${pos} on the waitlist.` : '';
+      Alert.alert("You're on the waitlist", `The event is full.${posText} We'll notify you if a spot opens up.`);
+      // Remove 'join' from capabilities so the button is hidden on remount.
+      mapStore?.updateEntityCapabilities(
+        entity.id,
+        caps.filter((c) => c !== 'join'),
+      );
     } else {
-      setRsvpDone(true);
+      setRsvpState('going');
       Alert.alert("You're going!", 'Your RSVP has been confirmed.');
       // Remove 'join' from capabilities so the button is hidden on remount
       // (the user has already RSVPed and shouldn't see the button again).
@@ -322,13 +338,21 @@ function ActionRowInner({ entity }: { entity: MapEntity }) {
           <ActionBtn
             testID="map-action-join"
             icon={
-              rsvpDone
+              rsvpState === 'going'
                 ? <CalendarCheck size={15} color={color.signal} />
-                : <CalendarPlus size={15} color={color.mute} />
+                : rsvpState === 'waitlisted'
+                  ? <CalendarCheck size={15} color={color.mute} />
+                  : <CalendarPlus size={15} color={color.mute} />
             }
-            label={rsvpDone ? 'Going' : 'Join'}
+            label={
+              rsvpState === 'going'
+                ? 'Going'
+                : rsvpState === 'waitlisted'
+                  ? 'Waitlisted'
+                  : 'Join'
+            }
             onPress={handleJoin}
-            disabled={rsvpDone}
+            disabled={rsvpState != null}
           />
         )}
         {showFollow && (
