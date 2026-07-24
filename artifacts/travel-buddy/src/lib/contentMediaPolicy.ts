@@ -191,7 +191,7 @@ export const CONTENT_MEDIA_POLICIES: Record<ContentPolicyKey, ContentMediaPolicy
   review: {
     maxItems: 3,
     allowedTypes: ['images'],
-    supportsCover: false,
+    supportsCover: true,
     supportsGallery: true,
     supportsAltText: false,
     fallbackCategory: 'review',
@@ -201,7 +201,7 @@ export const CONTENT_MEDIA_POLICIES: Record<ContentPolicyKey, ContentMediaPolicy
   buddyApplication: {
     maxItems: 3,
     allowedTypes: ['images'],
-    supportsCover: false,
+    supportsCover: true,
     supportsGallery: true,
     supportsAltText: false,
     fallbackCategory: 'buddy_application',
@@ -226,7 +226,7 @@ export const CONTENT_MEDIA_POLICIES: Record<ContentPolicyKey, ContentMediaPolicy
   communityPlace: {
     maxItems: 3,
     allowedTypes: ['images'],
-    supportsCover: false,
+    supportsCover: true,
     supportsGallery: true,
     supportsAltText: false,
     fallbackCategory: 'community_place',

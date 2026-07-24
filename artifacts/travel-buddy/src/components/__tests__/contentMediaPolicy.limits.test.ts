@@ -15,6 +15,10 @@ import {
 const ALL_KEYS: ContentPolicyKey[] = [
   'pulse', 'story', 'highlight', 'postcard', 'memory',
   'profileAvatar', 'profileCover', 'message', 'event', 'trip',
+  // Optional-photo flows added in Phase 0 Tasks 1–4
+  'tripCover', 'review', 'buddyApplication', 'hiddenGem',
+  // Defined for policy completeness; server endpoints have no media column (skipped flows)
+  'communityPlace', 'safetyReport',
 ];
 
 describe('contentMediaPolicy registry completeness', () => {
