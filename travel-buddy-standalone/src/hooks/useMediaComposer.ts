@@ -341,12 +341,7 @@ export function useMediaComposer(policyKey: ContentPolicyKey): UseMediaComposerR
   }, []);
 
   const uploadAll = useCallback(async (): Promise<Map<string, MediaUploadResult | null>> => {
-    let ids: string[] = [];
-    setItems((prev) => {
-      ids = prev.filter((it) => it.uploadState === 'idle').map((it) => it.id);
-      return prev;
-    });
-    await new Promise<void>((r) => setTimeout(r, 0));
+    const ids = itemsRef.current.filter((it) => it.uploadState === 'idle').map((it) => it.id);
 
     const results = await Promise.all(ids.map((id) => uploadItem(id)));
     const map = new Map<string, MediaUploadResult | null>();
