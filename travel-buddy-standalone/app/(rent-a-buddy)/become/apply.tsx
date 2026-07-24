@@ -164,6 +164,26 @@ export default function ApplyToBeBuddy() {
         if (prefillLangs.length) {
           setLanguages(prefillLangs.map((lang) => ({ lang, fluency: 'Proficient' })));
         }
+
+        // Pre-fill availability grid from any previously submitted blocks.
+        // Stored as [{ day, block }]; reconstruct the day → block → boolean map.
+        const prefillAvailabilityBlocks = (application?.availability ?? []) as Array<Record<string, unknown>>;
+        if (prefillAvailabilityBlocks.length) {
+          const grid: Record<string, Record<string, boolean>> = {};
+          for (const slot of prefillAvailabilityBlocks) {
+            const day = slot.day as string | undefined;
+            const block = slot.block as string | undefined;
+            if (day && block) {
+              if (!grid[day]) grid[day] = {};
+              grid[day][block] = true;
+            }
+          }
+          if (Object.keys(grid).length) setAvailability(grid);
+        }
+
+        // Pre-fill meetup zones from any previously submitted strings.
+        const prefillZones = application?.zones ?? [];
+        if (prefillZones.length) setZones(prefillZones);
       }
 
       // Profile checklist: if the user has a profile, show its completion state
