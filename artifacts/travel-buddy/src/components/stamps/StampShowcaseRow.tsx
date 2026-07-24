@@ -50,6 +50,7 @@ function ShowcaseCard({ item, onPress, anim }: {
               contentFit="contain"
               cachePolicy="memory-disk"
               accessibilityIgnoresInvertColors
+              accessibilityLabel={`${label} — ${rarity} stamp`}
             />
           ) : (
             <View style={styles.artPlaceholder} />

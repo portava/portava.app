@@ -17,6 +17,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { resolveExternalPlace, toCanonicalPlace, type ExternalPlaceRecord } from "../lib/places/placeResolve.js";
+import { asyncHandler } from "../lib/asyncHandler.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -45,7 +46,7 @@ async function loadGroup(sc: any, survivorId: string): Promise<{ place: any; ref
 }
 
 // ── GET /api/places/canonical/:id ─────────────────────────────────────────────
-router.get("/places/canonical/:id", async (req, res) => {
+router.get("/places/canonical/:id", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const sc = getServiceClient();
@@ -62,7 +63,7 @@ router.get("/places/canonical/:id", async (req, res) => {
   const group = await loadGroup(sc, survivorId);
   if (!group) { sendError(res, "not_found", "Place not found"); return; }
   res.json({ place: toCanonicalPlace(group.place, group.refs) });
-});
+}));
 
 // ── POST /api/admin/places/ingest ─────────────────────────────────────────────
 const recordSchema = z.object({
@@ -82,7 +83,7 @@ const recordSchema = z.object({
   canonicalLocationId: z.string().uuid().nullable().optional(),
 });
 
-router.post("/admin/places/ingest", async (req, res) => {
+router.post("/admin/places/ingest", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const parsed = z.object({ records: z.array(recordSchema).min(1).max(500) }).safeParse(req.body);
@@ -99,10 +100,10 @@ router.post("/admin/places/ingest", async (req, res) => {
     if (r.created) created++; else linked++;
   }
   res.json({ ok: true, created, linked, skipped, placeIds });
-});
+}));
 
 // ── POST /api/admin/places/:id/merge ──────────────────────────────────────────
-router.post("/admin/places/:id/merge", async (req, res) => {
+router.post("/admin/places/:id/merge", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { id } = req.params;
@@ -130,10 +131,10 @@ router.post("/admin/places/:id/merge", async (req, res) => {
     admin_id: admin.userId, ref_count: count ?? 0,
   });
   res.json({ ok: true, survivorId: intoId, mergedId: id });
-});
+}));
 
 // ── POST /api/admin/places/:id/unmerge ────────────────────────────────────────
-router.post("/admin/places/:id/unmerge", async (req, res) => {
+router.post("/admin/places/:id/unmerge", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { id } = req.params;
@@ -153,6 +154,6 @@ router.post("/admin/places/:id/unmerge", async (req, res) => {
     action: "unmerge", survivor_place_id: survivorId, affected_place_id: id, admin_id: admin.userId, ref_count: 0,
   });
   res.json({ ok: true, restoredId: id });
-});
+}));
 
 export default router;
