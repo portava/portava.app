@@ -102,7 +102,7 @@ export function RouteMinimapView({ routePlan, userLat, userLng, onExpand, height
         style={StyleSheet.absoluteFill}
         mapStyle={mapStyle}
         logo={false}
-        attribution={false}
+        attributionPosition={{ bottom: 4, right: 4 }}
         dragPan={false}
         touchZoom={false}
         touchRotate={false}

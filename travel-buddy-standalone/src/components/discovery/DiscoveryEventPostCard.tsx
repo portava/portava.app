@@ -98,6 +98,7 @@ export function DiscoveryEventPostCard({ post }: Props) {
             </View>
           ) : null}
         </View>
+
       </View>
     </Pressable>
   );

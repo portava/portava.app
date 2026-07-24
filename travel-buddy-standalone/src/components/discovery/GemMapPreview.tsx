@@ -78,7 +78,7 @@ export function GemMapPreview({ lat, lng, coordsPrecision, locationLabel }: GemM
             style={StyleSheet.absoluteFill}
             mapStyle={MAP_STYLE}
             logo={false}
-            attribution={false}
+            attributionPosition={{ bottom: 4, right: 4 }}
           >
             <Camera
               initialViewState={{ center: [lng, lat], zoom }}

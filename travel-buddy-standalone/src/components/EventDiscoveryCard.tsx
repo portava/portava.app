@@ -233,6 +233,7 @@ export function EventDiscoveryCard({ event, onPress, onHostPress, onRsvp, isSave
             </View>
           )}
         </View>
+
       </View>
     </Pressable>
   );
