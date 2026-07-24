@@ -7,9 +7,10 @@
  */
 import React, { useEffect, useRef } from 'react';
 import {
-  View, ScrollView, Image, Text, Pressable, StyleSheet, Animated,
+  View, ScrollView, Text, Pressable, StyleSheet, Animated,
   AccessibilityInfo,
 } from 'react-native';
+import { Image } from 'expo-image';
 import type { ShowcaseStamp } from '../../services/stampShowcase.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { RARITY_COLORS, normalizeRarity, hasGlowRing } from '../../lib/stampRarity.ts';
@@ -46,7 +47,8 @@ function ShowcaseCard({ item, onPress, anim }: {
             <Image
               source={{ uri: artworkUrl }}
               style={styles.artImage}
-              resizeMode="cover"
+              contentFit="contain"
+              cachePolicy="memory-disk"
               accessibilityIgnoresInvertColors
             />
           ) : (
