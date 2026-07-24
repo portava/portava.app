@@ -18,6 +18,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
 import { getMediaFilter, buildCssFilter } from '../lib/media/filters.ts';
+import { toAppMediaUrl, mediaSource, type ResolvedMediaSource } from '../lib/mediaSource.ts';
 import { X, Heart, MessageCircle, Flag, Eye, Share2, Plus, Trash2, Volume2, VolumeX } from 'lucide-react-native';
 import { SaveButton } from './SaveButton.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -80,6 +81,11 @@ export function HighlightViewer({
   // changes, so the choice carries forward as highlights advance and persists
   // for the session (not reset when the viewer reopens).
   const [isMuted, setIsMuted] = useState(false);
+  // Resolved media source: rewritten relay URL + Bearer token when the
+  // private-bucket flag is ON; plain original URL when OFF (fast path).
+  const [resolvedMediaSource, setResolvedMediaSource] = useState<ResolvedMediaSource>(
+    { uri: localHighlights[startIndex]?.mediaUrl ?? '' },
+  );
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const videoRef = useRef<Video>(null);
@@ -164,6 +170,19 @@ export function HighlightViewer({
   useEffect(() => {
     if (isVideo) setProgress(0);
   }, [index, isVideo]);
+
+  // Resolve the current highlight's media URL through the private-bucket relay
+  // when the flag is ON. When the flag is OFF this is nearly instant (cached)
+  // and returns the original URL unchanged.
+  useEffect(() => {
+    const url = current?.mediaUrl;
+    if (!url) return;
+    let cancelled = false;
+    mediaSource(url).then((src) => {
+      if (!cancelled) setResolvedMediaSource(src);
+    });
+    return () => { cancelled = true; };
+  }, [current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Video playback status — drives progress bar and auto-advance for video items
   const handleVideoStatus = useCallback((status: AVPlaybackStatus) => {
@@ -294,6 +313,9 @@ export function HighlightViewer({
         {isVideo && Platform.OS === 'web' ? (
           // Web video fallback: HTML <video> element with progress/auto-advance wired
           // via onTimeUpdate / onEnded; paused and muted are synced via useEffect above.
+          // HTML <video> cannot attach Bearer auth headers, so the original URL is used
+          // directly. When the flag is ON and buckets are private, a web-compatible
+          // auth mechanism (e.g. cookie session) would be needed — out of scope here.
           <video
             key={current.id}
             ref={webVideoRef}
@@ -317,10 +339,12 @@ export function HighlightViewer({
             onEnded={() => goNextRef.current()}
           />
         ) : isVideo ? (
+          // Native video: resolvedMediaSource carries the relay URL + auth
+          // headers when the private-bucket flag is ON.
           <Video
             key={current.id}
             ref={videoRef}
-            source={{ uri: current.mediaUrl }}
+            source={resolvedMediaSource}
             style={StyleSheet.absoluteFill}
             resizeMode={ResizeMode.COVER}
             shouldPlay={!paused}
@@ -330,8 +354,9 @@ export function HighlightViewer({
             onPlaybackStatusUpdate={handleVideoStatus}
           />
         ) : (
+          // Native image: RN Image accepts { uri, headers } in its source prop.
           <Image
-            source={{ uri: current.mediaUrl }}
+            source={resolvedMediaSource}
             style={StyleSheet.absoluteFill}
             resizeMode="cover"
           />

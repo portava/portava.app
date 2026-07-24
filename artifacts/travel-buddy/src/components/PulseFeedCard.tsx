@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert, useWindowDimensions } from 'react-native';
 import { CachedImage, withStorageParams } from './CachedImage.tsx';
+import { batchSignUrls } from '../lib/batchSignMedia.ts';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import {
@@ -219,6 +220,24 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
   const dismiss = () => setDismissed(true);
   const undismiss = () => setDismissed(false);
   const handleDeleted = () => { dismiss(); onDeleteSuccess?.(); };
+
+  // Batch-sign the main media URL so list renders share a single POST
+  // /api/media/sign call (45-min cache) rather than one redirect per image.
+  // When the private-bucket flag is OFF this resolves immediately with the
+  // original URL (zero network overhead).
+  const rawMediaUrl: string | undefined =
+    item.media?.[0]?.thumbnail_url ?? item.media?.[0]?.url ?? item.mediaUrl ?? undefined;
+  const [signedMediaUrl, setSignedMediaUrl] = useState<string | undefined>(rawMediaUrl);
+
+  useEffect(() => {
+    if (!rawMediaUrl) return;
+    let cancelled = false;
+    batchSignUrls([rawMediaUrl]).then((signed) => {
+      if (!cancelled) setSignedMediaUrl(signed.get(rawMediaUrl) ?? rawMediaUrl);
+    });
+    return () => { cancelled = true; };
+  }, [rawMediaUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (dismissed) return null;
 
   // 4:5 portrait media frame; capped at 600 for tablet/web
@@ -238,8 +257,11 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
               style={StyleSheet.absoluteFill}
             />
           ) : (
+            // signedMediaUrl is pre-resolved via batchSignUrls (relay URL when flag
+            // is ON, original URL when OFF). withStorageParams passes relay URLs
+            // through unchanged and adds Supabase transform params to original URLs.
             <CachedImage
-              source={{ uri: withStorageParams(item.media?.[0]?.thumbnail_url ?? item.media?.[0]?.url ?? item.mediaUrl, 'width=400&quality=80') }}
+              source={{ uri: withStorageParams(signedMediaUrl, 'width=400&quality=80') }}
               style={StyleSheet.absoluteFill}
               resizeMode="cover"
               onError={() => setMediaFailed(true)}

@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Image as ExpoImage } from 'expo-image';
 import type { ImageContentFit } from 'expo-image';
 import type { ImageStyle, StyleProp } from 'react-native';
+import { mediaSource } from '../lib/mediaSource.ts';
 
 type ResizeMode = 'cover' | 'contain' | 'stretch' | 'center' | 'repeat';
 
@@ -36,6 +37,11 @@ interface CachedImageProps {
  *
  * Props are a subset of RN ImageProps so it is a drop-in replacement:
  *   source, style, resizeMode, onLoad, onError, testID, placeholder.
+ *
+ * The source URI is resolved through mediaSource() so that when the
+ * `media_private_buckets_enabled` flag is ON the relay endpoint and
+ * Bearer token are used. When the flag is OFF the original URI is used
+ * unchanged (fast path via module-level cache after the first call).
  */
 export function CachedImage({
   source,
@@ -47,9 +53,31 @@ export function CachedImage({
   placeholder,
 }: CachedImageProps) {
   const contentFit: ImageContentFit = CONTENT_FIT_MAP[resizeMode] ?? 'cover';
+
+  // Resolved source: starts as the original source object so the image begins
+  // loading immediately (correct for flag-OFF, the common case).  When the
+  // async resolution completes (nearly instant from cache on subsequent calls)
+  // it is updated to include the relay URL + auth headers when the flag is ON.
+  const [resolvedSource, setResolvedSource] = useState<
+    { uri: string | undefined; headers?: Record<string, string> }
+  >(source);
+
+  useEffect(() => {
+    const uri = source.uri;
+    if (!uri) {
+      setResolvedSource(source);
+      return;
+    }
+    let cancelled = false;
+    mediaSource(uri).then((src) => {
+      if (!cancelled) setResolvedSource(src);
+    });
+    return () => { cancelled = true; };
+  }, [source.uri]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <ExpoImage
-      source={source}
+      source={resolvedSource}
       style={style as any}
       contentFit={contentFit}
       cachePolicy="disk"
@@ -66,6 +94,10 @@ export function CachedImage({
  * Append Supabase image-transform query params to a storage URL if not
  * already present. Only modifies URLs containing 'supabase' so CDN,
  * Unsplash, or other third-party URLs are left unchanged.
+ *
+ * When the `media_private_buckets_enabled` flag is ON the relay endpoint
+ * serves raw files (transform params are stripped by toAppMediaUrl), so
+ * this helper's params are only meaningful in the flag-OFF path.
  *
  * @example
  *   withStorageParams(avatarUrl, 'width=100&quality=80')
