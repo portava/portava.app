@@ -592,95 +592,111 @@ function PassportErrorCard({
 // fit in the medium card area. No new data fetching required.
 
 function EntityFullDetail({ entity }: { entity: MapEntity }) {
-  switch (entity.type) {
-    case 'buddies': {
-      const buddy = entity.payload as BuddyProfile;
-      return (
-        <View style={cs.fullDetail}>
-          {buddy.bio ? (
-            <Text style={cs.fullDetailText} numberOfLines={5}>{buddy.bio}</Text>
-          ) : null}
-          {buddy.languages.length > 0 && (
-            <View style={cs.fullDetailRow}>
-              <Text style={cs.fullDetailLabel}>Languages</Text>
-              <Text style={cs.fullDetailValue}>{buddy.languages.join(', ')}</Text>
-            </View>
-          )}
-          {buddy.responseTimeH != null && (
-            <View style={cs.fullDetailRow}>
-              <Text style={cs.fullDetailLabel}>Response time</Text>
-              <Text style={cs.fullDetailValue}>~{buddy.responseTimeH}h</Text>
-            </View>
-          )}
-          {buddy.country ? (
-            <View style={cs.fullDetailRow}>
-              <MapPin size={11} color={color.mute} />
-              <Text style={cs.fullDetailValue}>{buddy.city}, {buddy.country}</Text>
-            </View>
-          ) : null}
-        </View>
-      );
-    }
-    case 'events': {
-      const ev = entity.payload as EventListItem;
-      const description = (ev as any).description as string | null | undefined;
-      const address = (ev as any).address as string | null | undefined;
-      if (!description && !address) return null;
-      return (
-        <View style={cs.fullDetail}>
-          {description ? (
-            <Text style={cs.fullDetailText} numberOfLines={5}>{description}</Text>
-          ) : null}
-          {address ? (
-            <View style={cs.fullDetailRow}>
-              <MapPin size={11} color={color.mute} />
-              <Text style={cs.fullDetailValue}>{address}</Text>
-            </View>
-          ) : null}
-        </View>
-      );
-    }
-    case 'gems': {
-      const gem = entity.payload as HiddenGem;
-      return (
-        <View style={cs.fullDetail}>
-          {gem.description ? (
-            <Text style={cs.fullDetailText} numberOfLines={5}>{gem.description}</Text>
-          ) : null}
-          {gem.bestTimeToGo ? (
-            <View style={cs.fullDetailRow}>
-              <Text style={cs.fullDetailLabel}>Best time</Text>
-              <Text style={cs.fullDetailValue}>{gem.bestTimeToGo}</Text>
-            </View>
-          ) : null}
-          {gem.priceRange ? (
-            <View style={cs.fullDetailRow}>
-              <Text style={cs.fullDetailLabel}>Price range</Text>
-              <Text style={cs.fullDetailValue}>{gem.priceRange}</Text>
-            </View>
-          ) : null}
-          {gem.neighborhood ? (
-            <View style={cs.fullDetailRow}>
-              <MapPin size={11} color={color.mute} />
-              <Text style={cs.fullDetailValue}>{gem.neighborhood}, {gem.city}</Text>
-            </View>
-          ) : null}
-        </View>
-      );
-    }
-    case 'trips': {
-      const trip = entity.payload as TripRow;
-      const description = (trip as any).description as string | null | undefined;
-      if (!description) return null;
-      return (
-        <View style={cs.fullDetail}>
+  // Build type-specific extended content (description, stats, etc.).
+  const typeContent = (() => {
+    switch (entity.type) {
+      case 'buddies': {
+        const buddy = entity.payload as BuddyProfile;
+        return (
+          <>
+            {buddy.bio ? (
+              <Text style={cs.fullDetailText} numberOfLines={5}>{buddy.bio}</Text>
+            ) : null}
+            {buddy.languages.length > 0 && (
+              <View style={cs.fullDetailRow}>
+                <Text style={cs.fullDetailLabel}>Languages</Text>
+                <Text style={cs.fullDetailValue}>{buddy.languages.join(', ')}</Text>
+              </View>
+            )}
+            {buddy.responseTimeH != null && (
+              <View style={cs.fullDetailRow}>
+                <Text style={cs.fullDetailLabel}>Response time</Text>
+                <Text style={cs.fullDetailValue}>~{buddy.responseTimeH}h</Text>
+              </View>
+            )}
+            {buddy.country ? (
+              <View style={cs.fullDetailRow}>
+                <MapPin size={11} color={color.mute} />
+                <Text style={cs.fullDetailValue}>{buddy.city}, {buddy.country}</Text>
+              </View>
+            ) : null}
+          </>
+        );
+      }
+      case 'events': {
+        const ev = entity.payload as EventListItem;
+        const description = (ev as any).description as string | null | undefined;
+        const address = (ev as any).address as string | null | undefined;
+        if (!description && !address) return null;
+        return (
+          <>
+            {description ? (
+              <Text style={cs.fullDetailText} numberOfLines={5}>{description}</Text>
+            ) : null}
+            {address ? (
+              <View style={cs.fullDetailRow}>
+                <MapPin size={11} color={color.mute} />
+                <Text style={cs.fullDetailValue}>{address}</Text>
+              </View>
+            ) : null}
+          </>
+        );
+      }
+      case 'gems': {
+        const gem = entity.payload as HiddenGem;
+        return (
+          <>
+            {gem.description ? (
+              <Text style={cs.fullDetailText} numberOfLines={5}>{gem.description}</Text>
+            ) : null}
+            {gem.bestTimeToGo ? (
+              <View style={cs.fullDetailRow}>
+                <Text style={cs.fullDetailLabel}>Best time</Text>
+                <Text style={cs.fullDetailValue}>{gem.bestTimeToGo}</Text>
+              </View>
+            ) : null}
+            {gem.priceRange ? (
+              <View style={cs.fullDetailRow}>
+                <Text style={cs.fullDetailLabel}>Price range</Text>
+                <Text style={cs.fullDetailValue}>{gem.priceRange}</Text>
+              </View>
+            ) : null}
+            {gem.neighborhood ? (
+              <View style={cs.fullDetailRow}>
+                <MapPin size={11} color={color.mute} />
+                <Text style={cs.fullDetailValue}>{gem.neighborhood}, {gem.city}</Text>
+              </View>
+            ) : null}
+          </>
+        );
+      }
+      case 'trips': {
+        const trip = entity.payload as TripRow;
+        const description = (trip as any).description as string | null | undefined;
+        if (!description) return null;
+        return (
           <Text style={cs.fullDetailText} numberOfLines={5}>{description}</Text>
-        </View>
-      );
+        );
+      }
+      default:
+        return null;
     }
-    default:
-      return null;
-  }
+  })();
+
+  const caps = entity.actionCapabilities ?? [];
+  const hasActions = caps.length > 0;
+
+  // Nothing to show — skip rendering entirely.
+  if (!typeContent && !hasActions) return null;
+
+  return (
+    <View style={cs.fullDetail}>
+      {typeContent}
+      {/* Primary action buttons — reuse MapEntityActionRow so handlers and
+          visibility rules (permissions, caps) are consistent with the card row. */}
+      <MapEntityActionRow entity={entity} />
+    </View>
+  );
 }
 
 // ── Single animated card wrapper ──────────────────────────────────────────────
