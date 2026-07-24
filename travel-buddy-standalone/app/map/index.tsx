@@ -519,30 +519,33 @@ function FullScreenMapScreenInner() {
     setCompassQuery(null);
   }
 
-  // ── Place entities — wrap DiscoveryPlace[] as MapEntity<DiscoveryPlace> ───────
-  // Merged into the entity list when neither passport mode nor a compass override
-  // is active, so the carousel and preview card cover venue pins too.
+  // ── Place entities ──────────────────────────────────────────────────────────
+  // Convert fetched DiscoveryPlace objects into MapEntity envelopes so they
+  // participate in the carousel / handleSelectEntity flow (same as buddies,
+  // events, gems, etc.).  EntityMapLayers filters 'places' out (not a
+  // ToggleableEntityType), so the DiscoveryMapView's own visiblePlaces loop
+  // remains the sole renderer for place pins — no double rendering.
   const placeEntities = useMemo(
-    () =>
-      places.map((p) => ({
-        id: `place:${p.id}`,
-        type: 'places' as const,
-        lat: p.lat ?? 0,
-        lng: p.lng ?? 0,
-        payload: p,
-      })),
+    (): MapEntity<DiscoveryPlace>[] =>
+      places
+        .filter((p) => p.lat != null && p.lng != null)
+        .map((p) => ({
+          id: `place:${p.id}`,
+          type: 'places' as const,
+          lat: p.lat as number,
+          lng: p.lng as number,
+          payload: p,
+        })),
     [places],
   );
 
   // The active entity list.  Priority order:
   //   1. Compass override (active search result)
   //   2. Passport entities when mode=passport
-  //   3. Default hook-sourced entities (merged with place entities)
-  const entities =
-    compassOverrideEntities ??
-    (mode === 'passport'
-      ? passportEntities
-      : [...defaultEntities, ...placeEntities]);
+  //   3. Default hook-sourced entities + place entities
+  const entities = compassOverrideEntities ?? (
+    mode === 'passport' ? passportEntities : [...defaultEntities, ...placeEntities]
+  );
 
   // ── Carousel state ──────────────────────────────────────────────────────────
   // activeIndex / setActiveIndex come from the map store (carouselIndex / setCarouselIndex).
@@ -647,14 +650,16 @@ function FullScreenMapScreenInner() {
     [entities, setActiveIndex, setSelectedEntityId, setCameraCenter, setCameraZoom],
   );
 
-  // Wire venue/place pin taps through the same carousel path as other entities.
-  // Defined after handleSelectEntity to avoid stale closures.
+  /**
+   * Called when the user taps a venue/place pin in DiscoveryMapView.
+   * Converts the DiscoveryPlace to its MapEntity ID and delegates to
+   * handleSelectEntity so the carousel scrolls to the matching card.
+   */
   const handleSelectPlace = useCallback(
     (place: DiscoveryPlace) => {
-      const entity = entities.find((e) => e.id === `place:${place.id}`);
-      if (entity) {
-        handleSelectEntity(entity);
-      }
+      const entityId = `place:${place.id}`;
+      const entity = entities.find((e) => e.id === entityId);
+      if (entity) handleSelectEntity(entity);
     },
     [entities, handleSelectEntity],
   );

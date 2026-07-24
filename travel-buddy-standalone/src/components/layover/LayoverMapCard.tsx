@@ -29,6 +29,7 @@ export function LayoverMapCard({ airport, stops }: Props) {
   const hasAirportCoords =
     airport.lat != null && airport.lng != null && !(airport.lat === 0 && airport.lng === 0);
 
+  // Place detail sheet — opened when the user taps a stop/airport pin.
   const [selectedPlace, setSelectedPlace] = useState<DiscoveryPlace | null>(null);
   const [placeSheetVisible, setPlaceSheetVisible] = useState(false);
 
@@ -81,6 +82,7 @@ export function LayoverMapCard({ airport, stops }: Props) {
       </View>
       <Text style={styles.note}>Airport and any plan stops with a location.</Text>
 
+      {/* Place detail sheet — shown when a stop/airport pin is tapped */}
       <PlaceDetailSheet
         place={selectedPlace}
         visible={placeSheetVisible}

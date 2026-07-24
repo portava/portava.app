@@ -63,11 +63,11 @@ import { useMapStore } from '../../stores/mapStore.tsx';
 import type { PreviewDetent } from '../../stores/mapStore.tsx';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
 import type { MapEntity, PassportCountryPayload } from '../../types/mapTypes.ts';
-import type { DiscoveryPlace } from '../../services/discovery.ts';
 import type { BuddyProfile } from '../../services/rentABuddy.ts';
 import type { EventListItem } from '../../services/events.ts';
 import type { HiddenGem } from '../../services/hiddenGems.ts';
 import type { TripRow } from '../../services/trips.ts';
+import type { DiscoveryPlace } from '../../services/discovery.ts';
 import { openDirectThread } from '../../services/messaging.ts';
 import type { CircleMemberLocation } from '../../services/map.ts';
 
@@ -453,8 +453,18 @@ function PlaceCardBody({ entity }: { entity: MapEntity<DiscoveryPlace> }) {
         ) : null}
         {place.rating != null && (
           <View style={cs.chip}>
-            <Star size={10} color="#F59E0B" />
+            <Star size={10} color="#F59E0B" fill="#F59E0B" />
             <Text style={cs.chipText}>{place.rating.toFixed(1)}</Text>
+          </View>
+        )}
+        {place.distanceKm != null && (
+          <View style={cs.chip}>
+            <MapPin size={10} color={color.mute} />
+            <Text style={cs.chipText}>
+              {place.distanceKm < 1
+                ? `${Math.round(place.distanceKm * 1000)}m`
+                : `${place.distanceKm}km`}
+            </Text>
           </View>
         )}
       </View>
@@ -745,9 +755,12 @@ function MapEntityCard({
         break;
       }
       case 'stamps':
+        // Navigate to the user's passport tab to see their country stamps.
         router.push('/(tabs)/passport' as any);
         break;
       case 'places':
+        // Navigate to the Discover tab — the closest existing destination for
+        // venue/place entities (no dedicated /place/[id] route exists yet).
         router.push('/(tabs)/discover' as any);
         break;
     }

@@ -28,11 +28,11 @@ import {
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
 import type { MapEntity, PassportCountryPayload } from '../../types/mapTypes.ts';
-import type { DiscoveryPlace } from '../../services/discovery.ts';
 import { MapEntityActionRow } from './MapEntityActionRow.tsx';
 import type { BuddyProfile } from '../../services/rentABuddy.ts';
 import type { EventListItem } from '../../services/events.ts';
 import type { HiddenGem } from '../../services/hiddenGems.ts';
+import type { DiscoveryPlace } from '../../services/discovery.ts';
 import { openDirectThread } from '../../services/messaging.ts';
 import type { TripRow } from '../../services/trips.ts';
 import type { CircleMemberLocation } from '../../services/map.ts';
