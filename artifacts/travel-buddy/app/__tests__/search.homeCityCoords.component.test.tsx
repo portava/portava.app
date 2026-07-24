@@ -222,7 +222,27 @@ const mockSearchUnified = searchUnified as jest.Mock;
 
 // ── Suite ──────────────────────────────────────────────────────────────────────
 
+// Capture the real console.error before any mock intercepts it.
+const _consoleError = console.error.bind(console);
+
 describe('SearchScreen — home-city coords with GPS denied', () => {
+  beforeAll(() => {
+    // The Supabase auth client starts a background auto-refresh timer that can
+    // fire after this test file finishes, logging via console.error. Jest then
+    // throws "Cannot log after tests are done". We intercept the specific
+    // "Auto refresh tick" message and drop it so Jest never sees it, while
+    // still forwarding all other console.error calls.
+    jest.spyOn(console, 'error').mockImplementation((...args) => {
+      const msg = typeof args[0] === 'string' ? args[0] : '';
+      if (msg.includes('Auto refresh tick')) return;
+      _consoleError(...args);
+    });
+  });
+
+  afterAll(() => {
+    jest.restoreAllMocks();
+  });
+
   beforeEach(() => {
     // Return a minimal successful response so runSearch completes.
     mockSearchUnified.mockResolvedValue({

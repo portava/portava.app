@@ -3,7 +3,7 @@
  *
  * Confirms that:
  * 1. MapEntityPreviewCard renders a "View Stamps" CTA for stamps entities.
- * 2. Tapping the CTA calls router.push('/(tabs)/passport') and onClose.
+ * 2. Tapping the CTA calls router.push('/passport/country/France') and onClose.
  * 3. The card shows the country name and stamp count.
  *
  * This tests MapEntityPreviewCard (used by the inline/discover-tab map) in
@@ -78,7 +78,7 @@ describe('MapEntityPreviewCard — stamps "View Stamps" CTA navigation', () => {
     expect(screen.getByText('View Stamps')).toBeTruthy();
   });
 
-  it('calls router.push("/(tabs)/passport") and onClose when "View Stamps" is tapped', async () => {
+  it('calls router.push("/passport/country/France") and onClose when "View Stamps" is tapped', async () => {
     const onClose = jest.fn();
 
     await render(
@@ -90,9 +90,9 @@ describe('MapEntityPreviewCard — stamps "View Stamps" CTA navigation', () => {
     // onClose must be called first (closes the preview card).
     expect(onClose).toHaveBeenCalledTimes(1);
 
-    // router.push must navigate to the user's passport tab.
+    // router.push must navigate to the country-filtered stamp screen.
     // Cast to jest.Mock — the mock factory sets router.push = jest.fn().
-    expect((router.push as jest.Mock)).toHaveBeenCalledWith('/(tabs)/passport');
+    expect((router.push as jest.Mock)).toHaveBeenCalledWith('/passport/country/France');
   });
 
   it('shows the country name and stamp count in the card', async () => {
