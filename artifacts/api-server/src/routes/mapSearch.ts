@@ -14,6 +14,7 @@
  * the shared bidirectional set and fail closed.
  */
 import { Router } from "express";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
@@ -65,7 +66,7 @@ async function loadNearbyEvents(
 }
 
 // ── GET /api/map/search ───────────────────────────────────────────────────────
-router.get("/map/search", async (req, res) => {
+router.get("/map/search", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -136,12 +137,12 @@ router.get("/map/search", async (req, res) => {
     nextCursor,
     generatedAt,
   });
-});
+}));
 
 // ── POST /api/map/compass-command ─────────────────────────────────────────────
 const ALLOWED_KINDS = new Set(["go_to", "search", "select", "filter", "clear"]);
 
-router.post("/map/compass-command", async (req, res) => {
+router.post("/map/compass-command", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
 
@@ -161,6 +162,6 @@ router.post("/map/compass-command", async (req, res) => {
 
   const { commands, explanation } = await buildCommandsFromIntent(intent, forwardGeocode);
   res.json({ enabled: true, commands, explanation });
-});
+}));
 
 export default router;
