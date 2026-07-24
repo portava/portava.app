@@ -92,7 +92,7 @@ export function CircleMapSection({ members, meetingPoint, meetingPointLabel }: P
         <Maximize2 size={12} color="#fff" />
         <Text style={s.fullMapBtnText}>Full map</Text>
       </Pressable>
-      <Map style={{ flex: 1 }} mapStyle={MAP_STYLE} logo={false} attribution={false}>
+      <Map style={{ flex: 1 }} mapStyle={MAP_STYLE} logo={false} attributionPosition={{ bottom: 4, right: 4 }}>
         <Camera initialViewState={{ center: centerPoint, zoom: 13 }} />
 
         {activeMembers.length > 0 && (

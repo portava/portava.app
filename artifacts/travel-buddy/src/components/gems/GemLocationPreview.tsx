@@ -36,7 +36,7 @@ export function GemLocationPreview({ lat, lng }: GemLocationPreviewProps) {
           style={StyleSheet.absoluteFill}
           mapStyle={MAP_STYLE}
           logo={false}
-          attribution={false}
+          attributionPosition={{ bottom: 4, right: 4 }}
           dragPan={false}
           doubleTapZoom={false}
           doubleTapHoldZoom={false}

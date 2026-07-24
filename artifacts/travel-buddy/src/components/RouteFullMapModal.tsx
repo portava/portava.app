@@ -100,7 +100,7 @@ export function RouteFullMapModal({
             style={{ flex: 1 }}
             mapStyle={mapStyle}
             logo={false}
-            attribution={false}
+            attributionPosition={{ bottom: 4, right: 4 }}
             onDidFailLoadingMap={() => { if (mapStyle !== FALLBACK_MAP_STYLE_URL) setMapStyle(FALLBACK_MAP_STYLE_URL); }}
           >
             <Camera

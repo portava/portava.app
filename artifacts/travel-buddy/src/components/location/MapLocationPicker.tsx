@@ -126,7 +126,7 @@ export function MapLocationPicker({
             style={StyleSheet.absoluteFill}
             mapStyle={MAP_STYLE}
             logo={false}
-            attribution={false}
+            attributionPosition={{ bottom: 4, right: 4 }}
             onRegionDidChange={handleRegionDidChange}
           >
             <Camera

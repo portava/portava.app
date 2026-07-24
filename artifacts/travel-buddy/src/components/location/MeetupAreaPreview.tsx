@@ -52,7 +52,7 @@ export function MeetupAreaPreview({ lat, lng }: MeetupAreaPreviewProps) {
             style={StyleSheet.absoluteFill}
             mapStyle={MAP_STYLE}
             logo={false}
-            attribution={false}
+            attributionPosition={{ bottom: 4, right: 4 }}
           >
             <Camera initialViewState={{ center: [lng, lat], zoom: ZOOM }} />
           </Map>

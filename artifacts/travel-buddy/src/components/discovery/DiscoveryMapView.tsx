@@ -335,7 +335,7 @@ export function DiscoveryMapView({
         style={StyleSheet.absoluteFill}
         mapStyle={mapStyle}
         logo={false}
-        attribution={false}
+        attributionPosition={{ bottom: 4, right: 4 }}
         onRegionDidChange={handleRegionChange}
         onDidFailLoadingMap={handleMapLoadError}
       >
