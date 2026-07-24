@@ -383,7 +383,7 @@ function StampCountryCardBody({
       </View>
       <Pressable
         style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => { onClose(); router.push('/(tabs)/passport' as any); }}
+        onPress={() => { onClose(); router.push(`/passport/country/${encodeURIComponent(country)}` as any); }}
       >
         <Text style={s.ctaText}>View Stamps</Text>
         <ArrowRight size={15} color="#fff" />
