@@ -219,9 +219,9 @@ export const CONTENT_MEDIA_POLICIES: Record<ContentPolicyKey, ContentMediaPolicy
   },
 
   /**
-   * Community/user place submission photo.
-   * Defined for policy completeness; the current server endpoint has no
-   * imageUrl column — this flow is SKIPPED and noted in the Task 6 report.
+   * Community/user place submission photo (up to 3 images).
+   * Wired into SubmitPlaceSheet; uploaded URLs are sent as the `photos` field
+   * on POST /api/discovery/community.
    */
   communityPlace: {
     maxItems: 3,
@@ -233,9 +233,9 @@ export const CONTENT_MEDIA_POLICIES: Record<ContentPolicyKey, ContentMediaPolicy
   },
 
   /**
-   * Safety report photo evidence.
-   * Defined for policy completeness; the current server endpoint has no
-   * imageUrl column — this flow is SKIPPED and noted in the Task 6 report.
+   * Safety report photo evidence (single image).
+   * Wired into ReportSheet when the user selects the safety_concern category;
+   * the uploaded URL is sent as `imageUrl` on POST /api/moderation/report.
    */
   safetyReport: {
     maxItems: 1,
