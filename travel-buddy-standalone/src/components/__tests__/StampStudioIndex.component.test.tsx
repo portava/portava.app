@@ -210,11 +210,11 @@ describe('StampStudioIndex — 60-second catalog poll updates status tiles', () 
   it('renders the initial approved count from the first fetch', async () => {
     await render(<StampStudioIndex />);
     // waitFor polls until async load() resolves and the tile re-renders.
-    // Timeout raised to 25 s: under a full 190-suite run the event loop is
+    // Timeout raised to 15 s: under a full 110-suite run the event loop is
     // busy enough to push this past the default 5 s ceiling intermittently.
-    await screen.findByText('42', {}, { timeout: 25_000 });
+    await screen.findByText('42', {}, { timeout: 15_000 });
     expect(screen.getByText('42')).toBeTruthy();
-  }, 30_000);
+  }, 20_000);
 
   it('replaces the approved count after the 60-second poll fires', async () => {
     await render(<StampStudioIndex />);
