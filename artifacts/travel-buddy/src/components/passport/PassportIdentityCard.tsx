@@ -8,7 +8,7 @@
  */
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, Image, Pressable, StyleSheet, ActivityIndicator,
+  View, Text, Pressable, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import Svg, { Circle, Path, Rect, Text as SvgText } from 'react-native-svg';
 import {
@@ -19,6 +19,7 @@ import {
 import type { OwnProfile, PublicProfile } from '../../types/models.ts';
 import { resolveAvatarUrl, fallbackInitials, truncateDisplayName } from '../../utils/identity.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity.ts';
+import { AvatarImage } from '../ui/DisplayMediaImage.tsx';
 import { isTravelBuddyVerified } from '../../lib/verification.ts';
 import { HighlightRing } from '../HighlightRing.tsx';
 import { getPassportStats } from '../../services/passportStamps.ts';
@@ -352,13 +353,12 @@ export function PassportIdentityCard({
                       onPress={onAvatarPress}
                       disabled={!onAvatarPress}
                     >
-                      {avatarUrl ? (
-                        <Image source={{ uri: avatarUrl }} style={s.avatarImg} />
-                      ) : (
-                        <View style={[s.avatarImg, s.avatarFallback]}>
-                          <Text style={s.initials}>{initials}</Text>
-                        </View>
-                      )}
+                      <AvatarImage
+                        uri={avatarUrl}
+                        user={profile}
+                        size={AVATAR_SIZE}
+                        style={s.avatarImg}
+                      />
                     </Pressable>
                   </HighlightRing>
                 </View>

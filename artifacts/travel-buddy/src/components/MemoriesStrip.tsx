@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, ScrollView, Pressable, Image, StyleSheet, ActivityIndicator,
+  View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import { BookImage, MapPin } from 'lucide-react-native';
 import { getMemoryFeed, type Memory } from '../services/memories.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
 
 interface MemoriesStripProps {
   limit?: number;
@@ -54,13 +55,15 @@ export function MemoriesStrip({ limit = 8 }: MemoriesStripProps) {
             style={styles.card}
             onPress={() => router.push(`/memory/${m.id}` as any)}
           >
-            {m.cover?.mediaUrl ? (
-              <Image source={{ uri: m.cover.mediaUrl }} style={styles.cover} />
-            ) : (
-              <View style={[styles.cover, styles.coverPlaceholder]}>
-                <BookImage size={22} color={color.onInk} />
-              </View>
-            )}
+            <DisplayMediaImage
+              uri={m.cover?.mediaUrl}
+              width={CARD_W}
+              height={80}
+              style={styles.cover}
+              fallbackIcon={<BookImage size={22} color={color.onInk} />}
+              fallbackBg={color.deep}
+              alt={m.title ?? 'Memory'}
+            />
             <View style={styles.cardBody}>
               <Text style={styles.cardTitle} numberOfLines={1}>
                 {m.title ?? 'Untitled Memory'}

@@ -1,11 +1,12 @@
 import React from 'react';
-import { View, Text, Image, Pressable, StyleSheet, Platform } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import { router } from 'expo-router';
 import { MapPin, PlayCircle } from 'lucide-react-native';
 import type { Post } from '../types/models.ts';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
 import { getMediaFilter, buildCssFilter } from '../lib/media/filters.ts';
 import { MediaStampOverlay } from './StampOverlayBadge.tsx';
+import { CachedImage, withStorageParams } from './CachedImage.tsx';
 
 /**
  * PostcardTile — postcard-styled tile (image-heavy, paper border, corner
@@ -17,6 +18,7 @@ type Variant = 'tall' | 'wide' | 'square';
 export function PostcardTile({ post, variant = 'square', rotate = 0 }: { post: Post; variant?: Variant; rotate?: number }) {
   const h = variant === 'tall' ? 290 : variant === 'wide' ? 200 : 250;
   const date = new Date(post.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const [imgFailed, setImgFailed] = React.useState(false);
 
   const isVideo = post.media[0]?.kind === 'video' || post.mediaType?.startsWith('video/');
   const hasFilterId = post.filterId && post.filterId !== 'original';
@@ -32,14 +34,15 @@ export function PostcardTile({ post, variant = 'square', rotate = 0 }: { post: P
     >
       {/* image side */}
       <View style={pt.media}>
-        {post.media[0] ? (
-          <Image
-            source={{ uri: post.media[0].url }}
+        {post.media[0] && !imgFailed ? (
+          <CachedImage
+            source={{ uri: withStorageParams(post.media[0].url, 'width=500') }}
             style={[
               StyleSheet.absoluteFill,
               shouldApplyCssFilter && Platform.OS === 'web' ? { filter: cssFilter } as any : undefined,
             ]}
             resizeMode="cover"
+            onError={() => setImgFailed(true)}
           />
         ) : (
           <View style={[StyleSheet.absoluteFill, pt.noImage]}>

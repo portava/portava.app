@@ -68,13 +68,30 @@ export function Chip({
   );
 }
 
-import { CachedImage, withStorageParams } from './CachedImage.tsx';
+import { withStorageParams } from './CachedImage.tsx';
+import { AvatarImage } from './ui/DisplayMediaImage.tsx';
+import type { IdentityInput } from '../utils/identity.ts';
 
-export function Avatar({ uri, size = 36 }: { uri: string; size?: number }) {
+/**
+ * Avatar — circular user photo that degrades to initials, never a blank circle.
+ * Pass `user` for initials-capable fallback; omit for a generic placeholder.
+ */
+export function Avatar({
+  uri,
+  size = 36,
+  user,
+}: {
+  uri?: string | null;
+  size?: number;
+  user?: IdentityInput | null;
+}) {
+  const resolvedUri = uri ? withStorageParams(uri, 'width=100&quality=80') : null;
   return (
-    <CachedImage
-      source={{ uri: withStorageParams(uri, 'width=100&quality=80') }}
-      style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color.haze }}
+    <AvatarImage
+      uri={resolvedUri ?? undefined}
+      user={user}
+      size={size}
+      bg={undefined}
     />
   );
 }

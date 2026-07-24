@@ -15,12 +15,13 @@
  */
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, ScrollView, Pressable, StyleSheet, Image,
+  View, Text, ScrollView, Pressable, StyleSheet,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Users, Sparkles, CheckCircle, MapPin } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity.ts';
+import { AvatarImage } from '../ui/DisplayMediaImage.tsx';
 import {
   fetchCompassSettings,
   fetchCompassTravelerMatches,
@@ -81,13 +82,12 @@ function TravelerCard({ item }: { item: CompassTravelerResult }) {
     >
       {/* Avatar */}
       <View style={s.avatarWrap}>
-        {d.avatarUrl ? (
-          <Image source={{ uri: d.avatarUrl }} style={s.avatar} />
-        ) : (
-          <View style={[s.avatar, s.avatarPlaceholder]}>
-            <Text style={s.avatarInitial}>{initials}</Text>
-          </View>
-        )}
+        <AvatarImage
+          uri={d.avatarUrl}
+          user={{ displayName: d.displayName, username: d.username }}
+          size={48}
+          style={s.avatar}
+        />
         {d.verified && (
           <View style={s.verifiedBadge}>
             <CheckCircle size={11} color={color.success} fill={color.paper} />

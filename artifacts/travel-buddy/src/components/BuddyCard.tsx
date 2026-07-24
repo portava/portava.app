@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { Star, CheckCircle, Globe, Zap, Clock, Bookmark, BookmarkCheck, MapPin } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
@@ -8,6 +8,7 @@ import type { BuddyProfile } from '../services/rentABuddy.ts';
 import { saveBuddy, unsaveBuddy } from '../services/rentABuddy.ts';
 import { CompassFeedbackMenu } from './compass/CompassFeedbackMenu.tsx';
 import { CompassWhySheet } from './compass/CompassWhySheet.tsx';
+import { CachedImage } from './CachedImage.tsx';
 
 /** "650 m away" / "2.3 km away" / "12 km away" */
 export function formatDistanceAway(km: number): string {
@@ -47,6 +48,7 @@ export function BuddyCard({
   const [whyOpen, setWhyOpen] = useState(false);
   const [saved, setSaved] = useState(savedInitial);
   const [savingInProgress, setSavingInProgress] = useState(false);
+  const [coverImgFailed, setCoverImgFailed] = useState(false);
 
   if (dismissed) return null;
 
@@ -85,8 +87,8 @@ export function BuddyCard({
     >
       {/* Image */}
       <View style={styles.imageWrap}>
-        {buddy.coverPhotoUrl ? (
-          <Image source={{ uri: buddy.coverPhotoUrl }} style={styles.image} resizeMode="cover" />
+        {buddy.coverPhotoUrl && !coverImgFailed ? (
+          <CachedImage source={{ uri: buddy.coverPhotoUrl }} style={styles.image} resizeMode="cover" onError={() => setCoverImgFailed(true)} />
         ) : (
           <View style={[styles.image, styles.imageFallback]}>
             <Text style={styles.imageFallbackText}>{buddy.displayName?.[0]?.toUpperCase() ?? '?'}</Text>
