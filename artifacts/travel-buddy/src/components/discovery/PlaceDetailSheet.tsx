@@ -247,7 +247,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
 
           {/* Attribution */}
           <Text style={styles.attribution}>
-            Place data © OpenStreetMap contributors (ODbL)
+            {place.attribution ?? 'Place data © OpenStreetMap contributors (ODbL)'}
           </Text>
         </ScrollView>
 

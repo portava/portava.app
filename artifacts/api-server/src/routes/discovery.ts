@@ -79,6 +79,9 @@ export interface DiscoveryPlace {
   isOpenNow: boolean | null;
   /** Number of times this place has been saved; populated for DB-backed places. */
   savedCount?: number;
+  /** Data-source attribution text. Set for FSQ-sourced places; absent for OSM
+   *  places so the client falls back to the OSM copyright footer. */
+  attribution?: string | null;
 }
 
 /** Public shape returned in all API responses. */
@@ -466,7 +469,7 @@ async function queryDbPlaces(
   try {
     const { data, error } = await sc
       .from("discovery_places")
-      .select("id, city, name, place_type, category, primary_category, secondary_categories, neighborhood, blurb, image_url, rating, saved_count, lat, lng, tag, verified, created_at")
+      .select("id, city, name, place_type, category, primary_category, secondary_categories, neighborhood, blurb, image_url, rating, saved_count, lat, lng, tag, verified, created_at, source")
       .or(`city.ilike.${cityBase},city.ilike.${cityBase}%`)
       .eq("status", "active")
       .order("saved_count", { ascending: false })
@@ -516,6 +519,9 @@ async function queryDbPlaces(
           rating: row.rating != null ? parseFloat(String(row.rating)) : null,
           isOpenNow: null,
           savedCount: (row.saved_count as number) ?? 0,
+          attribution: (row.source as string | null)?.startsWith("fsq")
+            ? "Place data © Foursquare (CC BY 4.0)"
+            : null,
         };
       });
   } catch {
