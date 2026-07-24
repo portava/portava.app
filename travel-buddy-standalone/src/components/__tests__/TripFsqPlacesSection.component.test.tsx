@@ -14,6 +14,7 @@ import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react-native';
 import { TripFsqPlacesSection } from '../trip/TripFsqPlacesSection.tsx';
 
+// NOTE: fsqPlaces exports only the one function used in this component; factory is intentionally exhaustive.
 jest.mock('../../services/fsqPlaces', () => ({
   getCityPlaces: jest.fn(),
 }));

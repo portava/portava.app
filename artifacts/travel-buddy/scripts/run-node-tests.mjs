@@ -87,6 +87,8 @@ const KNOWN_BROKEN = [
   'src/services/__tests__/onboardingSaveAlert.partialSave.test.ts',
   'src/services/__tests__/profilePartialSave.test.ts',
   'src/services/__tests__/profileSaveFlow.partialSave.test.ts',
+  // Jest-syntax (describe/it/expect) test — not converted to node:test yet
+  'src/lib/__tests__/stampRarity.test.ts',
   // expo-modules-core@3.0.30 requires native sweet/setUpJsLogger.fx — not in Node
   'src/lib/__tests__/cryptoIdentity.e1.test.ts',
   'src/lib/__tests__/e0Migration.test.ts',

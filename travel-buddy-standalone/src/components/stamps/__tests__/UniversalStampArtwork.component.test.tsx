@@ -39,6 +39,7 @@ jest.mock('expo-image', () => {
 
 // StampArtwork is the procedural fallback — use module path from test location
 // (test is in stamps/__tests__/, fallback is in src/components/StampArtwork.tsx)
+// NOTE: StampArtwork is a leaf component with no other exports; factory is intentionally exhaustive.
 jest.mock('../../StampArtwork.tsx', () => ({
   StampArtwork: () => {
     const React = require('react');
@@ -48,6 +49,7 @@ jest.mock('../../StampArtwork.tsx', () => ({
 }));
 
 // stampArtworkResolver — minimal stub for accessibilityLabel computation
+// NOTE: only resolveArtwork is used by UniversalStampArtwork; factory is intentionally exhaustive.
 jest.mock('../../../lib/stampArtworkResolver', () => ({
   resolveArtwork: () => ({
     rarity: 'common',

@@ -133,6 +133,7 @@ function makeFakeClient(state: FakeState = {}) {
       },
       lt(col: string, val: any) { filters.push((r) => r[col] < val); return b; },
       gt(col: string, val: any) { filters.push((r) => r[col] > val); return b; },
+      or() { return b; },
       order() { return b; },
       limit(n: number) { _limit = n; return b; },
       maybeSingle() { _maybe = true; _single = true; return resolve(); },
