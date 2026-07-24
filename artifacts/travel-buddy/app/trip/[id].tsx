@@ -29,6 +29,7 @@ import { TripReadinessCard } from '../../src/components/trip/TripReadinessCard';
 import { TripEntrySection } from '../../src/components/trip/TripEntrySection';
 import { TripCountryEssentialsSection } from '../../src/components/trip/TripCountryEssentialsSection';
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
+import { toFsqCityKey } from '../../src/utils/fsqCityKey';
 import { ConciergeCommandBar, type ConciergeCommandBarHandle } from '../../src/components/ConciergeCommandBar';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { TripInviteSheet } from '../../src/components/TripInviteSheet';
@@ -408,7 +409,7 @@ function TripDetailScreen() {
 
         {/* ── FSQ places — renders nothing until city is ingested server-side ── */}
         {live ? (
-          <TripFsqPlacesSection cityKey={undefined} />
+          <TripFsqPlacesSection cityKey={toFsqCityKey(trip.destinationCity, trip.destinationCountry) ?? undefined} />
         ) : null}
 
         <TodayNextUp nextUp={null} tripId={trip.id} action={nextBestAction} />
