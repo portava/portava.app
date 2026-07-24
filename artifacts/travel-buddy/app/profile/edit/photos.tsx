@@ -1,11 +1,14 @@
 /**
  * Photos & Appearance — avatar + cover with immediate save flow.
- * Copied verbatim from the legacy edit-profile monolith:
- * pickAvatar/pickCover (ImagePicker), the optimizing → uploading photoPhase,
- * renderAvatarImage/renderCoverImage compression, uploadAvatar/uploadCover,
- * updateMyProfile({avatarUrl/coverUrl}), and the deleteOrphanedAvatar/
- * deleteOrphanedCover cleanup on definitive server rejection (skipped on
- * network_unreachable).
+ *
+ * Picking is now delegated to useMediaComposer (profileAvatar / profileCover
+ * policies) so that the denied→Settings path, iOS limited-library prompt, and
+ * allowsEditing / aspect-ratio crop are handled by the shared kit.
+ *
+ * pickAvatar / pickCover are replaced by avatarComposer.openSheet() and
+ * coverComposer.openSheet(). Two useEffects sync the picked item's URI into
+ * local state so the existing handleSave flow (renderAvatarImage → upload →
+ * updateMyProfile) is unchanged.
  *
  * NOTE: UpdateProfileInput.avatarUrl / coverUrl are typed `string` (not nullable),
  * so a "Remove" action is not supported by the service and is omitted.
@@ -13,7 +16,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Image, ActivityIndicator, Pressable, Alert, StyleSheet } from 'react-native';
 import { Camera, ImagePlus } from 'lucide-react-native';
-import * as ImagePicker from 'expo-image-picker';
 import { renderAvatarImage, renderCoverImage, MAX_ORIGINAL_BYTES } from '../../../src/lib/imageRender';
 import {
   getMyProfile, updateMyProfile, uploadAvatar, uploadCover,
@@ -27,6 +29,8 @@ import {
   SettingsScreen, SettingsSection, SaveButton, useUnsavedGuard, useSavedThenBack,
   FieldHint, type SaveState,
 } from '../../../src/components/settings/SettingsUI';
+import { useMediaComposer } from '../../../src/hooks/useMediaComposer.ts';
+import { MediaSourceSheet } from '../../../src/components/ui/MediaSourceSheet.tsx';
 
 type PhotoPhase = 'idle' | 'optimizing' | 'uploading';
 
@@ -46,6 +50,39 @@ export default function PhotosScreen() {
   const saveLockRef = useRef(false);
   const savedThenBack = useSavedThenBack(setSaveState);
 
+  // ── Shared-kit composer instances ──────────────────────────────────────────
+  // profileAvatar policy: allowsEditing=true, aspect=[1,1], images only
+  // profileCover  policy: allowsEditing=true, aspect=[16,9], images only
+  const avatarComposer = useMediaComposer('profileAvatar');
+  const coverComposer  = useMediaComposer('profileCover');
+
+  // Sync picked avatar URI into local state for the save flow
+  useEffect(() => {
+    const item = avatarComposer.primaryItem;
+    if (!item) return;
+    if (item.fileSize != null && item.fileSize > MAX_ORIGINAL_BYTES) {
+      Alert.alert('Image too large', 'This image is very large. Choose a file under 25 MB or use a smaller photo.');
+      avatarComposer.clearAll();
+      return;
+    }
+    setAvatarUri(item.uri);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [avatarComposer.primaryItem?.id]);
+
+  // Sync picked cover URI into local state for the save flow
+  useEffect(() => {
+    const item = coverComposer.primaryItem;
+    if (!item) return;
+    if (item.fileSize != null && item.fileSize > MAX_ORIGINAL_BYTES) {
+      Alert.alert('Image too large', 'This image is very large. Choose a file under 25 MB or use a smaller photo.');
+      coverComposer.clearAll();
+      return;
+    }
+    coverOriginalWidthRef.current = item.width ?? 1920;
+    setCoverUri(item.uri);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [coverComposer.primaryItem?.id]);
+
   const isDirty = avatarUri !== null || coverUri !== null;
   useUnsavedGuard(isDirty);
 
@@ -63,49 +100,6 @@ export default function PhotosScreen() {
     return () => {
       alive = false;
     };
-  }, []);
-
-  const pickAvatar = useCallback(async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Allow photo access to update your profile photo.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-    });
-    if (!result.canceled && result.assets[0]) {
-      const asset = result.assets[0];
-      if (asset.fileSize != null && asset.fileSize > MAX_ORIGINAL_BYTES) {
-        Alert.alert('Image too large', 'This image is very large. Choose a file under 25 MB or use a smaller photo.');
-        return;
-      }
-      setAvatarUri(asset.uri);
-    }
-  }, []);
-
-  const pickCover = useCallback(async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Allow photo access to update your cover photo.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [16, 9],
-    });
-    if (!result.canceled && result.assets[0]) {
-      const asset = result.assets[0];
-      if (asset.fileSize != null && asset.fileSize > MAX_ORIGINAL_BYTES) {
-        Alert.alert('Image too large', 'This image is very large. Choose a file under 25 MB or use a smaller photo.');
-        return;
-      }
-      coverOriginalWidthRef.current = asset.width ?? 1920;
-      setCoverUri(asset.uri);
-    }
   }, []);
 
   const handleSave = useCallback(async () => {
@@ -162,8 +156,6 @@ export default function PhotosScreen() {
         const kind = res.errorKind as string;
         setSaveError(outcome.message);
         setSaveState('error');
-        // Clean up newly-uploaded files only when the server definitively rejected
-        // the PATCH. Skip on network_unreachable because the PATCH may have succeeded.
         const canCleanup = kind !== 'network_unreachable';
         if (canCleanup) {
           if (uploadedAvatarPath) deleteOrphanedAvatar(uploadedAvatarPath).catch(() => {});
@@ -173,11 +165,13 @@ export default function PhotosScreen() {
         return;
       }
 
-      // Success — reflect committed URLs, clear pending picks, reset dirty baseline.
       if (patch.avatarUrl) setAvatarUrl(patch.avatarUrl);
       if (patch.coverUrl) setCoverUrl(patch.coverUrl);
       setAvatarUri(null);
       setCoverUri(null);
+      // Reset composer state after successful save
+      avatarComposer.clearAll();
+      coverComposer.clearAll();
       savedThenBack();
     } finally {
       setPhotoPhase('idle');
@@ -186,7 +180,7 @@ export default function PhotosScreen() {
   }, [avatarUri, coverUri, isDirty]);
 
   const avatarSource = avatarUri ?? avatarUrl ?? null;
-  const coverSource = coverUri ?? coverUrl ?? null;
+  const coverSource  = coverUri  ?? coverUrl  ?? null;
   const busy = saveState === 'saving';
 
   if (loading) {
@@ -207,7 +201,7 @@ export default function PhotosScreen() {
       {saveError ? <FieldHint tone="error">{saveError}</FieldHint> : null}
 
       <SettingsSection title="Cover Photo">
-        <Pressable style={st.coverWrap} onPress={pickCover} disabled={busy}>
+        <Pressable style={st.coverWrap} onPress={coverComposer.openSheet} disabled={busy}>
           {coverSource ? (
             <Image source={{ uri: coverSource }} style={st.coverImage} />
           ) : (
@@ -222,7 +216,7 @@ export default function PhotosScreen() {
 
       <SettingsSection title="Profile Photo">
         <View style={st.avatarSection}>
-          <Pressable style={st.avatarWrap} onPress={pickAvatar} disabled={busy}>
+          <Pressable style={st.avatarWrap} onPress={avatarComposer.openSheet} disabled={busy}>
             {avatarSource ? (
               <Image source={{ uri: avatarSource }} style={st.avatar} />
             ) : (
@@ -244,6 +238,31 @@ export default function PhotosScreen() {
           </Text>
         </View>
       ) : null}
+
+      {/* Pickers — rendered unconditionally as Modals so openSheet() always
+          finds a mounted sheet. The profileAvatar/Cover policies supply
+          allowsEditing=true and the correct aspect ratio automatically via
+          MediaSourceSheet ← MediaPickerButton ← useMediaComposer.
+          Here we render MediaSourceSheet directly (no MediaPickerButton)
+          because the trigger is the whole avatar / cover tap area. */}
+      <MediaSourceSheet
+        visible={avatarComposer.sheetVisible}
+        onClose={avatarComposer.closeSheet}
+        onResult={avatarComposer.onPickResult}
+        allowsVideo={false}
+        allowsEditing={avatarComposer.policy.allowsEditing}
+        aspect={avatarComposer.policy.editAspect}
+        title="Profile photo"
+      />
+      <MediaSourceSheet
+        visible={coverComposer.sheetVisible}
+        onClose={coverComposer.closeSheet}
+        onResult={coverComposer.onPickResult}
+        allowsVideo={false}
+        allowsEditing={coverComposer.policy.allowsEditing}
+        aspect={coverComposer.policy.editAspect}
+        title="Cover photo"
+      />
     </SettingsScreen>
   );
 }

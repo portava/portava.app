@@ -13,11 +13,11 @@
  */
 import { Router } from "express";
 import { z } from "zod";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { resolveExternalPlace, toCanonicalPlace, type ExternalPlaceRecord } from "../lib/places/placeResolve.js";
-import { asyncHandler } from "../lib/asyncHandler.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

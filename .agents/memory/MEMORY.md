@@ -48,3 +48,5 @@
 - [Shared dev/prod job queue](shared-dev-prod-job-queue.md) — one Supabase DB: jobs enqueued from dev run on the PROD worker; stamp images need a proxy-supported model (dall-e-3 rejected).
 - [E2EE implementation conventions](e2ee-conventions.md) — op-sqlite v17 rows API; __mocks__ excluded from tsconfig; `typeof import('native-pkg')` → `any` for lazy-required native modules; ApiErrorCode extensible in http.ts.
 - [Map store Phase 1 foundations](map-store-phase1.md) — MapStoreProvider (Context+useReducer) in stores/mapStore.tsx; actionCapabilities+detailRoute stamped by useMapEntities; stamps card in MapEntityPreviewCard.
+- [Shared media composer kit](shared-media-composer-kit.md) — useMediaComposer+MediaPickerButton+MediaAttachmentTray replace all copy-pasted picker flows; new composers must use the kit.
+- [expo-image-picker deprecated APIs](expo-image-picker-deprecated-apis.md) — MediaTypeOptions.Images/Videos removed in v15+; use `['images']`/`['videos']` string arrays instead.

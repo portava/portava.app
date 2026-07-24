@@ -10,9 +10,18 @@
  * All failures (flag off, 404, network error, parse error) resolve to null —
  * this function never throws.
  */
-import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 import type { CanonicalPlace } from '../types/canonicalPlace.ts';
+
+// Inline the supabase-configured check so this module does NOT import supabase.ts.
+// supabase.ts → secureStore.ts → expo-secure-store pulls in React Native, which
+// breaks the esbuild-based standalone test runner.
+function isSupabaseConfigured(): boolean {
+  return Boolean(
+    process.env.EXPO_PUBLIC_SUPABASE_URL &&
+    process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+  );
+}
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -33,7 +42,7 @@ async function freshToken(): Promise<string | null> {
  *          parse failure, unauthenticated, or API not configured.
  */
 export async function getCanonicalPlace(id: string): Promise<CanonicalPlace | null> {
-  if (!isSupabaseConfigured || !apiBase()) return null;
+  if (!isSupabaseConfigured() || !apiBase()) return null;
 
   const token = await freshToken();
   if (!token) return null;

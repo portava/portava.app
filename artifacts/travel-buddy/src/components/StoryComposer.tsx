@@ -14,8 +14,9 @@ import {
   View, Text, Pressable, Modal, StyleSheet, TextInput,
   Image, Alert, ActivityIndicator, ScrollView,
 } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
-import { X, Camera, ChevronDown, Lock, Users, Globe, Heart, UserCheck } from 'lucide-react-native';
+import { X, ChevronDown, Lock, Users, Globe, Heart, UserCheck } from 'lucide-react-native';
+import { useMediaComposer } from '../hooks/useMediaComposer.ts';
+import { MediaPickerButton } from './ui/MediaPickerButton.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
@@ -50,36 +51,15 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [visibilityOpen, setVisibilityOpen] = useState(false);
 
-  async function pickMedia() {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) { Alert.alert('Permission required', 'Allow photo library access to pick media.'); return; }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.All,
-      quality: 0.9,
-      allowsEditing: true,
-      aspect: [9, 16],
-    });
-    if (!result.canceled && result.assets[0]) {
-      const asset = result.assets[0];
-      setMediaUri(asset.uri);
-      setMediaType(asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
-    }
-  }
+  const mediaComposer = useMediaComposer('story');
 
-  async function pickCamera() {
-    const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) { Alert.alert('Permission required', 'Allow camera access to take a photo.'); return; }
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.All,
-      quality: 0.9,
-      allowsEditing: true,
-      aspect: [9, 16],
-    });
-    if (!result.canceled && result.assets[0]) {
-      const asset = result.assets[0];
-      setMediaUri(asset.uri);
-      setMediaType(asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
-    }
+  function handleMediaResult(asset: import('expo-image-picker').ImagePickerAsset) {
+    setMediaUri(asset.uri);
+    setMediaType(
+      asset.type === 'video' || (asset.mimeType ?? '').startsWith('video/')
+        ? 'video/mp4'
+        : 'image/jpeg',
+    );
   }
 
   async function handlePost() {
@@ -191,16 +171,12 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
               </Pressable>
             </View>
           ) : (
-            <View style={s.mediaPicker}>
-              <Pressable style={s.mediaBtn} onPress={pickMedia}>
-                <Camera size={28} color={color.mute} />
-                <Text style={s.mediaBtnText}>Photo Library</Text>
-              </Pressable>
-              <Pressable style={s.mediaBtn} onPress={pickCamera}>
-                <Camera size={28} color={color.deep} />
-                <Text style={[s.mediaBtnText, { color: color.deep }]}>Camera</Text>
-              </Pressable>
-            </View>
+            <MediaPickerButton
+              composer={{ ...mediaComposer, onPickResult: handleMediaResult }}
+              variant="area"
+              label="Add photo or video"
+              sheetTitle="New Story"
+            />
           )}
 
           {/* Caption */}

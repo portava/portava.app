@@ -4,6 +4,11 @@
  * Pick photos/videos from the library or camera, add a title + caption,
  * choose visibility, then publish. Media uploads to Supabase Storage
  * (memories bucket) before the memory row is created.
+ *
+ * Media state is owned entirely by useMediaComposer('memory') so that
+ * canAddMore / canAddMore re-enables correctly after removes. A parallel
+ * `captions` map (keyed by item.id) holds the per-item caption text
+ * without duplicating the asset list.
  */
 import React, { useState, useCallback, useRef } from 'react';
 import {
@@ -13,8 +18,7 @@ import {
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as ImagePicker from 'expo-image-picker';
-import { X, Camera, ImageIcon, Globe, Users, Lock, Eye, Trash2, MapPin, ChevronDown } from 'lucide-react-native';
+import { X, Globe, Users, Lock, Eye, Trash2, MapPin, ChevronDown } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { createMemory, addMemoryItem, type MemoryVisibility } from '../../src/services/memories';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
@@ -22,6 +26,8 @@ import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
 import { placeToLocationFields } from '../../src/lib/location/locationPayload';
 import type { Place } from '../../src/lib/location/placeTypes';
+import { useMediaComposer } from '../../src/hooks/useMediaComposer';
+import { MediaPickerButton } from '../../src/components/ui/MediaPickerButton';
 
 // ── Visibility options ────────────────────────────────────────────────────────
 
@@ -37,21 +43,33 @@ const VISIBILITY_OPTIONS: {
   { value: 'only_me',      label: 'Only me',     desc: 'Private draft',   icon: <Lock   size={15} color={color.mute} /> },
 ];
 
-// ── Local asset type ──────────────────────────────────────────────────────────
-
-interface LocalAsset {
-  uri: string;
-  mediaType: string;
-  caption: string;
-}
-
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 export default function CreateMemoryScreen() {
   const insets = useSafeAreaInsets();
   const navBarScrollHandler = useNavBarScrollHandler();
 
-  const [assets, setAssets] = useState<LocalAsset[]>([]);
+  // ── Media state (single source of truth) ───────────────────────────────────
+  // mediaComposer.items owns the asset list. A separate `captions` map holds
+  // per-item caption text keyed by item.id so renders stay cheap and removes
+  // automatically invalidate their caption entry.
+  const mediaComposer = useMediaComposer('memory');
+  const [captions, setCaptions] = useState<Record<string, string>>({});
+
+  const removeAsset = useCallback((id: string) => {
+    mediaComposer.removeItem(id);
+    setCaptions((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }, [mediaComposer.removeItem]);
+
+  const updateCaption = useCallback((id: string, text: string) => {
+    setCaptions((prev) => ({ ...prev, [id]: text }));
+  }, []);
+
+  // ── Other form state ────────────────────────────────────────────────────────
   const [title, setTitle] = useState('');
   const [caption, setCaption] = useState('');
   const [visibility, setVisibility] = useState<MemoryVisibility>('friends_only');
@@ -69,79 +87,6 @@ export default function CreateMemoryScreen() {
   // is immediate and visible within the same JS turn.
   const publishLock = useRef(false);
 
-  // ── Media picker ────────────────────────────────────────────────────────────
-
-  const pickFromLibrary = useCallback(async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Allow access to your photo library to attach media.');
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images', 'videos'],
-      allowsMultipleSelection: true,
-      quality: 0.85,
-      selectionLimit: 10,
-    });
-
-    if (result.canceled) return;
-
-    const newAssets: LocalAsset[] = result.assets.map((a) => ({
-      uri: a.uri,
-      mediaType: a.mimeType ?? (a.type === 'video' ? 'video/mp4' : 'image/jpeg'),
-      caption: '',
-    }));
-
-    setAssets((prev) => {
-      const combined = [...prev, ...newAssets];
-      return combined.slice(0, 10);
-    });
-  }, []);
-
-  const pickFromCamera = useCallback(async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Allow camera access to take a photo.');
-      return;
-    }
-
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['images', 'videos'],
-      quality: 0.85,
-    });
-
-    if (result.canceled) return;
-
-    const a = result.assets[0];
-    if (!a) return;
-
-    setAssets((prev) => {
-      if (prev.length >= 10) return prev;
-      return [...prev, {
-        uri: a.uri,
-        mediaType: a.mimeType ?? (a.type === 'video' ? 'video/mp4' : 'image/jpeg'),
-        caption: '',
-      }];
-    });
-  }, []);
-
-  const showPickerOptions = useCallback(() => {
-    Alert.alert('Add media', undefined, [
-      { text: 'Choose from library', onPress: pickFromLibrary },
-      { text: 'Take a photo / video', onPress: pickFromCamera },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
-  }, [pickFromLibrary, pickFromCamera]);
-
-  const removeAsset = useCallback((index: number) => {
-    setAssets((prev) => prev.filter((_, i) => i !== index));
-  }, []);
-
-  const updateAssetCaption = useCallback((index: number, text: string) => {
-    setAssets((prev) => prev.map((a, i) => i === index ? { ...a, caption: text } : a));
-  }, []);
-
   // ── Submit ──────────────────────────────────────────────────────────────────
 
   const handlePublish = useCallback(async () => {
@@ -154,6 +99,9 @@ export default function CreateMemoryScreen() {
 
     setError('');
     setUploading(true);
+
+    const items = mediaComposer.items;
+    const caps = captions;
 
     try {
       const createResult = await createMemory({
@@ -171,10 +119,16 @@ export default function CreateMemoryScreen() {
 
       const memoryId = createResult.memory.id;
 
-      if (assets.length > 0) {
+      if (items.length > 0) {
         const results = await Promise.allSettled(
-          assets.map((asset, i) =>
-            addMemoryItem(memoryId, asset.uri, asset.mediaType, asset.caption.trim() || null, i),
+          items.map((item, i) =>
+            addMemoryItem(
+              memoryId,
+              item.uri,
+              item.mimeType,
+              (caps[item.id] ?? '').trim() || null,
+              i,
+            ),
           ),
         );
 
@@ -191,11 +145,12 @@ export default function CreateMemoryScreen() {
       setUploading(false);
       publishLock.current = false;
     }
-  }, [assets, title, caption, visibility, place]);
+  }, [mediaComposer.items, captions, title, caption, visibility, place]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
   const canPublish = !uploading;
+  const items = mediaComposer.items;
 
   return (
     <KeyboardSafeScrollView style={{ backgroundColor: color.paper }}>
@@ -229,21 +184,27 @@ export default function CreateMemoryScreen() {
           <Text style={s.sectionLabel}>Photos & Videos</Text>
           <Text style={s.sectionSub}>Up to 10 items</Text>
 
-          {/* Asset grid */}
-          {assets.length > 0 && (
+          {/* Asset grid — driven by mediaComposer.items (single source of truth).
+              Captions are stored separately in `captions[item.id]`. */}
+          {items.length > 0 && (
             <View style={s.assetGrid}>
-              {assets.map((asset, i) => (
-                <View key={`${asset.uri}-${i}`} style={s.assetCard}>
-                  <Image source={{ uri: asset.uri }} style={s.assetThumb} resizeMode="cover" />
-                  <Pressable style={s.assetRemove} onPress={() => removeAsset(i)} hitSlop={4}>
+              {items.map((item) => (
+                <View key={item.id} style={s.assetCard}>
+                  <Image source={{ uri: item.uri }} style={s.assetThumb} resizeMode="cover" />
+                  <Pressable
+                    style={s.assetRemove}
+                    onPress={() => removeAsset(item.id)}
+                    hitSlop={4}
+                    accessibilityLabel="Remove photo"
+                  >
                     <Trash2 size={14} color="#fff" />
                   </Pressable>
                   <TextInput
                     style={s.assetCaption}
                     placeholder="Caption…"
                     placeholderTextColor={color.faint}
-                    value={asset.caption}
-                    onChangeText={(text) => updateAssetCaption(i, text)}
+                    value={captions[item.id] ?? ''}
+                    onChangeText={(text) => updateCaption(item.id, text)}
                     maxLength={200}
                   />
                 </View>
@@ -251,18 +212,13 @@ export default function CreateMemoryScreen() {
             </View>
           )}
 
-          {/* Add media button */}
-          {assets.length < 10 && (
-            <Pressable style={s.addMediaBtn} onPress={showPickerOptions}>
-              <View style={s.addMediaIconRow}>
-                <ImageIcon size={20} color={color.signal} />
-                <Camera size={20} color={color.signal} />
-              </View>
-              <Text style={s.addMediaText}>
-                {assets.length === 0 ? 'Add photos or videos' : 'Add more'}
-              </Text>
-            </Pressable>
-          )}
+          {/* Add media — canAddMore is derived from mediaComposer.items.length
+              so it re-enables as soon as an item is removed, with no lag. */}
+          <MediaPickerButton
+            composer={mediaComposer}
+            variant="area"
+            label={items.length === 0 ? 'Add photos or videos' : 'Add more'}
+          />
         </View>
 
         {/* Title */}
@@ -418,19 +374,6 @@ const s = StyleSheet.create({
     borderTopWidth: 1,
     borderColor: color.haze,
   },
-
-  addMediaBtn: {
-    borderWidth: 1.5,
-    borderStyle: 'dashed',
-    borderColor: color.haze,
-    borderRadius: radius.lg,
-    paddingVertical: space.xl,
-    alignItems: 'center',
-    gap: space.sm,
-    backgroundColor: color.paperRaised,
-  },
-  addMediaIconRow: { flexDirection: 'row', gap: space.md },
-  addMediaText: { ...(t.body as object), color: color.signal, fontWeight: '600' },
 
   input: {
     borderWidth: 1,

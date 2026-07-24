@@ -10,9 +10,11 @@ import {
   View, Text, TextInput, Pressable, Modal, ScrollView, StyleSheet,
   Image, ActivityIndicator,
 } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
+import type * as ImagePickerTypes from 'expo-image-picker';
 import { Video, ResizeMode } from 'expo-av';
-import { X, Camera, Video as VideoIcon, MapPin } from 'lucide-react-native';
+import { X, Video as VideoIcon, MapPin } from 'lucide-react-native';
+import { useMediaComposer } from '../hooks/useMediaComposer.ts';
+import { MediaPickerButton } from './ui/MediaPickerButton.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
 import { uploadMedia, validateMedia } from '../services/media.ts';
@@ -69,17 +71,18 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
   const submitLockRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [filterEditorOpen, setFilterEditorOpen] = useState(false);
-  const [filterEditorAsset, setFilterEditorAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [filterEditorAsset, setFilterEditorAsset] = useState<ImagePickerTypes.ImagePickerAsset | null>(null);
+  const mediaComposer = useMediaComposer('highlight');
   const [filterId, setFilterId] = useState<string>('original');
   const [filterIntensity, setFilterIntensity] = useState<number>(100);
 
+  // Reset non-media form fields when the composer opens so the form is fresh
+  // each time. Media state (mediaUri and related) is intentionally NOT reset
+  // here — that would lose picked media when the user closes and reopens the
+  // sheet without submitting (the "reopen-loses-media" bug).
+  // Media is reset explicitly after a successful submit or via the × remove button.
   useEffect(() => {
     if (visible) {
-      setMediaUri(null);
-      setMimeType('image/jpeg');
-      setIsVideo(false);
-      setVideoDuration(null);
-      setFileSize(null);
       setCaption('');
       setVis('public');
       setExpiresInHours(24);
@@ -93,41 +96,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
     }
   }, [visible]);
 
-  async function pickFromLibrary() {
-    setError(null);
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      setError('Photo library permission required to add media.');
-      return;
-    }
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images', 'videos'],
-      quality: 0.85,
-      videoMaxDuration: VIDEO_MAX_DURATION_SECONDS.highlight,
-      allowsEditing: true,
-    });
-    if (res.canceled || !res.assets?.[0]) return;
-    handlePickedAsset(res.assets[0]);
-  }
-
-  async function pickFromCamera() {
-    setError(null);
-    const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) {
-      setError('Camera access denied. Enable it in Settings to capture media for Highlights.');
-      return;
-    }
-    const res = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['images', 'videos'],
-      quality: 0.85,
-      videoMaxDuration: VIDEO_MAX_DURATION_SECONDS.highlight,
-      allowsEditing: true,
-    });
-    if (res.canceled || !res.assets?.[0]) return;
-    handlePickedAsset(res.assets[0]);
-  }
-
-  function handlePickedAsset(a: ImagePicker.ImagePickerAsset) {
+  function handlePickedAsset(a: ImagePickerTypes.ImagePickerAsset) {
     const mime = a.mimeType ?? (a.type === 'video' ? 'video/mp4' : 'image/jpeg');
     const asVideo = mime.startsWith('video/') || a.type === 'video';
     const durationSec = a.duration ? a.duration / 1000 : null;
@@ -236,6 +205,13 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
         return;
       }
 
+      // Reset media so the next open session starts fresh
+      // (the visible=true effect intentionally no longer resets media state).
+      setMediaUri(null);
+      setMimeType('image/jpeg');
+      setIsVideo(false);
+      setVideoDuration(null);
+      setFileSize(null);
       onSuccess?.();
       onClose();
     } finally {
@@ -298,16 +274,10 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
                   )}
                 </View>
               ) : (
-                <View style={s.mediaBtns}>
-                  <Pressable style={s.mediaBtn} onPress={pickFromCamera}>
-                    <Camera size={18} color={color.signal} />
-                    <Text style={s.mediaBtnText}>Camera</Text>
-                  </Pressable>
-                  <Pressable style={s.mediaBtn} onPress={pickFromLibrary}>
-                    <VideoIcon size={18} color={color.deep} />
-                    <Text style={s.mediaBtnText}>Library</Text>
-                  </Pressable>
-                </View>
+                <MediaPickerButton
+                  composer={{ ...mediaComposer, onPickResult: handlePickedAsset }}
+                  sheetTitle="Add Highlight Media"
+                />
               )}
               <Text style={s.mediaHint}>Photos or videos up to {VIDEO_MAX_DURATION_SECONDS.highlight}s</Text>
             </View>

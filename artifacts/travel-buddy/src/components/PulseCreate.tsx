@@ -28,6 +28,8 @@ import { useSession } from '../context/SessionContext.tsx';
 import type { Place } from '../lib/location/placeTypes.ts';
 import { HighlightComposer } from './HighlightComposer.tsx';
 import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor.tsx';
+import { MediaSourceSheet } from './ui/MediaSourceSheet.tsx';
+import { useMediaComposer } from '../hooks/useMediaComposer.ts';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { createComposerDismissHandlers, createSubmitLock, createOnceGuard, handleSubmitResult, handleUploadResult, handleFilterApplyResult, TYPE_CATEGORY, CATEGORY_OPTIONS, resolveDefaultCategory, handleCategoryChipPress, resolveCreateCategory, validateCategoryGate } from './PulseCreate.machine';
 import { createFilterDismissHandlers } from './PulseFilterSheet.machine';
@@ -239,26 +241,28 @@ export function UnifiedPostComposer({
   // every navigation mounts a fresh instance whose useState initializers
   // already provide clean state.
 
-  async function pickMedia() {
+  // Sheet state is managed by useMediaComposer; PulseCreate uses the
+  // hook only for sheetVisible/openSheet/closeSheet — it keeps its own
+  // single-item `media` state and filter-editor flow.
+  const pulseComposer = useMediaComposer('pulse');
+
+  function openPickerSheet() {
     setError(null);
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) { setError('Photo library permission required.'); return; }
+    pulseComposer.openSheet();
+  }
+
+  function handlePickResult(asset: ImagePicker.ImagePickerAsset) {
     const allowVideo = selectedType === 'share_postcard';
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: allowVideo ? ['images', 'videos'] : ['images'],
-      quality: 0.85,
-      videoMaxDuration: allowVideo ? 10 : undefined,
-    });
-    if (res.canceled || !res.assets?.[0]) return;
-    const a = res.assets[0];
-    const durationSec = a.duration != null ? a.duration / 1000 : null;
+    const mime = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
+    const durationSec = asset.duration != null ? asset.duration / 1000 : null;
     const picked: PickedMedia = {
-      uri: a.uri, mimeType: a.mimeType ?? 'image/jpeg',
-      fileName: a.fileName, fileSize: a.fileSize ?? null,
-      width: a.width, height: a.height, type: a.type,
+      uri: asset.uri, mimeType: mime,
+      fileName: asset.fileName, fileSize: asset.fileSize ?? null,
+      width: asset.width, height: asset.height,
+      type: asset.type as 'image' | 'video',
       duration: durationSec,
     };
-    const v = validateMedia(picked, selectedType === 'share_postcard' ? { maxVideoDurationSeconds: 10 } : undefined);
+    const v = validateMedia(picked, allowVideo ? { maxVideoDurationSeconds: 10 } : undefined);
     if (!v.ok) { setError(v.message); return; }
     if (selectedType === 'share_postcard' || selectedType === 'share_moment') setAddToPassport(true);
     setFilterEditorPending(picked);
@@ -555,7 +559,7 @@ export function UnifiedPostComposer({
                 {/* photo picker */}
                 <View style={uc.field}>
                   <Text style={uc.fieldLabel}>{photoLabel(selectedType)}</Text>
-                  <Pressable style={uc.mediaPicker} onPress={pickMedia} disabled={submitting}>
+                  <Pressable style={uc.mediaPicker} onPress={openPickerSheet} disabled={submitting}>
                     {media ? (
                       <View style={uc.mediaPreviewWrap}>
                         <Image source={{ uri: media.uri }} style={uc.mediaPreview} resizeMode="cover" />
@@ -769,6 +773,20 @@ export function UnifiedPostComposer({
           }}
         />
       )}
+
+      {/* Media source sheet — opened by openPickerSheet(); handles camera/library
+          picking plus the denied→Settings path and iOS limited-library prompt.
+          Sheet visibility is managed by pulseComposer (useMediaComposer); the
+          result is routed through PulseCreate's own handlePickResult so the
+          filter-editor step and single-item PickedMedia state are preserved. */}
+      <MediaSourceSheet
+        visible={pulseComposer.sheetVisible}
+        onClose={pulseComposer.closeSheet}
+        onResult={(asset) => { pulseComposer.closeSheet(); handlePickResult(asset); }}
+        allowsVideo={selectedType === 'share_postcard'}
+        videoMaxDuration={10}
+        title="Add media"
+      />
     </View>
   );
 }
