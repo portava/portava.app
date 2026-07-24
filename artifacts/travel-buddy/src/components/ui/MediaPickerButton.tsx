@@ -99,6 +99,7 @@ export function MediaPickerButton({
         title={sheetTitle ?? (allowsVideo ? 'Add photo or video' : 'Add photo')}
         allowsEditing={policy.allowsEditing}
         aspect={policy.editAspect}
+        storyVideoTrim={policy.requireStoryVideoCrop}
       />
     </>
   );

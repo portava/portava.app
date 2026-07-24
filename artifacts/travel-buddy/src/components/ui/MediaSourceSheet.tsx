@@ -32,6 +32,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { Camera, ImageIcon, X } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { VideoStoryTrimSheet } from './VideoStoryTrimSheet.tsx';
 
 export interface MediaSourceSheetProps {
   visible: boolean;
@@ -44,6 +45,13 @@ export interface MediaSourceSheetProps {
   allowsEditing?: boolean;
   /** Aspect ratio [width, height] for the crop editor; only used when allowsEditing=true. */
   aspect?: [number, number];
+  /**
+   * When true, video picks are intercepted by a post-pick 9:16 crop-preview
+   * sheet before being forwarded to onResult. Has no effect on image picks
+   * or on web (file-input path). Replaces in-picker crop for video — keep
+   * this in sync with the `effectiveAllowsEditing` guard below.
+   */
+  storyVideoTrim?: boolean;
 }
 
 export function MediaSourceSheet({
@@ -55,10 +63,13 @@ export function MediaSourceSheet({
   title = 'Add media',
   allowsEditing = false,
   aspect,
+  storyVideoTrim = false,
 }: MediaSourceSheetProps) {
   const [busy, setBusy] = useState<'camera' | 'library' | null>(null);
   const [cameraDenied, setCameraDenied] = useState(false);
   const [libraryDenied, setLibraryDenied] = useState(false);
+  // Holds a video asset awaiting the post-pick 9:16 confirm step.
+  const [pendingVideoAsset, setPendingVideoAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
 
   // Platform limitation: expo-image-picker's allowsEditing / aspect is silently
   // ignored for video assets on iOS (the OS controls video trimming separately).
@@ -123,8 +134,7 @@ export function MediaSourceSheet({
       });
       setBusy(null);
       if (result.canceled || !result.assets?.[0]) return;
-      onResult(result.assets[0]);
-      onClose();
+      deliverAsset(result.assets[0]);
     } catch {
       setBusy(null);
     }
@@ -174,11 +184,41 @@ export function MediaSourceSheet({
       });
       setBusy(null);
       if (result.canceled || !result.assets?.[0]) return;
-      onResult(result.assets[0]);
-      onClose();
+      deliverAsset(result.assets[0]);
     } catch {
       setBusy(null);
     }
+  }
+
+  // ── Asset delivery (with optional post-pick video crop step) ─────────────
+  /**
+   * Route a picked asset to onResult.
+   * If storyVideoTrim is enabled and the asset is a video, hold it in state
+   * so VideoStoryTrimSheet can show the 9:16 preview before confirming.
+   * Image assets and web picks always go straight through.
+   */
+  function deliverAsset(asset: ImagePicker.ImagePickerAsset) {
+    const isVideo = asset.type === 'video' || (asset.mimeType ?? '').startsWith('video/');
+    if (storyVideoTrim && isVideo && Platform.OS !== 'web') {
+      // Keep the source sheet visible (so its scrim remains) and
+      // show the trim preview on top — VideoStoryTrimSheet is a separate Modal.
+      setPendingVideoAsset(asset);
+      return;
+    }
+    onResult(asset);
+    onClose();
+  }
+
+  function handleTrimConfirm(asset: ImagePicker.ImagePickerAsset) {
+    setPendingVideoAsset(null);
+    onResult(asset);
+    onClose();
+  }
+
+  function handleTrimReject() {
+    // User wants to re-pick — dismiss the trim sheet but keep the source
+    // sheet open so they can choose again immediately.
+    setPendingVideoAsset(null);
   }
 
   function handleClose() {
@@ -191,6 +231,7 @@ export function MediaSourceSheet({
   const mediaLabel = allowsVideo ? 'photo or video' : 'photo';
 
   return (
+    <>
     <Modal
       visible={visible}
       transparent
@@ -298,6 +339,15 @@ export function MediaSourceSheet({
         </Pressable>
       </View>
     </Modal>
+
+    {/* Post-pick 9:16 crop-preview for story videos */}
+    <VideoStoryTrimSheet
+      visible={pendingVideoAsset !== null}
+      asset={pendingVideoAsset}
+      onConfirm={handleTrimConfirm}
+      onReject={handleTrimReject}
+    />
+    </>
   );
 }
 
