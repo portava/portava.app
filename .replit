@@ -195,6 +195,7 @@ timeoutMs = 300000
 STAMP_WORKER_ENABLED = "true"
 EXPO_PUBLIC_SUPABASE_ANON_KEY = "sb_publishable_xp3JiB50mBYHn1S_XjzOAg_rIoEqZKS"
 EXPO_PUBLIC_SUPABASE_URL = "https://ajrurzioarfkagpuxfnb.supabase.co"
+STAMP_IMAGE_MODEL = "gpt-image-1"
 
 [userenv.development]
 
