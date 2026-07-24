@@ -265,13 +265,24 @@ export default function ApplyToBeBuddy() {
           .map(([block]) => ({ day, block })),
       );
 
-      // Upload any picked photos before submitting
-      if (photoComposer.items.some((i) => i.uploadState === 'idle')) {
-        await photoComposer.uploadAll();
-      }
+      // Snapshot items before uploadAll() — uploadAll() only processes idle
+      // items, so done/error items must be captured from this snapshot to avoid
+      // stale React state after the async call.
+      const photoItemsBefore = photoComposer.items;
+      const alreadyDoneUrls = photoItemsBefore
+        .filter((i) => i.uploadState === 'done' && i.uploadedUrl)
+        .map((i) => i.uploadedUrl as string);
 
-      // Warn if any photos failed to upload — don't silently drop them
-      const failedPhotoCount = photoComposer.items.filter((i) => i.uploadState === 'error').length;
+      // Upload idle items and get authoritative results from the return value.
+      const uploadResultMap = photoItemsBefore.some((i) => i.uploadState === 'idle')
+        ? await photoComposer.uploadAll()
+        : new Map<string, import('../../../src/services/media').MediaUploadResult | null>();
+
+      // Count failures: pre-existing errors (not retried) + new failures from result map.
+      const preExistingErrorCount = photoItemsBefore.filter((i) => i.uploadState === 'error').length;
+      const newFailCount = [...uploadResultMap.values()].filter((r) => r === null || !r.ok).length;
+      const failedPhotoCount = preExistingErrorCount + newFailCount;
+
       if (failedPhotoCount > 0) {
         const proceed = await new Promise<boolean>((resolve) => {
           Alert.alert(
@@ -286,9 +297,11 @@ export default function ApplyToBeBuddy() {
         if (!proceed) return;
       }
 
-      const photoUrls = photoComposer.items
-        .filter((i) => i.uploadState === 'done' && i.uploadedUrl)
-        .map((i) => i.uploadedUrl as string);
+      // Combine already-done URLs with newly uploaded ones from the result map.
+      const newlyUploadedUrls = [...uploadResultMap.values()]
+        .filter((r): r is NonNullable<typeof r> => r !== null && r.ok && r.url !== null)
+        .map((r) => r.url as string);
+      const photoUrls = [...alreadyDoneUrls, ...newlyUploadedUrls];
 
       const result = await rentABuddy.submitApplication({
         city,

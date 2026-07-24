@@ -924,6 +924,87 @@ describe("avgRating lifecycle — create then refetch", () => {
   });
 });
 
+// ── photos round-trip ─────────────────────────────────────────────────────────
+// POST /api/reviews with photos → response includes photos
+// PATCH /api/reviews/:id with new photos → response reflects update
+
+describe("photos round-trip", () => {
+  let server: { url: string; close: () => Promise<void>; client: any };
+
+  afterEach(async () => { await server?.close(); });
+
+  it("POST /api/reviews persists photos and returns them in the response", async () => {
+    server = await startServer(completedTripTables());
+    const { status, body } = await fetchPost(server.url, "/api/reviews", "reviewer-token", {
+      entityType: "trip",
+      entityId:   TRIP_ID,
+      rating:     4,
+      photos:     [
+        "https://cdn.example.com/review/photo1.jpg",
+        "https://cdn.example.com/review/photo2.jpg",
+      ],
+    });
+    assert.equal(status, 201);
+    assert.ok(body.id);
+    assert.deepEqual(body.photos, [
+      "https://cdn.example.com/review/photo1.jpg",
+      "https://cdn.example.com/review/photo2.jpg",
+    ]);
+  });
+
+  it("POST /api/reviews with no photos returns an empty photos array", async () => {
+    server = await startServer(completedTripTables());
+    const { status, body } = await fetchPost(server.url, "/api/reviews", "reviewer-token", {
+      entityType: "trip",
+      entityId:   TRIP_ID,
+      rating:     3,
+    });
+    assert.equal(status, 201);
+    assert.deepEqual(body.photos, [], "omitted photos should default to []");
+  });
+
+  it("POST /api/reviews rejects more than 3 photos with 400", async () => {
+    server = await startServer(completedTripTables());
+    const { status, body } = await fetchPost(server.url, "/api/reviews", "reviewer-token", {
+      entityType: "trip",
+      entityId:   TRIP_ID,
+      rating:     3,
+      photos:     [
+        "https://cdn.example.com/1.jpg",
+        "https://cdn.example.com/2.jpg",
+        "https://cdn.example.com/3.jpg",
+        "https://cdn.example.com/4.jpg",
+      ],
+    });
+    assert.equal(status, 400);
+    assert.equal(body.error, "invalid_payload");
+  });
+
+  it("PATCH /api/reviews/:id updates photos and returns them in the response", async () => {
+    const tables = completedTripTables([{
+      id:          REVIEW_ID,
+      reviewer_id: REVIEWER_ID,
+      entity_type: "trip",
+      entity_id:   TRIP_ID,
+      rating:      3,
+      body:        null,
+      tags:        [],
+      photos:      [],
+      visibility:  "public",
+      state:       "published",
+    }]);
+    server = await startServer(tables);
+    const { status, body } = await fetchPatch(
+      server.url,
+      `/api/reviews/${REVIEW_ID}`,
+      "reviewer-token",
+      { photos: ["https://cdn.example.com/updated.jpg"] },
+    );
+    assert.equal(status, 200);
+    assert.deepEqual(body.photos, ["https://cdn.example.com/updated.jpg"]);
+  });
+});
+
 // ── POST /api/reviews/:id/report ──────────────────────────────────────────────
 
 describe("POST /api/reviews/:id/report", () => {

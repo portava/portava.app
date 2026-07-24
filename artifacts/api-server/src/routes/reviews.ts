@@ -169,6 +169,7 @@ const CreateReviewSchema = z.object({
   body:        z.string().max(2000).optional(),
   tags:        z.array(z.string().max(64)).max(10).optional().default([]),
   anonymous:   z.boolean().optional().default(false),
+  photos:      z.array(z.string().url()).max(3).optional().default([]),
 });
 
 router.post("/reviews", asyncHandler(async (req, res) => {
@@ -181,7 +182,7 @@ router.post("/reviews", asyncHandler(async (req, res) => {
     return;
   }
 
-  const { entityType, entityId, rating, body, tags, anonymous } = parsed.data;
+  const { entityType, entityId, rating, body, tags, anonymous, photos } = parsed.data;
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
@@ -200,11 +201,12 @@ router.post("/reviews", asyncHandler(async (req, res) => {
       rating,
       body:         body ?? null,
       tags:         tags ?? [],
+      photos:       photos ?? [],
       visibility:   anonymous ? "anonymous" : "public",
       state:        "published",
       updated_at:   new Date().toISOString(),
     })
-    .select("id, rating, body, tags, visibility, state, created_at")
+    .select("id, rating, body, tags, photos, visibility, state, created_at")
     .single();
 
   if (error) {
@@ -233,6 +235,7 @@ router.post("/reviews", asyncHandler(async (req, res) => {
     rating:     (review as any).rating,
     body:       (review as any).body ?? null,
     tags:       (review as any).tags,
+    photos:     (review as any).photos ?? [],
     anonymous,
     createdAt:  (review as any).created_at,
   });
@@ -531,6 +534,7 @@ const UpdateReviewSchema = z.object({
   body:      z.string().max(2000).optional().nullable(),
   tags:      z.array(z.string().max(64)).max(10).optional(),
   anonymous: z.boolean().optional(),
+  photos:    z.array(z.string().url()).max(3).optional(),
 });
 
 router.patch("/reviews/:id", asyncHandler(async (req, res) => {
@@ -566,19 +570,20 @@ router.patch("/reviews/:id", asyncHandler(async (req, res) => {
     return;
   }
 
-  const { rating, body, tags, anonymous } = parsed.data;
+  const { rating, body, tags, anonymous, photos } = parsed.data;
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (rating    !== undefined) patch.rating     = rating;
   if (body      !== undefined) patch.body        = body ?? null;
   if (tags      !== undefined) patch.tags        = tags;
   if (anonymous !== undefined) patch.visibility  = anonymous ? "anonymous" : "public";
+  if (photos    !== undefined) patch.photos      = photos;
 
   const { data: updated, error } = await sc
     .from("reviews")
     .update(patch)
     .eq("id", id)
-    .select("id, rating, body, tags, visibility, updated_at")
+    .select("id, rating, body, tags, photos, visibility, updated_at")
     .single();
 
   if (error) { req.log.error({ err: error }, "patch review"); sendError(res, "db_error", error.message); return; }
@@ -588,6 +593,7 @@ router.patch("/reviews/:id", asyncHandler(async (req, res) => {
     rating:    (updated as any).rating,
     body:      (updated as any).body ?? null,
     tags:      (updated as any).tags ?? [],
+    photos:    (updated as any).photos ?? [],
     anonymous: (updated as any).visibility === "anonymous",
     updatedAt: (updated as any).updated_at,
   });

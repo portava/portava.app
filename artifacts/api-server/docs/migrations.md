@@ -22,6 +22,7 @@ Record every migration here once applied and verified against
 | `20260724_compass_memories.sql` | 2026-07-20 (Phase 6 layered Compass memory — `compass_memories` table for structured insights scoped session/trip/long_term/circle, plus `compass_conversations.compressed_message_count` for bounded compression cadence) | table + both indexes and the new column confirmed via `information_schema` (Management API status 201) |
 | `20260727_compass_live.sql` | 2026-07-21 (Phase 12 Compass Live — `compass_live_sessions` per-user live-session records: rolling JSONB context, checks/nudges counters, end-of-session summary; one active session per user via partial unique index) | table + all 11 columns confirmed via `information_schema.columns`; `live_sessions_own` policy confirmed via `pg_policy` (Management API status 201) |
 | `0156` RLS addendum (`ALTER TABLE call_moderation_actions ENABLE ROW LEVEL SECURITY`) | 2026-07-19 (Phase 7 readiness audit — original 0156 omitted RLS on the audit table) | `pg_class.relrowsecurity = true` confirmed live; no policies on purpose (service-role-only table) |
+| `20260724_reviews_photos_column.sql` | 2026-07-24 (task 2408 — adds `reviews.photos TEXT[] NOT NULL DEFAULT '{}'` so POST/PATCH /api/reviews can persist up to 3 photo URLs per review) | `column_name=photos`, `data_type=ARRAY`, `column_default='{}'::text[]` confirmed via `information_schema.columns` (Management API status 201) |
 
 ## Wizard-write-path drift audit — 2026-07-20 (task 1925)
 
