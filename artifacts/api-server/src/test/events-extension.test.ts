@@ -1267,8 +1267,15 @@ describe("Event posts", () => {
 describe("Event media", () => {
   let port: number;
   let close: () => Promise<void>;
+  // appStorageUrlInfo requires SUPABASE_URL to validate the origin; provide a
+  // stable test origin and use URLs that pass the storage-URL guard.
+  const TEST_SB = "https://test.supabase.example";
+  const VALID_MEDIA_URL = `${TEST_SB}/storage/v1/object/public/post-media/events/photo.jpg`;
+  let _origSbUrl: string | undefined;
 
   beforeEach(async () => {
+    _origSbUrl = process.env.SUPABASE_URL;
+    process.env.SUPABASE_URL = TEST_SB;
     const client = makeFakeClient({
       events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open" }) ] },
       event_roles: { rows: [ { event_id: ID.ev1, user_id: ID.host1, role: "host" } ] },
@@ -1280,7 +1287,10 @@ describe("Event media", () => {
     _setTestClient(client, true);
     ({ port, close } = await startServer());
   });
-  afterEach(async () => { await close(); });
+  afterEach(async () => {
+    await close();
+    process.env.SUPABASE_URL = _origSbUrl;
+  });
 
   it("going attendee can upload media", async () => {
     // appStorageUrlInfo requires the URL to be on the configured SUPABASE_URL origin
@@ -1299,7 +1309,7 @@ describe("Event media", () => {
 
   it("non-attendee gets 403 uploading media", async () => {
     const { status } = await req(port, "POST", `/api/events/${ID.ev1}/media`, {
-      mediaUrl: "https://example.com/photo.jpg",
+      mediaUrl: VALID_MEDIA_URL,
     }, ID.user2);
     assert.equal(status, 403);
   });

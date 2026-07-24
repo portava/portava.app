@@ -1,4 +1,4 @@
--- Migration: 0190_globe_trotter_criteria.sql
+-- Migration: 0191_globe_trotter_criteria.sql
 -- Sets the criteria JSONB on the globe_trotter_5 and globe_trotter_10
 -- stamp_definitions rows so the criteria engine can evaluate and award them.
 --

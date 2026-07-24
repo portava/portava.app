@@ -61,8 +61,19 @@ export function resolveRoute(result: UnifiedSearchResult): string | null {
   if (placeMatch) return `/gems/${placeMatch[1]}`;
 
   // Cities and countries share /destination/:slug
+  // For city results the subtitle carries the country name (or "Region, Country"
+  // for typeahead suggestions). Extract the last comma-segment so both formats
+  // ("Philippines" and "California, United States") resolve to a clean country
+  // name that toFsqCityKey can look up.
   const cityMatch = destinationRoute.match(/^\/city\/(.+)$/);
-  if (cityMatch) return `/destination/${cityMatch[1]}`;
+  if (cityMatch) {
+    const rawSub = result.subtitle?.trim() ?? '';
+    const country = rawSub.includes(',')
+      ? rawSub.split(',').pop()!.trim()
+      : rawSub;
+    const countrySuffix = country ? `?country=${encodeURIComponent(country)}` : '';
+    return `/destination/${cityMatch[1]}${countrySuffix}`;
+  }
 
   const countryMatch = destinationRoute.match(/^\/country\/(.+)$/);
   if (countryMatch) return `/destination/${countryMatch[1]}`;

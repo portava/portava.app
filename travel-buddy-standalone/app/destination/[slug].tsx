@@ -24,6 +24,8 @@ import { getPulseData, type PulsePost } from '../../src/services/pulse';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 import { CityConfidenceBadge } from '../../src/components/compass/CityConfidenceBadge';
+import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
+import { toFsqCityKey } from '../../src/utils/fsqCityKey';
 
 type SectionState<T> = { status: 'loading' | 'ready' | 'error'; items: T[] };
 
@@ -36,10 +38,11 @@ function fmtEventDate(iso: string | null): string {
 
 export default function Destination() {
   const plainInset = usePlainBottomInset();
-  const { slug } = useLocalSearchParams<{ slug: string }>();
+  const { slug, country } = useLocalSearchParams<{ slug: string; country?: string }>();
   const cityName = slug
     ? slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
     : 'Destination';
+  const fsqCityKey = toFsqCityKey(cityName, country ?? null);
 
   const [gems, setGems] = useState<SectionState<HiddenGem>>({ status: 'loading', items: [] });
   const [events, setEvents] = useState<SectionState<EventListItem>>({ status: 'loading', items: [] });
@@ -216,6 +219,9 @@ export default function Destination() {
             </View>
           </View>
         ) : null}
+
+        {/* ── Foursquare places ── */}
+        <TripFsqPlacesSection cityKey={fsqCityKey} />
 
         {/* ── Honest all-empty state ── */}
         {allEmpty ? (
