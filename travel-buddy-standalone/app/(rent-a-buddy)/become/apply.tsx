@@ -131,6 +131,41 @@ export default function ApplyToBeBuddy() {
         photoComposer.preSeedFromUrls(buddyProfileRes.data.profile.galleryUrls);
       }
 
+      // Pre-fill text fields from existing buddy profile or application so a
+      // re-applicant doesn't have to retype everything from scratch.
+      {
+        const profile = buddyProfileRes.ok ? buddyProfileRes.data?.profile : null;
+        const application = appRes.ok ? appRes.data?.application : null;
+
+        const prefillDisplayName = profile?.displayName || application?.displayName || '';
+        if (prefillDisplayName) setDisplayName(prefillDisplayName);
+
+        const prefillBio = profile?.bio || application?.bio || '';
+        if (prefillBio) setBio(prefillBio);
+
+        const prefillCity = profile?.city || application?.city || '';
+        if (prefillCity) setCity(prefillCity);
+
+        const prefillCountry = profile?.country || application?.country || '';
+        if (prefillCountry) setCountry(prefillCountry);
+
+        const prefillCategories =
+          (profile?.categories?.length ? profile.categories : application?.categories) ?? [];
+        if (prefillCategories.length) setCategories(prefillCategories as BuddyCategory[]);
+
+        const prefillRate = profile?.hourlyRateUsd ?? application?.hourlyRateUsd ?? null;
+        if (prefillRate !== null) setHourlyRate(String(prefillRate));
+
+        const prefillMotivation = application?.motivation || '';
+        if (prefillMotivation) setMotivation(prefillMotivation);
+
+        const prefillLangs =
+          (profile?.languages?.length ? profile.languages : application?.languages) ?? [];
+        if (prefillLangs.length) {
+          setLanguages(prefillLangs.map((lang) => ({ lang, fluency: 'Proficient' })));
+        }
+      }
+
       // Profile checklist: if the user has a profile, show its completion state
       if (profileRes.ok && profileRes.data) {
         setProfileChecklistItems(profileRes.data.checklist);
