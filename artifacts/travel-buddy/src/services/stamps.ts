@@ -110,6 +110,7 @@ function mapStamp(r: any): PassportStampNew {
     createdAt:         r.created_at ?? r.createdAt ?? new Date().toISOString(),
     catalogId:         r.catalog_id ?? r.catalogId ?? null,
     activeArtworkUrl:  r.active_artwork_url ?? r.activeArtworkUrl ?? null,
+    thumbnailUrl:      r.thumbnail_url ?? r.thumbnailUrl ?? null,
   };
 }
 

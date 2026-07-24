@@ -11,14 +11,7 @@ import { UniversalStampArtwork } from './UniversalStampArtwork.tsx';
 import type { PassportStamp } from '../../types/models.ts';
 import type { PassportStampNew } from '../../services/passportStamps.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
-
-const RARITY_COLORS: Record<string, string> = {
-  common:    '#6B7280',
-  uncommon:  '#16A34A',
-  rare:      '#2563EB',
-  epic:      '#7C3AED',
-  legendary: '#D97706',
-};
+import { RARITY_COLORS, normalizeRarity, hasGlowRing } from '../../lib/stampRarity.ts';
 
 const VISIBILITY_LABEL: Record<string, string> = {
   private:      'Private',
@@ -40,17 +33,22 @@ interface Props {
 
 export function StampCard({ stamp, isOwner, onPress }: Props) {
   const legacy = toLegacy(stamp);
-  const rarity = stamp.definition?.rarity;
-  const rarityColor = rarity ? (RARITY_COLORS[rarity] ?? RARITY_COLORS.common) : RARITY_COLORS.common;
+  const rarity = normalizeRarity(stamp.definition?.rarity);
+  const rarityColor = RARITY_COLORS[rarity].ring;
+  const showGlow = hasGlowRing(rarity);
   const isNonPublic = stamp.visibility !== 'public' && !stamp.isRevoked;
   const isHidden = isOwner && !stamp.displayOnPassport && !stamp.isRevoked;
   const visLabel = VISIBILITY_LABEL[stamp.visibility];
 
   const inner = (
     <View style={[styles.card, isHidden && styles.cardHidden]}>
-      <View style={styles.artworkWrap}>
+      <View style={[
+        styles.artworkWrap,
+        showGlow && { borderWidth: 1.5, borderRadius: 12, borderColor: RARITY_COLORS[rarity].ring },
+      ]}>
         <UniversalStampArtwork
           activeArtworkUrl={stamp.activeArtworkUrl}
+          thumbnailUrl={stamp.thumbnailUrl}
           stamp={legacy}
           size={64}
           showPendingLabel={false}

@@ -27,6 +27,8 @@ import { TripBudgetSection } from '../../src/components/trip/TripBudgetSection';
 import { DailyBriefCard } from '../../src/components/DailyBriefCard';
 import { TripReadinessCard } from '../../src/components/trip/TripReadinessCard';
 import { TripEntrySection } from '../../src/components/trip/TripEntrySection';
+import { TripCountryEssentialsSection } from '../../src/components/trip/TripCountryEssentialsSection';
+import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
 import { ConciergeCommandBar, type ConciergeCommandBarHandle } from '../../src/components/ConciergeCommandBar';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { TripInviteSheet } from '../../src/components/TripInviteSheet';
@@ -397,6 +399,16 @@ function TripDetailScreen() {
         {/* ── Entry & visas — renders nothing when flag is off (null response) ── */}
         {live && trip.id ? (
           <TripEntrySection tripId={trip.id} />
+        ) : null}
+
+        {/* ── Country essentials ("Good to know") — fail-soft null when flag off ── */}
+        {live && trip.id ? (
+          <TripCountryEssentialsSection tripId={trip.id} />
+        ) : null}
+
+        {/* ── FSQ places — renders nothing until city is ingested server-side ── */}
+        {live ? (
+          <TripFsqPlacesSection cityKey={undefined} />
         ) : null}
 
         <TodayNextUp nextUp={null} tripId={trip.id} action={nextBestAction} />

@@ -1,0 +1,988 @@
+diff -ruN a/artifacts/api-server/src/lib/stamps/criteria/evaluator.ts b/artifacts/api-server/src/lib/stamps/criteria/evaluator.ts
+--- a/artifacts/api-server/src/lib/stamps/criteria/evaluator.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/lib/stamps/criteria/evaluator.ts	2026-07-24 02:48:55.347231482 +0000
+@@ -0,0 +1,163 @@
++/**
++ * Criteria evaluator — Stamp Wave 3.
++ *
++ * evaluateCriteria(sc, userId, rule, ctx) → { met, reason, checks }
++ *
++ * - Resolves only referenced metrics, each at most once (memoized).
++ * - Fails CLOSED: unknown metric, unknown/missing operator, bad version, or
++ *   malformed shape → met=false with a reason. Never throws, never awards on a
++ *   shape it doesn't understand.
++ * - Pure boolean logic over resolved numbers; no side effects.
++ */
++
++import {
++  CRITERIA_SCHEMA_VERSION,
++  COMPARISON_OPS,
++  referencedMetrics,
++  isAllGroup,
++  isAnyGroup,
++  isNotGroup,
++  isLeaf,
++  type Condition,
++  type CriteriaRule,
++} from "./schema.js";
++import { resolveMetric, isKnownMetric, type EvalContext } from "./metrics.js";
++
++export interface CriteriaCheck {
++  metric: string;
++  op: string;
++  target: number | boolean;
++  actual: number;
++  passed: boolean;
++}
++
++export interface CriteriaResult {
++  met: boolean;
++  reason: string;
++  /** Per-leaf detail, useful for admin debugging and "why not yet" surfaces. */
++  checks: CriteriaCheck[];
++  /** True when the rule shape itself was invalid (vs simply not satisfied). */
++  malformed?: boolean;
++}
++
++function compare(actual: number, op: string, target: number): boolean {
++  switch (op) {
++    case "gte": return actual >= target;
++    case "lte": return actual <= target;
++    case "gt":  return actual > target;
++    case "lt":  return actual < target;
++    case "eq":  return actual === target;
++    default:    return false;
++  }
++}
++
++/** Extract the single comparison operator present on a leaf, or null. */
++function leafOp(leaf: any): { op: string; target: number } | { op: "is"; target: boolean } | null {
++  if (typeof leaf.is === "boolean") return { op: "is", target: leaf.is };
++  const present = COMPARISON_OPS.filter((o) => typeof leaf[o] === "number");
++  if (present.length !== 1) return null; // exactly one operator required
++  return { op: present[0], target: leaf[present[0]] as number };
++}
++
++export async function evaluateCriteria(
++  sc: any,
++  userId: string,
++  rule: unknown,
++  ctx: EvalContext = {},
++): Promise<CriteriaResult> {
++  const checks: CriteriaCheck[] = [];
++
++  // ── Validate top-level shape ──
++  if (!rule || typeof rule !== "object") {
++    return { met: false, reason: "criteria_malformed", checks, malformed: true };
++  }
++  const r = rule as CriteriaRule;
++  if (r.version !== CRITERIA_SCHEMA_VERSION) {
++    return { met: false, reason: `criteria_version_unsupported:${(r as any).version}`, checks, malformed: true };
++  }
++
++  // Reject references to unknown metrics up front (fail-closed, explicit).
++  const metrics = referencedMetrics(rule);
++  if (metrics.length === 0) {
++    return { met: false, reason: "criteria_empty", checks, malformed: true };
++  }
++  const unknown = metrics.filter((m) => !isKnownMetric(m));
++  if (unknown.length > 0) {
++    return { met: false, reason: `criteria_unknown_metric:${unknown.join(",")}`, checks, malformed: true };
++  }
++
++  // ── Memoized metric resolution ──
++  const cache = new Map<string, number>();
++  const value = async (name: string): Promise<number> => {
++    if (cache.has(name)) return cache.get(name)!;
++    const v = await resolveMetric(sc, userId, name, ctx);
++    cache.set(name, v);
++    return v;
++  };
++
++  let malformed = false;
++
++  const evalLeaf = async (leaf: any): Promise<boolean> => {
++    const opInfo = leafOp(leaf);
++    if (!opInfo) { malformed = true; return false; }
++    const actual = await value(leaf.metric);
++    let passed: boolean;
++    if (opInfo.op === "is") {
++      passed = (actual !== 0) === (opInfo.target as boolean);
++    } else {
++      passed = compare(actual, opInfo.op, opInfo.target as number);
++    }
++    checks.push({ metric: leaf.metric, op: opInfo.op, target: opInfo.target, actual, passed });
++    return passed;
++  };
++
++  const evalCond = async (c: Condition): Promise<boolean> => {
++    if (isAllGroup(c)) {
++      let ok = true;
++      for (const sub of c.all) { if (!(await evalCond(sub))) ok = false; } // resolve all for full checks[]
++      return ok;
++    }
++    if (isAnyGroup(c)) {
++      let ok = false;
++      for (const sub of c.any) { if (await evalCond(sub)) ok = true; }
++      return ok;
++    }
++    if (isNotGroup(c)) {
++      return !(await evalCond(c.not));
++    }
++    if (isLeaf(c)) {
++      return evalLeaf(c);
++    }
++    malformed = true;
++    return false;
++  };
++
++  // Top-level: a group key wins; otherwise treat the object itself as a leaf.
++  let met: boolean;
++  if (r.all !== undefined || r.any !== undefined || r.not !== undefined) {
++    met = await evalCond(rule as Condition);
++  } else {
++    met = await evalLeaf(rule);
++  }
++
++  if (malformed) {
++    return { met: false, reason: "criteria_malformed", checks, malformed: true };
++  }
++  return { met, reason: met ? "criteria_met" : "criteria_not_met", checks };
++}
++
++/**
++ * Convenience: true only when the rule is present AND satisfied. A null/absent
++ * rule returns { applicable: false } so callers can distinguish "no criteria
++ * authored" (fall back to legacy behavior) from "criteria not met".
++ */
++export async function evaluateIfPresent(
++  sc: any,
++  userId: string,
++  rule: unknown,
++  ctx: EvalContext = {},
++): Promise<{ applicable: boolean; result?: CriteriaResult }> {
++  if (rule === null || rule === undefined) return { applicable: false };
++  const result = await evaluateCriteria(sc, userId, rule, ctx);
++  return { applicable: true, result };
++}
+diff -ruN a/artifacts/api-server/src/lib/stamps/criteria/index.ts b/artifacts/api-server/src/lib/stamps/criteria/index.ts
+--- a/artifacts/api-server/src/lib/stamps/criteria/index.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/lib/stamps/criteria/index.ts	2026-07-24 02:49:20.627230950 +0000
+@@ -0,0 +1,141 @@
++/**
++ * Criteria engine public surface — Stamp Wave 3.
++ *
++ * Two integration modes, both flag-gated by `stamp_criteria_engine_enabled`
++ * (default off — the ~30 hard-coded award sites remain the source of truth
++ * until you deliberately enable this):
++ *
++ *   GATE  — criteriaGate(): an ADDITIVE eligibility check used inside
++ *           checkEligibility. If a definition has authored criteria and the
++ *           flag is on, the criteria must be met. A definition with null
++ *           criteria is unaffected (legacy behavior preserved).
++ *
++ *   AWARD — evaluateAndAwardCriteria(): the data-driven path. Evaluates every
++ *           active, automatic definition that has authored criteria for a
++ *           user, and awards the newly-met ones via the (idempotent) award
++ *           engine. Overlap with a hard-coded site is a harmless no-op because
++ *           awardStamp dedupes on (user:def:sourceType:sourceId).
++ */
++
++import { evaluateCriteria, type CriteriaResult } from "./evaluator.js";
++import type { EvalContext } from "./metrics.js";
++
++export const CRITERIA_FLAG = "stamp_criteria_engine_enabled";
++
++export { evaluateCriteria, evaluateIfPresent } from "./evaluator.js";
++export type { CriteriaResult, CriteriaCheck } from "./evaluator.js";
++export { referencedMetrics, CRITERIA_SCHEMA_VERSION } from "./schema.js";
++export { isKnownMetric, knownMetricNames, CONTEXT_ONLY_METRICS } from "./metrics.js";
++
++async function flagOn(sc: any): Promise<boolean> {
++  try {
++    const { data, error } = await sc
++      .from("feature_flags")
++      .select("enabled")
++      .eq("flag", CRITERIA_FLAG)
++      .maybeSingle();
++    if (error) return false;
++    return (data as any)?.enabled === true;
++  } catch {
++    return false;
++  }
++}
++
++/**
++ * Additive gate for checkEligibility. Returns:
++ *   { blocked: false }                       — no criteria authored, or flag off, or criteria met
++ *   { blocked: true, reason, result }        — criteria authored + flag on + NOT met (or malformed)
++ * Never throws.
++ */
++export async function criteriaGate(
++  sc: any,
++  userId: string,
++  definition: { criteria?: unknown } | null | undefined,
++  ctx: EvalContext = {},
++): Promise<{ blocked: boolean; reason?: string; result?: CriteriaResult }> {
++  const criteria = definition?.criteria ?? null;
++  if (criteria === null || criteria === undefined) return { blocked: false }; // legacy path
++  if (!(await flagOn(sc))) return { blocked: false };                         // engine disabled
++  const result = await evaluateCriteria(sc, userId, criteria, ctx);
++  if (result.met) return { blocked: false };
++  return { blocked: true, reason: result.reason, result };
++}
++
++export interface CriteriaAwardOutcome {
++  slug: string;
++  met: boolean;
++  awarded: boolean;
++  reason: string;
++}
++
++/**
++ * Evaluate + award all automatic, criteria-bearing definitions for a user.
++ * Returns per-definition outcomes. No-op (empty) when the flag is off.
++ *
++ * `awardFn` is injected (defaults to the real award engine) so this is unit
++ * testable without HTTP or a live award pipeline.
++ */
++export async function evaluateAndAwardCriteria(
++  sc: any,
++  userId: string,
++  opts: {
++    ctx?: EvalContext;
++    sourceType?: string;
++    sourceId?: string;
++    /** Restrict evaluation to these slugs (e.g. the ones a trigger touches). */
++    onlySlugs?: string[];
++    awardFn?: (input: {
++      userId: string;
++      definitionSlug: string;
++      sourceType?: string;
++      sourceId?: string;
++    }) => Promise<{ awarded: boolean; reason: string; userStampId?: string }>;
++  } = {},
++): Promise<CriteriaAwardOutcome[]> {
++  if (!(await flagOn(sc))) return [];
++
++  let query = sc
++    .from("stamp_definitions")
++    .select("slug, criteria, criteria_type, is_active")
++    .eq("is_active", true)
++    .eq("criteria_type", "automatic")
++    .not("criteria", "is", null);
++  if (opts.onlySlugs && opts.onlySlugs.length > 0) query = query.in("slug", opts.onlySlugs);
++
++  let defs: any[] = [];
++  try {
++    const { data, error } = await query;
++    if (error || !Array.isArray(data)) return [];
++    defs = data;
++  } catch {
++    return [];
++  }
++
++  const awardFn =
++    opts.awardFn ??
++    (async (input) => {
++      const { awardStamp } = await import("../../../services/passport/StampAwardEngine.js");
++      return awardStamp(sc, input as any);
++    });
++
++  const outcomes: CriteriaAwardOutcome[] = [];
++  for (const def of defs) {
++    const result = await evaluateCriteria(sc, userId, def.criteria, opts.ctx ?? {});
++    if (!result.met) {
++      outcomes.push({ slug: def.slug, met: false, awarded: false, reason: result.reason });
++      continue;
++    }
++    try {
++      const award = await awardFn({
++        userId,
++        definitionSlug: def.slug,
++        sourceType: opts.sourceType ?? "criteria",
++        sourceId: opts.sourceId ?? "none",
++      });
++      outcomes.push({ slug: def.slug, met: true, awarded: award.awarded, reason: award.reason });
++    } catch {
++      outcomes.push({ slug: def.slug, met: true, awarded: false, reason: "award_error" });
++    }
++  }
++  return outcomes;
++}
+diff -ruN a/artifacts/api-server/src/lib/stamps/criteria/metrics.ts b/artifacts/api-server/src/lib/stamps/criteria/metrics.ts
+--- a/artifacts/api-server/src/lib/stamps/criteria/metrics.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/lib/stamps/criteria/metrics.ts	2026-07-24 02:48:29.147232033 +0000
+@@ -0,0 +1,118 @@
++/**
++ * Metric resolvers — Stamp Wave 3 criteria engine.
++ *
++ * A metric is a named quantity the criteria evaluator can compare against.
++ * Two kinds:
++ *
++ *   DB metrics    — resolved by querying real tables for the user's current
++ *                   value (e.g. trips_completed, followers_count). Every query
++ *                   here matches a verified column (see the Wave 3 audit notes).
++ *   Context metrics — supplied by the caller at evaluation time from the
++ *                   triggering event (e.g. is_solo_trip, trip_member_count),
++ *                   because they describe THIS action, not an aggregate.
++ *
++ * A resolver returns a number (booleans as 0/1). Any query error resolves to 0
++ * (fail-closed: a metric that can't be read never satisfies a threshold).
++ *
++ * The registry is the single source of truth for which metrics exist; the
++ * evaluator rejects criteria referencing anything not registered.
++ */
++
++export interface EvalContext {
++  /** Metrics supplied by the trigger site (override/augment DB metrics). */
++  context?: Record<string, number | boolean>;
++}
++
++export type MetricResolver = (sc: any, userId: string, ctx: EvalContext) => Promise<number>;
++
++async function countRows(sc: any, table: string, filters: Array<[string, any]>): Promise<number> {
++  try {
++    let q = sc.from(table).select("id", { count: "exact", head: true });
++    for (const [k, v] of filters) q = q.eq(k, v);
++    const { count, error } = await q;
++    if (error) return 0;
++    return count ?? 0;
++  } catch {
++    return 0;
++  }
++}
++
++/** Distinct non-null values of a column for the user's non-revoked stamps. */
++async function distinctStampField(sc: any, userId: string, field: string): Promise<number> {
++  try {
++    const { data, error } = await sc
++      .from("user_stamps")
++      .select(field)
++      .eq("user_id", userId)
++      .eq("is_revoked", false);
++    if (error || !Array.isArray(data)) return 0;
++    const set = new Set<string>();
++    for (const row of data as any[]) {
++      const v = row[field];
++      if (typeof v === "string" && v.trim()) set.add(v.trim().toLowerCase());
++    }
++    return set.size;
++  } catch {
++    return 0;
++  }
++}
++
++// ── DB metric registry ───────────────────────────────────────────────────────
++
++const DB_METRICS: Record<string, MetricResolver> = {
++  // Social graph (user_follows: follower_id follows following_id)
++  following_count: (sc, u) => countRows(sc, "user_follows", [["follower_id", u]]),
++  followers_count: (sc, u) => countRows(sc, "user_follows", [["following_id", u]]),
++
++  // Trips (owner_id; status='completed')
++  trips_created:   (sc, u) => countRows(sc, "trips", [["owner_id", u]]),
++  trips_completed: (sc, u) => countRows(sc, "trips", [["owner_id", u], ["status", "completed"]]),
++
++  // Events (host_id; event_rsvps user_id + status='going')
++  events_hosted: (sc, u) => countRows(sc, "events", [["host_id", u]]),
++  events_joined: (sc, u) => countRows(sc, "event_rsvps", [["user_id", u], ["status", "going"]]),
++
++  // Content
++  posts_count: (sc, u) => countRows(sc, "posts", [["user_id", u]]),
++
++  // Passport aggregates (non-revoked user_stamps)
++  stamps_earned:     (sc, u) => countRows(sc, "user_stamps", [["user_id", u], ["is_revoked", false]]),
++  cities_visited:    (sc, u) => distinctStampField(sc, u, "city"),
++  countries_visited: (sc, u) => distinctStampField(sc, u, "country"),
++};
++
++/** Metric names that must be provided via context (not queryable aggregates). */
++export const CONTEXT_ONLY_METRICS = new Set<string>([
++  "trip_member_count",   // members on the triggering trip
++  "is_solo_trip",        // 1 when the trip had exactly one member
++  "is_international",     // 1 when the trip crossed a border
++  "event_category_food", // 1 when the triggering event is a food event
++  "event_category_music",
++  "event_category_outdoor",
++]);
++
++export function isKnownMetric(name: string): boolean {
++  return name in DB_METRICS || CONTEXT_ONLY_METRICS.has(name);
++}
++
++export function knownMetricNames(): string[] {
++  return [...Object.keys(DB_METRICS), ...CONTEXT_ONLY_METRICS];
++}
++
++/**
++ * Resolve a single metric. Context wins over DB (the trigger site knows the
++ * ground truth of THIS action). Booleans coerce to 0/1. Context-only metrics
++ * missing from context resolve to 0 (fail-closed).
++ */
++export async function resolveMetric(
++  sc: any,
++  userId: string,
++  name: string,
++  ctx: EvalContext,
++): Promise<number> {
++  const provided = ctx.context?.[name];
++  if (provided !== undefined) return typeof provided === "boolean" ? (provided ? 1 : 0) : Number(provided) || 0;
++  const resolver = DB_METRICS[name];
++  if (resolver) return resolver(sc, userId, ctx);
++  return 0; // context-only metric not supplied, or unknown → fail-closed
++}
+diff -ruN a/artifacts/api-server/src/lib/stamps/criteria/schema.ts b/artifacts/api-server/src/lib/stamps/criteria/schema.ts
+--- a/artifacts/api-server/src/lib/stamps/criteria/schema.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/lib/stamps/criteria/schema.ts	2026-07-24 02:48:04.955232542 +0000
+@@ -0,0 +1,98 @@
++/**
++ * Stamp criteria rule schema — Stamp Wave 3.
++ *
++ * The `stamp_definitions.criteria` jsonb column has existed since 0081 but was
++ * never evaluated: every unlock threshold lived hard-coded at ~30 award sites.
++ * This is the versioned, machine-readable rule format the evaluator reads, so
++ * new stamps (and event-category variants) become authorable as DATA.
++ *
++ * Shape (version 1):
++ *
++ *   Leaf condition — compares a resolved metric to a number:
++ *     { "metric": "trips_completed", "gte": 5 }
++ *     operators: gte | lte | gt | lt | eq
++ *
++ *   Boolean condition — resolves a boolean metric (usually from context):
++ *     { "metric": "is_solo_trip", "is": true }
++ *
++ *   Groups (compose conditions):
++ *     { "all": [ <cond>, ... ] }   — AND (every condition must hold)
++ *     { "any": [ <cond>, ... ] }   — OR  (at least one holds)
++ *     { "not": <cond> }            — negation
++ *
++ *   Top-level object carries the version and exactly one condition/group:
++ *     { "version": 1, "all": [ { "metric": "followers_count", "gte": 50 } ] }
++ *     { "version": 1, "metric": "trips_completed", "gte": 10 }   // single leaf
++ *
++ * Design rules:
++ *   - Unknown metric, unknown operator, or malformed criteria → the evaluator
++ *     fails CLOSED (not met) with a reason; it never throws and never awards on
++ *     a shape it does not understand.
++ *   - The evaluator resolves only the metrics a criteria actually references
++ *     (lazy), each at most once (memoized per evaluation).
++ */
++
++export const CRITERIA_SCHEMA_VERSION = 1;
++
++export type ComparisonOp = "gte" | "lte" | "gt" | "lt" | "eq";
++export const COMPARISON_OPS: ComparisonOp[] = ["gte", "lte", "gt", "lt", "eq"];
++
++export interface LeafCondition {
++  metric: string;
++  gte?: number;
++  lte?: number;
++  gt?: number;
++  lt?: number;
++  eq?: number;
++  is?: boolean;
++}
++
++export interface AllGroup { all: Condition[] }
++export interface AnyGroup { any: Condition[] }
++export interface NotGroup { not: Condition }
++
++export type Condition = LeafCondition | AllGroup | AnyGroup | NotGroup;
++
++export interface CriteriaRule {
++  version: number;
++  all?: Condition[];
++  any?: Condition[];
++  not?: Condition;
++  metric?: string;
++  gte?: number;
++  lte?: number;
++  gt?: number;
++  lt?: number;
++  eq?: number;
++  is?: boolean;
++}
++
++export function isAllGroup(c: any): c is AllGroup {
++  return c && typeof c === "object" && Array.isArray(c.all);
++}
++export function isAnyGroup(c: any): c is AnyGroup {
++  return c && typeof c === "object" && Array.isArray(c.any);
++}
++export function isNotGroup(c: any): c is NotGroup {
++  return c && typeof c === "object" && c.not !== undefined && !Array.isArray(c.not);
++}
++export function isLeaf(c: any): c is LeafCondition {
++  return c && typeof c === "object" && typeof c.metric === "string";
++}
++
++/**
++ * Collect every metric name referenced by a criteria rule (deduped) so the
++ * evaluator can resolve exactly what it needs. Returns [] for malformed input.
++ */
++export function referencedMetrics(rule: unknown): string[] {
++  const out = new Set<string>();
++  const walk = (c: any): void => {
++    if (!c || typeof c !== "object") return;
++    if (Array.isArray(c.all)) { c.all.forEach(walk); return; }
++    if (Array.isArray(c.any)) { c.any.forEach(walk); return; }
++    if (c.not !== undefined) { walk(c.not); return; }
++    if (typeof c.metric === "string") out.add(c.metric);
++  };
++  walk(rule);
++  return [...out];
++}
+diff -ruN a/artifacts/api-server/src/migrations/0179_stamp_criteria_engine.sql b/artifacts/api-server/src/migrations/0179_stamp_criteria_engine.sql
+--- a/artifacts/api-server/src/migrations/0179_stamp_criteria_engine.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/migrations/0179_stamp_criteria_engine.sql	2026-07-24 02:50:50.695229054 +0000
+@@ -0,0 +1,71 @@
++-- Migration 0179: Stamp Wave 3 — criteria engine
++--
++-- Makes the long-dormant stamp_definitions.criteria jsonb column live:
++-- versioned rules the criteria engine evaluates, so unlock thresholds become
++-- DATA instead of ~30 hard-coded award sites.
++--
++-- Flag-gated (stamp_criteria_engine_enabled, default FALSE). While off, the
++-- hard-coded award sites remain the sole authority and these criteria are
++-- inert. While on, the criteria act as an ADDITIVE gate on award + power the
++-- data-driven evaluate/award path. Overlap with hard-coded sites is harmless:
++-- awardStamp dedupes on (user:def:source).
++--
++-- Safe to re-run.
++
++-- ── Flag ─────────────────────────────────────────────────────────────────────
++-- feature_flags PK column is `flag` (NOT `key`).
++
++INSERT INTO feature_flags (flag, enabled, description) VALUES
++  ('stamp_criteria_engine_enabled', FALSE,
++   'Stamp criteria engine: evaluate stamp_definitions.criteria (data-driven unlocks) as an additive award gate + evaluate/award path')
++ON CONFLICT (flag) DO NOTHING;
++
++-- ── Seed criteria onto existing social/trip milestone definitions ────────────
++-- These mirror the current hard-coded thresholds exactly, so enabling the
++-- engine changes nothing about WHEN they unlock — it just moves the rule into
++-- data. (The hard-coded sites keep working regardless; this proves parity.)
++-- Only sets criteria where the definition exists and criteria is still null.
++
++UPDATE stamp_definitions SET criteria = '{"version":1,"all":[{"metric":"following_count","gte":10}]}'::jsonb
++  WHERE slug = 'community_connector' AND criteria IS NULL;
++
++UPDATE stamp_definitions SET criteria = '{"version":1,"all":[{"metric":"followers_count","gte":50}]}'::jsonb
++  WHERE slug = 'popular_traveler' AND criteria IS NULL;
++
++UPDATE stamp_definitions SET criteria = '{"version":1,"all":[{"metric":"followers_count","gte":500}]}'::jsonb
++  WHERE slug = 'travel_influencer' AND criteria IS NULL;
++
++UPDATE stamp_definitions SET criteria = '{"version":1,"all":[{"metric":"trips_completed","gte":5}]}'::jsonb
++  WHERE slug = 'road_warrior' AND criteria IS NULL;
++
++UPDATE stamp_definitions SET criteria = '{"version":1,"all":[{"metric":"trips_completed","gte":10}]}'::jsonb
++  WHERE slug = 'frequent_flyer' AND criteria IS NULL;
++
++-- ── Event-category stamp definitions (net-new; NL from the audit's Task #1041) ─
++-- criteria_type='automatic' + authored criteria → the evaluate/award path can
++-- grant these with NO new hard-coded site. Context metrics event_category_*
++-- and events_joined are supplied by the RSVP/complete trigger context.
++-- is_active=FALSE for now: they light up only when you flip them active AND
++-- enable the engine flag (double safety).
++
++INSERT INTO stamp_definitions
++  (slug, name, description, stamp_type, category, rarity, is_active, is_repeatable,
++   max_awards_per_user, criteria_type, criteria, visibility_default, source_system)
++VALUES
++  ('foodie_explorer', 'Foodie Explorer', 'Join a food & drink event',
++   'event', 'event', 'common', FALSE, false, 1, 'automatic',
++   '{"version":1,"all":[{"metric":"event_category_food","is":true},{"metric":"events_joined","gte":1}]}'::jsonb,
++   'public', 'events'),
++  ('music_lover', 'Music Lover', 'Join a music event',
++   'event', 'event', 'common', FALSE, false, 1, 'automatic',
++   '{"version":1,"all":[{"metric":"event_category_music","is":true},{"metric":"events_joined","gte":1}]}'::jsonb,
++   'public', 'events'),
++  ('outdoor_adventurer', 'Outdoor Adventurer', 'Join an outdoor event',
++   'event', 'event', 'common', FALSE, false, 1, 'automatic',
++   '{"version":1,"all":[{"metric":"event_category_outdoor","is":true},{"metric":"events_joined","gte":1}]}'::jsonb,
++   'public', 'events'),
++  ('event_regular', 'Event Regular', 'Join 5 events',
++   'event', 'event', 'uncommon', FALSE, false, 1, 'automatic',
++   '{"version":1,"all":[{"metric":"events_joined","gte":5}]}'::jsonb,
++   'public', 'events')
++ON CONFLICT (slug) DO NOTHING;
+diff -ruN a/artifacts/api-server/src/routes/stampCatalog.ts b/artifacts/api-server/src/routes/stampCatalog.ts
+--- a/artifacts/api-server/src/routes/stampCatalog.ts	2026-07-23 20:17:11.000000000 +0000
++++ b/artifacts/api-server/src/routes/stampCatalog.ts	2026-07-24 02:51:23.603228362 +0000
+@@ -1323,4 +1323,70 @@
+   res.json({ runs, total: runs.length });
+ }));
+ 
++// ── Criteria engine (Stamp Wave 3) ────────────────────────────────────────────
++
++// GET /admin/stamps/criteria/metrics — the metric vocabulary authors can use.
++router.get("/admin/stamps/criteria/metrics", asyncHandler(async (req, res) => {
++  const admin = await requireAdmin(req, res);
++  if (!admin) return;
++  const { knownMetricNames, CONTEXT_ONLY_METRICS } = await import("../lib/stamps/criteria/index.js");
++  const all = knownMetricNames();
++  const contextOnly = new Set(CONTEXT_ONLY_METRICS);
++  res.json({
++    metrics: all.map((name) => ({ name, kind: contextOnly.has(name) ? "context" : "db" })),
++    schemaExample: { version: 1, all: [{ metric: "trips_completed", gte: 5 }] },
++  });
++}));
++
++// POST /admin/stamps/criteria/evaluate { userId, slug?, dryRun? }
++// Evaluate a single definition's criteria for a user (dry-run by default) or,
++// with no slug, evaluate+award all automatic criteria-bearing definitions.
++router.post("/admin/stamps/criteria/evaluate", asyncHandler(async (req, res) => {
++  const admin = await requireAdmin(req, res);
++  if (!admin) return;
++  const { sc } = admin;
++
++  const userId = String(req.body?.userId ?? "");
++  if (!isUuid(userId)) { sendError(res, "invalid_payload", "Valid userId required"); return; }
++  const slug = typeof req.body?.slug === "string" ? req.body.slug : null;
++  const dryRun = req.body?.dryRun !== false; // default true
++
++  const { evaluateCriteria, evaluateAndAwardCriteria } = await import("../lib/stamps/criteria/index.js");
++
++  if (slug) {
++    const { data: def } = await sc
++      .from("stamp_definitions")
++      .select("slug, criteria, criteria_type, is_active")
++      .eq("slug", slug)
++      .maybeSingle();
++    if (!def) { sendError(res, "not_found", "Definition not found"); return; }
++    if ((def as any).criteria == null) {
++      res.json({ slug, hasCriteria: false, note: "Definition has no authored criteria" });
++      return;
++    }
++    const result = await evaluateCriteria(sc, userId, (def as any).criteria);
++    res.json({ slug, hasCriteria: true, dryRun: true, result });
++    return;
++  }
++
++  // No slug → evaluate all automatic criteria definitions; award unless dryRun.
++  if (dryRun) {
++    const { data: defs } = await sc
++      .from("stamp_definitions")
++      .select("slug, criteria")
++      .eq("is_active", true)
++      .eq("criteria_type", "automatic")
++      .not("criteria", "is", null);
++    const results = [];
++    for (const d of (defs ?? []) as any[]) {
++      results.push({ slug: d.slug, result: await evaluateCriteria(sc, userId, d.criteria) });
++    }
++    res.json({ dryRun: true, evaluated: results.length, results });
++    return;
++  }
++
++  const outcomes = await evaluateAndAwardCriteria(sc, userId, { sourceType: "criteria_admin", sourceId: "none" });
++  res.json({ dryRun: false, outcomes });
++}));
++
+ export default router;
+diff -ruN a/artifacts/api-server/src/services/passport/StampAwardEngine.ts b/artifacts/api-server/src/services/passport/StampAwardEngine.ts
+--- a/artifacts/api-server/src/services/passport/StampAwardEngine.ts	2026-07-21 03:02:56.000000000 +0000
++++ b/artifacts/api-server/src/services/passport/StampAwardEngine.ts	2026-07-24 02:50:27.963229533 +0000
+@@ -15,6 +15,7 @@
+ import { resolveOrEnqueue, resolveOrEnqueueForDefinition } from "../../lib/stamps/StampCatalogService.js";
+ import { resolveCountry } from "../../lib/stamps/countryLookup.js";
+ import { resolveCountryWithGeocoding } from "../../lib/stamps/countryGeocoder.js";
++import { criteriaGate } from "../../lib/stamps/criteria/index.js";
+ 
+ // ── Types ─────────────────────────────────────────────────────────────────────
+ 
+@@ -30,6 +31,13 @@
+   metadata?: Record<string, unknown>;
+   awardReason?: string;
+   adminId?: string;
++  /**
++   * Context metrics for the criteria engine (Wave 3): ground-truth values for
++   * THIS action that can't be aggregated from tables (e.g. trip_member_count,
++   * is_solo_trip). Ignored unless the definition has authored criteria and the
++   * criteria engine flag is on. Optional — DB metrics resolve without it.
++   */
++  criteriaContext?: Record<string, number | boolean>;
+ }
+ 
+ export interface AwardResult {
+@@ -174,7 +182,7 @@
+   // 1. Load definition
+   const { data: def, error: defErr } = await sc
+     .from("stamp_definitions")
+-    .select("id, slug, name, stamp_type, is_active, is_repeatable, max_awards_per_user, visibility_default, criteria_type")
++    .select("id, slug, name, stamp_type, is_active, is_repeatable, max_awards_per_user, visibility_default, criteria_type, criteria")
+     .eq("slug", definitionSlug)
+     .maybeSingle();
+ 
+@@ -194,6 +202,14 @@
+     return { awarded: false, reason: sourceCheck.reason };
+   }
+ 
++  // 2b. Criteria engine gate (Wave 3, additive + flag-gated). Only bites when
++  // the definition has authored `criteria` AND stamp_criteria_engine_enabled
++  // is on; otherwise a no-op (legacy hard-coded award sites remain authority).
++  const gate = await criteriaGate(sc, userId, definition, { context: input.criteriaContext });
++  if (gate.blocked) {
++    return { awarded: false, reason: gate.reason ?? "criteria_not_met" };
++  }
++
+   const idemKey = buildIdempotencyKey(userId, definition.id, sourceType, sourceId);
+ 
+   // 3. Check idempotency — has this exact event already been awarded?
+@@ -585,7 +601,7 @@
+ ): Promise<EligibilityResult> {
+   const { data: def } = await sc
+     .from("stamp_definitions")
+-    .select("id, slug, name, is_active, is_repeatable, max_awards_per_user, criteria_type")
++    .select("id, slug, name, is_active, is_repeatable, max_awards_per_user, criteria_type, criteria")
+     .eq("slug", definitionSlug)
+     .maybeSingle();
+ 
+@@ -599,6 +615,11 @@
+   const sourceCheck = await validateSource(sc, sourceType, sourceId);
+   if (!sourceCheck.valid) return { eligible: false, reason: sourceCheck.reason, definition };
+ 
++  // Criteria engine gate (Wave 3) — additive, flag-gated, no-op when the
++  // definition has no authored criteria or the engine flag is off.
++  const gate = await criteriaGate(sc, userId, definition);
++  if (gate.blocked) return { eligible: false, reason: gate.reason ?? "criteria_not_met", definition };
++
+   const idemKey = buildIdempotencyKey(userId, definition.id, sourceType, sourceId);
+ 
+   const { data: existingEvent } = await sc
+diff -ruN a/artifacts/api-server/src/test/stampCriteria.test.ts b/artifacts/api-server/src/test/stampCriteria.test.ts
+--- a/artifacts/api-server/src/test/stampCriteria.test.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/test/stampCriteria.test.ts	2026-07-24 02:52:07.199227444 +0000
+@@ -0,0 +1,218 @@
++/**
++ * Stamp Wave 3 — criteria engine tests.
++ *
++ * Covers the schema (referenced metrics), metric resolution (DB + context),
++ * the evaluator (operators, all/any/not, fail-closed on malformed/unknown),
++ * the additive gate, and the evaluate-and-award path (injected awardFn).
++ */
++
++import { describe, it } from "node:test";
++import assert from "node:assert/strict";
++
++import { referencedMetrics, CRITERIA_SCHEMA_VERSION } from "../lib/stamps/criteria/schema.js";
++import { resolveMetric, isKnownMetric } from "../lib/stamps/criteria/metrics.js";
++import { evaluateCriteria } from "../lib/stamps/criteria/evaluator.js";
++import { criteriaGate, evaluateAndAwardCriteria } from "../lib/stamps/criteria/index.js";
++
++// ── Fake Supabase: count-head queries + jsonb-not-null + flag ─────────────────
++
++interface FakeOpts {
++  counts?: Record<string, number>;      // table → count for head queries
++  distinct?: Record<string, string[]>;  // "user_stamps.city" → values
++  flagOn?: boolean;
++  defs?: any[];                         // stamp_definitions rows
++}
++
++function makeSc(opts: FakeOpts = {}) {
++  const counts = opts.counts ?? {};
++  return {
++    from(table: string) {
++      const b: any = {
++        _filters: [] as Array<[string, any]>,
++        _notNull: false,
++        select(_f: string, o?: any) { b._head = o?.head === true; b._field = _f; return b; },
++        eq(k: string, v: any) { b._filters.push([k, v]); return b; },
++        in(_k: string, _v: any[]) { return b; },
++        not(_k: string, _op: string, _v: any) { b._notNull = true; return b; },
++        maybeSingle: async () => {
++          if (table === "feature_flags") return { data: { enabled: opts.flagOn === true }, error: null };
++          if (table === "stamp_definitions") {
++            const slug = b._filters.find((f: any) => f[0] === "slug")?.[1];
++            return { data: (opts.defs ?? []).find((d) => d.slug === slug) ?? null, error: null };
++          }
++          return { data: null, error: null };
++        },
++        then(resolve: any) {
++          if (b._head) { resolve({ count: counts[table] ?? 0, error: null }); return; }
++          if (table === "user_stamps" && b._field && opts.distinct) {
++            const vals = (opts.distinct[`user_stamps.${b._field}`] ?? []).map((v) => ({ [b._field]: v }));
++            resolve({ data: vals, error: null }); return;
++          }
++          if (table === "stamp_definitions") {
++            resolve({ data: opts.defs ?? [], error: null }); return;
++          }
++          resolve({ data: [], error: null });
++        },
++      };
++      return b;
++    },
++  } as any;
++}
++
++const U = "user-1";
++
++// ── Schema ────────────────────────────────────────────────────────────────────
++
++describe("criteria schema", () => {
++  it("collects referenced metrics from nested rules", () => {
++    const rule = { version: 1, all: [{ metric: "a", gte: 1 }, { any: [{ metric: "b", gte: 2 }, { not: { metric: "c", is: true } }] }] };
++    assert.deepEqual(referencedMetrics(rule).sort(), ["a", "b", "c"]);
++  });
++  it("returns [] for junk", () => {
++    assert.deepEqual(referencedMetrics(null), []);
++    assert.deepEqual(referencedMetrics(42), []);
++  });
++});
++
++// ── Metric resolution ─────────────────────────────────────────────────────────
++
++describe("metric resolution", () => {
++  it("resolves DB count metrics", async () => {
++    const sc = makeSc({ counts: { user_follows: 12 } });
++    assert.equal(await resolveMetric(sc, U, "following_count", {}), 12);
++  });
++  it("resolves distinct stamp fields (cities_visited)", async () => {
++    const sc = makeSc({ distinct: { "user_stamps.city": ["Cebu", "cebu", "Tokyo", ""] } });
++    assert.equal(await resolveMetric(sc, U, "cities_visited", {}), 2); // dedup case-insensitive, drop blank
++  });
++  it("context wins over DB and coerces booleans", async () => {
++    const sc = makeSc({ counts: { user_follows: 99 } });
++    assert.equal(await resolveMetric(sc, U, "following_count", { context: { following_count: 3 } }), 3);
++    assert.equal(await resolveMetric(sc, U, "is_solo_trip", { context: { is_solo_trip: true } }), 1);
++  });
++  it("context-only metric absent from context → 0 (fail-closed)", async () => {
++    const sc = makeSc();
++    assert.equal(await resolveMetric(sc, U, "trip_member_count", {}), 0);
++  });
++  it("knows registered metrics, rejects unknown", () => {
++    assert.equal(isKnownMetric("trips_completed"), true);
++    assert.equal(isKnownMetric("event_category_food"), true);
++    assert.equal(isKnownMetric("made_up_metric"), false);
++  });
++});
++
++// ── Evaluator ───────────────────────────────────────────────────────────────
++
++describe("criteria evaluator", () => {
++  it("passes a met threshold and fails an unmet one", async () => {
++    const sc = makeSc({ counts: { trips: 7 } });
++    const met = await evaluateCriteria(sc, U, { version: 1, all: [{ metric: "trips_completed", gte: 5 }] });
++    assert.equal(met.met, true);
++    assert.equal(met.checks[0].actual, 7);
++
++    const notMet = await evaluateCriteria(sc, U, { version: 1, all: [{ metric: "trips_completed", gte: 10 }] });
++    assert.equal(notMet.met, false);
++    assert.equal(notMet.reason, "criteria_not_met");
++  });
++
++  it("supports single-leaf, any, and not", async () => {
++    const sc = makeSc({ counts: { user_follows: 50 } });
++    assert.equal((await evaluateCriteria(sc, U, { version: 1, metric: "followers_count", gte: 50 })).met, true);
++    assert.equal((await evaluateCriteria(sc, U, { version: 1, any: [{ metric: "followers_count", gte: 999 }, { metric: "followers_count", gte: 10 }] })).met, true);
++    assert.equal((await evaluateCriteria(sc, U, { version: 1, not: { metric: "followers_count", gte: 999 } })).met, true);
++  });
++
++  it("evaluates boolean `is` conditions from context", async () => {
++    const sc = makeSc();
++    const r = await evaluateCriteria(sc, U, { version: 1, all: [{ metric: "is_solo_trip", is: true }] }, { context: { is_solo_trip: true } });
++    assert.equal(r.met, true);
++  });
++
++  it("fails closed on unknown metric, bad version, empty, and bad operator", async () => {
++    const sc = makeSc();
++    assert.equal((await evaluateCriteria(sc, U, { version: 1, all: [{ metric: "nope", gte: 1 }] })).reason.startsWith("criteria_unknown_metric"), true);
++    assert.equal((await evaluateCriteria(sc, U, { version: 2, all: [{ metric: "trips_completed", gte: 1 }] })).malformed, true);
++    assert.equal((await evaluateCriteria(sc, U, { version: 1, all: [] })).malformed, true);
++    // leaf with two operators is ambiguous → malformed
++    const twoOps = await evaluateCriteria(sc, U, { version: 1, all: [{ metric: "trips_completed", gte: 1, lte: 2 }] });
++    assert.equal(twoOps.met, false);
++  });
++
++  it("memoizes: an all-group with the same metric twice resolves it once", async () => {
++    let calls = 0;
++    const sc = {
++      from() {
++        return {
++          select() { return this; }, eq() { return this; }, not() { return this; }, in() { return this; },
++          maybeSingle: async () => ({ data: null }),
++          then(resolve: any) { calls++; resolve({ count: 8, error: null }); },
++        } as any;
++      },
++    } as any;
++    const r = await evaluateCriteria(sc, U, { version: 1, all: [{ metric: "trips_completed", gte: 5 }, { metric: "trips_completed", lte: 100 }] });
++    assert.equal(r.met, true);
++    assert.equal(calls, 1); // resolved once despite two references
++  });
++});
++
++// ── Gate ──────────────────────────────────────────────────────────────────────
++
++describe("criteria gate (additive)", () => {
++  it("is a no-op when the definition has no criteria", async () => {
++    const sc = makeSc({ flagOn: true });
++    const g = await criteriaGate(sc, U, { criteria: null });
++    assert.equal(g.blocked, false);
++  });
++  it("is a no-op when the flag is off (legacy authority preserved)", async () => {
++    const sc = makeSc({ flagOn: false, counts: { trips: 0 } });
++    const g = await criteriaGate(sc, U, { criteria: { version: 1, all: [{ metric: "trips_completed", gte: 5 }] } });
++    assert.equal(g.blocked, false);
++  });
++  it("blocks when flag on + criteria not met", async () => {
++    const sc = makeSc({ flagOn: true, counts: { trips: 1 } });
++    const g = await criteriaGate(sc, U, { criteria: { version: 1, all: [{ metric: "trips_completed", gte: 5 }] } });
++    assert.equal(g.blocked, true);
++    assert.equal(g.reason, "criteria_not_met");
++  });
++  it("allows when flag on + criteria met", async () => {
++    const sc = makeSc({ flagOn: true, counts: { trips: 9 } });
++    const g = await criteriaGate(sc, U, { criteria: { version: 1, all: [{ metric: "trips_completed", gte: 5 }] } });
++    assert.equal(g.blocked, false);
++  });
++});
++
++// ── Evaluate + award ────────────────────────────────────────────────────────
++
++describe("evaluateAndAwardCriteria", () => {
++  it("returns [] when the flag is off", async () => {
++    const sc = makeSc({ flagOn: false, defs: [{ slug: "x", criteria: { version: 1, all: [{ metric: "trips_completed", gte: 1 }] } }] });
++    const out = await evaluateAndAwardCriteria(sc, U, {});
++    assert.deepEqual(out, []);
++  });
++
++  it("awards met definitions and skips unmet ones (injected awardFn)", async () => {
++    const sc = makeSc({
++      flagOn: true,
++      counts: { trips: 6, user_follows: 3 },
++      defs: [
++        { slug: "road_warrior", criteria: { version: 1, all: [{ metric: "trips_completed", gte: 5 }] } },
++        { slug: "travel_influencer", criteria: { version: 1, all: [{ metric: "followers_count", gte: 500 }] } },
++      ],
++    });
++    const awarded: string[] = [];
++    const out = await evaluateAndAwardCriteria(sc, U, {
++      awardFn: async ({ definitionSlug }) => { awarded.push(definitionSlug); return { awarded: true, reason: "awarded" }; },
++    });
++    const rw = out.find((o) => o.slug === "road_warrior")!;
++    const ti = out.find((o) => o.slug === "travel_influencer")!;
++    assert.equal(rw.met, true);
++    assert.equal(rw.awarded, true);
++    assert.equal(ti.met, false);
++    assert.equal(ti.awarded, false);
++    assert.deepEqual(awarded, ["road_warrior"]); // only the met one hit the award fn
++  });
++});
++
++describe("schema version constant", () => {
++  it("is 1", () => assert.equal(CRITERIA_SCHEMA_VERSION, 1));
++});
+--- a/artifacts/api-server/package.json	2026-07-23 20:17:11.000000000 +0000
++++ b/artifacts/api-server/package.json	2026-07-24 02:52:16.120888654 +0000
+@@ -14,7 +14,7 @@
+     "check:migration-prefixes": "node --import tsx/esm src/scripts/checkMigrationPrefixes.ts",
+     "check:write-path-columns": "node --env-file-if-exists=.env --import tsx/esm src/scripts/checkWritePathColumns.ts",
+     "test:circle-locations": "node --import tsx/esm --test src/test/circleLocations.test.ts",
+-    "test": "node --import tsx/esm --test --test-force-exit src/test/universalStamps.test.ts src/test/eventsCirclesOwner.test.ts src/test/circleLocations.test.ts src/test/collections.test.ts src/test/accessControl.test.ts src/test/adminGeo.test.ts src/test/adminModeration.test.ts src/test/ageEligibility.test.ts src/test/airport.test.ts src/test/availability.test.ts src/test/blockExclusion.test.ts src/test/circleInviteAge.test.ts src/test/cleanupHealth.test.ts src/test/compass-active-reward.test.ts src/test/compass-admin.test.ts src/test/compass-cache.test.ts src/test/compass-memory.test.ts src/test/compass-context.test.ts src/test/compass-feed.test.ts src/test/compassServedDedup.test.ts src/test/compass-pipeline.test.ts src/test/compass-ux.test.ts src/test/coreActions.test.ts src/test/dailyBriefCleanup.test.ts src/test/delayedGeotag.test.ts src/test/emergencyFlags.test.ts src/test/events.test.ts src/test/featureFlagsAdmin.test.ts src/test/followDecisions.test.ts src/test/friendDecisions.test.ts src/test/geofenceAdminSettings.test.ts src/test/geofence.test.ts src/test/groupChat.test.ts src/test/hashtags.test.ts src/test/hiddenGems.test.ts src/test/hiddenGemCheckin.test.ts src/test/intelligence.test.ts src/test/interactionPermissions.test.ts src/test/itineraryTimeline.test.ts src/test/locationGps.test.ts src/test/locationVerify.test.ts src/test/meetupAgeRsvp.test.ts src/test/meetups.test.ts src/test/notifications.test.ts src/test/passportStamps.test.ts src/test/passportStampsPagination.test.ts src/test/passportStampsCountFallback.test.ts src/test/postInteractions.test.ts src/test/posts.test.ts src/test/postcards.test.ts src/test/pulseGps.test.ts src/test/pushDelivery.test.ts src/test/rentBuddyRequestPush.test.ts src/test/pushRetryQueue.test.ts src/test/pushWithRetry.test.ts src/test/tripReminderPush.test.ts src/test/tripReminderResetAudit.test.ts src/test/rateLimits.test.ts src/test/rentABuddyRollout.test.ts src/test/rentABuddy.test.ts src/test/rentBuddyReliabilityCounters.test.ts src/test/rentBuddyReliabilityRoutes.test.ts src/test/requests.test.ts src/test/friendRequestUpdateFailure.test.ts src/test/inviteUpdateFailure.test.ts src/test/routeMinimapView.test.ts src/test/routeOptimizer.test.ts src/test/routePlanHook.test.ts src/test/routePlanMembers.test.ts src/test/routePlan.test.ts src/test/safeReturnAdmin.test.ts src/test/safeReturn.test.ts src/test/stampHelper.test.ts src/test/tagging.test.ts src/test/telegraphChat.test.ts src/test/telegraphRealtime.test.ts src/test/telegraphStreamEndpoints.test.ts src/test/tripCompletion.test.ts src/test/tripCrewLocation.test.ts src/test/tripPlan.test.ts src/test/tripMembers.test.ts src/test/tripInviteRespond.test.ts src/test/trust-integration.test.ts src/test/trust.test.ts src/test/memories.test.ts src/test/stories.test.ts src/test/userSuggestions.test.ts src/test/eventWaitlistSweeper.test.ts src/lib/messagingPermissions.test.ts src/test/appeals.test.ts src/test/reviews.test.ts src/test/tripsExpansion.test.ts src/test/crashReport.test.ts src/test/wishlist.test.ts src/test/discoverySort.test.ts src/test/stamps-integration.test.ts src/test/stampRevoke.test.ts src/test/engagement.test.ts src/test/profileSystem.test.ts src/test/profileSchemaDrift.test.ts src/test/adminCompassSchemaDrift.test.ts src/test/adminGeoModerationSchemaDrift.test.ts src/test/adminRemainingDashboardsSchemaDrift.test.ts src/test/trustAdminAuditInsertSchemaDrift.test.ts src/test/inviteLinkPreview.test.ts src/test/inviteLinkPreviewFull.test.ts src/test/inviteLinkTripFull.test.ts src/test/stampArtworkEnrichment.test.ts src/test/ogImageVisibility.test.ts src/test/canonicalLocations.test.ts src/test/publicIdentity.test.ts src/test/privacySettings.test.ts src/test/discoveryPrivacy.test.ts src/test/stampPreviewVisibility.test.ts src/test/stampCountryLookup.test.ts src/test/stampCountryGeocoder.test.ts src/test/stampQueueRequeue.test.ts src/test/stampGenerationCycle.test.ts src/test/stampGenerationLockTiming.test.ts src/test/stampQueueRequeueRoute.test.ts src/test/rentABuddyAvailabilitySave.test.ts src/test/rentABuddySpecRebook.test.ts src/test/rentABuddySpecRequest.test.ts src/test/rentABuddySpecNoShow.test.ts src/test/rentABuddyDisputeTerminal.test.ts src/test/stampWorkerHealthMonitor.test.ts src/test/stampCatalogDefinition.test.ts src/test/stampOwnershipBackfill.test.ts src/test/adminGeocode.test.ts src/test/stampCatalogListEnrichment.test.ts src/test/stampCatalogActiveQueueStatus.test.ts src/test/notificationRouterCredentials.test.ts src/test/stampGeocodeStaleEviction.test.ts src/test/stampGeocodeDeletionPropagation.test.ts src/test/stampCatalogRequeueBadge.test.ts src/test/adminTripReminderReset.test.ts src/test/adminTripIdGuard.test.ts src/test/stampCatalogRegenDedup.test.ts src/test/stampCatalogDetailBadge.test.ts src/test/stampCatalogVersionArchive.test.ts src/test/stampCatalogRegenAuditLog.test.ts src/test/stampCatalogRegenAfterComplete.test.ts src/test/stampCatalogRegenAfterReviewRequired.test.ts src/test/pushTokenCleanup.test.ts src/test/rentABuddyHalfPairCoords.test.ts src/test/rentABuddySearchCoordGuard.test.ts src/test/adminVenueModeration.test.ts src/test/adminVenueQueue.test.ts src/test/rentABuddyAdminResolveDisputeGuard.test.ts src/test/rentABuddyAdminResolveDisputeFavorTraveler.test.ts src/test/stampGeocodeTombstoneRead.test.ts src/test/stampCatalogStyleVersionBadge.test.ts src/test/adminEventModeration.test.ts src/test/profileSelect.test.ts src/test/stampCatalogAdminActionDedup.test.ts src/test/stampCatalogAuditLogFilter.test.ts src/test/stampCatalogNullDisplayName.test.ts src/test/styleVersionSync.test.ts src/test/stampCatalogCountryCodeType.test.ts src/test/stampCatalogRegenPreexistingQueue.test.ts src/test/stampQueueClearCleanupAudit.test.ts src/test/stampAuditWriteFailure.test.ts src/test/stampAuditWriteFailureMergeReject.test.ts src/test/stampCatalogRegenArchiveObservability.test.ts src/test/stampCatalogRegenMultiFailedReset.test.ts src/test/stampCatalogConflictCollapse.test.ts src/test/stampCatalogRegenArchiveExtrasDbError.test.ts src/test/stampCatalogRegenSurvivorResetDbError.test.ts src/test/notificationDisplayNameCap.test.ts src/test/splitClockGuard.test.ts src/test/adminGeofenceSettingsNotFound.test.ts src/test/stampQueueConstraintSync.test.ts src/test/rankEventsOutcome.test.ts src/test/impressionLogFireAndForget.test.ts src/test/callSystem.test.ts src/test/callRoutes.test.ts src/test/callHardening.test.ts src/test/callAnalytics.test.ts src/test/tripInvitesPending.test.ts src/test/weatherCacheCleanupRoute.test.ts src/test/appHardening.test.ts src/test/corsAllowedOrigins.test.ts src/test/ageGate.test.ts src/test/rentABuddyLifecycle.test.ts src/test/reconcileRunSummary.test.ts src/test/reconcileRunHistory.test.ts src/test/schemaDriftCheck.test.ts src/test/adminPhase12.test.ts src/test/blocks.test.ts src/test/discoveryCommunityCoordinateBounds.test.ts src/test/discoveryCommunityCoords.test.ts src/test/discoveryCommunityRating.test.ts src/test/discoveryCommunitySortBy.test.ts src/test/discoverySearch.test.ts src/test/discoverySearchIntelligence.test.ts src/test/events-extension.test.ts src/test/passportProfileAccess.test.ts src/test/profileEnsure.test.ts src/test/pulseRanking.test.ts src/test/stampEarnedNotification.test.ts src/test/friendRequestReactivate.test.ts src/test/compass-ask.test.ts src/test/compass-structured-context.test.ts src/test/compass-tools.test.ts src/test/compass-ui-blocks.test.ts src/test/compass-recommendation-engine.test.ts src/test/compass-live-intel.test.ts src/test/compass-social.test.ts src/test/compass-home.test.ts src/test/compass-sense.test.ts src/test/compass-sense-scheduler.test.ts src/test/compass-live.test.ts src/test/compass-autopilot.test.ts src/test/compass-outcome-learning.test.ts src/test/compass-intelligence-graph.test.ts src/test/intelligenceGraphScheduler.test.ts src/test/placesLiveStatus.test.ts src/test/compass-local-time.test.ts src/test/eventPostsDiscovery.test.ts src/test/verification.test.ts src/test/moderation.test.ts src/test/featureFlagColumnGuard.test.ts src/test/entryRequirements.test.ts src/test/tripReadiness.test.ts src/test/tripBudgetIntel.test.ts src/test/tripReservations.test.ts src/test/tripDraft.test.ts src/test/neighborhoodMatch.test.ts src/test/compass-trip-context.test.ts src/test/stampComposition.test.ts src/test/stampShowcaseAdmire.test.ts",
++    "test": "node --import tsx/esm --test --test-force-exit src/test/universalStamps.test.ts src/test/eventsCirclesOwner.test.ts src/test/circleLocations.test.ts src/test/collections.test.ts src/test/accessControl.test.ts src/test/adminGeo.test.ts src/test/adminModeration.test.ts src/test/ageEligibility.test.ts src/test/airport.test.ts src/test/availability.test.ts src/test/blockExclusion.test.ts src/test/circleInviteAge.test.ts src/test/cleanupHealth.test.ts src/test/compass-active-reward.test.ts src/test/compass-admin.test.ts src/test/compass-cache.test.ts src/test/compass-memory.test.ts src/test/compass-context.test.ts src/test/compass-feed.test.ts src/test/compassServedDedup.test.ts src/test/compass-pipeline.test.ts src/test/compass-ux.test.ts src/test/coreActions.test.ts src/test/dailyBriefCleanup.test.ts src/test/delayedGeotag.test.ts src/test/emergencyFlags.test.ts src/test/events.test.ts src/test/featureFlagsAdmin.test.ts src/test/followDecisions.test.ts src/test/friendDecisions.test.ts src/test/geofenceAdminSettings.test.ts src/test/geofence.test.ts src/test/groupChat.test.ts src/test/hashtags.test.ts src/test/hiddenGems.test.ts src/test/hiddenGemCheckin.test.ts src/test/intelligence.test.ts src/test/interactionPermissions.test.ts src/test/itineraryTimeline.test.ts src/test/locationGps.test.ts src/test/locationVerify.test.ts src/test/meetupAgeRsvp.test.ts src/test/meetups.test.ts src/test/notifications.test.ts src/test/passportStamps.test.ts src/test/passportStampsPagination.test.ts src/test/passportStampsCountFallback.test.ts src/test/postInteractions.test.ts src/test/posts.test.ts src/test/postcards.test.ts src/test/pulseGps.test.ts src/test/pushDelivery.test.ts src/test/rentBuddyRequestPush.test.ts src/test/pushRetryQueue.test.ts src/test/pushWithRetry.test.ts src/test/tripReminderPush.test.ts src/test/tripReminderResetAudit.test.ts src/test/rateLimits.test.ts src/test/rentABuddyRollout.test.ts src/test/rentABuddy.test.ts src/test/rentBuddyReliabilityCounters.test.ts src/test/rentBuddyReliabilityRoutes.test.ts src/test/requests.test.ts src/test/friendRequestUpdateFailure.test.ts src/test/inviteUpdateFailure.test.ts src/test/routeMinimapView.test.ts src/test/routeOptimizer.test.ts src/test/routePlanHook.test.ts src/test/routePlanMembers.test.ts src/test/routePlan.test.ts src/test/safeReturnAdmin.test.ts src/test/safeReturn.test.ts src/test/stampHelper.test.ts src/test/tagging.test.ts src/test/telegraphChat.test.ts src/test/telegraphRealtime.test.ts src/test/telegraphStreamEndpoints.test.ts src/test/tripCompletion.test.ts src/test/tripCrewLocation.test.ts src/test/tripPlan.test.ts src/test/tripMembers.test.ts src/test/tripInviteRespond.test.ts src/test/trust-integration.test.ts src/test/trust.test.ts src/test/memories.test.ts src/test/stories.test.ts src/test/userSuggestions.test.ts src/test/eventWaitlistSweeper.test.ts src/lib/messagingPermissions.test.ts src/test/appeals.test.ts src/test/reviews.test.ts src/test/tripsExpansion.test.ts src/test/crashReport.test.ts src/test/wishlist.test.ts src/test/discoverySort.test.ts src/test/stamps-integration.test.ts src/test/stampRevoke.test.ts src/test/engagement.test.ts src/test/profileSystem.test.ts src/test/profileSchemaDrift.test.ts src/test/adminCompassSchemaDrift.test.ts src/test/adminGeoModerationSchemaDrift.test.ts src/test/adminRemainingDashboardsSchemaDrift.test.ts src/test/trustAdminAuditInsertSchemaDrift.test.ts src/test/inviteLinkPreview.test.ts src/test/inviteLinkPreviewFull.test.ts src/test/inviteLinkTripFull.test.ts src/test/stampArtworkEnrichment.test.ts src/test/ogImageVisibility.test.ts src/test/canonicalLocations.test.ts src/test/publicIdentity.test.ts src/test/privacySettings.test.ts src/test/discoveryPrivacy.test.ts src/test/stampPreviewVisibility.test.ts src/test/stampCountryLookup.test.ts src/test/stampCountryGeocoder.test.ts src/test/stampQueueRequeue.test.ts src/test/stampGenerationCycle.test.ts src/test/stampGenerationLockTiming.test.ts src/test/stampQueueRequeueRoute.test.ts src/test/rentABuddyAvailabilitySave.test.ts src/test/rentABuddySpecRebook.test.ts src/test/rentABuddySpecRequest.test.ts src/test/rentABuddySpecNoShow.test.ts src/test/rentABuddyDisputeTerminal.test.ts src/test/stampWorkerHealthMonitor.test.ts src/test/stampCatalogDefinition.test.ts src/test/stampOwnershipBackfill.test.ts src/test/adminGeocode.test.ts src/test/stampCatalogListEnrichment.test.ts src/test/stampCatalogActiveQueueStatus.test.ts src/test/notificationRouterCredentials.test.ts src/test/stampGeocodeStaleEviction.test.ts src/test/stampGeocodeDeletionPropagation.test.ts src/test/stampCatalogRequeueBadge.test.ts src/test/adminTripReminderReset.test.ts src/test/adminTripIdGuard.test.ts src/test/stampCatalogRegenDedup.test.ts src/test/stampCatalogDetailBadge.test.ts src/test/stampCatalogVersionArchive.test.ts src/test/stampCatalogRegenAuditLog.test.ts src/test/stampCatalogRegenAfterComplete.test.ts src/test/stampCatalogRegenAfterReviewRequired.test.ts src/test/pushTokenCleanup.test.ts src/test/rentABuddyHalfPairCoords.test.ts src/test/rentABuddySearchCoordGuard.test.ts src/test/adminVenueModeration.test.ts src/test/adminVenueQueue.test.ts src/test/rentABuddyAdminResolveDisputeGuard.test.ts src/test/rentABuddyAdminResolveDisputeFavorTraveler.test.ts src/test/stampGeocodeTombstoneRead.test.ts src/test/stampCatalogStyleVersionBadge.test.ts src/test/adminEventModeration.test.ts src/test/profileSelect.test.ts src/test/stampCatalogAdminActionDedup.test.ts src/test/stampCatalogAuditLogFilter.test.ts src/test/stampCatalogNullDisplayName.test.ts src/test/styleVersionSync.test.ts src/test/stampCatalogCountryCodeType.test.ts src/test/stampCatalogRegenPreexistingQueue.test.ts src/test/stampQueueClearCleanupAudit.test.ts src/test/stampAuditWriteFailure.test.ts src/test/stampAuditWriteFailureMergeReject.test.ts src/test/stampCatalogRegenArchiveObservability.test.ts src/test/stampCatalogRegenMultiFailedReset.test.ts src/test/stampCatalogConflictCollapse.test.ts src/test/stampCatalogRegenArchiveExtrasDbError.test.ts src/test/stampCatalogRegenSurvivorResetDbError.test.ts src/test/notificationDisplayNameCap.test.ts src/test/splitClockGuard.test.ts src/test/adminGeofenceSettingsNotFound.test.ts src/test/stampQueueConstraintSync.test.ts src/test/rankEventsOutcome.test.ts src/test/impressionLogFireAndForget.test.ts src/test/callSystem.test.ts src/test/callRoutes.test.ts src/test/callHardening.test.ts src/test/callAnalytics.test.ts src/test/tripInvitesPending.test.ts src/test/weatherCacheCleanupRoute.test.ts src/test/appHardening.test.ts src/test/corsAllowedOrigins.test.ts src/test/ageGate.test.ts src/test/rentABuddyLifecycle.test.ts src/test/reconcileRunSummary.test.ts src/test/reconcileRunHistory.test.ts src/test/schemaDriftCheck.test.ts src/test/adminPhase12.test.ts src/test/blocks.test.ts src/test/discoveryCommunityCoordinateBounds.test.ts src/test/discoveryCommunityCoords.test.ts src/test/discoveryCommunityRating.test.ts src/test/discoveryCommunitySortBy.test.ts src/test/discoverySearch.test.ts src/test/discoverySearchIntelligence.test.ts src/test/events-extension.test.ts src/test/passportProfileAccess.test.ts src/test/profileEnsure.test.ts src/test/pulseRanking.test.ts src/test/stampEarnedNotification.test.ts src/test/friendRequestReactivate.test.ts src/test/compass-ask.test.ts src/test/compass-structured-context.test.ts src/test/compass-tools.test.ts src/test/compass-ui-blocks.test.ts src/test/compass-recommendation-engine.test.ts src/test/compass-live-intel.test.ts src/test/compass-social.test.ts src/test/compass-home.test.ts src/test/compass-sense.test.ts src/test/compass-sense-scheduler.test.ts src/test/compass-live.test.ts src/test/compass-autopilot.test.ts src/test/compass-outcome-learning.test.ts src/test/compass-intelligence-graph.test.ts src/test/intelligenceGraphScheduler.test.ts src/test/placesLiveStatus.test.ts src/test/compass-local-time.test.ts src/test/eventPostsDiscovery.test.ts src/test/verification.test.ts src/test/moderation.test.ts src/test/featureFlagColumnGuard.test.ts src/test/entryRequirements.test.ts src/test/tripReadiness.test.ts src/test/tripBudgetIntel.test.ts src/test/tripReservations.test.ts src/test/tripDraft.test.ts src/test/neighborhoodMatch.test.ts src/test/compass-trip-context.test.ts src/test/stampComposition.test.ts src/test/stampShowcaseAdmire.test.ts src/test/stampCriteria.test.ts",
+     "test:app-hardening": "node --import tsx/esm --test src/test/appHardening.test.ts",
+     "test:cors-allowed-origins": "node --import tsx/esm --test src/test/corsAllowedOrigins.test.ts",
+     "test:interaction": "node --import tsx/esm --test src/test/interactionPermissions.test.ts src/test/coreActions.test.ts src/test/followDecisions.test.ts src/test/blockExclusion.test.ts src/test/accessControl.test.ts src/test/adminModeration.test.ts src/test/emergencyFlags.test.ts src/test/userSuggestions.test.ts",

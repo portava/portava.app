@@ -16,15 +16,9 @@ import { saveShowcase, MAX_SHOWCASE } from '../../services/stampShowcase.ts';
 import { toLegacyStamp } from '../../services/passportStampMappers.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
-const ROW_HEIGHT = 60;
+import { RARITY_COLORS, normalizeRarity } from '../../lib/stampRarity.ts';
 
-const RARITY_COLORS: Record<string, string> = {
-  common:    '#6B7280',
-  uncommon:  '#16A34A',
-  rare:      '#2563EB',
-  epic:      '#7C3AED',
-  legendary: '#D97706',
-};
+const ROW_HEIGHT = 60;
 
 interface Props {
   visible: boolean;
@@ -168,7 +162,7 @@ export function StampShowcaseCurationSheet({
               const legacy = toLegacyStamp(stamp);
               const name = stamp.titleOverride ?? stamp.definition?.name ?? legacy.label;
               const rarity = stamp.definition?.rarity ?? 'common';
-              const rarityColor = RARITY_COLORS[rarity] ?? RARITY_COLORS.common;
+              const rarityColor = RARITY_COLORS[normalizeRarity(rarity)].ring;
               const artUrl = stamp.activeArtworkUrl;
               const isDragging = dragId === id;
               return (
@@ -239,7 +233,7 @@ export function StampShowcaseCurationSheet({
                 const legacy = toLegacyStamp(stamp);
                 const name = stamp.titleOverride ?? stamp.definition?.name ?? legacy.label;
                 const rarity = stamp.definition?.rarity ?? 'common';
-                const rarityColor = RARITY_COLORS[rarity] ?? RARITY_COLORS.common;
+                const rarityColor = RARITY_COLORS[normalizeRarity(rarity)].ring;
                 const artUrl = stamp.activeArtworkUrl;
                 const atCap = selectedIds.length >= MAX_SHOWCASE;
                 return (

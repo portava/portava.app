@@ -1,0 +1,201 @@
+--- a/artifacts/api-server/src/routes/passport.ts	2026-07-21 03:02:56.000000000 +0000
++++ b/artifacts/api-server/src/routes/passport.ts	2026-07-24 03:22:04.059189632 +0000
+@@ -6,6 +6,7 @@
+ import { resolveInteractionPermissions } from "../services/interactionPermissions";
+ import { resolveProfileVisibility, extractBearerToken } from "../lib/profileVisibility";
+ import { nameVisibleFor } from "../lib/publicIdentity";
++import type { StampPalette } from "../lib/stamps/composition/identities";
+ 
+ const router = Router();
+ 
+@@ -826,11 +827,36 @@
+   city: string | null;
+   country: string | null;
+   earnedAt: string | null;
++  /** Resolved destination identity palette (for OG card theming). */
++  palette: StampPalette | null;
++}
++
++/**
++ * Resolve the premium composited artwork URL for a stamp via its catalog
++ * entry's active version (Wave 1+ pipeline). Returns null when the stamp has
++ * no catalog link or composited version yet — callers fall back to the flat
++ * universal_artwork_url. Never throws.
++ */
++async function fetchCompositedArtworkUrl(sc: any, catalogId: string | null): Promise<string | null> {
++  if (!catalogId) return null;
++  try {
++    const { data, error } = await sc
++      .from("universal_stamp_catalog")
++      .select("stamp_artwork_versions!active_version_id(public_url)")
++      .eq("id", catalogId)
++      .maybeSingle();
++    if (error || !data) return null;
++    return (data as any).stamp_artwork_versions?.public_url ?? null;
++  } catch {
++    return null;
++  }
+ }
+ 
+ /**
+  * Load a publicly-visible stamp owned by `ownerId`. Returns null on any
+  * failure (missing tables, revoked, non-public, wrong owner) — never throws.
++ * Prefers the premium composited artwork over the flat legacy art, and
++ * resolves the destination palette so the share card matches the stamp.
+  */
+ async function fetchPublicStampPreview(
+   sc: any,
+@@ -839,7 +865,7 @@
+ ): Promise<StampPreviewData | null> {
+   if (!STAMP_UUID_RE.test(stampId)) return null;
+   try {
+-    const BASE_COLS = "id, city, country, earned_at, title_override, visibility, is_revoked";
++    const BASE_COLS = "id, city, country, earned_at, title_override, visibility, is_revoked, catalog_id";
+     let { data, error } = await sc
+       .from("user_stamps")
+       .select(`${BASE_COLS}, stamp_definitions(name, stamp_type, universal_artwork_url)`)
+@@ -870,12 +896,31 @@
+       data.country ??
+       (def?.stamp_type ? String(def.stamp_type).replace(/_/g, " ").toUpperCase() : "Travel Stamp");
+ 
++    // Prefer the premium composited stamp; fall back to legacy flat art.
++    const composited = await fetchCompositedArtworkUrl(sc, data.catalog_id ?? null);
++    const artworkUrl = composited ?? def?.universal_artwork_url ?? null;
++
++    // Resolve palette for card theming (best-effort; null → neutral card).
++    let palette: StampPalette | null = null;
++    try {
++      const { resolveIdentity } = await import("../lib/stamps/composition/identities.js");
++      const identity = await resolveIdentity(sc, {
++        city: data.city ?? null,
++        display_name: data.city ?? null,
++        country: data.country ?? null,
++      });
++      palette = identity.palette;
++    } catch {
++      palette = null;
++    }
++
+     return {
+       label: String(label),
+-      artworkUrl: def?.universal_artwork_url ?? null,
++      artworkUrl,
+       city: data.city ?? null,
+       country: data.country ?? null,
+       earnedAt: data.earned_at ?? null,
++      palette,
+     };
+   } catch {
+     return null;
+@@ -889,17 +934,29 @@
+   place: string | null;
+   earnedAt: string | null;
+   artworkDataUri: string | null;
++  /** Destination palette (from the composition identity) for card theming. */
++  palette: StampPalette | null;
+ }
+ 
+-/** Build the 1200x630 stamp-share SVG in the same passport visual language. */
++/**
++ * Build the 1200x630 stamp-share SVG. Rebuilt on the composition system
++ * (Wave 3 follow-up): the hero is the PREMIUM COMPOSITED stamp (its own
++ * frame/typography/rarity), presented whole on a card themed by the
++ * destination's palette — so the share preview matches the in-app stamp
++ * instead of the old navy/gold passport styling. Falls back to a neutral
++ * palette and a monogram when data is missing.
++ */
+ function buildStampOgSvg(card: StampOgCardData): string {
+   const W = 1200;
+   const H = 630;
+-  const navy = "#152642";
+-  const navyLight = "#1D3358";
+-  const gold = "#C9A227";
+-  const goldSoft = "#E3C566";
+-  const cream = "#F5EFE0";
++
++  // Palette-driven theming with safe neutral defaults.
++  const p = card.palette;
++  const bgDark = p?.background ?? "#101826";
++  const primary = p?.primary ?? "#1E3A5F";
++  const accent = p?.accent ?? "#E8B04B";
++  const paper = p?.paper ?? "#F5EFE0";
++  const highlight = p?.highlight ?? accent;
+ 
+   const label = card.stampLabel.trim().slice(0, 40) || "Travel Stamp";
+   const owner = card.ownerName?.trim() || (card.ownerUsername ? `@${card.ownerUsername}` : null);
+@@ -912,37 +969,45 @@
+   }
+   const subLine = [card.place, dateLine].filter(Boolean).join("  ·  ");
+ 
+-  // Stamp artwork in a dashed passport-stamp frame; fall back to a monogram.
++  // The composited stamp already carries its own frame + transparent bg, so we
++  // present it WHOLE (contain), never re-clipped. Monogram medallion fallback.
++  const STAMP_X = 74, STAMP_Y = 95, STAMP_S = 440;
++  const cx = STAMP_X + STAMP_S / 2, cy = STAMP_Y + STAMP_S / 2;
+   const art = card.artworkDataUri
+-    ? `<image href="${card.artworkDataUri}" x="106" y="185" width="260" height="260" clip-path="url(#stampClip)" preserveAspectRatio="xMidYMid slice"/>`
+-    : `<circle cx="236" cy="315" r="130" fill="${navyLight}"/>
+-       <text x="236" y="348" text-anchor="middle" font-family="Georgia, serif" font-size="96" font-weight="bold" fill="${goldSoft}">${escapeXml(label.slice(0, 1).toUpperCase() || "S")}</text>`;
++    ? `<image href="${card.artworkDataUri}" x="${STAMP_X}" y="${STAMP_Y}" width="${STAMP_S}" height="${STAMP_S}" preserveAspectRatio="xMidYMid meet"/>`
++    : `<circle cx="${cx}" cy="${cy}" r="180" fill="${primary}"/>
++       <circle cx="${cx}" cy="${cy}" r="180" fill="none" stroke="${accent}" stroke-width="6"/>
++       <text x="${cx}" y="${cy + 60}" text-anchor="middle" font-family="Poppins, sans-serif" font-size="150" font-weight="bold" fill="${paper}">${escapeXml(label.slice(0, 1).toUpperCase() || "S")}</text>`;
++
++  const F = "Poppins, sans-serif";
++  const TX = 560; // right-column text x
+ 
+   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+   <defs>
+-    <clipPath id="stampClip"><circle cx="236" cy="315" r="130"/></clipPath>
+     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+-      <stop offset="0" stop-color="${navy}"/>
+-      <stop offset="1" stop-color="#0E1B31"/>
++      <stop offset="0" stop-color="${bgDark}"/>
++      <stop offset="1" stop-color="${primary}"/>
+     </linearGradient>
++    <radialGradient id="halo" cx="0.28" cy="0.5" r="0.5">
++      <stop offset="0" stop-color="${highlight}" stop-opacity="0.22"/>
++      <stop offset="1" stop-color="${highlight}" stop-opacity="0"/>
++    </radialGradient>
+   </defs>
+   <rect width="${W}" height="${H}" fill="url(#bg)"/>
+-  <rect x="28" y="28" width="${W - 56}" height="${H - 56}" fill="none" stroke="${gold}" stroke-width="3"/>
+-  <rect x="40" y="40" width="${W - 80}" height="${H - 80}" fill="none" stroke="${gold}" stroke-width="1" opacity="0.55"/>
+-  <!-- header -->
+-  <text x="96" y="122" font-family="Georgia, serif" font-size="30" letter-spacing="12" fill="${gold}">TRAVEL BUDDY</text>
+-  <text x="96" y="162" font-family="Georgia, serif" font-size="22" letter-spacing="8" fill="${cream}" opacity="0.7">·  PASSPORT STAMP  ·</text>
+-  <!-- stamp artwork with dashed frame -->
++  <rect width="${W}" height="${H}" fill="url(#halo)"/>
++  <rect x="26" y="26" width="${W - 52}" height="${H - 52}" rx="18" fill="none" stroke="${accent}" stroke-width="2.5" opacity="0.65"/>
++  <!-- hero: whole composited stamp -->
+   ${art}
+-  <circle cx="236" cy="315" r="134" fill="none" stroke="${gold}" stroke-width="4"/>
+-  <circle cx="236" cy="315" r="150" fill="none" stroke="${cream}" stroke-width="3" stroke-dasharray="7 6" opacity="0.5"/>
+-  <!-- stamp label block -->
+-  <text x="428" y="300" font-family="Georgia, serif" font-size="${label.length > 20 ? 48 : 62}" font-weight="bold" fill="${cream}">${escapeXml(label)}</text>
+-  ${subLine ? `<text x="428" y="356" font-family="Georgia, serif" font-size="30" fill="${goldSoft}">${escapeXml(subLine.slice(0, 60))}</text>` : ""}
+-  ${owner ? `<text x="428" y="${subLine ? 420 : 368}" font-family="Georgia, serif" font-size="28" fill="${cream}" opacity="0.85">Earned by ${escapeXml(owner.slice(0, 40))}</text>` : ""}
+-  <!-- footer rule -->
+-  <line x1="96" y1="524" x2="760" y2="524" stroke="${gold}" stroke-width="1.5" opacity="0.6"/>
+-  <text x="96" y="562" font-family="Georgia, serif" font-size="22" letter-spacing="4" fill="${cream}" opacity="0.55">SCAN THE WORLD, ONE STAMP AT A TIME</text>
++  <!-- header -->
++  <text x="${TX}" y="132" font-family="${F}" font-size="26" font-weight="700" letter-spacing="14" fill="${accent}">PORTAVA</text>
++  <text x="${TX}" y="168" font-family="${F}" font-size="19" font-weight="500" letter-spacing="7" fill="${paper}" opacity="0.6">PASSPORT STAMP</text>
++  <!-- stamp label -->
++  <text x="${TX}" y="${subLine ? 318 : 336}" font-family="${F}" font-size="${label.length > 18 ? 52 : 66}" font-weight="700" fill="${paper}">${escapeXml(label)}</text>
++  ${subLine ? `<text x="${TX}" y="374" font-family="${F}" font-size="28" font-weight="500" fill="${highlight}">${escapeXml(subLine.slice(0, 60))}</text>` : ""}
++  ${owner ? `<text x="${TX}" y="${subLine ? 438 : 400}" font-family="${F}" font-size="26" font-weight="400" fill="${paper}" opacity="0.85">Earned by ${escapeXml(owner.slice(0, 40))}</text>` : ""}
++  <!-- footer -->
++  <line x1="${TX}" y1="528" x2="${W - 74}" y2="528" stroke="${accent}" stroke-width="1.5" opacity="0.5"/>
++  <text x="${TX}" y="566" font-family="${F}" font-size="20" font-weight="500" letter-spacing="4" fill="${paper}" opacity="0.55">COLLECT THE WORLD, ONE STAMP AT A TIME</text>
+ </svg>`;
+ }
+ 
+@@ -1076,6 +1141,7 @@
+             place: stamp.city ?? stamp.country ?? null,
+             earnedAt: stamp.earnedAt,
+             artworkDataUri,
++            palette: stamp.palette,
+           });
+           res
+             .status(200)

@@ -19,10 +19,12 @@ import { DollarSign, Sliders, X, ChevronDown, ChevronUp } from 'lucide-react-nat
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import {
   fetchCostEstimate,
+  fetchCostEstimateWithFx,
   fetchManualBudget,
   updateManualBudget,
   runBudgetSandbox,
   type CostEstimate,
+  type CostEstimateConverted,
   type SandboxResultAvailable,
   type ManualBudget,
 } from '../../services/tripIntel.ts';
@@ -37,6 +39,13 @@ interface TripBudgetSectionProps {
   isOwnerOrCohost: boolean;
   /** True when the current user is the trip owner (can write budget). */
   isOwner: boolean;
+  /**
+   * ISO-4217 home currency code (e.g. 'EUR', 'GBP'). When provided and the
+   * server returns a converted figure, the budget section shows a secondary
+   * FX band underneath the source-currency estimate. Always subordinate —
+   * never replaces the source figure. `undefined` = no FX band.
+   */
+  homeCurrency?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -507,9 +516,10 @@ function ManualBudgetRow({
 // Main component
 // ---------------------------------------------------------------------------
 
-export function TripBudgetSection({ tripId, isOwnerOrCohost, isOwner }: TripBudgetSectionProps) {
+export function TripBudgetSection({ tripId, isOwnerOrCohost, isOwner, homeCurrency }: TripBudgetSectionProps) {
   const [estimate, setEstimate] = useState<CostEstimate | null | undefined>(undefined);
   const [budget, setBudget] = useState<ManualBudget | null>(null);
+  const [converted, setConverted] = useState<CostEstimateConverted | null>(null);
   const [sandboxOpen, setSandboxOpen] = useState(false);
   const [assumptionsOpen, setAssumptionsOpen] = useState(false);
   const [breakdownOpen, setBreakdownOpen] = useState(false);
@@ -526,11 +536,18 @@ export function TripBudgetSection({ tripId, isOwnerOrCohost, isOwner }: TripBudg
       if (cancelled) return;
       setEstimate(est);
       setBudget(bud);
+
+      // FX conversion — only when a home currency is provided and the
+      // estimate is available (non-null means flag is on).
+      if (homeCurrency && est?.available) {
+        const fxRes = await fetchCostEstimateWithFx(tripId, homeCurrency);
+        if (!cancelled) setConverted(fxRes?.converted ?? null);
+      }
     }
 
     load();
     return () => { cancelled = true; };
-  }, [tripId, isOwnerOrCohost]);
+  }, [tripId, isOwnerOrCohost, homeCurrency]);
 
   async function handleSaveBudget(amount: number | null) {
     const updated = await updateManualBudget(tripId, { totalBudget: amount });
@@ -642,6 +659,28 @@ export function TripBudgetSection({ tripId, isOwnerOrCohost, isOwner }: TripBudg
           )}
           {estimate.total && (
             <BandRow label="Total trip" band={estimate.total} currency={currency} />
+          )}
+
+          {/* FX converted band — shown only when available; always subordinate
+              to the source figure above. Never hides the source amounts. */}
+          {converted && (
+            <View style={styles.fxBand}>
+              <Text style={styles.fxLabel}>
+                ~{converted.currency} equivalent
+              </Text>
+              {converted.perDay && (
+                <BandRow label="Per day" band={converted.perDay} currency={converted.currency} />
+              )}
+              {converted.total && (
+                <BandRow label="Total trip" band={converted.total} currency={converted.currency} />
+              )}
+              <Text style={styles.fxDisclaimer}>{converted.disclaimer}</Text>
+              {converted.rateDate && (
+                <Text style={styles.fxRateDate}>
+                  Rate: {new Date(converted.rateDate).toLocaleDateString()}
+                </Text>
+              )}
+            </View>
           )}
 
           {/* Assumptions toggle */}
@@ -1112,5 +1151,31 @@ const styles = StyleSheet.create({
   sandboxErrorText: {
     ...t.small,
     color: '#BF360C',
+  },
+  // ── FX converted band ──────────────────────────────────────────────────────
+  fxBand: {
+    marginTop: space.sm,
+    paddingTop: space.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: color.haze,
+    gap: 2,
+  },
+  fxLabel: {
+    ...t.small,
+    fontWeight: '700',
+    color: color.mute,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: space.xs,
+  },
+  fxDisclaimer: {
+    ...t.small,
+    color: color.faint,
+    fontStyle: 'italic',
+    marginTop: space.xs,
+  },
+  fxRateDate: {
+    ...t.small,
+    color: color.faint,
   },
 });

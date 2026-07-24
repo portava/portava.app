@@ -12,16 +12,9 @@ import {
 } from 'react-native';
 import type { ShowcaseStamp } from '../../services/stampShowcase.ts';
 import { color, space, radius } from '../../theme/tokens.ts';
+import { RARITY_COLORS, normalizeRarity, hasGlowRing } from '../../lib/stampRarity.ts';
 
 const CARD_SIZE = 72;
-
-const RARITY_COLORS: Record<string, string> = {
-  common:    '#6B7280',
-  uncommon:  '#16A34A',
-  rare:      '#2563EB',
-  epic:      '#7C3AED',
-  legendary: '#D97706',
-};
 
 interface Props {
   items: ShowcaseStamp[];
@@ -29,10 +22,11 @@ interface Props {
 }
 
 function ShowcaseCard({ item, onPress }: { item: ShowcaseStamp; onPress: () => void }) {
-  const rarity = item.definition?.rarity ?? 'common';
-  const rarityColor = RARITY_COLORS[rarity] ?? RARITY_COLORS.common;
+  const rarity = normalizeRarity(item.definition?.rarity);
+  const rarityColor = RARITY_COLORS[rarity].ring;
   const artworkUrl = item.definition?.artworkUrl ?? null;
   const label = item.titleOverride ?? item.definition?.name ?? 'Stamp';
+  const showGlow = hasGlowRing(rarity);
 
   return (
     <Pressable
@@ -41,7 +35,7 @@ function ShowcaseCard({ item, onPress }: { item: ShowcaseStamp; onPress: () => v
       accessibilityRole="button"
       accessibilityLabel={label}
     >
-      <View style={styles.artFrame}>
+      <View style={[styles.artFrame, showGlow && { borderWidth: 1.5, borderColor: rarityColor }]}>
         {artworkUrl ? (
           <Image
             source={{ uri: artworkUrl }}

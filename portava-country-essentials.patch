@@ -1,0 +1,698 @@
+diff -ruN a/artifacts/api-server/src/lib/countryEssentials.ts b/artifacts/api-server/src/lib/countryEssentials.ts
+--- a/artifacts/api-server/src/lib/countryEssentials.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/lib/countryEssentials.ts	2026-07-24 04:27:24.461939401 +0000
+@@ -0,0 +1,130 @@
++/**
++ * Country essentials — curated static travel-readiness reference data.
++ *
++ * Fields:
++ *   plugTypes  — IEC "World Plugs" letter types (A–N) in common use
++ *   voltage    — nominal mains voltage (V)
++ *   frequency  — mains frequency (Hz)
++ *   driveSide  — 'left' | 'right' (side of the road)
++ *   emergency  — { all?, police?, ambulance?, fire? } dial numbers
++ *
++ * HONESTY CONTRACT (this is safety-relevant data):
++ *   - confidence is 'curated' with an explicit source note + dataset date.
++ *   - Plug/voltage/frequency are engineering-standardized (IEC) and stable.
++ *   - Emergency numbers vary by region and change; EVERY consumer must show
++ *     the CONFIRM_DISCLAIMER. Where a reliable universal number exists (112 in
++ *     the EU/EEA, 911 in North America) it is used as `all`.
++ *   - Countries not in this set return null (unknown) — never a guess.
++ *
++ * Sources: IEC World Plugs (iec.ch/world-plugs); national emergency-number
++ * directories / ITU. Dataset date below.
++ */
++
++export const ESSENTIALS_DATASET_DATE = "2026-07-24";
++export const ESSENTIALS_SOURCE = "IEC World Plugs; national emergency-service directories (curated)";
++export const CONFIRM_DISCLAIMER =
++  "Confirm emergency numbers locally on arrival — they vary by region and can change.";
++
++export interface EmergencyNumbers {
++  all?: string;
++  police?: string;
++  ambulance?: string;
++  fire?: string;
++}
++
++export interface CountryEssential {
++  plugTypes: string[];
++  voltage: number;
++  frequency: number;
++  driveSide: "left" | "right";
++  emergency: EmergencyNumbers;
++}
++
++// ISO-3166 alpha-2 → essentials. Curated; accurate for common travel
++// destinations. Emergency fields use the primary number a traveler should dial.
++export const COUNTRY_ESSENTIALS: Record<string, CountryEssential> = {
++  // ── North America ──
++  US: { plugTypes: ["A", "B"], voltage: 120, frequency: 60, driveSide: "right", emergency: { all: "911" } },
++  CA: { plugTypes: ["A", "B"], voltage: 120, frequency: 60, driveSide: "right", emergency: { all: "911" } },
++  MX: { plugTypes: ["A", "B"], voltage: 127, frequency: 60, driveSide: "right", emergency: { all: "911" } },
++  CR: { plugTypes: ["A", "B"], voltage: 120, frequency: 60, driveSide: "right", emergency: { all: "911" } },
++
++  // ── United Kingdom & Ireland ──
++  GB: { plugTypes: ["G"], voltage: 230, frequency: 50, driveSide: "left", emergency: { all: "999", police: "999", ambulance: "999", fire: "999" } },
++  IE: { plugTypes: ["G", "F"], voltage: 230, frequency: 50, driveSide: "left", emergency: { all: "112", police: "999" } },
++
++  // ── EU / EEA (112 is the pan-European emergency number) ──
++  FR: { plugTypes: ["C", "E"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112" } },
++  DE: { plugTypes: ["C", "F"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112", police: "110" } },
++  ES: { plugTypes: ["C", "F"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112" } },
++  IT: { plugTypes: ["C", "F", "L"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112" } },
++  NL: { plugTypes: ["C", "F"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112" } },
++  BE: { plugTypes: ["C", "E"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112" } },
++  PT: { plugTypes: ["C", "F"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112" } },
++  AT: { plugTypes: ["C", "F"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112" } },
++  CH: { plugTypes: ["C", "J"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112", police: "117", fire: "118", ambulance: "144" } },
++  GR: { plugTypes: ["C", "F"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112" } },
++  SE: { plugTypes: ["C", "F"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112" } },
++  NO: { plugTypes: ["C", "F"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112", ambulance: "113", fire: "110" } },
++  DK: { plugTypes: ["C", "E", "F", "K"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112" } },
++  FI: { plugTypes: ["C", "F"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112" } },
++  PL: { plugTypes: ["C", "E"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112" } },
++  CZ: { plugTypes: ["C", "E"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112" } },
++  HU: { plugTypes: ["C", "F"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112" } },
++  HR: { plugTypes: ["C", "F"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112" } },
++  IS: { plugTypes: ["C", "F"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112" } },
++
++  // ── Rest of Europe ──
++  TR: { plugTypes: ["C", "F"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112" } },
++  RU: { plugTypes: ["C", "F"], voltage: 220, frequency: 50, driveSide: "right", emergency: { all: "112", police: "102", ambulance: "103", fire: "101" } },
++
++  // ── East / SE / South Asia ──
++  JP: { plugTypes: ["A", "B"], voltage: 100, frequency: 50, driveSide: "left", emergency: { police: "110", fire: "119", ambulance: "119" } },
++  CN: { plugTypes: ["A", "C", "I"], voltage: 220, frequency: 50, driveSide: "right", emergency: { police: "110", ambulance: "120", fire: "119" } },
++  KR: { plugTypes: ["C", "F"], voltage: 220, frequency: 60, driveSide: "right", emergency: { police: "112", fire: "119", ambulance: "119" } },
++  TW: { plugTypes: ["A", "B"], voltage: 110, frequency: 60, driveSide: "right", emergency: { police: "110", fire: "119", ambulance: "119" } },
++  HK: { plugTypes: ["G"], voltage: 220, frequency: 50, driveSide: "left", emergency: { all: "999" } },
++  TH: { plugTypes: ["A", "B", "C", "O"], voltage: 230, frequency: 50, driveSide: "left", emergency: { police: "191", ambulance: "1669", fire: "199" } },
++  VN: { plugTypes: ["A", "C", "F"], voltage: 220, frequency: 50, driveSide: "right", emergency: { police: "113", ambulance: "115", fire: "114" } },
++  ID: { plugTypes: ["C", "F"], voltage: 230, frequency: 50, driveSide: "left", emergency: { all: "112", police: "110" } },
++  MY: { plugTypes: ["G"], voltage: 240, frequency: 50, driveSide: "left", emergency: { all: "999" } },
++  SG: { plugTypes: ["G"], voltage: 230, frequency: 50, driveSide: "left", emergency: { police: "999", ambulance: "995", fire: "995" } },
++  PH: { plugTypes: ["A", "B", "C"], voltage: 220, frequency: 60, driveSide: "right", emergency: { all: "911" } },
++  IN: { plugTypes: ["C", "D", "M"], voltage: 230, frequency: 50, driveSide: "left", emergency: { all: "112", police: "100", ambulance: "102", fire: "101" } },
++
++  // ── Oceania ──
++  AU: { plugTypes: ["I"], voltage: 230, frequency: 50, driveSide: "left", emergency: { all: "000", police: "000" } },
++  NZ: { plugTypes: ["I"], voltage: 230, frequency: 50, driveSide: "left", emergency: { all: "111" } },
++
++  // ── Middle East ──
++  AE: { plugTypes: ["G"], voltage: 220, frequency: 50, driveSide: "right", emergency: { police: "999", ambulance: "998", fire: "997" } },
++  SA: { plugTypes: ["G"], voltage: 230, frequency: 60, driveSide: "right", emergency: { police: "999", ambulance: "997", fire: "998" } },
++  IL: { plugTypes: ["C", "H", "M"], voltage: 230, frequency: 50, driveSide: "right", emergency: { police: "100", ambulance: "101", fire: "102" } },
++
++  // ── Africa ──
++  EG: { plugTypes: ["C", "F"], voltage: 220, frequency: 50, driveSide: "right", emergency: { police: "122", ambulance: "123" } },
++  ZA: { plugTypes: ["C", "D", "M", "N"], voltage: 230, frequency: 50, driveSide: "left", emergency: { police: "10111", ambulance: "10177" } },
++  KE: { plugTypes: ["G"], voltage: 240, frequency: 50, driveSide: "left", emergency: { all: "999" } },
++  NG: { plugTypes: ["D", "G"], voltage: 230, frequency: 50, driveSide: "right", emergency: { all: "112" } },
++  MA: { plugTypes: ["C", "E"], voltage: 220, frequency: 50, driveSide: "right", emergency: { police: "19", ambulance: "15" } },
++
++  // ── Latin America ──
++  BR: { plugTypes: ["C", "N"], voltage: 127, frequency: 60, driveSide: "right", emergency: { police: "190", ambulance: "192" } },
++  AR: { plugTypes: ["C", "I"], voltage: 220, frequency: 50, driveSide: "right", emergency: { all: "911", ambulance: "107" } },
++  CL: { plugTypes: ["C", "L"], voltage: 220, frequency: 50, driveSide: "right", emergency: { police: "133", ambulance: "131", fire: "132" } },
++  CO: { plugTypes: ["A", "B"], voltage: 110, frequency: 60, driveSide: "right", emergency: { all: "123" } },
++  PE: { plugTypes: ["A", "B", "C"], voltage: 220, frequency: 60, driveSide: "right", emergency: { all: "105", ambulance: "106" } },
++};
++
++/** Look up essentials by ISO-3166 alpha-2 code (case-insensitive). Null when unknown. */
++export function essentialsFor(code: string | null | undefined): (CountryEssential & { code: string }) | null {
++  if (!code) return null;
++  const c = code.trim().toUpperCase();
++  const e = COUNTRY_ESSENTIALS[c];
++  return e ? { code: c, ...e } : null;
++}
++
++/** How many countries are covered (for observability). */
++export function essentialsCoverage(): number {
++  return Object.keys(COUNTRY_ESSENTIALS).length;
++}
+diff -ruN a/artifacts/api-server/src/migrations/0182_country_essentials.sql b/artifacts/api-server/src/migrations/0182_country_essentials.sql
+--- a/artifacts/api-server/src/migrations/0182_country_essentials.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/migrations/0182_country_essentials.sql	2026-07-24 04:28:06.841939807 +0000
+@@ -0,0 +1,102 @@
++-- Migration 0182: Country essentials (curated travel-readiness reference data)
++--
++-- Plug types, mains voltage/frequency, drive side, and emergency numbers per
++-- country. Curated static data (no live provider — none worth using exists for
++-- this). Plug/voltage/frequency are engineering-standardized (IEC) and stable;
++-- emergency numbers are curated with a confirm-on-arrival disclaimer surfaced
++-- by every consumer (safety-relevant).
++--
++-- confidence='curated', source + dataset date recorded on the table. Countries
++-- not seeded return nothing (unknown) — the app never guesses.
++--
++-- Safe to re-run: seed uses ON CONFLICT (code) DO NOTHING so curated edits made
++-- later via admin are preserved.
++
++CREATE TABLE IF NOT EXISTS country_essentials (
++  code           CHAR(2)     PRIMARY KEY,
++  plug_types     TEXT[]      NOT NULL DEFAULT '{}',
++  voltage        INTEGER,
++  frequency      INTEGER,
++  drive_side     TEXT        CHECK (drive_side IN ('left','right')),
++  emergency      JSONB       NOT NULL DEFAULT '{}',
++  confidence     TEXT        NOT NULL DEFAULT 'curated',
++  source         TEXT        NOT NULL DEFAULT 'IEC World Plugs; national emergency-service directories (curated)',
++  last_verified_at DATE      NOT NULL DEFAULT DATE '2026-07-24',
++  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
++);
++
++ALTER TABLE country_essentials ENABLE ROW LEVEL SECURITY;
++
++DO $$ BEGIN
++  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'country_essentials' AND policyname = 'ce_read') THEN
++    CREATE POLICY ce_read ON country_essentials FOR SELECT USING (auth.role() IN ('authenticated','service_role'));
++  END IF;
++END $$;
++DO $$ BEGIN
++  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'country_essentials' AND policyname = 'ce_svc') THEN
++    CREATE POLICY ce_svc ON country_essentials FOR ALL USING (auth.role() = 'service_role');
++  END IF;
++END $$;
++
++INSERT INTO country_essentials (code, plug_types, voltage, frequency, drive_side, emergency) VALUES
++  ('US', ARRAY['A','B'], 120, 60, 'right', '{"all":"911"}'::jsonb),
++  ('CA', ARRAY['A','B'], 120, 60, 'right', '{"all":"911"}'::jsonb),
++  ('MX', ARRAY['A','B'], 127, 60, 'right', '{"all":"911"}'::jsonb),
++  ('CR', ARRAY['A','B'], 120, 60, 'right', '{"all":"911"}'::jsonb),
++  ('GB', ARRAY['G'], 230, 50, 'left', '{"all":"999","police":"999","ambulance":"999","fire":"999"}'::jsonb),
++  ('IE', ARRAY['G','F'], 230, 50, 'left', '{"all":"112","police":"999"}'::jsonb),
++  ('FR', ARRAY['C','E'], 230, 50, 'right', '{"all":"112"}'::jsonb),
++  ('DE', ARRAY['C','F'], 230, 50, 'right', '{"all":"112","police":"110"}'::jsonb),
++  ('ES', ARRAY['C','F'], 230, 50, 'right', '{"all":"112"}'::jsonb),
++  ('IT', ARRAY['C','F','L'], 230, 50, 'right', '{"all":"112"}'::jsonb),
++  ('NL', ARRAY['C','F'], 230, 50, 'right', '{"all":"112"}'::jsonb),
++  ('BE', ARRAY['C','E'], 230, 50, 'right', '{"all":"112"}'::jsonb),
++  ('PT', ARRAY['C','F'], 230, 50, 'right', '{"all":"112"}'::jsonb),
++  ('AT', ARRAY['C','F'], 230, 50, 'right', '{"all":"112"}'::jsonb),
++  ('CH', ARRAY['C','J'], 230, 50, 'right', '{"all":"112","police":"117","fire":"118","ambulance":"144"}'::jsonb),
++  ('GR', ARRAY['C','F'], 230, 50, 'right', '{"all":"112"}'::jsonb),
++  ('SE', ARRAY['C','F'], 230, 50, 'right', '{"all":"112"}'::jsonb),
++  ('NO', ARRAY['C','F'], 230, 50, 'right', '{"all":"112","ambulance":"113","fire":"110"}'::jsonb),
++  ('DK', ARRAY['C','E','F','K'], 230, 50, 'right', '{"all":"112"}'::jsonb),
++  ('FI', ARRAY['C','F'], 230, 50, 'right', '{"all":"112"}'::jsonb),
++  ('PL', ARRAY['C','E'], 230, 50, 'right', '{"all":"112"}'::jsonb),
++  ('CZ', ARRAY['C','E'], 230, 50, 'right', '{"all":"112"}'::jsonb),
++  ('HU', ARRAY['C','F'], 230, 50, 'right', '{"all":"112"}'::jsonb),
++  ('HR', ARRAY['C','F'], 230, 50, 'right', '{"all":"112"}'::jsonb),
++  ('IS', ARRAY['C','F'], 230, 50, 'right', '{"all":"112"}'::jsonb),
++  ('TR', ARRAY['C','F'], 230, 50, 'right', '{"all":"112"}'::jsonb),
++  ('RU', ARRAY['C','F'], 220, 50, 'right', '{"all":"112","police":"102","ambulance":"103","fire":"101"}'::jsonb),
++  ('JP', ARRAY['A','B'], 100, 50, 'left', '{"police":"110","fire":"119","ambulance":"119"}'::jsonb),
++  ('CN', ARRAY['A','C','I'], 220, 50, 'right', '{"police":"110","ambulance":"120","fire":"119"}'::jsonb),
++  ('KR', ARRAY['C','F'], 220, 60, 'right', '{"police":"112","fire":"119","ambulance":"119"}'::jsonb),
++  ('TW', ARRAY['A','B'], 110, 60, 'right', '{"police":"110","fire":"119","ambulance":"119"}'::jsonb),
++  ('HK', ARRAY['G'], 220, 50, 'left', '{"all":"999"}'::jsonb),
++  ('TH', ARRAY['A','B','C','O'], 230, 50, 'left', '{"police":"191","ambulance":"1669","fire":"199"}'::jsonb),
++  ('VN', ARRAY['A','C','F'], 220, 50, 'right', '{"police":"113","ambulance":"115","fire":"114"}'::jsonb),
++  ('ID', ARRAY['C','F'], 230, 50, 'left', '{"all":"112","police":"110"}'::jsonb),
++  ('MY', ARRAY['G'], 240, 50, 'left', '{"all":"999"}'::jsonb),
++  ('SG', ARRAY['G'], 230, 50, 'left', '{"police":"999","ambulance":"995","fire":"995"}'::jsonb),
++  ('PH', ARRAY['A','B','C'], 220, 60, 'right', '{"all":"911"}'::jsonb),
++  ('IN', ARRAY['C','D','M'], 230, 50, 'left', '{"all":"112","police":"100","ambulance":"102","fire":"101"}'::jsonb),
++  ('AU', ARRAY['I'], 230, 50, 'left', '{"all":"000","police":"000"}'::jsonb),
++  ('NZ', ARRAY['I'], 230, 50, 'left', '{"all":"111"}'::jsonb),
++  ('AE', ARRAY['G'], 220, 50, 'right', '{"police":"999","ambulance":"998","fire":"997"}'::jsonb),
++  ('SA', ARRAY['G'], 230, 60, 'right', '{"police":"999","ambulance":"997","fire":"998"}'::jsonb),
++  ('IL', ARRAY['C','H','M'], 230, 50, 'right', '{"police":"100","ambulance":"101","fire":"102"}'::jsonb),
++  ('EG', ARRAY['C','F'], 220, 50, 'right', '{"police":"122","ambulance":"123"}'::jsonb),
++  ('ZA', ARRAY['C','D','M','N'], 230, 50, 'left', '{"police":"10111","ambulance":"10177"}'::jsonb),
++  ('KE', ARRAY['G'], 240, 50, 'left', '{"all":"999"}'::jsonb),
++  ('NG', ARRAY['D','G'], 230, 50, 'right', '{"all":"112"}'::jsonb),
++  ('MA', ARRAY['C','E'], 220, 50, 'right', '{"police":"19","ambulance":"15"}'::jsonb),
++  ('BR', ARRAY['C','N'], 127, 60, 'right', '{"police":"190","ambulance":"192"}'::jsonb),
++  ('AR', ARRAY['C','I'], 220, 50, 'right', '{"all":"911","ambulance":"107"}'::jsonb),
++  ('CL', ARRAY['C','L'], 220, 50, 'right', '{"police":"133","ambulance":"131","fire":"132"}'::jsonb),
++  ('CO', ARRAY['A','B'], 110, 60, 'right', '{"all":"123"}'::jsonb),
++  ('PE', ARRAY['A','B','C'], 220, 60, 'right', '{"all":"105","ambulance":"106"}'::jsonb)
++ON CONFLICT (code) DO NOTHING;
++
++-- Rollout flag (default FALSE).
++INSERT INTO feature_flags (flag, enabled, description) VALUES
++  ('country_essentials_enabled', FALSE,
++   'Country essentials: plug types, voltage, drive side, emergency numbers on trip readiness surfaces')
++ON CONFLICT (flag) DO NOTHING;
+diff -ruN a/artifacts/api-server/src/routes/countryEssentials.ts b/artifacts/api-server/src/routes/countryEssentials.ts
+--- a/artifacts/api-server/src/routes/countryEssentials.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/routes/countryEssentials.ts	2026-07-24 04:29:03.545940350 +0000
+@@ -0,0 +1,161 @@
++/**
++ * Country essentials routes — travel-readiness reference data.
++ *
++ *   GET /api/countries/:code/essentials   — one country (ISO2 or a name)
++ *   GET /api/trips/:tripId/essentials      — essentials for the trip's
++ *                                            destination country(ies)
++ *
++ * Flag-gated by country_essentials_enabled. Reads the DB table first (so admin
++ * edits win), falls back to the in-code curated dataset when the row/table is
++ * absent, so it works even before 0182 runs. Every response carries the
++ * confirm-on-arrival disclaimer (emergency numbers are safety-relevant).
++ */
++
++import { Router } from "express";
++import { asyncHandler } from "../lib/asyncHandler.js";
++import { requireUser, requireTripMember, sendError } from "../lib/http.js";
++import { getServiceClient } from "../lib/supabase.js";
++import { isFlagEnabled } from "../lib/featureFlags.js";
++import { toCountryCode } from "../lib/countryCodes.js";
++import {
++  essentialsFor,
++  CONFIRM_DISCLAIMER,
++  ESSENTIALS_SOURCE,
++  ESSENTIALS_DATASET_DATE,
++} from "../lib/countryEssentials.js";
++
++const FLAG = "country_essentials_enabled";
++const router = Router();
++
++interface EssentialsPayload {
++  code: string;
++  plugTypes: string[];
++  voltage: number | null;
++  frequency: number | null;
++  driveSide: string | null;
++  emergency: Record<string, string>;
++  confidence: string;
++  source: string;
++  lastVerifiedAt: string;
++  disclaimer: string;
++}
++
++/** Resolve essentials for an ISO2 code — DB row first, curated lib fallback. */
++async function resolveEssentials(sc: any, code: string): Promise<EssentialsPayload | null> {
++  const iso = code.toUpperCase();
++  // 1. DB (admin edits win).
++  try {
++    const { data, error } = await sc
++      .from("country_essentials")
++      .select("code, plug_types, voltage, frequency, drive_side, emergency, confidence, source, last_verified_at")
++      .eq("code", iso)
++      .maybeSingle();
++    if (!error && data) {
++      const d = data as any;
++      return {
++        code: d.code,
++        plugTypes: d.plug_types ?? [],
++        voltage: d.voltage ?? null,
++        frequency: d.frequency ?? null,
++        driveSide: d.drive_side ?? null,
++        emergency: d.emergency ?? {},
++        confidence: d.confidence ?? "curated",
++        source: d.source ?? ESSENTIALS_SOURCE,
++        lastVerifiedAt: String(d.last_verified_at ?? ESSENTIALS_DATASET_DATE),
++        disclaimer: CONFIRM_DISCLAIMER,
++      };
++    }
++  } catch {
++    // fall through to curated lib
++  }
++  // 2. Curated in-code dataset.
++  const lib = essentialsFor(iso);
++  if (!lib) return null;
++  return {
++    code: lib.code,
++    plugTypes: lib.plugTypes,
++    voltage: lib.voltage,
++    frequency: lib.frequency,
++    driveSide: lib.driveSide,
++    emergency: lib.emergency as Record<string, string>,
++    confidence: "curated",
++    source: ESSENTIALS_SOURCE,
++    lastVerifiedAt: ESSENTIALS_DATASET_DATE,
++    disclaimer: CONFIRM_DISCLAIMER,
++  };
++}
++
++// ── GET /api/countries/:code/essentials ──────────────────────────────────────
++
++router.get("/countries/:code/essentials", asyncHandler(async (req, res) => {
++  const auth = await requireUser(req, res);
++  if (!auth) return;
++  const sc = getServiceClient();
++  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
++  if (!(await isFlagEnabled(sc, FLAG))) {
++    res.json({ essentials: null, enabled: false });
++    return;
++  }
++
++  const raw = String(req.params.code ?? "").trim();
++  const iso = /^[A-Za-z]{2}$/.test(raw) ? raw.toUpperCase() : toCountryCode(raw);
++  if (!iso) { sendError(res, "invalid_payload", "Unrecognized country"); return; }
++
++  const essentials = await resolveEssentials(sc, iso);
++  res.json({ essentials, enabled: true }); // essentials null when country not covered (honest unknown)
++}));
++
++// ── GET /api/trips/:tripId/essentials ────────────────────────────────────────
++
++router.get("/trips/:tripId/essentials", asyncHandler(async (req, res) => {
++  const auth = await requireUser(req, res);
++  if (!auth) return;
++  const { user } = auth;
++  const sc = getServiceClient();
++  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
++  if (!(await isFlagEnabled(sc, FLAG))) {
++    res.json({ items: [], enabled: false });
++    return;
++  }
++
++  const tripId = String(req.params.tripId ?? "");
++  const membership = await requireTripMember(sc, tripId, user.id);
++  if (!membership) { sendError(res, "forbidden", "Not a member of this trip"); return; }
++
++  // Collect destination countries: trip_destinations first, then the trip's
++  // primary destination_country. Deduped, order-preserving.
++  const countries: string[] = [];
++  const pushCountry = (raw: string | null | undefined) => {
++    if (!raw) return;
++    const iso = /^[A-Za-z]{2}$/.test(String(raw).trim()) ? String(raw).trim().toUpperCase() : toCountryCode(String(raw));
++    if (iso && !countries.includes(iso)) countries.push(iso);
++  };
++
++  try {
++    const { data: dests } = await sc
++      .from("trip_destinations")
++      .select("country, position")
++      .eq("trip_id", tripId)
++      .order("position", { ascending: true });
++    for (const d of (dests ?? []) as any[]) pushCountry(d.country);
++  } catch { /* table optional */ }
++
++  if (countries.length === 0) {
++    const { data: trip } = await sc
++      .from("trips")
++      .select("destination_country")
++      .eq("id", tripId)
++      .maybeSingle();
++    pushCountry((trip as any)?.destination_country);
++  }
++
++  const items = [];
++  for (const iso of countries) {
++    const essentials = await resolveEssentials(sc, iso);
++    items.push({ country: iso, essentials }); // essentials null = not covered
++  }
++
++  res.json({ items, enabled: true, disclaimer: CONFIRM_DISCLAIMER });
++}));
++
++export default router;
+diff -ruN a/artifacts/api-server/src/routes/index.ts b/artifacts/api-server/src/routes/index.ts
+--- a/artifacts/api-server/src/routes/index.ts	2026-07-23 20:17:11.000000000 +0000
++++ b/artifacts/api-server/src/routes/index.ts	2026-07-24 04:29:14.373940453 +0000
+@@ -96,6 +96,7 @@
+ import neighborhoodsRouter from "./neighborhoods";
+ import stampShowcaseRouter from "./stampShowcase";
+ import stampAdmireRouter from "./stampAdmire";
++import countryEssentialsRouter from "./countryEssentials";
+ 
+ const router: IRouter = Router();
+ 
+@@ -198,5 +199,6 @@
+ // so the stamp_system_v2_enabled gate (path-scoped to /stamps*) governs them.
+ router.use(stampShowcaseRouter);
+ router.use(stampAdmireRouter);
++router.use(countryEssentialsRouter);
+ 
+ export default router;
+diff -ruN a/artifacts/api-server/src/test/countryEssentials.test.ts b/artifacts/api-server/src/test/countryEssentials.test.ts
+--- a/artifacts/api-server/src/test/countryEssentials.test.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/test/countryEssentials.test.ts	2026-07-24 04:30:00.581940896 +0000
+@@ -0,0 +1,178 @@
++/**
++ * Country essentials — data + route tests.
++ *
++ * Data tests validate the curated dataset's shape/accuracy invariants (no
++ * fabrication slips: valid plug letters, sane voltage/frequency, drive side).
++ * Route tests cover flag gating, DB-first-then-lib resolution, honest-unknown
++ * for uncovered countries, and the trip-destination aggregation.
++ */
++
++import { describe, it, before, after, beforeEach } from "node:test";
++import assert from "node:assert/strict";
++import http from "node:http";
++import express from "express";
++
++import { _setTestClient, _clearTestClient } from "../lib/http.js";
++import { _setTestServiceClient } from "../lib/supabase.js";
++import countryEssentialsRouter from "../routes/countryEssentials.js";
++import {
++  COUNTRY_ESSENTIALS,
++  essentialsFor,
++  CONFIRM_DISCLAIMER,
++} from "../lib/countryEssentials.js";
++
++// ── Data invariants ───────────────────────────────────────────────────────────
++
++describe("country essentials dataset", () => {
++  const VALID_PLUGS = new Set("ABCDEFGHIJKLMNO".split(""));
++
++  it("every entry has valid plug letters, sane voltage/frequency, drive side", () => {
++    for (const [code, e] of Object.entries(COUNTRY_ESSENTIALS)) {
++      assert.match(code, /^[A-Z]{2}$/, `bad code ${code}`);
++      assert.ok(e.plugTypes.length > 0, `${code} has no plugs`);
++      for (const p of e.plugTypes) assert.ok(VALID_PLUGS.has(p), `${code} bad plug ${p}`);
++      assert.ok(e.voltage >= 100 && e.voltage <= 240, `${code} voltage ${e.voltage}`);
++      assert.ok(e.frequency === 50 || e.frequency === 60, `${code} freq ${e.frequency}`);
++      assert.ok(e.driveSide === "left" || e.driveSide === "right", `${code} drive ${e.driveSide}`);
++      assert.ok(Object.keys(e.emergency).length > 0, `${code} has no emergency number`);
++    }
++  });
++
++  it("spot-checks known-good values", () => {
++    assert.deepEqual(essentialsFor("us")!.emergency, { all: "911" });
++    assert.equal(essentialsFor("GB")!.plugTypes[0], "G");
++    assert.equal(essentialsFor("jp")!.voltage, 100);
++    assert.equal(essentialsFor("JP")!.emergency.police, "110");
++    assert.equal(essentialsFor("au")!.driveSide, "left");
++    assert.equal(essentialsFor("fr")!.emergency.all, "112");
++  });
++
++  it("returns null for uncovered / bad input (honest unknown)", () => {
++    assert.equal(essentialsFor("ZZ"), null);
++    assert.equal(essentialsFor(null), null);
++    assert.equal(essentialsFor(""), null);
++  });
++});
++
++// ── Route tests ────────────────────────────────────────────────────────────────
++
++function makeSc(opts: { flagOn?: boolean; dbRow?: any; dests?: any[]; trip?: any } = {}) {
++  return {
++    auth: { getUser: async (t: string) => (t ? { data: { user: { id: "u1" } }, error: null } : { data: { user: null }, error: {} }) },
++    from(table: string) {
++      const b: any = {
++        _f: [] as Array<[string, any]>,
++        select() { return b; },
++        eq(k: string, v: any) { b._f.push([k, v]); return b; },
++        order() { return b; },
++        maybeSingle: async () => {
++          if (table === "feature_flags") return { data: { enabled: opts.flagOn === true }, error: null };
++          if (table === "country_essentials") return { data: opts.dbRow ?? null, error: null };
++          if (table === "trips") return { data: opts.trip ?? null, error: null };
++          if (table === "trip_members") return { data: { role: "owner" }, error: null };
++          return { data: null, error: null };
++        },
++        then(resolve: any) {
++          if (table === "trip_destinations") { resolve({ data: opts.dests ?? [], error: null }); return; }
++          resolve({ data: [], error: null });
++        },
++      };
++      return b;
++    },
++  } as any;
++}
++
++function buildApp() {
++  const app = express();
++  app.use(express.json());
++  app.use((req: any, _res: any, next: any) => { req.log = { error() {}, warn() {}, info() {} }; next(); });
++  app.use("/api", countryEssentialsRouter);
++  return app;
++}
++
++function get(server: http.Server, path: string): Promise<{ status: number; body: any }> {
++  return new Promise((resolve, reject) => {
++    const addr = server.address() as any;
++    const r = http.request(
++      { hostname: "127.0.0.1", port: addr.port, path, method: "GET", headers: { authorization: "Bearer t" } },
++      (res) => { let raw = ""; res.on("data", (c) => (raw += c)); res.on("end", () => { let p: any; try { p = JSON.parse(raw); } catch { p = raw; } resolve({ status: res.statusCode ?? 0, body: p }); }); },
++    );
++    r.on("error", reject);
++    r.end();
++  });
++}
++
++let server: http.Server;
++function useClient(sc: any) { _setTestClient(sc, true); _setTestServiceClient(sc); }
++
++before(async () => {
++  server = http.createServer(buildApp());
++  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
++});
++after(async () => { _clearTestClient(); _setTestServiceClient(null as any); await new Promise<void>((r) => server.close(() => r())); });
++
++describe("GET /countries/:code/essentials", () => {
++  it("is flag-gated", async () => {
++    useClient(makeSc({ flagOn: false }));
++    const { body } = await get(server, "/api/countries/US/essentials");
++    assert.equal(body.enabled, false);
++    assert.equal(body.essentials, null);
++  });
++
++  it("returns curated lib data when no DB row (fallback)", async () => {
++    useClient(makeSc({ flagOn: true, dbRow: null }));
++    const { body } = await get(server, "/api/countries/JP/essentials");
++    assert.equal(body.enabled, true);
++    assert.equal(body.essentials.voltage, 100);
++    assert.equal(body.essentials.emergency.police, "110");
++    assert.equal(body.essentials.disclaimer, CONFIRM_DISCLAIMER);
++  });
++
++  it("prefers the DB row over lib data (admin edits win)", async () => {
++    useClient(makeSc({ flagOn: true, dbRow: { code: "US", plug_types: ["A"], voltage: 120, frequency: 60, drive_side: "right", emergency: { all: "911-edited" }, confidence: "curated", source: "admin", last_verified_at: "2026-07-24" } }));
++    const { body } = await get(server, "/api/countries/US/essentials");
++    assert.equal(body.essentials.emergency.all, "911-edited");
++  });
++
++  it("resolves a country NAME to ISO2", async () => {
++    useClient(makeSc({ flagOn: true }));
++    const { body } = await get(server, "/api/countries/Japan/essentials");
++    assert.equal(body.essentials?.code, "JP");
++  });
++
++  it("returns null essentials for an uncovered country (honest unknown, not a guess)", async () => {
++    useClient(makeSc({ flagOn: true }));
++    const { body } = await get(server, "/api/countries/AQ/essentials");
++    assert.equal(body.enabled, true);
++    assert.equal(body.essentials, null);
++  });
++});
++
++describe("GET /trips/:tripId/essentials", () => {
++  const TRIP = "aaaaaaaa-0000-4000-8000-000000000001";
++  it("aggregates destination countries from trip_destinations", async () => {
++    useClient(makeSc({ flagOn: true, dests: [{ country: "France", position: 0 }, { country: "IT", position: 1 }] }));
++    const { body } = await get(server, `/api/trips/${TRIP}/essentials`);
++    assert.equal(body.enabled, true);
++    assert.equal(body.items.length, 2);
++    assert.equal(body.items[0].country, "FR");
++    assert.equal(body.items[0].essentials.emergency.all, "112");
++    assert.equal(body.items[1].country, "IT");
++    assert.equal(body.disclaimer, CONFIRM_DISCLAIMER);
++  });
++
++  it("falls back to the trip's primary destination_country", async () => {
++    useClient(makeSc({ flagOn: true, dests: [], trip: { destination_country: "Thailand" } }));
++    const { body } = await get(server, `/api/trips/${TRIP}/essentials`);
++    assert.equal(body.items.length, 1);
++    assert.equal(body.items[0].country, "TH");
++    assert.equal(body.items[0].essentials.emergency.police, "191");
++  });
++
++  it("is flag-gated", async () => {
++    useClient(makeSc({ flagOn: false }));
++    const { body } = await get(server, `/api/trips/${TRIP}/essentials`);
++    assert.equal(body.enabled, false);
++    assert.deepEqual(body.items, []);
++  });
++});
+--- a/artifacts/api-server/package.json	2026-07-24 04:33:04.176060570 +0000
++++ b/artifacts/api-server/package.json	2026-07-24 04:30:08.280587404 +0000
+@@ -14,7 +14,7 @@
+     "check:migration-prefixes": "node --import tsx/esm src/scripts/checkMigrationPrefixes.ts",
+     "check:write-path-columns": "node --env-file-if-exists=.env --import tsx/esm src/scripts/checkWritePathColumns.ts",
+     "test:circle-locations": "node --import tsx/esm --test src/test/circleLocations.test.ts",
+-    "test": "node --import tsx/esm --test --test-force-exit src/test/universalStamps.test.ts src/test/eventsCirclesOwner.test.ts src/test/circleLocations.test.ts src/test/collections.test.ts src/test/accessControl.test.ts src/test/adminGeo.test.ts src/test/adminModeration.test.ts src/test/ageEligibility.test.ts src/test/airport.test.ts src/test/availability.test.ts src/test/blockExclusion.test.ts src/test/circleInviteAge.test.ts src/test/cleanupHealth.test.ts src/test/compass-active-reward.test.ts src/test/compass-admin.test.ts src/test/compass-cache.test.ts src/test/compass-memory.test.ts src/test/compass-context.test.ts src/test/compass-feed.test.ts src/test/compassServedDedup.test.ts src/test/compass-pipeline.test.ts src/test/compass-ux.test.ts src/test/coreActions.test.ts src/test/dailyBriefCleanup.test.ts src/test/delayedGeotag.test.ts src/test/emergencyFlags.test.ts src/test/events.test.ts src/test/featureFlagsAdmin.test.ts src/test/followDecisions.test.ts src/test/friendDecisions.test.ts src/test/geofenceAdminSettings.test.ts src/test/geofence.test.ts src/test/groupChat.test.ts src/test/hashtags.test.ts src/test/hiddenGems.test.ts src/test/hiddenGemCheckin.test.ts src/test/intelligence.test.ts src/test/interactionPermissions.test.ts src/test/itineraryTimeline.test.ts src/test/locationGps.test.ts src/test/locationVerify.test.ts src/test/meetupAgeRsvp.test.ts src/test/meetups.test.ts src/test/notifications.test.ts src/test/passportStamps.test.ts src/test/passportStampsPagination.test.ts src/test/passportStampsCountFallback.test.ts src/test/postInteractions.test.ts src/test/posts.test.ts src/test/postcards.test.ts src/test/pulseGps.test.ts src/test/pushDelivery.test.ts src/test/rentBuddyRequestPush.test.ts src/test/pushRetryQueue.test.ts src/test/pushWithRetry.test.ts src/test/tripReminderPush.test.ts src/test/tripReminderResetAudit.test.ts src/test/rateLimits.test.ts src/test/rentABuddyRollout.test.ts src/test/rentABuddy.test.ts src/test/rentBuddyReliabilityCounters.test.ts src/test/rentBuddyReliabilityRoutes.test.ts src/test/requests.test.ts src/test/friendRequestUpdateFailure.test.ts src/test/inviteUpdateFailure.test.ts src/test/routeMinimapView.test.ts src/test/routeOptimizer.test.ts src/test/routePlanHook.test.ts src/test/routePlanMembers.test.ts src/test/routePlan.test.ts src/test/safeReturnAdmin.test.ts src/test/safeReturn.test.ts src/test/stampHelper.test.ts src/test/tagging.test.ts src/test/telegraphChat.test.ts src/test/telegraphRealtime.test.ts src/test/telegraphStreamEndpoints.test.ts src/test/tripCompletion.test.ts src/test/tripCrewLocation.test.ts src/test/tripPlan.test.ts src/test/tripMembers.test.ts src/test/tripInviteRespond.test.ts src/test/trust-integration.test.ts src/test/trust.test.ts src/test/memories.test.ts src/test/stories.test.ts src/test/userSuggestions.test.ts src/test/eventWaitlistSweeper.test.ts src/lib/messagingPermissions.test.ts src/test/appeals.test.ts src/test/reviews.test.ts src/test/tripsExpansion.test.ts src/test/crashReport.test.ts src/test/wishlist.test.ts src/test/discoverySort.test.ts src/test/stamps-integration.test.ts src/test/stampRevoke.test.ts src/test/engagement.test.ts src/test/profileSystem.test.ts src/test/profileSchemaDrift.test.ts src/test/adminCompassSchemaDrift.test.ts src/test/adminGeoModerationSchemaDrift.test.ts src/test/adminRemainingDashboardsSchemaDrift.test.ts src/test/trustAdminAuditInsertSchemaDrift.test.ts src/test/inviteLinkPreview.test.ts src/test/inviteLinkPreviewFull.test.ts src/test/inviteLinkTripFull.test.ts src/test/stampArtworkEnrichment.test.ts src/test/ogImageVisibility.test.ts src/test/canonicalLocations.test.ts src/test/publicIdentity.test.ts src/test/privacySettings.test.ts src/test/discoveryPrivacy.test.ts src/test/stampPreviewVisibility.test.ts src/test/stampCountryLookup.test.ts src/test/stampCountryGeocoder.test.ts src/test/stampQueueRequeue.test.ts src/test/stampGenerationCycle.test.ts src/test/stampGenerationLockTiming.test.ts src/test/stampQueueRequeueRoute.test.ts src/test/rentABuddyAvailabilitySave.test.ts src/test/rentABuddySpecRebook.test.ts src/test/rentABuddySpecRequest.test.ts src/test/rentABuddySpecNoShow.test.ts src/test/rentABuddyDisputeTerminal.test.ts src/test/stampWorkerHealthMonitor.test.ts src/test/stampCatalogDefinition.test.ts src/test/stampOwnershipBackfill.test.ts src/test/adminGeocode.test.ts src/test/stampCatalogListEnrichment.test.ts src/test/stampCatalogActiveQueueStatus.test.ts src/test/notificationRouterCredentials.test.ts src/test/stampGeocodeStaleEviction.test.ts src/test/stampGeocodeDeletionPropagation.test.ts src/test/stampCatalogRequeueBadge.test.ts src/test/adminTripReminderReset.test.ts src/test/adminTripIdGuard.test.ts src/test/stampCatalogRegenDedup.test.ts src/test/stampCatalogDetailBadge.test.ts src/test/stampCatalogVersionArchive.test.ts src/test/stampCatalogRegenAuditLog.test.ts src/test/stampCatalogRegenAfterComplete.test.ts src/test/stampCatalogRegenAfterReviewRequired.test.ts src/test/pushTokenCleanup.test.ts src/test/rentABuddyHalfPairCoords.test.ts src/test/rentABuddySearchCoordGuard.test.ts src/test/adminVenueModeration.test.ts src/test/adminVenueQueue.test.ts src/test/rentABuddyAdminResolveDisputeGuard.test.ts src/test/rentABuddyAdminResolveDisputeFavorTraveler.test.ts src/test/stampGeocodeTombstoneRead.test.ts src/test/stampCatalogStyleVersionBadge.test.ts src/test/adminEventModeration.test.ts src/test/profileSelect.test.ts src/test/stampCatalogAdminActionDedup.test.ts src/test/stampCatalogAuditLogFilter.test.ts src/test/stampCatalogNullDisplayName.test.ts src/test/styleVersionSync.test.ts src/test/stampCatalogCountryCodeType.test.ts src/test/stampCatalogRegenPreexistingQueue.test.ts src/test/stampQueueClearCleanupAudit.test.ts src/test/stampAuditWriteFailure.test.ts src/test/stampAuditWriteFailureMergeReject.test.ts src/test/stampCatalogRegenArchiveObservability.test.ts src/test/stampCatalogRegenMultiFailedReset.test.ts src/test/stampCatalogConflictCollapse.test.ts src/test/stampCatalogRegenArchiveExtrasDbError.test.ts src/test/stampCatalogRegenSurvivorResetDbError.test.ts src/test/notificationDisplayNameCap.test.ts src/test/splitClockGuard.test.ts src/test/adminGeofenceSettingsNotFound.test.ts src/test/stampQueueConstraintSync.test.ts src/test/rankEventsOutcome.test.ts src/test/impressionLogFireAndForget.test.ts src/test/callSystem.test.ts src/test/callRoutes.test.ts src/test/callHardening.test.ts src/test/callAnalytics.test.ts src/test/tripInvitesPending.test.ts src/test/weatherCacheCleanupRoute.test.ts src/test/appHardening.test.ts src/test/corsAllowedOrigins.test.ts src/test/ageGate.test.ts src/test/rentABuddyLifecycle.test.ts src/test/reconcileRunSummary.test.ts src/test/reconcileRunHistory.test.ts src/test/schemaDriftCheck.test.ts src/test/adminPhase12.test.ts src/test/blocks.test.ts src/test/discoveryCommunityCoordinateBounds.test.ts src/test/discoveryCommunityCoords.test.ts src/test/discoveryCommunityRating.test.ts src/test/discoveryCommunitySortBy.test.ts src/test/discoverySearch.test.ts src/test/discoverySearchIntelligence.test.ts src/test/events-extension.test.ts src/test/passportProfileAccess.test.ts src/test/profileEnsure.test.ts src/test/pulseRanking.test.ts src/test/stampEarnedNotification.test.ts src/test/friendRequestReactivate.test.ts src/test/compass-ask.test.ts src/test/compass-structured-context.test.ts src/test/compass-tools.test.ts src/test/compass-ui-blocks.test.ts src/test/compass-recommendation-engine.test.ts src/test/compass-live-intel.test.ts src/test/compass-social.test.ts src/test/compass-home.test.ts src/test/compass-sense.test.ts src/test/compass-sense-scheduler.test.ts src/test/compass-live.test.ts src/test/compass-autopilot.test.ts src/test/compass-outcome-learning.test.ts src/test/compass-intelligence-graph.test.ts src/test/intelligenceGraphScheduler.test.ts src/test/placesLiveStatus.test.ts src/test/compass-local-time.test.ts src/test/eventPostsDiscovery.test.ts src/test/verification.test.ts src/test/moderation.test.ts src/test/featureFlagColumnGuard.test.ts src/test/entryRequirements.test.ts src/test/tripReadiness.test.ts src/test/tripBudgetIntel.test.ts src/test/tripReservations.test.ts src/test/tripDraft.test.ts src/test/neighborhoodMatch.test.ts src/test/compass-trip-context.test.ts src/test/stampComposition.test.ts src/test/stampShowcaseAdmire.test.ts src/test/stampCriteria.test.ts src/test/eventCategoryContext.test.ts src/test/unifiedStamps.test.ts",
++    "test": "node --import tsx/esm --test --test-force-exit src/test/universalStamps.test.ts src/test/eventsCirclesOwner.test.ts src/test/circleLocations.test.ts src/test/collections.test.ts src/test/accessControl.test.ts src/test/adminGeo.test.ts src/test/adminModeration.test.ts src/test/ageEligibility.test.ts src/test/airport.test.ts src/test/availability.test.ts src/test/blockExclusion.test.ts src/test/circleInviteAge.test.ts src/test/cleanupHealth.test.ts src/test/compass-active-reward.test.ts src/test/compass-admin.test.ts src/test/compass-cache.test.ts src/test/compass-memory.test.ts src/test/compass-context.test.ts src/test/compass-feed.test.ts src/test/compassServedDedup.test.ts src/test/compass-pipeline.test.ts src/test/compass-ux.test.ts src/test/coreActions.test.ts src/test/dailyBriefCleanup.test.ts src/test/delayedGeotag.test.ts src/test/emergencyFlags.test.ts src/test/events.test.ts src/test/featureFlagsAdmin.test.ts src/test/followDecisions.test.ts src/test/friendDecisions.test.ts src/test/geofenceAdminSettings.test.ts src/test/geofence.test.ts src/test/groupChat.test.ts src/test/hashtags.test.ts src/test/hiddenGems.test.ts src/test/hiddenGemCheckin.test.ts src/test/intelligence.test.ts src/test/interactionPermissions.test.ts src/test/itineraryTimeline.test.ts src/test/locationGps.test.ts src/test/locationVerify.test.ts src/test/meetupAgeRsvp.test.ts src/test/meetups.test.ts src/test/notifications.test.ts src/test/passportStamps.test.ts src/test/passportStampsPagination.test.ts src/test/passportStampsCountFallback.test.ts src/test/postInteractions.test.ts src/test/posts.test.ts src/test/postcards.test.ts src/test/pulseGps.test.ts src/test/pushDelivery.test.ts src/test/rentBuddyRequestPush.test.ts src/test/pushRetryQueue.test.ts src/test/pushWithRetry.test.ts src/test/tripReminderPush.test.ts src/test/tripReminderResetAudit.test.ts src/test/rateLimits.test.ts src/test/rentABuddyRollout.test.ts src/test/rentABuddy.test.ts src/test/rentBuddyReliabilityCounters.test.ts src/test/rentBuddyReliabilityRoutes.test.ts src/test/requests.test.ts src/test/friendRequestUpdateFailure.test.ts src/test/inviteUpdateFailure.test.ts src/test/routeMinimapView.test.ts src/test/routeOptimizer.test.ts src/test/routePlanHook.test.ts src/test/routePlanMembers.test.ts src/test/routePlan.test.ts src/test/safeReturnAdmin.test.ts src/test/safeReturn.test.ts src/test/stampHelper.test.ts src/test/tagging.test.ts src/test/telegraphChat.test.ts src/test/telegraphRealtime.test.ts src/test/telegraphStreamEndpoints.test.ts src/test/tripCompletion.test.ts src/test/tripCrewLocation.test.ts src/test/tripPlan.test.ts src/test/tripMembers.test.ts src/test/tripInviteRespond.test.ts src/test/trust-integration.test.ts src/test/trust.test.ts src/test/memories.test.ts src/test/stories.test.ts src/test/userSuggestions.test.ts src/test/eventWaitlistSweeper.test.ts src/lib/messagingPermissions.test.ts src/test/appeals.test.ts src/test/reviews.test.ts src/test/tripsExpansion.test.ts src/test/crashReport.test.ts src/test/wishlist.test.ts src/test/discoverySort.test.ts src/test/stamps-integration.test.ts src/test/stampRevoke.test.ts src/test/engagement.test.ts src/test/profileSystem.test.ts src/test/profileSchemaDrift.test.ts src/test/adminCompassSchemaDrift.test.ts src/test/adminGeoModerationSchemaDrift.test.ts src/test/adminRemainingDashboardsSchemaDrift.test.ts src/test/trustAdminAuditInsertSchemaDrift.test.ts src/test/inviteLinkPreview.test.ts src/test/inviteLinkPreviewFull.test.ts src/test/inviteLinkTripFull.test.ts src/test/stampArtworkEnrichment.test.ts src/test/ogImageVisibility.test.ts src/test/canonicalLocations.test.ts src/test/publicIdentity.test.ts src/test/privacySettings.test.ts src/test/discoveryPrivacy.test.ts src/test/stampPreviewVisibility.test.ts src/test/stampCountryLookup.test.ts src/test/stampCountryGeocoder.test.ts src/test/stampQueueRequeue.test.ts src/test/stampGenerationCycle.test.ts src/test/stampGenerationLockTiming.test.ts src/test/stampQueueRequeueRoute.test.ts src/test/rentABuddyAvailabilitySave.test.ts src/test/rentABuddySpecRebook.test.ts src/test/rentABuddySpecRequest.test.ts src/test/rentABuddySpecNoShow.test.ts src/test/rentABuddyDisputeTerminal.test.ts src/test/stampWorkerHealthMonitor.test.ts src/test/stampCatalogDefinition.test.ts src/test/stampOwnershipBackfill.test.ts src/test/adminGeocode.test.ts src/test/stampCatalogListEnrichment.test.ts src/test/stampCatalogActiveQueueStatus.test.ts src/test/notificationRouterCredentials.test.ts src/test/stampGeocodeStaleEviction.test.ts src/test/stampGeocodeDeletionPropagation.test.ts src/test/stampCatalogRequeueBadge.test.ts src/test/adminTripReminderReset.test.ts src/test/adminTripIdGuard.test.ts src/test/stampCatalogRegenDedup.test.ts src/test/stampCatalogDetailBadge.test.ts src/test/stampCatalogVersionArchive.test.ts src/test/stampCatalogRegenAuditLog.test.ts src/test/stampCatalogRegenAfterComplete.test.ts src/test/stampCatalogRegenAfterReviewRequired.test.ts src/test/pushTokenCleanup.test.ts src/test/rentABuddyHalfPairCoords.test.ts src/test/rentABuddySearchCoordGuard.test.ts src/test/adminVenueModeration.test.ts src/test/adminVenueQueue.test.ts src/test/rentABuddyAdminResolveDisputeGuard.test.ts src/test/rentABuddyAdminResolveDisputeFavorTraveler.test.ts src/test/stampGeocodeTombstoneRead.test.ts src/test/stampCatalogStyleVersionBadge.test.ts src/test/adminEventModeration.test.ts src/test/profileSelect.test.ts src/test/stampCatalogAdminActionDedup.test.ts src/test/stampCatalogAuditLogFilter.test.ts src/test/stampCatalogNullDisplayName.test.ts src/test/styleVersionSync.test.ts src/test/stampCatalogCountryCodeType.test.ts src/test/stampCatalogRegenPreexistingQueue.test.ts src/test/stampQueueClearCleanupAudit.test.ts src/test/stampAuditWriteFailure.test.ts src/test/stampAuditWriteFailureMergeReject.test.ts src/test/stampCatalogRegenArchiveObservability.test.ts src/test/stampCatalogRegenMultiFailedReset.test.ts src/test/stampCatalogConflictCollapse.test.ts src/test/stampCatalogRegenArchiveExtrasDbError.test.ts src/test/stampCatalogRegenSurvivorResetDbError.test.ts src/test/notificationDisplayNameCap.test.ts src/test/splitClockGuard.test.ts src/test/adminGeofenceSettingsNotFound.test.ts src/test/stampQueueConstraintSync.test.ts src/test/rankEventsOutcome.test.ts src/test/impressionLogFireAndForget.test.ts src/test/callSystem.test.ts src/test/callRoutes.test.ts src/test/callHardening.test.ts src/test/callAnalytics.test.ts src/test/tripInvitesPending.test.ts src/test/weatherCacheCleanupRoute.test.ts src/test/appHardening.test.ts src/test/corsAllowedOrigins.test.ts src/test/ageGate.test.ts src/test/rentABuddyLifecycle.test.ts src/test/reconcileRunSummary.test.ts src/test/reconcileRunHistory.test.ts src/test/schemaDriftCheck.test.ts src/test/adminPhase12.test.ts src/test/blocks.test.ts src/test/discoveryCommunityCoordinateBounds.test.ts src/test/discoveryCommunityCoords.test.ts src/test/discoveryCommunityRating.test.ts src/test/discoveryCommunitySortBy.test.ts src/test/discoverySearch.test.ts src/test/discoverySearchIntelligence.test.ts src/test/events-extension.test.ts src/test/passportProfileAccess.test.ts src/test/profileEnsure.test.ts src/test/pulseRanking.test.ts src/test/stampEarnedNotification.test.ts src/test/friendRequestReactivate.test.ts src/test/compass-ask.test.ts src/test/compass-structured-context.test.ts src/test/compass-tools.test.ts src/test/compass-ui-blocks.test.ts src/test/compass-recommendation-engine.test.ts src/test/compass-live-intel.test.ts src/test/compass-social.test.ts src/test/compass-home.test.ts src/test/compass-sense.test.ts src/test/compass-sense-scheduler.test.ts src/test/compass-live.test.ts src/test/compass-autopilot.test.ts src/test/compass-outcome-learning.test.ts src/test/compass-intelligence-graph.test.ts src/test/intelligenceGraphScheduler.test.ts src/test/placesLiveStatus.test.ts src/test/compass-local-time.test.ts src/test/eventPostsDiscovery.test.ts src/test/verification.test.ts src/test/moderation.test.ts src/test/featureFlagColumnGuard.test.ts src/test/entryRequirements.test.ts src/test/tripReadiness.test.ts src/test/tripBudgetIntel.test.ts src/test/tripReservations.test.ts src/test/tripDraft.test.ts src/test/neighborhoodMatch.test.ts src/test/compass-trip-context.test.ts src/test/stampComposition.test.ts src/test/stampShowcaseAdmire.test.ts src/test/stampCriteria.test.ts src/test/eventCategoryContext.test.ts src/test/unifiedStamps.test.ts src/test/countryEssentials.test.ts",
+     "test:app-hardening": "node --import tsx/esm --test src/test/appHardening.test.ts",
+     "test:cors-allowed-origins": "node --import tsx/esm --test src/test/corsAllowedOrigins.test.ts",
+     "test:interaction": "node --import tsx/esm --test src/test/interactionPermissions.test.ts src/test/coreActions.test.ts src/test/followDecisions.test.ts src/test/blockExclusion.test.ts src/test/accessControl.test.ts src/test/adminModeration.test.ts src/test/emergencyFlags.test.ts src/test/userSuggestions.test.ts",
+diff -ruN a/artifacts/travel-buddy/src/services/countryEssentials.ts b/artifacts/travel-buddy/src/services/countryEssentials.ts
+--- a/artifacts/travel-buddy/src/services/countryEssentials.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/travel-buddy/src/services/countryEssentials.ts	2026-07-24 04:29:26.997940574 +0000
+@@ -0,0 +1,71 @@
++/**
++ * countryEssentials.ts — client for travel-readiness reference data
++ * (plug types, voltage, drive side, emergency numbers).
++ * Fail-soft: null when the API is unconfigured or the feature flag is off, so
++ * the readiness screen simply omits the section.
++ *
++ * IMPORTANT: always render `disclaimer` alongside emergency numbers — they are
++ * safety-relevant and can vary/change.
++ */
++import { isSupabaseConfigured } from '../lib/supabase.ts';
++import { freshToken as freshApiToken } from './apiToken.ts';
++
++const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
++
++async function authedFetch(url: string, opts: RequestInit = {}): Promise<Response> {
++  const token = await freshApiToken();
++  return fetch(url, {
++    ...opts,
++    headers: {
++      'Content-Type': 'application/json',
++      ...(token ? { Authorization: `Bearer ${token}` } : {}),
++      ...(opts.headers ?? {}),
++    },
++  });
++}
++
++export interface CountryEssentials {
++  code: string;
++  plugTypes: string[];
++  voltage: number | null;
++  frequency: number | null;
++  driveSide: 'left' | 'right' | null;
++  emergency: { all?: string; police?: string; ambulance?: string; fire?: string };
++  confidence: string;
++  source: string;
++  lastVerifiedAt: string;
++  disclaimer: string;
++}
++
++export interface TripEssentialsItem {
++  country: string;
++  essentials: CountryEssentials | null;
++}
++
++/** One country's essentials. Null when unavailable OR not covered (honest unknown). */
++export async function getCountryEssentials(code: string): Promise<CountryEssentials | null> {
++  if (!isSupabaseConfigured || !apiBase() || !code) return null;
++  try {
++    const res = await authedFetch(`${apiBase()}/api/countries/${encodeURIComponent(code)}/essentials`);
++    if (!res.ok) return null;
++    const body = await res.json();
++    if (body?.enabled === false) return null;
++    return (body?.essentials as CountryEssentials) ?? null;
++  } catch {
++    return null;
++  }
++}
++
++/** Essentials for every destination country on a trip. Null = feature unavailable. */
++export async function getTripEssentials(tripId: string): Promise<TripEssentialsItem[] | null> {
++  if (!isSupabaseConfigured || !apiBase() || !tripId) return null;
++  try {
++    const res = await authedFetch(`${apiBase()}/api/trips/${encodeURIComponent(tripId)}/essentials`);
++    if (!res.ok) return null;
++    const body = await res.json();
++    if (body?.enabled === false) return null;
++    return Array.isArray(body?.items) ? (body.items as TripEssentialsItem[]) : [];
++  } catch {
++    return null;
++  }
++}
+--- a/docs/migrations.md	2026-07-24 04:33:04.176060570 +0000
++++ b/docs/migrations.md	2026-07-24 04:33:04.161942654 +0000
+@@ -761,3 +761,4 @@
+ - `0179_stamp_criteria_engine` — Stamp Wave 3: activates the dormant stamp_definitions.criteria jsonb via a versioned rule engine. Flag `stamp_criteria_engine_enabled` (default FALSE). Seeds parity criteria onto community_connector/popular_traveler/travel_influencer/road_warrior/frequent_flyer (mirror existing hard-coded thresholds — no behavior change), and adds 4 event-category definitions (foodie_explorer, music_lover, outdoor_adventurer, event_regular) as is_active=FALSE automatic criteria stamps. Engine is additive: gates awards only when a definition has authored criteria AND the flag is on; hard-coded award sites remain authority otherwise.
+ - `0180_activate_event_category_stamps` — Stamp Wave 3 follow-up: activates foodie_explorer/music_lover/outdoor_adventurer/event_regular (0179 left them inactive). Still gated by stamp_criteria_engine_enabled (evaluateAndAwardCriteria no-ops when off), so the engine flag becomes the single switch. RSVP-going now derives event category context (category+tags keyword match) and evaluates these 4 via the criteria engine.
+ - `0181_stamp_unified_view` — Stamp legacy unification (read-layer): flag stamp_unified_view_enabled (default FALSE). UnifiedStampService merges v1 passport_stamps (GPS) + v2 user_stamps (achievements) into one deduped read collection (dedup by catalog_id backfilled by reconcile, else stamp_type|country|city; v2 wins ties). GET /stamps/me/unified always available; when flag ON the passport-card stampCount reports the deduped v1+v2 total instead of v1-only. NO schema change, NO data migration, both write paths untouched.
++- `0182_country_essentials` — Country essentials (curated travel-readiness reference): plug_types, voltage, frequency, drive_side, emergency (jsonb) per country_essentials table (54 countries seeded), confidence='curated' + source + last_verified_at. Flag country_essentials_enabled (default FALSE). Endpoints GET /countries/:code/essentials + GET /trips/:tripId/essentials (DB-first, in-code curated fallback, honest-null for uncovered countries, confirm-on-arrival disclaimer on every response). Plug/voltage engineering-standardized; emergency numbers curated w/ disclaimer.

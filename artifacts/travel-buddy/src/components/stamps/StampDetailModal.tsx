@@ -19,13 +19,7 @@ import type { PassportStampNew } from '../../services/passportStamps.ts';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { StampAdmireBlock } from './StampAdmireBlock.tsx';
 
-const RARITY_COLORS: Record<string, string> = {
-  common:    '#6B7280',
-  uncommon:  '#16A34A',
-  rare:      '#2563EB',
-  epic:      '#7C3AED',
-  legendary: '#D97706',
-};
+import { RARITY_COLORS, normalizeRarity } from '../../lib/stampRarity.ts';
 
 const SOURCE_LABELS: Record<string, string> = {
   trip:        'Completed a trip',
@@ -84,8 +78,8 @@ export function StampDetailModal({ stamp, isOwner, visible, onClose, onStampUpda
   if (!stamp) return null;
 
   const legacy = stampToLegacy(stamp);
-  const rarity = stamp.definition?.rarity;
-  const rarityColor = rarity ? (RARITY_COLORS[rarity] ?? RARITY_COLORS.common) : null;
+  const rarity = stamp.definition?.rarity ? normalizeRarity(stamp.definition.rarity) : null;
+  const rarityColor = rarity ? RARITY_COLORS[rarity].ring : null;
 
   async function handleVisChange(vis: NewStampVisibility) {
     if (!stamp) return;
@@ -132,7 +126,7 @@ export function StampDetailModal({ stamp, isOwner, visible, onClose, onStampUpda
 
             {rarity && rarityColor && (
               <View style={[styles.rarityBadge, { backgroundColor: rarityColor + '25' }]}>
-                <Text style={[styles.rarityText, { color: rarityColor }]}>
+                <Text style={[styles.rarityText, { color: RARITY_COLORS[rarity].text }]}>
                   {rarity.toUpperCase()}
                 </Text>
               </View>

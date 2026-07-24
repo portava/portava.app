@@ -1,0 +1,735 @@
+diff -ruN a/artifacts/api-server/src/lib/fsq/categoryMap.ts b/artifacts/api-server/src/lib/fsq/categoryMap.ts
+--- a/artifacts/api-server/src/lib/fsq/categoryMap.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/lib/fsq/categoryMap.ts	2026-07-24 05:42:35.418961424 +0000
+@@ -0,0 +1,81 @@
++/**
++ * FSQ category mapping — Compass data (Foursquare OS Places).
++ *
++ * FSQ OS Places tags each venue with hierarchical category LABELS like
++ * "Dining and Drinking > Bar > Cocktail Bar" (top-level ` > ` sub-levels) plus
++ * stable category IDs. We map those onto Portava's place taxonomy so FSQ venues
++ * slot into the same buckets neighborhood-match / discovery already use, PLUS
++ * an `accommodation` bucket (hotels — the thing OSM covers poorly and no free
++ * booking API gives us).
++ *
++ * Mapping is keyword-based over the labels (robust to FSQ taxonomy revisions),
++ * most-specific-first: a "Hotel Bar" is accommodation-adjacent but reads as a
++ * bar, so nightlife keywords are checked before the generic dining bucket, and
++ * lodging before everything. Anything unrecognized → 'other' (kept, not
++ * discarded — honest, and still useful as density signal).
++ */
++
++export const FSQ_PLACE_CATEGORIES = [
++  "accommodation",
++  "nightlife",
++  "food",
++  "culture",
++  "shopping",
++  "other",
++] as const;
++export type FsqPlaceCategory = (typeof FSQ_PLACE_CATEGORIES)[number];
++
++// Keyword → category, checked in this order (first hit wins).
++const RULES: Array<{ category: FsqPlaceCategory; keywords: string[] }> = [
++  {
++    category: "accommodation",
++    keywords: ["lodging", "hotel", "hostel", "motel", "resort", "bed and breakfast", "b&b", "inn", "guest house", "guesthouse", "vacation rental"],
++  },
++  {
++    category: "nightlife",
++    keywords: ["bar", "pub", "nightclub", "night club", "nightlife", "brewery", "brewpub", "cocktail", "lounge", "beer garden", "wine bar", "speakeasy", "distillery", "hookah", "karaoke"],
++  },
++  {
++    category: "culture",
++    keywords: ["museum", "art gallery", "gallery", "monument", "landmark", "historic", "theater", "theatre", "performing arts", "opera", "concert hall", "cultural", "temple", "church", "mosque", "shrine", "cathedral", "palace", "castle", "memorial", "exhibit"],
++  },
++  {
++    category: "food",
++    keywords: ["restaurant", "café", "cafe", "coffee", "bakery", "diner", "bistro", "eatery", "food", "dining", "steakhouse", "pizzeria", "deli", "breakfast", "brunch", "dessert", "ice cream", "tea room", "food truck", "food court", "snack"],
++  },
++  {
++    category: "shopping",
++    keywords: ["retail", "shop", "store", "market", "mall", "boutique", "shopping", "supermarket", "grocery", "department store", "bookstore", "market"],
++  },
++];
++
++function norm(s: unknown): string {
++  return typeof s === "string" ? s.toLowerCase() : "";
++}
++
++/**
++ * Map a venue's FSQ category labels to a Portava category. Labels may be full
++ * hierarchical strings ("A > B > C") or leaf names; both work. Returns the
++ * most-specific match across all of the venue's labels, or 'other'.
++ */
++export function mapFsqCategory(labels: string[] | null | undefined): FsqPlaceCategory {
++  if (!labels || labels.length === 0) return "other";
++  const hay = labels.map(norm).join(" | ");
++  for (const rule of RULES) {
++    for (const kw of rule.keywords) {
++      // word-ish boundary so "bar" doesn't match "barber"/"barbecue"
++      const re = new RegExp(`(^|[^a-z])${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z]|$)`);
++      if (re.test(hay)) return rule.category;
++    }
++  }
++  return "other";
++}
++
++/** The single most representative (leaf) label for display, or null. */
++export function primaryLabel(labels: string[] | null | undefined): string | null {
++  if (!labels || labels.length === 0) return null;
++  // Prefer the deepest segment of the first label (most specific).
++  const first = String(labels[0] ?? "");
++  const parts = first.split(">").map((p) => p.trim()).filter(Boolean);
++  return parts.length ? parts[parts.length - 1] : (first.trim() || null);
++}
+diff -ruN a/artifacts/api-server/src/lib/fsq/fsqPlaces.ts b/artifacts/api-server/src/lib/fsq/fsqPlaces.ts
+--- a/artifacts/api-server/src/lib/fsq/fsqPlaces.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/lib/fsq/fsqPlaces.ts	2026-07-24 05:43:30.874959589 +0000
+@@ -0,0 +1,100 @@
++/**
++ * FSQ Places read service — Compass data.
++ *
++ * Reads the per-city-ingested fsq_places layer. Flag-gated by
++ * fsq_places_enabled; fail-soft to [] so callers keep working when the layer
++ * is off or empty. FSQ attribution is REQUIRED wherever these places are shown.
++ */
++
++import type { FsqPlaceCategory } from "./categoryMap.js";
++
++export const FSQ_FLAG = "fsq_places_enabled";
++export const FSQ_ATTRIBUTION = "Powered by Foursquare";
++
++export interface FsqPlace {
++  fsqId: string;
++  name: string;
++  latitude: number;
++  longitude: number;
++  category: FsqPlaceCategory;
++  label: string | null;
++  address: string | null;
++  locality: string | null;
++  country: string | null;
++  confidence: string;
++  datasetDate: string | null;
++}
++
++function rowToPlace(r: any): FsqPlace {
++  return {
++    fsqId: r.fsq_id,
++    name: r.name,
++    latitude: r.latitude,
++    longitude: r.longitude,
++    category: r.category,
++    label: r.fsq_primary_label ?? null,
++    address: r.address ?? null,
++    locality: r.locality ?? null,
++    country: r.country ?? null,
++    confidence: r.confidence ?? "provider",
++    datasetDate: r.dataset_date ? String(r.dataset_date) : null,
++  };
++}
++
++export async function fsqEnabled(sc: any): Promise<boolean> {
++  try {
++    const { data, error } = await sc
++      .from("feature_flags").select("enabled").eq("flag", FSQ_FLAG).maybeSingle();
++    if (error) return false;
++    return (data as any)?.enabled === true;
++  } catch {
++    return false;
++  }
++}
++
++export interface FsqQuery {
++  cityKey: string;
++  category?: FsqPlaceCategory;
++  limit?: number;
++}
++
++/**
++ * Places for a city, optionally filtered by category. Fail-soft []; returns
++ * attribution + dataset date alongside. Caller must render attribution.
++ */
++export async function getCityPlaces(
++  sc: any,
++  q: FsqQuery,
++): Promise<{ places: FsqPlace[]; attribution: string; datasetDate: string | null }> {
++  const empty = { places: [] as FsqPlace[], attribution: FSQ_ATTRIBUTION, datasetDate: null as string | null };
++  if (!sc || !q.cityKey) return empty;
++  try {
++    let query = sc
++      .from("fsq_places")
++      .select("fsq_id, name, latitude, longitude, category, fsq_primary_label, address, locality, country, confidence, dataset_date")
++      .eq("city_key", q.cityKey)
++      .limit(Math.min(Math.max(q.limit ?? 200, 1), 1000));
++    if (q.category) query = query.eq("category", q.category);
++    const { data, error } = await query;
++    if (error || !Array.isArray(data)) return empty;
++    const places = (data as any[]).map(rowToPlace);
++    return { places, attribution: FSQ_ATTRIBUTION, datasetDate: places[0]?.datasetDate ?? null };
++  } catch {
++    return empty;
++  }
++}
++
++/** Per-category counts for a city (density signal for neighborhood scoring). */
++export async function getCityCategoryCounts(sc: any, cityKey: string): Promise<Record<string, number>> {
++  const out: Record<string, number> = {};
++  if (!sc || !cityKey) return out;
++  try {
++    const { data, error } = await sc
++      .from("fsq_places").select("category").eq("city_key", cityKey);
++    if (error || !Array.isArray(data)) return out;
++    for (const r of data as any[]) out[r.category] = (out[r.category] ?? 0) + 1;
++  } catch {
++    // fail-soft
++  }
++  return out;
++}
+diff -ruN a/artifacts/api-server/src/lib/fsq/fsqTransform.ts b/artifacts/api-server/src/lib/fsq/fsqTransform.ts
+--- a/artifacts/api-server/src/lib/fsq/fsqTransform.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/lib/fsq/fsqTransform.ts	2026-07-24 05:45:59.062954685 +0000
+@@ -0,0 +1,104 @@
++/**
++ * FSQ row transform — Compass data (Foursquare OS Places).
++ *
++ * Normalizes a raw FSQ Places record (as read from the parquet by the
++ * ingestion script) into a Portava `fsq_places` DB row. Pure + defensive so it
++ * is unit-testable and tolerant of the FSQ schema's optional columns.
++ *
++ * HONESTY: every row is labeled source='fsq_os_places', confidence='provider',
++ * carries the dataset date, and FSQ attribution is required by the license
++ * (surfaced by the read layer).
++ */
++
++import { mapFsqCategory, primaryLabel, type FsqPlaceCategory } from "./categoryMap.js";
++
++export const FSQ_SOURCE = "fsq_os_places";
++
++/** Raw FSQ record fields the pipeline uses (all optional / defensively read). */
++export interface FsqRawPlace {
++  fsq_place_id?: string | null;
++  name?: string | null;
++  latitude?: number | null;
++  longitude?: number | null;
++  address?: string | null;
++  locality?: string | null;
++  region?: string | null;
++  postcode?: string | null;
++  country?: string | null;
++  fsq_category_ids?: string[] | null;
++  fsq_category_labels?: string[] | null;
++  date_closed?: string | null;
++}
++
++export interface FsqDbRow {
++  fsq_id: string;
++  name: string;
++  latitude: number;
++  longitude: number;
++  category: FsqPlaceCategory;
++  fsq_primary_label: string | null;
++  fsq_category_ids: string[];
++  fsq_category_labels: string[];
++  address: string | null;
++  locality: string | null;
++  region: string | null;
++  postcode: string | null;
++  country: string | null;
++  city_key: string;
++  source: string;
++  confidence: string;
++  dataset_date: string;
++}
++
++function num(v: unknown): number | null {
++  // Guard null/undefined/"" — Number(null) and Number("") are 0, not NaN, which
++  // would let a missing coordinate slip through as 0,0 (off the coast of Africa).
++  if (v === null || v === undefined || v === "") return null;
++  const n = typeof v === "number" ? v : Number(v);
++  return Number.isFinite(n) ? n : null;
++}
++function arr(v: unknown): string[] {
++  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
++}
++function str(v: unknown): string | null {
++  return typeof v === "string" && v.trim() ? v.trim() : null;
++}
++
++/**
++ * Transform a raw FSQ place into a DB row. Returns null when the record is
++ * unusable (no id / no name / no coordinates / permanently closed) — closed and
++ * malformed venues are dropped, never guessed.
++ */
++export function fsqRowToDbRow(
++  raw: FsqRawPlace,
++  ctx: { cityKey: string; datasetDate: string },
++): FsqDbRow | null {
++  const fsqId = str(raw.fsq_place_id);
++  const name = str(raw.name);
++  const lat = num(raw.latitude);
++  const lng = num(raw.longitude);
++  if (!fsqId || !name || lat === null || lng === null) return null;
++  if (str(raw.date_closed)) return null; // permanently closed
++  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
++
++  const labels = arr(raw.fsq_category_labels);
++  return {
++    fsq_id: fsqId,
++    name,
++    latitude: lat,
++    longitude: lng,
++    category: mapFsqCategory(labels),
++    fsq_primary_label: primaryLabel(labels),
++    fsq_category_ids: arr(raw.fsq_category_ids),
++    fsq_category_labels: labels,
++    address: str(raw.address),
++    locality: str(raw.locality),
++    region: str(raw.region),
++    postcode: str(raw.postcode),
++    country: str(raw.country),
++    city_key: ctx.cityKey,
++    source: FSQ_SOURCE,
++    confidence: "provider",
++    dataset_date: ctx.datasetDate,
++  };
++}
+diff -ruN a/artifacts/api-server/src/migrations/0184_fsq_places.sql b/artifacts/api-server/src/migrations/0184_fsq_places.sql
+--- a/artifacts/api-server/src/migrations/0184_fsq_places.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/migrations/0184_fsq_places.sql	2026-07-24 05:43:14.534960130 +0000
+@@ -0,0 +1,78 @@
++-- Migration 0184: FSQ Places (Foursquare OS Places, per-city ingested)
++--
++-- A provider-sourced POI layer that complements the existing OSM/Overpass data
++-- (neighborhood match) and user-submitted discovery_places: hotels/lodging
++-- (which OSM covers poorly and no free booking API gives us) plus richer
++-- nightlife/food/retail coverage and chains.
++--
++-- Populated per-city (NOT whole-world) by scripts/load-fsq-city.mjs, which uses
++-- DuckDB to extract only a city's bounding box from the FSQ parquet. Every row
++-- is source='fsq_os_places', confidence='provider', with the dataset date.
++-- FSQ OS Places requires attribution ("Powered by Foursquare") on surfaces that
++-- display it — the read layer carries the attribution string.
++--
++-- Flag-gated (fsq_places_enabled, default FALSE). Safe to re-run.
++
++CREATE TABLE IF NOT EXISTS fsq_places (
++  fsq_id              TEXT        PRIMARY KEY,
++  name                TEXT        NOT NULL,
++  latitude            DOUBLE PRECISION NOT NULL,
++  longitude           DOUBLE PRECISION NOT NULL,
++  category            TEXT        NOT NULL DEFAULT 'other'
++                        CHECK (category IN ('accommodation','nightlife','food','culture','shopping','other')),
++  fsq_primary_label   TEXT,
++  fsq_category_ids    TEXT[]      NOT NULL DEFAULT '{}',
++  fsq_category_labels TEXT[]      NOT NULL DEFAULT '{}',
++  address             TEXT,
++  locality            TEXT,
++  region              TEXT,
++  postcode            TEXT,
++  country             TEXT,
++  city_key            TEXT        NOT NULL,     -- ingestion city slug (e.g. 'cebu-ph')
++  source              TEXT        NOT NULL DEFAULT 'fsq_os_places',
++  confidence          TEXT        NOT NULL DEFAULT 'provider',
++  dataset_date        DATE        NOT NULL,
++  ingested_at         TIMESTAMPTZ NOT NULL DEFAULT now()
++);
++
++CREATE INDEX IF NOT EXISTS fsq_places_city_cat_idx ON fsq_places (city_key, category);
++CREATE INDEX IF NOT EXISTS fsq_places_city_idx     ON fsq_places (city_key);
++CREATE INDEX IF NOT EXISTS fsq_places_geo_idx      ON fsq_places (latitude, longitude);
++
++ALTER TABLE fsq_places ENABLE ROW LEVEL SECURITY;
++
++DO $$ BEGIN
++  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'fsq_places' AND policyname = 'fsq_read') THEN
++    CREATE POLICY fsq_read ON fsq_places FOR SELECT USING (auth.role() IN ('authenticated','service_role'));
++  END IF;
++END $$;
++DO $$ BEGIN
++  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'fsq_places' AND policyname = 'fsq_svc') THEN
++    CREATE POLICY fsq_svc ON fsq_places FOR ALL USING (auth.role() = 'service_role');
++  END IF;
++END $$;
++
++-- Track which cities have been ingested, and when (observability + freshness).
++CREATE TABLE IF NOT EXISTS fsq_city_ingests (
++  city_key      TEXT        PRIMARY KEY,
++  place_count   INTEGER     NOT NULL DEFAULT 0,
++  dataset_date  DATE        NOT NULL,
++  bbox          JSONB,                          -- {minLat,minLng,maxLat,maxLng}
++  ingested_at   TIMESTAMPTZ NOT NULL DEFAULT now()
++);
++ALTER TABLE fsq_city_ingests ENABLE ROW LEVEL SECURITY;
++DO $$ BEGIN
++  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'fsq_city_ingests' AND policyname = 'fsqci_read') THEN
++    CREATE POLICY fsqci_read ON fsq_city_ingests FOR SELECT USING (auth.role() IN ('authenticated','service_role'));
++  END IF;
++END $$;
++DO $$ BEGIN
++  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'fsq_city_ingests' AND policyname = 'fsqci_svc') THEN
++    CREATE POLICY fsqci_svc ON fsq_city_ingests FOR ALL USING (auth.role() = 'service_role');
++  END IF;
++END $$;
++
++INSERT INTO feature_flags (flag, enabled, description) VALUES
++  ('fsq_places_enabled', FALSE,
++   'FSQ OS Places: provider POI layer (hotels + richer nightlife/food/retail), per-city ingested; requires Foursquare attribution')
++ON CONFLICT (flag) DO NOTHING;
+diff -ruN a/artifacts/api-server/src/routes/fsqPlaces.ts b/artifacts/api-server/src/routes/fsqPlaces.ts
+--- a/artifacts/api-server/src/routes/fsqPlaces.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/routes/fsqPlaces.ts	2026-07-24 05:43:41.342959243 +0000
+@@ -0,0 +1,42 @@
++/**
++ * FSQ Places routes — Compass data.
++ *
++ *   GET /api/cities/:cityKey/places?category=<cat>&limit=<n>
++ *
++ * Flag-gated by fsq_places_enabled; returns FSQ attribution alongside the
++ * places (the license requires it be displayed). Fail-soft empty when off.
++ */
++
++import { Router } from "express";
++import { asyncHandler } from "../lib/asyncHandler.js";
++import { requireUser, sendError } from "../lib/http.js";
++import { getServiceClient } from "../lib/supabase.js";
++import { fsqEnabled, getCityPlaces, FSQ_ATTRIBUTION } from "../lib/fsq/fsqPlaces.js";
++import { FSQ_PLACE_CATEGORIES, type FsqPlaceCategory } from "../lib/fsq/categoryMap.js";
++
++const router = Router();
++
++router.get("/cities/:cityKey/places", asyncHandler(async (req, res) => {
++  const auth = await requireUser(req, res);
++  if (!auth) return;
++  const sc = getServiceClient();
++  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
++  if (!(await fsqEnabled(sc))) {
++    res.json({ places: [], enabled: false, attribution: FSQ_ATTRIBUTION });
++    return;
++  }
++
++  const cityKey = String(req.params.cityKey ?? "").trim().toLowerCase();
++  if (!cityKey) { sendError(res, "invalid_payload", "cityKey required"); return; }
++
++  const catParam = typeof req.query.category === "string" ? req.query.category.trim() : "";
++  const category = (FSQ_PLACE_CATEGORIES as readonly string[]).includes(catParam)
++    ? (catParam as FsqPlaceCategory)
++    : undefined;
++  const limit = Number(req.query.limit) || 200;
++
++  const result = await getCityPlaces(sc, { cityKey, category, limit });
++  res.json({ ...result, enabled: true });
++}));
++
++export default router;
+diff -ruN a/artifacts/api-server/src/routes/index.ts b/artifacts/api-server/src/routes/index.ts
+--- a/artifacts/api-server/src/routes/index.ts	2026-07-24 05:25:15.097586983 +0000
++++ b/artifacts/api-server/src/routes/index.ts	2026-07-24 05:43:47.422959042 +0000
+@@ -97,6 +97,7 @@
+ import stampShowcaseRouter from "./stampShowcase";
+ import stampAdmireRouter from "./stampAdmire";
+ import countryEssentialsRouter from "./countryEssentials";
++import fsqPlacesRouter from "./fsqPlaces";
+ 
+ const router: IRouter = Router();
+ 
+@@ -200,5 +201,6 @@
+ router.use(stampShowcaseRouter);
+ router.use(stampAdmireRouter);
+ router.use(countryEssentialsRouter);
++router.use(fsqPlacesRouter);
+ 
+ export default router;
+diff -ruN a/artifacts/api-server/src/test/fsqPlaces.test.ts b/artifacts/api-server/src/test/fsqPlaces.test.ts
+--- a/artifacts/api-server/src/test/fsqPlaces.test.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/test/fsqPlaces.test.ts	2026-07-24 05:44:53.598956851 +0000
+@@ -0,0 +1,153 @@
++/**
++ * FSQ Places — category mapping + transform + read service tests.
++ *
++ * The DuckDB ingestion script itself needs the real (gated) parquet, so it's
++ * exercised operationally; here we lock down the pure, verifiable core: the
++ * category mapper, the row transform (drops/normalization), and the flag-gated
++ * read service.
++ */
++
++import { describe, it } from "node:test";
++import assert from "node:assert/strict";
++import { mapFsqCategory, primaryLabel } from "../lib/fsq/categoryMap.js";
++import { fsqRowToDbRow, FSQ_SOURCE } from "../lib/fsq/fsqTransform.js";
++import { getCityPlaces, getCityCategoryCounts, fsqEnabled, FSQ_ATTRIBUTION } from "../lib/fsq/fsqPlaces.js";
++
++// ── Category mapping ────────────────────────────────────────────────────────
++
++describe("mapFsqCategory", () => {
++  it("maps lodging to accommodation (before anything else)", () => {
++    assert.equal(mapFsqCategory(["Travel and Transportation > Lodging > Hotel"]), "accommodation");
++    assert.equal(mapFsqCategory(["Hostel"]), "accommodation");
++    assert.equal(mapFsqCategory(["Resort"]), "accommodation");
++  });
++  it("maps bars/clubs to nightlife before generic dining", () => {
++    assert.equal(mapFsqCategory(["Dining and Drinking > Bar > Cocktail Bar"]), "nightlife");
++    assert.equal(mapFsqCategory(["Nightlife Spot > Night Club"]), "nightlife");
++    assert.equal(mapFsqCategory(["Brewery"]), "nightlife");
++  });
++  it("maps restaurants/cafés to food", () => {
++    assert.equal(mapFsqCategory(["Dining and Drinking > Restaurant > Italian Restaurant"]), "food");
++    assert.equal(mapFsqCategory(["Café"]), "food");
++    assert.equal(mapFsqCategory(["Coffee Shop"]), "food");
++  });
++  it("maps museums/landmarks to culture", () => {
++    assert.equal(mapFsqCategory(["Arts and Entertainment > Museum"]), "culture");
++    assert.equal(mapFsqCategory(["Landmarks and Outdoors > Monument"]), "culture");
++    assert.equal(mapFsqCategory(["Temple"]), "culture");
++  });
++  it("maps retail to shopping", () => {
++    assert.equal(mapFsqCategory(["Retail > Clothing Store"]), "shopping");
++    assert.equal(mapFsqCategory(["Shopping Mall"]), "shopping");
++  });
++  it("word-boundary: 'barber' is not nightlife, 'barbecue' is food-ish not bar", () => {
++    assert.notEqual(mapFsqCategory(["Barbershop"]), "nightlife");
++    assert.notEqual(mapFsqCategory(["Barber"]), "nightlife");
++  });
++  it("unknown → other; empty → other", () => {
++    assert.equal(mapFsqCategory(["Business and Professional Services > Accountant"]), "other");
++    assert.equal(mapFsqCategory([]), "other");
++    assert.equal(mapFsqCategory(null), "other");
++  });
++  it("primaryLabel returns the deepest segment", () => {
++    assert.equal(primaryLabel(["Dining and Drinking > Restaurant > Thai Restaurant"]), "Thai Restaurant");
++    assert.equal(primaryLabel(["Hotel"]), "Hotel");
++    assert.equal(primaryLabel([]), null);
++  });
++});
++
++// ── Transform ────────────────────────────────────────────────────────────────
++
++describe("fsqRowToDbRow", () => {
++  const ctx = { cityKey: "cebu-ph", datasetDate: "2026-06-01" };
++  const good = {
++    fsq_place_id: "abc123", name: "Café Lechon", latitude: 10.3, longitude: 123.9,
++    address: "1 Colon St", locality: "Cebu City", region: "Cebu", postcode: "6000", country: "PH",
++    fsq_category_ids: ["4bf58dd8d48988d16d941735"], fsq_category_labels: ["Dining and Drinking > Café"],
++  };
++
++  it("transforms a good row with provider labeling", () => {
++    const r = fsqRowToDbRow(good, ctx)!;
++    assert.equal(r.fsq_id, "abc123");
++    assert.equal(r.category, "food");
++    assert.equal(r.city_key, "cebu-ph");
++    assert.equal(r.source, FSQ_SOURCE);
++    assert.equal(r.confidence, "provider");
++    assert.equal(r.dataset_date, "2026-06-01");
++    assert.equal(r.fsq_primary_label, "Café");
++  });
++
++  it("drops rows with no id / no name / no coords / closed / out-of-range", () => {
++    assert.equal(fsqRowToDbRow({ ...good, fsq_place_id: null }, ctx), null);
++    assert.equal(fsqRowToDbRow({ ...good, name: "  " }, ctx), null);
++    assert.equal(fsqRowToDbRow({ ...good, latitude: null }, ctx), null);
++    assert.equal(fsqRowToDbRow({ ...good, date_closed: "2025-01-01" }, ctx), null);
++    assert.equal(fsqRowToDbRow({ ...good, latitude: 999 }, ctx), null);
++  });
++
++  it("tolerates missing optional fields", () => {
++    const r = fsqRowToDbRow({ fsq_place_id: "x", name: "Spot", latitude: 1, longitude: 2 }, ctx)!;
++    assert.equal(r.category, "other");
++    assert.deepEqual(r.fsq_category_labels, []);
++    assert.equal(r.address, null);
++  });
++});
++
++// ── Read service ─────────────────────────────────────────────────────────────
++
++function makeSc(opts: { flagOn?: boolean; rows?: any[] } = {}) {
++  return {
++    from(table: string) {
++      const b: any = {
++        _f: [] as Array<[string, any]>,
++        select() { return b; },
++        eq(k: string, v: any) { b._f.push([k, v]); return b; },
++        limit() { return b; },
++        maybeSingle: async () => (table === "feature_flags" ? { data: { enabled: opts.flagOn === true }, error: null } : { data: null, error: null }),
++        then(resolve: any) {
++          if (table === "fsq_places") {
++            const cat = b._f.find((f: any) => f[0] === "category")?.[1];
++            const rows = (opts.rows ?? []).filter((r) => !cat || r.category === cat);
++            resolve({ data: rows, error: null });
++          } else resolve({ data: [], error: null });
++        },
++      };
++      return b;
++    },
++  } as any;
++}
++
++const ROWS = [
++  { fsq_id: "1", name: "Hotel A", latitude: 10.3, longitude: 123.9, category: "accommodation", fsq_primary_label: "Hotel", address: null, locality: "Cebu", country: "PH", confidence: "provider", dataset_date: "2026-06-01" },
++  { fsq_id: "2", name: "Bar B", latitude: 10.31, longitude: 123.91, category: "nightlife", fsq_primary_label: "Bar", address: null, locality: "Cebu", country: "PH", confidence: "provider", dataset_date: "2026-06-01" },
++];
++
++describe("FSQ read service", () => {
++  it("fsqEnabled reflects the flag / fails closed", async () => {
++    assert.equal(await fsqEnabled(makeSc({ flagOn: true })), true);
++    assert.equal(await fsqEnabled(makeSc({ flagOn: false })), false);
++    assert.equal(await fsqEnabled({ from() { throw new Error("x"); } } as any), false);
++  });
++
++  it("getCityPlaces returns places + attribution, filters by category", async () => {
++    const all = await getCityPlaces(makeSc({ rows: ROWS }), { cityKey: "cebu-ph" });
++    assert.equal(all.places.length, 2);
++    assert.equal(all.attribution, FSQ_ATTRIBUTION);
++    assert.equal(all.datasetDate, "2026-06-01");
++
++    const hotels = await getCityPlaces(makeSc({ rows: ROWS }), { cityKey: "cebu-ph", category: "accommodation" });
++    assert.equal(hotels.places.length, 1);
++    assert.equal(hotels.places[0].category, "accommodation");
++  });
++
++  it("getCityCategoryCounts tallies by category", async () => {
++    const counts = await getCityCategoryCounts(makeSc({ rows: ROWS }), "cebu-ph");
++    assert.equal(counts.accommodation, 1);
++    assert.equal(counts.nightlife, 1);
++  });
++
++  it("fail-soft empty on missing client / city", async () => {
++    const r = await getCityPlaces(null, { cityKey: "x" });
++    assert.deepEqual(r.places, []);
++  });
++});
+diff -ruN a/artifacts/api-server/scripts/load-fsq-city.mjs b/artifacts/api-server/scripts/load-fsq-city.mjs
+--- a/artifacts/api-server/scripts/load-fsq-city.mjs	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/scripts/load-fsq-city.mjs	2026-07-24 05:44:18.730958005 +0000
+@@ -0,0 +1,113 @@
++/**
++ * load-fsq-city.mjs — per-city ingestion of Foursquare OS Places into fsq_places.
++ *
++ * Uses DuckDB to read the FSQ `places` parquet and extract ONLY a city's
++ * bounding box (predicate pushdown — it never loads the ~100M-row whole world),
++ * maps categories, and upserts into Supabase.
++ *
++ * ── PREREQUISITES (one-time) ─────────────────────────────────────────────────
++ *   1. Foursquare OS Places is a GATED open dataset — accept the terms and
++ *      download the `places` parquet from:
++ *        https://huggingface.co/datasets/foursquare/fsq-os-places
++ *      (the `places/` parquet part-files). Point PARQUET at a local file or a
++ *      glob, e.g. /data/fsq/places/*.parquet
++ *   2. Install DuckDB (either works):
++ *        npm i -g duckdb           # provides the `duckdb` CLI this script calls
++ *      or use the DuckDB CLI binary from duckdb.org and put it on PATH.
++ *   3. Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
++ *
++ * ── USAGE ────────────────────────────────────────────────────────────────────
++ *   node load-fsq-city.mjs \
++ *     --city cebu-ph \
++ *     --bbox 10.20,123.80,10.45,124.05 \      # minLat,minLng,maxLat,maxLng
++ *     --parquet '/data/fsq/places/*.parquet' \
++ *     --dataset-date 2026-06-01
++ *
++ * Re-running a city is safe: rows upsert by fsq_id; the city_key is refreshed.
++ *
++ * NOTE: the FSQ parquet column names below match the published OS Places
++ * schema (fsq_place_id, name, latitude, longitude, fsq_category_labels, …). If
++ * a future dataset revision renames a column, adjust SELECT_COLS — the rest of
++ * the pipeline is column-name-agnostic (it reads by these aliases).
++ */
++
++import { execFileSync } from "node:child_process";
++import { createClient } from "@supabase/supabase-js";
++import { fsqRowToDbRow } from "../src/lib/fsq/fsqTransform.js";
++
++// ── Args ──────────────────────────────────────────────────────────────────────
++function arg(name, required = false) {
++  const i = process.argv.indexOf(`--${name}`);
++  if (i >= 0 && process.argv[i + 1]) return process.argv[i + 1];
++  if (required) { console.error(`Missing required --${name}`); process.exit(1); }
++  return null;
++}
++const CITY = arg("city", true);
++const BBOX = arg("bbox", true);            // minLat,minLng,maxLat,maxLng
++const PARQUET = arg("parquet", true);      // local path or glob
++const DATASET_DATE = arg("dataset-date", true);
++
++const [minLat, minLng, maxLat, maxLng] = BBOX.split(",").map(Number);
++if ([minLat, minLng, maxLat, maxLng].some((n) => !Number.isFinite(n))) {
++  console.error("--bbox must be minLat,minLng,maxLat,maxLng"); process.exit(1);
++}
++
++const SUPABASE_URL = process.env.SUPABASE_URL;
++const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
++if (!SUPABASE_URL || !SERVICE_KEY) { console.error("Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY"); process.exit(1); }
++
++// ── DuckDB extract (bbox filter, only this city's rows) ──────────────────────
++// Emits newline-delimited JSON so we can stream-parse.
++const SELECT_COLS =
++  "fsq_place_id, name, latitude, longitude, address, locality, region, postcode, country, " +
++  "fsq_category_ids, fsq_category_labels, date_closed";
++const sql =
++  `COPY (SELECT ${SELECT_COLS} FROM read_parquet('${PARQUET.replace(/'/g, "''")}') ` +
++  `WHERE latitude BETWEEN ${minLat} AND ${maxLat} AND longitude BETWEEN ${minLng} AND ${maxLng} ` +
++  `AND date_closed IS NULL) TO '/dev/stdout' (FORMAT JSON, ARRAY false);`;
++
++console.log(`[fsq] extracting ${CITY} bbox=${BBOX} from ${PARQUET} …`);
++let ndjson;
++try {
++  ndjson = execFileSync("duckdb", [":memory:", "-c", sql], { maxBuffer: 1024 * 1024 * 512 }).toString();
++} catch (e) {
++  console.error("[fsq] DuckDB extract failed. Is the `duckdb` CLI installed and PARQUET readable?");
++  console.error(String(e.message || e));
++  process.exit(1);
++}
++
++const rawRows = ndjson.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => JSON.parse(l));
++console.log(`[fsq] ${rawRows.length} raw places in bbox`);
++
++// ── Transform (shared with the API via fsqTransform) ─────────────────────────
++const dbRows = [];
++let dropped = 0;
++for (const r of rawRows) {
++  const row = fsqRowToDbRow(r, { cityKey: CITY, datasetDate: DATASET_DATE });
++  if (row) dbRows.push(row); else dropped++;
++}
++console.log(`[fsq] ${dbRows.length} usable, ${dropped} dropped (closed/malformed)`);
++
++const byCat = {};
++for (const r of dbRows) byCat[r.category] = (byCat[r.category] ?? 0) + 1;
++console.log(`[fsq] by category:`, byCat);
++
++// ── Upsert ────────────────────────────────────────────────────────────────────
++const sc = createClient(SUPABASE_URL, SERVICE_KEY);
++const BATCH = 500;
++let upserted = 0, failed = 0;
++for (let i = 0; i < dbRows.length; i += BATCH) {
++  const batch = dbRows.slice(i, i + BATCH).map((r) => ({ ...r, ingested_at: new Date().toISOString() }));
++  const { error } = await sc.from("fsq_places").upsert(batch, { onConflict: "fsq_id", ignoreDuplicates: false });
++  if (error) { failed++; console.error(`[fsq] batch ${i / BATCH + 1} failed: ${error.message}`); }
++  else upserted += batch.length;
++}
++
++await sc.from("fsq_city_ingests").upsert(
++  { city_key: CITY, place_count: dbRows.length, dataset_date: DATASET_DATE,
++    bbox: { minLat, minLng, maxLat, maxLng }, ingested_at: new Date().toISOString() },
++  { onConflict: "city_key" },
++);
++
++console.log(`[fsq] done — upserted ${upserted}, failed batches ${failed}.`);
++console.log(`[fsq] Remember: any surface showing these places must display "Powered by Foursquare".`);
+--- a/artifacts/api-server/package.json	2026-07-24 05:48:29.755239835 +0000
++++ b/artifacts/api-server/package.json	2026-07-24 05:45:02.245238671 +0000
+@@ -14,7 +14,7 @@
+     "check:migration-prefixes": "node --import tsx/esm src/scripts/checkMigrationPrefixes.ts",
+     "check:write-path-columns": "node --env-file-if-exists=.env --import tsx/esm src/scripts/checkWritePathColumns.ts",
+     "test:circle-locations": "node --import tsx/esm --test src/test/circleLocations.test.ts",
+-    "test": "node --import tsx/esm --test --test-force-exit src/test/universalStamps.test.ts src/test/eventsCirclesOwner.test.ts src/test/circleLocations.test.ts src/test/collections.test.ts src/test/accessControl.test.ts src/test/adminGeo.test.ts src/test/adminModeration.test.ts src/test/ageEligibility.test.ts src/test/airport.test.ts src/test/availability.test.ts src/test/blockExclusion.test.ts src/test/circleInviteAge.test.ts src/test/cleanupHealth.test.ts src/test/compass-active-reward.test.ts src/test/compass-admin.test.ts src/test/compass-cache.test.ts src/test/compass-memory.test.ts src/test/compass-context.test.ts src/test/compass-feed.test.ts src/test/compassServedDedup.test.ts src/test/compass-pipeline.test.ts src/test/compass-ux.test.ts src/test/coreActions.test.ts src/test/dailyBriefCleanup.test.ts src/test/delayedGeotag.test.ts src/test/emergencyFlags.test.ts src/test/events.test.ts src/test/featureFlagsAdmin.test.ts src/test/followDecisions.test.ts src/test/friendDecisions.test.ts src/test/geofenceAdminSettings.test.ts src/test/geofence.test.ts src/test/groupChat.test.ts src/test/hashtags.test.ts src/test/hiddenGems.test.ts src/test/hiddenGemCheckin.test.ts src/test/intelligence.test.ts src/test/interactionPermissions.test.ts src/test/itineraryTimeline.test.ts src/test/locationGps.test.ts src/test/locationVerify.test.ts src/test/meetupAgeRsvp.test.ts src/test/meetups.test.ts src/test/notifications.test.ts src/test/passportStamps.test.ts src/test/passportStampsPagination.test.ts src/test/passportStampsCountFallback.test.ts src/test/postInteractions.test.ts src/test/posts.test.ts src/test/postcards.test.ts src/test/pulseGps.test.ts src/test/pushDelivery.test.ts src/test/rentBuddyRequestPush.test.ts src/test/pushRetryQueue.test.ts src/test/pushWithRetry.test.ts src/test/tripReminderPush.test.ts src/test/tripReminderResetAudit.test.ts src/test/rateLimits.test.ts src/test/rentABuddyRollout.test.ts src/test/rentABuddy.test.ts src/test/rentBuddyReliabilityCounters.test.ts src/test/rentBuddyReliabilityRoutes.test.ts src/test/requests.test.ts src/test/friendRequestUpdateFailure.test.ts src/test/inviteUpdateFailure.test.ts src/test/routeMinimapView.test.ts src/test/routeOptimizer.test.ts src/test/routePlanHook.test.ts src/test/routePlanMembers.test.ts src/test/routePlan.test.ts src/test/safeReturnAdmin.test.ts src/test/safeReturn.test.ts src/test/stampHelper.test.ts src/test/tagging.test.ts src/test/telegraphChat.test.ts src/test/telegraphRealtime.test.ts src/test/telegraphStreamEndpoints.test.ts src/test/tripCompletion.test.ts src/test/tripCrewLocation.test.ts src/test/tripPlan.test.ts src/test/tripMembers.test.ts src/test/tripInviteRespond.test.ts src/test/trust-integration.test.ts src/test/trust.test.ts src/test/memories.test.ts src/test/stories.test.ts src/test/userSuggestions.test.ts src/test/eventWaitlistSweeper.test.ts src/lib/messagingPermissions.test.ts src/test/appeals.test.ts src/test/reviews.test.ts src/test/tripsExpansion.test.ts src/test/crashReport.test.ts src/test/wishlist.test.ts src/test/discoverySort.test.ts src/test/stamps-integration.test.ts src/test/stampRevoke.test.ts src/test/engagement.test.ts src/test/profileSystem.test.ts src/test/profileSchemaDrift.test.ts src/test/adminCompassSchemaDrift.test.ts src/test/adminGeoModerationSchemaDrift.test.ts src/test/adminRemainingDashboardsSchemaDrift.test.ts src/test/trustAdminAuditInsertSchemaDrift.test.ts src/test/inviteLinkPreview.test.ts src/test/inviteLinkPreviewFull.test.ts src/test/inviteLinkTripFull.test.ts src/test/stampArtworkEnrichment.test.ts src/test/ogImageVisibility.test.ts src/test/canonicalLocations.test.ts src/test/publicIdentity.test.ts src/test/privacySettings.test.ts src/test/discoveryPrivacy.test.ts src/test/stampPreviewVisibility.test.ts src/test/stampCountryLookup.test.ts src/test/stampCountryGeocoder.test.ts src/test/stampQueueRequeue.test.ts src/test/stampGenerationCycle.test.ts src/test/stampGenerationLockTiming.test.ts src/test/stampQueueRequeueRoute.test.ts src/test/rentABuddyAvailabilitySave.test.ts src/test/rentABuddySpecRebook.test.ts src/test/rentABuddySpecRequest.test.ts src/test/rentABuddySpecNoShow.test.ts src/test/rentABuddyDisputeTerminal.test.ts src/test/stampWorkerHealthMonitor.test.ts src/test/stampCatalogDefinition.test.ts src/test/stampOwnershipBackfill.test.ts src/test/adminGeocode.test.ts src/test/stampCatalogListEnrichment.test.ts src/test/stampCatalogActiveQueueStatus.test.ts src/test/notificationRouterCredentials.test.ts src/test/stampGeocodeStaleEviction.test.ts src/test/stampGeocodeDeletionPropagation.test.ts src/test/stampCatalogRequeueBadge.test.ts src/test/adminTripReminderReset.test.ts src/test/adminTripIdGuard.test.ts src/test/stampCatalogRegenDedup.test.ts src/test/stampCatalogDetailBadge.test.ts src/test/stampCatalogVersionArchive.test.ts src/test/stampCatalogRegenAuditLog.test.ts src/test/stampCatalogRegenAfterComplete.test.ts src/test/stampCatalogRegenAfterReviewRequired.test.ts src/test/pushTokenCleanup.test.ts src/test/rentABuddyHalfPairCoords.test.ts src/test/rentABuddySearchCoordGuard.test.ts src/test/adminVenueModeration.test.ts src/test/adminVenueQueue.test.ts src/test/rentABuddyAdminResolveDisputeGuard.test.ts src/test/rentABuddyAdminResolveDisputeFavorTraveler.test.ts src/test/stampGeocodeTombstoneRead.test.ts src/test/stampCatalogStyleVersionBadge.test.ts src/test/adminEventModeration.test.ts src/test/profileSelect.test.ts src/test/stampCatalogAdminActionDedup.test.ts src/test/stampCatalogAuditLogFilter.test.ts src/test/stampCatalogNullDisplayName.test.ts src/test/styleVersionSync.test.ts src/test/stampCatalogCountryCodeType.test.ts src/test/stampCatalogRegenPreexistingQueue.test.ts src/test/stampQueueClearCleanupAudit.test.ts src/test/stampAuditWriteFailure.test.ts src/test/stampAuditWriteFailureMergeReject.test.ts src/test/stampCatalogRegenArchiveObservability.test.ts src/test/stampCatalogRegenMultiFailedReset.test.ts src/test/stampCatalogConflictCollapse.test.ts src/test/stampCatalogRegenArchiveExtrasDbError.test.ts src/test/stampCatalogRegenSurvivorResetDbError.test.ts src/test/notificationDisplayNameCap.test.ts src/test/splitClockGuard.test.ts src/test/adminGeofenceSettingsNotFound.test.ts src/test/stampQueueConstraintSync.test.ts src/test/rankEventsOutcome.test.ts src/test/impressionLogFireAndForget.test.ts src/test/callSystem.test.ts src/test/callRoutes.test.ts src/test/callHardening.test.ts src/test/callAnalytics.test.ts src/test/tripInvitesPending.test.ts src/test/weatherCacheCleanupRoute.test.ts src/test/appHardening.test.ts src/test/corsAllowedOrigins.test.ts src/test/ageGate.test.ts src/test/rentABuddyLifecycle.test.ts src/test/reconcileRunSummary.test.ts src/test/reconcileRunHistory.test.ts src/test/schemaDriftCheck.test.ts src/test/adminPhase12.test.ts src/test/blocks.test.ts src/test/discoveryCommunityCoordinateBounds.test.ts src/test/discoveryCommunityCoords.test.ts src/test/discoveryCommunityRating.test.ts src/test/discoveryCommunitySortBy.test.ts src/test/discoverySearch.test.ts src/test/discoverySearchIntelligence.test.ts src/test/events-extension.test.ts src/test/passportProfileAccess.test.ts src/test/profileEnsure.test.ts src/test/pulseRanking.test.ts src/test/stampEarnedNotification.test.ts src/test/friendRequestReactivate.test.ts src/test/compass-ask.test.ts src/test/compass-structured-context.test.ts src/test/compass-tools.test.ts src/test/compass-ui-blocks.test.ts src/test/compass-recommendation-engine.test.ts src/test/compass-live-intel.test.ts src/test/compass-social.test.ts src/test/compass-home.test.ts src/test/compass-sense.test.ts src/test/compass-sense-scheduler.test.ts src/test/compass-live.test.ts src/test/compass-autopilot.test.ts src/test/compass-outcome-learning.test.ts src/test/compass-intelligence-graph.test.ts src/test/intelligenceGraphScheduler.test.ts src/test/placesLiveStatus.test.ts src/test/compass-local-time.test.ts src/test/eventPostsDiscovery.test.ts src/test/verification.test.ts src/test/moderation.test.ts src/test/featureFlagColumnGuard.test.ts src/test/entryRequirements.test.ts src/test/tripReadiness.test.ts src/test/tripBudgetIntel.test.ts src/test/tripReservations.test.ts src/test/tripDraft.test.ts src/test/neighborhoodMatch.test.ts src/test/compass-trip-context.test.ts src/test/stampComposition.test.ts src/test/stampShowcaseAdmire.test.ts src/test/stampCriteria.test.ts src/test/eventCategoryContext.test.ts src/test/unifiedStamps.test.ts src/test/countryEssentials.test.ts src/test/fx.test.ts",
++    "test": "node --import tsx/esm --test --test-force-exit src/test/universalStamps.test.ts src/test/eventsCirclesOwner.test.ts src/test/circleLocations.test.ts src/test/collections.test.ts src/test/accessControl.test.ts src/test/adminGeo.test.ts src/test/adminModeration.test.ts src/test/ageEligibility.test.ts src/test/airport.test.ts src/test/availability.test.ts src/test/blockExclusion.test.ts src/test/circleInviteAge.test.ts src/test/cleanupHealth.test.ts src/test/compass-active-reward.test.ts src/test/compass-admin.test.ts src/test/compass-cache.test.ts src/test/compass-memory.test.ts src/test/compass-context.test.ts src/test/compass-feed.test.ts src/test/compassServedDedup.test.ts src/test/compass-pipeline.test.ts src/test/compass-ux.test.ts src/test/coreActions.test.ts src/test/dailyBriefCleanup.test.ts src/test/delayedGeotag.test.ts src/test/emergencyFlags.test.ts src/test/events.test.ts src/test/featureFlagsAdmin.test.ts src/test/followDecisions.test.ts src/test/friendDecisions.test.ts src/test/geofenceAdminSettings.test.ts src/test/geofence.test.ts src/test/groupChat.test.ts src/test/hashtags.test.ts src/test/hiddenGems.test.ts src/test/hiddenGemCheckin.test.ts src/test/intelligence.test.ts src/test/interactionPermissions.test.ts src/test/itineraryTimeline.test.ts src/test/locationGps.test.ts src/test/locationVerify.test.ts src/test/meetupAgeRsvp.test.ts src/test/meetups.test.ts src/test/notifications.test.ts src/test/passportStamps.test.ts src/test/passportStampsPagination.test.ts src/test/passportStampsCountFallback.test.ts src/test/postInteractions.test.ts src/test/posts.test.ts src/test/postcards.test.ts src/test/pulseGps.test.ts src/test/pushDelivery.test.ts src/test/rentBuddyRequestPush.test.ts src/test/pushRetryQueue.test.ts src/test/pushWithRetry.test.ts src/test/tripReminderPush.test.ts src/test/tripReminderResetAudit.test.ts src/test/rateLimits.test.ts src/test/rentABuddyRollout.test.ts src/test/rentABuddy.test.ts src/test/rentBuddyReliabilityCounters.test.ts src/test/rentBuddyReliabilityRoutes.test.ts src/test/requests.test.ts src/test/friendRequestUpdateFailure.test.ts src/test/inviteUpdateFailure.test.ts src/test/routeMinimapView.test.ts src/test/routeOptimizer.test.ts src/test/routePlanHook.test.ts src/test/routePlanMembers.test.ts src/test/routePlan.test.ts src/test/safeReturnAdmin.test.ts src/test/safeReturn.test.ts src/test/stampHelper.test.ts src/test/tagging.test.ts src/test/telegraphChat.test.ts src/test/telegraphRealtime.test.ts src/test/telegraphStreamEndpoints.test.ts src/test/tripCompletion.test.ts src/test/tripCrewLocation.test.ts src/test/tripPlan.test.ts src/test/tripMembers.test.ts src/test/tripInviteRespond.test.ts src/test/trust-integration.test.ts src/test/trust.test.ts src/test/memories.test.ts src/test/stories.test.ts src/test/userSuggestions.test.ts src/test/eventWaitlistSweeper.test.ts src/lib/messagingPermissions.test.ts src/test/appeals.test.ts src/test/reviews.test.ts src/test/tripsExpansion.test.ts src/test/crashReport.test.ts src/test/wishlist.test.ts src/test/discoverySort.test.ts src/test/stamps-integration.test.ts src/test/stampRevoke.test.ts src/test/engagement.test.ts src/test/profileSystem.test.ts src/test/profileSchemaDrift.test.ts src/test/adminCompassSchemaDrift.test.ts src/test/adminGeoModerationSchemaDrift.test.ts src/test/adminRemainingDashboardsSchemaDrift.test.ts src/test/trustAdminAuditInsertSchemaDrift.test.ts src/test/inviteLinkPreview.test.ts src/test/inviteLinkPreviewFull.test.ts src/test/inviteLinkTripFull.test.ts src/test/stampArtworkEnrichment.test.ts src/test/ogImageVisibility.test.ts src/test/canonicalLocations.test.ts src/test/publicIdentity.test.ts src/test/privacySettings.test.ts src/test/discoveryPrivacy.test.ts src/test/stampPreviewVisibility.test.ts src/test/stampCountryLookup.test.ts src/test/stampCountryGeocoder.test.ts src/test/stampQueueRequeue.test.ts src/test/stampGenerationCycle.test.ts src/test/stampGenerationLockTiming.test.ts src/test/stampQueueRequeueRoute.test.ts src/test/rentABuddyAvailabilitySave.test.ts src/test/rentABuddySpecRebook.test.ts src/test/rentABuddySpecRequest.test.ts src/test/rentABuddySpecNoShow.test.ts src/test/rentABuddyDisputeTerminal.test.ts src/test/stampWorkerHealthMonitor.test.ts src/test/stampCatalogDefinition.test.ts src/test/stampOwnershipBackfill.test.ts src/test/adminGeocode.test.ts src/test/stampCatalogListEnrichment.test.ts src/test/stampCatalogActiveQueueStatus.test.ts src/test/notificationRouterCredentials.test.ts src/test/stampGeocodeStaleEviction.test.ts src/test/stampGeocodeDeletionPropagation.test.ts src/test/stampCatalogRequeueBadge.test.ts src/test/adminTripReminderReset.test.ts src/test/adminTripIdGuard.test.ts src/test/stampCatalogRegenDedup.test.ts src/test/stampCatalogDetailBadge.test.ts src/test/stampCatalogVersionArchive.test.ts src/test/stampCatalogRegenAuditLog.test.ts src/test/stampCatalogRegenAfterComplete.test.ts src/test/stampCatalogRegenAfterReviewRequired.test.ts src/test/pushTokenCleanup.test.ts src/test/rentABuddyHalfPairCoords.test.ts src/test/rentABuddySearchCoordGuard.test.ts src/test/adminVenueModeration.test.ts src/test/adminVenueQueue.test.ts src/test/rentABuddyAdminResolveDisputeGuard.test.ts src/test/rentABuddyAdminResolveDisputeFavorTraveler.test.ts src/test/stampGeocodeTombstoneRead.test.ts src/test/stampCatalogStyleVersionBadge.test.ts src/test/adminEventModeration.test.ts src/test/profileSelect.test.ts src/test/stampCatalogAdminActionDedup.test.ts src/test/stampCatalogAuditLogFilter.test.ts src/test/stampCatalogNullDisplayName.test.ts src/test/styleVersionSync.test.ts src/test/stampCatalogCountryCodeType.test.ts src/test/stampCatalogRegenPreexistingQueue.test.ts src/test/stampQueueClearCleanupAudit.test.ts src/test/stampAuditWriteFailure.test.ts src/test/stampAuditWriteFailureMergeReject.test.ts src/test/stampCatalogRegenArchiveObservability.test.ts src/test/stampCatalogRegenMultiFailedReset.test.ts src/test/stampCatalogConflictCollapse.test.ts src/test/stampCatalogRegenArchiveExtrasDbError.test.ts src/test/stampCatalogRegenSurvivorResetDbError.test.ts src/test/notificationDisplayNameCap.test.ts src/test/splitClockGuard.test.ts src/test/adminGeofenceSettingsNotFound.test.ts src/test/stampQueueConstraintSync.test.ts src/test/rankEventsOutcome.test.ts src/test/impressionLogFireAndForget.test.ts src/test/callSystem.test.ts src/test/callRoutes.test.ts src/test/callHardening.test.ts src/test/callAnalytics.test.ts src/test/tripInvitesPending.test.ts src/test/weatherCacheCleanupRoute.test.ts src/test/appHardening.test.ts src/test/corsAllowedOrigins.test.ts src/test/ageGate.test.ts src/test/rentABuddyLifecycle.test.ts src/test/reconcileRunSummary.test.ts src/test/reconcileRunHistory.test.ts src/test/schemaDriftCheck.test.ts src/test/adminPhase12.test.ts src/test/blocks.test.ts src/test/discoveryCommunityCoordinateBounds.test.ts src/test/discoveryCommunityCoords.test.ts src/test/discoveryCommunityRating.test.ts src/test/discoveryCommunitySortBy.test.ts src/test/discoverySearch.test.ts src/test/discoverySearchIntelligence.test.ts src/test/events-extension.test.ts src/test/passportProfileAccess.test.ts src/test/profileEnsure.test.ts src/test/pulseRanking.test.ts src/test/stampEarnedNotification.test.ts src/test/friendRequestReactivate.test.ts src/test/compass-ask.test.ts src/test/compass-structured-context.test.ts src/test/compass-tools.test.ts src/test/compass-ui-blocks.test.ts src/test/compass-recommendation-engine.test.ts src/test/compass-live-intel.test.ts src/test/compass-social.test.ts src/test/compass-home.test.ts src/test/compass-sense.test.ts src/test/compass-sense-scheduler.test.ts src/test/compass-live.test.ts src/test/compass-autopilot.test.ts src/test/compass-outcome-learning.test.ts src/test/compass-intelligence-graph.test.ts src/test/intelligenceGraphScheduler.test.ts src/test/placesLiveStatus.test.ts src/test/compass-local-time.test.ts src/test/eventPostsDiscovery.test.ts src/test/verification.test.ts src/test/moderation.test.ts src/test/featureFlagColumnGuard.test.ts src/test/entryRequirements.test.ts src/test/tripReadiness.test.ts src/test/tripBudgetIntel.test.ts src/test/tripReservations.test.ts src/test/tripDraft.test.ts src/test/neighborhoodMatch.test.ts src/test/compass-trip-context.test.ts src/test/stampComposition.test.ts src/test/stampShowcaseAdmire.test.ts src/test/stampCriteria.test.ts src/test/eventCategoryContext.test.ts src/test/unifiedStamps.test.ts src/test/countryEssentials.test.ts src/test/fx.test.ts src/test/fsqPlaces.test.ts",
+     "test:app-hardening": "node --import tsx/esm --test src/test/appHardening.test.ts",
+     "test:cors-allowed-origins": "node --import tsx/esm --test src/test/corsAllowedOrigins.test.ts",
+     "test:interaction": "node --import tsx/esm --test src/test/interactionPermissions.test.ts src/test/coreActions.test.ts src/test/followDecisions.test.ts src/test/blockExclusion.test.ts src/test/accessControl.test.ts src/test/adminModeration.test.ts src/test/emergencyFlags.test.ts src/test/userSuggestions.test.ts",
+--- a/docs/migrations.md	2026-07-24 05:48:29.755239835 +0000
++++ b/docs/migrations.md	2026-07-24 05:48:29.746949698 +0000
+@@ -763,3 +763,4 @@
+ - `0181_stamp_unified_view` — Stamp legacy unification (read-layer): flag stamp_unified_view_enabled (default FALSE). UnifiedStampService merges v1 passport_stamps (GPS) + v2 user_stamps (achievements) into one deduped read collection (dedup by catalog_id backfilled by reconcile, else stamp_type|country|city; v2 wins ties). GET /stamps/me/unified always available; when flag ON the passport-card stampCount reports the deduped v1+v2 total instead of v1-only. NO schema change, NO data migration, both write paths untouched.
+ - `0182_country_essentials` — Country essentials (curated travel-readiness reference): plug_types, voltage, frequency, drive_side, emergency (jsonb) per country_essentials table (54 countries seeded), confidence='curated' + source + last_verified_at. Flag country_essentials_enabled (default FALSE). Endpoints GET /countries/:code/essentials + GET /trips/:tripId/essentials (DB-first, in-code curated fallback, honest-null for uncovered countries, confirm-on-arrival disclaimer on every response). Plug/voltage engineering-standardized; emergency numbers curated w/ disclaimer.
+ - `0183_budget_fx_conversion` — Budget FX: flag budget_fx_conversion_enabled (default FALSE). GET /trips/:tripId/cost-estimate?home=<ISO4217> now attaches a `converted` block (perDay/total bands in home currency) via lib/fx.ts (EUR-pivot over fx_rates, indicative disclaimer, null when rate unavailable — never fabricated). Source-currency estimate unchanged. Daily refresh scheduler (lib/fxRefreshScheduler.ts, env FX_REFRESH_ENABLED=true) re-pulls ECB rates from frankfurter.dev into fx_rates. Mobile: fetchCostEstimateWithFx (additive; fetchCostEstimate unchanged).
++- `0184_fsq_places` — FSQ OS Places (Foursquare) provider POI layer: fsq_places (per-city ingested, category accommodation|nightlife|food|culture|shopping|other, provider confidence + dataset_date) + fsq_city_ingests + flag fsq_places_enabled. Ingested by scripts/load-fsq-city.mjs (DuckDB per-city bbox extract from the gated FSQ parquet — NOT whole-world). GET /cities/:cityKey/places?category (flag-gated, FSQ attribution required). Adds hotels + richer nightlife/food/retail beyond OSM. Category map + transform shared lib/fsq/*.

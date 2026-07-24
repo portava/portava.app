@@ -4,7 +4,33 @@
  * A `StampArtworkDef` is a pure data record describing how one stamp should
  * look. It is resolved by `stampArtworkResolver.ts` from a `PassportStamp`
  * and is presentation-framework-independent (no React, no RN).
+ *
+ * Rarity types and colour palette are the canonical source of truth in
+ * `src/lib/stampRarity.ts`. This file re-exports them for backward compat.
  */
+
+// ── Rarity (canonical source: src/lib/stampRarity.ts) ────────────────────────
+export { StampRarity, normalizeRarity } from '../lib/stampRarity.ts';
+import { RARITY_COLORS, RARITY_LABEL } from '../lib/stampRarity.ts';
+import type { StampRarity } from '../lib/stampRarity.ts';
+
+/**
+ * Backward-compatible single-string colour per rarity tier.
+ * This derives the `ring` value from the canonical RARITY_COLORS map so
+ * files that import STAMP_RARITY_COLORS continue to work without changes.
+ */
+export const STAMP_RARITY_COLORS: Record<StampRarity, string> = {
+  common:    RARITY_COLORS.common.ring,
+  uncommon:  RARITY_COLORS.uncommon.ring,
+  rare:      RARITY_COLORS.rare.ring,
+  epic:      RARITY_COLORS.epic.ring,
+  legendary: RARITY_COLORS.legendary.ring,
+};
+
+/** Human-readable names for each rarity tier (backward compat). */
+export const STAMP_RARITY_LABELS: Record<StampRarity, string> = RARITY_LABEL;
+
+// ── Artwork shape / style types ────────────────────────────────────────────────
 
 /** Outer silhouette of the stamp frame. */
 export type StampShape = 'oval' | 'round' | 'rect' | 'hexagon';
@@ -21,9 +47,6 @@ export type StampTexture = 'paper' | 'ink' | 'foil' | 'worn';
 
 /** Background fill pattern drawn inside the stamp shape. */
 export type StampPattern = 'solid' | 'radial' | 'grid' | 'dots' | 'diagonal';
-
-/** Collectible rarity tier — drives border style, weight, and animations. */
-export type StampRarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 
 /**
  * The resolved artwork descriptor for a single stamp.
@@ -88,24 +111,6 @@ export interface StampArtworkDef {
    */
   accessibilityLabel: string;
 }
-
-/** Human-readable names for each rarity tier. */
-export const STAMP_RARITY_LABELS: Record<StampRarity, string> = {
-  common: 'Common',
-  uncommon: 'Uncommon',
-  rare: 'Rare',
-  epic: 'Epic',
-  legendary: 'Legendary',
-};
-
-/** Representative badge color for each rarity tier. */
-export const STAMP_RARITY_COLORS: Record<StampRarity, string> = {
-  common: '#9CA3AF',
-  uncommon: '#10B981',
-  rare: '#3B82F6',
-  epic: '#8B5CF6',
-  legendary: '#F59E0B',
-};
 
 /** Badge color for locked / not-yet-earned stamps. */
 export const STAMP_LOCKED_COLOR = '#D1D5DB';

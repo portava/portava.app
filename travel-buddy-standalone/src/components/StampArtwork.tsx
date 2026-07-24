@@ -8,9 +8,14 @@
  *
  * All three sub-components share the same props contract so callers never
  * need to think about which one to use — just pass a `size`.
+ *
+ * When `stamp.universalArtworkUrl` is set the composited AI image is rendered
+ * via expo-image with contentFit="contain" so the transparent frame is never
+ * cropped. Falls back to the procedural art system on load error.
  */
 import React, { useState } from 'react';
-import { Pressable, Image, View, StyleSheet } from 'react-native';
+import { Pressable, View, StyleSheet } from 'react-native';
+import { Image } from 'expo-image';
 import type { PassportStamp } from '../types/models.ts';
 import { StampIcon } from './StampIcon.tsx';
 import { StampCard } from './StampCard.tsx';
@@ -34,8 +39,9 @@ export function StampArtwork({ stamp, size = 88, rotate = 0, onPress }: StampArt
   let child: React.ReactElement;
 
   if (stamp.universalArtworkUrl && !artFailed) {
-    // AI-generated universal artwork — render the image; fall back to the
-    // procedural design if the image fails to load.
+    // AI-generated universal artwork — render the image via expo-image for
+    // memory/disk caching; fall back to the procedural design on error.
+    // contentFit="contain" preserves the transparent stamp frame (never crop).
     child = (
       <View
         style={[
@@ -52,7 +58,8 @@ export function StampArtwork({ stamp, size = 88, rotate = 0, onPress }: StampArt
         <Image
           source={{ uri: stamp.universalArtworkUrl }}
           style={{ width: '100%', height: '100%' }}
-          resizeMode="cover"
+          contentFit="contain"
+          cachePolicy="memory-disk"
           onError={() => setArtFailed(true)}
           accessibilityIgnoresInvertColors
         />

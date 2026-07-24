@@ -1,0 +1,71 @@
+--- a/artifacts/travel-buddy/src/components/stamps/StampEarnedToast.tsx	2026-07-17 09:59:39.000000000 +0000
++++ b/artifacts/travel-buddy/src/components/stamps/StampEarnedToast.tsx	2026-07-24 06:26:35.391807982 +0000
+@@ -11,7 +11,7 @@
+   createContext, useContext, useCallback, useEffect, useRef, useState,
+ } from 'react';
+ import {
+-  View, Text, Pressable, StyleSheet, Animated, Platform,
++  View, Text, Pressable, StyleSheet, Animated, Platform, AccessibilityInfo,
+ } from 'react-native';
+ import AsyncStorage from '@react-native-async-storage/async-storage';
+ import { router } from 'expo-router';
+@@ -95,18 +95,36 @@
+   const slideAnim = useRef(new Animated.Value(120)).current;
+   const timerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+ 
++  // Respect the OS "reduce motion" setting: skip the slide spring/timing and
++  // snap in/out instead (consistent with StampCard's shimmer gate).
++  const reduceMotion = useRef(false);
++  useEffect(() => {
++    AccessibilityInfo.isReduceMotionEnabled().then((v) => { reduceMotion.current = v; });
++    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', (v) => { reduceMotion.current = v; });
++    return () => sub.remove();
++  }, []);
++
+   // Show from queue
+   useEffect(() => {
+     if (current || queue.length === 0) return;
+     const [next, ...rest] = queue;
+     setQueue(rest);
+     setCurrent(next);
+-    Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
++    if (reduceMotion.current) {
++      slideAnim.setValue(0); // snap in — no motion
++    } else {
++      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
++    }
+     timerRef.current = setTimeout(dismiss, 4000);
+   }, [current, queue]);
+ 
+   function dismiss() {
+     if (timerRef.current) clearTimeout(timerRef.current);
++    if (reduceMotion.current) {
++      setCurrent(null);
++      slideAnim.setValue(120); // snap out — no motion
++      return;
++    }
+     Animated.timing(slideAnim, { toValue: 120, duration: 250, useNativeDriver: true }).start(() => {
+       setCurrent(null);
+       slideAnim.setValue(120);
+--- a/artifacts/api-server/.env.example	2026-07-23 16:05:33.000000000 +0000
++++ b/artifacts/api-server/.env.example	2026-07-24 06:27:11.699806780 +0000
+@@ -35,3 +35,19 @@
+ # Optional tuning: STAMP_WORKER_INTERVAL_MS, STAMP_MIN_CANDIDATES,
+ # STAMP_FAILED_REQUEUE_HOURS, STAMP_FAILED_REQUEUE_MAX_ROUNDS,
+ # STAMP_STALE_SWEEP_INTERVAL_MINUTES, STAMP_COUNTRY_SWEEP_ENABLED
++
++# ── FX daily refresh (budget currency conversion) ─────────────────────────────
++# When true, pulls ECB reference rates (frankfurter.dev) into fx_rates once a
++# day so budget conversions stay current. Off = rates stay at whatever was last
++# loaded (conversion still works, just not auto-updated).
++FX_REFRESH_ENABLED=false
++# Optional: FX_REFRESH_INTERVAL_MS (default 24h), FX_REFRESH_URL (default
++# https://api.frankfurter.dev/v1/latest?base=EUR)
++
++# ── Feature flags (set in the feature_flags DB table, NOT here) ───────────────
++# Stamp:  stamp_premium_rendering_enabled, stamp_showcase_enabled,
++#         stamp_admire_enabled, stamp_criteria_engine_enabled,
++#         stamp_unified_view_enabled
++# Data:   country_essentials_enabled, budget_fx_conversion_enabled,
++#         fsq_places_enabled
++# See PORTAVA-ACTIVATION-GUIDE.md for what each turns on and safe order.

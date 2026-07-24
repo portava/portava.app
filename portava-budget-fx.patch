@@ -1,0 +1,530 @@
+diff -ruN a/artifacts/api-server/src/index.ts b/artifacts/api-server/src/index.ts
+--- a/artifacts/api-server/src/index.ts	2026-07-21 06:07:33.000000000 +0000
++++ b/artifacts/api-server/src/index.ts	2026-07-24 05:20:39.227004983 +0000
+@@ -22,6 +22,7 @@
+ import { initCityTimezonePersistence } from "./compass/CompassGraphEngine.js";
+ import { assertRequiredEnv } from "./lib/envValidation";
+ import { startWorkerLoop, queryStampWorkerHealth, startHealthMonitorLoop } from "./lib/stamps/generationWorker";
++import { startFxRefreshLoop } from "./lib/fxRefreshScheduler";
+ import { startXXCatalogSweeper } from "./lib/stamps/xxCatalogRepair";
+ import { startCorrectionSweep } from "./lib/stamps/countryGeocoder";
+ import { runSchemaDriftCheck } from "./lib/schemaDriftCheck";
+@@ -86,6 +87,13 @@
+     startWorkerLoop(intervalMs);
+   }
+ 
++  // FX daily refresh — only when FX_REFRESH_ENABLED=true. Pulls ECB reference
++  // rates (frankfurter.dev) into fx_rates once a day so budget conversions stay
++  // current without the manual re-run. Best-effort; never blocks startup.
++  if (process.env.FX_REFRESH_ENABLED === "true") {
++    startFxRefreshLoop(() => getServiceClient(), logger);
++  }
++
+   // Periodic XX-catalog sweep: re-keys/merges catalog entries whose country
+   // becomes resolvable (static lookup or geocoding for less-known cities).
+   // Disable with STAMP_COUNTRY_SWEEP_ENABLED=false.
+diff -ruN a/artifacts/api-server/src/lib/fx.ts b/artifacts/api-server/src/lib/fx.ts
+--- a/artifacts/api-server/src/lib/fx.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/lib/fx.ts	2026-07-24 05:19:35.951007077 +0000
+@@ -0,0 +1,180 @@
++/**
++ * FX — currency conversion over the fx_rates table (Compass data).
++ *
++ * fx_rates holds ECB reference rates with base_currency='EUR': each row's
++ * `rate` is "units of `currency` per 1 EUR" for a given rate_date. Cross-rate
++ * conversion pivots through the base:
++ *
++ *     amount_to = amount_from * (rate[to] / rate[from])
++ *
++ * HONESTY CONTRACT:
++ *   - Conversions are labeled with the rate_date and an "indicative" disclaimer
++ *     (ECB reference rates ≠ the rate a traveler actually gets).
++ *   - When either currency is missing from the table, convert() returns null —
++ *     the caller shows the original amount, never a fabricated conversion.
++ *
++ * refreshFxRates() re-fetches the latest ECB rates (frankfurter.dev) and upserts
++ * them; it is what the daily scheduler calls. fetch is injectable for tests.
++ */
++
++export const FX_DISCLAIMER =
++  "Indicative conversion at ECB reference rates — the rate you actually pay may differ.";
++
++export interface FxTable {
++  base: string;
++  rateDate: string | null;
++  /** currency → units per 1 base. The base itself maps to 1. */
++  rates: Map<string, number>;
++}
++
++export interface MoneyBand { low: number; mid: number; high: number }
++
++function round2(n: number): number { return Math.round(n * 100) / 100; }
++
++/**
++ * Load the most recent rate_date's rates into an in-memory table. Returns an
++ * empty table (never throws) when fx_rates is missing/empty.
++ */
++export async function loadFxTable(sc: any, base = "EUR"): Promise<FxTable> {
++  const table: FxTable = { base, rateDate: null, rates: new Map([[base, 1]]) };
++  try {
++    // Find the latest rate_date for this base.
++    const { data: latest, error: e1 } = await sc
++      .from("fx_rates")
++      .select("rate_date")
++      .eq("base_currency", base)
++      .order("rate_date", { ascending: false })
++      .limit(1)
++      .maybeSingle();
++    if (e1 || !latest) return table;
++    const rateDate = (latest as any).rate_date as string;
++    table.rateDate = rateDate;
++
++    const { data, error } = await sc
++      .from("fx_rates")
++      .select("currency, rate")
++      .eq("base_currency", base)
++      .eq("rate_date", rateDate);
++    if (error || !Array.isArray(data)) return table;
++    for (const row of data as any[]) {
++      const cur = String(row.currency ?? "").toUpperCase();
++      const rate = Number(row.rate);
++      if (cur && Number.isFinite(rate) && rate > 0) table.rates.set(cur, rate);
++    }
++  } catch {
++    // return whatever we have (at least the base)
++  }
++  return table;
++}
++
++/** Convert an amount between currencies via the base pivot. Null if unsupported. */
++export function convert(amount: number, from: string, to: string, table: FxTable): number | null {
++  const f = from.toUpperCase();
++  const t = to.toUpperCase();
++  if (f === t) return round2(amount);
++  const rf = table.rates.get(f);
++  const rt = table.rates.get(t);
++  if (!rf || !rt) return null;
++  return round2(amount * (rt / rf));
++}
++
++/** Convert a {low,mid,high} band. Null if unsupported. */
++export function convertBand(band: MoneyBand, from: string, to: string, table: FxTable): MoneyBand | null {
++  const low = convert(band.low, from, to, table);
++  const mid = convert(band.mid, from, to, table);
++  const high = convert(band.high, from, to, table);
++  if (low === null || mid === null || high === null) return null;
++  return { low, mid, high };
++}
++
++export interface ConvertedEstimate {
++  currency: string;
++  perDay: MoneyBand;
++  total: MoneyBand;
++  rateDate: string | null;
++  disclaimer: string;
++}
++
++/**
++ * Produce a converted view of a budget estimate's perDay/total bands in
++ * `homeCurrency`. Returns null when conversion is unavailable (same currency,
++ * missing rate, or no fx data) so the caller just omits the converted block.
++ */
++export async function convertEstimate(
++  sc: any,
++  fromCurrency: string,
++  homeCurrency: string,
++  perDay: MoneyBand,
++  total: MoneyBand,
++): Promise<ConvertedEstimate | null> {
++  const from = (fromCurrency || "").toUpperCase();
++  const home = (homeCurrency || "").toUpperCase();
++  if (!/^[A-Z]{3}$/.test(home) || from === home) return null;
++  const table = await loadFxTable(sc);
++  const pd = convertBand(perDay, from, home, table);
++  const tot = convertBand(total, from, home, table);
++  if (!pd || !tot) return null;
++  return { currency: home, perDay: pd, total: tot, rateDate: table.rateDate, disclaimer: FX_DISCLAIMER };
++}
++
++// ── Refresh (daily scheduler target) ──────────────────────────────────────────
++
++export const FX_SOURCE = "ECB reference rates via frankfurter.dev";
++const FX_ENDPOINT = process.env.FX_REFRESH_URL?.trim() || "https://api.frankfurter.dev/v1/latest?base=EUR";
++
++type FetchLike = (url: string) => Promise<{ ok: boolean; status: number; json: () => Promise<any> }>;
++
++export interface FxRefreshResult {
++  ok: boolean;
++  rateDate?: string;
++  upserted?: number;
++  reason?: string;
++}
++
++/**
++ * Fetch the latest ECB rates and upsert into fx_rates (base EUR). Best-effort:
++ * returns {ok:false, reason} instead of throwing. `fetchImpl` is injectable for
++ * tests; defaults to global fetch with a timeout.
++ */
++export async function refreshFxRates(sc: any, fetchImpl?: FetchLike): Promise<FxRefreshResult> {
++  const doFetch: FetchLike =
++    fetchImpl ??
++    ((url: string) => fetch(url, { signal: AbortSignal.timeout(8000) }) as any);
++
++  let payload: any;
++  try {
++    const resp = await doFetch(FX_ENDPOINT);
++    if (!resp.ok) return { ok: false, reason: `http_${resp.status}` };
++    payload = await resp.json();
++  } catch (e: any) {
++    return { ok: false, reason: `fetch_failed:${e?.message ?? "error"}` };
++  }
++
++  const base = String(payload?.base ?? "EUR").toUpperCase();
++  const rateDate = String(payload?.date ?? "").slice(0, 10);
++  const rates = payload?.rates && typeof payload.rates === "object" ? payload.rates : null;
++  if (!/^\d{4}-\d{2}-\d{2}$/.test(rateDate) || !rates) return { ok: false, reason: "bad_payload" };
++
++  const rows = Object.entries(rates)
++    .filter(([cur, rate]) => /^[A-Za-z]{3}$/.test(cur) && Number(rate) > 0)
++    .map(([cur, rate]) => ({
++      base_currency: base,
++      currency: String(cur).toUpperCase(),
++      rate: Number(rate),
++      rate_date: rateDate,
++      source: FX_SOURCE,
++    }));
++  // Include the base→base identity row so loadFxTable always has it.
++  rows.push({ base_currency: base, currency: base, rate: 1, rate_date: rateDate, source: FX_SOURCE });
++
++  try {
++    const { error } = await sc
++      .from("fx_rates")
++      .upsert(rows, { onConflict: "base_currency,currency,rate_date", ignoreDuplicates: false });
++    if (error) return { ok: false, reason: `upsert_failed:${error.message}` };
++  } catch (e: any) {
++    return { ok: false, reason: `upsert_threw:${e?.message ?? "error"}` };
++  }
++
++  return { ok: true, rateDate, upserted: rows.length };
++}
+diff -ruN a/artifacts/api-server/src/lib/fxRefreshScheduler.ts b/artifacts/api-server/src/lib/fxRefreshScheduler.ts
+--- a/artifacts/api-server/src/lib/fxRefreshScheduler.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/lib/fxRefreshScheduler.ts	2026-07-24 05:20:10.235005943 +0000
+@@ -0,0 +1,65 @@
++/**
++ * FX daily refresh scheduler.
++ *
++ * ECB reference rates change at most once per business day, so a daily pull is
++ * plenty. Env-gated (FX_REFRESH_ENABLED=true) following the house worker
++ * pattern (cf. STAMP_WORKER_ENABLED). Runs once shortly after boot (if the
++ * table looks stale) and then on a fixed interval. Best-effort: a failed fetch
++ * logs and is retried on the next tick; it never crashes the server.
++ */
++
++import type { Logger } from "pino";
++import { refreshFxRates, loadFxTable } from "./fx.js";
++
++const DAY_MS = 24 * 60 * 60 * 1000;
++let started = false;
++
++/** True when the newest fx rate_date is older than ~1 day (or absent). */
++async function isStale(sc: any): Promise<boolean> {
++  try {
++    const table = await loadFxTable(sc);
++    if (!table.rateDate) return true;
++    const age = Date.now() - Date.parse(`${table.rateDate}T00:00:00Z`);
++    return !Number.isFinite(age) || age > DAY_MS;
++  } catch {
++    return true;
++  }
++}
++
++/**
++ * Start the FX refresh loop. `getSc` returns the service client (may be null).
++ * Interval overridable via FX_REFRESH_INTERVAL_MS (default 24h).
++ */
++export function startFxRefreshLoop(getSc: () => any, logger?: Logger): void {
++  if (started) return;
++  started = true;
++  const intervalMs = Number(process.env.FX_REFRESH_INTERVAL_MS) || DAY_MS;
++
++  const tick = async (reason: string) => {
++    const sc = getSc();
++    if (!sc) return;
++    const result = await refreshFxRates(sc);
++    const log = logger ?? (console as unknown as Logger);
++    if (result.ok) {
++      log.info?.({ event: "fx.refresh.ok", reason, rate_date: result.rateDate, upserted: result.upserted }, "fx rates refreshed");
++    } else {
++      log.warn?.({ event: "fx.refresh.failed", reason, why: result.reason }, "fx refresh failed (will retry next tick)");
++    }
++  };
++
++  // Kick once shortly after boot, only if the table is stale (avoids a needless
++  // fetch on every deploy when rates are already current).
++  setTimeout(() => {
++    void (async () => {
++      const sc = getSc();
++      if (sc && (await isStale(sc))) await tick("startup_stale");
++    })();
++  }, 10_000);
++
++  setInterval(() => { void tick("interval"); }, intervalMs);
++}
++
++/** Test hook to reset the singleton guard. */
++export function _resetFxSchedulerForTest(): void {
++  started = false;
++}
+diff -ruN a/artifacts/api-server/src/migrations/0183_budget_fx_conversion.sql b/artifacts/api-server/src/migrations/0183_budget_fx_conversion.sql
+--- a/artifacts/api-server/src/migrations/0183_budget_fx_conversion.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/migrations/0183_budget_fx_conversion.sql	2026-07-24 05:20:45.083004789 +0000
+@@ -0,0 +1,18 @@
++-- Migration 0183: Budget FX conversion flag
++--
++-- Wires the existing fx_rates table (ECB reference rates, base EUR, loaded via
++-- 0174 + the frankfurter loader) into the trip cost-estimate endpoint: when
++-- this flag is on and the caller passes ?home=<ISO4217>, the response includes
++-- a `converted` view of the perDay/total bands in the traveler's home currency.
++--
++-- Additive + fail-soft: source-currency figures are never altered; conversion
++-- is omitted when a rate is unavailable (honest — never fabricated). The daily
++-- refresh that keeps fx_rates current is a separate, env-gated scheduler
++-- (FX_REFRESH_ENABLED=true), not governed by this flag.
++--
++-- Safe to re-run. feature_flags PK column is `flag` (NOT `key`).
++
++INSERT INTO feature_flags (flag, enabled, description) VALUES
++  ('budget_fx_conversion_enabled', FALSE,
++   'Trip budget FX: convert cost-estimate bands to the traveler home currency (?home=ISO4217) using fx_rates (ECB, indicative)')
++ON CONFLICT (flag) DO NOTHING;
+diff -ruN a/artifacts/api-server/src/routes/tripBudgetIntel.ts b/artifacts/api-server/src/routes/tripBudgetIntel.ts
+--- a/artifacts/api-server/src/routes/tripBudgetIntel.ts	2026-07-23 14:22:36.000000000 +0000
++++ b/artifacts/api-server/src/routes/tripBudgetIntel.ts	2026-07-24 05:19:50.883006583 +0000
+@@ -148,7 +148,23 @@
+   const partySize = await countAcceptedMembers(sc, (trip as any).id);
+ 
+   const estimate = await estimateTripCost(sc, trip as any, { tier, partySize });
+-  res.json({ estimate, partySize });
++
++  // FX conversion (Compass): when budget_fx_conversion_enabled is on and the
++  // caller passes ?home=<ISO4217>, attach a converted view of the bands in the
++  // traveler's home currency. Additive + fail-soft: the source-currency figures
++  // are never altered; conversion is omitted when rates are unavailable.
++  let converted: unknown = undefined;
++  const home = typeof req.query.home === "string" ? req.query.home.trim().toUpperCase() : "";
++  if (estimate.available && /^[A-Z]{3}$/.test(home)) {
++    try {
++      if (await isFlagEnabled(sc, "budget_fx_conversion_enabled")) {
++        const { convertEstimate } = await import("../lib/fx.js");
++        converted = await convertEstimate(sc, estimate.currency, home, estimate.perDay, estimate.total);
++      }
++    } catch { /* omit conversion on any error */ }
++  }
++
++  res.json({ estimate, partySize, converted: converted ?? null });
+ }));
+ 
+ // ── POST /trips/:tripId/budget/sandbox ────────────────────────────────────────
+diff -ruN a/artifacts/api-server/src/test/fx.test.ts b/artifacts/api-server/src/test/fx.test.ts
+--- a/artifacts/api-server/src/test/fx.test.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/test/fx.test.ts	2026-07-24 05:21:11.507003915 +0000
+@@ -0,0 +1,126 @@
++/**
++ * FX conversion + refresh tests.
++ */
++
++import { describe, it } from "node:test";
++import assert from "node:assert/strict";
++import {
++  loadFxTable,
++  convert,
++  convertBand,
++  convertEstimate,
++  refreshFxRates,
++  FX_DISCLAIMER,
++} from "../lib/fx.js";
++
++// Fake fx_rates: EUR base. USD=1.10/EUR, GBP=0.85/EUR, THB=39/EUR, latest date 2026-07-24.
++function makeSc(rows?: any[], opts: { upsertCapture?: any[] } = {}) {
++  const data = rows ?? [
++    { currency: "USD", rate: 1.10, rate_date: "2026-07-24" },
++    { currency: "GBP", rate: 0.85, rate_date: "2026-07-24" },
++    { currency: "THB", rate: 39, rate_date: "2026-07-24" },
++    { currency: "EUR", rate: 1, rate_date: "2026-07-24" },
++  ];
++  return {
++    from(_t: string) {
++      const b: any = {
++        _f: [] as Array<[string, any]>,
++        select() { return b; },
++        eq(k: string, v: any) { b._f.push([k, v]); return b; },
++        order() { return b; },
++        limit() { return b; },
++        maybeSingle: async () => ({ data: { rate_date: "2026-07-24" }, error: null }),
++        upsert(vals: any[]) { opts.upsertCapture?.push(...vals); return { then: (r: any) => r({ error: null }) }; },
++        then(resolve: any) { resolve({ data, error: null }); },
++      };
++      return b;
++    },
++  } as any;
++}
++
++describe("fx conversion", () => {
++  it("loads the latest table with the base identity", async () => {
++    const t = await loadFxTable(makeSc());
++    assert.equal(t.base, "EUR");
++    assert.equal(t.rateDate, "2026-07-24");
++    assert.equal(t.rates.get("EUR"), 1);
++    assert.equal(t.rates.get("USD"), 1.10);
++  });
++
++  it("converts via the base pivot", async () => {
++    const t = await loadFxTable(makeSc());
++    // 110 USD → EUR: 110 / 1.10 = 100
++    assert.equal(convert(110, "USD", "EUR", t), 100);
++    // 100 EUR → THB: 100 * 39 = 3900
++    assert.equal(convert(100, "EUR", "THB", t), 3900);
++    // 110 USD → GBP: 110 * (0.85/1.10) = 85
++    assert.equal(convert(110, "USD", "GBP", t), 85);
++    // same currency identity
++    assert.equal(convert(50, "USD", "USD", t), 50);
++  });
++
++  it("returns null for an unsupported currency (honest, not fabricated)", async () => {
++    const t = await loadFxTable(makeSc());
++    assert.equal(convert(100, "USD", "XYZ", t), null);
++    assert.equal(convert(100, "ZZZ", "USD", t), null);
++  });
++
++  it("convertBand converts all three points", async () => {
++    const t = await loadFxTable(makeSc());
++    const b = convertBand({ low: 110, mid: 220, high: 330 }, "USD", "EUR", t);
++    assert.deepEqual(b, { low: 100, mid: 200, high: 300 });
++  });
++
++  it("convertEstimate produces a labeled converted block; null for same/missing", async () => {
++    const sc = makeSc();
++    const conv = await convertEstimate(sc, "THB", "USD", { low: 390, mid: 780, high: 1170 }, { low: 3900, mid: 7800, high: 11700 });
++    assert.ok(conv);
++    assert.equal(conv!.currency, "USD");
++    // 780 THB → USD: 780 * (1.10/39) = 22
++    assert.equal(conv!.perDay.mid, 22);
++    assert.equal(conv!.rateDate, "2026-07-24");
++    assert.equal(conv!.disclaimer, FX_DISCLAIMER);
++
++    assert.equal(await convertEstimate(sc, "USD", "USD", { low: 1, mid: 1, high: 1 }, { low: 1, mid: 1, high: 1 }), null);
++    assert.equal(await convertEstimate(sc, "USD", "ZZ", { low: 1, mid: 1, high: 1 }, { low: 1, mid: 1, high: 1 }), null);
++  });
++});
++
++describe("fx refresh", () => {
++  const okFetch = (payload: any) => async (_url: string) => ({ ok: true, status: 200, json: async () => payload });
++
++  it("upserts rows from a well-formed payload (+ base identity row)", async () => {
++    const captured: any[] = [];
++    const sc = makeSc(undefined, { upsertCapture: captured });
++    const r = await refreshFxRates(sc, okFetch({ base: "EUR", date: "2026-07-25", rates: { USD: 1.09, GBP: 0.86 } }));
++    assert.equal(r.ok, true);
++    assert.equal(r.rateDate, "2026-07-25");
++    // USD + GBP + EUR identity
++    assert.equal(captured.length, 3);
++    assert.ok(captured.some((x) => x.currency === "EUR" && x.rate === 1));
++    assert.ok(captured.some((x) => x.currency === "USD" && x.rate === 1.09));
++  });
++
++  it("rejects a bad payload without upserting", async () => {
++    const captured: any[] = [];
++    const sc = makeSc(undefined, { upsertCapture: captured });
++    const r = await refreshFxRates(sc, okFetch({ base: "EUR", date: "nope", rates: null }));
++    assert.equal(r.ok, false);
++    assert.equal(r.reason, "bad_payload");
++    assert.equal(captured.length, 0);
++  });
++
++  it("handles a non-200 response", async () => {
++    const sc = makeSc();
++    const r = await refreshFxRates(sc, async () => ({ ok: false, status: 503, json: async () => ({}) }));
++    assert.equal(r.ok, false);
++    assert.equal(r.reason, "http_503");
++  });
++
++  it("handles a fetch throw", async () => {
++    const sc = makeSc();
++    const r = await refreshFxRates(sc, async () => { throw new Error("dns"); });
++    assert.equal(r.ok, false);
++    assert.match(r.reason!, /fetch_failed/);
++  });
++});
+--- a/artifacts/api-server/package.json	2026-07-24 05:25:15.097586983 +0000
++++ b/artifacts/api-server/package.json	2026-07-24 05:21:20.578208262 +0000
+@@ -14,7 +14,7 @@
+     "check:migration-prefixes": "node --import tsx/esm src/scripts/checkMigrationPrefixes.ts",
+     "check:write-path-columns": "node --env-file-if-exists=.env --import tsx/esm src/scripts/checkWritePathColumns.ts",
+     "test:circle-locations": "node --import tsx/esm --test src/test/circleLocations.test.ts",
+-    "test": "node --import tsx/esm --test --test-force-exit src/test/universalStamps.test.ts src/test/eventsCirclesOwner.test.ts src/test/circleLocations.test.ts src/test/collections.test.ts src/test/accessControl.test.ts src/test/adminGeo.test.ts src/test/adminModeration.test.ts src/test/ageEligibility.test.ts src/test/airport.test.ts src/test/availability.test.ts src/test/blockExclusion.test.ts src/test/circleInviteAge.test.ts src/test/cleanupHealth.test.ts src/test/compass-active-reward.test.ts src/test/compass-admin.test.ts src/test/compass-cache.test.ts src/test/compass-memory.test.ts src/test/compass-context.test.ts src/test/compass-feed.test.ts src/test/compassServedDedup.test.ts src/test/compass-pipeline.test.ts src/test/compass-ux.test.ts src/test/coreActions.test.ts src/test/dailyBriefCleanup.test.ts src/test/delayedGeotag.test.ts src/test/emergencyFlags.test.ts src/test/events.test.ts src/test/featureFlagsAdmin.test.ts src/test/followDecisions.test.ts src/test/friendDecisions.test.ts src/test/geofenceAdminSettings.test.ts src/test/geofence.test.ts src/test/groupChat.test.ts src/test/hashtags.test.ts src/test/hiddenGems.test.ts src/test/hiddenGemCheckin.test.ts src/test/intelligence.test.ts src/test/interactionPermissions.test.ts src/test/itineraryTimeline.test.ts src/test/locationGps.test.ts src/test/locationVerify.test.ts src/test/meetupAgeRsvp.test.ts src/test/meetups.test.ts src/test/notifications.test.ts src/test/passportStamps.test.ts src/test/passportStampsPagination.test.ts src/test/passportStampsCountFallback.test.ts src/test/postInteractions.test.ts src/test/posts.test.ts src/test/postcards.test.ts src/test/pulseGps.test.ts src/test/pushDelivery.test.ts src/test/rentBuddyRequestPush.test.ts src/test/pushRetryQueue.test.ts src/test/pushWithRetry.test.ts src/test/tripReminderPush.test.ts src/test/tripReminderResetAudit.test.ts src/test/rateLimits.test.ts src/test/rentABuddyRollout.test.ts src/test/rentABuddy.test.ts src/test/rentBuddyReliabilityCounters.test.ts src/test/rentBuddyReliabilityRoutes.test.ts src/test/requests.test.ts src/test/friendRequestUpdateFailure.test.ts src/test/inviteUpdateFailure.test.ts src/test/routeMinimapView.test.ts src/test/routeOptimizer.test.ts src/test/routePlanHook.test.ts src/test/routePlanMembers.test.ts src/test/routePlan.test.ts src/test/safeReturnAdmin.test.ts src/test/safeReturn.test.ts src/test/stampHelper.test.ts src/test/tagging.test.ts src/test/telegraphChat.test.ts src/test/telegraphRealtime.test.ts src/test/telegraphStreamEndpoints.test.ts src/test/tripCompletion.test.ts src/test/tripCrewLocation.test.ts src/test/tripPlan.test.ts src/test/tripMembers.test.ts src/test/tripInviteRespond.test.ts src/test/trust-integration.test.ts src/test/trust.test.ts src/test/memories.test.ts src/test/stories.test.ts src/test/userSuggestions.test.ts src/test/eventWaitlistSweeper.test.ts src/lib/messagingPermissions.test.ts src/test/appeals.test.ts src/test/reviews.test.ts src/test/tripsExpansion.test.ts src/test/crashReport.test.ts src/test/wishlist.test.ts src/test/discoverySort.test.ts src/test/stamps-integration.test.ts src/test/stampRevoke.test.ts src/test/engagement.test.ts src/test/profileSystem.test.ts src/test/profileSchemaDrift.test.ts src/test/adminCompassSchemaDrift.test.ts src/test/adminGeoModerationSchemaDrift.test.ts src/test/adminRemainingDashboardsSchemaDrift.test.ts src/test/trustAdminAuditInsertSchemaDrift.test.ts src/test/inviteLinkPreview.test.ts src/test/inviteLinkPreviewFull.test.ts src/test/inviteLinkTripFull.test.ts src/test/stampArtworkEnrichment.test.ts src/test/ogImageVisibility.test.ts src/test/canonicalLocations.test.ts src/test/publicIdentity.test.ts src/test/privacySettings.test.ts src/test/discoveryPrivacy.test.ts src/test/stampPreviewVisibility.test.ts src/test/stampCountryLookup.test.ts src/test/stampCountryGeocoder.test.ts src/test/stampQueueRequeue.test.ts src/test/stampGenerationCycle.test.ts src/test/stampGenerationLockTiming.test.ts src/test/stampQueueRequeueRoute.test.ts src/test/rentABuddyAvailabilitySave.test.ts src/test/rentABuddySpecRebook.test.ts src/test/rentABuddySpecRequest.test.ts src/test/rentABuddySpecNoShow.test.ts src/test/rentABuddyDisputeTerminal.test.ts src/test/stampWorkerHealthMonitor.test.ts src/test/stampCatalogDefinition.test.ts src/test/stampOwnershipBackfill.test.ts src/test/adminGeocode.test.ts src/test/stampCatalogListEnrichment.test.ts src/test/stampCatalogActiveQueueStatus.test.ts src/test/notificationRouterCredentials.test.ts src/test/stampGeocodeStaleEviction.test.ts src/test/stampGeocodeDeletionPropagation.test.ts src/test/stampCatalogRequeueBadge.test.ts src/test/adminTripReminderReset.test.ts src/test/adminTripIdGuard.test.ts src/test/stampCatalogRegenDedup.test.ts src/test/stampCatalogDetailBadge.test.ts src/test/stampCatalogVersionArchive.test.ts src/test/stampCatalogRegenAuditLog.test.ts src/test/stampCatalogRegenAfterComplete.test.ts src/test/stampCatalogRegenAfterReviewRequired.test.ts src/test/pushTokenCleanup.test.ts src/test/rentABuddyHalfPairCoords.test.ts src/test/rentABuddySearchCoordGuard.test.ts src/test/adminVenueModeration.test.ts src/test/adminVenueQueue.test.ts src/test/rentABuddyAdminResolveDisputeGuard.test.ts src/test/rentABuddyAdminResolveDisputeFavorTraveler.test.ts src/test/stampGeocodeTombstoneRead.test.ts src/test/stampCatalogStyleVersionBadge.test.ts src/test/adminEventModeration.test.ts src/test/profileSelect.test.ts src/test/stampCatalogAdminActionDedup.test.ts src/test/stampCatalogAuditLogFilter.test.ts src/test/stampCatalogNullDisplayName.test.ts src/test/styleVersionSync.test.ts src/test/stampCatalogCountryCodeType.test.ts src/test/stampCatalogRegenPreexistingQueue.test.ts src/test/stampQueueClearCleanupAudit.test.ts src/test/stampAuditWriteFailure.test.ts src/test/stampAuditWriteFailureMergeReject.test.ts src/test/stampCatalogRegenArchiveObservability.test.ts src/test/stampCatalogRegenMultiFailedReset.test.ts src/test/stampCatalogConflictCollapse.test.ts src/test/stampCatalogRegenArchiveExtrasDbError.test.ts src/test/stampCatalogRegenSurvivorResetDbError.test.ts src/test/notificationDisplayNameCap.test.ts src/test/splitClockGuard.test.ts src/test/adminGeofenceSettingsNotFound.test.ts src/test/stampQueueConstraintSync.test.ts src/test/rankEventsOutcome.test.ts src/test/impressionLogFireAndForget.test.ts src/test/callSystem.test.ts src/test/callRoutes.test.ts src/test/callHardening.test.ts src/test/callAnalytics.test.ts src/test/tripInvitesPending.test.ts src/test/weatherCacheCleanupRoute.test.ts src/test/appHardening.test.ts src/test/corsAllowedOrigins.test.ts src/test/ageGate.test.ts src/test/rentABuddyLifecycle.test.ts src/test/reconcileRunSummary.test.ts src/test/reconcileRunHistory.test.ts src/test/schemaDriftCheck.test.ts src/test/adminPhase12.test.ts src/test/blocks.test.ts src/test/discoveryCommunityCoordinateBounds.test.ts src/test/discoveryCommunityCoords.test.ts src/test/discoveryCommunityRating.test.ts src/test/discoveryCommunitySortBy.test.ts src/test/discoverySearch.test.ts src/test/discoverySearchIntelligence.test.ts src/test/events-extension.test.ts src/test/passportProfileAccess.test.ts src/test/profileEnsure.test.ts src/test/pulseRanking.test.ts src/test/stampEarnedNotification.test.ts src/test/friendRequestReactivate.test.ts src/test/compass-ask.test.ts src/test/compass-structured-context.test.ts src/test/compass-tools.test.ts src/test/compass-ui-blocks.test.ts src/test/compass-recommendation-engine.test.ts src/test/compass-live-intel.test.ts src/test/compass-social.test.ts src/test/compass-home.test.ts src/test/compass-sense.test.ts src/test/compass-sense-scheduler.test.ts src/test/compass-live.test.ts src/test/compass-autopilot.test.ts src/test/compass-outcome-learning.test.ts src/test/compass-intelligence-graph.test.ts src/test/intelligenceGraphScheduler.test.ts src/test/placesLiveStatus.test.ts src/test/compass-local-time.test.ts src/test/eventPostsDiscovery.test.ts src/test/verification.test.ts src/test/moderation.test.ts src/test/featureFlagColumnGuard.test.ts src/test/entryRequirements.test.ts src/test/tripReadiness.test.ts src/test/tripBudgetIntel.test.ts src/test/tripReservations.test.ts src/test/tripDraft.test.ts src/test/neighborhoodMatch.test.ts src/test/compass-trip-context.test.ts src/test/stampComposition.test.ts src/test/stampShowcaseAdmire.test.ts src/test/stampCriteria.test.ts src/test/eventCategoryContext.test.ts src/test/unifiedStamps.test.ts src/test/countryEssentials.test.ts",
++    "test": "node --import tsx/esm --test --test-force-exit src/test/universalStamps.test.ts src/test/eventsCirclesOwner.test.ts src/test/circleLocations.test.ts src/test/collections.test.ts src/test/accessControl.test.ts src/test/adminGeo.test.ts src/test/adminModeration.test.ts src/test/ageEligibility.test.ts src/test/airport.test.ts src/test/availability.test.ts src/test/blockExclusion.test.ts src/test/circleInviteAge.test.ts src/test/cleanupHealth.test.ts src/test/compass-active-reward.test.ts src/test/compass-admin.test.ts src/test/compass-cache.test.ts src/test/compass-memory.test.ts src/test/compass-context.test.ts src/test/compass-feed.test.ts src/test/compassServedDedup.test.ts src/test/compass-pipeline.test.ts src/test/compass-ux.test.ts src/test/coreActions.test.ts src/test/dailyBriefCleanup.test.ts src/test/delayedGeotag.test.ts src/test/emergencyFlags.test.ts src/test/events.test.ts src/test/featureFlagsAdmin.test.ts src/test/followDecisions.test.ts src/test/friendDecisions.test.ts src/test/geofenceAdminSettings.test.ts src/test/geofence.test.ts src/test/groupChat.test.ts src/test/hashtags.test.ts src/test/hiddenGems.test.ts src/test/hiddenGemCheckin.test.ts src/test/intelligence.test.ts src/test/interactionPermissions.test.ts src/test/itineraryTimeline.test.ts src/test/locationGps.test.ts src/test/locationVerify.test.ts src/test/meetupAgeRsvp.test.ts src/test/meetups.test.ts src/test/notifications.test.ts src/test/passportStamps.test.ts src/test/passportStampsPagination.test.ts src/test/passportStampsCountFallback.test.ts src/test/postInteractions.test.ts src/test/posts.test.ts src/test/postcards.test.ts src/test/pulseGps.test.ts src/test/pushDelivery.test.ts src/test/rentBuddyRequestPush.test.ts src/test/pushRetryQueue.test.ts src/test/pushWithRetry.test.ts src/test/tripReminderPush.test.ts src/test/tripReminderResetAudit.test.ts src/test/rateLimits.test.ts src/test/rentABuddyRollout.test.ts src/test/rentABuddy.test.ts src/test/rentBuddyReliabilityCounters.test.ts src/test/rentBuddyReliabilityRoutes.test.ts src/test/requests.test.ts src/test/friendRequestUpdateFailure.test.ts src/test/inviteUpdateFailure.test.ts src/test/routeMinimapView.test.ts src/test/routeOptimizer.test.ts src/test/routePlanHook.test.ts src/test/routePlanMembers.test.ts src/test/routePlan.test.ts src/test/safeReturnAdmin.test.ts src/test/safeReturn.test.ts src/test/stampHelper.test.ts src/test/tagging.test.ts src/test/telegraphChat.test.ts src/test/telegraphRealtime.test.ts src/test/telegraphStreamEndpoints.test.ts src/test/tripCompletion.test.ts src/test/tripCrewLocation.test.ts src/test/tripPlan.test.ts src/test/tripMembers.test.ts src/test/tripInviteRespond.test.ts src/test/trust-integration.test.ts src/test/trust.test.ts src/test/memories.test.ts src/test/stories.test.ts src/test/userSuggestions.test.ts src/test/eventWaitlistSweeper.test.ts src/lib/messagingPermissions.test.ts src/test/appeals.test.ts src/test/reviews.test.ts src/test/tripsExpansion.test.ts src/test/crashReport.test.ts src/test/wishlist.test.ts src/test/discoverySort.test.ts src/test/stamps-integration.test.ts src/test/stampRevoke.test.ts src/test/engagement.test.ts src/test/profileSystem.test.ts src/test/profileSchemaDrift.test.ts src/test/adminCompassSchemaDrift.test.ts src/test/adminGeoModerationSchemaDrift.test.ts src/test/adminRemainingDashboardsSchemaDrift.test.ts src/test/trustAdminAuditInsertSchemaDrift.test.ts src/test/inviteLinkPreview.test.ts src/test/inviteLinkPreviewFull.test.ts src/test/inviteLinkTripFull.test.ts src/test/stampArtworkEnrichment.test.ts src/test/ogImageVisibility.test.ts src/test/canonicalLocations.test.ts src/test/publicIdentity.test.ts src/test/privacySettings.test.ts src/test/discoveryPrivacy.test.ts src/test/stampPreviewVisibility.test.ts src/test/stampCountryLookup.test.ts src/test/stampCountryGeocoder.test.ts src/test/stampQueueRequeue.test.ts src/test/stampGenerationCycle.test.ts src/test/stampGenerationLockTiming.test.ts src/test/stampQueueRequeueRoute.test.ts src/test/rentABuddyAvailabilitySave.test.ts src/test/rentABuddySpecRebook.test.ts src/test/rentABuddySpecRequest.test.ts src/test/rentABuddySpecNoShow.test.ts src/test/rentABuddyDisputeTerminal.test.ts src/test/stampWorkerHealthMonitor.test.ts src/test/stampCatalogDefinition.test.ts src/test/stampOwnershipBackfill.test.ts src/test/adminGeocode.test.ts src/test/stampCatalogListEnrichment.test.ts src/test/stampCatalogActiveQueueStatus.test.ts src/test/notificationRouterCredentials.test.ts src/test/stampGeocodeStaleEviction.test.ts src/test/stampGeocodeDeletionPropagation.test.ts src/test/stampCatalogRequeueBadge.test.ts src/test/adminTripReminderReset.test.ts src/test/adminTripIdGuard.test.ts src/test/stampCatalogRegenDedup.test.ts src/test/stampCatalogDetailBadge.test.ts src/test/stampCatalogVersionArchive.test.ts src/test/stampCatalogRegenAuditLog.test.ts src/test/stampCatalogRegenAfterComplete.test.ts src/test/stampCatalogRegenAfterReviewRequired.test.ts src/test/pushTokenCleanup.test.ts src/test/rentABuddyHalfPairCoords.test.ts src/test/rentABuddySearchCoordGuard.test.ts src/test/adminVenueModeration.test.ts src/test/adminVenueQueue.test.ts src/test/rentABuddyAdminResolveDisputeGuard.test.ts src/test/rentABuddyAdminResolveDisputeFavorTraveler.test.ts src/test/stampGeocodeTombstoneRead.test.ts src/test/stampCatalogStyleVersionBadge.test.ts src/test/adminEventModeration.test.ts src/test/profileSelect.test.ts src/test/stampCatalogAdminActionDedup.test.ts src/test/stampCatalogAuditLogFilter.test.ts src/test/stampCatalogNullDisplayName.test.ts src/test/styleVersionSync.test.ts src/test/stampCatalogCountryCodeType.test.ts src/test/stampCatalogRegenPreexistingQueue.test.ts src/test/stampQueueClearCleanupAudit.test.ts src/test/stampAuditWriteFailure.test.ts src/test/stampAuditWriteFailureMergeReject.test.ts src/test/stampCatalogRegenArchiveObservability.test.ts src/test/stampCatalogRegenMultiFailedReset.test.ts src/test/stampCatalogConflictCollapse.test.ts src/test/stampCatalogRegenArchiveExtrasDbError.test.ts src/test/stampCatalogRegenSurvivorResetDbError.test.ts src/test/notificationDisplayNameCap.test.ts src/test/splitClockGuard.test.ts src/test/adminGeofenceSettingsNotFound.test.ts src/test/stampQueueConstraintSync.test.ts src/test/rankEventsOutcome.test.ts src/test/impressionLogFireAndForget.test.ts src/test/callSystem.test.ts src/test/callRoutes.test.ts src/test/callHardening.test.ts src/test/callAnalytics.test.ts src/test/tripInvitesPending.test.ts src/test/weatherCacheCleanupRoute.test.ts src/test/appHardening.test.ts src/test/corsAllowedOrigins.test.ts src/test/ageGate.test.ts src/test/rentABuddyLifecycle.test.ts src/test/reconcileRunSummary.test.ts src/test/reconcileRunHistory.test.ts src/test/schemaDriftCheck.test.ts src/test/adminPhase12.test.ts src/test/blocks.test.ts src/test/discoveryCommunityCoordinateBounds.test.ts src/test/discoveryCommunityCoords.test.ts src/test/discoveryCommunityRating.test.ts src/test/discoveryCommunitySortBy.test.ts src/test/discoverySearch.test.ts src/test/discoverySearchIntelligence.test.ts src/test/events-extension.test.ts src/test/passportProfileAccess.test.ts src/test/profileEnsure.test.ts src/test/pulseRanking.test.ts src/test/stampEarnedNotification.test.ts src/test/friendRequestReactivate.test.ts src/test/compass-ask.test.ts src/test/compass-structured-context.test.ts src/test/compass-tools.test.ts src/test/compass-ui-blocks.test.ts src/test/compass-recommendation-engine.test.ts src/test/compass-live-intel.test.ts src/test/compass-social.test.ts src/test/compass-home.test.ts src/test/compass-sense.test.ts src/test/compass-sense-scheduler.test.ts src/test/compass-live.test.ts src/test/compass-autopilot.test.ts src/test/compass-outcome-learning.test.ts src/test/compass-intelligence-graph.test.ts src/test/intelligenceGraphScheduler.test.ts src/test/placesLiveStatus.test.ts src/test/compass-local-time.test.ts src/test/eventPostsDiscovery.test.ts src/test/verification.test.ts src/test/moderation.test.ts src/test/featureFlagColumnGuard.test.ts src/test/entryRequirements.test.ts src/test/tripReadiness.test.ts src/test/tripBudgetIntel.test.ts src/test/tripReservations.test.ts src/test/tripDraft.test.ts src/test/neighborhoodMatch.test.ts src/test/compass-trip-context.test.ts src/test/stampComposition.test.ts src/test/stampShowcaseAdmire.test.ts src/test/stampCriteria.test.ts src/test/eventCategoryContext.test.ts src/test/unifiedStamps.test.ts src/test/countryEssentials.test.ts src/test/fx.test.ts",
+     "test:app-hardening": "node --import tsx/esm --test src/test/appHardening.test.ts",
+     "test:cors-allowed-origins": "node --import tsx/esm --test src/test/corsAllowedOrigins.test.ts",
+     "test:interaction": "node --import tsx/esm --test src/test/interactionPermissions.test.ts src/test/coreActions.test.ts src/test/followDecisions.test.ts src/test/blockExclusion.test.ts src/test/accessControl.test.ts src/test/adminModeration.test.ts src/test/emergencyFlags.test.ts src/test/userSuggestions.test.ts",
+--- a/artifacts/travel-buddy/src/services/tripIntel.ts	2026-07-23 16:25:16.000000000 +0000
++++ b/artifacts/travel-buddy/src/services/tripIntel.ts	2026-07-24 05:22:25.139001478 +0000
+@@ -232,6 +232,51 @@
+   }
+ }
+ 
++/** FX-converted view of the estimate bands in the traveler's home currency. */
++export interface CostEstimateConverted {
++  currency: string;
++  perDay: { low: number; mid: number; high: number };
++  total: { low: number; mid: number; high: number };
++  rateDate: string | null;
++  /** Indicative-rate disclaimer — ALWAYS render alongside converted amounts. */
++  disclaimer: string;
++}
++
++export interface CostEstimateResponse {
++  estimate: CostEstimate | null;
++  /** Present only when budget_fx_conversion_enabled + a home currency was passed. */
++  converted: CostEstimateConverted | null;
++}
++
++/**
++ * Cost estimate WITH an optional FX conversion to `homeCurrency` (ISO 4217).
++ * Additive companion to fetchCostEstimate — the existing callers are unchanged.
++ * `converted` is null unless the server flag is on and rates are available; the
++ * source-currency `estimate` is always the authoritative figure.
++ */
++export async function fetchCostEstimateWithFx(
++  tripId: string,
++  homeCurrency?: string,
++  tier?: string,
++): Promise<CostEstimateResponse | null> {
++  if (!isSupabaseConfigured || !apiBase()) return null;
++  try {
++    const params = new URLSearchParams();
++    if (tier) params.set('tier', tier);
++    if (homeCurrency) params.set('home', homeCurrency);
++    const qs = params.toString() ? `?${params.toString()}` : '';
++    const res = await authedFetch(`${apiBase()}/api/trips/${tripId}/cost-estimate${qs}`);
++    if (!res.ok) return null;
++    const json = await res.json();
++    return {
++      estimate: (json.estimate ?? null) as CostEstimate | null,
++      converted: (json.converted ?? null) as CostEstimateConverted | null,
++    };
++  } catch {
++    return null;
++  }
++}
++
+ export async function runBudgetSandbox(
+   tripId: string,
+   whatIf: {
+--- a/docs/migrations.md	2026-07-24 05:25:15.097586983 +0000
++++ b/docs/migrations.md	2026-07-24 05:25:14.654995868 +0000
+@@ -762,3 +762,4 @@
+ - `0180_activate_event_category_stamps` — Stamp Wave 3 follow-up: activates foodie_explorer/music_lover/outdoor_adventurer/event_regular (0179 left them inactive). Still gated by stamp_criteria_engine_enabled (evaluateAndAwardCriteria no-ops when off), so the engine flag becomes the single switch. RSVP-going now derives event category context (category+tags keyword match) and evaluates these 4 via the criteria engine.
+ - `0181_stamp_unified_view` — Stamp legacy unification (read-layer): flag stamp_unified_view_enabled (default FALSE). UnifiedStampService merges v1 passport_stamps (GPS) + v2 user_stamps (achievements) into one deduped read collection (dedup by catalog_id backfilled by reconcile, else stamp_type|country|city; v2 wins ties). GET /stamps/me/unified always available; when flag ON the passport-card stampCount reports the deduped v1+v2 total instead of v1-only. NO schema change, NO data migration, both write paths untouched.
+ - `0182_country_essentials` — Country essentials (curated travel-readiness reference): plug_types, voltage, frequency, drive_side, emergency (jsonb) per country_essentials table (54 countries seeded), confidence='curated' + source + last_verified_at. Flag country_essentials_enabled (default FALSE). Endpoints GET /countries/:code/essentials + GET /trips/:tripId/essentials (DB-first, in-code curated fallback, honest-null for uncovered countries, confirm-on-arrival disclaimer on every response). Plug/voltage engineering-standardized; emergency numbers curated w/ disclaimer.
++- `0183_budget_fx_conversion` — Budget FX: flag budget_fx_conversion_enabled (default FALSE). GET /trips/:tripId/cost-estimate?home=<ISO4217> now attaches a `converted` block (perDay/total bands in home currency) via lib/fx.ts (EUR-pivot over fx_rates, indicative disclaimer, null when rate unavailable — never fabricated). Source-currency estimate unchanged. Daily refresh scheduler (lib/fxRefreshScheduler.ts, env FX_REFRESH_ENABLED=true) re-pulls ECB rates from frankfurter.dev into fx_rates. Mobile: fetchCostEstimateWithFx (additive; fetchCostEstimate unchanged).

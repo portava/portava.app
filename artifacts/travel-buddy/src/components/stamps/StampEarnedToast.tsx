@@ -11,7 +11,7 @@ import React, {
   createContext, useContext, useCallback, useEffect, useRef, useState,
 } from 'react';
 import {
-  View, Text, Pressable, StyleSheet, Animated, Platform,
+  View, Text, Pressable, StyleSheet, Animated, Platform, AccessibilityInfo,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
@@ -37,21 +37,7 @@ const SOURCE_LABELS: Record<string, string> = {
   rent_buddy:  'Rent a Buddy activity',
 };
 
-const RARITY_LABELS: Record<string, string> = {
-  common:    'Common',
-  uncommon:  'Uncommon',
-  rare:      'Rare',
-  epic:      'Epic',
-  legendary: 'Legendary',
-};
-
-const RARITY_COLORS: Record<string, string> = {
-  common:    '#9CA3AF',
-  uncommon:  '#34D399',
-  rare:      '#60A5FA',
-  epic:      '#A78BFA',
-  legendary: '#FBBF24',
-};
+import { RARITY_COLORS, RARITY_LABEL, normalizeRarity } from '../../lib/stampRarity.ts';
 
 async function getSeenIds(): Promise<Set<string>> {
   try {
@@ -95,18 +81,36 @@ export function StampEarnedToastProvider({ children }: { children: React.ReactNo
   const slideAnim = useRef(new Animated.Value(120)).current;
   const timerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Respect the OS "reduce motion" setting: skip the slide spring/timing and
+  // snap in/out instead (consistent with StampCard's shimmer gate).
+  const reduceMotion = useRef(false);
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then((v) => { reduceMotion.current = v; });
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', (v) => { reduceMotion.current = v; });
+    return () => sub.remove();
+  }, []);
+
   // Show from queue
   useEffect(() => {
     if (current || queue.length === 0) return;
     const [next, ...rest] = queue;
     setQueue(rest);
     setCurrent(next);
-    Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
+    if (reduceMotion.current) {
+      slideAnim.setValue(0); // snap in — no motion
+    } else {
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
+    }
     timerRef.current = setTimeout(dismiss, 4000);
   }, [current, queue]);
 
   function dismiss() {
     if (timerRef.current) clearTimeout(timerRef.current);
+    if (reduceMotion.current) {
+      setCurrent(null);
+      slideAnim.setValue(120); // snap out — no motion
+      return;
+    }
     Animated.timing(slideAnim, { toValue: 120, duration: 250, useNativeDriver: true }).start(() => {
       setCurrent(null);
       slideAnim.setValue(120);
@@ -173,9 +177,9 @@ export function StampEarnedToastProvider({ children }: { children: React.ReactNo
   const reason = current
     ? (SOURCE_LABELS[current.sourceType] ?? current.sourceType.replace(/_/g, ' '))
     : '';
-  const rarity = current?.definition?.rarity ?? null;
-  const rarityLabel = rarity ? (RARITY_LABELS[rarity] ?? rarity) : null;
-  const rarityColor = rarity ? (RARITY_COLORS[rarity] ?? '#9CA3AF') : '#9CA3AF';
+  const rarity = current?.definition?.rarity ? normalizeRarity(current.definition.rarity) : null;
+  const rarityLabel = rarity ? RARITY_LABEL[rarity] : null;
+  const rarityColor = rarity ? RARITY_COLORS[rarity].ring : RARITY_COLORS.common.ring;
 
   const subText = [rarityLabel, stampName, reason ? `— ${reason}` : '']
     .filter(Boolean)

@@ -1,0 +1,265 @@
+diff -ruN a/artifacts/api-server/src/lib/stamps/criteria/eventContext.ts b/artifacts/api-server/src/lib/stamps/criteria/eventContext.ts
+--- a/artifacts/api-server/src/lib/stamps/criteria/eventContext.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/lib/stamps/criteria/eventContext.ts	2026-07-24 03:10:08.983204680 +0000
+@@ -0,0 +1,73 @@
++/**
++ * Event → criteria context — Stamp Wave 3 follow-up.
++ *
++ * Events carry a free-text `category` (≤60 chars) plus a `tags TEXT[]` array.
++ * The criteria engine's event-category stamps (foodie_explorer, music_lover,
++ * outdoor_adventurer) key off boolean context metrics. This maps the event's
++ * human-authored category + tags onto those booleans with keyword matching, so
++ * the RSVP trigger can hand the engine ground truth about THIS event.
++ *
++ * Deliberately permissive: a single event can match multiple buckets (a
++ * "food & live music festival" is both food and music), and matching an
++ * unrelated event to none is correct — those stamps simply don't apply.
++ *
++ * Pure + synchronous → unit-testable without a DB.
++ */
++
++export interface EventCategoryContext {
++  event_category_food: boolean;
++  event_category_music: boolean;
++  event_category_outdoor: boolean;
++}
++
++const KEYWORDS: Record<keyof EventCategoryContext, string[]> = {
++  event_category_food: [
++    "food", "foodie", "dining", "dinner", "brunch", "lunch", "restaurant",
++    "culinary", "cuisine", "tasting", "wine", "beer", "cocktail", "coffee",
++    "cafe", "bakery", "bbq", "barbecue", "streetfood", "supper", "drinks",
++  ],
++  event_category_music: [
++    "music", "concert", "gig", "band", "dj", "festival", "live music",
++    "rave", "club night", "karaoke", "jazz", "rock", "hiphop", "hip hop",
++    "edm", "orchestra", "acoustic", "rap", "singer", "opera",
++  ],
++  event_category_outdoor: [
++    "outdoor", "hike", "hiking", "trek", "trekking", "camp", "camping",
++    "beach", "surf", "kayak", "climb", "climbing", "trail", "nature",
++    "mountain", "cycling", "biking", "run", "running", "picnic", "park",
++    "diving", "snorkel", "adventure",
++  ],
++};
++
++function normalizeTokens(category: string | null | undefined, tags: unknown): string {
++  const parts: string[] = [];
++  if (typeof category === "string") parts.push(category);
++  if (Array.isArray(tags)) {
++    for (const t of tags) if (typeof t === "string") parts.push(t);
++  }
++  return parts.join(" ").toLowerCase();
++}
++
++/**
++ * Derive the food/music/outdoor booleans for an event row. Accepts anything
++ * with `category` and/or `tags`; missing fields are treated as empty.
++ */
++export function eventCategoryContext(
++  ev: { category?: string | null; tags?: unknown } | null | undefined,
++): EventCategoryContext {
++  const hay = normalizeTokens(ev?.category, ev?.tags);
++  const match = (keys: string[]) => keys.some((k) => hay.includes(k));
++  return {
++    event_category_food: match(KEYWORDS.event_category_food),
++    event_category_music: match(KEYWORDS.event_category_music),
++    event_category_outdoor: match(KEYWORDS.event_category_outdoor),
++  };
++}
++
++/** The event-category criteria stamps this context can unlock (scoping helper). */
++export const EVENT_CATEGORY_STAMP_SLUGS = [
++  "foodie_explorer",
++  "music_lover",
++  "outdoor_adventurer",
++  "event_regular",
++] as const;
+diff -ruN a/artifacts/api-server/src/lib/stamps/criteria/index.ts b/artifacts/api-server/src/lib/stamps/criteria/index.ts
+--- a/artifacts/api-server/src/lib/stamps/criteria/index.ts	2026-07-24 03:12:43.072134004 +0000
++++ b/artifacts/api-server/src/lib/stamps/criteria/index.ts	2026-07-24 03:10:51.247203791 +0000
+@@ -66,6 +66,7 @@
+   met: boolean;
+   awarded: boolean;
+   reason: string;
++  userStampId?: string;
+ }
+ 
+ /**
+@@ -132,7 +133,7 @@
+         sourceType: opts.sourceType ?? "criteria",
+         sourceId: opts.sourceId ?? "none",
+       });
+-      outcomes.push({ slug: def.slug, met: true, awarded: award.awarded, reason: award.reason });
++      outcomes.push({ slug: def.slug, met: true, awarded: award.awarded, reason: award.reason, userStampId: award.userStampId });
+     } catch {
+       outcomes.push({ slug: def.slug, met: true, awarded: false, reason: "award_error" });
+     }
+diff -ruN a/artifacts/api-server/src/migrations/0180_activate_event_category_stamps.sql b/artifacts/api-server/src/migrations/0180_activate_event_category_stamps.sql
+--- a/artifacts/api-server/src/migrations/0180_activate_event_category_stamps.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/migrations/0180_activate_event_category_stamps.sql	2026-07-24 03:11:06.911203461 +0000
+@@ -0,0 +1,18 @@
++-- Migration 0180: activate the event-category criteria stamps
++--
++-- 0179 introduced foodie_explorer / music_lover / outdoor_adventurer /
++-- event_regular as is_active=FALSE (double-safety while the wiring landed).
++-- The RSVP-going trigger now evaluates them via the criteria engine with the
++-- event's derived category context, so they can go active.
++--
++-- Still fully gated: evaluateAndAwardCriteria is a no-op unless
++-- stamp_criteria_engine_enabled is TRUE, so activating here does NOT make them
++-- earnable until you flip that flag. This migration only removes the second
++-- (is_active) lock so the engine flag becomes the single switch.
++--
++-- Safe to re-run.
++
++UPDATE stamp_definitions
++SET is_active = TRUE, updated_at = now()
++WHERE slug IN ('foodie_explorer', 'music_lover', 'outdoor_adventurer', 'event_regular')
++  AND is_active = FALSE;
+diff -ruN a/artifacts/api-server/src/routes/events.ts b/artifacts/api-server/src/routes/events.ts
+--- a/artifacts/api-server/src/routes/events.ts	2026-07-23 20:17:11.000000000 +0000
++++ b/artifacts/api-server/src/routes/events.ts	2026-07-24 03:11:54.463202460 +0000
+@@ -2190,29 +2190,60 @@
+   // Stamp Wave 2 (closes Task #1041 for RSVPs): first_event_joined on a
+   // "going" RSVP. Fire-and-forget; awardStamp is fully idempotent via
+   // (user:def:events:eventId) so repeat RSVPs never double-award.
++  //
++  // Wave 3 follow-up: also run the criteria engine for the event-category
++  // stamps (foodie/music/outdoor/regular), passing this event's derived
++  // category context. evaluateAndAwardCriteria is a no-op unless
++  // stamp_criteria_engine_enabled is on AND those definitions are active, so
++  // this stays inert until you deliberately turn the engine on.
+   if (status === "going") {
+     void (async () => {
+       try {
+         const { awardStamp } = await import("../services/passport/StampAwardEngine.js");
+-        const r = await awardStamp(sc, {
+-          userId: user.id,
+-          definitionSlug: "first_event_joined",
+-          sourceType: "events",
+-          sourceId: id,
+-        });
+-        if (r.awarded && r.userStampId) {
+-          const { NotificationService } = await import("../services/notifications/NotificationService.js");
+-          const { NotificationRouter } = await import("../services/notifications/NotificationRouter.js");
+-          const notifSvc = new NotificationService(sc);
+-          const notifRouter = new NotificationRouter(sc);
++        const { NotificationService } = await import("../services/notifications/NotificationService.js");
++        const { NotificationRouter } = await import("../services/notifications/NotificationRouter.js");
++        const notifSvc = new NotificationService(sc);
++        const notifRouter = new NotificationRouter(sc);
++
++        const notifyEarned = async (userStampId: string, location: string) => {
+           const row = await notifSvc.create({
+             userId: user.id,
+             eventType: "passport.stamp_earned",
+             sourceType: "events",
+             sourceId: id,
+-            params: { location: "joining your first event", stampId: r.userStampId },
++            params: { location, stampId: userStampId },
+           });
+           if (row) await notifRouter.route(row);
++        };
++
++        const r = await awardStamp(sc, {
++          userId: user.id,
++          definitionSlug: "first_event_joined",
++          sourceType: "events",
++          sourceId: id,
++        });
++        if (r.awarded && r.userStampId) await notifyEarned(r.userStampId, "joining your first event");
++
++        // Event-category criteria stamps (data-driven; engine-flag + active gated).
++        const { evaluateAndAwardCriteria } = await import("../lib/stamps/criteria/index.js");
++        const { eventCategoryContext, EVENT_CATEGORY_STAMP_SLUGS } =
++          await import("../lib/stamps/criteria/eventContext.js");
++        const catCtx = eventCategoryContext(ev as any) as unknown as Record<string, boolean>;
++        const outcomes = await evaluateAndAwardCriteria(sc, user.id, {
++          ctx: { context: catCtx },
++          sourceType: "events",
++          sourceId: id,
++          onlySlugs: [...EVENT_CATEGORY_STAMP_SLUGS],
++        });
++        for (const o of outcomes) {
++          if (o.awarded && o.userStampId) {
++            const label =
++              o.slug === "event_regular" ? "being an event regular" :
++              o.slug === "foodie_explorer" ? "exploring food events" :
++              o.slug === "music_lover" ? "loving live music" :
++              o.slug === "outdoor_adventurer" ? "your outdoor adventures" : "joining an event";
++            await notifyEarned(o.userStampId, label);
++          }
+         }
+       } catch {}
+     })();
+diff -ruN a/artifacts/api-server/src/test/eventCategoryContext.test.ts b/artifacts/api-server/src/test/eventCategoryContext.test.ts
+--- a/artifacts/api-server/src/test/eventCategoryContext.test.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/artifacts/api-server/src/test/eventCategoryContext.test.ts	2026-07-24 03:11:18.335203221 +0000
+@@ -0,0 +1,55 @@
++/**
++ * Stamp Wave 3 follow-up — event → criteria context classifier.
++ */
++
++import { describe, it } from "node:test";
++import assert from "node:assert/strict";
++import { eventCategoryContext, EVENT_CATEGORY_STAMP_SLUGS } from "../lib/stamps/criteria/eventContext.js";
++
++describe("eventCategoryContext", () => {
++  it("classifies by free-text category", () => {
++    assert.deepEqual(eventCategoryContext({ category: "Food & Drink" }), {
++      event_category_food: true, event_category_music: false, event_category_outdoor: false,
++    });
++    assert.equal(eventCategoryContext({ category: "Live Concert" }).event_category_music, true);
++    assert.equal(eventCategoryContext({ category: "Sunset Hike" }).event_category_outdoor, true);
++  });
++
++  it("classifies by tags array", () => {
++    const ctx = eventCategoryContext({ category: null, tags: ["nightlife", "dj", "rooftop"] });
++    assert.equal(ctx.event_category_music, true);
++    assert.equal(ctx.event_category_food, false);
++  });
++
++  it("matches multiple buckets when applicable", () => {
++    const ctx = eventCategoryContext({ category: "Food & Music Festival", tags: ["beach"] });
++    assert.equal(ctx.event_category_food, true);
++    assert.equal(ctx.event_category_music, true);
++    assert.equal(ctx.event_category_outdoor, true); // beach
++  });
++
++  it("matches nothing for an unrelated event", () => {
++    assert.deepEqual(eventCategoryContext({ category: "Business Networking", tags: ["startup"] }), {
++      event_category_food: false, event_category_music: false, event_category_outdoor: false,
++    });
++  });
++
++  it("is null-safe", () => {
++    assert.deepEqual(eventCategoryContext(null), {
++      event_category_food: false, event_category_music: false, event_category_outdoor: false,
++    });
++    assert.deepEqual(eventCategoryContext({}), {
++      event_category_food: false, event_category_music: false, event_category_outdoor: false,
++    });
++  });
++
++  it("is case-insensitive", () => {
++    assert.equal(eventCategoryContext({ category: "BBQ COOKOUT" }).event_category_food, true);
++  });
++
++  it("exposes the four scoped slugs", () => {
++    assert.deepEqual([...EVENT_CATEGORY_STAMP_SLUGS], [
++      "foodie_explorer", "music_lover", "outdoor_adventurer", "event_regular",
++    ]);
++  });
++});
+--- a/artifacts/api-server/package.json	2026-07-24 03:12:43.072205256 +0000
++++ b/artifacts/api-server/package.json	2026-07-24 03:11:25.907968127 +0000
+@@ -14,7 +14,7 @@
+     "check:migration-prefixes": "node --import tsx/esm src/scripts/checkMigrationPrefixes.ts",
+     "check:write-path-columns": "node --env-file-if-exists=.env --import tsx/esm src/scripts/checkWritePathColumns.ts",
+     "test:circle-locations": "node --import tsx/esm --test src/test/circleLocations.test.ts",
+-    "test": "node --import tsx/esm --test --test-force-exit src/test/universalStamps.test.ts src/test/eventsCirclesOwner.test.ts src/test/circleLocations.test.ts src/test/collections.test.ts src/test/accessControl.test.ts src/test/adminGeo.test.ts src/test/adminModeration.test.ts src/test/ageEligibility.test.ts src/test/airport.test.ts src/test/availability.test.ts src/test/blockExclusion.test.ts src/test/circleInviteAge.test.ts src/test/cleanupHealth.test.ts src/test/compass-active-reward.test.ts src/test/compass-admin.test.ts src/test/compass-cache.test.ts src/test/compass-memory.test.ts src/test/compass-context.test.ts src/test/compass-feed.test.ts src/test/compassServedDedup.test.ts src/test/compass-pipeline.test.ts src/test/compass-ux.test.ts src/test/coreActions.test.ts src/test/dailyBriefCleanup.test.ts src/test/delayedGeotag.test.ts src/test/emergencyFlags.test.ts src/test/events.test.ts src/test/featureFlagsAdmin.test.ts src/test/followDecisions.test.ts src/test/friendDecisions.test.ts src/test/geofenceAdminSettings.test.ts src/test/geofence.test.ts src/test/groupChat.test.ts src/test/hashtags.test.ts src/test/hiddenGems.test.ts src/test/hiddenGemCheckin.test.ts src/test/intelligence.test.ts src/test/interactionPermissions.test.ts src/test/itineraryTimeline.test.ts src/test/locationGps.test.ts src/test/locationVerify.test.ts src/test/meetupAgeRsvp.test.ts src/test/meetups.test.ts src/test/notifications.test.ts src/test/passportStamps.test.ts src/test/passportStampsPagination.test.ts src/test/passportStampsCountFallback.test.ts src/test/postInteractions.test.ts src/test/posts.test.ts src/test/postcards.test.ts src/test/pulseGps.test.ts src/test/pushDelivery.test.ts src/test/rentBuddyRequestPush.test.ts src/test/pushRetryQueue.test.ts src/test/pushWithRetry.test.ts src/test/tripReminderPush.test.ts src/test/tripReminderResetAudit.test.ts src/test/rateLimits.test.ts src/test/rentABuddyRollout.test.ts src/test/rentABuddy.test.ts src/test/rentBuddyReliabilityCounters.test.ts src/test/rentBuddyReliabilityRoutes.test.ts src/test/requests.test.ts src/test/friendRequestUpdateFailure.test.ts src/test/inviteUpdateFailure.test.ts src/test/routeMinimapView.test.ts src/test/routeOptimizer.test.ts src/test/routePlanHook.test.ts src/test/routePlanMembers.test.ts src/test/routePlan.test.ts src/test/safeReturnAdmin.test.ts src/test/safeReturn.test.ts src/test/stampHelper.test.ts src/test/tagging.test.ts src/test/telegraphChat.test.ts src/test/telegraphRealtime.test.ts src/test/telegraphStreamEndpoints.test.ts src/test/tripCompletion.test.ts src/test/tripCrewLocation.test.ts src/test/tripPlan.test.ts src/test/tripMembers.test.ts src/test/tripInviteRespond.test.ts src/test/trust-integration.test.ts src/test/trust.test.ts src/test/memories.test.ts src/test/stories.test.ts src/test/userSuggestions.test.ts src/test/eventWaitlistSweeper.test.ts src/lib/messagingPermissions.test.ts src/test/appeals.test.ts src/test/reviews.test.ts src/test/tripsExpansion.test.ts src/test/crashReport.test.ts src/test/wishlist.test.ts src/test/discoverySort.test.ts src/test/stamps-integration.test.ts src/test/stampRevoke.test.ts src/test/engagement.test.ts src/test/profileSystem.test.ts src/test/profileSchemaDrift.test.ts src/test/adminCompassSchemaDrift.test.ts src/test/adminGeoModerationSchemaDrift.test.ts src/test/adminRemainingDashboardsSchemaDrift.test.ts src/test/trustAdminAuditInsertSchemaDrift.test.ts src/test/inviteLinkPreview.test.ts src/test/inviteLinkPreviewFull.test.ts src/test/inviteLinkTripFull.test.ts src/test/stampArtworkEnrichment.test.ts src/test/ogImageVisibility.test.ts src/test/canonicalLocations.test.ts src/test/publicIdentity.test.ts src/test/privacySettings.test.ts src/test/discoveryPrivacy.test.ts src/test/stampPreviewVisibility.test.ts src/test/stampCountryLookup.test.ts src/test/stampCountryGeocoder.test.ts src/test/stampQueueRequeue.test.ts src/test/stampGenerationCycle.test.ts src/test/stampGenerationLockTiming.test.ts src/test/stampQueueRequeueRoute.test.ts src/test/rentABuddyAvailabilitySave.test.ts src/test/rentABuddySpecRebook.test.ts src/test/rentABuddySpecRequest.test.ts src/test/rentABuddySpecNoShow.test.ts src/test/rentABuddyDisputeTerminal.test.ts src/test/stampWorkerHealthMonitor.test.ts src/test/stampCatalogDefinition.test.ts src/test/stampOwnershipBackfill.test.ts src/test/adminGeocode.test.ts src/test/stampCatalogListEnrichment.test.ts src/test/stampCatalogActiveQueueStatus.test.ts src/test/notificationRouterCredentials.test.ts src/test/stampGeocodeStaleEviction.test.ts src/test/stampGeocodeDeletionPropagation.test.ts src/test/stampCatalogRequeueBadge.test.ts src/test/adminTripReminderReset.test.ts src/test/adminTripIdGuard.test.ts src/test/stampCatalogRegenDedup.test.ts src/test/stampCatalogDetailBadge.test.ts src/test/stampCatalogVersionArchive.test.ts src/test/stampCatalogRegenAuditLog.test.ts src/test/stampCatalogRegenAfterComplete.test.ts src/test/stampCatalogRegenAfterReviewRequired.test.ts src/test/pushTokenCleanup.test.ts src/test/rentABuddyHalfPairCoords.test.ts src/test/rentABuddySearchCoordGuard.test.ts src/test/adminVenueModeration.test.ts src/test/adminVenueQueue.test.ts src/test/rentABuddyAdminResolveDisputeGuard.test.ts src/test/rentABuddyAdminResolveDisputeFavorTraveler.test.ts src/test/stampGeocodeTombstoneRead.test.ts src/test/stampCatalogStyleVersionBadge.test.ts src/test/adminEventModeration.test.ts src/test/profileSelect.test.ts src/test/stampCatalogAdminActionDedup.test.ts src/test/stampCatalogAuditLogFilter.test.ts src/test/stampCatalogNullDisplayName.test.ts src/test/styleVersionSync.test.ts src/test/stampCatalogCountryCodeType.test.ts src/test/stampCatalogRegenPreexistingQueue.test.ts src/test/stampQueueClearCleanupAudit.test.ts src/test/stampAuditWriteFailure.test.ts src/test/stampAuditWriteFailureMergeReject.test.ts src/test/stampCatalogRegenArchiveObservability.test.ts src/test/stampCatalogRegenMultiFailedReset.test.ts src/test/stampCatalogConflictCollapse.test.ts src/test/stampCatalogRegenArchiveExtrasDbError.test.ts src/test/stampCatalogRegenSurvivorResetDbError.test.ts src/test/notificationDisplayNameCap.test.ts src/test/splitClockGuard.test.ts src/test/adminGeofenceSettingsNotFound.test.ts src/test/stampQueueConstraintSync.test.ts src/test/rankEventsOutcome.test.ts src/test/impressionLogFireAndForget.test.ts src/test/callSystem.test.ts src/test/callRoutes.test.ts src/test/callHardening.test.ts src/test/callAnalytics.test.ts src/test/tripInvitesPending.test.ts src/test/weatherCacheCleanupRoute.test.ts src/test/appHardening.test.ts src/test/corsAllowedOrigins.test.ts src/test/ageGate.test.ts src/test/rentABuddyLifecycle.test.ts src/test/reconcileRunSummary.test.ts src/test/reconcileRunHistory.test.ts src/test/schemaDriftCheck.test.ts src/test/adminPhase12.test.ts src/test/blocks.test.ts src/test/discoveryCommunityCoordinateBounds.test.ts src/test/discoveryCommunityCoords.test.ts src/test/discoveryCommunityRating.test.ts src/test/discoveryCommunitySortBy.test.ts src/test/discoverySearch.test.ts src/test/discoverySearchIntelligence.test.ts src/test/events-extension.test.ts src/test/passportProfileAccess.test.ts src/test/profileEnsure.test.ts src/test/pulseRanking.test.ts src/test/stampEarnedNotification.test.ts src/test/friendRequestReactivate.test.ts src/test/compass-ask.test.ts src/test/compass-structured-context.test.ts src/test/compass-tools.test.ts src/test/compass-ui-blocks.test.ts src/test/compass-recommendation-engine.test.ts src/test/compass-live-intel.test.ts src/test/compass-social.test.ts src/test/compass-home.test.ts src/test/compass-sense.test.ts src/test/compass-sense-scheduler.test.ts src/test/compass-live.test.ts src/test/compass-autopilot.test.ts src/test/compass-outcome-learning.test.ts src/test/compass-intelligence-graph.test.ts src/test/intelligenceGraphScheduler.test.ts src/test/placesLiveStatus.test.ts src/test/compass-local-time.test.ts src/test/eventPostsDiscovery.test.ts src/test/verification.test.ts src/test/moderation.test.ts src/test/featureFlagColumnGuard.test.ts src/test/entryRequirements.test.ts src/test/tripReadiness.test.ts src/test/tripBudgetIntel.test.ts src/test/tripReservations.test.ts src/test/tripDraft.test.ts src/test/neighborhoodMatch.test.ts src/test/compass-trip-context.test.ts src/test/stampComposition.test.ts src/test/stampShowcaseAdmire.test.ts src/test/stampCriteria.test.ts",
++    "test": "node --import tsx/esm --test --test-force-exit src/test/universalStamps.test.ts src/test/eventsCirclesOwner.test.ts src/test/circleLocations.test.ts src/test/collections.test.ts src/test/accessControl.test.ts src/test/adminGeo.test.ts src/test/adminModeration.test.ts src/test/ageEligibility.test.ts src/test/airport.test.ts src/test/availability.test.ts src/test/blockExclusion.test.ts src/test/circleInviteAge.test.ts src/test/cleanupHealth.test.ts src/test/compass-active-reward.test.ts src/test/compass-admin.test.ts src/test/compass-cache.test.ts src/test/compass-memory.test.ts src/test/compass-context.test.ts src/test/compass-feed.test.ts src/test/compassServedDedup.test.ts src/test/compass-pipeline.test.ts src/test/compass-ux.test.ts src/test/coreActions.test.ts src/test/dailyBriefCleanup.test.ts src/test/delayedGeotag.test.ts src/test/emergencyFlags.test.ts src/test/events.test.ts src/test/featureFlagsAdmin.test.ts src/test/followDecisions.test.ts src/test/friendDecisions.test.ts src/test/geofenceAdminSettings.test.ts src/test/geofence.test.ts src/test/groupChat.test.ts src/test/hashtags.test.ts src/test/hiddenGems.test.ts src/test/hiddenGemCheckin.test.ts src/test/intelligence.test.ts src/test/interactionPermissions.test.ts src/test/itineraryTimeline.test.ts src/test/locationGps.test.ts src/test/locationVerify.test.ts src/test/meetupAgeRsvp.test.ts src/test/meetups.test.ts src/test/notifications.test.ts src/test/passportStamps.test.ts src/test/passportStampsPagination.test.ts src/test/passportStampsCountFallback.test.ts src/test/postInteractions.test.ts src/test/posts.test.ts src/test/postcards.test.ts src/test/pulseGps.test.ts src/test/pushDelivery.test.ts src/test/rentBuddyRequestPush.test.ts src/test/pushRetryQueue.test.ts src/test/pushWithRetry.test.ts src/test/tripReminderPush.test.ts src/test/tripReminderResetAudit.test.ts src/test/rateLimits.test.ts src/test/rentABuddyRollout.test.ts src/test/rentABuddy.test.ts src/test/rentBuddyReliabilityCounters.test.ts src/test/rentBuddyReliabilityRoutes.test.ts src/test/requests.test.ts src/test/friendRequestUpdateFailure.test.ts src/test/inviteUpdateFailure.test.ts src/test/routeMinimapView.test.ts src/test/routeOptimizer.test.ts src/test/routePlanHook.test.ts src/test/routePlanMembers.test.ts src/test/routePlan.test.ts src/test/safeReturnAdmin.test.ts src/test/safeReturn.test.ts src/test/stampHelper.test.ts src/test/tagging.test.ts src/test/telegraphChat.test.ts src/test/telegraphRealtime.test.ts src/test/telegraphStreamEndpoints.test.ts src/test/tripCompletion.test.ts src/test/tripCrewLocation.test.ts src/test/tripPlan.test.ts src/test/tripMembers.test.ts src/test/tripInviteRespond.test.ts src/test/trust-integration.test.ts src/test/trust.test.ts src/test/memories.test.ts src/test/stories.test.ts src/test/userSuggestions.test.ts src/test/eventWaitlistSweeper.test.ts src/lib/messagingPermissions.test.ts src/test/appeals.test.ts src/test/reviews.test.ts src/test/tripsExpansion.test.ts src/test/crashReport.test.ts src/test/wishlist.test.ts src/test/discoverySort.test.ts src/test/stamps-integration.test.ts src/test/stampRevoke.test.ts src/test/engagement.test.ts src/test/profileSystem.test.ts src/test/profileSchemaDrift.test.ts src/test/adminCompassSchemaDrift.test.ts src/test/adminGeoModerationSchemaDrift.test.ts src/test/adminRemainingDashboardsSchemaDrift.test.ts src/test/trustAdminAuditInsertSchemaDrift.test.ts src/test/inviteLinkPreview.test.ts src/test/inviteLinkPreviewFull.test.ts src/test/inviteLinkTripFull.test.ts src/test/stampArtworkEnrichment.test.ts src/test/ogImageVisibility.test.ts src/test/canonicalLocations.test.ts src/test/publicIdentity.test.ts src/test/privacySettings.test.ts src/test/discoveryPrivacy.test.ts src/test/stampPreviewVisibility.test.ts src/test/stampCountryLookup.test.ts src/test/stampCountryGeocoder.test.ts src/test/stampQueueRequeue.test.ts src/test/stampGenerationCycle.test.ts src/test/stampGenerationLockTiming.test.ts src/test/stampQueueRequeueRoute.test.ts src/test/rentABuddyAvailabilitySave.test.ts src/test/rentABuddySpecRebook.test.ts src/test/rentABuddySpecRequest.test.ts src/test/rentABuddySpecNoShow.test.ts src/test/rentABuddyDisputeTerminal.test.ts src/test/stampWorkerHealthMonitor.test.ts src/test/stampCatalogDefinition.test.ts src/test/stampOwnershipBackfill.test.ts src/test/adminGeocode.test.ts src/test/stampCatalogListEnrichment.test.ts src/test/stampCatalogActiveQueueStatus.test.ts src/test/notificationRouterCredentials.test.ts src/test/stampGeocodeStaleEviction.test.ts src/test/stampGeocodeDeletionPropagation.test.ts src/test/stampCatalogRequeueBadge.test.ts src/test/adminTripReminderReset.test.ts src/test/adminTripIdGuard.test.ts src/test/stampCatalogRegenDedup.test.ts src/test/stampCatalogDetailBadge.test.ts src/test/stampCatalogVersionArchive.test.ts src/test/stampCatalogRegenAuditLog.test.ts src/test/stampCatalogRegenAfterComplete.test.ts src/test/stampCatalogRegenAfterReviewRequired.test.ts src/test/pushTokenCleanup.test.ts src/test/rentABuddyHalfPairCoords.test.ts src/test/rentABuddySearchCoordGuard.test.ts src/test/adminVenueModeration.test.ts src/test/adminVenueQueue.test.ts src/test/rentABuddyAdminResolveDisputeGuard.test.ts src/test/rentABuddyAdminResolveDisputeFavorTraveler.test.ts src/test/stampGeocodeTombstoneRead.test.ts src/test/stampCatalogStyleVersionBadge.test.ts src/test/adminEventModeration.test.ts src/test/profileSelect.test.ts src/test/stampCatalogAdminActionDedup.test.ts src/test/stampCatalogAuditLogFilter.test.ts src/test/stampCatalogNullDisplayName.test.ts src/test/styleVersionSync.test.ts src/test/stampCatalogCountryCodeType.test.ts src/test/stampCatalogRegenPreexistingQueue.test.ts src/test/stampQueueClearCleanupAudit.test.ts src/test/stampAuditWriteFailure.test.ts src/test/stampAuditWriteFailureMergeReject.test.ts src/test/stampCatalogRegenArchiveObservability.test.ts src/test/stampCatalogRegenMultiFailedReset.test.ts src/test/stampCatalogConflictCollapse.test.ts src/test/stampCatalogRegenArchiveExtrasDbError.test.ts src/test/stampCatalogRegenSurvivorResetDbError.test.ts src/test/notificationDisplayNameCap.test.ts src/test/splitClockGuard.test.ts src/test/adminGeofenceSettingsNotFound.test.ts src/test/stampQueueConstraintSync.test.ts src/test/rankEventsOutcome.test.ts src/test/impressionLogFireAndForget.test.ts src/test/callSystem.test.ts src/test/callRoutes.test.ts src/test/callHardening.test.ts src/test/callAnalytics.test.ts src/test/tripInvitesPending.test.ts src/test/weatherCacheCleanupRoute.test.ts src/test/appHardening.test.ts src/test/corsAllowedOrigins.test.ts src/test/ageGate.test.ts src/test/rentABuddyLifecycle.test.ts src/test/reconcileRunSummary.test.ts src/test/reconcileRunHistory.test.ts src/test/schemaDriftCheck.test.ts src/test/adminPhase12.test.ts src/test/blocks.test.ts src/test/discoveryCommunityCoordinateBounds.test.ts src/test/discoveryCommunityCoords.test.ts src/test/discoveryCommunityRating.test.ts src/test/discoveryCommunitySortBy.test.ts src/test/discoverySearch.test.ts src/test/discoverySearchIntelligence.test.ts src/test/events-extension.test.ts src/test/passportProfileAccess.test.ts src/test/profileEnsure.test.ts src/test/pulseRanking.test.ts src/test/stampEarnedNotification.test.ts src/test/friendRequestReactivate.test.ts src/test/compass-ask.test.ts src/test/compass-structured-context.test.ts src/test/compass-tools.test.ts src/test/compass-ui-blocks.test.ts src/test/compass-recommendation-engine.test.ts src/test/compass-live-intel.test.ts src/test/compass-social.test.ts src/test/compass-home.test.ts src/test/compass-sense.test.ts src/test/compass-sense-scheduler.test.ts src/test/compass-live.test.ts src/test/compass-autopilot.test.ts src/test/compass-outcome-learning.test.ts src/test/compass-intelligence-graph.test.ts src/test/intelligenceGraphScheduler.test.ts src/test/placesLiveStatus.test.ts src/test/compass-local-time.test.ts src/test/eventPostsDiscovery.test.ts src/test/verification.test.ts src/test/moderation.test.ts src/test/featureFlagColumnGuard.test.ts src/test/entryRequirements.test.ts src/test/tripReadiness.test.ts src/test/tripBudgetIntel.test.ts src/test/tripReservations.test.ts src/test/tripDraft.test.ts src/test/neighborhoodMatch.test.ts src/test/compass-trip-context.test.ts src/test/stampComposition.test.ts src/test/stampShowcaseAdmire.test.ts src/test/stampCriteria.test.ts src/test/eventCategoryContext.test.ts",
+     "test:app-hardening": "node --import tsx/esm --test src/test/appHardening.test.ts",
+     "test:cors-allowed-origins": "node --import tsx/esm --test src/test/corsAllowedOrigins.test.ts",
+     "test:interaction": "node --import tsx/esm --test src/test/interactionPermissions.test.ts src/test/coreActions.test.ts src/test/followDecisions.test.ts src/test/blockExclusion.test.ts src/test/accessControl.test.ts src/test/adminModeration.test.ts src/test/emergencyFlags.test.ts src/test/userSuggestions.test.ts",

@@ -44,6 +44,8 @@ export interface PassportStampNew {
   catalogId: string | null;
   /** Active artwork URL from universal_stamp_catalog — null when pending or not approved */
   activeArtworkUrl: string | null;
+  /** Thumbnail (≈256px) for small render targets — null when no premium composited version */
+  thumbnailUrl?: string | null;
 }
 
 export interface PassportMemory {

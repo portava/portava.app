@@ -232,6 +232,51 @@ export async function fetchCostEstimate(tripId: string, tier?: string): Promise<
   }
 }
 
+/** FX-converted view of the estimate bands in the traveler's home currency. */
+export interface CostEstimateConverted {
+  currency: string;
+  perDay: { low: number; mid: number; high: number };
+  total: { low: number; mid: number; high: number };
+  rateDate: string | null;
+  /** Indicative-rate disclaimer — ALWAYS render alongside converted amounts. */
+  disclaimer: string;
+}
+
+export interface CostEstimateResponse {
+  estimate: CostEstimate | null;
+  /** Present only when budget_fx_conversion_enabled + a home currency was passed. */
+  converted: CostEstimateConverted | null;
+}
+
+/**
+ * Cost estimate WITH an optional FX conversion to `homeCurrency` (ISO 4217).
+ * Additive companion to fetchCostEstimate — the existing callers are unchanged.
+ * `converted` is null unless the server flag is on and rates are available; the
+ * source-currency `estimate` is always the authoritative figure.
+ */
+export async function fetchCostEstimateWithFx(
+  tripId: string,
+  homeCurrency?: string,
+  tier?: string,
+): Promise<CostEstimateResponse | null> {
+  if (!isSupabaseConfigured || !apiBase()) return null;
+  try {
+    const params = new URLSearchParams();
+    if (tier) params.set('tier', tier);
+    if (homeCurrency) params.set('home', homeCurrency);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await authedFetch(`${apiBase()}/api/trips/${tripId}/cost-estimate${qs}`);
+    if (!res.ok) return null;
+    const json = await res.json();
+    return {
+      estimate: (json.estimate ?? null) as CostEstimate | null,
+      converted: (json.converted ?? null) as CostEstimateConverted | null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function runBudgetSandbox(
   tripId: string,
   whatIf: {

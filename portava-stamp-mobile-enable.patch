@@ -1,0 +1,110 @@
+--- a/artifacts/api-server/src/routes/stamps.ts	2026-07-23 16:05:33.000000000 +0000
++++ b/artifacts/api-server/src/routes/stamps.ts	2026-07-24 03:38:41.188937561 +0000
+@@ -795,11 +795,18 @@
+ // single batch query against universal_stamp_catalog + stamp_artwork_versions.
+ // Falls back gracefully when the tables do not yet exist.
+ 
++interface CatalogArtwork {
++  /** Full composited stamp (≈1024px). */
++  full: string | null;
++  /** Thumbnail (≈256px) for grid tiles / icons — Wave 1 premium pipeline. */
++  thumb: string | null;
++}
++
+ async function buildCatalogArtworkMap(
+   sc: ReturnType<typeof getServiceClient>,
+   rows: any[],
+-): Promise<Map<string, string | null>> {
+-  const artworkMap = new Map<string, string | null>();
++): Promise<Map<string, CatalogArtwork>> {
++  const artworkMap = new Map<string, CatalogArtwork>();
+   if (!sc) return artworkMap;
+ 
+   const catalogIds = [...new Set(
+@@ -807,19 +814,32 @@
+   )];
+   if (catalogIds.length === 0) return artworkMap;
+ 
+-  try {
+-    // Join via active_version_id FK to stamp_artwork_versions to get public_url
+-    const { data, error } = await sc
++  // thumbnail_url is added by migration 0177; older DBs lack the column, so on
++  // a 42703 (undefined_column) we retry selecting only public_url.
++  const runQuery = (withThumb: boolean) =>
++    sc
+       .from("universal_stamp_catalog")
+-      .select("id, stamp_artwork_versions!active_version_id(public_url)")
++      .select(
++        withThumb
++          ? "id, stamp_artwork_versions!active_version_id(public_url, thumbnail_url)"
++          : "id, stamp_artwork_versions!active_version_id(public_url)",
++      )
+       .in("id", catalogIds)
+       .eq("status", "approved");
+ 
+-    if (error) return artworkMap; // Tables may not exist yet — degrade silently
++  try {
++    let { data, error } = await runQuery(true);
++    if (error && (error as any).code === "42703") {
++      ({ data, error } = await runQuery(false));
++    }
++    if (error) return artworkMap; // tables may not exist yet — degrade silently
+ 
+     for (const row of (data ?? []) as any[]) {
+-      const url: string | null = row.stamp_artwork_versions?.public_url ?? null;
+-      artworkMap.set(row.id, url);
++      const v = row.stamp_artwork_versions ?? null;
++      artworkMap.set(row.id, {
++        full: v?.public_url ?? null,
++        thumb: v?.thumbnail_url ?? null,
++      });
+     }
+   } catch {
+     // Never surface artwork lookup failures to the caller
+@@ -831,10 +851,11 @@
+ // ── Formatter ─────────────────────────────────────────────────────────────────
+ // lat/lng are intentionally omitted from all responses.
+ 
+-function formatStamp(row: any, artworkMap?: Map<string, string | null>) {
++function formatStamp(row: any, artworkMap?: Map<string, CatalogArtwork>) {
+   const catalogId: string | null = row.catalog_id ?? null;
+-  const activeArtworkUrl: string | null =
+-    (catalogId && artworkMap ? (artworkMap.get(catalogId) ?? null) : null);
++  const art = catalogId && artworkMap ? artworkMap.get(catalogId) : undefined;
++  const activeArtworkUrl: string | null = art?.full ?? null;
++  const thumbnailUrl: string | null = art?.thumb ?? null;
+ 
+   return {
+     id:                row.id,
+@@ -853,6 +874,10 @@
+     createdAt:         row.created_at,
+     catalogId,
+     activeArtworkUrl,
++    // Thumbnail for small render targets (grid tiles/icons). Null when the
++    // stamp has no premium composited version yet — client falls back to
++    // activeArtworkUrl, then legacy art.
++    thumbnailUrl,
+   };
+ }
+ 
+--- a/artifacts/travel-buddy/src/services/stamps.ts	2026-07-16 19:21:28.000000000 +0000
++++ b/artifacts/travel-buddy/src/services/stamps.ts	2026-07-24 03:40:48.212934888 +0000
+@@ -110,6 +110,7 @@
+     createdAt:         r.created_at ?? r.createdAt ?? new Date().toISOString(),
+     catalogId:         r.catalog_id ?? r.catalogId ?? null,
+     activeArtworkUrl:  r.active_artwork_url ?? r.activeArtworkUrl ?? null,
++    thumbnailUrl:      r.thumbnail_url ?? r.thumbnailUrl ?? null,
+   };
+ }
+ 
+--- a/artifacts/travel-buddy/src/services/passportStamps.ts	2026-07-19 11:36:22.000000000 +0000
++++ b/artifacts/travel-buddy/src/services/passportStamps.ts	2026-07-24 03:40:38.408935094 +0000
+@@ -44,6 +44,8 @@
+   catalogId: string | null;
+   /** Active artwork URL from universal_stamp_catalog — null when pending or not approved */
+   activeArtworkUrl: string | null;
++  /** Thumbnail (≈256px) for small render targets — null when no premium composited version */
++  thumbnailUrl?: string | null;
+ }
+ 
+ export interface PassportMemory {
