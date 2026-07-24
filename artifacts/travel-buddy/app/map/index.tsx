@@ -538,6 +538,10 @@ function FullScreenMapScreenInner() {
           lat: p.lat as number,
           lng: p.lng as number,
           payload: p,
+          // detailRoute drives navigation in MapCarousel and MapEntityPreviewCard;
+          // without it the card falls back to the Discover tab stub.
+          detailRoute: `/place/${encodeURIComponent(p.id)}`,
+          actionCapabilities: ['save', 'directions', 'add_to_trip', 'share'] as import('../../src/types/mapTypes.ts').MapActionCapability[],
         })),
     [places],
   );

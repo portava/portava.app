@@ -74,6 +74,8 @@ const KNOWN_BROKEN = [
   'src/services/__tests__/adminCatalogAuditMalformed.test.ts',
   'src/services/__tests__/media.upload.test.ts',
   'src/services/__tests__/apiToken.freshToken.test.ts',
+  // places.ts imports supabase.ts → SecureStoreAdapter → react-native (esbuild "Unexpected typeof")
+  'src/services/__tests__/places.getCanonicalPlace.test.ts',
   'src/services/__tests__/catalogDetail.approvedStale.test.ts',
   'src/services/__tests__/catalogDetail.archivedVersions.test.ts',
   'src/services/__tests__/catalogDetail.earnNullUserId.test.ts',

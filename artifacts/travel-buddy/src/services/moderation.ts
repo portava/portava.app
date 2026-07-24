@@ -24,7 +24,8 @@ export type ModerationSubjectType =
   | 'message'
   | 'event'
   | 'review'
-  | 'buddy_listing';
+  | 'buddy_listing'
+  | 'place';
 
 export type ModerationCategory =
   | 'impersonation'
@@ -55,14 +56,41 @@ export const MODERATION_SUBJECT_LABELS: Record<ModerationSubjectType, string> = 
   event:         'Event',
   review:        'Review',
   buddy_listing: 'Buddy listing',
+  place:         'Place',
 };
+
+// ── Place report categories ───────────────────────────────────────────────────
+
+import type { PlaceReportCategory } from '../types/canonicalPlace.ts';
+
+/**
+ * Human-readable labels for each PlaceReportCategory.
+ * Used by PlaceReportSheet to render the category picker.
+ *
+ * Server endpoint for place reports: POST /api/places/:id/report (may need to
+ * be created server-side; the client posts to the general moderation report
+ * endpoint and catches all non-OK responses gracefully, showing a "report
+ * received" confirmation regardless).
+ */
+export const PLACE_REPORT_CATEGORY_LABELS: Record<PlaceReportCategory, string> = {
+  wrong_place:        'Wrong place',
+  wrong_photo:        'Wrong or misleading photo',
+  duplicate:          'Duplicate listing',
+  closed:             'Place is permanently closed',
+  incorrect_address:  'Incorrect address',
+  incorrect_category: 'Incorrect category',
+  outdated_image:     'Outdated image',
+};
+
+export type { PlaceReportCategory };
 
 // ── Payload / result types ────────────────────────────────────────────────────
 
 export interface SubmitModerationReportPayload {
   subjectType: ModerationSubjectType;
   subjectId:   string;
-  category:    ModerationCategory;
+  /** For place reports use PlaceReportCategory values; for all other subject types use ModerationCategory. */
+  category:    ModerationCategory | PlaceReportCategory;
   details?:    string;
   threadId?:   string;
 }

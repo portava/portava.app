@@ -74,7 +74,13 @@ function toMapEntity(rec: CompassRecommendation): MapEntity | null {
   // Skip entities with no real coordinates rather than faking them.
   if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
 
-  return { id: rec.id, type: entityType, lat, lng, payload: rec };
+  // Populate detailRoute for place entities so map cards navigate to the
+  // canonical detail screen instead of falling back to the Discover stub.
+  const detailRoute = entityType === 'places' && rec.id
+    ? `/place/${encodeURIComponent(rec.id)}`
+    : undefined;
+
+  return { id: rec.id, type: entityType, lat, lng, payload: rec, detailRoute };
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
