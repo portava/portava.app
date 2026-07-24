@@ -115,7 +115,7 @@ export function MediaSourceSheet({
           'Video will display in 9:16',
           'Stories are shown in portrait 9:16 format. Your video will be cropped to fit — any content outside the centre frame may be cut off.',
           [
-            { text: 'Choose different file', style: 'cancel' },
+            { text: 'Choose different file', style: 'cancel', onPress: () => URL.revokeObjectURL(uri) },
             { text: 'Post anyway', onPress: () => onResult(synth) },
           ],
         );
