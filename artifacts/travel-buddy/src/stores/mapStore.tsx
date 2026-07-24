@@ -38,6 +38,14 @@ export interface MapStoreState {
    * so the updated state survives card unmount/remount (e.g. camera pan).
    */
   entityCapabilityPatches: Record<string, MapActionCapability[]>;
+  /**
+   * Per-entity follow state written by MapEntityActionRow after a successful
+   * follow/unfollow toggle.  Keyed by `MapEntity.id`.
+   * When present, useFollow uses this as the initial `isFollowing` value so
+   * the icon is correct immediately on remount — before the getFollowStatus
+   * round-trip completes.
+   */
+  entityFollowState: Record<string, boolean>;
 }
 
 const initialState: MapStoreState = {
@@ -48,6 +56,7 @@ const initialState: MapStoreState = {
   enabledLayers: [...TOGGLEABLE_LAYERS],
   carouselIndex: 0,
   entityCapabilityPatches: {},
+  entityFollowState: {},
 };
 
 // ── Actions ───────────────────────────────────────────────────────────────────
@@ -59,7 +68,8 @@ type Action =
   | { type: 'SET_CAMERA_ZOOM'; payload: number | null }
   | { type: 'SET_ENABLED_LAYERS'; payload: ToggleableEntityType[] }
   | { type: 'SET_CAROUSEL_INDEX'; payload: number }
-  | { type: 'UPDATE_ENTITY_CAPABILITIES'; payload: { entityId: string; caps: MapActionCapability[] } };
+  | { type: 'UPDATE_ENTITY_CAPABILITIES'; payload: { entityId: string; caps: MapActionCapability[] } }
+  | { type: 'SET_ENTITY_FOLLOW_STATE'; payload: { entityId: string; isFollowing: boolean } };
 
 function reducer(state: MapStoreState, action: Action): MapStoreState {
   switch (action.type) {
@@ -111,6 +121,15 @@ function reducer(state: MapStoreState, action: Action): MapStoreState {
         entityCapabilityPatches: { ...state.entityCapabilityPatches, [entityId]: caps },
       };
     }
+    case 'SET_ENTITY_FOLLOW_STATE': {
+      const { entityId, isFollowing } = action.payload;
+      // Identity bailout: same value → no change.
+      if (state.entityFollowState[entityId] === isFollowing) return state;
+      return {
+        ...state,
+        entityFollowState: { ...state.entityFollowState, [entityId]: isFollowing },
+      };
+    }
     default:
       return state;
   }
@@ -131,6 +150,12 @@ export interface MapStoreContextValue extends MapStoreState {
    * Called by MapEntityActionRow after save / follow / join succeeds.
    */
   updateEntityCapabilities: (entityId: string, caps: MapActionCapability[]) => void;
+  /**
+   * Persist the follow state for a single entity so the follow icon is correct
+   * immediately on remount — before the getFollowStatus round-trip completes.
+   * Called by MapEntityActionRow after a successful follow/unfollow toggle.
+   */
+  setEntityFollowState: (entityId: string, isFollowing: boolean) => void;
 }
 
 const MapStoreContext = createContext<MapStoreContextValue | null>(null);
@@ -181,6 +206,11 @@ export function MapStoreProvider({
       dispatch({ type: 'UPDATE_ENTITY_CAPABILITIES', payload: { entityId, caps } }),
     [],
   );
+  const setEntityFollowState = useCallback(
+    (entityId: string, isFollowing: boolean) =>
+      dispatch({ type: 'SET_ENTITY_FOLLOW_STATE', payload: { entityId, isFollowing } }),
+    [],
+  );
 
   const value = useMemo(
     (): MapStoreContextValue => ({
@@ -192,6 +222,7 @@ export function MapStoreProvider({
       setEnabledLayers,
       setCarouselIndex,
       updateEntityCapabilities,
+      setEntityFollowState,
     }),
     [
       state,
@@ -202,6 +233,7 @@ export function MapStoreProvider({
       setEnabledLayers,
       setCarouselIndex,
       updateEntityCapabilities,
+      setEntityFollowState,
     ],
   );
 
