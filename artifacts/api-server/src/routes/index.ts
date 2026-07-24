@@ -99,6 +99,7 @@ import stampAdmireRouter from "./stampAdmire";
 import countryEssentialsRouter from "./countryEssentials";
 import mapSearchRouter from "./mapSearch";
 import mediaFileRouter from "./mediaFile";
+import placesCanonicalRouter from "./placesCanonical";
 import fsqPlacesRouter from "./fsqPlaces";
 
 const router: IRouter = Router();
@@ -206,5 +207,6 @@ router.use(countryEssentialsRouter);
 router.use(fsqPlacesRouter);
 router.use(mapSearchRouter);
 router.use(mediaFileRouter);
+router.use(placesCanonicalRouter);
 
 export default router;
