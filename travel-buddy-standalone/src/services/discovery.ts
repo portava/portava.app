@@ -41,6 +41,9 @@ export interface DiscoveryPlace {
   openingHours: string | null;
   rating: number | null;
   isOpenNow: boolean | null;
+  /** Data-source attribution text for the venue detail view. When present,
+   *  replaces the default OSM attribution footer. */
+  attribution?: string | null;
 }
 
 export interface DiscoveryFilters {
