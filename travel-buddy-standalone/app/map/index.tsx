@@ -324,6 +324,8 @@ function FullScreenMapScreenInner() {
     setCarouselIndex: setActiveIndex,
     selectedEntityId,
     setSelectedEntityId,
+    cameraCenter,
+    cameraZoom,
     setCameraCenter,
     setCameraZoom,
   } = useMapStore();
@@ -734,9 +736,9 @@ function FullScreenMapScreenInner() {
       <MapComponent
         places={places}
         onSelectPlace={handleSelectPlace}
-        fallbackLat={fallbackLat}
-        fallbackLng={fallbackLng}
-        fallbackZoom={paramZoom}
+        fallbackLat={cameraCenter?.lat ?? fallbackLat}
+        fallbackLng={cameraCenter?.lng ?? fallbackLng}
+        fallbackZoom={cameraZoom ?? paramZoom}
         userLat={userLat}
         userLng={userLng}
         externalCameraRef={cameraRef}
