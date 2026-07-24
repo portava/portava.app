@@ -1,0 +1,400 @@
+/**
+ * useMediaComposer — shared media lifecycle hook used by all composers.
+ *
+ * Manages:
+ *   - Source sheet visibility
+ *   - Permission requests (camera + library) with denied→Settings path surfaced
+ *     through the MediaSourceSheet component
+ *   - iOS limited-library upgrade prompt
+ *   - An `items` array with per-item upload state (idle/uploading/done/error)
+ *   - Reorder, remove, cover-pick, alt-text setters
+ *   - Upload per item, retry, cancel
+ *
+ * Usage:
+ *   const composer = useMediaComposer('memory');
+ *   // Open the source sheet
+ *   <MediaPickerButton composer={composer} />
+ *   // Render thumbnails
+ *   <MediaAttachmentTray composer={composer} />
+ */
+import { useState, useCallback, useRef } from 'react';
+import { Alert, Linking, Platform } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import type { ContentPolicyKey, ContentMediaPolicy } from '../lib/contentMediaPolicy.ts';
+import { getPolicy, policyAllowsVideo } from '../lib/contentMediaPolicy.ts';
+import { validateMedia, uploadMedia } from '../services/media.ts';
+import type { MediaUploadResult } from '../services/media.ts';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export type MediaItemUploadState = 'idle' | 'uploading' | 'done' | 'error';
+
+export interface MediaItem {
+  /** Stable React key (random ID). */
+  id: string;
+  uri: string;
+  mimeType: string;
+  fileName?: string | null;
+  fileSize?: number | null;
+  width?: number | null;
+  height?: number | null;
+  /** 'image' | 'video' */
+  type: 'image' | 'video';
+  /** Video duration in seconds; null for images. */
+  duration?: number | null;
+  /** Alt-text for accessibility (shown when policy.supportsAltText). */
+  altText: string;
+  /** True for the item designated as the gallery cover. */
+  isCover: boolean;
+  uploadState: MediaItemUploadState;
+  /** 0–1 fraction; only meaningful while uploadState === 'uploading'. */
+  uploadProgress: number;
+  /** Public URL after a successful upload. */
+  uploadedUrl: string | null;
+  /** Human-readable error set when uploadState === 'error'. */
+  uploadError: string | null;
+}
+
+export interface UseMediaComposerReturn {
+  /** Resolved policy for the given key. */
+  policy: ContentMediaPolicy;
+  /** All currently-selected media items. */
+  items: MediaItem[];
+  /** Whether the MediaSourceSheet should be shown. */
+  sheetVisible: boolean;
+  /** Open the source sheet (e.g. on picker button press). */
+  openSheet: () => void;
+  /** Close the source sheet (called by the sheet's onClose). */
+  closeSheet: () => void;
+  /**
+   * Called by MediaSourceSheet's onResult. Adds the asset to items
+   * (if policy allows) and handles limited-library prompt.
+   */
+  onPickResult: (asset: ImagePicker.ImagePickerAsset) => void;
+  /** Remove an item by id. */
+  removeItem: (id: string) => void;
+  /** Swap two items by index (used by reorder UI). */
+  reorderItems: (fromIndex: number, toIndex: number) => void;
+  /** Mark item as cover (clears isCover on all others). */
+  setCover: (id: string) => void;
+  /** Update alt-text for an item. */
+  setAltText: (id: string, text: string) => void;
+  /**
+   * Upload a single item by id. Returns the MediaUploadResult on success,
+   * null on failure (error is set on the item).
+   */
+  uploadItem: (id: string) => Promise<MediaUploadResult | null>;
+  /**
+   * Upload all items that are in 'idle' state. Resolves when all finish.
+   * Returns map of id → result (null on failure).
+   */
+  uploadAll: () => Promise<Map<string, MediaUploadResult | null>>;
+  /** Retry a failed upload. */
+  retryUpload: (id: string) => Promise<MediaUploadResult | null>;
+  /** Cancel an in-flight upload (sets item back to idle). */
+  cancelUpload: (id: string) => void;
+  /** Remove all items and reset to empty. */
+  clearAll: () => void;
+  /** True when more items can be added (items.length < policy.maxItems). */
+  canAddMore: boolean;
+  /** The first item with isCover=true, or items[0], or null. */
+  primaryItem: MediaItem | null;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+let _idCounter = 0;
+function makeId(): string {
+  return `mi_${Date.now()}_${++_idCounter}`;
+}
+
+function assetToMediaItem(
+  asset: ImagePicker.ImagePickerAsset,
+  isCover: boolean,
+): MediaItem {
+  const isVideo =
+    asset.type === 'video' ||
+    (asset.mimeType ?? '').startsWith('video/');
+  return {
+    id: makeId(),
+    uri: asset.uri,
+    mimeType: asset.mimeType ?? (isVideo ? 'video/mp4' : 'image/jpeg'),
+    fileName: asset.fileName ?? null,
+    fileSize: asset.fileSize ?? null,
+    width: asset.width ?? null,
+    height: asset.height ?? null,
+    type: isVideo ? 'video' : 'image',
+    duration: asset.duration != null ? asset.duration / 1000 : null,
+    altText: '',
+    isCover,
+    uploadState: 'idle',
+    uploadProgress: 0,
+    uploadedUrl: null,
+    uploadError: null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Hook
+// ---------------------------------------------------------------------------
+
+export function useMediaComposer(policyKey: ContentPolicyKey): UseMediaComposerReturn {
+  const policy = getPolicy(policyKey);
+  const [items, setItems] = useState<MediaItem[]>([]);
+  const [sheetVisible, setSheetVisible] = useState(false);
+
+  // Per-item cancel signals: id → ref (cancelled flag)
+  const cancelRefs = useRef<Map<string, { cancelled: boolean }>>(new Map());
+
+  // ── Sheet ────────────────────────────────────────────────────────────────
+
+  const openSheet = useCallback(() => setSheetVisible(true), []);
+  const closeSheet = useCallback(() => setSheetVisible(false), []);
+
+  // ── iOS limited-library prompt ───────────────────────────────────────────
+
+  function maybeLimitedPrompt(perm: ImagePicker.MediaLibraryPermissionResponse) {
+    if (Platform.OS !== 'ios') return;
+    // accessPrivileges is 'limited' when user granted access to a subset
+    if ((perm as any).accessPrivileges === 'limited') {
+      Alert.alert(
+        'Limited photo access',
+        'You\'ve given access to a limited set of photos. You can expand your selection or grant full access.',
+        [
+          {
+            text: 'Select more photos',
+            onPress: () => {
+              // Present the limited photo picker (iOS 14+)
+              ImagePicker.requestMediaLibraryPermissionsAsync().catch(() => {});
+            },
+          },
+          {
+            text: 'Allow full access',
+            onPress: () => Linking.openSettings(),
+          },
+          { text: 'Continue', style: 'cancel' },
+        ],
+      );
+    }
+  }
+
+  // ── Pick result ──────────────────────────────────────────────────────────
+
+  const onPickResult = useCallback((asset: ImagePicker.ImagePickerAsset) => {
+    setItems((prev) => {
+      if (prev.length >= policy.maxItems) return prev;
+      // Validate
+      const isVideo = asset.type === 'video' || (asset.mimeType ?? '').startsWith('video/');
+      const durationSec = asset.duration != null ? asset.duration / 1000 : null;
+      const vResult = validateMedia(
+        {
+          uri: asset.uri,
+          mimeType: asset.mimeType,
+          fileSize: asset.fileSize,
+          type: isVideo ? 'video' : 'image',
+          duration: durationSec,
+        },
+        policy.videoMaxDuration != null
+          ? { maxVideoDurationSeconds: policy.videoMaxDuration }
+          : undefined,
+      );
+      if (!vResult.ok) {
+        Alert.alert('Cannot use this file', vResult.message);
+        return prev;
+      }
+      const isCover = policy.supportsCover && prev.length === 0;
+      return [...prev, assetToMediaItem(asset, isCover)];
+    });
+  // policy is stable per key — only depends on policyKey
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [policy.maxItems, policy.supportsCover, policy.videoMaxDuration]);
+
+  // ── Item mutations ───────────────────────────────────────────────────────
+
+  const removeItem = useCallback((id: string) => {
+    setItems((prev) => {
+      const next = prev.filter((it) => it.id !== id);
+      // If we removed the cover, promote next item
+      if (next.length > 0 && !next.some((it) => it.isCover)) {
+        next[0] = { ...next[0], isCover: true };
+      }
+      return next;
+    });
+    cancelRefs.current.delete(id);
+  }, []);
+
+  const reorderItems = useCallback((fromIndex: number, toIndex: number) => {
+    setItems((prev) => {
+      if (
+        fromIndex < 0 || fromIndex >= prev.length ||
+        toIndex < 0 || toIndex >= prev.length ||
+        fromIndex === toIndex
+      ) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  }, []);
+
+  const setCover = useCallback((id: string) => {
+    setItems((prev) =>
+      prev.map((it) => ({ ...it, isCover: it.id === id })),
+    );
+  }, []);
+
+  const setAltText = useCallback((id: string, text: string) => {
+    setItems((prev) =>
+      prev.map((it) => it.id === id ? { ...it, altText: text } : it),
+    );
+  }, []);
+
+  // ── Upload ───────────────────────────────────────────────────────────────
+
+  const uploadItem = useCallback(async (id: string): Promise<MediaUploadResult | null> => {
+    let item: MediaItem | undefined;
+    setItems((prev) => {
+      item = prev.find((it) => it.id === id);
+      if (!item) return prev;
+      cancelRefs.current.set(id, { cancelled: false });
+      return prev.map((it) =>
+        it.id === id
+          ? { ...it, uploadState: 'uploading', uploadProgress: 0.05, uploadError: null }
+          : it,
+      );
+    });
+
+    // Wait one tick so item is populated
+    await new Promise<void>((r) => setTimeout(r, 0));
+
+    // Re-read item from a fresh state slice
+    let currentItem: MediaItem | undefined;
+    setItems((prev) => {
+      currentItem = prev.find((it) => it.id === id);
+      return prev;
+    });
+
+    if (!currentItem) return null;
+
+    const cancelRef = cancelRefs.current.get(id) ?? { cancelled: false };
+
+    // Progress ticker
+    const tick = setInterval(() => {
+      if (cancelRef.cancelled) return;
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === id && it.uploadState === 'uploading'
+            ? { ...it, uploadProgress: Math.min(it.uploadProgress + 0.1, 0.85) }
+            : it,
+        ),
+      );
+    }, 400);
+
+    let result: MediaUploadResult;
+    try {
+      result = await uploadMedia({
+        uri: currentItem.uri,
+        mimeType: currentItem.mimeType,
+        fileName: currentItem.fileName,
+        fileSize: currentItem.fileSize,
+        width: currentItem.width,
+        height: currentItem.height,
+        type: currentItem.type,
+        duration: currentItem.duration,
+      });
+    } finally {
+      clearInterval(tick);
+    }
+
+    if (cancelRef.cancelled) return null;
+
+    if (!result.ok || !result.url) {
+      const msg = result.message ?? 'Upload failed. Please try again.';
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === id
+            ? { ...it, uploadState: 'error', uploadProgress: 0, uploadError: msg }
+            : it,
+        ),
+      );
+      return null;
+    }
+
+    setItems((prev) =>
+      prev.map((it) =>
+        it.id === id
+          ? { ...it, uploadState: 'done', uploadProgress: 1, uploadedUrl: result.url }
+          : it,
+      ),
+    );
+    return result;
+  }, []);
+
+  const uploadAll = useCallback(async (): Promise<Map<string, MediaUploadResult | null>> => {
+    let ids: string[] = [];
+    setItems((prev) => {
+      ids = prev.filter((it) => it.uploadState === 'idle').map((it) => it.id);
+      return prev;
+    });
+    await new Promise<void>((r) => setTimeout(r, 0));
+
+    const results = await Promise.all(ids.map((id) => uploadItem(id)));
+    const map = new Map<string, MediaUploadResult | null>();
+    ids.forEach((id, i) => map.set(id, results[i]));
+    return map;
+  }, [uploadItem]);
+
+  const retryUpload = useCallback(async (id: string): Promise<MediaUploadResult | null> => {
+    setItems((prev) =>
+      prev.map((it) =>
+        it.id === id ? { ...it, uploadState: 'idle', uploadError: null } : it,
+      ),
+    );
+    return uploadItem(id);
+  }, [uploadItem]);
+
+  const cancelUpload = useCallback((id: string) => {
+    const ref = cancelRefs.current.get(id);
+    if (ref) ref.cancelled = true;
+    setItems((prev) =>
+      prev.map((it) =>
+        it.id === id ? { ...it, uploadState: 'idle', uploadProgress: 0, uploadError: null } : it,
+      ),
+    );
+  }, []);
+
+  const clearAll = useCallback(() => {
+    setItems([]);
+    cancelRefs.current.clear();
+  }, []);
+
+  // ── Derived ──────────────────────────────────────────────────────────────
+
+  const canAddMore = items.length < policy.maxItems;
+  const primaryItem =
+    items.find((it) => it.isCover) ?? items[0] ?? null;
+
+  return {
+    policy,
+    items,
+    sheetVisible,
+    openSheet,
+    closeSheet,
+    onPickResult,
+    removeItem,
+    reorderItems,
+    setCover,
+    setAltText,
+    uploadItem,
+    uploadAll,
+    retryUpload,
+    cancelUpload,
+    clearAll,
+    canAddMore,
+    primaryItem,
+  };
+}

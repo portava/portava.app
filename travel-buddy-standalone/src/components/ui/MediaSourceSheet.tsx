@@ -26,7 +26,7 @@
  */
 import React, { useState } from 'react';
 import {
-  Modal, View, Text, Pressable, StyleSheet,
+  Alert, Modal, View, Text, Pressable, StyleSheet,
   ActivityIndicator, Linking, Platform,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -40,6 +40,10 @@ export interface MediaSourceSheetProps {
   allowsVideo?: boolean;
   videoMaxDuration?: number;
   title?: string;
+  /** When true the picker opens an in-picker crop editor after selection. */
+  allowsEditing?: boolean;
+  /** Aspect ratio [width, height] for the crop editor; only used when allowsEditing=true. */
+  aspect?: [number, number];
 }
 
 export function MediaSourceSheet({
@@ -49,6 +53,8 @@ export function MediaSourceSheet({
   allowsVideo = true,
   videoMaxDuration = 60,
   title = 'Add media',
+  allowsEditing = false,
+  aspect,
 }: MediaSourceSheetProps) {
   const [busy, setBusy] = useState<'camera' | 'library' | null>(null);
   const [cameraDenied, setCameraDenied] = useState(false);
@@ -104,6 +110,8 @@ export function MediaSourceSheet({
         mediaTypes,
         quality: 0.92,
         videoMaxDuration: allowsVideo ? videoMaxDuration : undefined,
+        allowsEditing,
+        aspect,
       });
       setBusy(null);
       if (result.canceled || !result.assets?.[0]) return;
@@ -130,12 +138,29 @@ export function MediaSourceSheet({
         setBusy(null);
         return;
       }
+      // iOS 14+: user granted access to a limited selection — offer to expand.
+      if (Platform.OS === 'ios' && (perm as any).accessPrivileges === 'limited') {
+        // Don't block the pick; just surface the upgrade option after.
+        // We show the alert after the picker closes so it doesn't fight the sheet.
+        setTimeout(() => {
+          Alert.alert(
+            'Limited photo access',
+            'You\'ve given access to a limited set of photos. Expand your selection or grant full access in Settings.',
+            [
+              { text: 'Select more photos', onPress: () => ImagePicker.requestMediaLibraryPermissionsAsync().catch(() => {}) },
+              { text: 'Allow full access', onPress: () => Linking.openSettings() },
+              { text: 'Continue', style: 'cancel' },
+            ],
+          );
+        }, 500);
+      }
       const mediaTypes: ImagePicker.MediaType[] = allowsVideo
         ? ['images', 'videos']
         : ['images'];
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes,
-        allowsEditing: false,
+        allowsEditing,
+        aspect,
         quality: 0.92,
         videoMaxDuration: allowsVideo ? videoMaxDuration : undefined,
       });

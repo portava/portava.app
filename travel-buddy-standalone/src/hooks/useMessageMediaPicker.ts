@@ -2,6 +2,11 @@
  * useMessageMediaPicker — encapsulates media picking, validation, upload,
  * progress tracking, cancel, and retry for message media (images & videos).
  *
+ * Picking and validation are delegated to useMediaComposer('message') so all
+ * composers share the same permission-denied→Settings path, iOS limited-library
+ * prompt, and policy-driven validation. The rest of the hook (upload progress,
+ * cancel, retry, web fallback) is message-thread-specific and stays local.
+ *
  * Usage:
  *   const picker = useMessageMediaPicker(threadId);
  *   picker.pickFromLibrary()    // photo library
@@ -14,11 +19,12 @@
  * Returned `media` describes the pending attachment; null = no attachment.
  * Returned `uploadResult` is set after a successful upload; reset on clear.
  */
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import * as ImagePicker from 'expo-image-picker';
-import { Platform, Alert } from 'react-native';
-import { validateMedia, uploadMedia } from '../services/media.ts';
+import { Platform, Alert, Linking } from 'react-native';
+import { uploadMedia } from '../services/media.ts';
 import type { PickedMedia } from '../services/media.ts';
+import { useMediaComposer } from './useMediaComposer.ts';
 
 export type PickerUploadState = 'idle' | 'picking' | 'previewing' | 'uploading' | 'done' | 'failed';
 
@@ -63,99 +69,80 @@ const MESSAGE_UPLOAD_ERROR_MESSAGES: Record<string, string> = {
 };
 
 export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
+  // Picking and validation are handled by useMediaComposer('message').
+  // The message policy: maxItems=1, allowedTypes=['images','videos'],
+  // videoMaxDuration=60. All permission flows go through MediaSourceSheet
+  // (used by callers via the sheet state), or through the programmatic
+  // pick functions below which call ImagePicker directly for the three
+  // distinct action types (library photo, camera, library video).
+  const mediaComposer = useMediaComposer('message');
+
   const [state, setState] = useState<PickerUploadState>('idle');
-  const [media, setMedia] = useState<PendingMediaAttachment | null>(null);
   const [uploadResult, setUploadResult] = useState<MediaUploadResult | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   const cancelledRef = useRef(false);
 
-  // ── Internal: pick helper ─────────────────────────────────────────────────
+  // Derive PendingMediaAttachment from the composer's primary item so that
+  // the upload / retry flow reads from one source of truth.
+  const primaryItem = mediaComposer.primaryItem;
+  const media = useMemo<PendingMediaAttachment | null>(
+    () =>
+      primaryItem
+        ? {
+            localUri: primaryItem.uri,
+            mediaType: primaryItem.type,
+            mimeType: primaryItem.mimeType,
+            fileName: primaryItem.fileName,
+            fileSize: primaryItem.fileSize,
+            width: primaryItem.width,
+            height: primaryItem.height,
+            duration: primaryItem.duration,
+          }
+        : null,
+    [primaryItem],
+  );
 
-  async function handlePickResult(
-    result: ImagePicker.ImagePickerResult,
-    expectedType: 'image' | 'video' | 'any',
-  ): Promise<void> {
-    if (result.canceled || result.assets.length === 0) return;
-    const asset = result.assets[0];
-
-    const detectedType: 'image' | 'video' =
-      asset.type === 'video' ? 'video' : 'image';
-
-    const pickedMedia: PickedMedia = {
-      uri: asset.uri,
-      mimeType: asset.mimeType ?? (detectedType === 'video' ? 'video/mp4' : 'image/jpeg'),
-      fileName: asset.fileName ?? null,
-      fileSize: asset.fileSize ?? null,
-      width: asset.width ?? null,
-      height: asset.height ?? null,
-      type: detectedType,
-      duration: asset.duration != null ? asset.duration / 1000 : null,
-    };
-
-    const validation = validateMedia(pickedMedia, { surface: 'message' });
-    if (!validation.ok) {
-      Alert.alert('Cannot attach media', validation.message);
-      return;
+  // Transition to 'previewing' as soon as the composer receives its first item.
+  useEffect(() => {
+    if (mediaComposer.items.length > 0 && state === 'idle') {
+      setState('previewing');
     }
-
-    const mime: string = pickedMedia.mimeType ?? (detectedType === 'video' ? 'video/mp4' : 'image/jpeg');
-    setMedia({
-      localUri: asset.uri,
-      mediaType: detectedType,
-      mimeType: mime,
-      fileName: asset.fileName ?? null,
-      fileSize: asset.fileSize ?? null,
-      width: asset.width ?? null,
-      height: asset.height ?? null,
-      duration: pickedMedia.duration,
-    });
-    setUploadResult(null);
-    setUploadProgress(0);
-    setState('previewing');
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mediaComposer.items.length]);
 
   // ── Web fallback: <input type="file"> ─────────────────────────────────────
+  // Synthesises a minimal ImagePickerAsset and routes it through
+  // mediaComposer.onPickResult so validation is consistent with native.
 
   function pickViaFileInput(accept: string): Promise<void> {
     return new Promise((resolve) => {
       const input = document.createElement('input');
       input.type = 'file';
       input.accept = accept;
-      input.onchange = async () => {
+      input.onchange = () => {
         const file = input.files?.[0];
         if (!file) { resolve(); return; }
         const isVideo = file.type.startsWith('video/');
         const detectedType: 'image' | 'video' = isVideo ? 'video' : 'image';
         const uri = URL.createObjectURL(file);
-        const pickedMedia: PickedMedia = {
+        // Synthesise a minimal ImagePickerAsset for onPickResult
+        const synth: ImagePicker.ImagePickerAsset = {
           uri,
           mimeType: file.type,
           fileName: file.name,
           fileSize: file.size,
           type: detectedType,
+          width: 0,
+          height: 0,
+          assetId: null,
+          base64: null,
+          exif: null,
           duration: null,
-        };
-        const validation = validateMedia(pickedMedia, { surface: 'message' });
-        if (!validation.ok) {
-          Alert.alert('Cannot attach media', validation.message);
-          resolve();
-          return;
-        }
-        setMedia({
-          localUri: uri,
-          mediaType: detectedType,
-          mimeType: file.type,
-          fileName: file.name,
-          fileSize: file.size,
-          width: null,
-          height: null,
-          duration: null,
-        });
-        setUploadResult(null);
-        setUploadProgress(0);
-        setState('previewing');
+          pairedVideoAsset: undefined,
+        } as unknown as ImagePicker.ImagePickerAsset;
+        mediaComposer.onPickResult(synth);
         resolve();
       };
       input.click();
@@ -171,18 +158,23 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
     }
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Permission required', 'Please allow access to your photo library in Settings.');
+      Alert.alert('Permission required', 'Allow access to your photo library to attach images.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Open Settings', onPress: () => Linking.openSettings() },
+      ]);
       return;
     }
     setState('picking');
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       allowsEditing: false,
       quality: 0.9,
     });
-    if (state === 'picking') setState('idle'); // reset if nothing selected
-    await handlePickResult(result, 'image');
-  }, [state]);
+    setState((s) => (s === 'picking' ? 'idle' : s));
+    if (!result.canceled && result.assets[0]) {
+      mediaComposer.onPickResult(result.assets[0]);
+    }
+  }, [mediaComposer.onPickResult]);
 
   const pickFromCamera = useCallback(async () => {
     if (Platform.OS === 'web') {
@@ -191,18 +183,23 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
     }
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Permission required', 'Please allow camera access in Settings.');
+      Alert.alert('Permission required', 'Allow camera access to take a photo.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Open Settings', onPress: () => Linking.openSettings() },
+      ]);
       return;
     }
     setState('picking');
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       allowsEditing: false,
       quality: 0.9,
     });
-    if (state === 'picking') setState('idle');
-    await handlePickResult(result, 'image');
-  }, [state]);
+    setState((s) => (s === 'picking' ? 'idle' : s));
+    if (!result.canceled && result.assets[0]) {
+      mediaComposer.onPickResult(result.assets[0]);
+    }
+  }, [mediaComposer.onPickResult]);
 
   const pickVideo = useCallback(async () => {
     if (Platform.OS === 'web') {
@@ -211,19 +208,24 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
     }
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Permission required', 'Please allow access to your photo library in Settings.');
+      Alert.alert('Permission required', 'Allow access to your photo library to attach a video.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Open Settings', onPress: () => Linking.openSettings() },
+      ]);
       return;
     }
     setState('picking');
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      mediaTypes: ['videos'],
       allowsEditing: false,
       quality: 1,
       videoMaxDuration: 60,
     });
-    if (state === 'picking') setState('idle');
-    await handlePickResult(result, 'video');
-  }, [state]);
+    setState((s) => (s === 'picking' ? 'idle' : s));
+    if (!result.canceled && result.assets[0]) {
+      mediaComposer.onPickResult(result.assets[0]);
+    }
+  }, [mediaComposer.onPickResult]);
 
   // ── Upload ────────────────────────────────────────────────────────────────
 
@@ -241,7 +243,7 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
       width: media.width,
       height: media.height,
       type: media.mediaType,
-      // duration is stored in seconds in PendingMediaAttachment; PickedMedia also expects seconds
+      // duration is stored in seconds in PendingMediaAttachment
       duration: media.duration ?? null,
     };
 
@@ -290,12 +292,12 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
 
   const cancel = useCallback(() => {
     cancelledRef.current = true;
-    setMedia(null);
+    mediaComposer.clearAll();
     setUploadResult(null);
     setUploadProgress(0);
     setUploadError(null);
     setState('idle');
-  }, []);
+  }, [mediaComposer.clearAll]);
 
   // ── Retry ─────────────────────────────────────────────────────────────────
 
@@ -309,12 +311,12 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
 
   const clearMedia = useCallback(() => {
     cancelledRef.current = true;
-    setMedia(null);
+    mediaComposer.clearAll();
     setUploadResult(null);
     setUploadProgress(0);
     setUploadError(null);
     setState('idle');
-  }, []);
+  }, [mediaComposer.clearAll]);
 
   return {
     state,
