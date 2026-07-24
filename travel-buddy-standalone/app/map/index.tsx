@@ -735,6 +735,10 @@ function FullScreenMapScreenInner() {
   _fe_setSelectedEntityId.current = setSelectedEntityId;
   const _fe_setActiveIndex = useRef(setActiveIndex);
   _fe_setActiveIndex.current = setActiveIndex;
+  const _fe_setCompassOverrideEntities = useRef(setCompassOverrideEntities);
+  _fe_setCompassOverrideEntities.current = setCompassOverrideEntities;
+  const _fe_setCompassQuery = useRef(setCompassQuery);
+  _fe_setCompassQuery.current = setCompassQuery;
 
   useFocusEffect(
     useCallback(() => {
@@ -755,10 +759,12 @@ function FullScreenMapScreenInner() {
         if (!_fe_selectedEntityId.current) return;
         carouselRef.current?.scrollToIndex(_fe_activeIndex.current, false);
       } else {
-        // Tab-switch: clear any stale selectedEntityId so the map doesn't open
-        // with a ghost highlight, then snap the carousel to the
-        // proximity-nearest entity.
+        // Tab-switch: clear any stale selectedEntityId and Compass search state
+        // so the map doesn't open with a ghost highlight or stale search results,
+        // then snap the carousel to the proximity-nearest entity.
         _fe_setSelectedEntityId.current(null);
+        _fe_setCompassOverrideEntities.current(null);
+        _fe_setCompassQuery.current(null);
         const ents = _fe_entities.current;
         if (ents.length === 0) return;
         let bestIndex = 0;
