@@ -1,26 +1,38 @@
 /**
  * Place detail screen — /place/[id]
  *
- * Fetches the canonical place envelope from the API and renders PlaceCard
- * plus the standard MapEntityActionRow. Behind the `external_places_enabled`
- * flag — when the flag is OFF (or the fetch returns null for any reason) a
- * short "Place not available" message is shown instead.
+ * Two rendering paths:
+ *
+ * 1. Canonical places (external_places_enabled flag ON, canonical UUID):
+ *    Fetches the canonical place envelope from the API and renders PlaceCard
+ *    plus the standard MapEntityActionRow and a report button.
+ *
+ * 2. Discovery places (OSM / db-style IDs from the map layer):
+ *    getCanonicalPlace returns null for non-canonical IDs. The caller encodes
+ *    the DiscoveryPlace payload as `placeJson` in the URL so this screen can
+ *    render a full detail view without a second network round-trip.
+ *    Falls back to "Place not available" only when neither source has data.
  */
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable,
+  View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable, Linking,
 } from 'react-native';
-import { useLocalSearchParams, useNavigation, Stack } from 'expo-router';
+import { useLocalSearchParams, Stack } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Flag } from 'lucide-react-native';
-import { color, space, type as t } from '../../src/theme/tokens';
+import { Flag, MapPin, Globe, Phone, Tag, Bookmark, Navigation, Clock, Star, ListPlus } from 'lucide-react-native';
+import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { getCanonicalPlace } from '../../src/services/places';
 import { PlaceCard } from '../../src/components/place/PlaceCard';
 import { PlaceReportSheet } from '../../src/components/PlaceReportSheet';
 import { MapEntityActionRow } from '../../src/components/map/MapEntityActionRow';
 import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
+import { TripWishlistPicker } from '../../src/components/discovery/TripWishlistPicker';
+import { checkSaved, toggleSave } from '../../src/services/collections';
+import { getPlaceLiveStatus } from '../../src/services/discovery';
+import { categoryColor } from '../../src/components/discovery/PlaceCard';
 import type { CanonicalPlace } from '../../src/types/canonicalPlace';
 import type { MapEntity } from '../../src/types/mapTypes';
+import type { DiscoveryPlace, PlaceLiveStatus } from '../../src/services/discovery';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -49,21 +61,255 @@ function buildMapEntity(place: CanonicalPlace): MapEntity {
   };
 }
 
+/** Parse placeJson query param into a DiscoveryPlace, or return null. */
+function parsePlaceJson(raw: string | string[] | undefined): DiscoveryPlace | null {
+  const str = Array.isArray(raw) ? raw[0] : raw;
+  if (!str) return null;
+  try {
+    return JSON.parse(decodeURIComponent(str)) as DiscoveryPlace;
+  } catch {
+    return null;
+  }
+}
+
+// ── Discovery-place fallback view ─────────────────────────────────────────────
+
+function DiscoveryFallback({ place, city }: { place: DiscoveryPlace; city: string | null }) {
+  const [saved, setSaved] = useState(false);
+  const [pickerVisible, setPickerVisible] = useState(false);
+  const [liveStatus, setLiveStatus] = useState<PlaceLiveStatus | null>(null);
+
+  useEffect(() => {
+    checkSaved('place', place.id)
+      .then(({ saved: s }) => setSaved(s))
+      .catch(() => {});
+  }, [place.id]);
+
+  useEffect(() => {
+    setLiveStatus(null);
+    let cancelled = false;
+    getPlaceLiveStatus(place.name, city)
+      .then((ls) => { if (!cancelled) setLiveStatus(ls); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [place.id, city]);
+
+  const liveOpenNow: boolean | null =
+    liveStatus?.available && typeof liveStatus.openNow === 'boolean'
+      ? liveStatus.openNow
+      : null;
+
+  const accent = categoryColor(place.category);
+
+  const openMap = () => {
+    if (place.lat != null && place.lng != null) {
+      Linking.openURL(
+        `https://www.openstreetmap.org/?mlat=${place.lat}&mlon=${place.lng}&zoom=17`,
+      ).catch(() => {});
+    } else {
+      const q = encodeURIComponent(place.name + (place.address ? ` ${place.address}` : ''));
+      Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${q}`).catch(() => {});
+    }
+  };
+
+  const openDirections = () => {
+    if (place.lat != null && place.lng != null) {
+      Linking.openURL(
+        `https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}`,
+      ).catch(() => {});
+    } else {
+      Linking.openURL(
+        `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(place.name)}`,
+      ).catch(() => {});
+    }
+  };
+
+  return (
+    <SafeAreaView style={fb.safeArea} edges={['bottom']}>
+      <ScrollView style={fb.scroll} contentContainerStyle={fb.content}>
+        {/* Header */}
+        <View style={fb.headerRow}>
+          <View style={[fb.accentDot, { backgroundColor: accent }]} />
+          <View style={{ flex: 1 }}>
+            {place.type ? (
+              <Text style={[fb.type, { color: accent }]}>{capitalize(place.type)}</Text>
+            ) : null}
+            {liveOpenNow != null ? (
+              <Text
+                style={[
+                  fb.openPill,
+                  liveOpenNow
+                    ? { color: '#047857', backgroundColor: '#04785716' }
+                    : { color: '#B91C1C', backgroundColor: '#B91C1C16' },
+                ]}
+              >
+                {liveOpenNow ? 'Open now' : 'Closed now'}
+              </Text>
+            ) : null}
+          </View>
+          <Pressable
+            style={[fb.saveBtn, saved && fb.saveBtnActive]}
+            onPress={() => {
+              const next = !saved;
+              setSaved(next);
+              toggleSave('place', place.id, !next)
+                .then(setSaved)
+                .catch(() => setSaved((s) => !s));
+            }}
+            hitSlop={8}
+          >
+            <Bookmark size={18} color={saved ? color.signal : color.mute} fill={saved ? color.signal : 'none'} />
+          </Pressable>
+        </View>
+
+        {/* Address */}
+        {place.address ? (
+          <View style={fb.infoRow}>
+            <MapPin size={15} color={color.mute} />
+            <Text style={fb.infoText}>{place.address}</Text>
+          </View>
+        ) : null}
+
+        {/* Rating */}
+        {place.rating != null ? (
+          <View style={fb.infoRow}>
+            <Star size={15} color="#F59E0B" fill="#F59E0B" />
+            <Text style={[fb.infoText, { color: color.ink, fontWeight: '600' }]}>
+              {place.rating.toFixed(1)}
+              <Text style={[fb.infoText, { fontWeight: '400' }]}> · OSM community rating</Text>
+            </Text>
+          </View>
+        ) : null}
+
+        {/* Opening hours */}
+        {place.openingHours ? (
+          <View style={fb.infoRow}>
+            <Clock size={15} color={color.mute} />
+            <Text style={fb.infoText}>
+              {place.openingHours}
+              {liveStatus != null && liveOpenNow == null ? (
+                <Text style={fb.lastKnownNote}>  · Last known hours — can't verify live</Text>
+              ) : null}
+            </Text>
+          </View>
+        ) : null}
+
+        {/* Map thumbnail */}
+        {place.lat != null && place.lng != null ? (
+          <Pressable style={fb.mapThumb} onPress={openMap}>
+            <Navigation size={18} color={color.deep} />
+            <View>
+              <Text style={fb.mapThumbTitle}>View on map</Text>
+              <Text style={fb.mapThumbSub}>
+                {place.lat.toFixed(4)}, {place.lng.toFixed(4)}
+              </Text>
+            </View>
+          </Pressable>
+        ) : null}
+
+        {/* Description */}
+        {place.description ? (
+          <View style={fb.section}>
+            <Text style={fb.sectionLabel}>About</Text>
+            <Text style={fb.desc}>{place.description}</Text>
+          </View>
+        ) : null}
+
+        {/* Tags */}
+        {place.tags.length > 0 ? (
+          <View style={fb.section}>
+            <View style={fb.infoRow}>
+              <Tag size={14} color={color.mute} />
+              <Text style={fb.sectionLabel}>Tags</Text>
+            </View>
+            <View style={fb.tagRow}>
+              {place.tags.map((tag) => (
+                <View key={tag} style={[fb.tag, { backgroundColor: accent + '18' }]}>
+                  <Text style={[fb.tagText, { color: accent }]}>{capitalize(tag)}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        ) : null}
+
+        {/* Links */}
+        {(place.website || place.phone) ? (
+          <View style={fb.section}>
+            <Text style={fb.sectionLabel}>Contact</Text>
+            {place.website ? (
+              <Pressable
+                style={fb.linkBtn}
+                onPress={() => place.website && Linking.openURL(place.website).catch(() => {})}
+              >
+                <Globe size={15} color={color.deep} />
+                <Text style={fb.linkText} numberOfLines={1}>Website</Text>
+              </Pressable>
+            ) : null}
+            {place.phone ? (
+              <Pressable
+                style={fb.linkBtn}
+                onPress={() => Linking.openURL(`tel:${place.phone}`).catch(() => {})}
+              >
+                <Phone size={15} color={color.deep} />
+                <Text style={fb.linkText}>{place.phone}</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
+
+        <Text style={fb.attribution}>Place data © OpenStreetMap contributors (ODbL)</Text>
+
+        <PlainBottomFiller />
+      </ScrollView>
+
+      {/* Footer */}
+      <View style={fb.footer}>
+        <Pressable style={fb.dirBtn} onPress={openDirections}>
+          <Navigation size={18} color={color.deep} />
+          <Text style={fb.dirText}>Directions</Text>
+        </Pressable>
+        <Pressable style={fb.wishlistBtn} onPress={() => setPickerVisible(true)}>
+          <ListPlus size={18} color={color.deep} />
+          <Text style={fb.wishlistText}>Save to Trip</Text>
+        </Pressable>
+      </View>
+
+      <TripWishlistPicker
+        place={place}
+        visible={pickerVisible}
+        onClose={() => setPickerVisible(false)}
+        onSaved={() => setPickerVisible(false)}
+      />
+    </SafeAreaView>
+  );
+}
+
+function capitalize(s: string) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 export default function PlaceDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const params = useLocalSearchParams<{ id: string; placeJson?: string; city?: string }>();
+  const id = Array.isArray(params.id) ? params.id[0] : params.id;
+  const city = Array.isArray(params.city) ? params.city[0] : (params.city ?? null);
 
-  const [place, setPlace]           = useState<CanonicalPlace | null | undefined>(undefined);
+  const [canonicalPlace, setCanonicalPlace] = useState<CanonicalPlace | null | undefined>(undefined);
   const [reportOpen, setReportOpen] = useState(false);
 
+  // Parse discovery-place fallback from URL param (set by map/index.tsx placeEntities).
+  const discoveryPlace = parsePlaceJson(params.placeJson);
+
   useEffect(() => {
-    if (!id) { setPlace(null); return; }
-    void getCanonicalPlace(id).then(setPlace);
+    if (!id) { setCanonicalPlace(null); return; }
+    void getCanonicalPlace(id).then(setCanonicalPlace);
   }, [id]);
 
-  // Loading
-  if (place === undefined) {
+  const placeName = canonicalPlace?.name ?? discoveryPlace?.name ?? 'Place';
+
+  // ── Loading ─────────────────────────────────────────────────────────────────
+  if (canonicalPlace === undefined) {
     return (
       <>
         <Stack.Screen options={{ title: 'Place' }} />
@@ -74,63 +320,66 @@ export default function PlaceDetailScreen() {
     );
   }
 
-  // Flag off or not found
-  if (place === null) {
+  // ── Canonical place ─────────────────────────────────────────────────────────
+  if (canonicalPlace !== null) {
+    const entity = buildMapEntity(canonicalPlace);
     return (
       <>
-        <Stack.Screen options={{ title: 'Place' }} />
-        <View style={ps.centered}>
-          <Text style={ps.notAvailableTitle}>Place not available</Text>
-          <Text style={ps.notAvailableSub}>
-            This place can't be shown right now.
-          </Text>
-        </View>
+        <Stack.Screen options={{ title: canonicalPlace.name }} />
+        <SafeAreaView style={ps.safeArea} edges={['bottom']}>
+          <ScrollView style={ps.scroll} contentContainerStyle={ps.scrollContent}>
+            <PlaceCard place={canonicalPlace} />
+            <View style={ps.actionRowWrap}>
+              <MapEntityActionRow entity={entity} />
+            </View>
+            <Pressable
+              testID="place-detail-report-btn"
+              style={ps.reportBtn}
+              onPress={() => setReportOpen(true)}
+            >
+              <Flag size={14} color={color.faint} />
+              <Text style={ps.reportBtnLabel}>Report a problem with this place</Text>
+            </Pressable>
+            <PlainBottomFiller />
+          </ScrollView>
+        </SafeAreaView>
+        <PlaceReportSheet
+          visible={reportOpen}
+          onClose={() => setReportOpen(false)}
+          placeId={canonicalPlace.id}
+          placeName={canonicalPlace.name}
+        />
       </>
     );
   }
 
-  const entity = buildMapEntity(place);
+  // ── Discovery-place fallback ────────────────────────────────────────────────
+  // getCanonicalPlace returned null (non-canonical ID or flag off).
+  // Render from the placeJson payload passed by map/index.tsx.
+  if (discoveryPlace) {
+    return (
+      <>
+        <Stack.Screen options={{ title: discoveryPlace.name }} />
+        <DiscoveryFallback place={discoveryPlace} city={city} />
+      </>
+    );
+  }
 
+  // ── Nothing available ───────────────────────────────────────────────────────
   return (
     <>
-      <Stack.Screen options={{ title: place.name }} />
-
-      <SafeAreaView style={ps.safeArea} edges={['bottom']}>
-        <ScrollView style={ps.scroll} contentContainerStyle={ps.scrollContent}>
-          {/* Main place card */}
-          <PlaceCard place={place} />
-
-          {/* Action row: Save · Directions · Add to Trip · Share */}
-          <View style={ps.actionRowWrap}>
-            <MapEntityActionRow entity={entity} />
-          </View>
-
-          {/* Report button */}
-          <Pressable
-            testID="place-detail-report-btn"
-            style={ps.reportBtn}
-            onPress={() => setReportOpen(true)}
-          >
-            <Flag size={14} color={color.faint} />
-            <Text style={ps.reportBtnLabel}>Report a problem with this place</Text>
-          </Pressable>
-
-          <PlainBottomFiller />
-        </ScrollView>
-      </SafeAreaView>
-
-      {/* Place report sheet */}
-      <PlaceReportSheet
-        visible={reportOpen}
-        onClose={() => setReportOpen(false)}
-        placeId={place.id}
-        placeName={place.name}
-      />
+      <Stack.Screen options={{ title: 'Place' }} />
+      <View style={ps.centered}>
+        <Text style={ps.notAvailableTitle}>Place not available</Text>
+        <Text style={ps.notAvailableSub}>
+          This place can't be shown right now.
+        </Text>
+      </View>
     </>
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+// ── Styles — canonical screen ─────────────────────────────────────────────────
 
 const ps = StyleSheet.create({
   safeArea: {
@@ -179,5 +428,188 @@ const ps = StyleSheet.create({
     ...t.small,
     color: color.faint,
     fontSize: 12,
+  },
+});
+
+// ── Styles — discovery fallback ───────────────────────────────────────────────
+
+const fb = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: color.paperRaised,
+  },
+  scroll: {
+    flex: 1,
+  },
+  content: {
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    gap: space.md,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.sm,
+  },
+  accentDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginTop: 4,
+    flexShrink: 0,
+  },
+  type: {
+    ...t.stamp,
+    fontSize: 11,
+    textTransform: 'capitalize',
+  },
+  openPill: {
+    ...t.stamp,
+    fontSize: 9,
+    fontWeight: '700',
+    paddingHorizontal: space.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    overflow: 'hidden',
+    alignSelf: 'flex-start',
+    marginTop: 4,
+  },
+  saveBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  saveBtnActive: {
+    backgroundColor: color.signal + '18',
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  infoText: {
+    ...t.small,
+    color: color.mute,
+    flex: 1,
+  },
+  lastKnownNote: {
+    ...t.small,
+    color: color.faint,
+    fontSize: 10,
+  },
+  mapThumb: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    backgroundColor: '#E2EDF0',
+    borderRadius: radius.md,
+    padding: space.md,
+  },
+  mapThumbTitle: {
+    ...t.bodyStrong,
+    color: color.deep,
+    fontSize: 13,
+  },
+  mapThumbSub: {
+    ...t.stamp,
+    color: color.mute,
+    fontSize: 10,
+    marginTop: 2,
+  },
+  section: {
+    gap: space.sm,
+  },
+  sectionLabel: {
+    ...t.stamp,
+    color: color.faint,
+    fontSize: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  desc: {
+    ...t.body,
+    color: color.ink,
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  tagRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.sm,
+  },
+  tag: {
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    borderRadius: radius.pill,
+  },
+  tagText: {
+    ...t.stamp,
+    fontSize: 11,
+    textTransform: 'capitalize',
+  },
+  linkBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingVertical: space.sm,
+  },
+  linkText: {
+    ...t.body,
+    color: color.deep,
+    fontSize: 14,
+    flex: 1,
+  },
+  attribution: {
+    ...t.small,
+    color: color.faint,
+    fontSize: 10,
+    textAlign: 'center',
+    marginTop: space.md,
+  },
+  footer: {
+    flexDirection: 'row',
+    gap: space.md,
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    paddingBottom: space.md,
+    borderTopWidth: 1,
+    borderTopColor: color.haze,
+  },
+  dirBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.sm,
+    flex: 1,
+    borderRadius: radius.md,
+    paddingVertical: space.md + 2,
+    borderWidth: 1.5,
+    borderColor: color.deep,
+  },
+  dirText: {
+    ...t.bodyStrong,
+    color: color.deep,
+    fontWeight: '700',
+  },
+  wishlistBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.sm,
+    flex: 1,
+    borderRadius: radius.md,
+    paddingVertical: space.md + 2,
+    borderWidth: 1.5,
+    borderColor: color.deep,
+  },
+  wishlistText: {
+    ...t.bodyStrong,
+    color: color.deep,
+    fontWeight: '700',
+    fontSize: 13,
   },
 });

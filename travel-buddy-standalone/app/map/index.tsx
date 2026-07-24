@@ -540,7 +540,7 @@ function FullScreenMapScreenInner() {
           payload: p,
           // detailRoute drives navigation in MapCarousel and MapEntityPreviewCard;
           // without it the card falls back to the Discover tab stub.
-          detailRoute: `/place/${encodeURIComponent(p.id)}`,
+          detailRoute: `/place/${encodeURIComponent(p.id)}?placeJson=${encodeURIComponent(JSON.stringify(p))}`,
           actionCapabilities: ['save', 'directions', 'add_to_trip', 'share'] as import('../../src/types/mapTypes.ts').MapActionCapability[],
         })),
     [places],
