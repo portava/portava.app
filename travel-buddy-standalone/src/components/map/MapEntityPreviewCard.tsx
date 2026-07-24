@@ -286,6 +286,11 @@ function FriendCard({ entity, onClose }: { entity: MapEntity<CircleMemberLocatio
 function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onClose: () => void }) {
   const place = entity.payload;
   const cfg = MAP_LAYER_CONFIG.places;
+  // attribution may be an array (canonical) or a single string/null (discovery).
+  const attributionList: string[] = Array.isArray((place as any).attribution)
+    ? (place as any).attribution as string[]
+    : [];
+  const detailRoute = entity.detailRoute ?? '/(tabs)/discover';
   return (
     <>
       <View style={s.topRow}>
@@ -316,11 +321,19 @@ function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onC
           </View>
         )}
       </View>
+      {/* Attribution — canonical place sources (OSM / Foursquare etc.) */}
+      {attributionList.length > 0 && (
+        <View style={s.placeAttributionRow}>
+          {attributionList.map((attr, i) => (
+            <Text key={i} style={s.placeAttributionText}>{attr}</Text>
+          ))}
+        </View>
+      )}
       <Pressable
         style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => { onClose(); router.push('/(tabs)/discover' as any); }}
+        onPress={() => { onClose(); router.push(detailRoute as any); }}
       >
-        <Text style={s.ctaText}>View Place</Text>
+        <Text style={s.ctaText}>View details</Text>
         <ArrowRight size={15} color="#fff" />
       </Pressable>
     </>
@@ -574,5 +587,16 @@ const s = StyleSheet.create({
     fontSize: 11,
     color: '#92400E',
     fontWeight: '500',
+  },
+  // Place attribution footer (canonical sources)
+  placeAttributionRow: {
+    marginTop: 4,
+    gap: 2,
+  },
+  placeAttributionText: {
+    fontSize: 10,
+    color: color.faint,
+    fontStyle: 'italic',
+    lineHeight: 14,
   },
 });

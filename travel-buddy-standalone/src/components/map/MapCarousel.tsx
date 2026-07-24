@@ -434,6 +434,10 @@ function FriendCardBody({ entity }: { entity: MapEntity<CircleMemberLocation> })
 function PlaceCardBody({ entity }: { entity: MapEntity<DiscoveryPlace> }) {
   const place = entity.payload;
   const cfg = MAP_LAYER_CONFIG.places;
+  // attribution may be an array (canonical place) or a single string / null (discovery place).
+  const attributionList: string[] = Array.isArray((place as any).attribution)
+    ? (place as any).attribution as string[]
+    : [];
   return (
     <>
       <View style={cs.topRow}>
@@ -474,6 +478,14 @@ function PlaceCardBody({ entity }: { entity: MapEntity<DiscoveryPlace> }) {
           </View>
         )}
       </View>
+      {/* Attribution — canonical place sources (OSM / Foursquare etc.) */}
+      {attributionList.length > 0 && (
+        <View style={cs.attributionRow}>
+          {attributionList.map((attr, i) => (
+            <Text key={i} style={cs.attributionText}>{attr}</Text>
+          ))}
+        </View>
+      )}
     </>
   );
 }
@@ -772,9 +784,9 @@ export function MapEntityCard({
         router.push('/(tabs)/passport' as any);
         break;
       case 'places':
-        // Navigate to the Discover tab — the closest existing destination for
-        // venue/place entities (no dedicated /place/[id] route exists yet).
-        router.push('/(tabs)/discover' as any);
+        // Navigate to the canonical place detail screen when a detailRoute is
+        // present (e.g. /place/abc123), otherwise fall back to the Discover tab.
+        router.push((entity.detailRoute ?? '/(tabs)/discover') as any);
         break;
     }
   };
@@ -1325,6 +1337,18 @@ const cs = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
+  // Place attribution footer (canonical place sources)
+  attributionRow: {
+    marginTop: 4,
+    gap: 1,
+  },
+  attributionText: {
+    fontSize: 9,
+    color: color.faint,
+    fontStyle: 'italic',
+    lineHeight: 13,
+  },
+
   fullDetailLabel: {
     ...t.small,
     fontSize: 11,
