@@ -10,8 +10,11 @@
  * `entity.permissions`.  Block is never rendered for venue/place/gem/trip/
  * event entities even if the capability is present.
  *
- * Phase 2B / 2C wires in-store icon-flip via updateEntityCapabilities once
- * the store supports it; for now the per-action hooks own their state.
+ * After a mutating action (join, save, follow) the component dispatches
+ * updateEntityCapabilities to the map store so the card reflects the new state
+ * on remount (e.g. after a camera pan).  For follow, useFollow already
+ * re-fetches from the server on mount, so the icon is correct without a
+ * capability change; the store dispatch is omitted for that case.
  */
 import React, { useState, useCallback } from 'react';
 import {
@@ -45,6 +48,7 @@ import { rsvpEvent } from '../../services/events.ts';
 import { useFollow } from '../../hooks/useFollow.ts';
 import { useBlockUser } from '../../hooks/useBlockUser.ts';
 import { usePlanPicker } from '../PlanPickerController.tsx';
+import { useOptionalMapStore } from '../../stores/mapStore.tsx';
 import { TripWishlistPicker } from '../discovery/TripWishlistPicker.tsx';
 import type { AddToTripPayload } from '../discovery/TripWishlistPicker.tsx';
 import { ReportSheet } from '../ReportSheet.tsx';
@@ -150,7 +154,7 @@ export function MapEntityActionRow({ entity }: MapEntityActionRowProps) {
  * early-return guard cannot be above hook calls in React).
  */
 function ActionRowInner({ entity }: { entity: MapEntity }) {
-  const caps = entity.actionCapabilities ?? [];
+  const baseCaps = entity.actionCapabilities ?? [];
   const perms = entity.permissions;
   const isPersonEntity = PERSON_TYPES.includes(entity.type);
 
@@ -164,6 +168,15 @@ function ActionRowInner({ entity }: { entity: MapEntity }) {
   const followState = useFollow(userId);
   const { doBlock, loading: blockLoading } = useBlockUser();
   const { open: openPlanPicker } = usePlanPicker();
+
+  // Map store — may be null when the component is rendered outside a map
+  // session (e.g. in unit tests or non-map surfaces).
+  const mapStore = useOptionalMapStore();
+
+  // Effective capabilities: store patch wins over entity's initial caps so
+  // post-mutation state survives card unmount/remount (e.g. camera pan).
+  const caps: typeof baseCaps =
+    (mapStore?.entityCapabilityPatches[entity.id]) ?? baseCaps;
 
   // Sheet visibility — only business state that lives here.
   const [wishlistOpen, setWishlistOpen] = useState(false);
@@ -213,8 +226,14 @@ function ActionRowInner({ entity }: { entity: MapEntity }) {
       Alert.alert('Could not RSVP', (res as any).message ?? 'Please try again.');
     } else {
       Alert.alert("You're going!", 'Your RSVP has been confirmed.');
+      // Remove 'join' from capabilities so the button is hidden on remount
+      // (the user has already RSVPed and shouldn't see the button again).
+      mapStore?.updateEntityCapabilities(
+        entity.id,
+        caps.filter((c) => c !== 'join'),
+      );
     }
-  }, [rawEntityId]);
+  }, [rawEntityId, mapStore, entity.id, caps]);
 
   const handleBlock = useCallback(() => {
     if (!userId) return;
