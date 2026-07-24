@@ -189,10 +189,12 @@ function ActionRowInner({ entity }: { entity: MapEntity }) {
   const [wishlistOpen, setWishlistOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
 
-  // Optimistic RSVP state — flips to true after a successful rsvpEvent call.
-  // Resets when the component unmounts (user navigated away); server is source
-  // of truth on re-mount.
-  const [rsvpDone, setRsvpDone] = useState(false);
+  // Optimistic RSVP state — seeded from the entity payload so that re-opening
+  // the same card within a session (after a successful RSVP) still shows
+  // 'Going'.  For events the payload is EventListItem which carries myRsvp.
+  const [rsvpDone, setRsvpDone] = useState(
+    () => entity.type === 'events' && entityPayload.myRsvp === 'going',
+  );
 
   // ── Button visibility ─────────────────────────────────────────────────────
   const showSave       = caps.includes('save');

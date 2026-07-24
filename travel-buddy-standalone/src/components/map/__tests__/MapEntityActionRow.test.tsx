@@ -388,6 +388,46 @@ describe('MapEntityActionRow', () => {
     });
   });
 
+  // ── Join seeded from payload.myRsvp ────────────────────────────────────────
+
+  it('mounts showing Going (disabled) when payload.myRsvp is going', async () => {
+    const entity = makeEventEntity({
+      payload: {
+        id: 'ev-1', title: 'Jazz Night', startsAt: null, goingCount: 1,
+        priceType: 'free', myRsvp: 'going',
+      },
+    });
+    await render(<MapEntityActionRow entity={entity} />);
+    expect(screen.getByText('Going')).toBeTruthy();
+    expect(screen.queryByText('Join')).toBeNull();
+    const btn = screen.getByTestId('map-action-join');
+    expect(btn.props.accessibilityState?.disabled ?? btn.props.disabled).toBeTruthy();
+  });
+
+  it('mounts showing Join when payload.myRsvp is null', async () => {
+    const entity = makeEventEntity({
+      payload: {
+        id: 'ev-1', title: 'Jazz Night', startsAt: null, goingCount: 0,
+        priceType: 'free', myRsvp: null,
+      },
+    });
+    await render(<MapEntityActionRow entity={entity} />);
+    expect(screen.getByText('Join')).toBeTruthy();
+    expect(screen.queryByText('Going')).toBeNull();
+  });
+
+  it('mounts showing Join when payload.myRsvp is maybe (not going)', async () => {
+    const entity = makeEventEntity({
+      payload: {
+        id: 'ev-1', title: 'Jazz Night', startsAt: null, goingCount: 0,
+        priceType: 'free', myRsvp: 'maybe',
+      },
+    });
+    await render(<MapEntityActionRow entity={entity} />);
+    expect(screen.getByText('Join')).toBeTruthy();
+    expect(screen.queryByText('Going')).toBeNull();
+  });
+
   // ── Grep assertion: no duplicate mutations in src/components/map/ ───────────
 
   it('contains no duplicate save/share/report/block mutation logic in src/components/map/', () => {
