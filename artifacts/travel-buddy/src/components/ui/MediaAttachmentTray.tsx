@@ -4,7 +4,7 @@
  * Each card shows:
  *   - Thumbnail (image) or video-icon overlay
  *   - Remove × button
- *   - Long-press drag handles for reorder
+ *   - Long-press drag to reorder (or tap-based buttons when reduce-motion is on)
  *   - Cover ★ badge (when policy.supportsCover)
  *   - Alt-text input (when policy.supportsAltText)
  *   - Per-item upload progress bar
@@ -12,11 +12,19 @@
  *
  * The component is stateless — all state lives in useMediaComposer.
  */
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, Image, Pressable, TextInput,
-  ActivityIndicator, StyleSheet,
+  ActivityIndicator, StyleSheet, AccessibilityInfo,
 } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  runOnJS,
+  type SharedValue,
+} from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { X, Star, RefreshCw, Video as VideoIcon, GripVertical } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import type { UseMediaComposerReturn, MediaItem } from '../../hooks/useMediaComposer.ts';
@@ -43,41 +51,63 @@ export interface MediaAttachmentTrayProps {
 }
 
 // ---------------------------------------------------------------------------
-// Single card
+// Constants (declared early — referenced by DraggableMediaCard and styles)
 // ---------------------------------------------------------------------------
 
-function MediaCard({
+const THUMB_SIZE = 80;
+/** Width of one card slot (thumbnail + gap) used to compute drag target index. */
+const CARD_STEP = THUMB_SIZE + space.sm;
+
+// ---------------------------------------------------------------------------
+// Reduce-motion hook
+// ---------------------------------------------------------------------------
+
+function useIsReduceMotionEnabled(): boolean {
+  const [enabled, setEnabled] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    AccessibilityInfo.isReduceMotionEnabled().then((v) => {
+      if (alive) setEnabled(v);
+    });
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', (v) => {
+      if (alive) setEnabled(v);
+    });
+    return () => {
+      alive = false;
+      sub.remove();
+    };
+  }, []);
+  return enabled;
+}
+
+// ---------------------------------------------------------------------------
+// Card content (shared between tap-based and drag-based rendering)
+// ---------------------------------------------------------------------------
+
+function MediaCardContent({
   item,
-  index,
-  totalCount,
   showCover,
   showAltText,
-  showReorder,
   onRemove,
-  onMoveBefore,
-  onMoveAfter,
   onCoverPress,
   onAltTextChange,
   onRetry,
+  dragActive,
 }: {
   item: MediaItem;
-  index: number;
-  totalCount: number;
   showCover: boolean;
   showAltText: boolean;
-  showReorder: boolean;
   onRemove: () => void;
-  onMoveBefore: () => void;
-  onMoveAfter: () => void;
   onCoverPress: () => void;
   onAltTextChange: (text: string) => void;
   onRetry: () => void;
+  dragActive: boolean;
 }) {
   const isUploading = item.uploadState === 'uploading';
   const isError = item.uploadState === 'error';
 
   return (
-    <View style={s.card} testID={`media-card-${item.id}`}>
+    <>
       {/* Thumbnail */}
       <View style={s.thumbWrap}>
         <Image source={{ uri: item.uri }} style={s.thumb} resizeMode="cover" />
@@ -130,6 +160,13 @@ function MediaCard({
             />
           </Pressable>
         )}
+
+        {/* Drag active: grip icon overlay */}
+        {dragActive && (
+          <View style={s.gripOverlay} pointerEvents="none">
+            <GripVertical size={20} color="#fff" />
+          </View>
+        )}
       </View>
 
       {/* Alt-text field */}
@@ -149,8 +186,55 @@ function MediaCard({
       {isError && item.uploadError && (
         <Text style={s.errorText} numberOfLines={2}>{item.uploadError}</Text>
       )}
+    </>
+  );
+}
 
-      {/* Reorder handles — only shown when multiple items exist */}
+// ---------------------------------------------------------------------------
+// Tap-based reorder card (reduce-motion fallback)
+// ---------------------------------------------------------------------------
+
+function TapMediaCard({
+  item,
+  index,
+  totalCount,
+  showCover,
+  showAltText,
+  showReorder,
+  onRemove,
+  onMoveBefore,
+  onMoveAfter,
+  onCoverPress,
+  onAltTextChange,
+  onRetry,
+}: {
+  item: MediaItem;
+  index: number;
+  totalCount: number;
+  showCover: boolean;
+  showAltText: boolean;
+  showReorder: boolean;
+  onRemove: () => void;
+  onMoveBefore: () => void;
+  onMoveAfter: () => void;
+  onCoverPress: () => void;
+  onAltTextChange: (text: string) => void;
+  onRetry: () => void;
+}) {
+  return (
+    <View style={s.card} testID={`media-card-${item.id}`}>
+      <MediaCardContent
+        item={item}
+        showCover={showCover}
+        showAltText={showAltText}
+        onRemove={onRemove}
+        onCoverPress={onCoverPress}
+        onAltTextChange={onAltTextChange}
+        onRetry={onRetry}
+        dragActive={false}
+      />
+
+      {/* Tap-based reorder handles — only shown when multiple items exist */}
       {showReorder && totalCount > 1 && (
         <View style={s.reorderRow}>
           <Pressable
@@ -178,7 +262,189 @@ function MediaCard({
 }
 
 // ---------------------------------------------------------------------------
-// Tray
+// Drag-based card (when reduce-motion is off)
+// ---------------------------------------------------------------------------
+
+interface DragSharedState {
+  fromIndex: SharedValue<number>;
+  offsetX: SharedValue<number>;
+}
+
+function DraggableMediaCard({
+  item,
+  index,
+  totalCount,
+  showCover,
+  showAltText,
+  drag,
+  activeIndex,
+  onRemove,
+  onCoverPress,
+  onAltTextChange,
+  onRetry,
+  onDragStart,
+  onDragEnd,
+}: {
+  item: MediaItem;
+  index: number;
+  totalCount: number;
+  showCover: boolean;
+  showAltText: boolean;
+  drag: DragSharedState;
+  activeIndex: number;
+  onRemove: () => void;
+  onCoverPress: () => void;
+  onAltTextChange: (text: string) => void;
+  onRetry: () => void;
+  onDragStart: (fromIndex: number) => void;
+  onDragEnd: (fromIndex: number, toIndex: number) => void;
+}) {
+  const isActive = activeIndex === index;
+
+  const animStyle = useAnimatedStyle(() => {
+    if (drag.fromIndex.value === index) {
+      return {
+        transform: [{ translateX: drag.offsetX.value }],
+        zIndex: 10,
+        opacity: 0.9,
+      };
+    }
+    return { transform: [{ translateX: 0 }], zIndex: 1, opacity: 1 };
+  });
+
+  const gesture = Gesture.Simultaneous(
+    Gesture.LongPress()
+      .minDuration(400)
+      .onStart(() => {
+        'worklet';
+        drag.fromIndex.value = index;
+        drag.offsetX.value = 0;
+        runOnJS(onDragStart)(index);
+      }),
+    Gesture.Pan()
+      .onUpdate((e) => {
+        'worklet';
+        if (drag.fromIndex.value >= 0) {
+          drag.offsetX.value = e.translationX;
+        }
+      })
+      .onEnd(() => {
+        'worklet';
+        const from = drag.fromIndex.value;
+        if (from >= 0) {
+          const steps = Math.round(drag.offsetX.value / CARD_STEP);
+          const to = Math.max(0, Math.min(totalCount - 1, from + steps));
+          drag.fromIndex.value = -1;
+          drag.offsetX.value = withSpring(0, { duration: 200 });
+          runOnJS(onDragEnd)(from, to);
+        }
+      })
+      .onFinalize(() => {
+        'worklet';
+        // Ensure state is reset even if gesture is cancelled
+        if (drag.fromIndex.value >= 0) {
+          drag.fromIndex.value = -1;
+          drag.offsetX.value = 0;
+        }
+      }),
+  );
+
+  return (
+    <GestureDetector gesture={gesture}>
+      <Animated.View style={[s.card, animStyle]} testID={`media-card-${item.id}`}>
+        <MediaCardContent
+          item={item}
+          showCover={showCover}
+          showAltText={showAltText}
+          onRemove={onRemove}
+          onCoverPress={onCoverPress}
+          onAltTextChange={onAltTextChange}
+          onRetry={onRetry}
+          dragActive={isActive}
+        />
+      </Animated.View>
+    </GestureDetector>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Draggable tray (reduce-motion off)
+// ---------------------------------------------------------------------------
+
+function DraggableTray({
+  items,
+  policy,
+  removeItem,
+  reorderItems,
+  setCover,
+  setAltText,
+  retryUpload,
+  testID,
+}: {
+  items: MediaItem[];
+  policy: UseMediaComposerReturn['policy'];
+  removeItem: (id: string) => void;
+  reorderItems: (from: number, to: number) => void;
+  setCover: (id: string) => void;
+  setAltText: (id: string, text: string) => void;
+  retryUpload: (id: string) => void;
+  testID?: string;
+}) {
+  const scrollRef = useRef<ScrollView>(null);
+  const [activeIndex, setActiveIndex] = useState(-1);
+
+  // Shared values for gesture tracking (stable across renders)
+  const fromIndex = useSharedValue(-1);
+  const offsetX = useSharedValue(0);
+  const drag: DragSharedState = { fromIndex, offsetX };
+
+  const handleDragStart = (idx: number) => {
+    setActiveIndex(idx);
+    // Disable scroll during drag by scrolling to current position
+    scrollRef.current?.scrollTo({ animated: false });
+  };
+
+  const handleDragEnd = (from: number, to: number) => {
+    setActiveIndex(-1);
+    if (from !== to) {
+      reorderItems(from, to);
+    }
+  };
+
+  return (
+    <ScrollView
+      ref={scrollRef}
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={s.tray}
+      contentContainerStyle={s.trayContent}
+      scrollEnabled={activeIndex < 0}
+      testID={testID ?? 'media-attachment-tray'}
+    >
+      {items.map((item, index) => (
+        <DraggableMediaCard
+          key={item.id}
+          item={item}
+          index={index}
+          totalCount={items.length}
+          showCover={policy.supportsCover}
+          showAltText={policy.supportsAltText}
+          drag={drag}
+          activeIndex={activeIndex}
+          onRemove={() => removeItem(item.id)}
+          onCoverPress={() => setCover(item.id)}
+          onAltTextChange={(text) => setAltText(item.id, text)}
+          onRetry={() => retryUpload(item.id)}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+        />
+      ))}
+    </ScrollView>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tray (public)
 // ---------------------------------------------------------------------------
 
 export function MediaAttachmentTray({
@@ -187,45 +453,61 @@ export function MediaAttachmentTray({
   testID,
 }: MediaAttachmentTrayProps) {
   const { policy, items, removeItem, reorderItems, setCover, setAltText, retryUpload } = composer;
+  const reduceMotion = useIsReduceMotionEnabled();
 
   if (items.length === 0) return null;
 
   const shouldShowReorder = showReorder ?? policy.supportsGallery;
 
+  // Reduce-motion: fall back to tap-based buttons
+  if (reduceMotion) {
+    return (
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={s.tray}
+        contentContainerStyle={s.trayContent}
+        testID={testID ?? 'media-attachment-tray'}
+      >
+        {items.map((item, index) => (
+          <TapMediaCard
+            key={item.id}
+            item={item}
+            index={index}
+            totalCount={items.length}
+            showCover={policy.supportsCover}
+            showAltText={policy.supportsAltText}
+            showReorder={shouldShowReorder}
+            onRemove={() => removeItem(item.id)}
+            onMoveBefore={() => reorderItems(index, index - 1)}
+            onMoveAfter={() => reorderItems(index, index + 1)}
+            onCoverPress={() => setCover(item.id)}
+            onAltTextChange={(text) => setAltText(item.id, text)}
+            onRetry={() => retryUpload(item.id)}
+          />
+        ))}
+      </ScrollView>
+    );
+  }
+
+  // Default: drag-to-reorder
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={s.tray}
-      contentContainerStyle={s.trayContent}
-      testID={testID ?? 'media-attachment-tray'}
-    >
-      {items.map((item, index) => (
-        <MediaCard
-          key={item.id}
-          item={item}
-          index={index}
-          totalCount={items.length}
-          showCover={policy.supportsCover}
-          showAltText={policy.supportsAltText}
-          showReorder={shouldShowReorder}
-          onRemove={() => removeItem(item.id)}
-          onMoveBefore={() => reorderItems(index, index - 1)}
-          onMoveAfter={() => reorderItems(index, index + 1)}
-          onCoverPress={() => setCover(item.id)}
-          onAltTextChange={(text) => setAltText(item.id, text)}
-          onRetry={() => retryUpload(item.id)}
-        />
-      ))}
-    </ScrollView>
+    <DraggableTray
+      items={items}
+      policy={policy}
+      removeItem={removeItem}
+      reorderItems={reorderItems}
+      setCover={setCover}
+      setAltText={setAltText}
+      retryUpload={retryUpload}
+      testID={testID}
+    />
   );
 }
 
 // ---------------------------------------------------------------------------
 // Styles
 // ---------------------------------------------------------------------------
-
-const THUMB_SIZE = 80;
 
 const s = StyleSheet.create({
   tray: {
@@ -324,6 +606,12 @@ const s = StyleSheet.create({
   },
   coverBtnActive: {
     backgroundColor: color.signal,
+  },
+  gripOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.25)',
   },
   altTextInput: {
     width: THUMB_SIZE,

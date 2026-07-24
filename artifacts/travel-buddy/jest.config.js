@@ -55,7 +55,10 @@ module.exports = {
   // RNTL's act() saves/restores true instead of undefined between tests.
   // Companion rule: never wrap an Alert button's onPress in act() — see
   // src/components/__tests__/TESTING.md for both rules and the reasoning.
-  setupFilesAfterEnv: ['<rootDir>/src/jest.setup.ts'],
+  setupFilesAfterEnv: [
+    'react-native-gesture-handler/jestSetup',
+    '<rootDir>/src/jest.setup.ts',
+  ],
   moduleNameMapper: {
     // AsyncStorage's native module is null under jest; map every import to the
     // official jest mock so no test file needs a per-file jest.mock.
