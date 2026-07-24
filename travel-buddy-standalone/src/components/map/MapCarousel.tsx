@@ -678,6 +678,8 @@ function MapEntityCard({
   scrollX: SharedValue<number>;
   onPress: () => void;
 }) {
+  const { setSelectedEntityId } = useMapStore();
+
   const animStyle = useAnimatedStyle(() => {
     const inputRange = [
       (index - 1) * SNAP_INTERVAL,
@@ -723,6 +725,10 @@ function MapEntityCard({
   };
 
   const navigateToDetail = () => {
+    // Capture selectedEntityId in the store BEFORE pushing so that when the
+    // user navigates back, useFocusEffect can restore the map to this entity.
+    setSelectedEntityId(entity.id);
+
     switch (entity.type) {
       case 'buddies': {
         const b = entity.payload as BuddyProfile;
@@ -791,7 +797,13 @@ function MapEntityCard({
 // ── MapCarousel public ref ────────────────────────────────────────────────────
 
 export interface MapCarouselRef {
-  scrollToIndex: (index: number) => void;
+  /**
+   * Scroll the FlatList to the given index.
+   * @param index  - zero-based card index
+   * @param animated - whether to animate the scroll (default true).
+   *                   Pass false for instant restoration (e.g. back-navigation).
+   */
+  scrollToIndex: (index: number, animated?: boolean) => void;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -904,8 +916,8 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
     ).current;
 
     useImperativeHandle(ref, () => ({
-      scrollToIndex: (index: number) => {
-        flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+      scrollToIndex: (index: number, animated = true) => {
+        flatListRef.current?.scrollToIndex({ index, animated, viewPosition: 0.5 });
       },
     }));
 
