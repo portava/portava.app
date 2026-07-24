@@ -92,6 +92,8 @@ export interface SubmitModerationReportPayload {
   category:    ModerationCategory | PlaceReportCategory;
   details?:    string;
   threadId?:   string;
+  /** Optional photo evidence URL — used by safety_concern reports. */
+  imageUrl?:   string;
 }
 
 export interface ModerationReportResult {

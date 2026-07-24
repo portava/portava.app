@@ -1680,6 +1680,7 @@ router.post("/discovery/community", async (req, res) => {
     rating,
     lat,
     lng,
+    photos,
   } = req.body as Record<string, unknown>;
 
   if (!city || typeof city !== "string" || city.trim().length === 0) {
@@ -1769,6 +1770,13 @@ router.post("/discovery/community", async (req, res) => {
   }
 
   try {
+    // Validate and sanitise the optional photos array (max 3 CDN URL strings).
+    const photosArr: string[] | null = Array.isArray(photos)
+      ? (photos as unknown[])
+          .filter((p): p is string => typeof p === "string" && p.length > 0)
+          .slice(0, 3)
+      : null;
+
     const { data, error } = await sc
       .from("discovery_places")
       .insert({
@@ -1787,6 +1795,7 @@ router.post("/discovery/community", async (req, res) => {
         source:       "traveler",
         status:       "active",
         verified:     false,
+        photos:       photosArr && photosArr.length > 0 ? photosArr : null,
       })
       .select("id, name, city, place_type, status, created_at")
       .single();

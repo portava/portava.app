@@ -40,9 +40,9 @@ All content-type keys are drawn from `src/lib/contentMediaPolicy.ts` (spec §64)
 | `review` (up to 3 evidence photos) | ⚠️ Client ready | Policy + hook wired. Server photos column being added. |
 | `buddyApplication` (up to 3 profile photos) | ⚠️ Client ready | Policy + hook wired. Server gallery_urls field being added to apply endpoint. |
 | `hiddenGem` (single representative photo) | ⚠️ Client ready | Policy + hook wired. `submitMachine.ts` has `imageUrl` stub. Server image_url column being added. |
-| **Skipped flows — no server media column** | | |
-| `communityPlace` (community place submission photo) | ❌ Skipped | Policy defined for completeness. Current `/api/places` endpoint has no `imageUrl` column. Documented in §3 below. |
-| `safetyReport` (safety-report photo evidence) | ❌ Skipped | Policy defined for completeness. Current safety-report endpoint has no `imageUrl` column. Documented in §3 below. |
+| **Skipped flows — now implemented** | | |
+| `communityPlace` (community place submission photo) | ✅ Implemented | `useMediaComposer('communityPlace')` wired into `SubmitPlaceSheet.tsx`. Uploaded URLs sent as `photos: string[]` on `POST /api/discovery/community`. Up to 3 images, gallery mode. |
+| `safetyReport` (safety-report photo evidence) | ✅ Implemented | `useMediaComposer('safetyReport')` wired into `ReportSheet.tsx` (shown when user selects `safety_concern`). Uploaded URL sent as `imageUrl` on `POST /api/moderation/report`. Single image. |
 
 ---
 
@@ -55,6 +55,7 @@ All content-type keys are drawn from `src/lib/contentMediaPolicy.ts` (spec §64)
 | `useMediaComposer.permissions.component.test.tsx` | jest-expo | Library permission denied → denied UI; camera denied → denied UI; iOS limited (accessPrivileges='limited') → Alert fires after pick, asset still delivered |
 | `contentMediaPolicy.limits.test.ts` | node:test | (updated) All 6 new optional-photo + skipped-flow policy keys in the registry completeness and required-fields checks; `supportsGallery→supportsCover` invariant |
 | `useMediaComposer.optionalPhoto.component.test.tsx` | jest-expo | For each of `tripCover`, `review`, `buddyApplication`, `hiddenGem`: primaryItem=null before pick (text-only path); URI set after pick; maxItems enforced; clearAll resets to text-only |
+| `useMediaComposer.communityPlaceSafetyReport.component.test.tsx` | jest-expo | For `communityPlace`: text-only path, pick path, maxItems=3, canAddMore, clearAll. For `safetyReport`: text-only path, pick path, maxItems=1, canAddMore, clearAll. |
 | `useMediaComposer.uploadUrl.component.test.tsx` | jest-expo | Upload URL path for `tripCover`, `review`, `buddyApplication`, `hiddenGem` — **4 tests skipped** (see §Testing Gap below) |
 | Previously existing | mixed | `useMediaComposer.limits.component.test.tsx`, `MediaAttachmentTray.addremove`, `MediaSourceSheet.allowsEditing`, `MemoriesTab.photoUpload{Fail,Success}`, `HighlightComposer.reopenPreservesMedia`, `PostcardComposer.emptyStatePick`, `useMessageMediaPicker.validation` |
 

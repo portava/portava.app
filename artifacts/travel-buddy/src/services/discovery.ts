@@ -242,6 +242,8 @@ export interface SubmitPlacePayload {
   /** Optional coordinates — when present, the place appears as a pin on the For You map. */
   lat?: number | null;
   lng?: number | null;
+  /** Optional photos attached to the place submission (up to 3 CDN URLs). */
+  photos?: string[];
 }
 
 export interface SubmitPlaceResult {

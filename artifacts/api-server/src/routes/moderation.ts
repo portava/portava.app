@@ -48,6 +48,8 @@ const ReportSchema = z.object({
   details:     z.string().max(500).optional().nullable(),
   /** Only for message reports in E2EE threads */
   threadId:    z.string().uuid().optional().nullable(),
+  /** Optional photo evidence URL for safety_concern reports. */
+  imageUrl:    z.string().url().max(2048).optional().nullable(),
 });
 
 // ── Helper: resolve subject_user_id from the relevant table ───────────────────
@@ -171,7 +173,7 @@ router.post("/moderation/report", asyncHandler(async (req, res) => {
     return;
   }
 
-  const { subjectType, subjectId, category, details, threadId } = parsed.data;
+  const { subjectType, subjectId, category, details, threadId, imageUrl } = parsed.data;
 
   // Self-report guard
   if (subjectType === "user" && subjectId === user.id) {
@@ -223,6 +225,11 @@ router.post("/moderation/report", asyncHandler(async (req, res) => {
   if (subjectType === "message" && threadId) {
     insertRow.thread_id = threadId;
     // TODO(e2ee-report-attachment): recipient device can attach decrypted content here
+  }
+
+  // Optional photo evidence (safety_concern reports).
+  if (imageUrl) {
+    insertRow.image_url = imageUrl;
   }
 
   const { data: report, error } = await sc

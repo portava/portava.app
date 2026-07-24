@@ -341,7 +341,11 @@ export function useMediaComposer(policyKey: ContentPolicyKey): UseMediaComposerR
   }, []);
 
   const uploadAll = useCallback(async (): Promise<Map<string, MediaUploadResult | null>> => {
-    const ids = itemsRef.current.filter((it) => it.uploadState === 'idle').map((it) => it.id);
+    // Read idle IDs from the snapshot ref — avoids the setItems-as-reader race
+    // under React 19 concurrent mode (same approach as uploadItem uses itemsRef.current).
+    const ids = itemsRef.current
+      .filter((it) => it.uploadState === 'idle')
+      .map((it) => it.id);
 
     const results = await Promise.all(ids.map((id) => uploadItem(id)));
     const map = new Map<string, MediaUploadResult | null>();

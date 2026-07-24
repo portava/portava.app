@@ -25,6 +25,8 @@ import {
 } from '../services/moderation.ts';
 import { blockUser, unblockUser } from '../services/blocks.ts';
 import { useBlockedIds } from '../context/BlockedIdsContext.tsx';
+import { useMediaComposer } from '../hooks/useMediaComposer.ts';
+import { MediaPickerButton } from './ui/MediaPickerButton.tsx';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -74,12 +76,16 @@ export function ReportSheet({
   const { blockedIds, addBlock, removeBlock } = useBlockedIds();
   const isBlocked = subjectUserId ? blockedIds.has(subjectUserId) : false;
 
+  // Optional photo evidence — only surfaced when the user picks 'safety_concern'.
+  const safetyPhotoComposer = useMediaComposer('safetyReport');
+
   function reset() {
     setStep(1);
     setCategory(null);
     setDetails('');
     setSubmitting(false);
     setBlockBusy(false);
+    safetyPhotoComposer.clearAll();
   }
 
   function handleClose() {
@@ -90,12 +96,33 @@ export function ReportSheet({
   async function handleSubmit() {
     if (!category || submitting) return;
     setSubmitting(true);
+
+    // For safety concerns, ensure the attached photo URL is included even on retry
+    // (uploadAll only uploads idle items; already-uploaded items carry uploadedUrl).
+    let imageUrl: string | undefined;
+    if (category === 'safety_concern' && safetyPhotoComposer.items.length > 0) {
+      // Check for an already-uploaded item first (retry path).
+      const doneItem = safetyPhotoComposer.items.find(
+        (i) => i.uploadState === 'done' && i.uploadedUrl,
+      );
+      if (doneItem?.uploadedUrl) {
+        imageUrl = doneItem.uploadedUrl;
+      } else {
+        // Upload idle item (first attempt).
+        const uploadResults = await safetyPhotoComposer.uploadAll();
+        for (const res of uploadResults.values()) {
+          if (res?.ok && res.url) { imageUrl = res.url; break; }
+        }
+      }
+    }
+
     const res = await submitModerationReport({
       subjectType,
       subjectId,
       category,
       details: details.trim() || undefined,
       threadId: threadId ?? undefined,
+      imageUrl,
     });
     setSubmitting(false);
     if (res.ok) {
@@ -204,6 +231,23 @@ export function ReportSheet({
                 textAlignVertical="top"
               />
               <Text style={rs.charCount}>{charCount}/500</Text>
+
+              {/* Optional photo evidence — shown only for safety concerns */}
+              {category === 'safety_concern' && (
+                <View style={rs.photoRow}>
+                  <Text style={rs.photoLabel}>Photo evidence (optional)</Text>
+                  <MediaPickerButton
+                    composer={safetyPhotoComposer}
+                    label={safetyPhotoComposer.items.length > 0 ? 'Replace photo' : 'Add photo'}
+                  />
+                  {safetyPhotoComposer.items.length > 0 && (
+                    <Text style={rs.photoName} numberOfLines={1}>
+                      {safetyPhotoComposer.items[0]?.fileName ?? 'Photo attached'}
+                    </Text>
+                  )}
+                </View>
+              )}
+
               <Pressable
                 testID="report-sheet-submit"
                 style={[rs.primaryBtn, submitting && rs.btnDisabled]}
@@ -351,6 +395,15 @@ const rs = StyleSheet.create({
   doneRow:  { alignItems: 'center', paddingVertical: space.md },
   doneIcon: { fontSize: 38, marginBottom: space.sm },
   doneSub:  { ...t.body, color: color.mute, textAlign: 'center' },
+
+  photoRow: {
+    marginTop: space.sm,
+    marginBottom: space.xs,
+    gap: 4,
+  },
+  photoLabel: { ...t.small, color: color.mute, fontWeight: '600', marginBottom: 2 },
+  photoPickerBtn: {},
+  photoName: { ...t.small, color: color.signal, fontSize: 12 },
 
   safetyBanner: {
     flexDirection: 'row',

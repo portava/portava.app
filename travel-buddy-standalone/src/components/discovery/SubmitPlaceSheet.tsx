@@ -19,6 +19,9 @@ import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { submitCommunityPlace } from '../../services/discovery.ts';
 import { GpsLocationCapture } from '../location/GpsLocationCapture.tsx';
 import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
+import { useMediaComposer } from '../../hooks/useMediaComposer.ts';
+import { MediaPickerButton } from '../ui/MediaPickerButton.tsx';
+import { MediaAttachmentTray } from '../ui/MediaAttachmentTray.tsx';
 
 const CATEGORIES = [
   'hidden_gem', 'food', 'nightlife', 'activities',
@@ -39,6 +42,7 @@ interface SubmitPlaceSheetProps {
 
 export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: SubmitPlaceSheetProps) {
   const insets = useSafeAreaInsets();
+  const composer = useMediaComposer('communityPlace');
   const [placeType, setPlaceType]       = useState<'hidden_gem' | 'traveler_pick'>('hidden_gem');
   const [name, setName]                 = useState('');
   const [category, setCategory]         = useState('hidden_gem');
@@ -72,6 +76,7 @@ export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: Submit
     setError(null);
     setSuccess(false);
     setPinned(false);
+    composer.clearAll();
   };
 
   const handleClose = () => {
@@ -97,6 +102,20 @@ export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: Submit
     setSubmitting(true);
     setError(null);
 
+    // Collect already-uploaded URLs (items that were uploaded in a prior attempt).
+    const alreadyUploaded = composer.items
+      .filter((i) => i.uploadState === 'done' && i.uploadedUrl)
+      .map((i) => i.uploadedUrl!);
+
+    // Upload any remaining idle items and collect new CDN URLs.
+    const uploadResults = await composer.uploadAll();
+    const newlyUploaded: string[] = [];
+    for (const res of uploadResults.values()) {
+      if (res?.ok && res.url) newlyUploaded.push(res.url);
+    }
+
+    const photos = [...new Set([...alreadyUploaded, ...newlyUploaded])];
+
     const result = await submitCommunityPlace({
       city:         city.trim(),
       name:         name.trim(),
@@ -109,6 +128,7 @@ export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: Submit
       rating:       rating,
       lat:          latVal,
       lng:          lngVal,
+      photos:       photos.length > 0 ? photos : undefined,
     });
 
     setSubmitting(false);
@@ -314,6 +334,17 @@ export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: Submit
                       }
                     }}
                   />
+                </View>
+              )}
+
+              {/* Photos (optional — up to 3) */}
+              <Text style={styles.label}>Photos <Text style={styles.optional}>(optional)</Text></Text>
+              {composer.items.length > 0 && (
+                <MediaAttachmentTray composer={composer} />
+              )}
+              {composer.canAddMore && (
+                <View style={styles.photoPickerBtn}>
+                  <MediaPickerButton composer={composer} label="Add photo" />
                 </View>
               )}
 
@@ -602,6 +633,15 @@ const styles = StyleSheet.create({
     color: color.mute,
     textAlign: 'center',
     lineHeight: 21,
+  },
+  optional: {
+    color: color.mute,
+    fontWeight: '400',
+    textTransform: 'none',
+  },
+  photoPickerBtn: {
+    marginTop: space.xs,
+    marginBottom: space.xs,
   },
 });
 
