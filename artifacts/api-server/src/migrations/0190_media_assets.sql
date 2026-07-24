@@ -1,4 +1,4 @@
--- Migration 0189: canonical media layer + media moderation subject + flag
+-- Migration 0190: canonical media layer + media moderation subject + flag
 --
 -- Phase 1.5 of the media Phase 0 audit. Adds:
 --   1. media_assets       — one canonical row per uploaded file (spec §9)
