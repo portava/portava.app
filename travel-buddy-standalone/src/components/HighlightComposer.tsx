@@ -195,6 +195,14 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
           onClose();
           return;
         }
+        if (up.errorKind === 'rate_limited') {
+          setError('Too many uploads — please wait a moment and try again.');
+          return;
+        }
+        if (up.errorKind === 'invalid_payload') {
+          setError("This file couldn't be read — try a different photo.");
+          return;
+        }
         setError(up.message ?? 'Media upload failed.');
         return;
       }

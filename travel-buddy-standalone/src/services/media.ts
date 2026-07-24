@@ -65,7 +65,9 @@ export type MediaErrorKind =
   | 'invalid_type'
   | 'too_large'
   | 'read_failed'
-  | 'upload_failed';
+  | 'upload_failed'
+  | 'rate_limited'
+  | 'invalid_payload';
 
 export interface MediaUploadResult {
   ok: boolean;
@@ -75,6 +77,14 @@ export interface MediaUploadResult {
   message?: string;
   /** rich detail for debugging per spec (never fake "could not upload") */
   detail?: Record<string, unknown>;
+  /** Server-generated thumbnail URL (null when not yet processed or not applicable). */
+  thumbnailUrl?: string | null;
+  /** Intrinsic width of the uploaded media in pixels (null when unavailable). */
+  width?: number | null;
+  /** Intrinsic height of the uploaded media in pixels (null when unavailable). */
+  height?: number | null;
+  /** True when the server has finished post-processing (thumbnails, transcoding). */
+  processed?: boolean;
 }
 
 function apiBase(): string {
@@ -202,6 +212,20 @@ export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMed
     if (apiRes.status === 401) {
       return { ok: false, url: null, mediaType: null, errorKind: 'unauthenticated', message: 'Session expired — please sign in again.' };
     }
+    // 429 or explicit rate_limited code from the server.
+    if (apiRes.status === 429 || (body as any)?.error === 'rate_limited') {
+      return {
+        ok: false, url: null, mediaType: null, errorKind: 'rate_limited',
+        message: (body as any)?.message ?? 'Too many uploads — please wait a moment and try again.',
+      };
+    }
+    // invalid_payload: the file was unreadable or malformed on the server side.
+    if ((body as any)?.error === 'invalid_payload') {
+      return {
+        ok: false, url: null, mediaType: null, errorKind: 'invalid_payload',
+        message: (body as any)?.message ?? "This file couldn't be read — try a different photo.",
+      };
+    }
     return {
       ok: false, url: null, mediaType: null, errorKind: 'upload_failed',
       message: (body as any)?.message ?? `Upload failed (HTTP ${apiRes.status})`,
@@ -215,7 +239,15 @@ export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMed
     return { ok: false, url: null, mediaType: null, errorKind: 'upload_failed', message: 'Upload succeeded but no URL returned' };
   }
 
-  return { ok: true, url, mediaType: mime };
+  return {
+    ok: true,
+    url,
+    mediaType: mime,
+    thumbnailUrl: (body as any)?.thumbnailUrl ?? null,
+    width: (body as any)?.width ?? null,
+    height: (body as any)?.height ?? null,
+    processed: (body as any)?.processed ?? false,
+  };
 }
 
 /** Best-effort cleanup: remove an uploaded object if post creation later fails. */

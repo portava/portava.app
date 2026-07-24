@@ -45,6 +45,8 @@ export interface UseMessageMediaPickerReturn {
   media: PendingMediaAttachment | null;
   uploadResult: MediaUploadResult | null;
   uploadProgress: number;
+  /** Actionable error message set when the upload fails (rate_limited / invalid_payload / generic). */
+  uploadError: string | null;
   pickFromLibrary: () => Promise<void>;
   pickFromCamera: () => Promise<void>;
   pickVideo: () => Promise<void>;
@@ -54,11 +56,18 @@ export interface UseMessageMediaPickerReturn {
   clearMedia: () => void;
 }
 
+/** User-facing messages for upload-specific error kinds in message threads. */
+const MESSAGE_UPLOAD_ERROR_MESSAGES: Record<string, string> = {
+  rate_limited: 'Too many uploads — please wait a moment and try again.',
+  invalid_payload: "This file couldn't be read — try a different photo.",
+};
+
 export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
   const [state, setState] = useState<PickerUploadState>('idle');
   const [media, setMedia] = useState<PendingMediaAttachment | null>(null);
   const [uploadResult, setUploadResult] = useState<MediaUploadResult | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const cancelledRef = useRef(false);
 
@@ -252,10 +261,16 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
     if (cancelledRef.current) return null;
 
     if (!result.ok || !result.url) {
+      const msg =
+        MESSAGE_UPLOAD_ERROR_MESSAGES[result.errorKind ?? ''] ??
+        result.message ??
+        'Upload failed. Please try again.';
+      setUploadError(msg);
       setState('failed');
       return null;
     }
 
+    setUploadError(null);
     setUploadProgress(1);
     const mediaTypeNormalized: 'image' | 'video' =
       (result.mediaType ?? '').startsWith('video/') ? 'video' : 'image';
@@ -263,7 +278,7 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
     const uploadRes: MediaUploadResult = {
       url: result.url,
       mediaType: mediaTypeNormalized,
-      thumbnailUrl: null, // thumbnail generation is server-side / future
+      thumbnailUrl: result.thumbnailUrl ?? null,
       durationSeconds: media.duration != null ? Math.round(media.duration) : null,
     };
     setUploadResult(uploadRes);
@@ -278,6 +293,7 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
     setMedia(null);
     setUploadResult(null);
     setUploadProgress(0);
+    setUploadError(null);
     setState('idle');
   }, []);
 
@@ -296,6 +312,7 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
     setMedia(null);
     setUploadResult(null);
     setUploadProgress(0);
+    setUploadError(null);
     setState('idle');
   }, []);
 
@@ -304,6 +321,7 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
     media,
     uploadResult,
     uploadProgress,
+    uploadError,
     pickFromLibrary,
     pickFromCamera,
     pickVideo,

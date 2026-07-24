@@ -152,7 +152,11 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
     setUploadingCover(false);
 
     if (!uploadResult.ok || !uploadResult.url) {
-      setUploadError(uploadResult.message ?? 'Upload failed. Try again.');
+      const uploadMsg =
+        uploadResult.errorKind === 'rate_limited' ? 'Too many uploads — please wait a moment and try again.' :
+        uploadResult.errorKind === 'invalid_payload' ? "This file couldn't be read — try a different photo." :
+        (uploadResult.message ?? 'Upload failed. Try again.');
+      setUploadError(uploadMsg);
       setCoverLocalUri(null);
       setCoverMediaType(null);
       return;

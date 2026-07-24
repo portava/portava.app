@@ -1963,7 +1963,7 @@ export default function TelegraphThread() {
               {mediaPicker.state === 'uploading'
                 ? `Uploading… ${Math.round((mediaPicker.uploadProgress ?? 0) * 100)}%`
                 : mediaPicker.state === 'failed'
-                ? 'Upload failed — tap retry'
+                ? (mediaPicker.uploadError ?? 'Upload failed — tap retry')
                 : mediaPicker.media.mediaType === 'video' ? 'Video attached' : 'Image attached'}
             </Text>
           </View>
