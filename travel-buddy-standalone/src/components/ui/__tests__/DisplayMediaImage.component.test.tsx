@@ -21,6 +21,19 @@ import TestRenderer, { act } from 'react-test-renderer';
 import { DisplayMediaImage, AvatarImage } from '../DisplayMediaImage.tsx';
 import * as MediaSourceModule from '../../../lib/mediaSource.ts';
 
+// ── mediaSource mock ─────────────────────────────────────────────────────────
+// Default: flag-OFF fast path — returns { uri } unchanged.
+// Individual tests override this to simulate flag-ON relay behaviour.
+
+const mockMediaSource = jest.fn(async (url: string | null | undefined) =>
+  url ? { uri: url } : { uri: '' },
+);
+
+jest.mock('../../../lib/mediaSource.ts', () => ({
+  ...jest.requireActual('../../../lib/mediaSource.ts'),
+  mediaSource: (...args: any[]) => mockMediaSource(...args),
+}));
+
 // ── expo-image mock ──────────────────────────────────────────────────────────
 
 jest.mock('expo-image', () => {
@@ -192,14 +205,10 @@ describe('DisplayMediaImage', () => {
 
 describe('AvatarImage', () => {
   beforeEach(() => {
-    // Default: flag-OFF fast path — mediaSource returns { uri } unchanged.
-    jest.spyOn(MediaSourceModule, 'mediaSource').mockImplementation(
-      async (url) => (url ? { uri: url } : { uri: '' }),
+    // Restore default flag-OFF behaviour between tests.
+    mockMediaSource.mockImplementation(async (url: string | null | undefined) =>
+      url ? { uri: url } : { uri: '' },
     );
-  });
-
-  afterEach(() => {
-    jest.restoreAllMocks();
   });
 
   it('renders initials when uri is null and user has a name', () => {
@@ -256,8 +265,9 @@ describe('AvatarImage', () => {
   });
 
   it('passes relay URL + auth headers to expo-image when flag is ON', async () => {
+    // Simulate flag-ON: mediaSource rewrites to the relay endpoint and adds auth.
     const relayUrl = 'https://api.example.com/api/media/file/avatars/user123.jpg';
-    jest.spyOn(MediaSourceModule, 'mediaSource').mockResolvedValueOnce({
+    mockMediaSource.mockResolvedValueOnce({
       uri: relayUrl,
       headers: { Authorization: 'Bearer test-token' },
     });
@@ -271,21 +281,25 @@ describe('AvatarImage', () => {
           size={40}
         />,
       );
+      // Allow the mediaSource() promise to settle.
       await Promise.resolve();
     });
 
     const imgs = findExpoImages(tr.root);
     expect(imgs.length).toBeGreaterThan(0);
+    // The source prop should use the relay URL, not the original Supabase URL.
     const src = JSON.parse(imgs[0].props['data-source'] ?? 'null') as {
       uri: string;
       headers?: Record<string, string>;
-    } | null;
+    };
     expect(src?.uri).toBe(relayUrl);
     expect(src?.headers?.Authorization).toBe('Bearer test-token');
+    // Initials must not be shown.
     expect(textContent(tr.root)).not.toContain('AK');
   });
 
   it('never shows the previous URI relay source after uri prop changes to a new URI', async () => {
+    // Simulate flag-ON for both URIs, each with distinct relay URLs.
     const relayA = 'https://api.example.com/api/media/file/avatars/a.jpg';
     const relayB = 'https://api.example.com/api/media/file/avatars/b.jpg';
 
@@ -298,29 +312,33 @@ describe('AvatarImage', () => {
       (res) => { resolveB = res; },
     );
 
-    jest.spyOn(MediaSourceModule, 'mediaSource')
+    mockMediaSource
       .mockReturnValueOnce(promiseA)
       .mockReturnValueOnce(promiseB);
 
     let tr!: TestRenderer.ReactTestRenderer;
+
+    // Mount with URI A — resolvedSource reset to plain { uri: uriA }.
     await act(async () => {
       tr = TestRenderer.create(
         <AvatarImage uri="https://supabase.example.com/storage/v1/object/public/avatars/a.jpg" size={40} />,
       );
     });
 
+    // Update to URI B before A's relay promise resolves.
     await act(async () => {
       tr.update(
         <AvatarImage uri="https://supabase.example.com/storage/v1/object/public/avatars/b.jpg" size={40} />,
       );
     });
 
-    // Resolve A — should be ignored (cancelled).
+    // Now resolve A — should be ignored (cancelled).
     await act(async () => {
       resolveA({ uri: relayA, headers: { Authorization: 'Bearer token-a' } });
       await Promise.resolve();
     });
 
+    // Source must not be the stale relay URL for A.
     const imgs = findExpoImages(tr.root);
     expect(imgs.length).toBeGreaterThan(0);
     const srcAfterA = JSON.parse(imgs[0].props['data-source'] ?? 'null') as { uri: string } | null;
@@ -343,7 +361,7 @@ describe('AvatarImage', () => {
   });
 
   it('falls back to initials when relay returns 403 (flag ON, onError fires)', async () => {
-    jest.spyOn(MediaSourceModule, 'mediaSource').mockResolvedValueOnce({
+    mockMediaSource.mockResolvedValueOnce({
       uri: 'https://api.example.com/api/media/file/avatars/private.jpg',
       headers: { Authorization: 'Bearer test-token' },
     });
@@ -360,10 +378,13 @@ describe('AvatarImage', () => {
       await Promise.resolve();
     });
 
+    // Image is shown (relay URL in place).
     expect(findExpoImages(tr.root).length).toBeGreaterThan(0);
 
+    // Relay returns 403 — onError fires.
     fireOnError(tr.root);
 
+    // Initials chip shown instead of broken circle.
     expect(textContent(tr.root)).toContain('SR');
     expect(findExpoImages(tr.root).length).toBe(0);
   });
