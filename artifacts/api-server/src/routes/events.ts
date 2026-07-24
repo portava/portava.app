@@ -944,7 +944,31 @@ router.get("/events/city/:city", async (req, res) => {
     filtered.push(ev);
   }
 
-  res.json({ events: filtered.map((e: any) => formatEvent(e, user.id)), page, limit });
+  const cityEventIds = filtered.map((e: any) => e.id as string);
+  let cityRsvpMap: Record<string, string> = {};
+  let cityWaitlistPositionMap: Record<string, number> = {};
+  if (cityEventIds.length > 0) {
+    const [cityRsvpResult, cityWaitlistResult] = await Promise.all([
+      sc.from("event_rsvps").select("event_id, status").eq("user_id", user.id).in("event_id", cityEventIds),
+      sc.from("event_waitlist").select("event_id, position").eq("user_id", user.id).in("event_id", cityEventIds),
+    ]);
+    for (const r of ((cityRsvpResult as any).data as any[]) ?? []) {
+      cityRsvpMap[(r as any).event_id as string] = (r as any).status as string;
+    }
+    for (const w of ((cityWaitlistResult as any).data as any[]) ?? []) {
+      cityWaitlistPositionMap[(w as any).event_id as string] = (w as any).position as number;
+    }
+  }
+
+  res.json({
+    events: filtered.map((e: any) => ({
+      ...formatEvent(e, user.id),
+      myRsvp:             cityRsvpMap[e.id] ?? null,
+      myWaitlistPosition: cityWaitlistPositionMap[e.id] ?? null,
+    })),
+    page,
+    limit,
+  });
 });
 
 // ── GET /api/events/nearby ────────────────────────────────────────────────────
@@ -1004,7 +1028,31 @@ router.get("/events/nearby", async (req, res) => {
     filtered.push(ev);
   }
 
-  res.json({ events: filtered.map((e: any) => formatEvent(e, user.id)), page, limit });
+  const nearbyEventIds = filtered.map((e: any) => e.id as string);
+  let nearbyRsvpMap: Record<string, string> = {};
+  let nearbyWaitlistPositionMap: Record<string, number> = {};
+  if (nearbyEventIds.length > 0) {
+    const [nearbyRsvpResult, nearbyWaitlistResult] = await Promise.all([
+      sc.from("event_rsvps").select("event_id, status").eq("user_id", user.id).in("event_id", nearbyEventIds),
+      sc.from("event_waitlist").select("event_id, position").eq("user_id", user.id).in("event_id", nearbyEventIds),
+    ]);
+    for (const r of ((nearbyRsvpResult as any).data as any[]) ?? []) {
+      nearbyRsvpMap[(r as any).event_id as string] = (r as any).status as string;
+    }
+    for (const w of ((nearbyWaitlistResult as any).data as any[]) ?? []) {
+      nearbyWaitlistPositionMap[(w as any).event_id as string] = (w as any).position as number;
+    }
+  }
+
+  res.json({
+    events: filtered.map((e: any) => ({
+      ...formatEvent(e, user.id),
+      myRsvp:             nearbyRsvpMap[e.id] ?? null,
+      myWaitlistPosition: nearbyWaitlistPositionMap[e.id] ?? null,
+    })),
+    page,
+    limit,
+  });
 });
 
 // ── GET /api/events/search ────────────────────────────────────────────────────
