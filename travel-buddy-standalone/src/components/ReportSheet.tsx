@@ -27,6 +27,7 @@ import { blockUser, unblockUser } from '../services/blocks.ts';
 import { useBlockedIds } from '../context/BlockedIdsContext.tsx';
 import { useMediaComposer } from '../hooks/useMediaComposer.ts';
 import { MediaPickerButton } from './ui/MediaPickerButton.tsx';
+import { MediaAttachmentTray } from './ui/MediaAttachmentTray.tsx';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -240,11 +241,7 @@ export function ReportSheet({
                     composer={safetyPhotoComposer}
                     label={safetyPhotoComposer.items.length > 0 ? 'Replace photo' : 'Add photo'}
                   />
-                  {safetyPhotoComposer.items.length > 0 && (
-                    <Text style={rs.photoName} numberOfLines={1}>
-                      {safetyPhotoComposer.items[0]?.fileName ?? 'Photo attached'}
-                    </Text>
-                  )}
+                  <MediaAttachmentTray composer={safetyPhotoComposer} testID="safety-photo-tray" />
                 </View>
               )}
 
@@ -403,7 +400,6 @@ const rs = StyleSheet.create({
   },
   photoLabel: { ...t.small, color: color.mute, fontWeight: '600', marginBottom: 2 },
   photoPickerBtn: {},
-  photoName: { ...t.small, color: color.signal, fontSize: 12 },
 
   safetyBanner: {
     flexDirection: 'row',
