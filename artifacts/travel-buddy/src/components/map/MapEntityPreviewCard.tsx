@@ -93,6 +93,11 @@ function EventCard({ entity, onClose }: { entity: MapEntity<EventListItem>; onCl
   const dateLabel = ev.startsAt
     ? new Date(ev.startsAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
     : null;
+  // myWaitlistPosition is present on EventDetail payloads (not formally on
+  // EventListItem, but may be populated when the map entity was hydrated from
+  // a detail fetch).  Cast to any to read it defensively.
+  const waitlistPosition: number | null | undefined = (ev as any).myWaitlistPosition;
+  const showWaitlist = waitlistPosition != null && waitlistPosition > 0;
   return (
     <>
       <View style={s.topRow}>
@@ -122,6 +127,11 @@ function EventCard({ entity, onClose }: { entity: MapEntity<EventListItem>; onCl
         {ev.priceType === 'free' && (
           <View style={[s.chip, s.greenChip]}>
             <Text style={[s.chipText, { color: color.success }]}>Free</Text>
+          </View>
+        )}
+        {showWaitlist && (
+          <View style={[s.chip, s.waitlistChip]} testID="event-waitlist-position-chip">
+            <Text style={[s.chipText, s.waitlistChipText]}>Waitlisted — #{waitlistPosition}</Text>
           </View>
         )}
       </View>
@@ -502,6 +512,14 @@ const s = StyleSheet.create({
   greenChip: {
     backgroundColor: '#F0FDF4',
     borderColor: '#BBF7D0',
+  },
+  waitlistChip: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  waitlistChipText: {
+    color: '#92400E',
+    textTransform: 'none',
   },
   chipText: {
     fontSize: 11,
