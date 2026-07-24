@@ -23,10 +23,11 @@ import {
   Users,
   MapPin,
   Star,
+  Stamp,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
-import type { MapEntity } from '../../types/mapTypes.ts';
+import type { MapEntity, PassportCountryPayload } from '../../types/mapTypes.ts';
 import type { BuddyProfile } from '../../services/rentABuddy.ts';
 import type { EventListItem } from '../../services/events.ts';
 import type { HiddenGem } from '../../services/hiddenGems.ts';
@@ -268,6 +269,45 @@ function FriendCard({ entity, onClose }: { entity: MapEntity<CircleMemberLocatio
   );
 }
 
+// ── Stamp card body ────────────────────────────────────────────────────────────
+
+function StampCountryCardBody({ entity }: { entity: MapEntity<PassportCountryPayload> }) {
+  const { country, stampCount, cities } = entity.payload;
+  const cfg = MAP_LAYER_CONFIG.stamps;
+  const cityLabel = cities.slice(0, 3).join(' · ');
+  return (
+    <>
+      <View style={s.topRow}>
+        <View style={[s.iconCircle, { backgroundColor: cfg.color }]}>
+          <Stamp size={20} color="#fff" />
+        </View>
+        <View style={s.topText}>
+          <Text style={s.primaryText} numberOfLines={1}>{country}</Text>
+          {cityLabel ? (
+            <Text style={s.secondaryText} numberOfLines={1}>{cityLabel}</Text>
+          ) : null}
+        </View>
+      </View>
+      <View style={s.chipRow}>
+        <View style={s.chip}>
+          <Stamp size={10} color={cfg.color} />
+          <Text style={[s.chipText, { color: cfg.color }]}>
+            {stampCount} {stampCount === 1 ? 'stamp' : 'stamps'}
+          </Text>
+        </View>
+        {cities.length > 0 && (
+          <View style={s.chip}>
+            <MapPin size={10} color={color.mute} />
+            <Text style={s.chipText}>
+              {cities.length} {cities.length === 1 ? 'city' : 'cities'}
+            </Text>
+          </View>
+        )}
+      </View>
+    </>
+  );
+}
+
 // ── Wrapper ────────────────────────────────────────────────────────────────────
 
 export function MapEntityPreviewCard({
@@ -289,6 +329,8 @@ export function MapEntityPreviewCard({
         return <TripCard entity={entity as MapEntity<TripRow>} onClose={onClose} />;
       case 'friends':
         return <FriendCard entity={entity as MapEntity<CircleMemberLocation>} onClose={onClose} />;
+      case 'stamps':
+        return <StampCountryCardBody entity={entity as MapEntity<PassportCountryPayload>} />;
       default:
         return null;
     }

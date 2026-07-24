@@ -10,14 +10,27 @@
  *     deterministic ±0.01° area-level jitter so exact coords are never exposed.
  *   - Re-fetches when `enabledLayers`, `city`, or `lat`/`lng` change.
  *   - Battery-aware: pauses background fetches when layers are disabled.
+ *   - Each entity is stamped with `actionCapabilities` and `detailRoute`
+ *     so preview cards know what actions to offer without re-fetching.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { MapEntity, ToggleableEntityType } from '../types/mapTypes.ts';
+import type { MapEntity, MapActionCapability, ToggleableEntityType } from '../types/mapTypes.ts';
 import { searchBuddies, type BuddyProfile } from '../services/rentABuddy.ts';
 import { listEvents, type EventListItem } from '../services/events.ts';
 import { listGems, type HiddenGem } from '../services/hiddenGems.ts';
 import { listMyTrips, type TripRow } from '../services/trips.ts';
 import { listVisibleCircleLocations, type CircleMemberLocation } from '../services/map.ts';
+
+// ── Action capability maps ─────────────────────────────────────────────────────
+
+/** Default action capabilities per entity type. */
+const LAYER_CAPABILITIES: Record<ToggleableEntityType, MapActionCapability[]> = {
+  buddies: ['book', 'message', 'report'],
+  events:  ['join', 'share', 'report'],
+  gems:    ['save', 'share', 'directions'],
+  trips:   ['share'],
+  friends: ['message', 'follow', 'report', 'block'],
+};
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -61,7 +74,15 @@ async function fetchBuddies(
     const bLat = buddy.meetupBaseLat ?? null;
     const bLng = buddy.meetupBaseLng ?? null;
     if (bLat == null || bLng == null) continue; // no pin without coords
-    out.push({ id: `buddy:${buddy.id}`, type: 'buddies', lat: bLat, lng: bLng, payload: buddy });
+    out.push({
+      id: `buddy:${buddy.id}`,
+      type: 'buddies',
+      lat: bLat,
+      lng: bLng,
+      payload: buddy,
+      actionCapabilities: LAYER_CAPABILITIES.buddies,
+      detailRoute: `/(rent-a-buddy)/buddy/${buddy.id}`,
+    });
   }
   return out;
 }
@@ -99,6 +120,8 @@ async function fetchEvents(
       lat: ev.locationLat,
       lng: ev.locationLng,
       payload: ev,
+      actionCapabilities: LAYER_CAPABILITIES.events,
+      detailRoute: `/event/${ev.id}`,
     });
   }
   return out;
@@ -115,7 +138,15 @@ async function fetchGems(city: string): Promise<MapEntity<HiddenGem>[]> {
   for (const gem of gems) {
     if (gem.lat == null || gem.lng == null) continue;
     if (gem.status !== 'active') continue;
-    out.push({ id: `gem:${gem.id}`, type: 'gems', lat: gem.lat, lng: gem.lng, payload: gem });
+    out.push({
+      id: `gem:${gem.id}`,
+      type: 'gems',
+      lat: gem.lat,
+      lng: gem.lng,
+      payload: gem,
+      actionCapabilities: LAYER_CAPABILITIES.gems,
+      detailRoute: `/gems/${gem.id}`,
+    });
   }
   return out;
 }
@@ -137,6 +168,8 @@ async function fetchTrips(): Promise<MapEntity<TripRow>[]> {
       lat: trip.destinationLat,
       lng: trip.destinationLng,
       payload: trip,
+      actionCapabilities: LAYER_CAPABILITIES.trips,
+      detailRoute: `/trip/${trip.id}`,
     });
   }
   return out;
@@ -160,6 +193,8 @@ async function fetchFriends(): Promise<MapEntity<CircleMemberLocation>[]> {
       lat,
       lng,
       payload: { ...loc, lat, lng }, // replace coords with coarsened values
+      actionCapabilities: LAYER_CAPABILITIES.friends,
+      detailRoute: undefined, // friends navigate via thread resolution, not a static route
     });
   }
   return out;
