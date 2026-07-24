@@ -158,13 +158,13 @@ const StoreCapture = forwardRef<StoreHandle>(function StoreCapture(_props, ref) 
 // ── 1. Detent height constants ────────────────────────────────────────────────
 
 describe('Detent height constants', () => {
-  it('PEEK_HEIGHT=52 and CARD_AREA_HEIGHT=164 produce correct medium height', () => {
-    expect(52 + 164).toBe(216);
+  it('PEEK_HEIGHT=52 and CARD_AREA_HEIGHT=200 produce correct medium height', () => {
+    expect(52 + 200).toBe(252);
   });
 
   it('ordering: collapsed < medium < full', () => {
     const collapsed = 52;
-    const medium    = 216;
+    const medium    = 252;
     const full      = Math.round(812 * 0.72); // representative screen height
     expect(collapsed).toBeLessThan(medium);
     expect(medium).toBeLessThan(full);
