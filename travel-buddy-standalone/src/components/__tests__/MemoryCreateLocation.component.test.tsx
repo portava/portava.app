@@ -33,7 +33,8 @@ jest.mock('../../hooks/useNavBarCollapse', () => ({
 jest.mock('../../services/memories', () => ({
   ...jest.requireActual('../../services/memories'),
   createMemory: jest.fn(),
-  addMemoryItem: jest.fn(),
+  // addMemoryItemFromUrl is not called in these tests (no photos picked before publish)
+  addMemoryItemFromUrl: jest.fn(),
 }));
 
 const LISBON: Place = {

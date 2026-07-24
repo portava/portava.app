@@ -33,10 +33,10 @@ jest.mock('react-native-safe-area-context', () => ({
 
 // ── Services ──────────────────────────────────────────────────────────────────
 
-// NOTE: createMemory / addMemoryItem are not called in these tests (no publish).
+// NOTE: createMemory / addMemoryItemFromUrl are not called in these tests (no publish).
 jest.mock('../../../src/services/memories', () => ({
   createMemory: jest.fn(),
-  addMemoryItem: jest.fn(),
+  addMemoryItemFromUrl: jest.fn(),
 }));
 
 // NOTE: services/media.ts — validateMedia is called inside useMediaComposer.onPickResult.
