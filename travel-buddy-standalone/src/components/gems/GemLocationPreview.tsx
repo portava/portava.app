@@ -8,7 +8,7 @@
  * MapLibre native modules are unavailable.
  */
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Map, Camera } from '@maplibre/maplibre-react-native';
 
@@ -22,32 +22,35 @@ export interface GemLocationPreviewProps {
 export function GemLocationPreview({ lat, lng }: GemLocationPreviewProps) {
   const center: [number, number] = [lng, lat];
   return (
-    <View style={styles.container}>
-      {/*
-       * pointerEvents="none" on this wrapper prevents MapLibre's native gesture
-       * recognisers from intercepting touch events on Android/iOS.  Without it,
-       * dragPan={false} disables MapLibre-level panning but the native view can
-       * still swallow the initial touch, blocking the parent ScrollView.
-       * Setting pointerEvents="none" removes the Map subtree from the hit-test
-       * tree entirely so all gestures fall through to the ScrollView.
-       */}
-      <View style={StyleSheet.absoluteFill} pointerEvents="none">
-        <Map
-          style={StyleSheet.absoluteFill}
-          mapStyle={MAP_STYLE}
-          logo={false}
-          attributionPosition={{ bottom: 4, right: 4 }}
-          dragPan={false}
-          doubleTapZoom={false}
-          doubleTapHoldZoom={false}
-          touchPitch={false}
-        >
-          <Camera initialViewState={{ center, zoom: 13 }} />
-        </Map>
+    <View>
+      <View style={styles.container}>
+        {/*
+         * pointerEvents="none" on this wrapper prevents MapLibre's native gesture
+         * recognisers from intercepting touch events on Android/iOS.  Without it,
+         * dragPan={false} disables MapLibre-level panning but the native view can
+         * still swallow the initial touch, blocking the parent ScrollView.
+         * Setting pointerEvents="none" removes the Map subtree from the hit-test
+         * tree entirely so all gestures fall through to the ScrollView.
+         */}
+        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+          <Map
+            style={StyleSheet.absoluteFill}
+            mapStyle={MAP_STYLE}
+            logo={false}
+            attribution={false}
+            dragPan={false}
+            doubleTapZoom={false}
+            doubleTapHoldZoom={false}
+            touchPitch={false}
+          >
+            <Camera initialViewState={{ center, zoom: 13 }} />
+          </Map>
+        </View>
+        <View style={styles.pinWrap} pointerEvents="none">
+          <Ionicons name="location" size={32} color="#4C8BF5" style={styles.pinIcon} />
+        </View>
       </View>
-      <View style={styles.pinWrap} pointerEvents="none">
-        <Ionicons name="location" size={32} color="#4C8BF5" style={styles.pinIcon} />
-      </View>
+      <Text style={styles.attribution}>© OpenFreeMap contributors</Text>
     </View>
   );
 }
@@ -72,5 +75,11 @@ const styles = StyleSheet.create({
   },
   pinIcon: {
     marginBottom: 16,
+  },
+  attribution: {
+    color: '#8A9BB5',
+    fontSize: 10,
+    lineHeight: 14,
+    marginTop: 4,
   },
 });

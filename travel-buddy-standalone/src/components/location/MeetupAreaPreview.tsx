@@ -52,7 +52,7 @@ export function MeetupAreaPreview({ lat, lng }: MeetupAreaPreviewProps) {
             style={StyleSheet.absoluteFill}
             mapStyle={MAP_STYLE}
             logo={false}
-            attributionPosition={{ bottom: 4, right: 4 }}
+            attribution={false}
           >
             <Camera initialViewState={{ center: [lng, lat], zoom: ZOOM }} />
           </Map>
@@ -72,6 +72,7 @@ export function MeetupAreaPreview({ lat, lng }: MeetupAreaPreviewProps) {
       <Text style={s.approxNote}>
         Approximate area only — the exact meetup point is agreed after booking.
       </Text>
+      <Text style={s.attribution}>© OpenFreeMap contributors</Text>
     </View>
   );
 }
@@ -100,5 +101,12 @@ const s = StyleSheet.create({
     color: color.mute,
     marginTop: space.sm,
     lineHeight: 16,
+  },
+  attribution: {
+    ...t.small,
+    color: color.mute,
+    marginTop: 2,
+    fontSize: 10,
+    lineHeight: 14,
   },
 });

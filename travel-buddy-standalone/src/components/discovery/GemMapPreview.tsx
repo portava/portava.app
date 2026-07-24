@@ -78,7 +78,7 @@ export function GemMapPreview({ lat, lng, coordsPrecision, locationLabel }: GemM
             style={StyleSheet.absoluteFill}
             mapStyle={MAP_STYLE}
             logo={false}
-            attributionPosition={{ bottom: 4, right: 4 }}
+            attribution={false}
           >
             <Camera
               initialViewState={{ center: [lng, lat], zoom }}
@@ -100,6 +100,7 @@ export function GemMapPreview({ lat, lng, coordsPrecision, locationLabel }: GemM
           {isApprox ? (
             <Text style={s.approxNotice}>Approximate area — exact location protected</Text>
           ) : null}
+          <Text style={s.attribution}>© OpenFreeMap contributors</Text>
         </View>
         <Pressable
           style={s.openMapsBtn}
@@ -200,5 +201,11 @@ const s = StyleSheet.create({
     color: '#4C8BF5',
     fontSize: 13,
     fontWeight: '600',
+  },
+  attribution: {
+    color: '#8A9BB5',
+    fontSize: 10,
+    lineHeight: 14,
+    marginTop: 2,
   },
 });
