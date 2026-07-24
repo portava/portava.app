@@ -1,0 +1,286 @@
+/**
+ * Bucket privacy — object-level authorization matrix + /media/file endpoint.
+ * Run: node --import tsx/esm --test src/test/mediaAccess.test.ts
+ */
+import { describe, it, before, after, beforeEach } from "node:test";
+import assert from "node:assert/strict";
+import http from "node:http";
+import express from "express";
+import { _setTestClient } from "../lib/http.js";
+import { _setTestServiceClient } from "../lib/supabase.js";
+import { authorizeMediaAccess, ownerFromPath, _clearMediaAccessCache } from "../lib/mediaAccess.js";
+import mediaFileRouter from "../routes/mediaFile.js";
+
+const SB = "http://sb.example.test";
+const OLD_SUPABASE_URL = process.env.SUPABASE_URL;
+
+const OWNER  = "a1000000-0000-4000-a000-000000000001";
+const VIEWER = "a1000000-0000-4000-a000-000000000002";
+const TRIP   = "b1000000-0000-4000-a000-000000000001";
+const THREAD = "c1000000-0000-4000-a000-000000000001";
+const TOKEN  = "media-access-token";
+
+const pub = (path: string) => `${SB}/storage/v1/object/public/post-media/${path}`;
+
+interface FakeState {
+  flags?: Record<string, boolean>;
+  blocks?: any[];
+  posts?: any[];
+  postMedia?: any[];
+  messages?: any[];
+  threadMembers?: any[];
+  stories?: any[];
+  highlights?: any[];
+  trips?: any[];
+  tripMembers?: any[];
+  closeFriends?: any[];
+  mediaAssets?: any[];
+}
+
+function makeClient(state: FakeState = {}) {
+  function builder(table: string) {
+    const filters: Array<(r: any) => boolean> = [];
+    const src = () =>
+      table === "feature_flags" ? Object.entries(state.flags ?? {}).map(([flag, enabled]) => ({ flag, enabled })) :
+      table === "blocks" ? state.blocks ?? [] :
+      table === "posts" ? state.posts ?? [] :
+      table === "post_media" ? state.postMedia ?? [] :
+      table === "messages" ? state.messages ?? [] :
+      table === "message_thread_members" ? state.threadMembers ?? [] :
+      table === "stories" ? state.stories ?? [] :
+      table === "highlights" ? state.highlights ?? [] :
+      table === "trips" ? state.trips ?? [] :
+      table === "trip_members" ? state.tripMembers ?? [] :
+      table === "close_friends" ? state.closeFriends ?? [] :
+      table === "media_assets" ? state.mediaAssets ?? [] : [];
+    const rows = () => src().filter((r: any) => filters.every((f) => f(r)));
+    const b: any = {
+      select() { return b; },
+      eq(col: string, val: any) { filters.push((r) => r[col] === val); return b; },
+      in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return b; },
+      is(col: string, val: any) { filters.push((r) => val === null ? r[col] == null : r[col] === val); return b; },
+      contains(col: string, vals: any[]) {
+        filters.push((r) => Array.isArray(r[col]) && vals.every((v) => r[col].includes(v)));
+        return b;
+      },
+      or(expr: string) {
+        const parts = expr.split(",").map((p) => p.trim().match(/^(\w+)\.(\w+)\.(.*)$/)).filter(Boolean) as RegExpMatchArray[];
+        filters.push((r) => parts.some((m) => String(r[m[1]]) === m[3]));
+        return b;
+      },
+      limit() { return b; }, not() { return b; }, order() { return b; },
+      maybeSingle() { return Promise.resolve({ data: rows()[0] ?? null, error: null }); },
+      then(onF: any, onR: any) { return Promise.resolve({ data: rows(), error: null }).then(onF, onR); },
+    };
+    return b;
+  }
+  return {
+    from: builder,
+    storage: {
+      from(bucket: string) {
+        return {
+          createSignedUrl: async (path: string, ttl: number) => ({
+            data: { signedUrl: `${SB}/storage/v1/object/sign/${bucket}/${path}?token=signed&ttl=${ttl}` },
+            error: null,
+          }),
+        };
+      },
+    },
+    auth: {
+      getUser: async (t: string) => t === TOKEN
+        ? { data: { user: { id: VIEWER } }, error: null }
+        : { data: { user: null }, error: { message: "bad" } },
+    },
+  } as any;
+}
+
+before(() => { process.env.SUPABASE_URL = SB; });
+after(() => { process.env.SUPABASE_URL = OLD_SUPABASE_URL; });
+beforeEach(() => _clearMediaAccessCache());
+
+describe("ownerFromPath", () => {
+  it("extracts owner from all path conventions", () => {
+    assert.equal(ownerFromPath(`${OWNER}/123.jpg`), OWNER);
+    assert.equal(ownerFromPath(`stories/${OWNER}/x.jpg`), OWNER);
+    assert.equal(ownerFromPath(`memories/${OWNER}/y.jpg`), OWNER);
+    assert.equal(ownerFromPath("weird/prefix/z.jpg"), null);
+  });
+});
+
+describe("authorizeMediaAccess — the matrix", () => {
+  it("owner always allowed (path-prefix ownership)", async () => {
+    const sc = makeClient();
+    assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", `${OWNER}/a.jpg`), true);
+  });
+
+  it("profile-media is universally readable (product design)", async () => {
+    const sc = makeClient();
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "profile-media", `avatars/${OWNER}/a.webp`), true);
+  });
+
+  it("blocked viewer denied even for a public post's media", async () => {
+    const path = `${OWNER}/p1.jpg`;
+    const sc = makeClient({
+      blocks: [{ blocker_id: OWNER, blocked_id: VIEWER }],
+      posts: [{ author_id: OWNER, visibility: "public", status: "active", post_status: "published", trip_id: null, media_urls: [pub(path)] }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), false);
+  });
+
+  it("public published post media → allowed for a stranger", async () => {
+    const path = `${OWNER}/p2.jpg`;
+    const sc = makeClient({
+      posts: [{ author_id: OWNER, visibility: "public", status: "active", post_status: "published", trip_id: null, media_urls: [pub(path)] }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), true);
+  });
+
+  it("DELAYED post media denied to non-owner (audit 1e fix)", async () => {
+    const path = `${OWNER}/p3.jpg`;
+    const sc = makeClient({
+      posts: [{ author_id: OWNER, visibility: "public", status: "active", post_status: "scheduled", trip_id: null, media_urls: [pub(path)] }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), false);
+  });
+
+  it("trip_only post media: member allowed, stranger denied", async () => {
+    const path = `${OWNER}/p4.jpg`;
+    const mk = (members: any[]) => makeClient({
+      posts: [{ author_id: OWNER, visibility: "trip_only", status: "active", post_status: "published", trip_id: TRIP, media_urls: [pub(path)] }],
+      trips: [{ id: TRIP, owner_id: OWNER }],
+      tripMembers: members,
+    });
+    assert.equal(await authorizeMediaAccess(mk([{ trip_id: TRIP, user_id: VIEWER, role: "member" }]), VIEWER, "post-media", path), true);
+    _clearMediaAccessCache();
+    assert.equal(await authorizeMediaAccess(mk([]), VIEWER, "post-media", path), false);
+  });
+
+  it("postcard media follows the parent post; rejected media denied outright", async () => {
+    const path = `${OWNER}/post9/m1.jpg`;
+    const base = {
+      postMedia: [{ storage_path: path, post_id: "post9", moderation_status: "approved", processing_status: "ready" }],
+      posts: [{ id: "post9", author_id: OWNER, visibility: "public", status: "active", post_status: "published", trip_id: null }],
+    };
+    assert.equal(await authorizeMediaAccess(makeClient(base), VIEWER, "post-media", path), true);
+    _clearMediaAccessCache();
+    const rejected = { ...base, postMedia: [{ ...base.postMedia[0], moderation_status: "rejected" }] };
+    assert.equal(await authorizeMediaAccess(makeClient(rejected), VIEWER, "post-media", path), false);
+  });
+
+  it("message media: thread member allowed, outsider denied", async () => {
+    const path = `${OWNER}/dm1.jpg`;
+    const mk = (members: any[]) => makeClient({
+      messages: [{ thread_id: THREAD, media_url: pub(path), media_thumbnail_url: null }],
+      threadMembers: members,
+    });
+    assert.equal(await authorizeMediaAccess(mk([{ thread_id: THREAD, user_id: VIEWER, left_at: null }]), VIEWER, "post-media", path), true);
+    _clearMediaAccessCache();
+    assert.equal(await authorizeMediaAccess(mk([]), VIEWER, "post-media", path), false);
+  });
+
+  it("story media: public allowed; close-friends only for close friends; expired denied", async () => {
+    const path = `stories/${OWNER}/s1.jpg`;
+    const future = new Date(Date.now() + 3600_000).toISOString();
+    const mkStory = (over: any, cf: any[] = []) => makeClient({
+      stories: [{ owner_id: OWNER, state: "active", visibility: "public", close_friends_only: false, expires_at: future, media_url: pub(path), ...over }],
+      closeFriends: cf,
+    });
+    assert.equal(await authorizeMediaAccess(mkStory({}), VIEWER, "post-media", path), true);
+    _clearMediaAccessCache();
+    assert.equal(await authorizeMediaAccess(
+      mkStory({ close_friends_only: true }, [{ user_id: OWNER, friend_id: VIEWER }]), VIEWER, "post-media", path), true);
+    _clearMediaAccessCache();
+    assert.equal(await authorizeMediaAccess(mkStory({ close_friends_only: true }), VIEWER, "post-media", path), false);
+    _clearMediaAccessCache();
+    assert.equal(await authorizeMediaAccess(
+      mkStory({ state: "expired", expires_at: new Date(Date.now() - 1000).toISOString() }), VIEWER, "post-media", path), false);
+  });
+
+  it("orphan/unknown object → DENY by default", async () => {
+    const sc = makeClient();
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", `${OWNER}/nothing-references-this.jpg`), false);
+  });
+});
+
+// ── Endpoint modes ────────────────────────────────────────────────────────────
+
+let server: http.Server;
+let base: string;
+
+function setClients(c: any) { _setTestClient(c, true); _setTestServiceClient(c); }
+
+function req(method: string, path: string, body?: any): Promise<{ status: number; body: any; location?: string }> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(path, base);
+    const payload = body ? JSON.stringify(body) : null;
+    const headers: Record<string, string> = { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" };
+    if (payload) headers["content-length"] = String(Buffer.byteLength(payload));
+    const r = http.request({ hostname: url.hostname, port: Number(url.port), path: url.pathname, method, headers }, (res) => {
+      let raw = ""; res.on("data", (c) => (raw += c));
+      res.on("end", () => {
+        let p: any; try { p = JSON.parse(raw); } catch { p = raw; }
+        resolve({ status: res.statusCode ?? 0, body: p, location: res.headers.location as string | undefined });
+      });
+    });
+    r.on("error", reject);
+    if (payload) r.write(payload);
+    r.end();
+  });
+}
+
+describe("GET /api/media/file — public vs signed mode", () => {
+  before(() => {
+    const app = express();
+    app.use(express.json());
+    app.use((r: any, _res: any, next: any) => { r.log = { error() {}, info() {}, warn() {}, debug() {} }; next(); });
+    app.use("/api", mediaFileRouter);
+    return new Promise<void>((resolve) => { server = app.listen(0, () => { base = `http://127.0.0.1:${(server.address() as any).port}`; resolve(); }); });
+  });
+  after(() => new Promise<void>((r) => server.close(() => r())));
+
+  const path = `${OWNER}/pub1.jpg`;
+  const publicPost = {
+    posts: [{ author_id: OWNER, visibility: "public", status: "active", post_status: "published", trip_id: null, media_urls: [pub(path)] }],
+  };
+
+  it("flag OFF → 302 to the PUBLIC url (Stage 1, zero behavior change)", async () => {
+    setClients(makeClient({ ...publicPost, flags: { media_private_buckets_enabled: false } }));
+    const r = await req("GET", `/api/media/file/post-media/${path}`);
+    assert.equal(r.status, 302);
+    assert.equal(r.location, pub(path));
+  });
+
+  it("flag ON → 302 to a SIGNED url", async () => {
+    _clearMediaAccessCache();
+    setClients(makeClient({ ...publicPost, flags: { media_private_buckets_enabled: true } }));
+    const r = await req("GET", `/api/media/file/post-media/${path}`);
+    assert.equal(r.status, 302);
+    assert.ok(r.location?.includes("/object/sign/post-media/"), r.location);
+    assert.ok(r.location?.includes("token=signed"));
+  });
+
+  it("unauthorized object → 403 in EITHER mode", async () => {
+    _clearMediaAccessCache();
+    setClients(makeClient({ flags: { media_private_buckets_enabled: true } }));
+    const r = await req("GET", `/api/media/file/post-media/${OWNER}/orphan.jpg`);
+    assert.equal(r.body.error, "forbidden");
+  });
+
+  it("disallowed bucket and traversal → 400", async () => {
+    setClients(makeClient());
+    const r1 = await req("GET", `/api/media/file/stamp-artwork/x.png`);
+    assert.equal(r1.body.error, "invalid_payload");
+  });
+
+  it("batch /media/sign: authorized url signed, foreign + unauthorized null", async () => {
+    _clearMediaAccessCache();
+    setClients(makeClient({ ...publicPost, flags: { media_private_buckets_enabled: true } }));
+    const r = await req("POST", "/api/media/sign", {
+      urls: [pub(path), "https://evil.example.com/x.jpg", pub(`${OWNER}/orphan2.jpg`)],
+    });
+    assert.equal(r.status, 200);
+    assert.ok(String(r.body.signed[pub(path)]).includes("token=signed"));
+    assert.equal(r.body.signed["https://evil.example.com/x.jpg"], null);
+    assert.equal(r.body.signed[pub(`${OWNER}/orphan2.jpg`)], null);
+  });
+});

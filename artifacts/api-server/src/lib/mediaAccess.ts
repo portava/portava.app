@@ -1,0 +1,244 @@
+/**
+ * mediaAccess — SERVER-side authorization for media BYTES (bucket privacy).
+ *
+ * The audit's #1 finding: every media bucket is public-read, so row-level
+ * visibility/block gating controls who gets a URL while the bytes stay
+ * world-readable. This module is the object-layer fix: given a viewer and a
+ * (bucket, path), decide whether that viewer may fetch the file — by resolving
+ * what entity references it and reusing the SAME rules the rows enforce
+ * (owner, blocks fail-closed, visibility, membership).
+ *
+ * DENY BY DEFAULT: an object nothing references (orphan/unknown) is denied.
+ * The matrix is deliberately conservative — where an entity's sharing model is
+ * richer than what's implemented here (circle/custom story lists, memory
+ * sharing), non-owners are denied rather than guessed at; those refinements are
+ * documented in the apply doc, not silently skipped.
+ *
+ * Used by GET /api/media/file/* which serves a 302 to either the public URL
+ * (bucket still public — Stage 1, zero behavior change) or a short-lived
+ * signed URL (after the Stage-3 bucket flip).
+ */
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { fetchBlockedSet } from "./blocks.js";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Per-(viewer,object) allow-cache — media loads burst per screen. */
+const ALLOW_TTL_MS = 60_000;
+const allowCache = new Map<string, number>();
+export function _clearMediaAccessCache(): void { allowCache.clear(); }
+
+export function publicUrlFor(bucket: string, path: string): string | null {
+  const base = process.env.SUPABASE_URL;
+  if (!base) return null;
+  return `${new URL(base).origin}/storage/v1/object/public/${bucket}/${path}`;
+}
+
+/** Owner uid implied by our path conventions, or null. */
+export function ownerFromPath(path: string): string | null {
+  const segs = path.split("/");
+  if (UUID_RE.test(segs[0] ?? "")) return segs[0];
+  if ((segs[0] === "stories" || segs[0] === "memories" || segs[0] === "avatars" || segs[0] === "covers")
+      && UUID_RE.test(segs[1] ?? "")) return segs[1];
+  return null;
+}
+
+async function isCloseFriend(sc: SupabaseClient, ownerId: string, viewerId: string): Promise<boolean> {
+  try {
+    const { data } = await sc
+      .from("close_friends")
+      .select("friend_id")
+      .eq("user_id", ownerId)
+      .eq("friend_id", viewerId)
+      .maybeSingle();
+    return Boolean(data);
+  } catch { return false; }
+}
+
+async function isTripMember(sc: SupabaseClient, tripId: string, viewerId: string): Promise<boolean> {
+  try {
+    const [{ data: t }, { data: m }] = await Promise.all([
+      sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle(),
+      sc.from("trip_members").select("user_id").eq("trip_id", tripId).eq("user_id", viewerId)
+        .in("role", ["owner", "member"]).maybeSingle(),
+    ]);
+    return (t as any)?.owner_id === viewerId || Boolean(m);
+  } catch { return false; }
+}
+
+function postVisible(post: any, viewerId: string): "allow" | "deny" | "trip" {
+  if (post.status && post.status !== "active") return "deny";
+  // Delayed-publish gate (audit 1e): unpublished post media is owner-only.
+  if (post.post_status && post.post_status !== "published") return "deny";
+  if (post.author_id === viewerId) return "allow";
+  if (post.visibility === "public") return "allow";
+  if (post.visibility === "trip_only" && post.trip_id) return "trip";
+  return "deny"; // private + anything richer → conservative deny
+}
+
+/**
+ * May `viewerId` fetch the bytes at (bucket, path)? Fail-closed everywhere:
+ * unknown object, unreadable block list, or unmodeled sharing → deny.
+ */
+export async function authorizeMediaAccess(
+  sc: SupabaseClient,
+  viewerId: string,
+  bucket: string,
+  path: string,
+): Promise<boolean> {
+  const cacheKey = `${viewerId}:${bucket}/${path}`;
+  const hit = allowCache.get(cacheKey);
+  if (hit && Date.now() - hit < ALLOW_TTL_MS) return true;
+
+  const allow = await decide(sc, viewerId, bucket, path);
+  if (allow) allowCache.set(cacheKey, Date.now());
+  if (allowCache.size > 5000) {
+    const oldest = allowCache.keys().next().value as string | undefined;
+    if (oldest) allowCache.delete(oldest);
+  }
+  return allow;
+}
+
+async function decide(
+  sc: SupabaseClient,
+  viewerId: string,
+  bucket: string,
+  path: string,
+): Promise<boolean> {
+  // profile-media (avatars/covers) is universally visible by product design.
+  if (bucket === "profile-media") return true;
+  if (bucket !== "post-media") return false;
+
+  // 1. Owner always sees their own bytes.
+  const pathOwner = ownerFromPath(path);
+  if (pathOwner === viewerId) return true;
+
+  let owner = pathOwner;
+  try {
+    const { data: asset } = await sc
+      .from("media_assets")
+      .select("owner_user_id")
+      .eq("storage_bucket", bucket)
+      .eq("storage_path", path)
+      .maybeSingle();
+    if ((asset as any)?.owner_user_id) {
+      owner = (asset as any).owner_user_id;
+      if (owner === viewerId) return true;
+    }
+  } catch { /* canonical layer may be dark — path owner still applies */ }
+
+  // 2. Blocks, both directions, fail-closed.
+  if (owner) {
+    const blocked = await fetchBlockedSet(sc, viewerId);
+    if (blocked === null) return false;
+    if (blocked.has(owner)) return false;
+  }
+
+  const publicUrl = publicUrlFor(bucket, path);
+  if (!publicUrl) return false;
+
+  // 3a. Postcard media (post_media.storage_path → parent post rules).
+  try {
+    const { data: pm } = await sc
+      .from("post_media")
+      .select("post_id, moderation_status, processing_status")
+      .eq("storage_path", path)
+      .maybeSingle();
+    if (pm) {
+      if ((pm as any).moderation_status === "rejected" || (pm as any).moderation_status === "flagged") return false;
+      const { data: post } = await sc
+        .from("posts")
+        .select("author_id, visibility, status, post_status, trip_id")
+        .eq("id", (pm as any).post_id)
+        .maybeSingle();
+      if (!post) return false;
+      const v = postVisible(post, viewerId);
+      if (v === "allow") return true;
+      if (v === "trip") return isTripMember(sc, (post as any).trip_id, viewerId);
+      return false;
+    }
+  } catch { /* fall through */ }
+
+  // 3b. Regular post media (posts.media_urls array contains the public URL).
+  try {
+    const { data: posts } = await sc
+      .from("posts")
+      .select("author_id, visibility, status, post_status, trip_id")
+      .contains("media_urls", [publicUrl])
+      .limit(1);
+    const post = (posts as any[])?.[0];
+    if (post) {
+      const v = postVisible(post, viewerId);
+      if (v === "allow") return true;
+      if (v === "trip") return isTripMember(sc, post.trip_id, viewerId);
+      return false;
+    }
+  } catch { /* fall through */ }
+
+  // 3c. Message media → thread membership.
+  try {
+    const { data: msgs } = await sc
+      .from("messages")
+      .select("thread_id")
+      .or(`media_url.eq.${publicUrl},media_thumbnail_url.eq.${publicUrl}`)
+      .limit(1);
+    const msg = (msgs as any[])?.[0];
+    if (msg) {
+      const { data: member } = await sc
+        .from("message_thread_members")
+        .select("user_id")
+        .eq("thread_id", msg.thread_id)
+        .eq("user_id", viewerId)
+        .is("left_at", null)
+        .maybeSingle();
+      return Boolean(member);
+    }
+  } catch { /* fall through */ }
+
+  // 3d. Story media — active + public, or close-friends when viewer qualifies.
+  //     Richer lists (friends_only/circle/trip_crew/custom) → conservative deny.
+  try {
+    const { data: stories } = await sc
+      .from("stories")
+      .select("owner_id, state, visibility, close_friends_only, expires_at")
+      .eq("media_url", publicUrl)
+      .limit(1);
+    const story = (stories as any[])?.[0];
+    if (story) {
+      const live = (story.state === "active" || story.state === "saved") &&
+        (!story.expires_at || new Date(story.expires_at).getTime() > Date.now() || story.state === "saved");
+      if (!live) return false;
+      const needsClose = story.close_friends_only === true || story.visibility === "close_friends";
+      if (needsClose) return isCloseFriend(sc, story.owner_id, viewerId);
+      return story.visibility === "public";
+    }
+  } catch { /* fall through */ }
+
+  // 3e. Highlight media — public + unexpired.
+  try {
+    const { data: hs } = await sc
+      .from("highlights")
+      .select("owner_id, visibility, expires_at")
+      .eq("media_url", publicUrl)
+      .limit(1);
+    const h = (hs as any[])?.[0];
+    if (h) {
+      if (h.expires_at && new Date(h.expires_at).getTime() <= Date.now()) return false;
+      return h.visibility === "public";
+    }
+  } catch { /* fall through */ }
+
+  // 3f. Trip cover — trip member (owner handled above).
+  try {
+    const { data: trips } = await sc
+      .from("trips")
+      .select("id")
+      .eq("cover_url", publicUrl)
+      .limit(1);
+    const trip = (trips as any[])?.[0];
+    if (trip) return isTripMember(sc, trip.id, viewerId);
+  } catch { /* fall through */ }
+
+  // 4. Nothing references it → orphan/unknown → DENY (fail-closed).
+  return false;
+}
