@@ -8,11 +8,13 @@
  *   - 429 response falls back to original URL
  *   - flag OFF short-circuits without any network call
  *   - batches are capped at ≤50 URLs per request
+ *   - cache does not grow past MAX_CACHE_SIZE (LRU eviction)
+ *   - LRU: the least-recently-used entry is evicted first
  */
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { batchSignUrls, _resetBatchSignCache } from '../batchSignMedia.ts';
+import { batchSignUrls, _resetBatchSignCache, _getCacheSize } from '../batchSignMedia.ts';
 import { _resetMediaFlagCache, _setTestTokenGetter, _resetTestTokenGetter } from '../mediaSource.ts';
 
 const API_BASE = 'http://localhost:9999';
@@ -147,5 +149,84 @@ describe('batchSignUrls', () => {
     const result = await batchSignUrls([]);
     assert.equal(fetchCalled, false);
     assert.equal(result.size, 0);
+  });
+
+  it('cache does not grow past 500 entries after inserting many URLs', async () => {
+    // Stub: flag ON, sign endpoint echoes each URL back as its own "signed" form
+    (globalThis as any).fetch = async (url: string, opts?: any) => {
+      if (url.includes('/api/feature-flags')) {
+        return { ok: true, json: async () => ({ flags: { media_private_buckets_enabled: true } }) };
+      }
+      if (url.includes('/api/media/sign')) {
+        const body = JSON.parse(opts.body);
+        const signed: Record<string, string> = {};
+        for (const u of body.urls) signed[u] = `${u}?signed=1`;
+        return { ok: true, json: async () => ({ signed, ttlSeconds: 3600 }) };
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    };
+
+    // Insert 600 unique URLs in batches of 50 (the function's internal batch size)
+    const TOTAL = 600;
+    for (let i = 0; i < TOTAL; i += 50) {
+      const batch = Array.from({ length: Math.min(50, TOTAL - i) }, (_, j) =>
+        `https://abc.supabase.co/storage/v1/object/public/media/img-${i + j}.jpg`
+      );
+      await batchSignUrls(batch);
+    }
+
+    const size = _getCacheSize();
+    assert.ok(
+      size <= 500,
+      `Cache size should not exceed 500 but was ${size}`
+    );
+    assert.ok(size > 0, 'Cache should contain entries after inserts');
+  });
+
+  it('LRU: the least-recently-used entry is evicted when the cap is reached', async () => {
+    // Stub: flag ON, sign endpoint echoes URLs
+    (globalThis as any).fetch = async (url: string, opts?: any) => {
+      if (url.includes('/api/feature-flags')) {
+        return { ok: true, json: async () => ({ flags: { media_private_buckets_enabled: true } }) };
+      }
+      if (url.includes('/api/media/sign')) {
+        const body = JSON.parse(opts.body);
+        const signed: Record<string, string> = {};
+        for (const u of body.urls) signed[u] = `${u}?signed=1`;
+        return { ok: true, json: async () => ({ signed, ttlSeconds: 3600 }) };
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    };
+
+    // Fill cache to exactly 500 entries
+    for (let i = 0; i < 500; i += 50) {
+      const batch = Array.from({ length: 50 }, (_, j) =>
+        `https://abc.supabase.co/storage/v1/object/public/media/img-${i + j}.jpg`
+      );
+      await batchSignUrls(batch);
+    }
+    assert.equal(_getCacheSize(), 500);
+
+    // Access the very first URL to promote it from LRU head to MRU tail
+    const firstUrl = 'https://abc.supabase.co/storage/v1/object/public/media/img-0.jpg';
+    let signCallCount = 0;
+    const baseFetch = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, opts?: any) => {
+      if (url.includes('/api/media/sign')) signCallCount++;
+      return baseFetch(url, opts);
+    };
+    await batchSignUrls([firstUrl]); // cache hit — promotes firstUrl to MRU tail
+    assert.equal(signCallCount, 0, 'firstUrl should be served from cache');
+
+    // Now insert one more URL to trigger eviction — img-0 should NOT be evicted
+    // because it was just promoted; img-1 (next-oldest) should be evicted instead.
+    const newUrl = 'https://abc.supabase.co/storage/v1/object/public/media/img-500.jpg';
+    await batchSignUrls([newUrl]);
+    assert.equal(_getCacheSize(), 500, 'cache size should remain capped at 500');
+
+    // firstUrl (promoted) must still be in the cache — a second lookup should not call sign
+    signCallCount = 0;
+    await batchSignUrls([firstUrl]);
+    assert.equal(signCallCount, 0, 'recently-promoted entry should still be in cache after eviction');
   });
 });
