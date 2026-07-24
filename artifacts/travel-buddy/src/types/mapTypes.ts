@@ -61,6 +61,35 @@ export const MAP_LAYER_CONFIG: Record<MapEntityType, MapLayerConfig> = {
   stamps:   { color: '#DC2626', label: 'Passport Stamps' },
 };
 
+// ── Action capabilities ───────────────────────────────────────────────────────
+
+/**
+ * Actions a preview card can offer for this entity.
+ * Phase 2A renders the actual buttons; Phase 1 only populates the field.
+ */
+export type MapActionCapability =
+  | 'save'
+  | 'share'
+  | 'directions'
+  | 'add_to_trip'
+  | 'join'
+  | 'follow'
+  | 'book'
+  | 'message'
+  | 'report'
+  | 'block';
+
+/**
+ * Viewer-relative permissions for an entity.
+ * Used by Phase 2 action row to decide which buttons to show/disable.
+ */
+export interface MapEntityPermissions {
+  canMessage: boolean;
+  canFollow: boolean;
+  canBlock: boolean;
+  canReport: boolean;
+}
+
 // ── Normalised entity envelope ────────────────────────────────────────────────
 
 /**
@@ -74,4 +103,20 @@ export interface MapEntity<T = unknown> {
   lat: number;
   lng: number;
   payload: T;
+  /**
+   * Actions this entity supports in the preview card action row.
+   * Populated by entity producers (useMapEntities, buildPassportEntities, etc.).
+   * Phase 2A renders the buttons; Phase 1 only populates this field.
+   */
+  actionCapabilities?: MapActionCapability[];
+  /**
+   * Expo Router href the "View →" CTA navigates to.
+   * Populated by entity producers so preview cards don't need to reconstruct it.
+   */
+  detailRoute?: string;
+  /**
+   * Viewer permissions — determines which action buttons are enabled.
+   * Optional; absence means the action row should derive defaults from the type.
+   */
+  permissions?: MapEntityPermissions;
 }

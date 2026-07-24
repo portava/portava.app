@@ -133,7 +133,20 @@ function makeFakeClient(state: FakeState = {}) {
       },
       lt(col: string, val: any) { filters.push((r) => r[col] < val); return b; },
       gt(col: string, val: any) { filters.push((r) => r[col] > val); return b; },
-      or() { return b; },
+      // or() parses Supabase-style "col.op.val,col.op.val" filter strings.
+      // Only eq is needed today (used by fetchBlockedSet on the blocks table).
+      or(filter: string) {
+        const clauses = filter.split(",").map((c) => c.trim());
+        filters.push((r) => clauses.some((clause) => {
+          const parts = clause.split(".");
+          if (parts.length < 3) return false;
+          const [col, op, ...rest] = parts;
+          const val = rest.join(".");
+          if (op === "eq") return String(r[col]) === val;
+          return false;
+        }));
+        return b;
+      },
       order() { return b; },
       limit(n: number) { _limit = n; return b; },
       maybeSingle() { _maybe = true; _single = true; return resolve(); },

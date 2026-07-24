@@ -42,6 +42,7 @@ import type { MapEntity, ToggleableEntityType, PassportCountryPayload } from '..
 import { TOGGLEABLE_LAYERS } from '../../src/types/mapTypes.ts';
 import { MapCarousel } from '../../src/components/map/MapCarousel.tsx';
 import type { MapCarouselRef } from '../../src/components/map/MapCarousel.tsx';
+import { MapStoreProvider, useMapStore } from '../../src/stores/mapStore.tsx';
 
 // ── Lazy-load native map component only on native ─────────────────────────────
 // This avoids importing MapLibre on web where it would crash.
@@ -280,7 +281,30 @@ function parseCategory(v: string | string[] | undefined): DiscoveryCategory {
     : 'for_you';
 }
 
+/**
+ * FullScreenMapScreen — public default export.
+ *
+ * Wraps the inner implementation with MapStoreProvider so all child components
+ * can access shared map state without prop-drilling. Existing tests that render
+ * this default export automatically get the store provider.
+ */
 export default function FullScreenMapScreen() {
+  const params = useLocalSearchParams<{ mode?: string }>();
+  const mode = Array.isArray(params.mode) ? params.mode[0] : (params.mode ?? null);
+
+  // Pre-select enabled layers based on mode so MapStoreProvider gets the right
+  // initial value — circle mode pre-selects friends only.
+  const initialLayers = mode === 'circle' ? (['friends'] as const) : undefined;
+
+  return (
+    <MapStoreProvider initialEnabledLayers={initialLayers as any}>
+      <FullScreenMapScreenInner />
+    </MapStoreProvider>
+  );
+}
+
+/** Inner implementation — reads map state from the store via useMapStore(). */
+function FullScreenMapScreenInner() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     entityTypes?: string;
@@ -292,6 +316,16 @@ export default function FullScreenMapScreen() {
     focusId?: string;
     mode?: string;
   }>();
+
+  const {
+    enabledLayers,
+    setEnabledLayers,
+    carouselIndex: activeIndex,
+    setCarouselIndex: setActiveIndex,
+    setSelectedEntityId,
+    setCameraCenter,
+    setCameraZoom,
+  } = useMapStore();
 
   // Shared camera ref — forwarded into DiscoveryMapView so the Camera element
   // inside is the same ref that MapTopControls calls easeTo on.
@@ -405,10 +439,8 @@ export default function FullScreenMapScreen() {
   }, [mode, passportRetryCount]);
 
   // ── Entity layer filter state ───────────────────────────────────────────────
-  // mode=circle pre-selects only the Friends layer; other modes load persisted prefs.
-  const [enabledLayers, setEnabledLayers] = useState<ToggleableEntityType[]>(
-    () => mode === 'circle' ? ['friends'] : [...TOGGLEABLE_LAYERS],
-  );
+  // enabledLayers now lives in the store (initialised by FullScreenMapScreen
+  // wrapper which passes the mode-aware initial value to MapStoreProvider).
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
 
   // Restore persisted layer preferences on mount — skipped in circle/passport mode
@@ -494,7 +526,7 @@ export default function FullScreenMapScreen() {
   const entities = compassOverrideEntities ?? (mode === 'passport' ? passportEntities : defaultEntities);
 
   // ── Carousel state ──────────────────────────────────────────────────────────
-  const [activeIndex, setActiveIndex] = useState(0);
+  // activeIndex / setActiveIndex come from the map store (carouselIndex / setCarouselIndex).
   const carouselRef = useRef<MapCarouselRef>(null);
   // Tracks whether focusId has already been applied — only snap once on first load.
   const focusAppliedRef = useRef(false);
@@ -566,15 +598,19 @@ export default function FullScreenMapScreen() {
       setActiveIndex(index);
       const entity = entities[index];
       if (!entity) return;
+      const zoom = zoomForEntity(entity.type);
+      // Capture camera position in the store so it can be restored on back.
+      setCameraCenter({ lat: entity.lat, lng: entity.lng });
+      setCameraZoom(zoom);
       if (cameraRef.current && typeof cameraRef.current.easeTo === 'function') {
         cameraRef.current.easeTo({
           center: [entity.lng, entity.lat],
-          zoom: zoomForEntity(entity.type),
+          zoom,
           duration: 400,
         });
       }
     },
-    [entities],
+    [entities, setCameraCenter, setCameraZoom, setActiveIndex],
   );
 
   /** Called when the user taps a marker on the map. */
@@ -583,9 +619,13 @@ export default function FullScreenMapScreen() {
       const index = entities.findIndex((e) => e.id === entity.id);
       if (index < 0) return;
       setActiveIndex(index);
+      setSelectedEntityId(entity.id);
+      // Capture camera position so it survives a detail-screen push.
+      setCameraCenter({ lat: entity.lat, lng: entity.lng });
+      setCameraZoom(zoomForEntity(entity.type));
       carouselRef.current?.scrollToIndex(index);
     },
-    [entities],
+    [entities, setActiveIndex, setSelectedEntityId, setCameraCenter, setCameraZoom],
   );
 
   // Web: show static placeholder.
