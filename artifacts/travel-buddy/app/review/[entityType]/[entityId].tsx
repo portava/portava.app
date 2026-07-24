@@ -29,6 +29,10 @@ import {
 import { useSession } from '../../../src/context/SessionContext';
 import { useNavBarScrollHandler } from '../../../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../../../src/hooks/useNavBarCollapse';
+// NOTE: Photo attachments for reviews are NOT wired — the `reviews` table has
+// no `photos` column (only `rent_buddy_reviews` does). This flow is documented
+// as skipped in the Task 6 report. The `photos` field exists in the service
+// type (reviews.ts) for forward-compat with the rent-a-buddy review surface.
 
 // ── Star rating ───────────────────────────────────────────────────────────────
 

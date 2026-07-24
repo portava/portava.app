@@ -73,6 +73,8 @@ export async function createReview(params: {
   body?: string;
   tags?: string[];
   anonymous?: boolean;
+  /** Optional photo URLs attached to the review (max 3). */
+  photos?: string[];
 }): Promise<Review> {
   const res = await fetch(api('reviews'), {
     method: 'POST',
@@ -84,6 +86,7 @@ export async function createReview(params: {
       body:       params.body,
       tags:       params.tags ?? [],
       anonymous:  params.anonymous ?? false,
+      ...(params.photos?.length ? { photos: params.photos } : {}),
     }),
   });
   if (!res.ok) {
@@ -167,6 +170,8 @@ export async function updateReview(
     body?: string | null;
     tags?: string[];
     anonymous?: boolean;
+    /** Optional photo URLs attached to the review (max 3). */
+    photos?: string[];
   },
 ): Promise<UpdatedReview> {
   const res = await fetch(api(`reviews/${reviewId}`), {

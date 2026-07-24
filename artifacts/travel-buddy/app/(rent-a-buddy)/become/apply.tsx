@@ -13,6 +13,10 @@ import { Stamp } from '../../../src/components/ui';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyCategory, TrainingItem, ChecklistItem, ProfileSubmitResult } from '../../../src/services/rentABuddy';
+// NOTE: Profile photo upload in the application wizard is NOT wired — the
+// rent_buddy_applications table has no photos column. rent_buddy_profiles has
+// gallery_urls but the apply endpoint doesn't persist it from this payload.
+// Documented as skipped in the Task 6 report.
 
 const TOTAL_STEPS = 7;
 

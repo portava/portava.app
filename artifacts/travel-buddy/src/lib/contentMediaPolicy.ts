@@ -24,7 +24,13 @@ export type ContentPolicyKey =
   | 'profileCover'
   | 'message'
   | 'event'
-  | 'trip';
+  | 'trip'
+  | 'tripCover'
+  | 'review'
+  | 'buddyApplication'
+  | 'hiddenGem'
+  | 'communityPlace'
+  | 'safetyReport';
 
 export interface ContentMediaPolicy {
   /** Maximum number of media items allowed. */
@@ -157,6 +163,78 @@ export const CONTENT_MEDIA_POLICIES: Record<ContentPolicyKey, ContentMediaPolicy
     supportsAltText: false,
     fallbackCategory: 'trip',
     videoMaxDuration: 120,
+  },
+
+  // ── Optional photo attachment flows ─────────────────────────────────────────
+
+  /** Single cover image for a new trip — images only, no video. */
+  tripCover: {
+    maxItems: 1,
+    allowedTypes: ['images'],
+    supportsCover: true,
+    supportsGallery: false,
+    supportsAltText: false,
+    fallbackCategory: 'trip_cover',
+    allowsEditing: false,
+  },
+
+  /** Optional photo evidence attached to a review (max 3). */
+  review: {
+    maxItems: 3,
+    allowedTypes: ['images'],
+    supportsCover: false,
+    supportsGallery: true,
+    supportsAltText: false,
+    fallbackCategory: 'review',
+  },
+
+  /** Profile photos uploaded during a buddy application (max 3). */
+  buddyApplication: {
+    maxItems: 3,
+    allowedTypes: ['images'],
+    supportsCover: false,
+    supportsGallery: true,
+    supportsAltText: false,
+    fallbackCategory: 'buddy_application',
+  },
+
+  /** Single representative photo for a hidden gem submission. */
+  hiddenGem: {
+    maxItems: 1,
+    allowedTypes: ['images'],
+    supportsCover: false,
+    supportsGallery: false,
+    supportsAltText: false,
+    fallbackCategory: 'gem',
+    allowsEditing: false,
+  },
+
+  /**
+   * Community/user place submission photo.
+   * Defined for policy completeness; the current server endpoint has no
+   * imageUrl column — this flow is SKIPPED and noted in the Task 6 report.
+   */
+  communityPlace: {
+    maxItems: 3,
+    allowedTypes: ['images'],
+    supportsCover: false,
+    supportsGallery: true,
+    supportsAltText: false,
+    fallbackCategory: 'community_place',
+  },
+
+  /**
+   * Safety report photo evidence.
+   * Defined for policy completeness; the current server endpoint has no
+   * imageUrl column — this flow is SKIPPED and noted in the Task 6 report.
+   */
+  safetyReport: {
+    maxItems: 1,
+    allowedTypes: ['images'],
+    supportsCover: false,
+    supportsGallery: false,
+    supportsAltText: false,
+    fallbackCategory: 'safety_report',
   },
 };
 

@@ -200,6 +200,8 @@ export async function submitGem(input: {
   layoverSafe?: boolean;
   minimumLayoverMinutes?: number;
   sensitivityLevel?: GemSensitivity;
+  /** Optional representative photo URL for the gem. */
+  imageUrl?: string;
 }): Promise<HiddenGem> {
   const data = await apiFetch<{ gem: any }>('/api/hidden-gems', {
     method: 'POST',
