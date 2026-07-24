@@ -23,9 +23,8 @@ export type PlaceStatus =
  * Used by PlaceReportSheet and submitted via submitModerationReport
  * with subjectType: 'place'.
  *
- * Server endpoint: POST /api/places/:id/report (may need to be created;
- * client POSTs to the general moderation endpoint and falls back gracefully
- * on any non-OK response).
+ * Server endpoint: POST /api/moderation/report with subjectType:'place'
+ * stores the report in moderation_reports (migration 2029).
  */
 export type PlaceReportCategory =
   | 'wrong_place'

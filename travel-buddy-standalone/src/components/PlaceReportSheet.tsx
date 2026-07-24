@@ -7,10 +7,10 @@
  *
  * Posts via submitModerationReport with subjectType: 'place'.
  *
- * Server endpoint note: POST /api/places/:id/report (or equivalent) may need
- * to be created server-side. This component catches all non-OK API responses
- * gracefully and always shows the step-3 confirmation — it never crashes on
- * a server rejection.
+ * Server endpoint: POST /api/moderation/report accepts subjectType:'place'
+ * and place-specific category values (migration 2029). This component catches
+ * all non-OK API responses gracefully and always shows the step-3 confirmation
+ * — it never crashes on a server rejection.
  */
 import React, { useState } from 'react';
 import {
@@ -79,9 +79,8 @@ export function PlaceReportSheet({
     setSubmitting(true);
 
     // Post the report — catch all failures gracefully and always show confirmation.
-    // Server-side note: if POST /api/places/:id/report does not yet exist, the
-    // moderation endpoint returns a non-OK status; we treat any error as
-    // "report received" so the user experience is consistent.
+    // Endpoint: POST /api/moderation/report with subjectType:'place'.
+    // Any network or server error is swallowed so UX stays consistent.
     try {
       await submitModerationReport({
         subjectType: 'place',
