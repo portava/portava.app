@@ -271,6 +271,41 @@ export async function getUserMemories(
 
 // ── Add item (upload + register) ──────────────────────────────────────────────
 
+/**
+ * Register a memory item using an already-uploaded URL (no re-upload).
+ * Use this when the upload has already been performed by `useMediaComposer.uploadAll()`
+ * so that upload progress and retry UI work correctly.
+ */
+export async function addMemoryItemFromUrl(
+  memoryId: string,
+  mediaUrl: string,
+  mediaType: string,
+  caption?: string | null,
+  position?: number,
+): Promise<{ ok: true; item: MemoryItem } | { ok: false; message: string }> {
+  try {
+    const headers = { ...(await authHeader()), 'Content-Type': 'application/json' };
+    const res = await fetch(`${apiBase()}/api/memories/${memoryId}/items`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        mediaUrl,
+        mediaType,
+        caption: caption ?? null,
+        position: position ?? 0,
+      }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      return { ok: false, message: j.message ?? `HTTP ${res.status}` };
+    }
+    const json = await res.json();
+    return { ok: true, item: json.item };
+  } catch (e: any) {
+    return { ok: false, message: e?.message ?? 'Network error' };
+  }
+}
+
 export async function addMemoryItem(
   memoryId: string,
   localUri: string,

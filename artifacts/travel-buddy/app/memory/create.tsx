@@ -2,8 +2,9 @@
  * Memory composer — /memory/create
  *
  * Pick photos/videos from the library or camera, add a title + caption,
- * choose visibility, then publish. Media uploads to Supabase Storage
- * (memories bucket) before the memory row is created.
+ * choose visibility, then publish. Media uploads via useMediaComposer
+ * (driving the per-item progress bar and retry UI) before the memory row
+ * is created and items are registered with their already-uploaded URLs.
  *
  * Media state is owned entirely by useMediaComposer('memory') so that
  * canAddMore / canAddMore re-enables correctly after removes. A parallel
@@ -18,9 +19,9 @@ import {
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { X, Globe, Users, Lock, Eye, Trash2, MapPin, ChevronDown } from 'lucide-react-native';
+import { X, Globe, Users, Lock, Eye, Trash2, MapPin, ChevronDown, RefreshCw } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
-import { createMemory, addMemoryItem, type MemoryVisibility } from '../../src/services/memories';
+import { createMemory, addMemoryItemFromUrl, type MemoryVisibility } from '../../src/services/memories';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
@@ -91,19 +92,47 @@ export default function CreateMemoryScreen() {
 
   const handlePublish = useCallback(async () => {
     // Synchronous guard — checked before any async work or React state update.
-    // setUploading(true) below is async (deferred until next render), so a rapid
-    // double-tap could bypass the `disabled={!canPublish}` check and re-enter
-    // this handler before the button has re-rendered as disabled.
     if (publishLock.current) return;
     publishLock.current = true;
 
     setError('');
     setUploading(true);
 
-    const items = mediaComposer.items;
+    // Snapshot items at publish time so the closure is stable across awaits.
+    // Items already in 'done' state (e.g. from a prior individual retry) retain
+    // their uploadedUrl in this snapshot; newly idle items will be uploaded now.
+    const snapshotItems = mediaComposer.items;
     const caps = captions;
 
     try {
+      // ── Step 1: upload all idle items via the composer ──────────────────────
+      // This drives the per-item progress bar and error/retry overlays.
+      // Items already in 'done' state are skipped by uploadAll().
+      let uploadMap = new Map<string, string | null>();
+
+      if (snapshotItems.length > 0) {
+        const raw = await mediaComposer.uploadAll();
+        raw.forEach((result, id) => uploadMap.set(id, result?.url ?? null));
+      }
+
+      // Resolve the public URL for every item:
+      //   • was idle → uploaded now → URL from map
+      //   • was already done (prior retry) → URL from snapshot.uploadedUrl
+      const urlForItem = (item: typeof snapshotItems[0]): string | null => {
+        if (uploadMap.has(item.id)) return uploadMap.get(item.id) ?? null;
+        return item.uploadedUrl;
+      };
+
+      const failCount = snapshotItems.filter((it) => !urlForItem(it)).length;
+      if (failCount > 0) {
+        setError(
+          `${failCount} photo${failCount > 1 ? 's' : ''} failed to upload. ` +
+          'Tap the retry button on each failed item, then publish again.',
+        );
+        return;
+      }
+
+      // ── Step 2: create the memory row ───────────────────────────────────────
       const createResult = await createMemory({
         title: title.trim() || null,
         caption: caption.trim() || null,
@@ -119,12 +148,14 @@ export default function CreateMemoryScreen() {
 
       const memoryId = createResult.memory.id;
 
-      if (items.length > 0) {
+      // ── Step 3: register each item with its already-uploaded URL ────────────
+      // No re-upload — the composer already holds the public URLs.
+      if (snapshotItems.length > 0) {
         const results = await Promise.allSettled(
-          items.map((item, i) =>
-            addMemoryItem(
+          snapshotItems.map((item, i) =>
+            addMemoryItemFromUrl(
               memoryId,
-              item.uri,
+              urlForItem(item)!,
               item.mimeType,
               (caps[item.id] ?? '').trim() || null,
               i,
@@ -132,9 +163,14 @@ export default function CreateMemoryScreen() {
           ),
         );
 
-        const failures = results.filter((r) => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.ok));
+        const failures = results.filter(
+          (r) => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.ok),
+        );
         if (failures.length > 0) {
-          setError(`Memory created but ${failures.length} photo(s) failed to upload. View the memory to retry.`);
+          setError(
+            `Memory created but ${failures.length} photo(s) failed to save. ` +
+            'View the memory to retry.',
+          );
           router.replace({ pathname: '/memory/[id]' as any, params: { id: memoryId } });
           return;
         }
@@ -145,7 +181,7 @@ export default function CreateMemoryScreen() {
       setUploading(false);
       publishLock.current = false;
     }
-  }, [mediaComposer.items, captions, title, caption, visibility, place]);
+  }, [mediaComposer.items, mediaComposer.uploadAll, captions, title, caption, visibility, place]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -190,15 +226,55 @@ export default function CreateMemoryScreen() {
             <View style={s.assetGrid}>
               {items.map((item) => (
                 <View key={item.id} style={s.assetCard}>
-                  <Image source={{ uri: item.uri }} style={s.assetThumb} resizeMode="cover" />
-                  <Pressable
-                    style={s.assetRemove}
-                    onPress={() => removeAsset(item.id)}
-                    hitSlop={4}
-                    accessibilityLabel="Remove photo"
-                  >
-                    <Trash2 size={14} color="#fff" />
-                  </Pressable>
+                  {/* Thumbnail wrapper — overlays are positioned inside here */}
+                  <View style={s.assetThumbWrap}>
+                    <Image source={{ uri: item.uri }} style={s.assetThumb} resizeMode="cover" />
+
+                    {/* Upload progress overlay */}
+                    {item.uploadState === 'uploading' && (
+                      <View style={s.uploadOverlay}>
+                        <ActivityIndicator size="small" color="#fff" />
+                        <View style={s.uploadProgressBar}>
+                          <View
+                            style={[
+                              s.uploadProgressFill,
+                              { width: `${Math.round(item.uploadProgress * 100)}%` as any },
+                            ]}
+                          />
+                        </View>
+                      </View>
+                    )}
+
+                    {/* Error overlay with retry */}
+                    {item.uploadState === 'error' && (
+                      <View style={s.uploadErrorOverlay}>
+                        <Pressable
+                          style={s.retryBtn}
+                          onPress={() => mediaComposer.retryUpload(item.id)}
+                          hitSlop={8}
+                          accessibilityLabel="Retry upload"
+                        >
+                          <RefreshCw size={14} color="#fff" />
+                          <Text style={s.retryText}>Retry</Text>
+                        </Pressable>
+                      </View>
+                    )}
+
+                    <Pressable
+                      style={s.assetRemove}
+                      onPress={() => removeAsset(item.id)}
+                      hitSlop={4}
+                      accessibilityLabel="Remove photo"
+                    >
+                      <Trash2 size={14} color="#fff" />
+                    </Pressable>
+                  </View>
+
+                  {/* Per-item upload error message */}
+                  {item.uploadState === 'error' && item.uploadError ? (
+                    <Text style={s.uploadErrorText} numberOfLines={2}>{item.uploadError}</Text>
+                  ) : null}
+
                   <TextInput
                     style={s.assetCaption}
                     placeholder="Caption…"
@@ -360,12 +436,66 @@ const s = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: color.haze,
   },
+  // Wrapper for the thumbnail + all absolutely-positioned overlays.
+  // Gives overlays a bounded context so they don't bleed into the caption.
+  assetThumbWrap: {
+    width: '100%',
+    height: 200,
+    position: 'relative',
+  },
   assetThumb: { width: '100%', height: 200 },
   assetRemove: {
     position: 'absolute', top: space.sm, right: space.sm,
     backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: radius.pill,
     padding: 6,
   },
+
+  // Upload progress overlay (shown while uploadState === 'uploading')
+  uploadOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    padding: 12,
+  },
+  uploadProgressBar: {
+    width: '80%',
+    height: 3,
+    backgroundColor: 'rgba(255,255,255,0.35)',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  uploadProgressFill: {
+    height: '100%',
+    backgroundColor: '#fff',
+    borderRadius: 2,
+  },
+
+  // Error overlay (shown when uploadState === 'error')
+  uploadErrorOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(220,40,30,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  retryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  retryText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  uploadErrorText: {
+    ...(t.small as object),
+    color: color.signal,
+    paddingHorizontal: space.md,
+    paddingTop: space.xs,
+  },
+
   assetCaption: {
     padding: space.md,
     ...(t.small as object),
