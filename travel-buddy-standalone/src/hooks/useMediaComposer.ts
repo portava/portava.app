@@ -97,6 +97,13 @@ export interface UseMediaComposerReturn {
   cancelUpload: (id: string) => void;
   /** Remove all items and reset to empty. */
   clearAll: () => void;
+  /**
+   * Pre-populate the tray with existing remote URLs (e.g. gallery_urls from a
+   * saved buddy profile). Each URL is added as a `done` item so the user can
+   * keep, replace, or remove it without re-uploading.
+   * No-ops if the tray already has items (i.e. only seeds on a fresh mount).
+   */
+  preSeedFromUrls: (urls: string[]) => void;
   /** True when more items can be added (items.length < policy.maxItems). */
   canAddMore: boolean;
   /** The first item with isCover=true, or items[0], or null. */
@@ -372,6 +379,32 @@ export function useMediaComposer(policyKey: ContentPolicyKey): UseMediaComposerR
     cancelRefs.current.clear();
   }, []);
 
+  const preSeedFromUrls = useCallback((urls: string[]) => {
+    if (urls.length === 0) return;
+    setItems((prev) => {
+      // Only seed when the tray is truly empty — don't overwrite items the
+      // user has already picked in the same session.
+      if (prev.length > 0) return prev;
+      return urls.slice(0, policy.maxItems).map((url, idx): MediaItem => ({
+        id: makeId(),
+        uri: url,
+        mimeType: 'image/jpeg',
+        fileName: null,
+        fileSize: null,
+        width: null,
+        height: null,
+        type: 'image',
+        duration: null,
+        altText: '',
+        isCover: idx === 0,
+        uploadState: 'done',
+        uploadProgress: 1,
+        uploadedUrl: url,
+        uploadError: null,
+      }));
+    });
+  }, [policy.maxItems]);
+
   // ── Derived ──────────────────────────────────────────────────────────────
 
   const canAddMore = items.length < policy.maxItems;
@@ -394,6 +427,7 @@ export function useMediaComposer(policyKey: ContentPolicyKey): UseMediaComposerR
     retryUpload,
     cancelUpload,
     clearAll,
+    preSeedFromUrls,
     canAddMore,
     primaryItem,
   };

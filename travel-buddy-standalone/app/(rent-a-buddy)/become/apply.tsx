@@ -117,12 +117,19 @@ export default function ApplyToBeBuddy() {
 
   useEffect(() => {
     (async () => {
-      const [appRes, trainRes, profileRes] = await Promise.all([
+      const [appRes, trainRes, profileRes, buddyProfileRes] = await Promise.all([
         rentABuddy.getMyApplication(),
         rentABuddy.getTrainingChecklist(),
         rentABuddy.getProfileChecklist(),
+        rentABuddy.getMyBuddyProfile(),
       ]);
       const hasExistingApplication = appRes.ok && !!appRes.data?.application;
+
+      // Pre-fill photo tray with any previously submitted gallery photos so the
+      // user doesn't have to re-upload them when re-entering the wizard.
+      if (buddyProfileRes.ok && buddyProfileRes.data?.profile?.galleryUrls?.length) {
+        photoComposer.preSeedFromUrls(buddyProfileRes.data.profile.galleryUrls);
+      }
 
       // Profile checklist: if the user has a profile, show its completion state
       if (profileRes.ok && profileRes.data) {
