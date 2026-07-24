@@ -2939,7 +2939,7 @@ packages:
         optional: true
 
   expo-task-manager@14.0.9:
-    resolution: {integrity: sha512-GKWtXrkedr4XChHfTm5IyTcSfMtCPxzx89y4CMVqKfyfROATibrE/8UI5j7UC/pUOfFoYlQvulQEvECMreYuUA==, tarball: https://registry.npmjs.org/expo-task-manager/-/expo-task-manager-14.0.9.tgz}
+    resolution: {integrity: sha512-GKWtXrkedr4XChHfTm5IyTcSfMtCPxzx89y4CMVqKfyfROATibrE/8UI5j7UC/pUOfFoYlQvulQEvECMreYuUA==}
     peerDependencies:
       expo: '*'
       react-native: '*'

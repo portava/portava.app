@@ -11,10 +11,10 @@
  * event entities even if the capability is present.
  *
  * After a mutating action (join, save, follow) the component dispatches
- * updateEntityCapabilities to the map store so the card reflects the new state
- * on remount (e.g. after a camera pan).  For follow, useFollow already
- * re-fetches from the server on mount, so the icon is correct without a
- * capability change; the store dispatch is omitted for that case.
+ * to the map store so the card reflects the new state on remount (e.g. after
+ * a camera pan).  For follow, the store persists the toggled state so
+ * useFollow can seed the icon instantly before the getFollowStatus fetch
+ * completes.
  */
 import React, { useState, useCallback } from 'react';
 import {
@@ -165,13 +165,20 @@ function ActionRowInner({ entity }: { entity: MapEntity }) {
   const userId = getEntityUserId(entity);
 
   // ── Hooks (unconditional) ─────────────────────────────────────────────────
-  const followState = useFollow(userId);
-  const { doBlock, loading: blockLoading } = useBlockUser();
-  const { open: openPlanPicker } = usePlanPicker();
 
   // Map store — may be null when the component is rendered outside a map
   // session (e.g. in unit tests or non-map surfaces).
   const mapStore = useOptionalMapStore();
+
+  // Seed from the store so the icon is correct instantly on remount, before
+  // the getFollowStatus round-trip completes.
+  const storedFollowState: boolean | undefined = mapStore?.entityFollowState[entity.id];
+  const followState = useFollow(userId, {
+    initialIsFollowing: storedFollowState,
+  });
+
+  const { doBlock, loading: blockLoading } = useBlockUser();
+  const { open: openPlanPicker } = usePlanPicker();
 
   // Effective capabilities: store patch wins over entity's initial caps so
   // post-mutation state survives card unmount/remount (e.g. camera pan).
@@ -240,6 +247,15 @@ function ActionRowInner({ entity }: { entity: MapEntity }) {
       );
     }
   }, [rawEntityId, mapStore, entity.id, caps]);
+
+  const handleFollowToggle = useCallback(async () => {
+    const succeeded = await followState.toggle();
+    if (succeeded && mapStore) {
+      // Persist the new follow state so the icon is correct on remount without
+      // waiting for a getFollowStatus round-trip.
+      mapStore.setEntityFollowState(entity.id, !followState.isFollowing);
+    }
+  }, [followState, mapStore, entity.id]);
 
   const handleBlock = useCallback(() => {
     if (!userId) return;
@@ -322,7 +338,7 @@ function ActionRowInner({ entity }: { entity: MapEntity }) {
                 : <UserPlus size={15} color={color.mute} />
             }
             label={followState.isFollowing ? 'Unfollow' : 'Follow'}
-            onPress={followState.toggle}
+            onPress={handleFollowToggle}
             disabled={followState.toggling}
           />
         )}
