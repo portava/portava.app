@@ -138,7 +138,11 @@ export default function Destination() {
                   accessibilityRole="button"
                   accessibilityLabel={`Hidden gem: ${g.name}`}
                 >
-                  <View style={s.gemIcon}><Gem size={16} color={color.deep} /></View>
+                  {g.imageUrl ? (
+                    <Image source={{ uri: g.imageUrl }} style={s.gemThumb} resizeMode="cover" />
+                  ) : (
+                    <View style={s.gemIcon}><Gem size={16} color={color.deep} /></View>
+                  )}
                   <Text style={s.gemName} numberOfLines={2}>{g.name}</Text>
                   {g.neighborhood ? <Text style={s.gemMeta} numberOfLines={1}>{g.neighborhood}</Text> : null}
                 </Pressable>
@@ -276,6 +280,9 @@ const s = StyleSheet.create({
   gemCard: {
     width: 132, padding: space.md, borderRadius: radius.md,
     borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised, gap: 6,
+  },
+  gemThumb: {
+    width: '100%', height: 80, borderRadius: radius.sm, marginBottom: 2,
   },
   gemIcon: {
     width: 30, height: 30, borderRadius: 15, backgroundColor: color.paper,
