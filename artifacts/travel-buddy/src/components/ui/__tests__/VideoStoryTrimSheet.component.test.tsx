@@ -42,6 +42,8 @@ jest.mock('expo-av', () => {
 
 const mockRequestLibrary = ImagePicker.requestMediaLibraryPermissionsAsync as jest.Mock;
 const mockLaunchLibrary  = ImagePicker.launchImageLibraryAsync as jest.Mock;
+const mockRequestCamera  = ImagePicker.requestCameraPermissionsAsync as jest.Mock;
+const mockLaunchCamera   = ImagePicker.launchCameraAsync as jest.Mock;
 
 const VIDEO_ASSET: ImagePicker.ImagePickerAsset = {
   uri: 'file:///story-clip.mp4',
@@ -76,6 +78,8 @@ const IMAGE_ASSET: ImagePicker.ImagePickerAsset = {
 beforeEach(() => {
   mockRequestLibrary.mockResolvedValue({ granted: true, status: 'granted' });
   mockLaunchLibrary.mockResolvedValue({ canceled: false, assets: [VIDEO_ASSET] });
+  mockRequestCamera.mockResolvedValue({ granted: true, status: 'granted' });
+  mockLaunchCamera.mockResolvedValue({ canceled: false, assets: [VIDEO_ASSET] });
   // Force iOS path so web file-input fallback is not taken.
   Object.defineProperty(Platform, 'OS', { get: () => 'ios', configurable: true });
 });
@@ -89,6 +93,12 @@ afterEach(() => {
 async function pickLibrary(getByLabelText: (l: string) => any) {
   await act(async () => {
     fireEvent.press(getByLabelText('Choose photo or video from library'));
+  });
+}
+
+async function pickCamera(getByLabelText: (l: string) => any) {
+  await act(async () => {
+    fireEvent.press(getByLabelText('Take photo or video with camera'));
   });
 }
 
@@ -226,5 +236,94 @@ describe('MediaSourceSheet — storyVideoTrim interception', () => {
     await waitFor(() => expect(onResult).toHaveBeenCalledTimes(1));
     expect(onResult).toHaveBeenCalledWith(VIDEO_ASSET);
     expect(queryByLabelText('Use this video')).toBeNull();
+  });
+});
+
+describe('MediaSourceSheet — storyVideoTrim camera path', () => {
+  it('shows VideoStoryTrimSheet after a camera video recording and does NOT call onResult yet', async () => {
+    const onResult = jest.fn();
+    const onClose  = jest.fn();
+
+    const { getByLabelText } = await render(
+      <MediaSourceSheet
+        visible
+        onClose={onClose}
+        onResult={onResult}
+        allowsVideo
+        storyVideoTrim
+        title="New Story"
+      />,
+    );
+
+    await pickCamera(getByLabelText);
+
+    await waitFor(() => {
+      // The trim sheet's confirm button should be visible.
+      expect(getByLabelText('Use this video')).toBeTruthy();
+    });
+
+    // onResult must NOT have fired yet.
+    expect(onResult).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('calls onResult + onClose when the user confirms after a camera recording', async () => {
+    const onResult = jest.fn();
+    const onClose  = jest.fn();
+
+    const { getByLabelText } = await render(
+      <MediaSourceSheet
+        visible
+        onClose={onClose}
+        onResult={onResult}
+        allowsVideo
+        storyVideoTrim
+        title="New Story"
+      />,
+    );
+
+    await pickCamera(getByLabelText);
+
+    await waitFor(() => getByLabelText('Use this video'));
+
+    await act(async () => {
+      fireEvent.press(getByLabelText('Use this video'));
+    });
+
+    expect(onResult).toHaveBeenCalledTimes(1);
+    expect(onResult).toHaveBeenCalledWith(VIDEO_ASSET);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('dismisses VideoStoryTrimSheet without calling onResult when user rejects a camera recording', async () => {
+    const onResult = jest.fn();
+    const onClose  = jest.fn();
+
+    const { getByLabelText, queryByLabelText } = await render(
+      <MediaSourceSheet
+        visible
+        onClose={onClose}
+        onResult={onResult}
+        allowsVideo
+        storyVideoTrim
+        title="New Story"
+      />,
+    );
+
+    await pickCamera(getByLabelText);
+
+    await waitFor(() => getByLabelText('Re-pick video'));
+
+    await act(async () => {
+      fireEvent.press(getByLabelText('Re-pick video'));
+    });
+
+    // Trim sheet dismissed — its confirm button should be gone.
+    await waitFor(() => {
+      expect(queryByLabelText('Use this video')).toBeNull();
+    });
+
+    expect(onResult).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 });
