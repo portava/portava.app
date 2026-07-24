@@ -1,4 +1,4 @@
--- Migration 0191: bucket-privacy STAGE 1 (prep) — flag + lookup indexes
+-- Migration 2027: bucket-privacy STAGE 1 (prep) — flag + lookup indexes
 --
 -- Prepares for making the post-media bucket private WITHOUT changing any
 -- behavior. The actual flip is a separate, deliberate, owner-run step
