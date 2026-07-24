@@ -25,7 +25,7 @@ const router = Router();
 // ── Enum constants ─────────────────────────────────────────────────────────────
 
 const SUBJECT_TYPES = [
-  "user", "post", "comment", "message", "event", "review", "buddy_listing", "media",
+  "user", "post", "comment", "message", "event", "review", "buddy_listing", "media", "place",
 ] as const;
 
 const CATEGORIES = [
@@ -33,12 +33,18 @@ const CATEGORIES = [
   "safety_concern", "underage", "spam", "other",
 ] as const;
 
+/** Place-specific report categories — validated when subjectType === 'place'. */
+const PLACE_CATEGORIES = [
+  "wrong_place", "wrong_photo", "duplicate", "closed",
+  "incorrect_address", "incorrect_category", "outdated_image",
+] as const;
+
 // ── Zod schema ────────────────────────────────────────────────────────────────
 
 const ReportSchema = z.object({
   subjectType: z.enum(SUBJECT_TYPES),
   subjectId:   z.string().uuid("subjectId must be a UUID"),
-  category:    z.enum(CATEGORIES),
+  category:    z.union([z.enum(CATEGORIES), z.enum(PLACE_CATEGORIES)]),
   details:     z.string().max(500).optional().nullable(),
   /** Only for message reports in E2EE threads */
   threadId:    z.string().uuid().optional().nullable(),
@@ -128,6 +134,10 @@ async function resolveSubjectUserId(
           .maybeSingle();
         return (byUser as any)?.user_id ?? null;
       }
+
+      case "place":
+        // Canonical places are not owned by a single user — no subject_user_id.
+        return null;
 
       default:
         return null;

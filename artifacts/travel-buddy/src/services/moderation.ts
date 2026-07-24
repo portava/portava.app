@@ -67,10 +67,9 @@ import type { PlaceReportCategory } from '../types/canonicalPlace.ts';
  * Human-readable labels for each PlaceReportCategory.
  * Used by PlaceReportSheet to render the category picker.
  *
- * Server endpoint for place reports: POST /api/places/:id/report (may need to
- * be created server-side; the client posts to the general moderation report
- * endpoint and catches all non-OK responses gracefully, showing a "report
- * received" confirmation regardless).
+ * Server endpoint: POST /api/moderation/report with subjectType:'place'
+ * stores the report in moderation_reports (migration 2029 widens the
+ * subject_type and category CHECK constraints to include place values).
  */
 export const PLACE_REPORT_CATEGORY_LABELS: Record<PlaceReportCategory, string> = {
   wrong_place:        'Wrong place',

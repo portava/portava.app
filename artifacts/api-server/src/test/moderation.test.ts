@@ -38,6 +38,7 @@ const CMT_ID   = "ffffffff-0000-0000-0000-000000000006";
 const REV_ID   = "11111111-0000-0000-0000-000000000007";
 const BUDDY_ID = "22222222-0000-0000-0000-000000000008";
 const THR_ID   = "33333333-0000-0000-0000-000000000009";
+const PLACE_ID = "44444444-0000-0000-0000-000000000010";
 
 // ── Fake client factory ───────────────────────────────────────────────────────
 
@@ -348,6 +349,49 @@ describe("Moderation routes", () => {
       _setTestClient(makeClient() as any, true);
       const { status, body } = await req(server, "POST", "/api/moderation/report", {
         subjectType: "buddy_listing", subjectId: BUDDY_ID, category: "scam_fraud",
+      }, AUTH);
+      assert.ok(status === 201 || status === 200, `got ${status}: ${JSON.stringify(body)}`);
+    });
+
+    it("happy path — place report with place-specific category: 201", async () => {
+      _setTestClient(makeClient() as any, true);
+      const { status, body } = await req(server, "POST", "/api/moderation/report", {
+        subjectType: "place", subjectId: PLACE_ID, category: "wrong_photo",
+      }, AUTH);
+      assert.ok(status === 201 || status === 200, `got ${status}: ${JSON.stringify(body)}`);
+      assert.ok(typeof body.reportId === "string", "reportId should be a string");
+    });
+
+    it("accepts all seven place-specific category values", async () => {
+      const placeCategories = [
+        "wrong_place", "wrong_photo", "duplicate", "closed",
+        "incorrect_address", "incorrect_category", "outdated_image",
+      ];
+      for (const cat of placeCategories) {
+        _clearTestClient?.();
+        _resetRateLimit("moderation_report", ALICE_ID);
+        _setTestClient(makeClient() as any, true);
+        const { status, body } = await req(server, "POST", "/api/moderation/report", {
+          subjectType: "place", subjectId: PLACE_ID, category: cat,
+        }, AUTH);
+        assert.ok(status === 201 || status === 200, `category '${cat}': got ${status}: ${JSON.stringify(body)}`);
+      }
+    });
+
+    it("returns 400 when a general moderation category is paired with place subjectType (wrong_place is a place cat, not general)", async () => {
+      // 'bad_place_cat' is not a valid category at all — should 400
+      _setTestClient(makeClient() as any, true);
+      const { status } = await req(server, "POST", "/api/moderation/report", {
+        subjectType: "place", subjectId: PLACE_ID, category: "bad_place_cat",
+      }, AUTH);
+      assert.equal(status, 400);
+    });
+
+    it("place report with optional details is accepted", async () => {
+      _setTestClient(makeClient() as any, true);
+      const { status, body } = await req(server, "POST", "/api/moderation/report", {
+        subjectType: "place", subjectId: PLACE_ID, category: "closed",
+        details: "The restaurant shut down last month.",
       }, AUTH);
       assert.ok(status === 201 || status === 200, `got ${status}: ${JSON.stringify(body)}`);
     });

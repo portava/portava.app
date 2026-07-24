@@ -93,6 +93,7 @@ const KNOWN_BROKEN = [
   // standalone-only files that hit the same esbuild "Unexpected typeof" wall
   'src/components/__tests__/LivePulseRail.test.ts',
   'src/services/__tests__/media.upload.test.ts',
+  'src/services/__tests__/places.getCanonicalPlace.test.ts',
   // react-native@0.81.5 esbuild "Unexpected typeof" — cannot run via tsx in Node
   'src/components/__tests__/LivePulseRail.test.ts',
   'src/services/__tests__/media.upload.test.ts',
