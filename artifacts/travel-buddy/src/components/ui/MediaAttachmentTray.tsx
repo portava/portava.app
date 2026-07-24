@@ -349,6 +349,26 @@ function DraggableMediaCard({
       }),
   );
 
+  // With only one item there is nothing to reorder. Skip the GestureDetector
+  // entirely so the long-press never fires and the grip overlay never appears.
+  // This also prevents the gesture from intercepting scroll in parent views.
+  if (totalCount === 1) {
+    return (
+      <Animated.View style={[s.card, animStyle]} testID={`media-card-${item.id}`}>
+        <MediaCardContent
+          item={item}
+          showCover={showCover}
+          showAltText={showAltText}
+          onRemove={onRemove}
+          onCoverPress={onCoverPress}
+          onAltTextChange={onAltTextChange}
+          onRetry={onRetry}
+          dragActive={false}
+        />
+      </Animated.View>
+    );
+  }
+
   return (
     <GestureDetector gesture={gesture}>
       <Animated.View style={[s.card, animStyle]} testID={`media-card-${item.id}`}>
