@@ -29,6 +29,7 @@ import { verifyLocation, shouldCreatePostcard } from "../lib/locationVerify";
 import { upsertCityStamp } from "../lib/stampHelper";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { awardStamp } from "../services/passport/StampAwardEngine.js";
+import { evaluateAndAwardCriteria } from "../lib/stamps/criteria/index.js";
 import { getServiceClient } from "../lib/supabase";
 import { stampOverlayCol } from "../lib/postMediaOverlay";
 import { checkRateLimit } from "../lib/rateLimit";
@@ -501,6 +502,7 @@ router.post("/posts", async (req, res) => {
 
           // Fire-and-forget: location milestone stamps based on GPS-verified cities/countries.
           // city_explorer → first verified city; globe_trotter → 5 countries; world_citizen → 20 countries.
+          // globe_trotter_5 / globe_trotter_10 → criteria-engine path (countries_visited >= 5/10).
           void (async () => {
             try {
               const stampSc = getServiceClient();
@@ -521,22 +523,36 @@ router.post("/posts", async (req, res) => {
               if (distinctCountries >= 5)  locationAwards.push({ slug: "globe_trotter" });
               if (distinctCountries >= 20) locationAwards.push({ slug: "world_citizen" });
 
-              const settled = await Promise.allSettled(
-                locationAwards.map(({ slug }) =>
-                  awardStamp(stampSc, {
-                    userId:         user.id,
-                    definitionSlug: slug,
-                    sourceType:     "posts",
-                    sourceId:       (data as any).id,
-                    city:           locationCity ?? undefined,
-                    country:        locationCountry ?? undefined,
-                  }).then((r) => ({ slug, ...r })),
+              const [settled, criteriaOutcomes] = await Promise.all([
+                Promise.allSettled(
+                  locationAwards.map(({ slug }) =>
+                    awardStamp(stampSc, {
+                      userId:         user.id,
+                      definitionSlug: slug,
+                      sourceType:     "posts",
+                      sourceId:       (data as any).id,
+                      city:           locationCity ?? undefined,
+                      country:        locationCountry ?? undefined,
+                    }).then((r) => ({ slug, ...r })),
+                  ),
                 ),
-              );
+                // Criteria-engine path: evaluate globe_trotter_5 and globe_trotter_10
+                // (distinct countries from user_stamps via the countries_visited metric).
+                evaluateAndAwardCriteria(stampSc, user.id, {
+                  sourceType: "posts",
+                  sourceId:   (data as any).id,
+                  onlySlugs:  ["globe_trotter_5", "globe_trotter_10"],
+                }),
+              ]);
 
-              const awardedSlugs = settled
-                .filter((r) => r.status === "fulfilled" && (r as any).value.awarded)
-                .map((r) => (r as any).value.slug as string);
+              const awardedSlugs = [
+                ...settled
+                  .filter((r) => r.status === "fulfilled" && (r as any).value.awarded)
+                  .map((r) => (r as any).value.slug as string),
+                ...criteriaOutcomes
+                  .filter((o) => o.awarded)
+                  .map((o) => o.slug),
+              ];
 
               if (awardedSlugs.length > 0) {
                 const { NotificationService: NS } = await import("../services/notifications/NotificationService.js");
