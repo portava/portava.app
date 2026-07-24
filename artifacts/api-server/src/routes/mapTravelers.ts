@@ -17,28 +17,9 @@ import { requireUser, sendError } from "../lib/http";
 import { checkRateLimit } from "../lib/rateLimit";
 import { getServiceClient } from "../lib/supabase";
 import { listMapTravelers } from "../lib/mapTravelers";
+import { fetchBlockedSet } from "../lib/blocks";
 
 const router = Router();
-
-/** Blocked-user set, both directions. Returns null on error — callers MUST
- *  treat null as "show nobody" (same contract as discoverySearch). */
-async function fetchBlockedSet(sc: any, userId: string): Promise<Set<string> | null> {
-  try {
-    const { data, error } = await sc
-      .from("blocks")
-      .select("blocker_id, blocked_id")
-      .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`);
-    if (error) return null;
-    const set = new Set<string>();
-    for (const b of data ?? []) {
-      if ((b as any).blocker_id === userId) set.add((b as any).blocked_id);
-      else set.add((b as any).blocker_id);
-    }
-    return set;
-  } catch {
-    return null;
-  }
-}
 
 router.get("/map/travelers", async (req, res) => {
   const auth = await requireUser(req, res);

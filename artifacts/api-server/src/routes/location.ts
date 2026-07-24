@@ -13,6 +13,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { coarsenPosition, effectiveDiscoveryVisibility } from "../lib/mapTravelers.js";
+import { fetchBlockedSet } from "../lib/blocks.js";
 import { reverseGeocode } from "../services/geocodingService";
 import { checkAndRecordSnapshot, getUserTrustLevel, checkIpCityMismatch } from "../services/location/LocationSafetyService";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
@@ -465,7 +466,18 @@ router.get("/me/circle-locations", async (req, res) => {
     return;
   }
 
-  const memberIds: string[] = (memberRows ?? []).map((r: any) => r.other_id as string);
+  const memberIdsRaw: string[] = (memberRows ?? []).map((r: any) => r.other_id as string);
+
+  // Bidirectional block filter (server-enforced, fail-closed): a blocked
+  // member's approximate area must not be returned in either direction. If the
+  // block list can't be read, return nothing rather than risk a leak — same
+  // contract as the discovery/crew maps.
+  const blockedSet = await fetchBlockedSet(sc, user.id);
+  if (blockedSet === null) {
+    res.status(200).json({ ok: true, locations: [] });
+    return;
+  }
+  const memberIds: string[] = memberIdsRaw.filter((id) => !blockedSet.has(id));
 
   if (memberIds.length === 0) {
     res.status(200).json({ ok: true, locations: [] });

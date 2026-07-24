@@ -116,6 +116,50 @@ function makeFakeClient(state: FakeState, userId: string) {
       },
       gt(col: string, val: any) { filters.push((r) => r[col] > val); return builder; },
       lte(col: string, val: any) { filters.push((r) => r[col] <= val); return builder; },
+      or(expr: string) {
+        // Parses PostgREST or()-expressions including the nested and()-of-range
+        // form the proximity bounding box uses:
+        //   and(latitude.gte.X,latitude.lte.Y,longitude.gte.A,longitude.lte.B),and(approx_...)
+        const splitTop = (s: string): string[] => {
+          const out: string[] = [];
+          let depth = 0, cur = "";
+          for (const ch of s) {
+            if (ch === "(") { depth++; cur += ch; }
+            else if (ch === ")") { depth--; cur += ch; }
+            else if (ch === "," && depth === 0) { out.push(cur); cur = ""; }
+            else cur += ch;
+          }
+          if (cur) out.push(cur);
+          return out;
+        };
+        const matchTerm = (r: any, term: string): boolean => {
+          const m = term.trim().match(/^(\w+)\.(\w+)\.(.*)$/);
+          if (!m) return false;
+          const [, col, op, raw] = m;
+          const rv = r[col];
+          if (op === "is") return raw === "null" ? rv == null : String(rv) === raw;
+          if (rv == null) return false;
+          const a = Number(rv), b = Number(raw);
+          switch (op) {
+            case "eq":  return String(rv) === raw;
+            case "gte": return a >= b;
+            case "lte": return a <= b;
+            case "gt":  return a > b;
+            case "lt":  return a < b;
+            default:    return false;
+          }
+        };
+        const matchGroup = (r: any, g: string): boolean => {
+          const t = g.trim();
+          if (t.startsWith("and(") && t.endsWith(")")) {
+            return splitTop(t.slice(4, -1)).every((term) => matchTerm(r, term));
+          }
+          return matchTerm(r, t);
+        };
+        const groups = splitTop(expr);
+        filters.push((r) => groups.some((g) => matchGroup(r, g)));
+        return builder;
+      },
       order()                  { return builder; },
       limit()                  { return builder; },
       range()                  { return builder; },
@@ -612,6 +656,61 @@ describe("Hidden Gems — nearby endpoint", () => {
     const r = await req("GET", "/api/hidden-gems/nearby");
     assert.equal(r.status, 400);
     assert.equal(r.body.error, "invalid_payload");
+  });
+
+  it("GET /nearby bounds the fetch: a gem far outside the radius is not returned", async () => {
+    // near = Tokyo (in the 5km box of 35.68,139.65); far = London (thousands of km).
+    // Before the bounding box, London would be fetched and only dropped in JS;
+    // now it never leaves the DB (the .or() box excludes it).
+    const client = makeFakeClient(
+      {
+        featureFlags: { hidden_gems_enabled: true },
+        gems: [
+          makeActiveGem({ id: "near", sensitivity_level: "public", latitude: 35.6762, longitude: 139.6503 }),
+          makeActiveGem({ id: "far",  sensitivity_level: "public", latitude: 51.5074, longitude: -0.1278,
+                          city: "London", approx_latitude: 51.51, approx_longitude: -0.12 }),
+        ],
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("GET", `/api/hidden-gems/nearby?lat=35.68&lng=139.65&radiusKm=5`);
+    assert.equal(r.status, 200);
+    const ids = r.body.gems.map((g: any) => g.id);
+    assert.ok(ids.includes("near"), "the in-radius gem should be returned");
+    assert.ok(!ids.includes("far"), "a gem far outside the radius must not be returned");
+  });
+
+  it("GET /nearby matches an approximate gem via its approx coords (exact null)", async () => {
+    // Approximate-sensitivity gem: no exact coords, only approx inside the box.
+    // The second box of the .or() must still catch it.
+    const client = makeFakeClient(
+      {
+        featureFlags: { hidden_gems_enabled: true },
+        gems: [
+          makeActiveGem({
+            id: "approx", sensitivity_level: "approximate",
+            latitude: null, longitude: null,
+            approx_latitude: 35.68, approx_longitude: 139.65,
+          }),
+          makeActiveGem({
+            id: "protected", sensitivity_level: "protected",
+            latitude: null, longitude: null, approx_latitude: null, approx_longitude: null,
+          }),
+        ],
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("GET", `/api/hidden-gems/nearby?lat=35.68&lng=139.65&radiusKm=5`);
+    assert.equal(r.status, 200);
+    const ids = r.body.gems.map((g: any) => g.id);
+    assert.ok(ids.includes("approx"),     "approx-only gem inside the box should be returned");
+    assert.ok(!ids.includes("protected"), "a gem with no coordinates must not appear in proximity results");
   });
 });
 

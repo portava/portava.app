@@ -78,6 +78,7 @@ interface FakeState {
     updated_at: string | null;
   }>;
   profiles: Array<{ id: string; name: string | null; avatar_url: string | null }>;
+  blocks?: Array<{ blocker_id: string; blocked_id: string }>;
 }
 
 function buildQuery(allRows: any[]) {
@@ -90,6 +91,16 @@ function buildQuery(allRows: any[]) {
     },
     in(col: string, vals: any[]) {
       rows = rows.filter((r: any) => vals.includes(r[col]));
+      return q;
+    },
+    // Parses "col.eq.val" terms separated by commas (OR). Enough for the
+    // bidirectional block lookup fetchBlockedSet issues.
+    or(expr: string) {
+      const parts = expr.split(",").map((p) => {
+        const m = p.trim().match(/^(\w+)\.(\w+)\.(.*)$/);
+        return m ? { col: m[1], val: m[3] } : null;
+      }).filter(Boolean) as { col: string; val: string }[];
+      rows = rows.filter((r: any) => parts.some(({ col, val }) => String(r[col]) === val));
       return q;
     },
     // requireUser's account-status check reads profiles via .maybeSingle().
@@ -109,6 +120,7 @@ function makeClient(state: FakeState, tokenToUser: Record<string, string> = { [V
     location_preferences: state.locationPreferences,
     user_location_state: state.locationState,
     profiles: state.profiles,
+    blocks: state.blocks ?? [],
   };
 
   return {
@@ -370,5 +382,57 @@ describe("GET /api/me/circle-locations", () => {
     const expected = coarsenPosition(USER_ID, OWN_LAT, OWN_LNG, effectiveDiscoveryVisibility(null) ?? "city_only");
     assert.equal(loc.lat, expected.lat);
     assert.equal(loc.lng, expected.lng);
+  });
+
+  it("excludes a circle member the caller has blocked", async () => {
+    const client = makeClient({
+      circleMemberships: [
+        { user_id: USER_ID, other_id: MEMBER_A },
+        { user_id: USER_ID, other_id: MEMBER_B },
+      ],
+      locationPreferences: [],
+      locationState: [
+        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522,   city: "Paris", country: "FR", updated_at: null },
+        { user_id: MEMBER_B, lat: 35.6762, lng: 139.6503, city: "Tokyo", country: "JP", updated_at: null },
+      ],
+      profiles: [
+        { id: MEMBER_A, name: "Alice", avatar_url: null },
+        { id: MEMBER_B, name: "Bob",   avatar_url: null },
+      ],
+      blocks: [{ blocker_id: USER_ID, blocked_id: MEMBER_B }], // caller blocked B
+    });
+    _setTestClient(client as any, true);
+
+    const r = await req("/me/circle-locations");
+    assert.equal(r.status, 200);
+    const ids = r.body.locations.map((l: any) => l.userId);
+    assert.ok(ids.includes(MEMBER_A),  "unblocked member A should appear");
+    assert.ok(!ids.includes(MEMBER_B), "member B (blocked by caller) must not appear");
+  });
+
+  it("excludes a circle member who has blocked the caller (reverse direction)", async () => {
+    const client = makeClient({
+      circleMemberships: [
+        { user_id: USER_ID, other_id: MEMBER_A },
+        { user_id: USER_ID, other_id: MEMBER_C },
+      ],
+      locationPreferences: [],
+      locationState: [
+        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522,  city: "Paris",  country: "FR", updated_at: null },
+        { user_id: MEMBER_C, lat: 51.5074, lng: -0.1278, city: "London", country: "GB", updated_at: null },
+      ],
+      profiles: [
+        { id: MEMBER_A, name: "Alice", avatar_url: null },
+        { id: MEMBER_C, name: "Carol", avatar_url: null },
+      ],
+      blocks: [{ blocker_id: MEMBER_C, blocked_id: USER_ID }], // C blocked the caller
+    });
+    _setTestClient(client as any, true);
+
+    const r = await req("/me/circle-locations");
+    assert.equal(r.status, 200);
+    const ids = r.body.locations.map((l: any) => l.userId);
+    assert.ok(ids.includes(MEMBER_A),  "unblocked member A should appear");
+    assert.ok(!ids.includes(MEMBER_C), "member C (who blocked caller) must not appear");
   });
 });

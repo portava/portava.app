@@ -79,6 +79,7 @@ interface FakeState {
   safeReturnSessions?: any[];
   crewSessions?: any[];
   crewEvents?: any[];
+  blocks?: Array<{ blocker_id: string; blocked_id: string }>;
 }
 
 function makeFakeClient(state: FakeState = {}) {
@@ -93,6 +94,7 @@ function makeFakeClient(state: FakeState = {}) {
     if (table === "plan_checkins")                  return state.planCheckins ?? [];
     if (table === "safe_return_sessions")           return state.safeReturnSessions ?? [];
     if (table === "trip_crew_location_sessions")    return state.crewSessions ?? [];
+    if (table === "blocks")                         return state.blocks ?? [];
     return [];
   }
 
@@ -110,7 +112,16 @@ function makeFakeClient(state: FakeState = {}) {
       is(col: string, val: any)    { filters.push((r) => val === null ? r[col] == null : r[col] === val); return b; },
       lt(col: string, val: any)    { filters.push((r) => r[col] < val); return b; },
       gt(col: string, val: any)    { filters.push((r) => r[col] > val); return b; },
-      or(_expr: string)            { return b; },
+      or(expr: string) {
+        // Parses "col.eq.val" terms separated by commas (OR) — enough for the
+        // bidirectional block lookup fetchBlockedSet issues.
+        const parts = expr.split(",").map((p) => {
+          const m = p.trim().match(/^(\w+)\.(\w+)\.(.*)$/);
+          return m ? { col: m[1], val: m[3] } : null;
+        }).filter(Boolean) as { col: string; val: string }[];
+        filters.push((r) => parts.some(({ col, val }) => String(r[col]) === val));
+        return b;
+      },
       order()                      { return b; },
       limit(n: number)             { _limit = n; return b; },
       maybeSingle()                { _maybe = true; return resolveOne(); },
@@ -323,6 +334,42 @@ describe("GET /trips/:tripId/crew/map — invited-member access and crew list", 
     const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`);
     assert.equal(r.status, 200);
     assert.equal(r.body.totalCount, r.body.members.length);
+  });
+
+  it("11. A crew member the viewer blocked is excluded from the map (server-side)", async () => {
+    // Viewer = MEMBER_ID; MEMBER blocked INVITED. INVITED must not appear even
+    // though they are a trip member — the block is enforced in getCrewMap, not
+    // just the client.
+    setClients(makeFakeClient({
+      featureFlags: FLAG_ON,
+      trips: OWNER_TRIP,
+      tripMembers: [OWNER_MEMBER_ROW, ACCEPTED_MEMBER_ROW, INVITED_MEMBER_ROW],
+      profiles: PROFILES,
+      blocks: [{ blocker_id: MEMBER_ID, blocked_id: INVITED_ID }],
+    }));
+    const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`, MEMBER_TOKEN);
+    assert.equal(r.status, 200);
+    const ids = r.body.members.map((m: any) => m.userId);
+    assert.ok(ids.includes(OWNER_ID),    "owner should still appear");
+    assert.ok(!ids.includes(INVITED_ID), "blocked member must not appear on the crew map");
+    assert.equal(r.body.totalCount, r.body.members.length);
+  });
+
+  it("12. A crew member who blocked the viewer is excluded (reverse direction)", async () => {
+    // INVITED blocked MEMBER. When MEMBER views the map, INVITED must not appear
+    // — blocking is symmetric for location visibility.
+    setClients(makeFakeClient({
+      featureFlags: FLAG_ON,
+      trips: OWNER_TRIP,
+      tripMembers: [OWNER_MEMBER_ROW, ACCEPTED_MEMBER_ROW, INVITED_MEMBER_ROW],
+      profiles: PROFILES,
+      blocks: [{ blocker_id: INVITED_ID, blocked_id: MEMBER_ID }],
+    }));
+    const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`, MEMBER_TOKEN);
+    assert.equal(r.status, 200);
+    const ids = r.body.members.map((m: any) => m.userId);
+    assert.ok(ids.includes(OWNER_ID),    "owner should still appear");
+    assert.ok(!ids.includes(INVITED_ID), "member who blocked the viewer must not appear");
   });
 
 });

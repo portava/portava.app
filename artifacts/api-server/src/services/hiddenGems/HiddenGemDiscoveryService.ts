@@ -30,6 +30,25 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+/**
+ * Lat/lng bounding box for a radius around a point (mirrors lib/mapTravelers).
+ * A generous superset of the true circle — the haversine pass below still makes
+ * the exact circular cut, so a slightly-too-wide box never changes results,
+ * it only bounds how many rows the DB returns.
+ */
+function radiusBoundingBox(lat: number, lng: number, radiusKm: number): {
+  minLat: number; maxLat: number; minLng: number; maxLng: number;
+} {
+  const dLat = radiusKm / 111.32;
+  const dLng = radiusKm / (111.32 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+  return {
+    minLat: Number((lat - dLat).toFixed(5)),
+    maxLat: Number((lat + dLat).toFixed(5)),
+    minLng: Number((lng - dLng).toFixed(5)),
+    maxLng: Number((lng + dLng).toFixed(5)),
+  };
+}
+
 /** Compute a single gem's discovery score (higher = better rank). */
 function scoreGem(
   gem: any,
@@ -96,6 +115,18 @@ export async function discoverGems(
   db: SupabaseClient,
   opts: DiscoverGemsOptions = {},
 ): Promise<RankedGem[]> {
+  // Proximity path: bound the fetch to a lat/lng box so we don't pull the whole
+  // active table and radius-filter in JS. Without this, a global /nearby query
+  // fetched up to 300 status-only rows in unspecified order — which could BOTH
+  // miss nearby gems (past the unordered cap) and over-fetch far ones. The box
+  // is matched against the gem's effective position — exact coords, or approx
+  // coords when exact is absent — so it never drops a gem the haversine pass
+  // would have kept. Gems with no coordinates at all (protected) fall outside
+  // both boxes and are excluded from proximity results, matching
+  // findNearbyGems' documented contract.
+  const proximityBounded =
+    opts.userLat != null && opts.userLng != null && opts.radiusKm != null;
+
   let q = db
     .from("hidden_gems")
     .select(`
@@ -107,8 +138,17 @@ export async function discoverGems(
       submitted_by, guide_verified_by,
       save_count, visit_count, report_count, created_at, updated_at
     `)
-    .eq("status", "active")
-    .limit(Math.min((opts.limit ?? 60) * 3, 300)); // over-fetch for client-side ranking
+    .eq("status", "active");
+
+  if (proximityBounded) {
+    const b = radiusBoundingBox(opts.userLat!, opts.userLng!, opts.radiusKm!);
+    q = q.or(
+      `and(latitude.gte.${b.minLat},latitude.lte.${b.maxLat},longitude.gte.${b.minLng},longitude.lte.${b.maxLng}),` +
+      `and(approx_latitude.gte.${b.minLat},approx_latitude.lte.${b.maxLat},approx_longitude.gte.${b.minLng},approx_longitude.lte.${b.maxLng})`,
+    );
+  }
+
+  q = q.limit(Math.min((opts.limit ?? 60) * 3, 300)); // over-fetch for client-side ranking
 
   if (opts.city)     q = q.ilike("city", opts.city);
   if (opts.neighborhood) q = q.ilike("neighborhood", opts.neighborhood);

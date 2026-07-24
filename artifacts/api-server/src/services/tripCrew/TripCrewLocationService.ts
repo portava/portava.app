@@ -19,6 +19,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildCrewCard, type RawMemberLocation, type CrewMemberCard } from "../../lib/tripCrewLocation.js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { nameVisibilitySet } from "../../lib/publicIdentity.js";
+import { fetchBlockedSet } from "../../lib/blocks.js";
 
 const logger = rootLogger.child({ service: "TripCrewLocationService" });
 
@@ -52,11 +53,23 @@ export async function getCrewMap(
   const ownerId: string | null = (ownerRes.data as any)?.owner_id ?? null;
   const memberRows: any[] = (membersRes.data as any[]) ?? [];
 
+  // Bidirectional block filter — enforced HERE on the server, not only in the
+  // client. A blocked user hitting this endpoint directly must never receive a
+  // crew member's area label or (with live-share) exact coordinates, and a
+  // member the viewer blocked must not appear either. Fail-closed: if the block
+  // list can't be read we return no members rather than risk a leak, mirroring
+  // lib/mapTravelers' "never leak when block state is uncertain" contract.
+  const blockedSet = await fetchBlockedSet(db, viewerId);
+  if (blockedSet === null) {
+    return { members: [], totalCount: 0 };
+  }
+
   // Collect all user IDs (owner + accepted members + invited), excluding viewer
+  // and anyone in a block relationship with the viewer.
   const allUserIds = Array.from(new Set([
     ...(ownerId ? [ownerId] : []),
     ...memberRows.map((r) => r.user_id),
-  ])).filter((id) => id !== viewerId);
+  ])).filter((id) => id !== viewerId && !blockedSet.has(id));
 
   if (allUserIds.length === 0) {
     return { members: [], totalCount: 0 };
