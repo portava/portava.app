@@ -225,6 +225,10 @@ export interface MediaUploadResult {
   mediaType: string | null;
   errorKind?: string;
   message?: string;
+  thumbnailUrl?: string | null;
+  width?: number | null;
+  height?: number | null;
+  processed?: boolean;
 }
 
 /** Side-effect handlers injected so handleUploadResult stays testable. */
@@ -261,6 +265,12 @@ export type UploadOutcome =
  *   mediaUrl = outcome.url;
  *   mediaType = outcome.mediaType ?? undefined;
  */
+/** User-facing messages for upload-specific error kinds. */
+const UPLOAD_ERROR_MESSAGES: Record<string, string> = {
+  rate_limited: 'Too many uploads — please wait a moment and try again.',
+  invalid_payload: "This file couldn't be read — try a different photo.",
+};
+
 export async function handleUploadResult(
   result: MediaUploadResult,
   handlers: UploadResultHandlers,
@@ -276,7 +286,11 @@ export async function handleUploadResult(
     return { continue: false };
   }
 
-  handlers.setError(result.message ?? 'Media upload failed.');
+  const msg =
+    UPLOAD_ERROR_MESSAGES[result.errorKind ?? ''] ??
+    result.message ??
+    'Media upload failed.';
+  handlers.setError(msg);
   return { continue: false };
 }
 

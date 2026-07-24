@@ -315,7 +315,11 @@ export default function CreateEventScreen() {
     const up = await uploadMedia(media);
     setCoverUploading(false);
     if (!up.ok || !up.url) {
-      Alert.alert('Upload failed', up.message ?? 'Could not upload cover photo');
+      const uploadMsg =
+        up.errorKind === 'rate_limited' ? 'Too many uploads — please wait a moment and try again.' :
+        up.errorKind === 'invalid_payload' ? "This file couldn't be read — try a different photo." :
+        (up.message ?? 'Could not upload cover photo');
+      Alert.alert('Upload failed', uploadMsg);
       setCoverUri(null);
       return;
     }

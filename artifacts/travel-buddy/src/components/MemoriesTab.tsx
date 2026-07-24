@@ -164,7 +164,11 @@ function EditMemoryModal({ visible, memory, onClose, onSaved }: EditMemoryModalP
       const up = await uploadMedia({ uri: photoUri, mimeType: photoMime, type: 'image' });
       setUploading(false);
       if (!up.ok || !up.url) {
-        setUploadError(up.message ?? 'Photo upload failed. You can save without a photo or try again.');
+        const uploadMsg =
+          up.errorKind === 'rate_limited' ? 'Too many uploads — please wait a moment and try again.' :
+          up.errorKind === 'invalid_payload' ? "This file couldn't be read — try a different photo." :
+          (up.message ?? 'Photo upload failed. You can save without a photo or try again.');
+        setUploadError(uploadMsg);
         setSaving(false);
         return;
       }
@@ -483,7 +487,11 @@ export function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalPr
       );
       setUploading(false);
       if (!up.ok || !up.url) {
-        setUploadError(up.message ?? 'Upload failed. You can save without media or try again.');
+        const uploadMsg =
+          up.errorKind === 'rate_limited' ? 'Too many uploads — please wait a moment and try again.' :
+          up.errorKind === 'invalid_payload' ? "This file couldn't be read — try a different photo." :
+          (up.message ?? 'Upload failed. You can save without media or try again.');
+        setUploadError(uploadMsg);
         setSaving(false);
         return;
       }

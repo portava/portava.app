@@ -134,7 +134,11 @@ export default function EditTrip() {
     try {
       const upload = await uploadMedia(picked, { surface: 'trip' });
       if (!upload.ok || !upload.url) {
-        Alert.alert('Upload failed', upload.message ?? 'Could not upload cover. Please try again.');
+        const uploadMsg =
+          upload.errorKind === 'rate_limited' ? 'Too many uploads — please wait a moment and try again.' :
+          upload.errorKind === 'invalid_payload' ? "This file couldn't be read — try a different photo." :
+          (upload.message ?? 'Could not upload cover. Please try again.');
+        Alert.alert('Upload failed', uploadMsg);
         return;
       }
       setCoverUrl(upload.url);
