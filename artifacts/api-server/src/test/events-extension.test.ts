@@ -1301,7 +1301,7 @@ describe("Event media", () => {
     const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/media`, {
       mediaUrl,
       mediaType: "image",
-      caption: "Great time!",
+      caption:   "Great time!",
     }, ID.user1);
     assert.equal(status, 201);
     assert.equal(body.media_url, mediaUrl);

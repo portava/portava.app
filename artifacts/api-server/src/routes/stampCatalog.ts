@@ -1389,4 +1389,141 @@ router.post("/admin/stamps/criteria/evaluate", asyncHandler(async (req, res) => 
   res.json({ dryRun: false, outcomes });
 }));
 
+// ── POST /admin/stamps/criteria/backfill-globe-trotters ───────────────────────
+// One-time (idempotent) backfill: awards globe_trotter_5 / globe_trotter_10 to
+// every user who already has ≥5 distinct countries in user_stamps but joined
+// before the criteria engine existed.
+//
+// Intentionally bypasses the `stamp_criteria_engine_enabled` feature flag:
+// this is a one-shot operational backfill, not part of the live engine pipeline.
+// Calling evaluateAndAwardCriteria would silently return [] when the flag is
+// off — so we call evaluateCriteria + awardStamp directly instead.
+//
+// Safe to re-run: awardStamp dedupes on (user, definition, sourceType, sourceId).
+// Streams all non-revoked (user_id, country) rows in pages of 1 000 to build
+// a per-user distinct-country count without pulling the whole table at once.
+
+router.post("/admin/stamps/criteria/backfill-globe-trotters", asyncHandler(async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { userId: adminId, sc } = admin;
+
+  const { evaluateCriteria } = await import("../lib/stamps/criteria/index.js");
+  const { awardStamp }       = await import("../services/passport/StampAwardEngine.js");
+
+  // ── 1. Fetch definitions directly (no flag gate) ────────────────────────────
+  const SLUGS = ["globe_trotter_5", "globe_trotter_10"];
+  const { data: defRows, error: defErr } = await sc
+    .from("stamp_definitions")
+    .select("slug, criteria")
+    .in("slug", SLUGS)
+    .eq("is_active", true)
+    .not("criteria", "is", null);
+
+  if (defErr) { sendError(res, "db_error", `stamp_definitions fetch failed: ${defErr.message}`); return; }
+  const defs = (defRows ?? []) as Array<{ slug: string; criteria: unknown }>;
+
+  // ── 2. Collect distinct countries per user ──────────────────────────────────
+  const userCountries = new Map<string, Set<string>>();
+  const PAGE = 1000;
+  let from = 0;
+  let done = false;
+
+  while (!done) {
+    const { data, error } = await sc
+      .from("user_stamps")
+      .select("user_id, country")
+      .eq("is_revoked", false)
+      .not("country", "is", null)
+      .range(from, from + PAGE - 1);
+
+    if (error) { sendError(res, "db_error", `user_stamps page fetch failed: ${error.message}`); return; }
+
+    const rows = (data ?? []) as Array<{ user_id: string; country: string }>;
+    for (const row of rows) {
+      if (!row.user_id || !row.country?.trim()) continue;
+      const key = row.country.trim().toLowerCase();
+      let set = userCountries.get(row.user_id);
+      if (!set) { set = new Set(); userCountries.set(row.user_id, set); }
+      set.add(key);
+    }
+
+    if (rows.length < PAGE) done = true;
+    else from += PAGE;
+  }
+
+  // ── 3. Filter users with ≥5 distinct countries ──────────────────────────────
+  const eligibleUsers = [...userCountries.entries()]
+    .filter(([, countries]) => countries.size >= 5)
+    .map(([userId]) => userId);
+
+  console.log(JSON.stringify({
+    event:          "stamp.backfill.globe_trotters.started",
+    admin_id:       adminId,
+    eligible_users: eligibleUsers.length,
+    definitions:    defs.length,
+  }));
+
+  // ── 4. Evaluate + award for each eligible user ──────────────────────────────
+  const results: Array<{ userId: string; outcomes: any[] }> = [];
+  let awarded5 = 0;
+  let awarded10 = 0;
+  let errors = 0;
+
+  for (const userId of eligibleUsers) {
+    const outcomes: any[] = [];
+    try {
+      for (const def of defs) {
+        const result = await evaluateCriteria(sc, userId, def.criteria, {});
+        if (!result.met) {
+          outcomes.push({ slug: def.slug, met: false, awarded: false, reason: result.reason });
+          continue;
+        }
+        try {
+          const award = await awardStamp(sc, {
+            userId,
+            definitionSlug: def.slug,
+            sourceType:     "backfill",
+            sourceId:       "globe_trotter_backfill",
+          });
+          outcomes.push({ slug: def.slug, met: true, awarded: award.awarded, reason: award.reason, userStampId: award.userStampId });
+          if (award.awarded) {
+            if (def.slug === "globe_trotter_5")  awarded5++;
+            if (def.slug === "globe_trotter_10") awarded10++;
+          }
+        } catch (awardErr: any) {
+          outcomes.push({ slug: def.slug, met: true, awarded: false, reason: "award_error", error: awardErr?.message ?? String(awardErr) });
+          errors++;
+        }
+      }
+    } catch (err: any) {
+      errors++;
+      outcomes.push({ error: err?.message ?? String(err) });
+    }
+    results.push({ userId, outcomes });
+  }
+
+  console.log(JSON.stringify({
+    event:          "stamp.backfill.globe_trotters.complete",
+    admin_id:       adminId,
+    eligible_users: eligibleUsers.length,
+    awarded5,
+    awarded10,
+    errors,
+  }));
+
+  await writeAuditLog(sc, adminId, "backfill_globe_trotters", {
+    notes: `globe_trotter backfill — eligible:${eligibleUsers.length} awarded5:${awarded5} awarded10:${awarded10} errors:${errors}`,
+  });
+
+  res.json({
+    ok:             true,
+    eligibleUsers:  eligibleUsers.length,
+    awarded5,
+    awarded10,
+    errors,
+    results,
+  });
+}));
+
 export default router;

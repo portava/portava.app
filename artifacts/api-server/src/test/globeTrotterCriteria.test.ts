@@ -15,7 +15,7 @@
 
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { evaluateAndAwardCriteria } from "../lib/stamps/criteria/index.js";
+import { evaluateAndAwardCriteria, evaluateCriteria } from "../lib/stamps/criteria/index.js";
 
 // ── Fixed IDs ─────────────────────────────────────────────────────────────────
 
@@ -363,5 +363,84 @@ describe("criteria engine flag guard", () => {
     assert.ok(gt5, "outcome for globe_trotter_5 expected");
     assert.equal(gt5!.met, false, "revoked stamps must not count; 4 valid < 5 threshold");
     assert.equal(awardLog.length, 0, "awardFn must not be called");
+  });
+});
+
+// ── Backfill direct-path tests ─────────────────────────────────────────────────
+//
+// The backfill endpoint calls evaluateCriteria + awardStamp directly, bypassing
+// the stamp_criteria_engine_enabled feature flag. These tests verify that the
+// direct evaluateCriteria path produces the correct outcome regardless of the
+// flag's state — so the backfill works even when the live engine is still off.
+
+describe("backfill — evaluateCriteria direct path (flag-independent)", () => {
+  it("evaluateCriteria returns met=true for 5 countries regardless of flag state", async () => {
+    // Flag is OFF — this simulates running the backfill before enabling the engine.
+    const db: FakeDB = {
+      feature_flags:       [{ flag: "stamp_criteria_engine_enabled", key: "stamp_criteria_engine_enabled", enabled: false }],
+      stamp_definitions:   [DEF_GT5, DEF_GT10],
+      user_stamps:         countryStamps(5),
+      stamp_award_events:  [],
+      user_stamps_awarded: [],
+    };
+    const sc = makeFakeClient(db);
+
+    // evaluateCriteria has no flag gate — it must work regardless.
+    const result5  = await evaluateCriteria(sc as any, USER_ID, DEF_GT5.criteria);
+    const result10 = await evaluateCriteria(sc as any, USER_ID, DEF_GT10.criteria);
+
+    assert.equal(result5.met,  true,  "gt5 must be met at 5 countries even with flag off");
+    assert.equal(result10.met, false, "gt10 must NOT be met at 5 countries");
+  });
+
+  it("evaluateCriteria returns met=true for both tiers at 10 countries regardless of flag state", async () => {
+    const db: FakeDB = {
+      feature_flags:       [{ flag: "stamp_criteria_engine_enabled", key: "stamp_criteria_engine_enabled", enabled: false }],
+      stamp_definitions:   [DEF_GT5, DEF_GT10],
+      user_stamps:         countryStamps(10),
+      stamp_award_events:  [],
+      user_stamps_awarded: [],
+    };
+    const sc = makeFakeClient(db);
+
+    const result5  = await evaluateCriteria(sc as any, USER_ID, DEF_GT5.criteria);
+    const result10 = await evaluateCriteria(sc as any, USER_ID, DEF_GT10.criteria);
+
+    assert.equal(result5.met,  true, "gt5 must be met at 10 countries");
+    assert.equal(result10.met, true, "gt10 must be met at 10 countries");
+  });
+
+  it("evaluateCriteria returns met=false for 4 countries — user below threshold is skipped", async () => {
+    const db: FakeDB = {
+      feature_flags:       [{ flag: "stamp_criteria_engine_enabled", key: "stamp_criteria_engine_enabled", enabled: false }],
+      stamp_definitions:   [DEF_GT5, DEF_GT10],
+      user_stamps:         countryStamps(4),
+      stamp_award_events:  [],
+      user_stamps_awarded: [],
+    };
+    const sc = makeFakeClient(db);
+
+    const result5 = await evaluateCriteria(sc as any, USER_ID, DEF_GT5.criteria);
+    assert.equal(result5.met, false, "gt5 must NOT be met at 4 countries");
+  });
+
+  it("backfill awardFn is not called for a user below threshold (met=false guard)", async () => {
+    // Verify that the backfill's met-check gate prevents spurious awardFn calls.
+    const db: FakeDB = {
+      feature_flags:       [{ flag: "stamp_criteria_engine_enabled", key: "stamp_criteria_engine_enabled", enabled: false }],
+      stamp_definitions:   [DEF_GT5, DEF_GT10],
+      user_stamps:         countryStamps(4),
+      stamp_award_events:  [],
+      user_stamps_awarded: [],
+    };
+    const sc = makeFakeClient(db);
+
+    const awarded: string[] = [];
+    for (const def of [DEF_GT5, DEF_GT10]) {
+      const result = await evaluateCriteria(sc as any, USER_ID, def.criteria);
+      if (result.met) awarded.push(def.slug);
+    }
+
+    assert.equal(awarded.length, 0, "no stamps should be awarded for a user with only 4 countries");
   });
 });
