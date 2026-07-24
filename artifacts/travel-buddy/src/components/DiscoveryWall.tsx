@@ -336,6 +336,13 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
     <>
       <View style={g.card}>
         <View style={g.media}>
+          {gem.imageUrl ? (
+            <Image
+              source={{ uri: gem.imageUrl }}
+              style={StyleSheet.absoluteFillObject}
+              resizeMode="cover"
+            />
+          ) : null}
           <View style={g.gemBadge}><Gem size={14} color={color.onInk} /></View>
           <Pressable
             style={g.saveIcon}
