@@ -19,6 +19,7 @@ import React from 'react';
 import { Text, View } from 'react-native';
 import TestRenderer, { act } from 'react-test-renderer';
 import { DisplayMediaImage, AvatarImage } from '../DisplayMediaImage.tsx';
+import * as MediaSourceModule from '../../../lib/mediaSource.ts';
 
 // ── expo-image mock ──────────────────────────────────────────────────────────
 
@@ -235,6 +236,78 @@ describe('AvatarImage', () => {
 
     // Initials shown after error
     expect(textContent(tr.root)).toContain('JL');
+    expect(findExpoImages(tr.root).length).toBe(0);
+  });
+});
+
+// ── DisplayMediaImage — mediaSource pending (first-launch auth window) ────────
+//
+// On first app launch the feature-flag cache is empty, so mediaSource() must
+// hit /api/feature-flags before it can resolve. These tests use jest.spyOn to
+// hold mediaSource in the pending state and confirm the component shows a
+// skeleton (not a broken box) throughout that window.
+
+describe('DisplayMediaImage — mediaSource pending (auth-window)', () => {
+  // Hold mediaSource in "pending" state for the duration of each test so we
+  // can inspect the component's appearance during the async resolution window.
+  beforeEach(() => {
+    jest.spyOn(MediaSourceModule, 'mediaSource').mockImplementation(
+      () => new Promise(() => {}), // intentionally never resolves
+    );
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('shows skeleton — not a broken fallback box — while mediaSource is pending', () => {
+    const tr = create(
+      <DisplayMediaImage
+        uri="https://abc123.supabase.co/storage/v1/object/public/media/img.jpg"
+        width={100}
+        height={100}
+        fallbackLabel="Should not appear"
+      />,
+    );
+    // The fallback must NOT be visible during the loading/pending window.
+    // If the component flashed a broken box this label (or an error View)
+    // would be rendered — catching the regression.
+    expect(textContent(tr.root)).not.toContain('Should not appear');
+  });
+
+  it('does not render ExpoImage when resolvedSource is null (null uri)', () => {
+    // A null URI means resolvedSource is initialised to null and stays null
+    // even after mediaSource would have resolved — ExpoImage must never mount.
+    const tr = create(
+      <DisplayMediaImage uri={null} width={100} height={100} fallbackLabel="No image" />,
+    );
+    expect(findExpoImages(tr.root).length).toBe(0);
+    expect(textContent(tr.root)).toContain('No image');
+  });
+
+  it('transitions to MediaFallback after onError (e.g. HTTP 403) — not a blank broken box', () => {
+    // ExpoImage is mounted with the plain URI immediately (resolvedSource is
+    // initialised synchronously so there is no blank-URI flash). If the
+    // server returns 403 before the auth-bearing relay URL is ready, onError
+    // fires. The component must show the designed MediaFallback — never an
+    // unstyled broken-image rectangle.
+    const tr = create(
+      <DisplayMediaImage
+        uri="https://abc123.supabase.co/storage/v1/object/public/media/img.jpg"
+        width={100}
+        height={100}
+        fallbackLabel="Load failed"
+      />,
+    );
+    // ExpoImage is present initially (plain URI fast-path)
+    expect(findExpoImages(tr.root).length).toBeGreaterThan(0);
+
+    // Simulate an HTTP 403 (or any network error) coming back
+    fireOnError(tr.root);
+
+    // Designed fallback is now shown
+    expect(textContent(tr.root)).toContain('Load failed');
+    // ExpoImage is unmounted (error phase) — no broken-image box
     expect(findExpoImages(tr.root).length).toBe(0);
   });
 });
