@@ -28,14 +28,14 @@ export interface WizardFormState {
   layoverSafe: boolean;
   minimumLayoverMinutes: string;
   sensitivityLevel: GemSensitivity;
-  // NOTE: imageUrl is NOT wired — the hidden_gems table has no image_url column.
-  // Documented as skipped in the Task 6 report. Field reserved here for future use.
+  /** Optional representative photo URL after eager upload via uploadMedia(). */
+  imageUrl: string | undefined;
 }
 
 // ── Step count (0-indexed) ────────────────────────────────────────────────────
 
 /** Total number of wizard steps. */
-export const WIZARD_STEP_COUNT = 4;
+export const WIZARD_STEP_COUNT = 5;
 
 // ── Validation ────────────────────────────────────────────────────────────────
 
@@ -43,9 +43,10 @@ export const WIZARD_STEP_COUNT = 4;
  * Returns true when the "Next / Submit" button should be enabled.
  *
  * Step 0 — Location: city is required (GPS alone is not enough).
- * Step 1 — Details: name and category are both required.
- * Step 2 — Privacy: always passable (has a sensible default).
- * Step 3 — Review:  always passable (final submit guard in buildSubmitPayload).
+ * Step 1 — Details:  name and category are both required.
+ * Step 2 — Photo:    always passable (photo is optional).
+ * Step 3 — Privacy:  always passable (has a sensible default).
+ * Step 4 — Review:   always passable (final submit guard in buildSubmitPayload).
  */
 export function canNext(step: number, form: WizardFormState): boolean {
   if (step === 0) return form.city.trim().length > 0;
@@ -72,6 +73,7 @@ export interface GemSubmitPayload {
   layoverSafe: boolean;
   minimumLayoverMinutes: number | undefined;
   sensitivityLevel: GemSensitivity;
+  imageUrl: string | undefined;
 }
 
 /**
@@ -108,5 +110,6 @@ export function buildSubmitPayload(form: WizardFormState): GemSubmitPayload | nu
       ? parseInt(form.minimumLayoverMinutes, 10)
       : undefined,
     sensitivityLevel:      form.sensitivityLevel,
+    imageUrl:              form.imageUrl || undefined,
   };
 }

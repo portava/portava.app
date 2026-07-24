@@ -133,6 +133,7 @@ const submitSchema = z.object({
   layoverSafe: z.boolean().optional(),
   minimumLayoverMinutes: z.number().int().min(0).max(1440).optional().nullable(),
   sensitivityLevel: z.enum(VALID_SENSITIVITY).optional(),
+  imageUrl: z.string().url().max(2048).optional().nullable(),
 });
 
 const updateSchema = z.object({

@@ -15,6 +15,7 @@ const GEM_SELECT_COLS = `
   sensitivity_level, verification_level, status,
   submitted_by, guide_verified_by,
   save_count, visit_count, report_count,
+  image_url,
   created_at, updated_at
 `.trim();
 
@@ -37,6 +38,7 @@ export interface CreateGemInput {
   minimumLayoverMinutes?: number | null;
   sensitivityLevel?: string;
   submittedBy: string;
+  imageUrl?: string | null;
 }
 
 export interface GemListOptions {
@@ -75,6 +77,7 @@ export async function submitGem(db: SupabaseClient, input: CreateGemInput) {
       sensitivity_level: input.sensitivityLevel ?? "public",
       submitted_by: input.submittedBy,
       status: "pending",
+      image_url: input.imageUrl ?? null,
     })
     .select(GEM_SELECT_COLS)
     .single();
