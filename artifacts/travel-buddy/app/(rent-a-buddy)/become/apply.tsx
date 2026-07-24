@@ -6,17 +6,16 @@ import {
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardSafeScrollView } from '../../../src/components/ui/KeyboardSafeView';
-import { ArrowLeft, ArrowRight, Check, Camera, Plus, X, BookOpen, Search, AlertCircle, CheckCircle, Circle } from 'lucide-react-native';
+import { ArrowLeft, ArrowRight, Check, Plus, X, BookOpen, Search, AlertCircle, CheckCircle, Circle } from 'lucide-react-native';
 import { GlobalPlacePicker } from '../../../src/components/selectors/GlobalPlacePicker';
 import { TravelButton, TravelCard, TravelChip } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
+import { MediaPickerButton } from '../../../src/components/ui/MediaPickerButton';
+import { MediaAttachmentTray } from '../../../src/components/ui/MediaAttachmentTray';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import { useMediaComposer } from '../../../src/hooks/useMediaComposer';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyCategory, TrainingItem, ChecklistItem, ProfileSubmitResult } from '../../../src/services/rentABuddy';
-// NOTE: Profile photo upload in the application wizard is NOT wired — the
-// rent_buddy_applications table has no photos column. rent_buddy_profiles has
-// gallery_urls but the apply endpoint doesn't persist it from this payload.
-// Documented as skipped in the Task 6 report.
 
 const TOTAL_STEPS = 7;
 
@@ -184,6 +183,7 @@ export default function ApplyToBeBuddy() {
 
   // Step 3
   const [bio, setBio] = useState('');
+  const photoComposer = useMediaComposer('buddyApplication');
 
   // Step 4
   const [hourlyRate, setHourlyRate] = useState('');
@@ -258,6 +258,14 @@ export default function ApplyToBeBuddy() {
           .map(([block]) => ({ day, block })),
       );
 
+      // Upload any picked photos before submitting
+      if (photoComposer.items.some((i) => i.uploadState === 'idle')) {
+        await photoComposer.uploadAll();
+      }
+      const photoUrls = photoComposer.items
+        .filter((i) => i.uploadState === 'done' && i.uploadedUrl)
+        .map((i) => i.uploadedUrl as string);
+
       const result = await rentABuddy.submitApplication({
         city,
         country: country || undefined,
@@ -271,6 +279,7 @@ export default function ApplyToBeBuddy() {
         zones: zones.filter((z) => z.trim()).map((z) => z.trim()).length
           ? zones.filter((z) => z.trim()).map((z) => z.trim())
           : undefined,
+        photos: photoUrls.length ? photoUrls : undefined,
       });
       if (result.ok) {
         setSubmitted(true);
@@ -689,16 +698,12 @@ export default function ApplyToBeBuddy() {
             />
             <Text style={hint.text}>{bio.length}/600 characters (minimum 30)</Text>
 
-            <FieldLabel label="Profile photos" />
-            <Text style={hint.text}>Upload up to 3 photos showing you in your city. Photo upload will be available after your application is approved.</Text>
-            <View style={photos.row}>
-              {[0, 1, 2].map((i) => (
-                <View key={i} style={photos.slot}>
-                  <Camera size={22} color={color.haze} />
-                  <Text style={photos.slotText}>Photo {i + 1}</Text>
-                </View>
-              ))}
-            </View>
+            <FieldLabel label="Profile photos" optional />
+            <Text style={hint.text}>Upload up to 3 photos showing you in your city.</Text>
+            <MediaPickerButton composer={photoComposer} />
+            {photoComposer.items.length > 0 && (
+              <MediaAttachmentTray composer={photoComposer} />
+            )}
           </View>
         )}
 

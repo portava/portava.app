@@ -3124,7 +3124,7 @@ router.post("/api/rent-a-buddy/apply", async (req, res) => {
 
   const {
     city, country, categories = [], languages = [], motivation, socialLinks = {},
-    displayName, bio, hourlyRateUsd, availability, zones,
+    displayName, bio, hourlyRateUsd, availability, zones, photos,
   } = req.body ?? {};
   if (!city) return res.status(400).json({ error: "invalid_payload", message: "city required." });
 
@@ -3180,6 +3180,7 @@ router.post("/api/rent-a-buddy/apply", async (req, res) => {
   if (typeof hourlyRateUsd === "number" && Number.isFinite(hourlyRateUsd)) profilePatch.hourly_rate_usd = hourlyRateUsd;
   if (Array.isArray(availability))                                  profilePatch.availability_blocks  = availability;
   if (Array.isArray(zones))                                         profilePatch.preferred_meetup_zones = zones;
+  if (Array.isArray(photos) && photos.length > 0)                   profilePatch.gallery_urls           = photos;
 
   const { data: profileRow, error: profileError } = await serviceClient
     .from("rent_buddy_profiles")
