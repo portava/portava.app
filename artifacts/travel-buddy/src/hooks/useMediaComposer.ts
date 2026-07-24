@@ -17,7 +17,7 @@
  *   // Render thumbnails
  *   <MediaAttachmentTray composer={composer} />
  */
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Alert, Linking, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import type { ContentPolicyKey, ContentMediaPolicy } from '../lib/contentMediaPolicy.ts';
@@ -154,6 +154,14 @@ export function useMediaComposer(policyKey: ContentPolicyKey): UseMediaComposerR
   const [items, setItems] = useState<MediaItem[]>([]);
   const [sheetVisible, setSheetVisible] = useState(false);
 
+  // Snapshot ref kept fresh via useEffect — lets uploadItem read the current
+  // items list without relying on React's eager state evaluation (which is
+  // bypassed in concurrent mode when fiber.lanes !== NoLanes).
+  const itemsRef = useRef<MediaItem[]>([]);
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
   // Per-item cancel signals: id → ref (cancelled flag)
   const cancelRefs = useRef<Map<string, { cancelled: boolean }>>(new Map());
 
@@ -263,29 +271,20 @@ export function useMediaComposer(policyKey: ContentPolicyKey): UseMediaComposerR
   // ── Upload ───────────────────────────────────────────────────────────────
 
   const uploadItem = useCallback(async (id: string): Promise<MediaUploadResult | null> => {
-    let item: MediaItem | undefined;
-    setItems((prev) => {
-      item = prev.find((it) => it.id === id);
-      if (!item) return prev;
-      cancelRefs.current.set(id, { cancelled: false });
-      return prev.map((it) =>
+    // Read the item from the ref snapshot (kept fresh via useEffect) — avoids
+    // the setItems-as-reader pattern that breaks under React 19 concurrent mode
+    // because eager evaluation is skipped when fiber.lanes !== NoLanes.
+    const currentItem = itemsRef.current.find((it) => it.id === id);
+    if (!currentItem) return null;
+
+    cancelRefs.current.set(id, { cancelled: false });
+    setItems((prev) =>
+      prev.map((it) =>
         it.id === id
           ? { ...it, uploadState: 'uploading', uploadProgress: 0.05, uploadError: null }
           : it,
-      );
-    });
-
-    // Wait one tick so item is populated
-    await new Promise<void>((r) => setTimeout(r, 0));
-
-    // Re-read item from a fresh state slice
-    let currentItem: MediaItem | undefined;
-    setItems((prev) => {
-      currentItem = prev.find((it) => it.id === id);
-      return prev;
-    });
-
-    if (!currentItem) return null;
+      ),
+    );
 
     const cancelRef = cancelRefs.current.get(id) ?? { cancelled: false };
 
