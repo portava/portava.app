@@ -25,6 +25,7 @@ const SIGNED_B = 'https://abc.supabase.co/storage/v1/object/sign/media/b.jpg?tok
 
 let _origFetch: typeof globalThis.fetch;
 let _origApiBase: string | undefined;
+let _origDateNow: () => number;
 
 // Build the server's object-map response: { signed: { [url]: signedUrl } }
 function makeSignedMap(urls: string[]): Record<string, string> {
@@ -72,6 +73,7 @@ describe('batchSignUrls', () => {
   beforeEach(() => {
     _origFetch = globalThis.fetch;
     _origApiBase = process.env.EXPO_PUBLIC_API_BASE_URL;
+    _origDateNow = Date.now;
     process.env.EXPO_PUBLIC_API_BASE_URL = API_BASE;
     _resetBatchSignCache();
     _resetMediaFlagCache();
@@ -81,6 +83,7 @@ describe('batchSignUrls', () => {
   afterEach(() => {
     globalThis.fetch = _origFetch;
     process.env.EXPO_PUBLIC_API_BASE_URL = _origApiBase;
+    Date.now = _origDateNow;
     _resetBatchSignCache();
     _resetMediaFlagCache();
     _resetTestTokenGetter();
@@ -181,6 +184,55 @@ describe('batchSignUrls', () => {
       `Cache size should not exceed 500 but was ${size}`
     );
     assert.ok(size > 0, 'Cache should contain entries after inserts');
+  });
+
+  it('expired cache entry triggers a fresh sign request — not served stale', async () => {
+    const FIXED_NOW = 1_000_000_000;
+    const TTL_MS = 45 * 60 * 1000; // must match CACHE_TTL_MS in batchSignMedia.ts
+    let signCallCount = 0;
+
+    // Fix time at FIXED_NOW and prime the cache
+    Date.now = () => FIXED_NOW;
+    (globalThis as any).fetch = async (url: string, opts?: any) => {
+      if (url.includes('/api/feature-flags')) {
+        return { ok: true, json: async () => ({ flags: { media_private_buckets_enabled: true } }) };
+      }
+      if (url.includes('/api/media/sign')) {
+        signCallCount++;
+        const body = JSON.parse(opts.body);
+        const signed: Record<string, string> = {};
+        for (const u of body.urls) signed[u] = `${u}?token=old`;
+        return { ok: true, json: async () => ({ signed, ttlSeconds: 3600 }) };
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    };
+    const first = await batchSignUrls([URL_A]);
+    assert.equal(first.get(URL_A), `${URL_A}?token=old`, 'initial sign should return old token');
+    assert.equal(signCallCount, 1, 'sign endpoint called once on first miss');
+
+    // Advance time past the TTL so the cached entry is expired
+    Date.now = () => FIXED_NOW + TTL_MS + 1;
+    // Update stub to return a distinct "new" token so we can distinguish fresh vs stale
+    (globalThis as any).fetch = async (url: string, opts?: any) => {
+      if (url.includes('/api/feature-flags')) {
+        return { ok: true, json: async () => ({ flags: { media_private_buckets_enabled: true } }) };
+      }
+      if (url.includes('/api/media/sign')) {
+        signCallCount++;
+        const body = JSON.parse(opts.body);
+        const signed: Record<string, string> = {};
+        for (const u of body.urls) signed[u] = `${u}?token=new`;
+        return { ok: true, json: async () => ({ signed, ttlSeconds: 3600 }) };
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    };
+    const second = await batchSignUrls([URL_A]);
+    assert.equal(signCallCount, 2, 'sign endpoint should be called again after TTL expiry (cache miss)');
+    assert.equal(
+      second.get(URL_A),
+      `${URL_A}?token=new`,
+      'should return the freshly signed URL, not the stale cached one'
+    );
   });
 
   it('LRU: the least-recently-used entry is evicted when the cap is reached', async () => {
