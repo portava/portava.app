@@ -175,6 +175,11 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
           </View>
         )}
 
+        {/* FSQ attribution — required by CC BY 4.0 wherever FSQ data is displayed */}
+        {place.attribution ? (
+          <Text style={styles.attribution} numberOfLines={1}>{place.attribution}</Text>
+        ) : null}
+
         {/* Action row */}
         <View style={styles.actionRow}>
           <Pressable
@@ -465,6 +470,12 @@ const styles = StyleSheet.create({
     backgroundColor: color.deep + '14',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  attribution: {
+    ...t.stamp,
+    color: color.faint,
+    fontSize: 9,
+    marginTop: 2,
   },
   savedBadge: {
     flexDirection: 'row',
