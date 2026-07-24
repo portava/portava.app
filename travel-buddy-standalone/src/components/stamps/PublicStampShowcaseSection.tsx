@@ -42,6 +42,7 @@ function ShowcaseCard({ item, onPress }: { item: ShowcaseStamp; onPress: () => v
             style={styles.artImage}
             resizeMode="cover"
             accessibilityIgnoresInvertColors
+            accessibilityLabel={`${label} — ${rarity} stamp`}
           />
         ) : (
           <View style={styles.artPlaceholder} />

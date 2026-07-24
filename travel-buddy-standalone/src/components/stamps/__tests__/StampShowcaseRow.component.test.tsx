@@ -5,8 +5,8 @@
  * accessibilityLabel containing "photo". A future refactor that adds
  * accessibilityLabel="photo" to the Image element would be caught here.
  *
- * Also confirms the Image element itself carries no label text at all today
- * (the Pressable parent holds the stamp name label, not the Image).
+ * Also confirms the Image element carries the expected "<name> — <rarity> stamp"
+ * label so screen readers can announce the artwork meaningfully.
  *
  * Uses react-test-renderer for prop inspection (RNTL v14 dropped
  * UNSAFE_getAllByType). Follows the DisplayMediaImage.component.test.tsx pattern.
@@ -135,13 +135,17 @@ describe('StampShowcaseRow — no "photo" label on AI artwork images', () => {
     }
   });
 
-  it('Image element carries no accessibilityLabel today (Pressable parent holds the name)', () => {
+  it('Image element carries a "<name> — <rarity> stamp" accessibilityLabel', () => {
     const tr = create(
       <StampShowcaseRow items={[SHOWCASE_ITEM]} onPress={jest.fn()} />,
     );
-    for (const img of findArtworkImages(tr.root)) {
-      // Current behaviour: Image has no label — the Pressable parent carries it.
-      expect(img.props.accessibilityLabel).toBeUndefined();
+    const images = findArtworkImages(tr.root);
+    expect(images.length).toBeGreaterThanOrEqual(1);
+    for (const img of images) {
+      // Expected: "Kyoto Visit — common stamp"
+      expect(typeof img.props.accessibilityLabel).toBe('string');
+      expect(img.props.accessibilityLabel).toMatch(/— \w+ stamp$/);
+      expect(img.props.accessibilityLabel.toLowerCase()).not.toContain('photo');
     }
   });
 
