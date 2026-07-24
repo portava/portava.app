@@ -29,10 +29,9 @@ import {
 import { useSession } from '../../../src/context/SessionContext';
 import { useNavBarScrollHandler } from '../../../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../../../src/hooks/useNavBarCollapse';
-// NOTE: Photo attachments for reviews are NOT wired — the `reviews` table has
-// no `photos` column (only `rent_buddy_reviews` does). This flow is documented
-// as skipped in the Task 6 report. The `photos` field exists in the service
-// type (reviews.ts) for forward-compat with the rent-a-buddy review surface.
+import { useMediaComposer } from '../../../src/hooks/useMediaComposer';
+import { MediaPickerButton } from '../../../src/components/ui/MediaPickerButton';
+import { MediaAttachmentTray } from '../../../src/components/ui/MediaAttachmentTray';
 
 // ── Star rating ───────────────────────────────────────────────────────────────
 
@@ -92,6 +91,9 @@ export default function ReviewComposerScreen() {
   const [saving, setSaving]           = useState(false);
   const [loading, setLoading]         = useState(false);
   const [hasDraft, setHasDraft]       = useState(false);
+
+  // Photo attachments — only for non-event entity types (events have no photos column)
+  const mediaComposer = useMediaComposer('review');
 
   const navBarScrollHandler = useNavBarScrollHandler();
 
@@ -189,12 +191,67 @@ export default function ReviewComposerScreen() {
 
     setSaving(true);
     try {
+      // Upload any pending photos before submitting (non-event only).
+      // Only computed when the user actually picked photos; omitted otherwise
+      // so an edit that touches only rating/body/tags never clears existing photos.
+      //
+      // uploadAll() only processes `idle` items — it skips `done` and `error` ones.
+      // We snapshot items BEFORE the upload to:
+      //   1. Block immediately if any item is already in `error` (won't be retried)
+      //   2. Capture already-done URLs (stable, won't change) to merge into payload
+      //   3. Derive new URLs from the result map (avoids stale React state)
+      let photosPayload: string[] | undefined;
+      if (entityType !== 'event' && mediaComposer.items.length > 0) {
+        const itemsBefore = mediaComposer.items;
+
+        // Block if any item is already errored — uploadAll() won't retry them.
+        const preExistingErrors = itemsBefore.filter((i) => i.uploadState === 'error');
+        if (preExistingErrors.length > 0) {
+          const n = preExistingErrors.length;
+          Alert.alert(
+            'Photo upload failed',
+            `${n} photo${n > 1 ? 's' : ''} could not be uploaded. Remove ${n > 1 ? 'them' : 'it'} or retry before submitting.`,
+          );
+          setSaving(false);
+          return;
+        }
+
+        // Capture already-uploaded URLs; uploadAll() won't touch done items.
+        const alreadyDoneUrls = itemsBefore
+          .filter((i) => i.uploadState === 'done' && i.uploadedUrl)
+          .map((i) => i.uploadedUrl!);
+
+        // Upload idle items; result map is keyed by item id.
+        const uploadResults = await mediaComposer.uploadAll();
+
+        // Gate on failures in newly uploaded items.
+        const failCount = [...uploadResults.values()].filter(
+          (r) => r === null || !r.ok,
+        ).length;
+        if (failCount > 0) {
+          Alert.alert(
+            'Photo upload failed',
+            `${failCount} photo${failCount > 1 ? 's' : ''} could not be uploaded. Remove ${failCount > 1 ? 'them' : 'it'} or retry before submitting.`,
+          );
+          setSaving(false);
+          return;
+        }
+
+        // Combine already-done URLs with newly uploaded ones.
+        const newlyUploadedUrls = [...uploadResults.values()]
+          .filter((r): r is NonNullable<typeof r> => r !== null && r.ok && r.url !== null)
+          .map((r) => r.url!);
+
+        photosPayload = [...alreadyDoneUrls, ...newlyUploadedUrls];
+      }
+
       if (isEditing && existingReviewId) {
         await updateReview(existingReviewId, {
           rating,
           body:      body.trim() || null,
           tags,
           anonymous,
+          ...(photosPayload !== undefined ? { photos: photosPayload } : {}),
         });
         clearReviewDraft(AsyncStorage, entityType!, entityId);
         Alert.alert('Review updated', 'Your review has been updated.', [
@@ -219,6 +276,7 @@ export default function ReviewComposerScreen() {
           body:      body.trim() || undefined,
           tags,
           anonymous,
+          ...(photosPayload !== undefined ? { photos: photosPayload } : {}),
         });
         clearReviewDraft(AsyncStorage, entityType!, entityId);
         Alert.alert('Review submitted', 'Thank you for your review!', [
@@ -337,6 +395,21 @@ export default function ReviewComposerScreen() {
               />
             ))}
           </View>
+        </View>
+      )}
+
+      {/* Photo attachments (not shown for events) */}
+      {entityType !== 'event' && (
+        <View style={s.section}>
+          <Text style={s.label}>Photos (optional, up to 3)</Text>
+          {mediaComposer.items.length > 0 && (
+            <MediaAttachmentTray composer={mediaComposer} />
+          )}
+          {mediaComposer.canAddMore && (
+            <View style={s.photoPickerBtn}>
+              <MediaPickerButton composer={mediaComposer} />
+            </View>
+          )}
         </View>
       )}
 
@@ -486,4 +559,6 @@ const s = StyleSheet.create({
 
   cancelBtn:     { alignItems: 'center', paddingVertical: 10 },
   cancelBtnText: { fontSize: 15, color: '#6B7280' },
+
+  photoPickerBtn: { marginTop: 8 },
 });
