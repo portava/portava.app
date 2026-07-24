@@ -54,6 +54,12 @@ export interface ContentMediaPolicy {
   allowsEditing?: boolean;
   /** Aspect ratio for editing [width, height] — only meaningful when allowsEditing=true. */
   editAspect?: [number, number];
+  /**
+   * When true, video picks are intercepted by a post-pick 9:16 crop-preview
+   * sheet (VideoStoryTrimSheet) before the asset is passed to onResult.
+   * Use for story composers where iOS ignores in-picker aspect on video.
+   */
+  requireStoryVideoCrop?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +86,9 @@ export const CONTENT_MEDIA_POLICIES: Record<ContentPolicyKey, ContentMediaPolicy
     fallbackCategory: 'story',
     allowsEditing: true,
     editAspect: [9, 16],
+    // Video picks bypass in-picker crop (iOS ignores aspect on video).
+    // VideoStoryTrimSheet handles the post-pick 9:16 preview + confirm step.
+    requireStoryVideoCrop: true,
   },
 
   highlight: {
