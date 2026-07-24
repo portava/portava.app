@@ -4,7 +4,7 @@ import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 import { postCompassFrontloadEvent } from '../../src/services/compass';
 import {
-  View, Text, ScrollView, Pressable, Image,
+  View, Text, ScrollView, Pressable,
   ActivityIndicator, StyleSheet, Alert, RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,7 +13,7 @@ import EventsTabScreen from './events';
 import { NotificationBell } from '../../src/components/NotificationBell';
 import {
   Plus, Users, CalendarDays, MapPin, CalendarClock,
-  ChevronRight, Check, X, UserCircle, Plane, Briefcase,
+  ChevronRight, Check, X, Plane, Briefcase,
 } from 'lucide-react-native';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
@@ -28,6 +28,8 @@ import { classifyInviteAcceptError } from '../../src/lib/inviteCardGoneHandler';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useSnapshotCache } from '../../src/hooks/useSnapshotCache';
 import type { TripRow } from '../../src/services/trips';
+import { CachedImage } from '../../src/components/CachedImage';
+import { AvatarImage } from '../../src/components/ui/DisplayMediaImage';
 
 function MeetupsShortcut({ count }: { count: number }) {
   const label = count > 9 ? '9+' : count > 0 ? String(count) : null;
@@ -55,6 +57,7 @@ function MeetupsShortcut({ count }: { count: number }) {
 function InviteCard({ invite, onDone }: { invite: TripInvite; onDone: () => void }) {
   const [busy, setBusy] = React.useState<'accept' | 'decline' | null>(null);
   const [tripGone, setTripGone] = React.useState(false);
+  const [inviteCoverErr, setInviteCoverErr] = React.useState(false);
 
   async function handle(action: 'accept' | 'decline') {
     setBusy(action);
@@ -91,8 +94,8 @@ function InviteCard({ invite, onDone }: { invite: TripInvite; onDone: () => void
 
   return (
     <View style={styles.inviteCard}>
-      {invite.coverUrl ? (
-        <Image source={{ uri: invite.coverUrl }} style={styles.inviteCover} />
+      {invite.coverUrl && !inviteCoverErr ? (
+        <CachedImage source={{ uri: invite.coverUrl }} style={styles.inviteCover} resizeMode="cover" onError={() => setInviteCoverErr(true)} />
       ) : (
         <View style={[styles.inviteCover, styles.inviteCoverPlaceholder]}>
           <MapPin size={22} color={color.onInk} />
@@ -100,13 +103,12 @@ function InviteCard({ invite, onDone }: { invite: TripInvite; onDone: () => void
       )}
       <View style={styles.inviteBody}>
         <View style={styles.inviteInviterRow}>
-          {invite.inviter?.avatarUrl ? (
-            <Image source={{ uri: invite.inviter.avatarUrl }} style={styles.inviterAvatar} />
-          ) : (
-            <View style={styles.inviterAvatarPlaceholder}>
-              <UserCircle size={14} color={color.mute} />
-            </View>
-          )}
+          <AvatarImage
+            uri={invite.inviter?.avatarUrl}
+            user={{ displayName: invite.inviter?.name }}
+            size={20}
+            style={styles.inviterAvatar}
+          />
           <Text style={styles.inviterLabel} numberOfLines={1}>
             <Text style={styles.inviterName}>{invite.inviter?.name ?? 'Someone'}</Text>
             {' invited you'}
@@ -402,6 +404,36 @@ function TripsScreen() {
   );
 }
 
+function TripCardItem({ tr, onPickTrip }: { tr: any; onPickTrip?: (tripId: string) => void }) {
+  const [coverErr, setCoverErr] = React.useState(false);
+  return (
+    <Pressable
+      style={styles.card}
+      onPress={() => (onPickTrip ? onPickTrip(tr.id) : router.push(`/trip/${tr.id}`))}
+    >
+      {tr.coverUrl && !coverErr ? (
+        <CachedImage source={{ uri: tr.coverUrl }} style={styles.cover} resizeMode="cover" onError={() => setCoverErr(true)} />
+      ) : (
+        <View style={[styles.cover, styles.coverFallback]}>
+          <MapPin size={22} color={color.onInk} />
+          <Text style={styles.coverFallbackText} numberOfLines={1}>{tr.destinationCity}</Text>
+        </View>
+      )}
+      <View style={styles.body}>
+        <View style={styles.stampRow}>
+          <Stamp label={tr.destinationCity} tone="deep" />
+          <Stamp label={tr.visibility} rotate={2} />
+        </View>
+        <Text style={styles.title}>{tr.title}</Text>
+        <View style={styles.metaRow}>
+          <CalendarDays size={14} color={color.mute} />
+          <Text style={styles.meta}>{tr.startDate ?? 'Dates TBD'}{tr.endDate ? ` – ${tr.endDate}` : ''} · {tr.status}</Text>
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
 function LiveTrips({ trips, loading, error, onPickTrip }: { trips: any[]; loading: boolean; error: string | null; onPickTrip?: (tripId: string) => void }) {
   if (loading) return <View style={styles.state}><ActivityIndicator color={color.signal} /></View>;
   if (error) return <View style={styles.state}><Text style={styles.stateText}>Couldn't load your trips. Pull to retry.</Text></View>;
@@ -417,24 +449,7 @@ function LiveTrips({ trips, loading, error, onPickTrip }: { trips: any[]; loadin
   return (
     <>
       {trips.map((tr) => (
-        <Pressable
-          key={tr.id}
-          style={styles.card}
-          onPress={() => (onPickTrip ? onPickTrip(tr.id) : router.push(`/trip/${tr.id}`))}
-        >
-          {tr.coverUrl ? <Image source={{ uri: tr.coverUrl }} style={styles.cover} /> : <View style={[styles.cover, { backgroundColor: color.deep }]} />}
-          <View style={styles.body}>
-            <View style={styles.stampRow}>
-              <Stamp label={tr.destinationCity} tone="deep" />
-              <Stamp label={tr.visibility} rotate={2} />
-            </View>
-            <Text style={styles.title}>{tr.title}</Text>
-            <View style={styles.metaRow}>
-              <CalendarDays size={14} color={color.mute} />
-              <Text style={styles.meta}>{tr.startDate ?? 'Dates TBD'}{tr.endDate ? ` – ${tr.endDate}` : ''} · {tr.status}</Text>
-            </View>
-          </View>
-        </Pressable>
+        <TripCardItem key={tr.id} tr={tr} onPickTrip={onPickTrip} />
       ))}
     </>
   );
@@ -521,6 +536,8 @@ const styles = StyleSheet.create({
   },
   card: { backgroundColor: color.paperRaised, borderRadius: radius.lg, overflow: 'hidden', ...shadow.card },
   cover: { width: '100%', height: 150, backgroundColor: color.haze },
+  coverFallback: { backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center', gap: 6 },
+  coverFallbackText: { fontFamily: 'Courier', fontSize: 11, fontWeight: '700', color: color.onInk, letterSpacing: 0.5, maxWidth: '70%', textAlign: 'center' },
   body: { padding: space.lg, gap: space.sm },
   stampRow: { flexDirection: 'row', gap: space.sm },
   title: { ...t.title, color: color.ink },

@@ -4,7 +4,6 @@ import {
   Text,
   ScrollView,
   Pressable,
-  Image,
   ActivityIndicator,
   StyleSheet,
   Animated,
@@ -22,6 +21,7 @@ import {
 import { useSession } from '../context/SessionContext.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
+import { AvatarImage } from './ui/DisplayMediaImage.tsx';
 
 const FOLLOWING_THRESHOLD = 10;
 const STRIP_LIMIT = 5;
@@ -174,13 +174,12 @@ function SuggestionCard({ user, onFollowed, onDismiss }: CardProps) {
         >
           <X size={11} color={color.mute} />
         </Pressable>
-        {user.avatarUrl ? (
-          <Image source={{ uri: user.avatarUrl }} style={styles.avatar} />
-        ) : (
-          <View style={[styles.avatar, styles.avatarEmpty]}>
-            <Text style={{ fontSize: 20 }}>👤</Text>
-          </View>
-        )}
+        <AvatarImage
+          uri={user.avatarUrl}
+          user={{ displayName: user.displayName, username: user.username }}
+          size={44}
+          style={styles.avatar}
+        />
         <Text style={styles.cardName} numberOfLines={1}>{displayName}</Text>
         {handle ? <Text style={styles.cardHandle} numberOfLines={1}>{handle}</Text> : null}
         {reason ? <CardReasonLines reason={reason} /> : null}

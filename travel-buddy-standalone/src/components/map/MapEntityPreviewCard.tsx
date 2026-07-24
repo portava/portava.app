@@ -11,7 +11,7 @@
  * payload when available.
  */
 import React from 'react';
-import { View, Text, Image, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
 import {
   X,
@@ -27,6 +27,7 @@ import {
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
+import { AvatarImage, DisplayMediaImage } from '../ui/DisplayMediaImage.tsx';
 import type { MapEntity, PassportCountryPayload } from '../../types/mapTypes.ts';
 import { MapEntityActionRow } from './MapEntityActionRow.tsx';
 import type { BuddyProfile } from '../../services/rentABuddy.ts';
@@ -48,7 +49,7 @@ function BuddyCard({ entity, onClose }: { entity: MapEntity<BuddyProfile>; onClo
       <View style={s.topRow}>
         <View style={[s.iconCircle, { backgroundColor: cfg.color }]}>
           {buddy.coverPhotoUrl
-            ? <Image source={{ uri: buddy.coverPhotoUrl }} style={s.iconImg} />
+            ? <DisplayMediaImage uri={buddy.coverPhotoUrl} width={46} height={46} style={s.iconImg} fallbackIcon={<Users size={20} color="#fff" />} fallbackBg={cfg.color} />
             : <Users size={20} color="#fff" />}
         </View>
         <View style={s.topText}>
@@ -97,7 +98,7 @@ function EventCard({ entity, onClose }: { entity: MapEntity<EventListItem>; onCl
       <View style={s.topRow}>
         <View style={[s.iconCircle, { backgroundColor: cfg.color }]}>
           {ev.coverUrl
-            ? <Image source={{ uri: ev.coverUrl }} style={s.iconImg} />
+            ? <DisplayMediaImage uri={ev.coverUrl} width={46} height={46} style={s.iconImg} fallbackIcon={<CalendarDays size={20} color="#fff" />} fallbackBg={cfg.color} />
             : <CalendarDays size={20} color="#fff" />}
         </View>
         <View style={s.topText}>
@@ -189,7 +190,7 @@ function TripCard({ entity, onClose }: { entity: MapEntity<TripRow>; onClose: ()
       <View style={s.topRow}>
         <View style={[s.iconCircle, { backgroundColor: cfg.color }]}>
           {trip.coverUrl
-            ? <Image source={{ uri: trip.coverUrl }} style={s.iconImg} />
+            ? <DisplayMediaImage uri={trip.coverUrl} width={46} height={46} style={s.iconImg} fallbackIcon={<Plane size={20} color="#fff" />} fallbackBg={cfg.color} />
             : <Plane size={20} color="#fff" />}
         </View>
         <View style={s.topText}>
@@ -232,7 +233,7 @@ function FriendCard({ entity, onClose }: { entity: MapEntity<CircleMemberLocatio
       <View style={s.topRow}>
         <View style={[s.avatarWrap, { borderColor: cfg.color }]}>
           {loc.avatarUrl
-            ? <Image source={{ uri: loc.avatarUrl }} style={s.avatarImg} />
+            ? <AvatarImage uri={loc.avatarUrl} user={{ displayName: loc.name }} size={44} style={s.avatarImg} bg={cfg.color} />
             : (
               <View style={[s.avatarFallback, { backgroundColor: cfg.color }]}>
                 <Heart size={16} color="#fff" />

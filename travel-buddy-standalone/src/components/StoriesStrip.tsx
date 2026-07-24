@@ -7,11 +7,12 @@
  * A ▶ badge is overlaid on the ring when the user's first story is a video.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { FlatList, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { color, radius, space, type as t } from '../theme/tokens.ts';
 import { HighlightRing } from './HighlightRing.tsx';
 import { useSession } from '../context/SessionContext.tsx';
 import { getStoriesFeed, type StoryFeedUser, type Story } from '../services/stories.ts';
+import { AvatarImage } from './ui/DisplayMediaImage.tsx';
 
 const RING_SIZE = 64;
 const RING_GAP = space.md;
@@ -70,14 +71,12 @@ export function StoriesStrip({ onTapUser, onTapSelf, style }: Props) {
                   isOwner
                   mediaType={selfEntry ? firstStoryMediaType(selfEntry.stories) : undefined}
                 >
-                  {selfEntry?.avatarUrl ? (
-                    <Image
-                      source={{ uri: selfEntry.avatarUrl }}
-                      style={[s.avatarCircle, { width: RING_SIZE, height: RING_SIZE, borderRadius: RING_SIZE / 2 }]}
-                    />
-                  ) : (
-                    <View style={[s.avatarCircle, { width: RING_SIZE, height: RING_SIZE, borderRadius: RING_SIZE / 2 }]} />
-                  )}
+                  <AvatarImage
+                    uri={selfEntry?.avatarUrl}
+                    user={selfEntry ? { displayName: selfEntry.name, handle: selfEntry.handle } : null}
+                    size={RING_SIZE}
+                    style={s.avatarCircle}
+                  />
                 </HighlightRing>
                 <View style={s.plusBadge}>
                   <Text style={s.plusText}>+</Text>
@@ -98,14 +97,12 @@ export function StoriesStrip({ onTapUser, onTapSelf, style }: Props) {
               hasActive
               mediaType={mediaType}
             >
-              {item.avatarUrl ? (
-                <Image
-                  source={{ uri: item.avatarUrl }}
-                  style={[s.avatarCircle, { width: RING_SIZE, height: RING_SIZE, borderRadius: RING_SIZE / 2 }]}
-                />
-              ) : (
-                <View style={[s.avatarCircle, { width: RING_SIZE, height: RING_SIZE, borderRadius: RING_SIZE / 2 }]} />
-              )}
+              <AvatarImage
+                uri={item.avatarUrl}
+                user={{ displayName: item.name, handle: item.handle }}
+                size={RING_SIZE}
+                style={s.avatarCircle}
+              />
             </HighlightRing>
             <Text style={s.label} numberOfLines={1}>{item.name ?? item.handle ?? 'Traveler'}</Text>
           </Pressable>

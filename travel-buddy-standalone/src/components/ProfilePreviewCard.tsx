@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, Pressable, Modal, Image, ActivityIndicator, StyleSheet,
+  View, Text, Pressable, Modal, ActivityIndicator, StyleSheet,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,6 +8,7 @@ import { X } from 'lucide-react-native';
 import { getPublicProfile, type PublicProfileCard } from '../services/profile.ts';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
+import { AvatarImage } from './ui/DisplayMediaImage.tsx';
 
 interface Props {
   username: string | null;
@@ -70,15 +71,12 @@ export function ProfilePreviewCard({ username, visible, onClose }: Props) {
 
           {profile && !loading && (
             <View style={s.content}>
-              {profile.avatarUrl ? (
-                <Image source={{ uri: profile.avatarUrl }} style={s.avatar} />
-              ) : (
-                <View style={[s.avatar, s.avatarFallback]}>
-                  <Text style={s.avatarInitial}>
-                    {(primaryIdentityText({ displayName: profile.displayName, username: profile.username }).replace(/^@/, '')[0] ?? '?').toUpperCase()}
-                  </Text>
-                </View>
-              )}
+              <AvatarImage
+                uri={profile.avatarUrl}
+                user={{ displayName: profile.displayName, username: profile.username }}
+                size={AVATAR_SIZE}
+                style={s.avatar}
+              />
 
               <Text style={s.name} numberOfLines={1}>
                 {primaryIdentityText({ displayName: profile.displayName, username: profile.username })}

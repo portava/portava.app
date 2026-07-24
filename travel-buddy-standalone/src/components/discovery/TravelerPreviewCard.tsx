@@ -7,13 +7,14 @@
  * and coarse freshness. Never coordinates, never distances.
  */
 import React from 'react';
-import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { BadgeCheck, MapPin, X, ArrowRight, HandMetal } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import type { MapTraveler } from '../../services/mapTravelers.ts';
 import { travelerInitials } from './TravelerMapLayer.tsx';
 import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity.ts';
+import { AvatarImage } from '../ui/DisplayMediaImage.tsx';
 
 export function TravelerPreviewCard({ traveler, onClose }: {
   traveler: MapTraveler;
@@ -37,13 +38,12 @@ export function TravelerPreviewCard({ traveler, onClose }: {
       </Pressable>
 
       <View style={s.topRow}>
-        {traveler.avatarUrl ? (
-          <Image source={{ uri: traveler.avatarUrl }} style={s.avatar} />
-        ) : (
-          <View style={s.avatarFallback}>
-            <Text style={s.avatarInitials}>{travelerInitials(nameText.replace(/^@/, ''))}</Text>
-          </View>
-        )}
+        <AvatarImage
+          uri={traveler.avatarUrl}
+          user={{ displayName: traveler.displayName, handle: traveler.handle }}
+          size={46}
+          style={s.avatar}
+        />
         <View style={{ flex: 1, minWidth: 0 }}>
           <View style={s.nameRow}>
             <Text style={s.name} numberOfLines={1}>{nameText}</Text>

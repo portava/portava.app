@@ -13,11 +13,12 @@
  * data shape, so PostcardTile is NOT imported or wrapped here.
  */
 import React from 'react';
-import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { MapPin, Heart, Music2 } from 'lucide-react-native';
 import { color, space, radius, shadow } from '../../theme/tokens.ts';
 import type { DiscoveryEventPost } from '../../types/discovery.ts';
+import { DisplayMediaImage } from '../ui/DisplayMediaImage.tsx';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -54,19 +55,15 @@ export function DiscoveryEventPostCard({ post }: Props) {
       accessibilityLabel={`Post from ${label ?? 'event'}: ${post.content.slice(0, 60)}`}
     >
       {/* Media thumbnail — shown only when media is present */}
-      {thumbnail ? (
-        <Image
-          source={{ uri: thumbnail }}
-          style={s.thumbnail}
-          resizeMode="cover"
-          accessibilityIgnoresInvertColors
-        />
-      ) : (
-        /* Placeholder icon strip when no media */
-        <View style={s.thumbnailPlaceholder}>
-          <Music2 size={24} color={color.mute} />
-        </View>
-      )}
+      <DisplayMediaImage
+        uri={thumbnail}
+        width={CARD_WIDTH}
+        height={110}
+        style={s.thumbnail}
+        fallbackIcon={<Music2 size={24} color={color.mute} />}
+        fallbackBg={color.haze}
+        alt={post.linkedEventTitle ?? post.venueLabel ?? 'Post media'}
+      />
 
       {/* Text body */}
       <View style={s.body}>

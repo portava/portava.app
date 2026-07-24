@@ -1,8 +1,9 @@
 import React from 'react';
-import { View, Text, Pressable, Image, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity.ts';
+import { AvatarImage } from '../ui/DisplayMediaImage.tsx';
 
 interface Props {
   senderId: string;
@@ -34,13 +35,12 @@ export function MessageRequestCard({
   return (
     <View style={s.card}>
       <View style={s.row}>
-        {senderAvatar ? (
-          <Image source={{ uri: senderAvatar }} style={s.avatar} />
-        ) : (
-          <View style={[s.avatar, s.avatarEmpty]}>
-            <Text style={{ fontSize: 20 }}>👤</Text>
-          </View>
-        )}
+        <AvatarImage
+          uri={senderAvatar}
+          user={{ displayName: senderName, handle: senderHandle }}
+          size={44}
+          style={s.avatar}
+        />
         <View style={s.body}>
           <Text style={s.name} numberOfLines={1}>{name}</Text>
           {handleSubline ? <Text style={s.handle}>{handleSubline}</Text> : null}
