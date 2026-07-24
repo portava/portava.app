@@ -623,7 +623,7 @@ export default function EventDetailScreen() {
               <View style={styles.waitlistBanner}>
                 <Clock size={14} color="#2563EB" />
                 <Text style={styles.waitlistText}>
-                  You're #{event.myWaitlistPosition} on the waitlist
+                  Waitlisted — #{event.myWaitlistPosition} in queue
                   {event.myWaitlistOfferExpiresAt
                     ? ` · Offer expires ${new Date(event.myWaitlistOfferExpiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
                     : ''}
