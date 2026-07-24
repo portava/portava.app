@@ -520,7 +520,7 @@ router.post("/posts", async (req, res) => {
 
               const locationAwards: Array<{ slug: string }> = [];
               if (distinctCities >= 1)  locationAwards.push({ slug: "city_explorer" });
-              if (distinctCountries >= 5)  locationAwards.push({ slug: "globe_trotter" });
+              // globe_trotter (unversioned) removed — globe_trotter_5/10 via criteria-engine below
               if (distinctCountries >= 20) locationAwards.push({ slug: "world_citizen" });
 
               const [settled, criteriaOutcomes] = await Promise.all([
@@ -538,6 +538,7 @@ router.post("/posts", async (req, res) => {
                 ),
                 // Criteria-engine path: evaluate globe_trotter_5 and globe_trotter_10
                 // (distinct countries from user_stamps via the countries_visited metric).
+                // globe_trotter (unversioned) is retired — is_active=false in stamp_definitions.
                 evaluateAndAwardCriteria(stampSc, user.id, {
                   sourceType: "posts",
                   sourceId:   (data as any).id,
