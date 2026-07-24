@@ -18,6 +18,9 @@ import { GpsLocationCapture } from '../../src/components/location/GpsLocationCap
 import type { Place } from '../../src/lib/location/placeTypes';
 import { canNext as wizardCanNext, buildSubmitPayload } from '../../src/lib/gems/submitMachine';
 import { GemLocationPreview } from '../../src/components/gems/GemLocationPreview';
+// NOTE: Photo attachment for hidden gems is NOT wired — the hidden_gems table
+// has no image_url column (media is handled via the separate media_attachments
+// system). Documented as skipped in the Task 6 report.
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -563,4 +566,5 @@ const styles = StyleSheet.create({
   },
   btnDisabled: { opacity: 0.5 },
   nextBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+
 });

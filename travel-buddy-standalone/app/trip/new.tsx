@@ -1,8 +1,8 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator, ScrollView, StyleSheet, Switch } from 'react-native';
+import { View, Text, TextInput, Pressable, ActivityIndicator, ScrollView, StyleSheet, Switch, Alert, Image } from 'react-native';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { router } from 'expo-router';
-import { CalendarDays, MapPin, X, Sparkles } from 'lucide-react-native';
+import { CalendarDays, MapPin, X, Sparkles, ImagePlus } from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { useSession } from '../../src/context/SessionContext';
 import { createTrip } from '../../src/services/trips';
@@ -15,6 +15,8 @@ import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { formatDisplayDate, fromISODate } from '../../src/lib/dateTime/formatters';
 import type { Place } from '../../src/lib/location/placeTypes';
 import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
+import * as ImagePicker from 'expo-image-picker';
+import { uploadMedia, type PickedMedia } from '../../src/services/media.ts';
 
 export default function NewTrip() {
   const { configured, isAuthed } = useSession();
@@ -37,6 +39,10 @@ export default function NewTrip() {
   const [multiCity, setMultiCity] = useState(false);
   const [destinations, setDestinations] = useState<DestinationEntry[]>([]);
 
+  // ── Cover photo ───────────────────────────────────────────────────────────
+  const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [coverUploading, setCoverUploading] = useState(false);
+
   // ── Save state ────────────────────────────────────────────────────────────
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +55,43 @@ export default function NewTrip() {
   // Pressable's `disabled` prop. Unlike the React state flag, a ref update
   // is immediate and visible within the same JS turn.
   const saveLock = useRef(false);
+
+  // ── Cover photo picker ────────────────────────────────────────────────────
+  const pickCover = useCallback(async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Permission needed', 'Allow access to your photos to add a cover.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.9,
+      allowsEditing: false,
+    });
+    if (result.canceled || result.assets.length === 0) return;
+    const asset = result.assets[0];
+    const picked: PickedMedia = {
+      uri: asset.uri,
+      type: 'image',
+      fileName: asset.fileName ?? `cover_${Date.now()}.jpg`,
+      mimeType: asset.mimeType ?? 'image/jpeg',
+      fileSize: asset.fileSize ?? null,
+      width: asset.width ?? null,
+      height: asset.height ?? null,
+      duration: null,
+    };
+    setCoverUploading(true);
+    try {
+      const upload = await uploadMedia(picked, { surface: 'trip' });
+      if (!upload.ok || !upload.url) {
+        Alert.alert('Upload failed', upload.message ?? 'Could not upload the photo. Try again.');
+        return;
+      }
+      setCoverUrl(upload.url);
+    } finally {
+      setCoverUploading(false);
+    }
+  }, []);
 
   // ── NL draft handler ──────────────────────────────────────────────────────
   const handleNLDraft = useCallback(async () => {
@@ -162,6 +205,7 @@ export default function NewTrip() {
         status: 'planning',
         visibility: 'private',
         tripNotes: tripNotes.trim() || null,
+        coverUrl: coverUrl ?? undefined,
       });
       if (!trip) { setError('Could not create the trip. Try again.'); return; }
 
@@ -194,7 +238,7 @@ export default function NewTrip() {
       setBusy(false);
       saveLock.current = false;
     }
-  }, [title, place, live, startDate, endDate, tripNotes, checkForNewStamps, multiCity, destinations]);
+  }, [title, place, live, startDate, endDate, tripNotes, checkForNewStamps, multiCity, destinations, coverUrl]);
 
   const startD = startDate ? fromISODate(startDate) : null;
   const endD = endDate ? fromISODate(endDate) : null;
@@ -275,6 +319,53 @@ export default function NewTrip() {
                   <X size={14} color={color.mute} />
                 </Pressable>
               )}
+            </Pressable>
+          )}
+        </View>
+
+        {/* Cover photo */}
+        <View>
+          <Text style={styles.label}>Cover photo (optional)</Text>
+          {coverUrl ? (
+            <View style={styles.coverPreview}>
+              <Image source={{ uri: coverUrl }} style={styles.coverImg} resizeMode="cover" />
+              <View style={styles.coverActions}>
+                <Pressable
+                  style={styles.coverBtn}
+                  onPress={pickCover}
+                  disabled={coverUploading}
+                  accessibilityLabel="Change cover photo"
+                >
+                  {coverUploading
+                    ? <ActivityIndicator size="small" color={color.signal} />
+                    : <Text style={styles.coverBtnText}>Change</Text>}
+                </Pressable>
+                <Pressable
+                  style={[styles.coverBtn, styles.coverBtnRemove]}
+                  onPress={() => setCoverUrl(null)}
+                  disabled={coverUploading}
+                  accessibilityLabel="Remove cover photo"
+                >
+                  <Text style={[styles.coverBtnText, { color: color.mute }]}>Remove</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : (
+            <Pressable
+              style={styles.coverPicker}
+              onPress={pickCover}
+              disabled={coverUploading}
+              accessibilityLabel="Add cover photo"
+              testID="cover-photo-picker"
+            >
+              {coverUploading
+                ? <ActivityIndicator size="small" color={color.signal} />
+                : (
+                  <>
+                    <ImagePlus size={18} color={color.mute} />
+                    <Text style={styles.coverPickerText}>Add a cover photo</Text>
+                  </>
+                )}
             </Pressable>
           )}
         </View>
@@ -394,6 +485,23 @@ const styles = StyleSheet.create({
   pickerText: { flex: 1, ...t.body, color: color.ink },
   pickerPlaceholder: { color: color.faint },
   notesInput: { height: 100, paddingTop: space.md },
+  coverPreview: { borderRadius: radius.md, overflow: 'hidden' },
+  coverImg: { width: '100%', height: 160 },
+  coverActions: { flexDirection: 'row', gap: space.sm, marginTop: space.sm },
+  coverBtn: {
+    flex: 1, paddingVertical: space.sm, borderRadius: radius.md,
+    borderWidth: 1, borderColor: color.haze, alignItems: 'center',
+    backgroundColor: color.paperRaised,
+  },
+  coverBtnRemove: {},
+  coverBtnText: { ...t.small, color: color.ink, fontWeight: '600' },
+  coverPicker: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: space.sm, borderWidth: 1, borderColor: color.haze, borderStyle: 'dashed',
+    borderRadius: radius.md, paddingVertical: space.lg,
+    backgroundColor: color.paperRaised,
+  },
+  coverPickerText: { ...t.small, color: color.mute },
   error: { ...t.small, color: color.signal, fontWeight: '600' },
   hint: { ...t.small, color: color.mute },
   create: {

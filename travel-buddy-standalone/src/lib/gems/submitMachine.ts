@@ -28,6 +28,8 @@ export interface WizardFormState {
   layoverSafe: boolean;
   minimumLayoverMinutes: string;
   sensitivityLevel: GemSensitivity;
+  // NOTE: imageUrl is NOT wired — the hidden_gems table has no image_url column.
+  // Documented as skipped in the Task 6 report. Field reserved here for future use.
 }
 
 // ── Step count (0-indexed) ────────────────────────────────────────────────────

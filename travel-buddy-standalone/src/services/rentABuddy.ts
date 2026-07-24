@@ -390,6 +390,8 @@ export async function submitApplication(payload: {
   availability?: Array<Record<string, unknown>>;
   /** Preferred meetup zone names or area slugs. */
   zones?: string[];
+  /** Profile photo URLs uploaded during the application wizard (max 3). */
+  photos?: string[];
 }): Promise<ApiResult<{ application: BuddyApplication | null; message: string }>> {
   return apiFetch('/api/rent-a-buddy/apply', {
     method: 'POST',
