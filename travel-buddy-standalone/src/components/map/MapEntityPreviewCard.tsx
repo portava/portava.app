@@ -28,6 +28,7 @@ import {
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
 import type { MapEntity, PassportCountryPayload } from '../../types/mapTypes.ts';
+import { MapEntityActionRow } from './MapEntityActionRow.tsx';
 import type { BuddyProfile } from '../../services/rentABuddy.ts';
 import type { EventListItem } from '../../services/events.ts';
 import type { HiddenGem } from '../../services/hiddenGems.ts';
@@ -342,6 +343,7 @@ export function MapEntityPreviewCard({
         <X size={16} color={color.mute} />
       </Pressable>
       {renderBody()}
+      <MapEntityActionRow entity={entity} />
     </View>
   );
 }

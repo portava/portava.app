@@ -14,7 +14,7 @@
  * native-only (iOS / Android). Do NOT import MapLibre in the web file.
  */
 import React from 'react';
-import { View, Text, Pressable, Linking, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
 import { MapPin, Lock, Map as MapIcon } from 'lucide-react-native';
 
@@ -26,13 +26,8 @@ export interface GemMapPreviewProps {
 }
 
 import { MAP_STYLE_URL } from '../../constants/mapStyle.ts';
+import { openInMaps } from '../../lib/openInMaps.ts';
 const MAP_STYLE = MAP_STYLE_URL;
-
-function openInMaps(lat: number, lng: number): void {
-  Linking.openURL(`geo:${lat},${lng}`).catch(() => {
-    Linking.openURL(`https://maps.google.com/?q=${lat},${lng}`).catch(() => {});
-  });
-}
 
 export function GemMapPreview({ lat, lng, coordsPrecision, locationLabel }: GemMapPreviewProps) {
   if (coordsPrecision === 'hidden') {
