@@ -105,6 +105,23 @@ export function MediaSourceSheet({
         duration: null,
         pairedVideoAsset: undefined,
       } as unknown as ImagePicker.ImagePickerAsset;
+
+      // Web: expo-av is unavailable so VideoStoryTrimSheet cannot render a
+      // preview. Instead, show a lightweight Alert warning the user that their
+      // video will be cropped to 9:16, giving them a chance to cancel and
+      // pick a better-framed file.
+      if (storyVideoTrim && isVideo) {
+        Alert.alert(
+          'Video will display in 9:16',
+          'Stories are shown in portrait 9:16 format. Your video will be cropped to fit — any content outside the centre frame may be cut off.',
+          [
+            { text: 'Choose different file', style: 'cancel' },
+            { text: 'Post anyway', onPress: () => onResult(synth) },
+          ],
+        );
+        return;
+      }
+
       onResult(synth);
       onClose();
     };
