@@ -32,6 +32,7 @@ import { MapEntityActionRow } from './MapEntityActionRow.tsx';
 import type { BuddyProfile } from '../../services/rentABuddy.ts';
 import type { EventListItem } from '../../services/events.ts';
 import type { HiddenGem } from '../../services/hiddenGems.ts';
+import type { DiscoveryPlace } from '../../services/discovery.ts';
 import { openDirectThread } from '../../services/messaging.ts';
 import type { TripRow } from '../../services/trips.ts';
 import type { CircleMemberLocation } from '../../services/map.ts';
@@ -270,9 +271,61 @@ function FriendCard({ entity, onClose }: { entity: MapEntity<CircleMemberLocatio
   );
 }
 
+// ── Place card body ────────────────────────────────────────────────────────────
+
+function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onClose: () => void }) {
+  const place = entity.payload;
+  const cfg = MAP_LAYER_CONFIG.places;
+  return (
+    <>
+      <View style={s.topRow}>
+        <View style={[s.iconCircle, { backgroundColor: cfg.color }]}>
+          <MapPin size={20} color="#fff" />
+        </View>
+        <View style={s.topText}>
+          <Text style={s.primaryText} numberOfLines={1}>{place.name}</Text>
+          {place.address ? (
+            <Text style={s.secondaryText} numberOfLines={1}>{place.address}</Text>
+          ) : place.category ? (
+            <Text style={s.secondaryText} numberOfLines={1}>
+              {place.category.replace('_', ' ')}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+      <View style={s.chipRow}>
+        {place.category ? (
+          <View style={s.chip}>
+            <Text style={s.chipText}>{place.category.replace('_', ' ')}</Text>
+          </View>
+        ) : null}
+        {place.rating != null && (
+          <View style={s.chip}>
+            <Star size={10} color="#F59E0B" fill="#F59E0B" />
+            <Text style={s.chipText}>{place.rating.toFixed(1)}</Text>
+          </View>
+        )}
+      </View>
+      <Pressable
+        style={[s.cta, { backgroundColor: cfg.color }]}
+        onPress={() => { onClose(); router.push('/(tabs)/discover' as any); }}
+      >
+        <Text style={s.ctaText}>View Place</Text>
+        <ArrowRight size={15} color="#fff" />
+      </Pressable>
+    </>
+  );
+}
+
 // ── Stamp card body ────────────────────────────────────────────────────────────
 
-function StampCountryCardBody({ entity }: { entity: MapEntity<PassportCountryPayload> }) {
+function StampCountryCardBody({
+  entity,
+  onClose,
+}: {
+  entity: MapEntity<PassportCountryPayload>;
+  onClose: () => void;
+}) {
   const { country, stampCount, cities } = entity.payload;
   const cfg = MAP_LAYER_CONFIG.stamps;
   const cityLabel = cities.slice(0, 3).join(' · ');
@@ -305,6 +358,13 @@ function StampCountryCardBody({ entity }: { entity: MapEntity<PassportCountryPay
           </View>
         )}
       </View>
+      <Pressable
+        style={[s.cta, { backgroundColor: cfg.color }]}
+        onPress={() => { onClose(); router.push('/(tabs)/passport' as any); }}
+      >
+        <Text style={s.ctaText}>View Stamps</Text>
+        <ArrowRight size={15} color="#fff" />
+      </Pressable>
     </>
   );
 }
@@ -331,7 +391,9 @@ export function MapEntityPreviewCard({
       case 'friends':
         return <FriendCard entity={entity as MapEntity<CircleMemberLocation>} onClose={onClose} />;
       case 'stamps':
-        return <StampCountryCardBody entity={entity as MapEntity<PassportCountryPayload>} />;
+        return <StampCountryCardBody entity={entity as MapEntity<PassportCountryPayload>} onClose={onClose} />;
+      case 'places':
+        return <PlaceCard entity={entity as MapEntity<DiscoveryPlace>} onClose={onClose} />;
       default:
         return null;
     }

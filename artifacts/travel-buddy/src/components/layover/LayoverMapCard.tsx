@@ -2,11 +2,12 @@
  * LayoverMapCard — the layover at a glance on the Discovery map: airport
  * pin plus any plan stops that carry coordinates.
  */
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Map as MapIcon } from 'lucide-react-native';
 import { DiscoveryMapView } from '../discovery/DiscoveryMapView';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
+import { PlaceDetailSheet } from '../discovery/PlaceDetailSheet.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import type { PlanStop, PublicAirport } from '../../services/layover.ts';
 
@@ -27,6 +28,15 @@ function toPlace(partial: Partial<DiscoveryPlace> & { id: string; name: string; 
 export function LayoverMapCard({ airport, stops }: Props) {
   const hasAirportCoords =
     airport.lat != null && airport.lng != null && !(airport.lat === 0 && airport.lng === 0);
+
+  // Place detail sheet — opened when the user taps a stop/airport pin.
+  const [selectedPlace, setSelectedPlace] = useState<DiscoveryPlace | null>(null);
+  const [placeSheetVisible, setPlaceSheetVisible] = useState(false);
+
+  const handleSelectPlace = (place: DiscoveryPlace) => {
+    setSelectedPlace(place);
+    setPlaceSheetVisible(true);
+  };
 
   const places = useMemo(() => {
     const list: DiscoveryPlace[] = [];
@@ -64,13 +74,21 @@ export function LayoverMapCard({ airport, stops }: Props) {
       <View style={styles.mapWrap}>
         <DiscoveryMapView
           places={places}
-          onSelectPlace={() => {}}
+          onSelectPlace={handleSelectPlace}
           fallbackLat={airport.lat}
           fallbackLng={airport.lng}
           fallbackZoom={11}
         />
       </View>
       <Text style={styles.note}>Airport and any plan stops with a location.</Text>
+
+      {/* Place detail sheet — shown when a stop/airport pin is tapped */}
+      <PlaceDetailSheet
+        place={selectedPlace}
+        visible={placeSheetVisible}
+        onClose={() => setPlaceSheetVisible(false)}
+        onAddToPlan={() => setPlaceSheetVisible(false)}
+      />
     </View>
   );
 }

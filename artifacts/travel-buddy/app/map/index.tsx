@@ -14,7 +14,7 @@
  * Metro selects this file for native. The web platform fallback is handled
  * inline via Platform.OS checks so we avoid a separate .web.tsx route file.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CameraRef } from '@maplibre/maplibre-react-native';
 import {
   View, Text, Pressable, StyleSheet, Platform,
@@ -519,11 +519,33 @@ function FullScreenMapScreenInner() {
     setCompassQuery(null);
   }
 
+  // ── Place entities ──────────────────────────────────────────────────────────
+  // Convert fetched DiscoveryPlace objects into MapEntity envelopes so they
+  // participate in the carousel / handleSelectEntity flow (same as buddies,
+  // events, gems, etc.).  EntityMapLayers filters 'places' out (not a
+  // ToggleableEntityType), so the DiscoveryMapView's own visiblePlaces loop
+  // remains the sole renderer for place pins — no double rendering.
+  const placeEntities = useMemo(
+    (): MapEntity<DiscoveryPlace>[] =>
+      places
+        .filter((p) => p.lat != null && p.lng != null)
+        .map((p) => ({
+          id: `place:${p.id}`,
+          type: 'places' as const,
+          lat: p.lat as number,
+          lng: p.lng as number,
+          payload: p,
+        })),
+    [places],
+  );
+
   // The active entity list.  Priority order:
   //   1. Compass override (active search result)
   //   2. Passport entities when mode=passport
-  //   3. Default hook-sourced entities
-  const entities = compassOverrideEntities ?? (mode === 'passport' ? passportEntities : defaultEntities);
+  //   3. Default hook-sourced entities + place entities
+  const entities = compassOverrideEntities ?? (
+    mode === 'passport' ? passportEntities : [...defaultEntities, ...placeEntities]
+  );
 
   // ── Carousel state ──────────────────────────────────────────────────────────
   // activeIndex / setActiveIndex come from the map store (carouselIndex / setCarouselIndex).
@@ -628,6 +650,20 @@ function FullScreenMapScreenInner() {
     [entities, setActiveIndex, setSelectedEntityId, setCameraCenter, setCameraZoom],
   );
 
+  /**
+   * Called when the user taps a venue/place pin in DiscoveryMapView.
+   * Converts the DiscoveryPlace to its MapEntity ID and delegates to
+   * handleSelectEntity so the carousel scrolls to the matching card.
+   */
+  const handleSelectPlace = useCallback(
+    (place: DiscoveryPlace) => {
+      const entityId = `place:${place.id}`;
+      const entity = entities.find((e) => e.id === entityId);
+      if (entity) handleSelectEntity(entity);
+    },
+    [entities, handleSelectEntity],
+  );
+
   // Web: show static placeholder.
   if (Platform.OS === 'web') {
     return <WebPlaceholder />;
@@ -654,7 +690,7 @@ function FullScreenMapScreenInner() {
           via entities/enabledEntityLayers props. */}
       <MapComponent
         places={places}
-        onSelectPlace={() => {}}
+        onSelectPlace={handleSelectPlace}
         fallbackLat={fallbackLat}
         fallbackLng={fallbackLng}
         fallbackZoom={paramZoom}

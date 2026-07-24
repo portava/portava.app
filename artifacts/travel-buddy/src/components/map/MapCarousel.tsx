@@ -67,6 +67,7 @@ import type { BuddyProfile } from '../../services/rentABuddy.ts';
 import type { EventListItem } from '../../services/events.ts';
 import type { HiddenGem } from '../../services/hiddenGems.ts';
 import type { TripRow } from '../../services/trips.ts';
+import type { DiscoveryPlace } from '../../services/discovery.ts';
 import { openDirectThread } from '../../services/messaging.ts';
 import type { CircleMemberLocation } from '../../services/map.ts';
 
@@ -124,6 +125,7 @@ function getEntityPeekLabel(entity: MapEntity | undefined): string {
     case 'gems':    return (entity.payload as HiddenGem).name                 ?? 'Gem';
     case 'friends': return (entity.payload as CircleMemberLocation).name      ?? 'Friend nearby';
     case 'stamps':  return (entity.payload as PassportCountryPayload).country ?? 'Country';
+    case 'places':  return (entity.payload as DiscoveryPlace).name            ?? 'Place';
     default:        return 'Nearby';
   }
 }
@@ -423,6 +425,53 @@ function FriendCardBody({ entity }: { entity: MapEntity<CircleMemberLocation> })
   );
 }
 
+function PlaceCardBody({ entity }: { entity: MapEntity<DiscoveryPlace> }) {
+  const place = entity.payload;
+  const cfg = MAP_LAYER_CONFIG.places;
+  return (
+    <>
+      <View style={cs.topRow}>
+        <View style={[cs.iconCircle, { backgroundColor: cfg.color }]}>
+          <MapPin size={18} color="#fff" />
+        </View>
+        <View style={cs.topText}>
+          <Text style={cs.primaryText} numberOfLines={1}>{place.name}</Text>
+          {place.address ? (
+            <Text style={cs.secondaryText} numberOfLines={1}>{place.address}</Text>
+          ) : place.category ? (
+            <Text style={cs.secondaryText} numberOfLines={1}>
+              {place.category.replace('_', ' ')}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+      <View style={cs.chipRow}>
+        {place.category ? (
+          <View style={cs.chip}>
+            <Text style={cs.chipText}>{place.category.replace('_', ' ')}</Text>
+          </View>
+        ) : null}
+        {place.rating != null && (
+          <View style={cs.chip}>
+            <Star size={10} color="#F59E0B" fill="#F59E0B" />
+            <Text style={cs.chipText}>{place.rating.toFixed(1)}</Text>
+          </View>
+        )}
+        {place.distanceKm != null && (
+          <View style={cs.chip}>
+            <MapPin size={10} color={color.mute} />
+            <Text style={cs.chipText}>
+              {place.distanceKm < 1
+                ? `${Math.round(place.distanceKm * 1000)}m`
+                : `${place.distanceKm}km`}
+            </Text>
+          </View>
+        )}
+      </View>
+    </>
+  );
+}
+
 function StampCardBody({ entity }: { entity: MapEntity<PassportCountryPayload> }) {
   const { country, stampCount, cities } = entity.payload;
   const cfg = MAP_LAYER_CONFIG.stamps;
@@ -666,6 +715,8 @@ function MapEntityCard({
         return <FriendCardBody entity={entity as MapEntity<CircleMemberLocation>} />;
       case 'stamps':
         return <StampCardBody entity={entity as MapEntity<PassportCountryPayload>} />;
+      case 'places':
+        return <PlaceCardBody entity={entity as MapEntity<DiscoveryPlace>} />;
       default:
         return null;
     }
@@ -704,9 +755,13 @@ function MapEntityCard({
         break;
       }
       case 'stamps':
-        // Passport tab handles its own navigation — tapping a country card
-        // on the map just centres the camera (handled by the parent's
-        // handleSelectEntity), so no deep-link is needed here.
+        // Navigate to the user's passport tab to see their country stamps.
+        router.push('/(tabs)/passport' as any);
+        break;
+      case 'places':
+        // Navigate to the Discover tab — the closest existing destination for
+        // venue/place entities (no dedicated /place/[id] route exists yet).
+        router.push('/(tabs)/discover' as any);
         break;
     }
   };

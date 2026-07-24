@@ -371,7 +371,7 @@ describe('MapEntityPreviewCard stamps card', () => {
       );
     });
     // "5 stamps" — the Text renders the number and word as one run
-    expect(screen.getByText(/stamps/i)).toBeTruthy();
+    expect(screen.getByText('5 stamps')).toBeTruthy();
   });
 
   it('renders cities in the subtitle row', async () => {
@@ -425,9 +425,10 @@ describe('MapEntityPreviewCard stamps card', () => {
         <MapEntityPreviewCard entity={singleStamp as MapEntity} onClose={onClose} />,
       );
     });
-    expect(screen.getByText(/stamp/i)).toBeTruthy();
-    // singular — no trailing 's' (not "stamps")
-    expect(screen.queryByText(/stamps/i)).toBeNull();
+    // Chip must show exact singular label "1 stamp" (not "1 stamps").
+    expect(screen.getByText('1 stamp')).toBeTruthy();
+    // The chip must NOT contain a plural "stamps" label.
+    expect(screen.queryByText('1 stamps')).toBeNull();
   });
 
   it('does not crash for an unknown entity type', async () => {
