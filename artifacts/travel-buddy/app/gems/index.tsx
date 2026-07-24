@@ -8,7 +8,7 @@ import React, { useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   TextInput, ActivityIndicator, RefreshControl, ScrollView,
-  Alert,
+  Alert, Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -42,57 +42,67 @@ function GemCard({ gem, onPress }: { gem: HiddenGem; onPress: () => void }) {
 
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.8}>
-      <View style={styles.cardHeader}>
-        <View style={[styles.categoryBadge, { backgroundColor: categoryColor(gem.category) }]}>
-          <Text style={styles.categoryText}>{gem.category}</Text>
-        </View>
-        {isProtected && (
-          <View style={styles.protectedBadge}>
-            <Ionicons name="lock-closed" size={11} color="#fff" />
-            <Text style={styles.protectedText}>Protected</Text>
-          </View>
-        )}
-      </View>
-
-      <Text style={styles.gemName} numberOfLines={2}>{gem.name}</Text>
-
-      <View style={styles.locationRow}>
-        <Ionicons
-          name={isApproximate ? 'navigate-circle-outline' : isProtected ? 'eye-off-outline' : 'location-outline'}
-          size={14}
-          color="#8A9BB5"
+      {gem.imageUrl ? (
+        <Image
+          source={{ uri: gem.imageUrl }}
+          style={styles.cardThumbnail}
+          resizeMode="cover"
         />
-        <Text style={styles.locationText}>
-          {gem.neighborhood ? `${gem.neighborhood}, ` : ''}{gem.city}
-          {isApproximate ? '  (approx)' : ''}
-        </Text>
-      </View>
-
-      {gem.description ? (
-        <Text style={styles.description} numberOfLines={2}>{gem.description}</Text>
       ) : null}
 
-      <View style={styles.cardFooter}>
-        <View style={styles.verBadge}>
-          <Ionicons name="checkmark-circle-outline" size={12} color="#4CAF7D" />
-          <Text style={styles.verText}>{verificationBadge(gem.verificationLevel)}</Text>
-        </View>
-        <View style={styles.statsRow}>
-          {gem.priceRange ? <Text style={styles.price}>{gem.priceRange}</Text> : null}
-          <Ionicons name="bookmark-outline" size={13} color="#8A9BB5" />
-          <Text style={styles.statNum}>{gem.saveCount}</Text>
-        </View>
-      </View>
-
-      {gem.vibeTags.length > 0 && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tagScroll}>
-          {gem.vibeTags.slice(0, 5).map((t) => (
-            <View key={t} style={styles.tag}>
-              <Text style={styles.tagText}>#{t}</Text>
+      <View style={styles.cardBody}>
+        <View style={styles.cardHeader}>
+          <View style={[styles.categoryBadge, { backgroundColor: categoryColor(gem.category) }]}>
+            <Text style={styles.categoryText}>{gem.category}</Text>
+          </View>
+          {isProtected && (
+            <View style={styles.protectedBadge}>
+              <Ionicons name="lock-closed" size={11} color="#fff" />
+              <Text style={styles.protectedText}>Protected</Text>
             </View>
-          ))}
-        </ScrollView>
-      )}
+          )}
+        </View>
+
+        <Text style={styles.gemName} numberOfLines={2}>{gem.name}</Text>
+
+        <View style={styles.locationRow}>
+          <Ionicons
+            name={isApproximate ? 'navigate-circle-outline' : isProtected ? 'eye-off-outline' : 'location-outline'}
+            size={14}
+            color="#8A9BB5"
+          />
+          <Text style={styles.locationText}>
+            {gem.neighborhood ? `${gem.neighborhood}, ` : ''}{gem.city}
+            {isApproximate ? '  (approx)' : ''}
+          </Text>
+        </View>
+
+        {gem.description ? (
+          <Text style={styles.description} numberOfLines={2}>{gem.description}</Text>
+        ) : null}
+
+        <View style={styles.cardFooter}>
+          <View style={styles.verBadge}>
+            <Ionicons name="checkmark-circle-outline" size={12} color="#4CAF7D" />
+            <Text style={styles.verText}>{verificationBadge(gem.verificationLevel)}</Text>
+          </View>
+          <View style={styles.statsRow}>
+            {gem.priceRange ? <Text style={styles.price}>{gem.priceRange}</Text> : null}
+            <Ionicons name="bookmark-outline" size={13} color="#8A9BB5" />
+            <Text style={styles.statNum}>{gem.saveCount}</Text>
+          </View>
+        </View>
+
+        {gem.vibeTags.length > 0 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tagScroll}>
+            {gem.vibeTags.slice(0, 5).map((t) => (
+              <View key={t} style={styles.tag}>
+                <Text style={styles.tagText}>#{t}</Text>
+              </View>
+            ))}
+          </ScrollView>
+        )}
+      </View>
     </TouchableOpacity>
   );
 }
@@ -511,10 +521,15 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: '#13213A',
     borderRadius: 16,
-    padding: 16,
+    overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#1E2D45',
   },
+  cardThumbnail: {
+    width: '100%',
+    height: 160,
+  },
+  cardBody: { padding: 16 },
   cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   categoryBadge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   categoryText: { color: '#fff', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
