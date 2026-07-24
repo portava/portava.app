@@ -11,7 +11,8 @@
  * Sized for social sharing (320 × 400px by default).
  */
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, Image } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
+import { Image } from 'expo-image';
 import {
   MapPin, Users, Gem, ShieldCheck, Crown, Ticket, Sparkles,
 } from 'lucide-react-native';
@@ -114,10 +115,12 @@ export function StampShareCard({
             <Image
               source={{ uri: stamp.universalArtworkUrl }}
               style={{ width: '100%', height: '100%' }}
-              resizeMode="cover"
+              contentFit="contain"
+              cachePolicy="memory-disk"
               onLoad={settle}
               onError={() => setArtFailed(true)}
               accessibilityIgnoresInvertColors
+              accessibilityLabel={`${art.categoryLabel} stamp artwork`}
             />
           </View>
         ) : (
