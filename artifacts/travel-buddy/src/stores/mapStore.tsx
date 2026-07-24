@@ -18,7 +18,7 @@
  */
 import React, { createContext, useContext, useReducer, useCallback, useMemo } from 'react';
 import { TOGGLEABLE_LAYERS } from '../types/mapTypes.ts';
-import type { ToggleableEntityType } from '../types/mapTypes.ts';
+import type { ToggleableEntityType, MapActionCapability } from '../types/mapTypes.ts';
 
 // ── State shape ───────────────────────────────────────────────────────────────
 
@@ -31,6 +31,13 @@ export interface MapStoreState {
   cameraZoom: number | null;
   enabledLayers: ToggleableEntityType[];
   carouselIndex: number;
+  /**
+   * Per-entity capability overrides written by MapEntityActionRow after a
+   * mutating action (save, follow, join).  Keyed by `MapEntity.id`.
+   * When present, the action row uses this instead of `entity.actionCapabilities`
+   * so the updated state survives card unmount/remount (e.g. camera pan).
+   */
+  entityCapabilityPatches: Record<string, MapActionCapability[]>;
 }
 
 const initialState: MapStoreState = {
@@ -40,6 +47,7 @@ const initialState: MapStoreState = {
   cameraZoom: null,
   enabledLayers: [...TOGGLEABLE_LAYERS],
   carouselIndex: 0,
+  entityCapabilityPatches: {},
 };
 
 // ── Actions ───────────────────────────────────────────────────────────────────
@@ -50,7 +58,8 @@ type Action =
   | { type: 'SET_CAMERA_CENTER'; payload: { lat: number; lng: number } | null }
   | { type: 'SET_CAMERA_ZOOM'; payload: number | null }
   | { type: 'SET_ENABLED_LAYERS'; payload: ToggleableEntityType[] }
-  | { type: 'SET_CAROUSEL_INDEX'; payload: number };
+  | { type: 'SET_CAROUSEL_INDEX'; payload: number }
+  | { type: 'UPDATE_ENTITY_CAPABILITIES'; payload: { entityId: string; caps: MapActionCapability[] } };
 
 function reducer(state: MapStoreState, action: Action): MapStoreState {
   switch (action.type) {
@@ -88,6 +97,20 @@ function reducer(state: MapStoreState, action: Action): MapStoreState {
       return state.carouselIndex === action.payload
         ? state
         : { ...state, carouselIndex: action.payload };
+    case 'UPDATE_ENTITY_CAPABILITIES': {
+      const { entityId, caps } = action.payload;
+      const prev = state.entityCapabilityPatches[entityId];
+      // Identity bailout: same length + same elements in order → no change.
+      if (
+        prev !== undefined &&
+        prev.length === caps.length &&
+        prev.every((c, i) => c === caps[i])
+      ) return state;
+      return {
+        ...state,
+        entityCapabilityPatches: { ...state.entityCapabilityPatches, [entityId]: caps },
+      };
+    }
     default:
       return state;
   }
@@ -102,6 +125,12 @@ export interface MapStoreContextValue extends MapStoreState {
   setCameraZoom: (zoom: number | null) => void;
   setEnabledLayers: (layers: ToggleableEntityType[]) => void;
   setCarouselIndex: (index: number) => void;
+  /**
+   * Patch the action capabilities for a single entity so the action row
+   * reflects the post-mutation state on remount (e.g. after a camera pan).
+   * Called by MapEntityActionRow after save / follow / join succeeds.
+   */
+  updateEntityCapabilities: (entityId: string, caps: MapActionCapability[]) => void;
 }
 
 const MapStoreContext = createContext<MapStoreContextValue | null>(null);
@@ -147,6 +176,11 @@ export function MapStoreProvider({
     (index: number) => dispatch({ type: 'SET_CAROUSEL_INDEX', payload: index }),
     [],
   );
+  const updateEntityCapabilities = useCallback(
+    (entityId: string, caps: MapActionCapability[]) =>
+      dispatch({ type: 'UPDATE_ENTITY_CAPABILITIES', payload: { entityId, caps } }),
+    [],
+  );
 
   const value = useMemo(
     (): MapStoreContextValue => ({
@@ -157,6 +191,7 @@ export function MapStoreProvider({
       setCameraZoom,
       setEnabledLayers,
       setCarouselIndex,
+      updateEntityCapabilities,
     }),
     [
       state,
@@ -166,13 +201,14 @@ export function MapStoreProvider({
       setCameraZoom,
       setEnabledLayers,
       setCarouselIndex,
+      updateEntityCapabilities,
     ],
   );
 
   return <MapStoreContext.Provider value={value}>{children}</MapStoreContext.Provider>;
 }
 
-// ── Hook ──────────────────────────────────────────────────────────────────────
+// ── Hooks ─────────────────────────────────────────────────────────────────────
 
 export function useMapStore(): MapStoreContextValue {
   const ctx = useContext(MapStoreContext);
@@ -180,4 +216,14 @@ export function useMapStore(): MapStoreContextValue {
     throw new Error('useMapStore must be called inside a <MapStoreProvider>');
   }
   return ctx;
+}
+
+/**
+ * Like `useMapStore` but returns `null` when called outside a
+ * `<MapStoreProvider>`.  Use in components that may be rendered both inside
+ * and outside the map session (e.g. MapEntityActionRow in tests or in a
+ * non-map context) so they degrade gracefully instead of crashing.
+ */
+export function useOptionalMapStore(): MapStoreContextValue | null {
+  return useContext(MapStoreContext);
 }
