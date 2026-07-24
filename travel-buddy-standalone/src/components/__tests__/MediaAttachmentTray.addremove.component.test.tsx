@@ -15,6 +15,14 @@ jest.mock('expo-av', () => ({
   ResizeMode: { COVER: 'cover' },
 }));
 
+// Stub reanimated so gesture shared-values work without native modules.
+jest.mock('react-native-reanimated', () => require('react-native-reanimated/mock'));
+
+// Force reduce-motion ON so the tray renders tap-based reorder buttons (the
+// drag path requires gesture-handler native events that RNTL cannot fire).
+import { AccessibilityInfo } from 'react-native';
+jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(true);
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function makeItem(id: string, overrides: Partial<MediaItem> = {}): MediaItem {
