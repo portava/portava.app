@@ -15,6 +15,7 @@
  * unknown objects 403/404 regardless of mode.
  */
 import { Router } from "express";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
@@ -41,7 +42,7 @@ async function resolveRedirect(
 }
 
 // ── GET /api/media/file/:bucket/*path ─────────────────────────────────────────
-router.get("/media/file/:bucket/*path", async (req, res) => {
+router.get("/media/file/:bucket/*path", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -74,10 +75,10 @@ router.get("/media/file/:bucket/*path", async (req, res) => {
   // Private cache only: the redirect target is viewer-authorized.
   res.setHeader("Cache-Control", "private, max-age=300");
   res.redirect(302, target);
-});
+}));
 
 // ── POST /api/media/sign — batch for feed hydration ──────────────────────────
-router.post("/media/sign", async (req, res) => {
+router.post("/media/sign", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -108,6 +109,6 @@ router.post("/media/sign", async (req, res) => {
   }
 
   res.json({ signed, ttlSeconds: SIGNED_TTL_SECONDS });
-});
+}));
 
 export default router;

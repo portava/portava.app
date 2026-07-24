@@ -86,9 +86,14 @@ const CARD_OFFSET = (SCREEN_WIDTH - CARD_WIDTH) / 2; // center first card
 const PEEK_HEIGHT = 52;
 /**
  * Maximum height of the scrollable card area below the peek strip.
- * Sized generously so all card types (regular entities, empty, error) fit.
+ * Sized to accommodate the tallest possible card body + action row.
+ *
+ * Worst-case breakdown (buddy card, 2-row chip strip, Book + Message buttons):
+ *   paddingTop 12 + type badge ~20 + gap 8 + topRow 42 + gap 8
+ *   + chipRow ×2 rows 45 + (gap 8 + actionRow marginTop 4) + actionRow 33
+ *   + paddingBottom 12  ≈ 192 px → rounded to 200 for headroom.
  */
-const CARD_AREA_HEIGHT = 164;
+const CARD_AREA_HEIGHT = 200;
 /** Spring config — snappy with a subtle settle. */
 const SPRING_CFG = { damping: 18, stiffness: 220, mass: 0.9 } as const;
 
