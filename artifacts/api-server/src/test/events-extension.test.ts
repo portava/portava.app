@@ -1283,13 +1283,18 @@ describe("Event media", () => {
   afterEach(async () => { await close(); });
 
   it("going attendee can upload media", async () => {
+    // appStorageUrlInfo requires the URL to be on the configured SUPABASE_URL origin
+    // in an allowed bucket — construct a valid one from the env var so the route's
+    // security guard accepts it.
+    const supabaseOrigin = new URL(process.env.SUPABASE_URL ?? "https://placeholder.supabase.co").origin;
+    const mediaUrl = `${supabaseOrigin}/storage/v1/object/public/post-media/events/test-photo.jpg`;
     const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/media`, {
-      mediaUrl: "https://example.com/photo.jpg",
+      mediaUrl,
       mediaType: "image",
       caption: "Great time!",
     }, ID.user1);
     assert.equal(status, 201);
-    assert.equal(body.media_url, "https://example.com/photo.jpg");
+    assert.equal(body.media_url, mediaUrl);
   });
 
   it("non-attendee gets 403 uploading media", async () => {

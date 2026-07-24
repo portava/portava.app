@@ -61,6 +61,7 @@ import {
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { useMapStore } from '../../stores/mapStore.tsx';
 import type { PreviewDetent } from '../../stores/mapStore.tsx';
+import { MapEntityActionRow } from './MapEntityActionRow.tsx';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
 import type { MapEntity, PassportCountryPayload } from '../../types/mapTypes.ts';
 import type { BuddyProfile } from '../../services/rentABuddy.ts';
@@ -667,7 +668,7 @@ function EntityFullDetail({ entity }: { entity: MapEntity }) {
 
 // ── Single animated card wrapper ──────────────────────────────────────────────
 
-function MapEntityCard({
+export function MapEntityCard({
   entity,
   index,
   scrollX,
@@ -678,7 +679,8 @@ function MapEntityCard({
   scrollX: SharedValue<number>;
   onPress: () => void;
 }) {
-  const { setSelectedEntityId } = useMapStore();
+  const { setSelectedEntityId, previewDetent } = useMapStore();
+  const isExpanded = previewDetent !== 'collapsed';
 
   const animStyle = useAnimatedStyle(() => {
     const inputRange = [
@@ -789,6 +791,7 @@ function MapEntityCard({
           <Text style={[cs.typeLabel, { color: cfg.color }]}>{typeLabel}</Text>
         </View>
         {renderBody()}
+        {isExpanded && <MapEntityActionRow entity={entity} />}
       </Pressable>
     </Animated.View>
   );
