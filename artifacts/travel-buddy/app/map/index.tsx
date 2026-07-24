@@ -19,7 +19,7 @@ import type { CameraRef } from '@maplibre/maplibre-react-native';
 import {
   View, Text, Pressable, StyleSheet, Platform,
 } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { router } from 'expo-router';
 import { AlertTriangle } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -322,6 +322,7 @@ function FullScreenMapScreenInner() {
     setEnabledLayers,
     carouselIndex: activeIndex,
     setCarouselIndex: setActiveIndex,
+    selectedEntityId,
     setSelectedEntityId,
     setCameraCenter,
     setCameraZoom,
@@ -552,14 +553,26 @@ function FullScreenMapScreenInner() {
   const carouselRef = useRef<MapCarouselRef>(null);
   // Tracks whether focusId has already been applied — only snap once on first load.
   const focusAppliedRef = useRef(false);
+  // "first mount only" guard — initialization effects (proximity selection,
+  // focusId snap) must not run again when the screen re-focuses after a detail
+  // push/pop. useFocusEffect handles restoration; this guards the entities effect.
+  const hasInitializedRef = useRef(false);
 
   // Auto-select closest entity whenever the entities list changes.
   // If focusId is set and not yet applied, prefer that entity over proximity.
+  // On re-focus after back-navigation, selectedEntityId is non-null: if the
+  // entity is still in the list, use its index instead of re-computing proximity
+  // so the map doesn't flash a reset state.
   useEffect(() => {
     if (entities.length === 0) {
-      setActiveIndex(0);
+      // Only reset index to 0 on the very first mount, not on every entities
+      // update — avoids clobbering the restored index on a re-fetch.
+      if (!hasInitializedRef.current) setActiveIndex(0);
+      hasInitializedRef.current = true;
       return;
     }
+
+    hasInitializedRef.current = true;
 
     // focusId snap: find matching entity and center on it (once only).
     // Accepts both the raw ID (e.g. "abc123") and the prefixed form used by
@@ -586,6 +599,21 @@ function FullScreenMapScreenInner() {
       // city default (no crash, per robustness requirement).
     }
 
+    // Restoration path: if returning from a detail screen, selectedEntityId is
+    // still set in the store. Use that entity's current index so the carousel
+    // doesn't jump to a proximity-sorted position after the entity list re-fetches.
+    // selectedEntityId is intentionally excluded from deps (we only want this
+    // effect to fire when entities changes, not on every selection change).
+    if (selectedEntityId) {
+      const restoredIndex = entities.findIndex((e) => e.id === selectedEntityId);
+      if (restoredIndex >= 0) {
+        setActiveIndex(restoredIndex);
+        // Camera position is already stored from before the push (Phase 1) —
+        // no easeTo needed here.
+        return;
+      }
+    }
+
     let bestIndex = 0;
     if (userLat != null && userLng != null) {
       let bestDist = Infinity;
@@ -609,8 +637,8 @@ function FullScreenMapScreenInner() {
         });
       }
     }
-  // Deliberately exclude userLat/userLng from deps — we only want this to fire
-  // when the entity list changes, not on every location update.
+  // Deliberately exclude userLat/userLng and selectedEntityId from deps —
+  // fire only when the entity list changes, not on location or selection updates.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entities]);
 
@@ -662,6 +690,21 @@ function FullScreenMapScreenInner() {
       if (entity) handleSelectEntity(entity);
     },
     [entities, handleSelectEntity],
+  );
+
+  // ── Back-navigation state restoration ──────────────────────────────────────
+  // When the user returns from a detail screen, useFocusEffect fires and snaps
+  // the carousel to the stored index without animation (instant restore, not a
+  // spring). previewDetent and enabledLayers are automatically correct because
+  // MapCarousel and the filter sheet both read directly from the store — no
+  // extra write is needed here. Camera position was stored in Phase 1.
+  useFocusEffect(
+    useCallback(() => {
+      if (!selectedEntityId) return;
+      // Snap carousel to the stored position without a visible scroll animation
+      // so there is no flash of a wrong card before the correct one appears.
+      carouselRef.current?.scrollToIndex(activeIndex, false);
+    }, [selectedEntityId, activeIndex]),
   );
 
   // Web: show static placeholder.
