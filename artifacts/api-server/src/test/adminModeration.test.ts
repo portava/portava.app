@@ -77,6 +77,8 @@ function makeFakeClient(opts: {
   accountStates?: Record<string, unknown>[];
   reports?: Record<string, unknown>[];
   modActions?: Record<string, unknown>[];
+  moderationReports?: Record<string, unknown>[];
+  places?: Record<string, unknown>[];
 }) {
   const {
     role = "admin",
@@ -85,10 +87,14 @@ function makeFakeClient(opts: {
     accountStates = [],
     reports = [],
     modActions = [],
+    moderationReports = [],
+    places = [],
   } = opts;
 
   function builder(table: string, rows: unknown[]) {
     let _rows = [...rows];
+    let _eqFilters: Record<string, any> = {};
+    let _inFilter: { col: string; vals: any[] } | null = null;
     const b: any = {
       select:      () => b,
       insert:      (data: any) => {
@@ -99,18 +105,28 @@ function makeFakeClient(opts: {
       update:      (data: any) => { _rows = _rows.map((r: any) => ({ ...r, ...data })); return b; },
       upsert:      (data: any) => { _rows = Array.isArray(data) ? data : [data]; return b; },
       delete:      () => { _rows = []; return b; },
-      eq:          (_col: string, _val: any) => b,
+      eq:          (col: string, val: any) => { _eqFilters[col] = val; return b; },
       neq:         () => b,
       is:          () => b,
       ilike:       () => b,
       not:         () => b,
-      in:          () => b,
+      in:          (col: string, vals: any[]) => { _inFilter = { col, vals }; return b; },
       or:          () => b,
       gt:          () => b,
       order:       () => b,
       limit:       () => b,
       range:       () => b,
-      then:        (resolve: any) => Promise.resolve({ data: _rows, error: null, count: _rows.length }).then(resolve),
+      then:        (resolve: any) => {
+        let result = [..._rows];
+        for (const [col, val] of Object.entries(_eqFilters)) {
+          result = result.filter((r: any) => r[col] === val);
+        }
+        if (_inFilter) {
+          const { col, vals } = _inFilter;
+          result = result.filter((r: any) => vals.includes(r[col]));
+        }
+        return Promise.resolve({ data: result, error: null, count: result.length }).then(resolve);
+      },
       maybeSingle: () => Promise.resolve({ data: _rows[0] ?? null, error: null }),
       single:      () => Promise.resolve({ data: { ...(_rows[0] as any), id: "new-audit-id", target_user_id: TARGET_USER_ID, performed_by: ADMIN_USER_ID, created_at: new Date().toISOString() }, error: null }),
     };
@@ -128,6 +144,8 @@ function makeFakeClient(opts: {
       if (table === "user_account_states")    return builder(table, accountStates);
       if (table === "moderation_actions")     return builder(table, modActions);
       if (table === "reports")                return builder(table, reports);
+      if (table === "moderation_reports")     return builder(table, moderationReports);
+      if (table === "places")                 return builder(table, places);
       return builder(table, []);
     },
     auth: {
@@ -276,5 +294,98 @@ describe("GET /admin/users/:userId/moderation-summary — returns full moderatio
     const { status, body } = await req("GET", `/admin/users/${TARGET_USER_ID}/moderation-summary`);
     assert.equal(status, 403);
     assert.equal(body.error, "forbidden");
+  });
+});
+
+// ── Tests: GET /admin/moderation/reports ──────────────────────────────────────
+
+const PLACE_ID = "dddddddd-1111-0000-0000-000000000001";
+
+describe("GET /admin/moderation/reports — place reports in the moderation queue", () => {
+  it("returns 403 for non-admin users", async () => {
+    const c = makeFakeClient({ role: "user" });
+    _setTestClient(c, true);
+    _setTestServiceClient(c);
+    const { status, body } = await req("GET", "/admin/moderation/reports");
+    assert.equal(status, 403);
+    assert.equal(body.error, "forbidden");
+  });
+
+  it("returns empty list when no reports exist", async () => {
+    setAdminClient([], { moderationReports: [] });
+    const { status, body } = await req("GET", "/admin/moderation/reports");
+    assert.equal(status, 200, `Expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.ok(Array.isArray(body.reports), "reports must be an array");
+    assert.equal(body.reports.length, 0);
+    assert.equal(body.total, 0);
+  });
+
+  it("returns place reports when subject_type filter is 'place'", async () => {
+    setAdminClient([], {
+      moderationReports: [
+        { id: "rep-place-1", subject_type: "place", subject_id: PLACE_ID, category: "wrong_photo", status: "open", created_at: new Date().toISOString() },
+        { id: "rep-user-1",  subject_type: "user",  subject_id: TARGET_USER_ID, category: "spam", status: "open", created_at: new Date().toISOString() },
+      ],
+    });
+    const { status, body } = await req("GET", "/admin/moderation/reports?subject_type=place");
+    assert.equal(status, 200, `Expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.ok(Array.isArray(body.reports));
+    assert.ok(body.reports.every((r: any) => r.subject_type === "place"), "only place reports should be returned");
+  });
+
+  it("returns all report types when subject_type is 'all'", async () => {
+    setAdminClient([], {
+      moderationReports: [
+        { id: "rep-place-1", subject_type: "place", subject_id: PLACE_ID, category: "closed",    status: "open", created_at: new Date().toISOString() },
+        { id: "rep-user-1",  subject_type: "user",  subject_id: TARGET_USER_ID, category: "spam", status: "open", created_at: new Date().toISOString() },
+      ],
+    });
+    const { status, body } = await req("GET", "/admin/moderation/reports?subject_type=all");
+    assert.equal(status, 200, `Expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.ok(Array.isArray(body.reports));
+    assert.equal(body.reports.length, 2, "all report types should be returned");
+  });
+
+  it("enriches place reports with place_name and place_address from the places table", async () => {
+    setAdminClient([], {
+      moderationReports: [
+        { id: "rep-place-1", subject_type: "place", subject_id: PLACE_ID, category: "wrong_photo", status: "open", created_at: new Date().toISOString() },
+      ],
+      places: [
+        { id: PLACE_ID, name: "The Grand Café", address: "1 Main St, Paris" },
+      ],
+    });
+    const { status, body } = await req("GET", "/admin/moderation/reports?subject_type=place");
+    assert.equal(status, 200, `Expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.reports.length, 1);
+    const report = body.reports[0];
+    assert.equal(report.place_name, "The Grand Café", "place_name must be resolved from places table");
+    assert.equal(report.place_address, "1 Main St, Paris", "place_address must be resolved from places table");
+  });
+
+  it("sets place_name/place_address to null when the place row is not found", async () => {
+    setAdminClient([], {
+      moderationReports: [
+        { id: "rep-place-2", subject_type: "place", subject_id: PLACE_ID, category: "duplicate", status: "open", created_at: new Date().toISOString() },
+      ],
+      places: [], // no places in DB
+    });
+    const { status, body } = await req("GET", "/admin/moderation/reports?subject_type=place");
+    assert.equal(status, 200, `Expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.reports.length, 1);
+    assert.strictEqual(body.reports[0].place_name, null, "place_name should be null when place not found");
+    assert.strictEqual(body.reports[0].place_address, null, "place_address should be null when place not found");
+  });
+
+  it("does not add place_name/place_address fields to non-place reports", async () => {
+    setAdminClient([], {
+      moderationReports: [
+        { id: "rep-user-1", subject_type: "user", subject_id: TARGET_USER_ID, category: "harassment", status: "open", created_at: new Date().toISOString() },
+      ],
+    });
+    const { status, body } = await req("GET", "/admin/moderation/reports");
+    assert.equal(status, 200, `Expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.reports.length, 1);
+    assert.ok(!("place_name" in body.reports[0]), "non-place reports must not have place_name");
   });
 });

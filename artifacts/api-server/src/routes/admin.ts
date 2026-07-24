@@ -1491,6 +1491,78 @@ router.delete("/admin/users/:userId/cover", async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Admin moderation_reports queue ────────────────────────────────────────────
+//
+// GET /admin/moderation/reports — paginated list of moderation_reports rows,
+//   filterable by subject_type ('place' | 'user' | 'post' | … | 'all').
+//   For place reports the response enriches each row with place name + address
+//   resolved from the canonical places table.
+
+/** GET /admin/moderation/reports — paginated moderation_reports with optional subject_type filter */
+router.get("/admin/moderation/reports", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const page        = Math.max(1, Number(req.query.page)  || 1);
+  const limit       = Math.min(100, Number(req.query.limit) || 50);
+  const subjectType = (req.query.subject_type as string | undefined) || "all";
+  const status      = (req.query.status as string | undefined) || null;
+
+  let query = sc
+    .from("moderation_reports")
+    .select(
+      "id, reporter_id, subject_type, subject_id, subject_user_id, category, details, status, created_at",
+      { count: "exact" },
+    )
+    .order("created_at", { ascending: false })
+    .range((page - 1) * limit, page * limit - 1);
+
+  if (subjectType && subjectType !== "all") {
+    query = query.eq("subject_type", subjectType);
+  }
+  if (status) {
+    query = query.eq("status", status);
+  }
+
+  const { data, error, count } = await query;
+  if (error) { sendError(res, "db_error", error.message); return; }
+
+  const rows: any[] = data ?? [];
+
+  // Enrich place reports with name + address from the canonical places table.
+  const placeIds = [
+    ...new Set(
+      rows
+        .filter((r) => r.subject_type === "place" && r.subject_id)
+        .map((r) => r.subject_id as string),
+    ),
+  ];
+
+  let placeMap: Map<string, { name: string; address: string | null }> = new Map();
+  if (placeIds.length > 0) {
+    const { data: places } = await sc
+      .from("places")
+      .select("id, name, address")
+      .in("id", placeIds);
+    for (const p of (places ?? []) as any[]) {
+      placeMap.set(p.id, { name: p.name, address: p.address ?? null });
+    }
+  }
+
+  const enriched = rows.map((r) => {
+    if (r.subject_type !== "place") return r;
+    const place = placeMap.get(r.subject_id);
+    return {
+      ...r,
+      place_name:    place?.name    ?? null,
+      place_address: place?.address ?? null,
+    };
+  });
+
+  res.json({ reports: enriched, total: count ?? 0, page });
+});
+
 // ── Admin report moderation routes ────────────────────────────────────────────
 //
 // GET  /admin/reports              — paginated list (filterable by type, status)
