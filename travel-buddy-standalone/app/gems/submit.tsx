@@ -2,25 +2,24 @@
  * Gem submission screen
  * Route: /gems/submit
  *
- * Multi-step wizard: Location → Details → Privacy → Review & Submit
+ * Multi-step wizard: Location → Details → Photo → Privacy → Review & Submit
  */
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  ScrollView, ActivityIndicator, Alert, Switch,
+  ScrollView, ActivityIndicator, Alert, Switch, Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 import { submitGem, type GemCategory, type GemSensitivity } from '../../src/services/hiddenGems';
 import { KeyboardSafeView } from '../../src/components/ui/KeyboardSafeView';
 import { GpsLocationCapture } from '../../src/components/location/GpsLocationCapture';
 import type { Place } from '../../src/lib/location/placeTypes';
 import { canNext as wizardCanNext, buildSubmitPayload } from '../../src/lib/gems/submitMachine';
 import { GemLocationPreview } from '../../src/components/gems/GemLocationPreview';
-// NOTE: Photo attachment for hidden gems is NOT wired — the hidden_gems table
-// has no image_url column (media is handled via the separate media_attachments
-// system). Documented as skipped in the Task 6 report.
+import { uploadMedia } from '../../src/services/media';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -41,6 +40,7 @@ interface FormState {
   layoverSafe: boolean;
   minimumLayoverMinutes: string;
   sensitivityLevel: GemSensitivity;
+  imageUrl: string | undefined;
 }
 
 const INITIAL: FormState = {
@@ -60,6 +60,7 @@ const INITIAL: FormState = {
   layoverSafe: false,
   minimumLayoverMinutes: '',
   sensitivityLevel: 'public',
+  imageUrl: undefined,
 };
 
 const CATEGORIES: Array<{ key: GemCategory; label: string; icon: string }> = [
@@ -87,7 +88,7 @@ const SENSITIVITY_OPTIONS: Array<{ key: GemSensitivity; label: string; desc: str
 
 const PRICE_OPTIONS = ['free', '$', '$$', '$$$', '$$$$'];
 
-const STEPS = ['Location', 'Details', 'Privacy', 'Review'];
+const STEPS = ['Location', 'Details', 'Photo', 'Privacy', 'Review'];
 
 // ── Step components ────────────────────────────────────────────────────────────
 
@@ -263,6 +264,111 @@ function DetailsStep({ form, update }: { form: FormState; update: (k: keyof Form
   );
 }
 
+function PhotoStep({
+  form,
+  update,
+}: {
+  form: FormState;
+  update: (k: keyof FormState, v: any) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const pickAndUpload = useCallback(async () => {
+    setUploadError(null);
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setUploadError('Photo library permission is required to add a photo.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsMultipleSelection: false,
+      quality: 0.85,
+    });
+    if (result.canceled) return;
+
+    const asset = result.assets[0];
+    if (!asset) return;
+
+    setUploading(true);
+    try {
+      const uploaded = await uploadMedia({
+        uri: asset.uri,
+        mimeType: asset.mimeType ?? 'image/jpeg',
+        fileName: asset.fileName ?? undefined,
+        fileSize: asset.fileSize ?? undefined,
+        width: asset.width ?? undefined,
+        height: asset.height ?? undefined,
+        type: 'image',
+      });
+
+      if (!uploaded.ok || !uploaded.url) {
+        setUploadError(uploaded.message ?? 'Upload failed. Please try again.');
+      } else {
+        update('imageUrl', uploaded.url);
+      }
+    } catch (e: any) {
+      setUploadError(e.message ?? 'Upload failed. Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  }, [update]);
+
+  const removePhoto = useCallback(() => {
+    update('imageUrl', undefined);
+    setUploadError(null);
+  }, [update]);
+
+  return (
+    <KeyboardSafeView style={{ flex: 1 }} contentContainerStyle={styles.stepContent}>
+      <Text style={styles.stepHeading}>Add a photo</Text>
+      <Text style={styles.stepSub}>
+        A representative photo helps others recognise this gem. Optional — you can skip this step.
+      </Text>
+
+      {form.imageUrl ? (
+        <View style={styles.photoPreviewWrapper}>
+          <Image source={{ uri: form.imageUrl }} style={styles.photoPreview} resizeMode="cover" />
+          <TouchableOpacity style={styles.photoRemoveBtn} onPress={removePhoto}>
+            <Ionicons name="close-circle" size={28} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <TouchableOpacity
+          style={styles.photoPickerBtn}
+          onPress={pickAndUpload}
+          disabled={uploading}
+        >
+          {uploading ? (
+            <ActivityIndicator color="#4C8BF5" />
+          ) : (
+            <>
+              <Ionicons name="camera-outline" size={36} color="#4C8BF5" />
+              <Text style={styles.photoPickerText}>Choose a photo</Text>
+              <Text style={styles.photoPickerSub}>JPEG or PNG, up to 10 MB</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      )}
+
+      {uploadError && (
+        <View style={styles.photoError}>
+          <Ionicons name="alert-circle-outline" size={16} color="#FF6B6B" />
+          <Text style={styles.photoErrorText}>{uploadError}</Text>
+        </View>
+      )}
+
+      {form.imageUrl && (
+        <TouchableOpacity style={styles.photoReplaceBtn} onPress={pickAndUpload} disabled={uploading}>
+          <Text style={styles.photoReplaceBtnText}>Replace photo</Text>
+        </TouchableOpacity>
+      )}
+    </KeyboardSafeView>
+  );
+}
+
 function PrivacyStep({ form, update }: { form: FormState; update: (k: keyof FormState, v: any) => void }) {
   return (
     <KeyboardSafeView style={{ flex: 1 }} contentContainerStyle={styles.stepContent}>
@@ -311,6 +417,13 @@ function ReviewStep({ form }: { form: FormState }) {
               {' '}{form.gpsLabel}
             </Text>
           )}
+        </View>
+      )}
+
+      {form.imageUrl && (
+        <View style={styles.reviewPhotoSection}>
+          <Text style={styles.mapPreviewLabel}>Photo</Text>
+          <Image source={{ uri: form.imageUrl }} style={styles.reviewPhoto} resizeMode="cover" />
         </View>
       )}
 
@@ -428,8 +541,9 @@ export default function SubmitGemScreen() {
       <View style={{ flex: 1 }}>
         {step === 0 && <LocationStep form={form} update={update} />}
         {step === 1 && <DetailsStep form={form} update={update} />}
-        {step === 2 && <PrivacyStep form={form} update={update} />}
-        {step === 3 && <ReviewStep form={form} />}
+        {step === 2 && <PhotoStep form={form} update={update} />}
+        {step === 3 && <PrivacyStep form={form} update={update} />}
+        {step === 4 && <ReviewStep form={form} />}
       </View>
 
       {/* Footer CTA */}
@@ -516,6 +630,30 @@ const styles = StyleSheet.create({
   switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   switchLabel: { color: '#E8F0FE', fontSize: 15 },
 
+  // Photo step
+  photoPickerBtn: {
+    borderWidth: 2, borderColor: '#2A3D5E', borderStyle: 'dashed',
+    borderRadius: 16, paddingVertical: 48,
+    alignItems: 'center', justifyContent: 'center', gap: 10,
+    backgroundColor: '#13213A',
+  },
+  photoPickerText: { color: '#4C8BF5', fontSize: 16, fontWeight: '700' },
+  photoPickerSub: { color: '#8A9BB5', fontSize: 13 },
+  photoPreviewWrapper: { position: 'relative', borderRadius: 16, overflow: 'hidden', marginBottom: 12 },
+  photoPreview: { width: '100%', height: 220, borderRadius: 16 },
+  photoRemoveBtn: {
+    position: 'absolute', top: 8, right: 8,
+    backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20,
+  },
+  photoReplaceBtn: { alignItems: 'center', paddingVertical: 10 },
+  photoReplaceBtnText: { color: '#4C8BF5', fontWeight: '600', fontSize: 14 },
+  photoError: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    marginTop: 12, padding: 12, borderRadius: 10,
+    backgroundColor: '#1A1020', borderWidth: 1, borderColor: '#FF6B6B33',
+  },
+  photoErrorText: { flex: 1, color: '#FF6B6B', fontSize: 13, lineHeight: 18 },
+
   privacyOption: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 12,
     padding: 14, borderRadius: 14, borderWidth: 1, borderColor: '#1E2D45',
@@ -538,6 +676,9 @@ const styles = StyleSheet.create({
   mapPreviewLocationText: {
     marginTop: 8, color: '#8A9BB5', fontSize: 13, lineHeight: 18,
   },
+
+  reviewPhotoSection: { marginBottom: 20 },
+  reviewPhoto: { width: '100%', height: 160, borderRadius: 12 },
 
   reviewCard: {
     backgroundColor: '#13213A', borderRadius: 14,

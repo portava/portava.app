@@ -31,12 +31,13 @@ function makeForm(overrides: Partial<WizardFormState> = {}): WizardFormState {
     layoverSafe: false,
     minimumLayoverMinutes: '',
     sensitivityLevel: 'public',
+    imageUrl: undefined,
     ...overrides,
   };
 }
 
-test('WIZARD_STEP_COUNT is 4', () => {
-  assert.equal(WIZARD_STEP_COUNT, 4);
+test('WIZARD_STEP_COUNT is 5', () => {
+  assert.equal(WIZARD_STEP_COUNT, 5);
 });
 
 // ── canNext ──────────────────────────────────────────────────────────────────
@@ -59,9 +60,10 @@ test('step 1 requires both name and category', () => {
   assert.equal(canNext(1, makeForm({ name: 'Tiny Bar', category: 'food' as any })), true);
 });
 
-test('steps 2 and 3 are always passable', () => {
+test('steps 2, 3 and 4 are always passable', () => {
   assert.equal(canNext(2, makeForm()), true);
   assert.equal(canNext(3, makeForm()), true);
+  assert.equal(canNext(4, makeForm()), true);
 });
 
 // ── buildSubmitPayload ───────────────────────────────────────────────────────
