@@ -60,6 +60,14 @@ export function MediaSourceSheet({
   const [cameraDenied, setCameraDenied] = useState(false);
   const [libraryDenied, setLibraryDenied] = useState(false);
 
+  // Platform limitation: expo-image-picker's allowsEditing / aspect is silently
+  // ignored for video assets on iOS (the OS controls video trimming separately).
+  // When video picks are enabled we suppress the crop editor entirely — showing
+  // a crop UI that does nothing for the picked asset would confuse users.
+  // Callers that need cropping AND video support should either restrict
+  // allowedTypes to ['images'] in their policy, or apply the crop post-pick.
+  const effectiveAllowsEditing = allowsEditing && !allowsVideo;
+
   // ── Web file-input fallback ────────────────────────────────────────────────
   function pickViaFileInput() {
     const accept = allowsVideo ? 'image/*,video/*' : 'image/*';
@@ -110,8 +118,8 @@ export function MediaSourceSheet({
         mediaTypes,
         quality: 0.92,
         videoMaxDuration: allowsVideo ? videoMaxDuration : undefined,
-        allowsEditing,
-        aspect,
+        allowsEditing: effectiveAllowsEditing,
+        aspect: effectiveAllowsEditing ? aspect : undefined,
       });
       setBusy(null);
       if (result.canceled || !result.assets?.[0]) return;
@@ -159,8 +167,8 @@ export function MediaSourceSheet({
         : ['images'];
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes,
-        allowsEditing,
-        aspect,
+        allowsEditing: effectiveAllowsEditing,
+        aspect: effectiveAllowsEditing ? aspect : undefined,
         quality: 0.92,
         videoMaxDuration: allowsVideo ? videoMaxDuration : undefined,
       });
