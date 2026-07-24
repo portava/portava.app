@@ -195,6 +195,9 @@ async function fetchFriends(): Promise<MapEntity<CircleMemberLocation>[]> {
       payload: { ...loc, lat, lng }, // replace coords with coarsened values
       actionCapabilities: LAYER_CAPABILITIES.friends,
       detailRoute: undefined, // friends navigate via thread resolution, not a static route
+      // All circle-member actions are permitted by default; the server already
+      // enforces the privacy opt-in before including the entity in the response.
+      permissions: { canMessage: true, canFollow: true, canBlock: true, canReport: true },
     });
   }
   return out;
