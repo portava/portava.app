@@ -94,40 +94,260 @@ export function isSamePlace(candidate: PlaceLike, existing: PlaceLike): boolean 
   return nameSimilarity(candidate.name, existing.name) >= MERGE_NAME_SIM;
 }
 
+// ── Opening hours sub-type ────────────────────────────────────────────────────
+
+/**
+ * One day's open/close window. dayOfWeek: 0=Sunday…6=Saturday.
+ * open/close are local-time "HH:MM" strings (24-hour).
+ */
+export interface NormalizedOpeningHoursEntry {
+  dayOfWeek: number;
+  open: string;
+  close: string;
+}
+export type NormalizedOpeningHours = NormalizedOpeningHoursEntry[];
+
+// ── Price level ───────────────────────────────────────────────────────────────
+
+export type PriceLevel =
+  | "free"
+  | "inexpensive"
+  | "moderate"
+  | "expensive"
+  | "very_expensive";
+
 // ── Canonical display envelope ────────────────────────────────────────────────
 export interface CanonicalPlace {
+  // Required
   id: string;
   name: string;
   category: PlaceCategory;
+
+  // Location
   coordinates: { lat: number; lng: number } | null;
   address: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  formattedAddress: string | null;
+  postalCode: string | null;
+  region: string | null;
   city: string | null;
   neighborhood: string | null;
   countryCode: string | null;
+
+  // Status & routing
   status: string;
   detailRoute: string;
+
+  // Images
+  headerImageUrl: string | null;
+  galleryImages: string[];
+
+  // Contact
+  phone: string | null;
+  internationalPhone: string | null;
+  website: string | null;
+  bookingUrl: string | null;
+
+  // Ratings & reviews
+  rating: number | null;
+  reviewCount: number | null;
+
+  // Pricing
+  priceLevel: PriceLevel | null;
+
+  // Hours
+  openingHours: NormalizedOpeningHours | null;
+  isOpenNow: boolean | null;
+
+  // Amenities
+  amenities: string[];
+
+  // Provenance
   attribution: string[];          // every provider's required attribution, deduped
   sources: string[];              // provider names contributing to this place
   fieldFreshness: Record<string, string>;
 }
+
+// ── Image reference shape (used by resolveCanonicalPlaceImage) ────────────────
+
+export interface PlaceImageRef {
+  provider?: string | null;
+  image_url?: string | null;
+  photo_url?: string | null;
+  verified?: boolean | null;
+  approved?: boolean | null;
+}
+
+/**
+ * Resolve the best available header image for a place following the
+ * 5-tier priority chain:
+ *
+ *   1. Verified Portava image_url (provider='portava', verified=true)
+ *   2. Any provider photo_url (non-user provider)
+ *   3. Approved user-contributed photo_url (provider='user', approved=true)
+ *   4. → null  (category-based fallback is a client-side concern)
+ *
+ * Never invents or generates images; only selects from existing URLs in refs.
+ */
+export function resolveCanonicalPlaceImage(
+  _place: PlaceLike,
+  refs: PlaceImageRef[],
+): string | null {
+  if (!Array.isArray(refs) || refs.length === 0) return null;
+
+  // Tier 1: verified Portava image
+  for (const r of refs) {
+    if (r.provider === "portava" && r.verified === true && r.image_url) {
+      return r.image_url;
+    }
+  }
+
+  // Tier 2: any provider photo (exclude user-contributed)
+  for (const r of refs) {
+    if (r.provider !== "user" && r.photo_url) {
+      return r.photo_url;
+    }
+  }
+
+  // Tier 3: approved user-contributed image
+  for (const r of refs) {
+    if (r.provider === "user" && r.approved === true && r.photo_url) {
+      return r.photo_url;
+    }
+  }
+
+  return null;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Map a numeric FSQ price tier (1–4) to a PriceLevel string. */
+function fsqPriceToLevel(price: unknown): PriceLevel | null {
+  switch (Number(price)) {
+    case 1: return "inexpensive";
+    case 2: return "moderate";
+    case 3: return "expensive";
+    case 4: return "very_expensive";
+    default: return null;
+  }
+}
+
+/** Safely coerce to array of strings; returns [] for anything else. */
+function toStringArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is string => typeof x === "string" && x.trim() !== "");
+}
+
+/** Safely coerce to string or null. */
+function toStr(v: unknown): string | null {
+  return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
+}
+
+/** Safely coerce to finite number or null. */
+function toNum(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Validate and coerce an opening hours value from provider/DB data.
+ * Accepts an array of { dayOfWeek, open, close } objects.
+ * Returns null when the value is absent or malformed.
+ */
+function toOpeningHours(v: unknown): NormalizedOpeningHours | null {
+  if (!Array.isArray(v) || v.length === 0) return null;
+  const result: NormalizedOpeningHours = [];
+  for (const entry of v) {
+    if (!entry || typeof entry !== "object") return null;
+    const e = entry as Record<string, unknown>;
+    const dayOfWeek = toNum(e.dayOfWeek);
+    const open = toStr(e.open);
+    const close = toStr(e.close);
+    if (dayOfWeek === null || open === null || close === null) return null;
+    if (!Number.isInteger(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) return null;
+    result.push({ dayOfWeek, open, close });
+  }
+  return result.length > 0 ? result : null;
+}
+
+// ── Normalizer ────────────────────────────────────────────────────────────────
 
 export function toCanonicalPlace(place: any, refs: any[]): CanonicalPlace {
   const attribution = Array.from(new Set(
     (refs ?? []).map((r) => r.attribution).filter((a): a is string => typeof a === "string" && a.trim() !== ""),
   ));
   const sources = Array.from(new Set((refs ?? []).map((r) => r.provider).filter(Boolean)));
+
+  // Resolve best image via priority chain
+  const headerImageUrl = resolveCanonicalPlaceImage(place, refs ?? []);
+
+  // Gallery: collect all provider photo_urls not already used as header
+  const galleryImages: string[] = [];
+  for (const r of refs ?? []) {
+    if (r.photo_url && r.photo_url !== headerImageUrl) {
+      galleryImages.push(r.photo_url);
+    }
+  }
+  // Also include any gallery_images stored directly on the place record
+  for (const url of toStringArray(place.gallery_images)) {
+    if (!galleryImages.includes(url)) galleryImages.push(url);
+  }
+
+  // Price: prefer explicit price_level string; fall back to fsq numeric tier
+  let priceLevel: PriceLevel | null = null;
+  const rawPriceLevel = toStr(place.price_level);
+  const validPriceLevels: ReadonlySet<string> = new Set([
+    "free", "inexpensive", "moderate", "expensive", "very_expensive",
+  ]);
+  if (rawPriceLevel && validPriceLevels.has(rawPriceLevel)) {
+    priceLevel = rawPriceLevel as PriceLevel;
+  } else {
+    priceLevel = fsqPriceToLevel(place.price ?? place.fsq_price);
+  }
+
+  // isOpenNow: explicit boolean only — never inferred from hours
+  const isOpenNow: boolean | null =
+    typeof place.is_open_now === "boolean" ? place.is_open_now : null;
+
   return {
     id: place.id,
     name: place.name,
     category: categoryFamily(place.primary_category),
+
     coordinates: place.latitude != null && place.longitude != null
       ? { lat: place.latitude, lng: place.longitude } : null,
     address: place.address ?? null,
+    addressLine1: toStr(place.address_line1),
+    addressLine2: toStr(place.address_line2),
+    formattedAddress: toStr(place.formatted_address),
+    postalCode: toStr(place.postal_code ?? place.postcode),
+    region: toStr(place.region),
     city: place.city ?? null,
     neighborhood: place.neighborhood ?? null,
     countryCode: place.country_code ?? null,
+
     status: place.status ?? "active",
     detailRoute: `/place/${place.id}`,
+
+    headerImageUrl,
+    galleryImages,
+
+    phone: toStr(place.phone ?? place.tel),
+    internationalPhone: toStr(place.international_phone),
+    website: toStr(place.website),
+    bookingUrl: toStr(place.booking_url),
+
+    rating: toNum(place.provider_rating ?? place.rating),
+    reviewCount: toNum(place.review_count),
+
+    priceLevel,
+    openingHours: toOpeningHours(place.opening_hours),
+    isOpenNow,
+
+    amenities: toStringArray(place.amenities),
+
     attribution,
     sources,
     fieldFreshness: place.field_freshness ?? {},
