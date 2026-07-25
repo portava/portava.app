@@ -557,7 +557,7 @@ export async function getSavedEvents(
 export async function shareEvent(
   eventId: string,
 ): Promise<ApiResult<{ shareUrl: string }>> {
-  return apiCall(`/api/events/${eventId}/share`, { method: 'POST' });
+  return apiCall(`/api/events/${eventId}/share-link`, { method: 'POST' });
 }
 
 export async function reportEvent(

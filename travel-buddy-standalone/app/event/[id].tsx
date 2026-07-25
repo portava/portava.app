@@ -400,9 +400,34 @@ export default function EventDetailScreen() {
             <Text style={styles.headerTitle} numberOfLines={1}>Event</Text>
             <View style={styles.headerRight} />
           </View>
+          {(error.includes('404') || error.toLowerCase().includes('not found')) ? (
+            <View style={styles.center}>
+              <Text style={styles.errorText}>This event is no longer available.</Text>
+              <Pressable onPress={() => router.back()} style={styles.retryBtn}>
+                <Text style={styles.retryText}>Go back</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.center}>
+              <Text style={styles.errorText}>{error}</Text>
+              <Pressable onPress={load} style={styles.retryBtn}><Text style={styles.retryText}>Retry</Text></Pressable>
+            </View>
+          )}
+        </>
+      ) : event && (event.state === 'cancelled' || event.state === 'archived') ? (
+        <>
+          <View style={[styles.header, { paddingTop: insets.top + space.sm }]}>
+            <Pressable style={styles.headerBtn} onPress={() => router.back()} hitSlop={8}>
+              <ArrowLeft size={22} color={color.ink} />
+            </Pressable>
+            <Text style={styles.headerTitle} numberOfLines={1}>{event.title ?? 'Event'}</Text>
+            <View style={styles.headerRight} />
+          </View>
           <View style={styles.center}>
-            <Text style={styles.errorText}>{error}</Text>
-            <Pressable onPress={load} style={styles.retryBtn}><Text style={styles.retryText}>Retry</Text></Pressable>
+            <Text style={styles.errorText}>This event is no longer available.</Text>
+            <Pressable onPress={() => router.back()} style={styles.retryBtn}>
+              <Text style={styles.retryText}>Go back</Text>
+            </Pressable>
           </View>
         </>
       ) : event ? (
