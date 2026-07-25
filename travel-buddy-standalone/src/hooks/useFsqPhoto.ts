@@ -20,10 +20,11 @@ export function useFsqPhoto(
   const [photoUrl, setPhotoUrl] = useState<string | null>(existingUrl ?? null);
 
   useEffect(() => {
-    if (existingUrl) {
-      setPhotoUrl(existingUrl);
-      return;
-    }
+    // Reset immediately so a recycled card never shows the previous place's
+    // photo while the deferred lookup is in flight.
+    setPhotoUrl(existingUrl ?? null);
+
+    if (existingUrl) return;
 
     let cancelled = false;
     const timer = setTimeout(() => {
