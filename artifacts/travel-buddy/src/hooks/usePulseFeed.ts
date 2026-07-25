@@ -12,6 +12,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { getPulseData, pulsePostToFeedItem, placeCardToFeedItem } from '../services/pulse.ts';
 import type { PulseFeedItem } from '../types/models.ts';
+import { useBlockedIds } from '../context/BlockedIdsContext.tsx';
 
 const PAGE_SIZE = 20;
 
@@ -48,6 +49,14 @@ export function usePulseFeed(opts: {
   // IDs deleted this session — excluded from every reload so they never reappear
   const deletedIds = useRef(new Set<string>());
 
+  // Client-side block filter — defense-in-depth on top of server-side block enforcement.
+  // When the block list is still loading (empty Set), no items are incorrectly excluded.
+  const { blockedIds } = useBlockedIds();
+  const isNotBlocked = useCallback(
+    (item: PulseFeedItem) => !item.author?.id || !blockedIds.has(item.author.id),
+    [blockedIds],
+  );
+
   const markDeleted = useCallback((id: string) => {
     deletedIds.current.add(id);
     setItems((prev) => prev.filter((p) => !deletedIds.current.has(p.id)));
@@ -73,7 +82,7 @@ export function usePulseFeed(opts: {
             cursorRef.current = raw[raw.length - 1]?.createdAt ?? null;
             setHasMore(true);
           }
-          setItems(raw.map(pulsePostToFeedItem).filter((p) => !deletedIds.current.has(p.id)));
+          setItems(raw.map(pulsePostToFeedItem).filter((p) => !deletedIds.current.has(p.id) && isNotBlocked(p)));
           setPlaceCards(result.data.placeCards.map(placeCardToFeedItem));
           setSessionId(result.data.sessionId ?? null);
           setError(null);
@@ -87,7 +96,7 @@ export function usePulseFeed(opts: {
       .finally(() => {
         if (!ac.signal.aborted) setLoading(false);
       });
-  }, [opts.city, opts.lat, opts.lng]);
+  }, [opts.city, opts.lat, opts.lng, isNotBlocked]);
 
   const loadMore = useCallback(() => {
     if (loadingMore || !hasMore || !cursorRef.current) return;
@@ -97,10 +106,10 @@ export function usePulseFeed(opts: {
       .then((result) => {
         if (result.ok) {
           const mapped = result.data.posts.map(pulsePostToFeedItem);
-          // De-dupe by id and exclude locally-deleted posts
+          // De-dupe by id and exclude locally-deleted posts and blocked authors
           setItems((prev) => {
             const seen = new Set(prev.map((p) => p.id));
-            const fresh = mapped.filter((p) => !seen.has(p.id) && !deletedIds.current.has(p.id));
+            const fresh = mapped.filter((p) => !seen.has(p.id) && !deletedIds.current.has(p.id) && isNotBlocked(p));
             return [...prev, ...fresh];
           });
           if (mapped.length === PAGE_SIZE) {
@@ -115,7 +124,7 @@ export function usePulseFeed(opts: {
       })
       .catch(() => {})
       .finally(() => setLoadingMore(false));
-  }, [loadingMore, hasMore, opts.city, opts.lat, opts.lng]);
+  }, [loadingMore, hasMore, opts.city, opts.lat, opts.lng, isNotBlocked]);
 
   useEffect(() => {
     reload();
