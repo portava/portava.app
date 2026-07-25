@@ -645,6 +645,13 @@ function EventsTabScreen() {
             datePreset === 'all' ? 'Upcoming' : STEP_LABELS_MAP[datePreset] ?? 'Upcoming',
             <CalendarX size={15} color={color.mute} />,
             todayEvents,
+            () => router.push({
+              pathname: '/events/list',
+              params: {
+                datePreset,
+                ...(cityFilter ? { city: cityFilter } : {}),
+              },
+            } as any),
           )}
 
           {/* Tomorrow — only when preset is 'all' */}
@@ -652,6 +659,13 @@ function EventsTabScreen() {
             'Tomorrow',
             <CalendarX size={15} color={color.mute} />,
             tomorrowEvents,
+            () => router.push({
+              pathname: '/events/list',
+              params: {
+                datePreset: 'tomorrow',
+                ...(cityFilter ? { city: cityFilter } : {}),
+              },
+            } as any),
           )}
 
           {/* This Weekend — only shown when preset is 'all' */}
@@ -659,6 +673,13 @@ function EventsTabScreen() {
             'This Weekend',
             <CalendarX size={15} color={color.mute} />,
             weekendEvents,
+            () => router.push({
+              pathname: '/events/list',
+              params: {
+                datePreset: 'weekend',
+                ...(cityFilter ? { city: cityFilter } : {}),
+              },
+            } as any),
           )}
 
           {/* Near Me */}

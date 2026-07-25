@@ -11,18 +11,39 @@ import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
   StyleSheet, RefreshControl, TextInput,
 } from 'react-native';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Plus, Search, CalendarX } from 'lucide-react-native';
+import { ArrowLeft, Plus, Search, CalendarX, X } from 'lucide-react-native';
 import {
   listEvents, rsvpEvent,
   type EventListItem, type EventState,
 } from '../../src/services/events';
+import {
+  todayRange, tomorrowRange, weekendRange, next7Range, upcomingRange,
+} from '../../src/lib/eventDateTime';
 import { EventDiscoveryCard } from '../../src/components/EventDiscoveryCard';
 import { EventComposerSheet } from '../../src/components/EventComposerSheet';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
+
+type DatePreset = 'all' | 'today' | 'tomorrow' | 'weekend' | 'next7';
+
+const DATE_PRESET_LABELS: Record<DatePreset, string> = {
+  all:      'Any time',
+  today:    'Today',
+  tomorrow: 'Tomorrow',
+  weekend:  'This Weekend',
+  next7:    'Next 7 Days',
+};
+
+function datePresetToRange(preset: DatePreset): { dateFrom?: string; dateTo?: string } {
+  if (preset === 'today')    return todayRange();
+  if (preset === 'tomorrow') return tomorrowRange();
+  if (preset === 'weekend')  return weekendRange();
+  if (preset === 'next7')    return next7Range();
+  return upcomingRange();
+}
 
 const STATES: { key: EventState | 'all'; label: string }[] = [
   { key: 'open',    label: 'Open' },
@@ -34,19 +55,26 @@ export default function EventsScreen() {
   const plainInset = usePlainBottomInset();
   const insets = useSafeAreaInsets();
   const { isAuthed, configured } = useSession();
+  const params = useLocalSearchParams<{ datePreset?: string; city?: string }>();
+
+  const initialDatePreset = (params.datePreset as DatePreset | undefined) ?? 'all';
+  const initialCity = params.city ?? '';
 
   const [events, setEvents] = useState<EventListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [stateFilter, setStateFilter] = useState<EventState | 'all'>('open');
-  const [cityFilter, setCityFilter] = useState('');
+  const [cityFilter, setCityFilter] = useState(initialCity);
+  const [datePreset, setDatePreset] = useState<DatePreset>(initialDatePreset);
   const [showCreate, setShowCreate] = useState(false);
 
   const load = useCallback(async () => {
     if (!configured || !isAuthed) { setLoading(false); return; }
     setLoading(true);
     setError(null);
+    const dateRange = datePresetToRange(datePreset);
     const res = await listEvents({
+      ...dateRange,
       state: stateFilter,
       city: cityFilter.trim() || undefined,
       limit: 30,
@@ -54,7 +82,7 @@ export default function EventsScreen() {
     if (!res.ok) setError(res.message ?? 'Failed to load events');
     else setEvents(res.data?.events ?? []);
     setLoading(false);
-  }, [configured, isAuthed, stateFilter, cityFilter]);
+  }, [configured, isAuthed, stateFilter, cityFilter, datePreset]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -102,6 +130,19 @@ export default function EventsScreen() {
           />
         </View>
       </View>
+
+      {/* Active date preset badge */}
+      {datePreset !== 'all' && (
+        <View style={styles.presetBadgeRow}>
+          <View style={styles.presetBadge}>
+            <CalendarX size={12} color={color.signal} />
+            <Text style={styles.presetBadgeText}>{DATE_PRESET_LABELS[datePreset]}</Text>
+            <Pressable hitSlop={8} onPress={() => setDatePreset('all')}>
+              <X size={12} color={color.signal} />
+            </Pressable>
+          </View>
+        </View>
+      )}
 
       <ScrollView
         horizontal
@@ -201,4 +242,7 @@ const styles = StyleSheet.create({
   emptyBtn:     { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: color.signal, paddingHorizontal: space.lg, paddingVertical: space.md, borderRadius: radius.pill, marginTop: space.sm, ...shadow.card },
   emptyBtnText: { ...t.body, color: color.onInk, fontWeight: '700' },
   list:         { padding: space.lg, gap: space.md },
+  presetBadgeRow:  { paddingHorizontal: space.lg, paddingBottom: space.sm },
+  presetBadge:     { flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start', backgroundColor: '#FFE8E3', paddingHorizontal: space.sm, paddingVertical: 4, borderRadius: radius.pill },
+  presetBadgeText: { ...t.small, color: color.signal, fontWeight: '600' },
 });
