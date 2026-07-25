@@ -16,8 +16,7 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { batchSignUrls } from '../lib/batchSignMedia.ts';
-import { _resolveMediaFlag } from '../lib/mediaSource.ts';
+import { batchSignUrls, _resolveMediaFlag } from '../lib/batchSignMedia.ts';
 
 function getApiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';

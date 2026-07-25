@@ -8,12 +8,10 @@
  *   - Load-error fallback view
  *   - onEnd callback
  *
- * Video URIs are resolved through mediaSource() so that when the
- * `media_private_buckets_enabled` flag is ON the relay endpoint and
- * Bearer token are attached. When the flag is OFF the original URI is
- * used with no overhead.
+ * Video URIs are passed through directly — signed URLs are self-authenticating
+ * and require no Authorization header injection.
  */
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useRef, useCallback, useState } from 'react';
 import {
   View,
   Pressable,
@@ -26,7 +24,6 @@ import {
 import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
 import { Play, Volume2, VolumeX } from 'lucide-react-native';
 import { color, radius } from '../../theme/tokens.ts';
-import { mediaSource, type ResolvedMediaSource } from '../../lib/mediaSource.ts';
 
 export interface SharedVideoPlayerProps {
   uri: string;
@@ -53,19 +50,6 @@ export function SharedVideoPlayer({
   const [isPlaying, setIsPlaying] = useState(autoplay);
   const [isMuted, setIsMuted] = useState(mutedProp);
   const [hasError, setHasError] = useState(false);
-
-  // Resolved source: starts with the plain URI so playback can begin
-  // immediately (correct for flag-OFF). Updated to include the relay URL
-  // + auth headers when the private-bucket flag is ON.
-  const [videoSource, setVideoSource] = useState<ResolvedMediaSource>({ uri });
-
-  useEffect(() => {
-    let cancelled = false;
-    mediaSource(uri).then((src) => {
-      if (!cancelled) setVideoSource(src);
-    });
-    return () => { cancelled = true; };
-  }, [uri]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePlaybackStatus = useCallback(
     (status: AVPlaybackStatus) => {
@@ -111,7 +95,7 @@ export function SharedVideoPlayer({
     <View style={[s.container, style]}>
       <Video
         ref={videoRef}
-        source={videoSource}
+        source={{ uri }}
         style={StyleSheet.absoluteFill}
         resizeMode={ResizeMode.COVER}
         shouldPlay={autoplay}

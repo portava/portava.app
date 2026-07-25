@@ -16,8 +16,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { hydrateMediaUrls } from '../mediaUrl.ts';
-import { _resetBatchSignCache } from '../../lib/batchSignMedia.ts';
-import { _resetMediaFlagCache, _setTestTokenGetter, _resetTestTokenGetter } from '../../lib/mediaSource.ts';
+import { _resetBatchSignCache, _resetMediaFlagCache } from '../../lib/batchSignMedia.ts';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -61,7 +60,6 @@ beforeEach(() => {
   _origDateNow = Date.now;
   _resetBatchSignCache();
   _resetMediaFlagCache();
-  _setTestTokenGetter(async () => 'test-token');
 });
 
 afterEach(() => {
@@ -69,7 +67,6 @@ afterEach(() => {
   Date.now = _origDateNow;
   _resetBatchSignCache();
   _resetMediaFlagCache();
-  _resetTestTokenGetter();
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

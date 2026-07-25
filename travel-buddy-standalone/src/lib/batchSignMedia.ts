@@ -19,9 +19,39 @@
  *   _getCacheSize()          — current cache size (tests only)
  */
 
-import { _resolveMediaFlag } from './mediaSource.ts';
-
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+
+// ── Feature-flag resolver (moved here from the now-deleted mediaSource.ts) ────
+
+const FLAG_CACHE_TTL_MS = 5 * 60 * 1000;
+let _cachedFlagEnabled: boolean | null = null;
+let _flagCacheTs = 0;
+
+/** Reset the module-level flag cache. For use in tests only. */
+export function _resetMediaFlagCache(): void {
+  _cachedFlagEnabled = null;
+  _flagCacheTs = 0;
+}
+
+/**
+ * Fetch `media_private_buckets_enabled` from /api/feature-flags with a
+ * 5-minute module-level cache. Fail-safe: returns false on any error.
+ */
+export async function _resolveMediaFlag(apiBase: string, nowMs = Date.now()): Promise<boolean> {
+  if (_cachedFlagEnabled !== null && nowMs - _flagCacheTs < FLAG_CACHE_TTL_MS) {
+    return _cachedFlagEnabled;
+  }
+  try {
+    const r = await fetch(`${apiBase}/api/feature-flags`);
+    const body = (await r.json()) as { flags?: Record<string, boolean> };
+    const val = body?.flags?.['media_private_buckets_enabled'] ?? false;
+    _cachedFlagEnabled = val;
+    _flagCacheTs = nowMs;
+    return val;
+  } catch {
+    return false; // fail-safe: treat as OFF
+  }
+}
 const BATCH_SIZE = 50;
 /**
  * Safety buffer subtracted from the server-issued signed-URL TTL before the

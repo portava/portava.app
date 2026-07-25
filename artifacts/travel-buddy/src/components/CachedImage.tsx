@@ -1,8 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Image as ExpoImage } from 'expo-image';
 import type { ImageContentFit } from 'expo-image';
 import type { ImageStyle, StyleProp } from 'react-native';
-import { mediaSource } from '../lib/mediaSource.ts';
 
 type ResizeMode = 'cover' | 'contain' | 'stretch' | 'center' | 'repeat';
 
@@ -38,10 +37,7 @@ interface CachedImageProps {
  * Props are a subset of RN ImageProps so it is a drop-in replacement:
  *   source, style, resizeMode, onLoad, onError, testID, placeholder.
  *
- * The source URI is resolved through mediaSource() so that when the
- * `media_private_buckets_enabled` flag is ON the relay endpoint and
- * Bearer token are used. When the flag is OFF the original URI is used
- * unchanged (fast path via module-level cache after the first call).
+ * Signed URLs are self-authenticating — no Authorization header injection needed.
  */
 export function CachedImage({
   source,
@@ -54,30 +50,9 @@ export function CachedImage({
 }: CachedImageProps) {
   const contentFit: ImageContentFit = CONTENT_FIT_MAP[resizeMode] ?? 'cover';
 
-  // Resolved source: starts as the original source object so the image begins
-  // loading immediately (correct for flag-OFF, the common case).  When the
-  // async resolution completes (nearly instant from cache on subsequent calls)
-  // it is updated to include the relay URL + auth headers when the flag is ON.
-  const [resolvedSource, setResolvedSource] = useState<
-    { uri: string | undefined; headers?: Record<string, string> }
-  >(source);
-
-  useEffect(() => {
-    const uri = source.uri;
-    if (!uri) {
-      setResolvedSource(source);
-      return;
-    }
-    let cancelled = false;
-    mediaSource(uri).then((src) => {
-      if (!cancelled) setResolvedSource(src);
-    });
-    return () => { cancelled = true; };
-  }, [source.uri]); // eslint-disable-line react-hooks/exhaustive-deps
-
   return (
     <ExpoImage
-      source={resolvedSource}
+      source={source}
       style={style as any}
       contentFit={contentFit}
       cachePolicy="disk"

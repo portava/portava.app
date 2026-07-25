@@ -16,8 +16,7 @@
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { batchSignUrls, _resetBatchSignCache, _getCacheSize } from '../batchSignMedia.ts';
-import { _resetMediaFlagCache, _setTestTokenGetter, _resetTestTokenGetter } from '../mediaSource.ts';
+import { batchSignUrls, _resetBatchSignCache, _getCacheSize, _resetMediaFlagCache } from '../batchSignMedia.ts';
 
 const API_BASE = 'http://localhost:9999';
 const URL_A = 'https://abc.supabase.co/storage/v1/object/public/media/a.jpg';
@@ -79,7 +78,6 @@ describe('batchSignUrls', () => {
     process.env.EXPO_PUBLIC_API_BASE_URL = API_BASE;
     _resetBatchSignCache();
     _resetMediaFlagCache();
-    _setTestTokenGetter(async () => 'tok');
   });
 
   afterEach(() => {
@@ -88,7 +86,6 @@ describe('batchSignUrls', () => {
     Date.now = _origDateNow;
     _resetBatchSignCache();
     _resetMediaFlagCache();
-    _resetTestTokenGetter();
   });
 
   it('flag OFF: returns originals immediately without any network call to /api/media/sign', async () => {
