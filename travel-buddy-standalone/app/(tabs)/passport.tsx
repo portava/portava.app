@@ -216,6 +216,8 @@ export default function PassportScreen() {
         <Pressable
           style={{ backgroundColor: PP.ink, paddingHorizontal: space.xl, paddingVertical: 12, borderRadius: radius.pill }}
           onPress={error ? reload : () => router.push('/sign-in')}
+          accessibilityLabel={error ? 'Retry' : 'Sign in'}
+          accessibilityRole="button"
         >
           <Text style={{ ...t.bodyStrong, color: PP.paper }}>{error ? 'Retry' : 'Sign in'}</Text>
         </Pressable>
@@ -478,6 +480,9 @@ function PassportContent({
             key={key}
             style={s.tabItem}
             onPress={() => setTab(key)}
+            accessibilityLabel={TAB_LABELS[key]}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: tab === key }}
           >
             <Text style={[s.tabText, tab === key && s.tabTextActive]}>
               {key === 'destinations' && destinationCount > 0
@@ -612,7 +617,12 @@ function PassportContent({
 
         {/* ── Pending posts ── */}
         {pendingCount > 0 && (
-          <Pressable style={s.pendingRow} onPress={() => router.push('/pending-posts' as any)}>
+          <Pressable
+            style={s.pendingRow}
+            onPress={() => router.push('/pending-posts' as any)}
+            accessibilityLabel={`${pendingCount} pending post${pendingCount === 1 ? '' : 's'}`}
+            accessibilityRole="button"
+          >
             <View style={s.pendingIcon}>
               <Clock size={18} color="#8B5CF6" />
             </View>
@@ -636,6 +646,12 @@ function PassportContent({
           <Pressable
             style={s.bpCard}
             onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard/' as any)}
+            accessibilityLabel={
+              buddyProfile.status === 'active' ? 'Your Buddy Profile'
+              : buddyProfile.status === 'paused' ? 'Buddy Profile (Paused)'
+              : 'Buddy Application'
+            }
+            accessibilityRole="button"
           >
             <View style={s.bpIcon}><Text style={{ fontSize: 20 }}>🤝</Text></View>
             <View style={{ flex: 1 }}>

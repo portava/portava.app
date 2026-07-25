@@ -360,7 +360,12 @@ function EventsTabScreen() {
             <Text style={styles.sectionTitle}>{title}</Text>
           </View>
           {onSeeAll && (
-            <Pressable style={styles.seeAll} onPress={onSeeAll}>
+            <Pressable
+              style={styles.seeAll}
+              onPress={onSeeAll}
+              accessibilityLabel={`See all ${title} events`}
+              accessibilityRole="button"
+            >
               <Text style={styles.seeAllText}>See all</Text>
               <ChevronRight size={12} color={color.signal} />
             </Pressable>
@@ -404,6 +409,8 @@ function EventsTabScreen() {
           <Pressable
             style={[styles.filterBtn, activeFilters > 0 && styles.filterBtnActive]}
             onPress={() => setShowFilters((v) => !v)}
+            accessibilityLabel={activeFilters > 0 ? `Filters (${activeFilters} active)` : 'Filters'}
+            accessibilityRole="button"
           >
             <Filter size={14} color={activeFilters > 0 ? color.onInk : color.mute} />
             {activeFilters > 0 && (
@@ -415,6 +422,8 @@ function EventsTabScreen() {
           <Pressable
             style={styles.createBtn}
             onPress={() => router.push('/events/create' as any)}
+            accessibilityLabel="Create event"
+            accessibilityRole="button"
           >
             <Plus size={16} color={color.onInk} />
             <Text style={styles.createBtnText}>Create</Text>
@@ -454,12 +463,22 @@ function EventsTabScreen() {
               returnKeyType="search"
             />
             {cityInput.length > 0 && (
-              <Pressable onPress={clearCityFilter} hitSlop={8}>
+              <Pressable
+                onPress={clearCityFilter}
+                hitSlop={8}
+                accessibilityLabel="Clear city filter"
+                accessibilityRole="button"
+              >
                 <X size={14} color={color.mute} />
               </Pressable>
             )}
             {cityInput.length > 0 && cityInput !== cityFilter && (
-              <Pressable style={styles.citySearchBtn} onPress={handleCitySubmit}>
+              <Pressable
+                style={styles.citySearchBtn}
+                onPress={handleCitySubmit}
+                accessibilityLabel="Search"
+                accessibilityRole="button"
+              >
                 <Text style={styles.citySearchBtnText}>Search</Text>
               </Pressable>
             )}
@@ -547,7 +566,12 @@ function EventsTabScreen() {
         <View style={styles.activeCityPill}>
           <MapPin size={12} color={color.signal} />
           <Text style={styles.activeCityText}>{cityFilter}</Text>
-          <Pressable onPress={clearCityFilter} hitSlop={8}>
+          <Pressable
+            onPress={clearCityFilter}
+            hitSlop={8}
+            accessibilityLabel="Clear active city filter"
+            accessibilityRole="button"
+          >
             <X size={12} color={color.signal} />
           </Pressable>
         </View>
@@ -558,6 +582,8 @@ function EventsTabScreen() {
         <Pressable
           style={styles.invitesBanner}
           onPress={() => router.push('/events/invites' as any)}
+          accessibilityLabel={`${pendingInvites.length} pending event ${pendingInvites.length === 1 ? 'invite' : 'invites'}`}
+          accessibilityRole="button"
         >
           <Bell size={15} color="#7C3AED" />
           <Text style={styles.invitesBannerText}>
@@ -574,7 +600,12 @@ function EventsTabScreen() {
       ) : error && !hasContent ? (
         <View style={styles.center}>
           <Text style={styles.errorText}>{error}</Text>
-          <Pressable onPress={() => load()} style={styles.retryBtn}>
+          <Pressable
+            onPress={() => load()}
+            style={styles.retryBtn}
+            accessibilityLabel="Retry loading events"
+            accessibilityRole="button"
+          >
             <Text style={styles.retryText}>Retry</Text>
           </Pressable>
         </View>

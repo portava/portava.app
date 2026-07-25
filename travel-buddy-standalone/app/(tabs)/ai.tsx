@@ -314,7 +314,12 @@ export default function AiChat() {
       </ScrollView>
 
       <View style={styles.inputBar}>
-        <Pressable style={styles.layoverBtn} onPress={() => setLayoverOpen(true)}>
+        <Pressable
+          style={styles.layoverBtn}
+          onPress={() => setLayoverOpen(true)}
+          accessibilityLabel="Layover mode"
+          accessibilityRole="button"
+        >
           <Plane size={16} color="#fff" />
         </Pressable>
         <TextInput
@@ -327,7 +332,13 @@ export default function AiChat() {
           returnKeyType="send"
           editable={!loading}
         />
-        <Pressable style={[styles.sendBtn, loading && styles.sendBtnDisabled]} onPress={() => send()}>
+        <Pressable
+          style={[styles.sendBtn, loading && styles.sendBtnDisabled]}
+          onPress={() => send()}
+          accessibilityLabel="Send message"
+          accessibilityRole="button"
+          disabled={loading}
+        >
           <Send size={18} color={color.onInk} />
         </Pressable>
       </View>
@@ -395,6 +406,8 @@ function RecCard({
                   style={[styles.actionBtn, state === 'busy' && styles.sendBtnDisabled]}
                   disabled={state === 'busy'}
                   onPress={() => onProposal(p, 'confirm')}
+                  accessibilityLabel="Confirm proposal"
+                  accessibilityRole="button"
                 >
                   <Text style={styles.actionText}>Confirm</Text>
                 </Pressable>
@@ -402,6 +415,8 @@ function RecCard({
                   style={[styles.declineBtn, state === 'busy' && styles.sendBtnDisabled]}
                   disabled={state === 'busy'}
                   onPress={() => onProposal(p, 'decline')}
+                  accessibilityLabel="Decline proposal"
+                  accessibilityRole="button"
                 >
                   <Text style={styles.declineText}>Decline</Text>
                 </Pressable>
