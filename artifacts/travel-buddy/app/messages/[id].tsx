@@ -27,6 +27,7 @@ import {
   RefreshCw, Clock, ChevronDown, X, Phone, Video, Lock,
 } from 'lucide-react-native';
 import { useCallState, useCallActions } from '../../src/context/CallContext';
+import { useBlockedIds } from '../../src/context/BlockedIdsContext';
 import { ensureCallMediaPermissions } from '../../src/services/callPermissions';
 import { CallHistoryMessage } from '../../src/components/calls/CallHistoryMessage';
 import { canShowThreadCallButtons, threadCallContextType } from '../../src/components/calls/callEntryGating';
@@ -1543,6 +1544,8 @@ export default function TelegraphThread() {
 
   // Shared back + title header element (used in loading/error states too)
   function ThreadHeader({ compact }: { compact?: boolean }) {
+    const { blockedIds: dmBlockedIds, blockerIds: dmBlockerIds } = useBlockedIds();
+    const isDmBlocked = isDirect && !!otherUserId && (dmBlockedIds.has(otherUserId) || dmBlockerIds.has(otherUserId));
     const displayName = isDirect
       ? (dmProfile?.name ?? headerTitle)
       : headerTitle;
@@ -1560,9 +1563,17 @@ export default function TelegraphThread() {
           <ArrowLeft size={20} color={color.ink} />
         </Pressable>
 
-        {/* Direct: small avatar */}
+        {/* Direct: small avatar — tappable to open the other person's profile */}
         {isDirect && (
-          <View style={styles.dmAvatarWrap}>
+          <Pressable
+            style={styles.dmAvatarWrap}
+            onPress={() => {
+              if (!dmProfile?.handle || isDmBlocked) return;
+              router.push(`/u/${dmProfile.handle}` as any);
+            }}
+            disabled={!dmProfile?.handle || isDmBlocked}
+            hitSlop={4}
+          >
             {dmProfile?.avatarUrl ? (
               <Image source={{ uri: dmProfile.avatarUrl }} style={styles.dmAvatar} />
             ) : (
@@ -1572,7 +1583,7 @@ export default function TelegraphThread() {
                 </Text>
               </View>
             )}
-          </View>
+          </Pressable>
         )}
 
         {/* Trip / Circle: coloured badge */}
@@ -1587,7 +1598,11 @@ export default function TelegraphThread() {
           </View>
         )}
 
-        <View style={styles.headerMeta}>
+        <Pressable
+          style={styles.headerMeta}
+          onPress={isDirect && dmProfile?.handle && !isDmBlocked ? () => router.push(`/u/${dmProfile!.handle}` as any) : undefined}
+          disabled={!isDirect || !dmProfile?.handle || isDmBlocked}
+        >
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <Text style={styles.headerName} numberOfLines={1}>{displayName}</Text>
             {isDirect && dmProfile?.name && (
@@ -1624,7 +1639,7 @@ export default function TelegraphThread() {
               <Text style={styles.headerTag} numberOfLines={1}>{subtitle}</Text>
             )}
           </View>
-        </View>
+        </Pressable>
 
         {/* Right-side action icons */}
         {!compact && (

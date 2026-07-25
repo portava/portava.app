@@ -9,7 +9,7 @@ import { useLocalSearchParams, router } from 'expo-router';
 import * as Linking from 'expo-linking';
 import {
   MoreVertical, Share2, Flag, Flag as FlagFill,
-  MapPin, Heart, MessageCircle, UserCircle,
+  MapPin, Heart, MessageCircle, UserCircle, Pencil,
 } from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { ReportSheet } from '../../src/components/ReportSheet';
@@ -32,11 +32,13 @@ function PostOverflowSheet({
   onClose,
   onShare,
   onReport,
+  onEdit,
 }: {
   visible: boolean;
   onClose: () => void;
   onShare: () => void;
-  onReport: () => void;
+  onReport?: () => void;
+  onEdit?: () => void;
 }) {
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -44,15 +46,28 @@ function PostOverflowSheet({
         <Pressable style={{ flex: 1 }} onPress={onClose} />
         <View style={ov.sheet}>
           <View style={ov.handle} />
+          {onEdit && (
+            <>
+              <Pressable style={ov.row} onPress={() => { onClose(); onEdit(); }}>
+                <Pencil size={20} color={color.ink} />
+                <Text style={ov.rowLabel}>Edit post</Text>
+              </Pressable>
+              <View style={ov.divider} />
+            </>
+          )}
           <Pressable style={ov.row} onPress={() => { onClose(); onShare(); }}>
             <Share2 size={20} color={color.ink} />
             <Text style={ov.rowLabel}>Share post</Text>
           </Pressable>
-          <View style={ov.divider} />
-          <Pressable style={ov.row} onPress={() => { onClose(); onReport(); }}>
-            <Flag size={20} color={color.signal} />
-            <Text style={[ov.rowLabel, { color: color.signal }]}>Report post</Text>
-          </Pressable>
+          {onReport && (
+            <>
+              <View style={ov.divider} />
+              <Pressable style={ov.row} onPress={() => { onClose(); onReport(); }}>
+                <Flag size={20} color={color.signal} />
+                <Text style={[ov.rowLabel, { color: color.signal }]}>Report post</Text>
+              </Pressable>
+            </>
+          )}
         </View>
       </View>
     </Modal>
@@ -249,7 +264,7 @@ export default function PostDetail() {
     await Share.share({ message: `${preview}${deepLink}`, url: deepLink });
   }
 
-  const headerRight = post && !isOwnPost ? (
+  const headerRight = post ? (
     <Pressable
       onPress={() => setOverflowOpen(true)}
       hitSlop={8}
@@ -305,22 +320,25 @@ export default function PostDetail() {
         </ScrollView>
       </KeyboardSafeScrollView>
 
-      {post && !isOwnPost && (
+      {post && (
         <>
           <PostOverflowSheet
             visible={overflowOpen}
             onClose={() => setOverflowOpen(false)}
             onShare={handleShare}
-            onReport={() => setReportOpen(true)}
+            onEdit={isOwnPost ? () => router.push(`/post/edit/${post.id}` as any) : undefined}
+            onReport={!isOwnPost ? () => setReportOpen(true) : undefined}
           />
-          <ReportSheet
-            visible={reportOpen}
-            onClose={() => setReportOpen(false)}
-            subjectType="post"
-            subjectId={post.id}
-            subjectUserId={post.author?.id ?? undefined}
-            onReported={handleReported}
-          />
+          {!isOwnPost && (
+            <ReportSheet
+              visible={reportOpen}
+              onClose={() => setReportOpen(false)}
+              subjectType="post"
+              subjectId={post.id}
+              subjectUserId={post.author?.id ?? undefined}
+              onReported={handleReported}
+            />
+          )}
         </>
       )}
     </View>

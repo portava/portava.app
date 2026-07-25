@@ -51,6 +51,7 @@ import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { ReportSheet } from '../../src/components/ReportSheet';
 import { SharedVideoPlayer } from '../../src/components/ui/SharedVideoPlayer';
 import { Avatar } from '../../src/components/ui';
+import { UserAvatarButton } from '../../src/components/interaction/UserAvatarButton';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import { primaryIdentityText } from '../../src/lib/displayIdentity';
@@ -607,7 +608,7 @@ export default function EventDetailScreen() {
               <View style={styles.attendeeRow}>
                 {(event.goingAttendees ?? []).slice(0, 5).map((a) => (
                   <View key={a.id} style={styles.avatarOverlap}>
-                    <Avatar uri={a.avatarUrl ?? ''} size={32} />
+                    <UserAvatarButton userId={a.id} handle={a.handle} avatarUrl={a.avatarUrl} size={32} />
                   </View>
                 ))}
                 {(event.counts?.going ?? 0) > 5 && (
