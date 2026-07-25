@@ -32,13 +32,14 @@ async function resolveRedirect(
   sc: any,
   bucket: string,
   path: string,
-): Promise<string | null> {
+): Promise<{ url: string; privateMode: boolean } | null> {
   if (await isFlagEnabled(sc, "media_private_buckets_enabled")) {
     const { data, error } = await sc.storage.from(bucket).createSignedUrl(path, SIGNED_TTL_SECONDS);
     if (error || !data?.signedUrl) return null;
-    return data.signedUrl as string;
+    return { url: data.signedUrl as string, privateMode: true };
   }
-  return publicUrlFor(bucket, path);
+  const url = publicUrlFor(bucket, path);
+  return url ? { url, privateMode: false } : null;
 }
 
 // ── GET /api/media/file/:bucket/*path ─────────────────────────────────────────
@@ -69,12 +70,22 @@ router.get("/media/file/:bucket/*path", asyncHandler(async (req, res) => {
   const allowed = await authorizeMediaAccess(sc, user.id, bucket, path);
   if (!allowed) { sendError(res, "forbidden", "Not authorized for this media"); return; }
 
-  const target = await resolveRedirect(sc, bucket, path);
-  if (!target) { sendError(res, "not_found", "Media unavailable"); return; }
+  const resolved = await resolveRedirect(sc, bucket, path);
+  if (!resolved) { sendError(res, "not_found", "Media unavailable"); return; }
 
-  // Private cache only: the redirect target is viewer-authorized.
-  res.setHeader("Cache-Control", "private, max-age=300");
-  res.redirect(302, target);
+  // In private-buckets mode the signed URL has a finite lifetime (SIGNED_TTL_SECONDS).
+  // Allowing the browser to cache this redirect for up to 300 s means the same
+  // signed URL can be reused near the end of its lifetime, recreating the
+  // mid-session expiry window the batch-sign safety buffer was added to prevent.
+  // Using no-store forces every fetch to re-hit the relay and receive a
+  // freshly-issued signed URL.
+  // In public mode the redirect target never expires, so a short private cache
+  // is harmless and reduces load.
+  res.setHeader(
+    "Cache-Control",
+    resolved.privateMode ? "no-store" : "private, max-age=300",
+  );
+  res.redirect(302, resolved.url);
 }));
 
 // ── POST /api/media/sign — batch for feed hydration ──────────────────────────
@@ -105,7 +116,7 @@ router.post("/media/sign", asyncHandler(async (req, res) => {
     const ref = appStorageUrlInfo(url);
     if (!ref) { signed[url] = null; continue; }
     const ok = await authorizeMediaAccess(sc, user.id, ref.bucket, ref.path);
-    signed[url] = ok ? await resolveRedirect(sc, ref.bucket, ref.path) : null;
+    signed[url] = ok ? (await resolveRedirect(sc, ref.bucket, ref.path))?.url ?? null : null;
   }
 
   res.json({ signed, ttlSeconds: SIGNED_TTL_SECONDS });
