@@ -243,7 +243,10 @@ function PlaceBlockCard({ place, onAddToPlan }: {
       >
         {/* Accent strip (hidden when a hero image is shown, to avoid visual noise) */}
         {!hasImage ? (
-          <View style={[s.strip, { backgroundColor: placeFallback.color }]} />
+          <View
+            style={[s.strip, { backgroundColor: placeFallback.color }]}
+            testID={`compass-block-place-strip-${place.id}`}
+          />
         ) : null}
         <View style={s.cardBody}>
           {/* Hero image — rendered when the server sends headerImageUrl */}

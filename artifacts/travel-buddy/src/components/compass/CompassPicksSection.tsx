@@ -130,7 +130,10 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
           onError={() => setImageError(true)}
         />
       ) : placeFallback ? (
-        <View style={[s.emojiHeader, { backgroundColor: placeFallback.color + '18' }]}>
+        <View
+          style={[s.emojiHeader, { backgroundColor: placeFallback.color + '18' }]}
+          testID={`compass-pick-emoji-${item.id}`}
+        >
           <Text style={s.emojiText}>{placeFallback.emoji}</Text>
         </View>
       ) : null}
