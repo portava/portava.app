@@ -174,7 +174,7 @@ before(async () => {
   app.use(specAliasRewrite);
   app.use("/api", rentABuddyRouter);
   app.use("/api", rentABuddySpecRouter);
-  app.use(marketplaceRouter);
+  app.use("/api", marketplaceRouter);
   server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   port = (server.address() as { port: number }).port;
