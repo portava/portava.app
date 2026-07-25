@@ -35,9 +35,26 @@ export interface FsqPlace {
   label: string | null;
   address: string | null;
   locality: string | null;
+  region: string | null;
+  postalCode: string | null;
   country: string | null;
   confidence: string;
   datasetDate: string | null;
+  // Contact
+  phone: string | null;
+  website: string | null;
+  // Ratings & pricing
+  rating: number | null;
+  reviewCount: number | null;
+  /** Numeric FSQ price tier (1=cheap … 4=expensive). */
+  fsqPrice: number | null;
+  // Media
+  photoUrl: string | null;
+  galleryImages: string[];
+  // Hours
+  isOpenNow: boolean | null;
+  // Amenities
+  amenities: string[];
 }
 
 export interface FsqPlacesResult {

@@ -901,7 +901,7 @@ const s = StyleSheet.create({
   inviteBody:       { gap: space.sm, marginTop: space.xs },
   searchRow:        { flexDirection: 'row', alignItems: 'center', gap: space.sm, backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, paddingHorizontal: space.md, paddingVertical: space.sm },
   searchInput:      { flex: 1, ...t.body, color: color.ink, padding: 0 },
-  candidateList:    { gap: 2, maxHeight: 240 },
+  candidateList:    { gap: 2 },
   candidateRow:     { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: 'transparent' },
   candidateRowActive: { backgroundColor: '#FFF0ED', borderColor: color.signal },
   candidateName:    { ...t.bodyStrong, color: color.ink, fontWeight: '600', fontSize: 14 },
