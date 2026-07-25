@@ -15,14 +15,6 @@ export interface SaveResult<T = void> {
   error?: string;
 }
 
-export interface SavedUser {
-  id: string;
-  handle: string | null;
-  name: string | null;
-  avatarUrl: string | null;
-  savedAt: string;
-}
-
 export interface SaveStatus {
   userId: string;
   isSaved: boolean;
@@ -85,21 +77,3 @@ export async function getSaveStatus(userId: string): Promise<SaveResult<SaveStat
   }
 }
 
-export async function getSaveList(): Promise<SaveResult<SavedUser[]>> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'Not configured' };
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'Not authenticated' };
-  try {
-    const res = await fetch(`${apiBase()}/api/me/saves`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return { ok: false, error: (body as any).message ?? 'Failed to load saves' };
-    }
-    const body = await res.json();
-    return { ok: true, data: body.saves ?? [] };
-  } catch (e: any) {
-    return { ok: false, error: e.message };
-  }
-}
