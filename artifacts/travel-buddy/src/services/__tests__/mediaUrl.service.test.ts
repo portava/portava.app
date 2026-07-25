@@ -160,7 +160,8 @@ describe('hydrateMediaUrls', () => {
 
   it('expired cache entry triggers a fresh sign request on the next call', async () => {
     const FIXED_NOW = 1_000_000_000_000;
-    const TTL_MS = 45 * 60 * 1000; // must match CACHE_TTL_MS in batchSignMedia.ts
+    // Cache TTL = server ttlSeconds (3600) minus 5-min safety buffer (300) = 3300 s
+    const TTL_MS = (3600 - 300) * 1000; // 55 minutes
 
     let signCallCount = 0;
 

@@ -2,7 +2,8 @@
  * batchSignMedia — batch-sign helper for list screens.
  *
  * Calls POST /api/media/sign with up to 50 app-storage URLs per request,
- * caches results for 45 minutes, and silently falls back to the original URL
+ * caches results for the server-issued TTL minus a 5-minute safety buffer
+ * (55 minutes for the current 3600 s server TTL), and silently falls back to the original URL
  * on any error (including 429). Cache hits are served without a network request.
  *
  * When the `media_private_buckets_enabled` flag is OFF the function returns
@@ -22,7 +23,14 @@ import { _resolveMediaFlag } from './mediaSource.ts';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 const BATCH_SIZE = 50;
-const CACHE_TTL_MS = 45 * 60 * 1000; // 45 minutes
+/**
+ * Safety buffer subtracted from the server-issued signed-URL TTL before the
+ * cached entry is treated as expired.  Ensures the client re-signs before the
+ * actual token expires, preventing mid-session 403s.
+ */
+const SIGN_TTL_SAFETY_BUFFER_S = 5 * 60; // 5 minutes
+/** Fallback cache lifetime when the server omits ttlSeconds. */
+const FALLBACK_CACHE_TTL_MS = 55 * 60 * 1000; // 55 minutes (3600 - 300)
 const MAX_CACHE_SIZE = 500;
 
 interface CacheEntry {
@@ -140,7 +148,16 @@ export async function batchSignUrls(urls: string[]): Promise<Map<string, string>
         signed?: Record<string, string | null>;
         ttlSeconds?: number;
       };
-      const expiresAt = now + CACHE_TTL_MS;
+      // Use the server-reported TTL minus the safety buffer so the cache evicts
+      // entries before the actual signed URL expires, preventing mid-session 403s.
+      const serverTtlS =
+        typeof body.ttlSeconds === 'number' && body.ttlSeconds > SIGN_TTL_SAFETY_BUFFER_S
+          ? body.ttlSeconds
+          : undefined;
+      const cacheTtlMs = serverTtlS !== undefined
+        ? (serverTtlS - SIGN_TTL_SAFETY_BUFFER_S) * 1000
+        : FALLBACK_CACHE_TTL_MS;
+      const expiresAt = now + cacheTtlMs;
       for (const url of batch) {
         const signedUrl = body.signed?.[url] ?? null;
         if (signedUrl) {
