@@ -16,7 +16,7 @@
  */
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator,
+  View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, Image,
 } from 'react-native';
 import { Sparkles, CheckCircle, Navigation, Settings2, MapPin } from 'lucide-react-native';
 import { router } from 'expo-router';
@@ -26,7 +26,7 @@ import { CompassWhySheet } from './CompassWhySheet.tsx';
 import { CompassFeedbackMenu } from './CompassFeedbackMenu.tsx';
 import { postCompassAnalyticsEvent, reportCompassViewed, COMPASS_ENGINE_VERSION } from '../../services/compass.ts';
 import type { CompassFeedItem } from '../../services/compass.ts';
-import { resolveCompassTitle, formatCompassSubtitle, formatCompassContext, resolveCompassCategory } from '../../utils/compassFormat.ts';
+import { resolveCompassTitle, formatCompassSubtitle, formatCompassContext, resolveCompassCategory, resolveCompassImageUrl } from '../../utils/compassFormat.ts';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 
 // ── Action label mapping ──────────────────────────────────────────────────────
@@ -79,6 +79,7 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
   const placeAddress = isPlace
     ? ((item.data?.neighborhood as string | undefined) ?? (item.data?.address as string | undefined) ?? null)
     : null;
+  const imageUrl = resolveCompassImageUrl(item);
 
   function navigateToItem() {
     // Fire-and-forget "viewed" outcome — the user actually opened the card.
@@ -115,12 +116,20 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
 
   return (
     <Pressable style={({ pressed }) => [s.card, pressed && { opacity: 0.85 }]} onPress={navigateToItem}>
-      {/* Category emoji header for place items */}
-      {placeFallback && (
+      {/* Hero image when the server provides one; emoji fallback for place items */}
+      {imageUrl ? (
+        <Image
+          source={{ uri: imageUrl }}
+          style={s.heroImage}
+          resizeMode="cover"
+          accessibilityLabel={title}
+          testID={`compass-pick-image-${item.id}`}
+        />
+      ) : placeFallback ? (
         <View style={[s.emojiHeader, { backgroundColor: placeFallback.color + '18' }]}>
           <Text style={s.emojiText}>{placeFallback.emoji}</Text>
         </View>
-      )}
+      ) : null}
 
       {/* Row 1: type chip + overflow menu */}
       <View style={s.typeRow}>
@@ -384,7 +393,14 @@ const s = StyleSheet.create({
     gap: space.sm,
     paddingRight: space.xl,
   },
-  // Category emoji header for place picks
+  // Hero image — shown when the server sends an imageUrl
+  heroImage: {
+    width: '100%' as const,
+    height: 90,
+    borderRadius: radius.sm,
+    marginBottom: 2,
+  },
+  // Category emoji header for place picks (fallback when no image)
   emojiHeader: {
     borderRadius: radius.sm,
     paddingVertical: 6,
