@@ -28,6 +28,7 @@ import {
   type CompassTravelerResult,
 } from '../../services/compass.ts';
 import { followUser } from '../../services/follows.ts';
+import { PrivateRequestButton } from '../ui/PrivateRequestButton.tsx';
 
 interface Props {
   city?: string | null;
@@ -48,21 +49,18 @@ function TravelerSkeleton() {
 function TravelerCard({ item }: { item: CompassTravelerResult }) {
   const d = item.data;
   const [followed, setFollowed] = useState(d.followStatus === 'following');
-  const [requested, setRequested] = useState(d.followStatus === 'requested');
   const [inFlight, setInFlight] = useState(false);
 
   const displayName = d.displayName ?? (d.isPrivate ? 'Private Traveler' : primaryIdentityText({ username: d.username }));
   const usernameSubline = secondaryIdentityText({ displayName: d.displayName, username: d.username });
-  const initials = displayName.replace(/^@/, '').slice(0, 2).toUpperCase();
 
   const handleFollow = async () => {
-    if (followed || requested || inFlight) return;
+    if (followed || inFlight) return;
     setInFlight(true);
     const res = await followUser(d.userId);
     setInFlight(false);
     if (res.ok) {
-      if (d.isPrivate) setRequested(true);
-      else setFollowed(true);
+      setFollowed(true);
     }
   };
 
@@ -71,9 +69,6 @@ function TravelerCard({ item }: { item: CompassTravelerResult }) {
       router.push(`/profile/${d.userId}` as any);
     }
   };
-
-  const btnLabel = followed ? 'Following' : requested ? 'Requested' : d.isPrivate ? 'Request' : 'Follow';
-  const btnDisabled = followed || requested || inFlight;
 
   return (
     <Pressable
@@ -125,21 +120,30 @@ function TravelerCard({ item }: { item: CompassTravelerResult }) {
         </View>
       )}
 
-      {/* Follow / Requested / Following button */}
-      <Pressable
-        style={({ pressed }) => [
-          s.followBtn,
-          (followed || requested) && s.followedBtn,
-          (inFlight || btnDisabled) && { opacity: 0.7 },
-          pressed && { opacity: 0.6 },
-        ]}
-        onPress={handleFollow}
-        disabled={btnDisabled}
-      >
-        <Text style={[s.followText, (followed || requested) && s.followedText]}>
-          {btnLabel}
-        </Text>
-      </Pressable>
+      {/* For private profiles: Request / Request sent via shared component.
+          For public profiles: standard Follow / Following button. */}
+      {d.isPrivate && !followed ? (
+        <PrivateRequestButton
+          userId={d.userId}
+          initialPending={d.followStatus === 'requested'}
+          style={s.cardBtn}
+        />
+      ) : (
+        <Pressable
+          style={({ pressed }) => [
+            s.followBtn,
+            followed && s.followedBtn,
+            (inFlight || followed) && { opacity: 0.7 },
+            pressed && { opacity: 0.6 },
+          ]}
+          onPress={handleFollow}
+          disabled={followed || inFlight}
+        >
+          <Text style={[s.followText, followed && s.followedText]}>
+            {followed ? 'Following' : inFlight ? '…' : 'Follow'}
+          </Text>
+        </Pressable>
+      )}
     </Pressable>
   );
 }
@@ -333,5 +337,11 @@ const s = StyleSheet.create({
   },
   followedText: {
     color: color.mute,
+  },
+  cardBtn: {
+    paddingVertical: 5,
+    paddingHorizontal: space.md,
+    borderRadius: radius.md,
+    marginTop: space.xs,
   },
 });

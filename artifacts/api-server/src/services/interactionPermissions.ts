@@ -503,7 +503,28 @@ export async function resolveInteractionPermissions(
   const canViewProfile = !isPrivate || isFriend;
   if (!canViewProfile) {
     reasonCodes.push("private_profile");
-    return { ...ALL_FALSE, targetUserId, viewerId, relationshipLabel, profileVisibility: "private", canBlock: true, canUnblock: true, canUnsaveProfile: true, canReport: true, safetyWarnings, reasonCodes, context: ctx };
+    // Surface friend-request capabilities even when the profile content is not
+    // visible. This lets the follow route (and any future surface) transparently
+    // redirect a follow-of-private-profile into a friend request while still
+    // enforcing suspension/cooldown/existing-request guards.
+    return {
+      ...ALL_FALSE,
+      targetUserId,
+      viewerId,
+      relationshipLabel,
+      profileVisibility: "private",
+      canBlock: true,
+      canUnblock: true,
+      canUnsaveProfile: true,
+      canReport: true,
+      // Allow friend-request writes iff the viewer is not suspended, no cooldown,
+      // and no request already exists in this direction.
+      canAddFriend: !isFriend && !hasOutgoingFriendReq && !hasIncomingFriendReq && !viewerSuspended && !friendReqCooldownActive,
+      canAcceptFriendRequest: hasIncomingFriendReq && !viewerSuspended,
+      safetyWarnings,
+      reasonCodes,
+      context: ctx,
+    };
   }
 
   // ── Messaging ─────────────────────────────────────────────────────────────

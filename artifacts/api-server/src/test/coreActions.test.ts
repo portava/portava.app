@@ -1245,3 +1245,110 @@ describe("interaction-context — context.areMutualFollowers and context.isFrien
     assert.equal(body.iRestricted,                false, "no restriction row");
   });
 });
+
+// =============================================================================
+// Tests 34–36: SEC-01 — private-profile follow → friend-request redirect
+// =============================================================================
+
+describe("SEC-01 — follow of private profile creates a friend request", () => {
+  let url: string;
+  let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: followsRouter } = await import("../routes/follows.js");
+    // Alice is private; Bob (stranger, not suspended) follows her
+    const client = makeClient({
+      users:    baseUsers(),
+      profiles: [
+        { id: ALICE_ID, handle: "alice", name: "Alice", is_private: true, tag_permission: "everyone" },
+        { id: BOB_ID,   handle: "bob",   name: "Bob",   is_private: false, tag_permission: "everyone" },
+      ],
+    });
+    _setTestClient(client, true);
+    const srv = await startServer(makeApp(followsRouter));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("34. POST /users/:id/follow on a private profile returns 201 with friendRequest=true", async () => {
+    const res = await fetch(`${url}/api/users/${ALICE_ID}/follow`, {
+      method: "POST",
+      headers: bearer("bob-tok"),
+    });
+    assert.equal(res.status, 201, "private-profile follow must create a friend request (201)");
+    const body = await res.json() as any;
+    assert.equal(body.friendRequest,  true,               "friendRequest must be true");
+    assert.equal(body.following,      false,              "follow must NOT be set");
+    assert.equal(body.status,         "outgoing_pending", "request must start as outgoing_pending");
+  });
+});
+
+describe("SEC-01 — suspended user cannot create friend request via follow on private profile", () => {
+  let url: string;
+  let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: followsRouter } = await import("../routes/follows.js");
+    // Alice is private; Bob is suspended
+    const client = makeClient({
+      users:    baseUsers(),
+      profiles: [
+        { id: ALICE_ID, handle: "alice", name: "Alice", is_private: true, tag_permission: "everyone" },
+        { id: BOB_ID,   handle: "bob",   name: "Bob",   is_private: false, tag_permission: "everyone" },
+      ],
+      user_account_states: [{ user_id: BOB_ID, state: "suspended" }],
+    });
+    _setTestClient(client, true);
+    const srv = await startServer(makeApp(followsRouter));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("35. suspended user's follow of a private profile is rejected (400)", async () => {
+    const res = await fetch(`${url}/api/users/${ALICE_ID}/follow`, {
+      method: "POST",
+      headers: bearer("bob-tok"),
+    });
+    assert.equal(res.status, 400, "suspended user must not be able to send a friend request via follow");
+    const body = await res.json() as any;
+    assert.ok(body.error, "error body must have an error code");
+  });
+});
+
+describe("SEC-01 — follow of private profile blocked when outgoing request already pending", () => {
+  let url: string;
+  let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: followsRouter } = await import("../routes/follows.js");
+    // Alice is private; Bob already has a pending outgoing request.
+    // canAddFriend=false (!hasOutgoingFriendReq), canAcceptFriendRequest=false
+    // → same behaviour as friends.ts: invalid_payload (400).
+    const client = makeClient({
+      users:    baseUsers(),
+      profiles: [
+        { id: ALICE_ID, handle: "alice", name: "Alice", is_private: true, tag_permission: "everyone" },
+        { id: BOB_ID,   handle: "bob",   name: "Bob",   is_private: false, tag_permission: "everyone" },
+      ],
+      friend_requests: [
+        { id: "req-001", requester_id: BOB_ID, recipient_id: ALICE_ID, status: "pending", created_at: new Date().toISOString() },
+      ],
+    });
+    _setTestClient(client, true);
+    const srv = await startServer(makeApp(followsRouter));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("36. follow with existing pending request returns 400 — same gate as friends route", async () => {
+    const res = await fetch(`${url}/api/users/${ALICE_ID}/follow`, {
+      method: "POST",
+      headers: bearer("bob-tok"),
+    });
+    // canAddFriend=false because a pending outgoing request already exists;
+    // canAcceptFriendRequest=false (no incoming request). Permission gate fires.
+    assert.equal(res.status, 400, "must not create a duplicate request when one is already pending");
+    const body = await res.json() as any;
+    assert.ok(body.error, "error body must have an error code");
+  });
+});

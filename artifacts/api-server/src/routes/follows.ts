@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity";
 import { decideUnfollow, isUuid } from "../lib/followDecisions";
+import { normalizedFriendshipPair } from "../lib/friendDecisions";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { getSeenIds, markAsSeen, clearSeen, dailySeed, seededShuffle } from "../lib/suggestionSeenCache";
 import { isFlagEnabled } from "../lib/featureFlags";
@@ -37,10 +38,113 @@ router.post("/users/:userId/follow", async (req, res) => {
   try {
     const perms = await resolveInteractionPermissions(client, user.id, target);
     const isBlocked = perms.reasonCodes.includes("blocked");
-    if (isBlocked || !perms.canViewProfile) {
+
+    if (isBlocked) {
       sendError(res, "forbidden");
       return;
     }
+
+    // Private profile: convert follow → friend request (idempotent create/reactivate).
+    // The follow cannot proceed (canViewProfile=false), but the viewer is not blocked,
+    // so we transparently route this call into the friend-request flow so that clients
+    // calling followUser() on a private profile get the correct SEC-01 behaviour.
+    //
+    // Enforce the same capability gate as POST /users/:userId/friend-request:
+    // canAddFriend  — stranger can create a new request (not suspended, no cooldown,
+    //                 no existing request in either direction)
+    // canAcceptFriendRequest — target already has an incoming request from the viewer,
+    //                 so we auto-accept rather than create a duplicate.
+    if (!perms.canViewProfile && perms.reasonCodes.includes("private_profile")) {
+      if (!perms.canAddFriend && !perms.canAcceptFriendRequest) {
+        sendError(res, "invalid_payload", "Friend request not allowed");
+        return;
+      }
+
+      // Check for an existing request in this direction
+      const { data: existing } = await client
+        .from("friend_requests")
+        .select("id, status")
+        .eq("requester_id", user.id)
+        .eq("recipient_id", target)
+        .maybeSingle();
+
+      if (existing) {
+        if (existing.status === "pending") {
+          res.status(200).json({ following: false, userId: target, friendRequest: true, status: "outgoing_pending", idempotent: true });
+          return;
+        }
+        if (existing.status === "accepted") {
+          res.status(200).json({ following: false, userId: target, friendRequest: true, status: "friends" });
+          return;
+        }
+        // Re-activate declined/cancelled request
+        const now = new Date().toISOString();
+        const { error: reactivateErr } = await client
+          .from("friend_requests")
+          .update({ status: "pending", responded_at: null, updated_at: now })
+          .eq("id", existing.id);
+        if (reactivateErr) {
+          req.log.error({ err: reactivateErr }, "friend request reactivation update failed");
+          sendError(res, "db_error", reactivateErr.message);
+          return;
+        }
+        res.status(200).json({ following: false, userId: target, friendRequest: true, status: "outgoing_pending", reactivated: true });
+        return;
+      }
+
+      // Check if target already sent us a request → auto-accept both sides
+      const { data: incoming } = await client
+        .from("friend_requests")
+        .select("id")
+        .eq("requester_id", target)
+        .eq("recipient_id", user.id)
+        .eq("status", "pending")
+        .maybeSingle();
+
+      if (incoming) {
+        const now = new Date().toISOString();
+        const { error: autoAcceptErr } = await client
+          .from("friend_requests")
+          .update({ status: "accepted", responded_at: now, updated_at: now })
+          .eq("id", incoming.id);
+        if (autoAcceptErr) {
+          req.log.error({ err: autoAcceptErr }, "friend request auto-accept update failed");
+          sendError(res, "db_error", autoAcceptErr.message);
+          return;
+        }
+        const [ua, ub] = normalizedFriendshipPair(user.id, target);
+        const { error: autoFriendshipErr } = await client
+          .from("user_friendships")
+          .upsert({ user_a: ua, user_b: ub, accepted_request_id: incoming.id, created_at: now });
+        if (autoFriendshipErr) {
+          req.log.error({ err: autoFriendshipErr }, "user_friendships upsert failed after auto-accept");
+          sendError(res, "db_error", autoFriendshipErr.message);
+          return;
+        }
+        res.status(200).json({ following: false, userId: target, friendRequest: true, status: "friends", autoAccepted: true });
+        return;
+      }
+
+      // Create new friend request
+      const { data: newReq, error: insertErr } = await client
+        .from("friend_requests")
+        .insert({ requester_id: user.id, recipient_id: target })
+        .select("id")
+        .single();
+      if (insertErr) {
+        req.log.error({ err: insertErr }, "Failed to create friend request for private profile");
+        sendError(res, "db_error", insertErr.message);
+        return;
+      }
+      res.status(201).json({ following: false, userId: target, friendRequest: true, status: "outgoing_pending", requestId: (newReq as any).id });
+      return;
+    }
+
+    if (!perms.canViewProfile) {
+      sendError(res, "forbidden");
+      return;
+    }
+
     if (!perms.canFollow) {
       if (perms.canUnfollow) {
         // Already following — idempotent success

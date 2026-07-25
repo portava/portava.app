@@ -215,6 +215,21 @@ router.get("/users/:username/passport", async (req, res) => {
   }
 
   if (visibility === "limited_preview" && !isMe) {
+    // Compute minimal viewer relationship state so the client can show
+    // "Send Request" vs "Request sent" vs (future) "View profile" without
+    // a second round-trip.  Fail-open: both flags stay false on any error.
+    let isFriend = false;
+    let friendRequestPending = false;
+    if (viewerId) {
+      try {
+        const perms = await resolveInteractionPermissions(sc, viewerId, targetId);
+        const label = perms.relationshipLabel;
+        isFriend = label === "friend";
+        friendRequestPending = label === "outgoing_request";
+      } catch {
+        // non-fatal — leave false
+      }
+    }
     res.status(200).json({
       id: data.id,
       username: data.username ?? null,
@@ -226,6 +241,8 @@ router.get("/users/:username/passport", async (req, res) => {
       avatarUrl: null,
       accountStatus: (data as any).account_status ?? "active",
       visibility: "private",
+      is_friend: isFriend,
+      friend_request_pending: friendRequestPending,
     });
     return;
   }
