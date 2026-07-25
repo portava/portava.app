@@ -163,6 +163,7 @@ export function SettingsDivider() {
 
 export function SettingsRow({
   icon, title, subtitle, onPress, right, chevron = true, danger, disabled, testID,
+  accessibilityRole: arole, accessibilityState: astate, accessibilityLabel: alabel,
 }: {
   icon?: React.ReactNode;
   title: string;
@@ -174,6 +175,9 @@ export function SettingsRow({
   danger?: boolean;
   disabled?: boolean;
   testID?: string;
+  accessibilityRole?: 'button' | 'radio' | 'checkbox' | 'link' | 'menuitem' | 'none';
+  accessibilityState?: { checked?: boolean; selected?: boolean; disabled?: boolean };
+  accessibilityLabel?: string;
 }) {
   const body = (
     <>
@@ -193,8 +197,9 @@ export function SettingsRow({
       style={({ pressed }) => [st.row, pressed && { opacity: 0.7 }]}
       onPress={onPress}
       disabled={disabled}
-      accessibilityRole="button"
-      accessibilityLabel={title}
+      accessibilityRole={arole ?? 'button'}
+      accessibilityLabel={alabel ?? title}
+      accessibilityState={astate}
       testID={testID}
     >
       {body}

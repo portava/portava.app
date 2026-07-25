@@ -215,7 +215,12 @@ export default function WhoCanSeeMeScreen() {
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
       <View style={s.header}>
-        <Pressable onPress={() => router.back()} style={s.backBtn}>
+        <Pressable
+          onPress={() => router.back()}
+          style={s.backBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <ArrowLeft size={22} color={color.ink} />
         </Pressable>
         <Text style={s.headerTitle}>Who can see me?</Text>
@@ -279,6 +284,8 @@ export default function WhoCanSeeMeScreen() {
                         style={({ pressed }) => [s.turnOffBtn, pressed && { opacity: 0.7 }, group.turningOff && { opacity: 0.4 }]}
                         onPress={() => handleTurnOff(group)}
                         disabled={group.turningOff}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Turn off sharing for ${group.label}`}
                       >
                         <X size={13} color={color.signal} />
                         <Text style={s.turnOffText}>Turn off</Text>
@@ -310,6 +317,8 @@ export default function WhoCanSeeMeScreen() {
               style={({ pressed }) => [s.pauseAllBtn, pressed && { opacity: 0.8 }, pausingAll && { opacity: 0.5 }]}
               onPress={handlePauseAll}
               disabled={pausingAll}
+              accessibilityRole="button"
+              accessibilityLabel={pausingAll ? 'Pausing sharing…' : 'Pause all sharing'}
             >
               <PauseCircle size={16} color={color.onInk} />
               <Text style={s.pauseAllBtnText}>
@@ -320,6 +329,8 @@ export default function WhoCanSeeMeScreen() {
             <Pressable
               style={s.circleSettingsBtn}
               onPress={() => router.push('/profile/edit/location' as any)}
+              accessibilityRole="button"
+              accessibilityLabel="Open Circle settings"
             >
               <Settings size={16} color={color.deep} />
               <Text style={s.circleSettingsBtnText}>Circle settings</Text>

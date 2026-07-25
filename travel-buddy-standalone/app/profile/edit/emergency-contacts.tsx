@@ -96,10 +96,22 @@ function ContactRow({
         </Text>
       </View>
       <View style={styles.rowActions}>
-        <Pressable style={styles.actionBtn} onPress={() => onEdit(contact)} hitSlop={8}>
+        <Pressable
+          style={styles.actionBtn}
+          onPress={() => onEdit(contact)}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${contact.name}`}
+        >
           <Edit2 size={15} color={color.deep} />
         </Pressable>
-        <Pressable style={styles.actionBtn} onPress={() => onDelete(contact)} hitSlop={8}>
+        <Pressable
+          style={styles.actionBtn}
+          onPress={() => onDelete(contact)}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={`Delete ${contact.name}`}
+        >
           <Trash2 size={15} color={color.signal} />
         </Pressable>
       </View>
@@ -167,7 +179,7 @@ function EditModal({
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <KeyboardSafeScrollView offset={insets.top} style={{ backgroundColor: color.paper }}>
         <View style={styles.modalHeader}>
-          <Pressable onPress={onClose} hitSlop={8}>
+          <Pressable onPress={onClose} hitSlop={8} accessibilityRole="button" accessibilityLabel="Close">
             <X size={20} color={color.ink} />
           </Pressable>
           <Text style={styles.modalTitle}>{editing ? 'Edit contact' : 'Add contact'}</Text>
@@ -234,17 +246,23 @@ function EditModal({
           <View style={styles.field}>
             <Text style={styles.fieldLabel}>How to notify them</Text>
             <View style={styles.methodRow}>
-              {METHODS.map((m) => (
-                <Pressable
-                  key={m.value}
-                  style={[styles.methodChip, form.notifyMethod === m.value && styles.methodChipActive]}
-                  onPress={() => field('notifyMethod', m.value)}
-                >
-                  <Text style={[styles.methodChipText, form.notifyMethod === m.value && styles.methodChipTextActive]}>
-                    {m.label}
-                  </Text>
-                </Pressable>
-              ))}
+              {METHODS.map((m) => {
+                const active = form.notifyMethod === m.value;
+                return (
+                  <Pressable
+                    key={m.value}
+                    style={[styles.methodChip, active && styles.methodChipActive]}
+                    onPress={() => field('notifyMethod', m.value)}
+                    accessibilityRole="radio"
+                    accessibilityLabel={m.label}
+                    accessibilityState={{ checked: active }}
+                  >
+                    <Text style={[styles.methodChipText, active && styles.methodChipTextActive]}>
+                      {m.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
             </View>
             <Text style={styles.methodNote}>
               {form.notifyMethod === 'in_app'

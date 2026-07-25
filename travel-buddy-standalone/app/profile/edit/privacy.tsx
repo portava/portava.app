@@ -272,19 +272,25 @@ export default function PrivacyVisibilityScreen() {
         title="Who can see your profile"
         subtitle="Controls who can open and view your full profile."
       >
-        {profileVisOptions.map((opt, idx) => (
-          <React.Fragment key={opt.value}>
-            {idx > 0 && <SettingsDivider />}
-            <SettingsRow
-              title={opt.label}
-              subtitle={opt.sub}
-              onPress={() => handleChange('profile_visibility', opt.value)}
-              right={
-                <View style={[st.radio, privacy.profile_visibility === opt.value && st.radioChecked]} />
-              }
-            />
-          </React.Fragment>
-        ))}
+        {profileVisOptions.map((opt, idx) => {
+          const checked = privacy.profile_visibility === opt.value;
+          return (
+            <React.Fragment key={opt.value}>
+              {idx > 0 && <SettingsDivider />}
+              <SettingsRow
+                title={opt.label}
+                subtitle={opt.sub}
+                onPress={() => handleChange('profile_visibility', opt.value)}
+                accessibilityRole="radio"
+                accessibilityLabel={`${opt.label}: ${opt.sub}`}
+                accessibilityState={{ checked }}
+                right={
+                  <View style={[st.radio, checked && st.radioChecked]} />
+                }
+              />
+            </React.Fragment>
+          );
+        })}
       </SettingsSection>
 
       {/* Visibility toggles */}
@@ -328,18 +334,24 @@ export default function PrivacyVisibilityScreen() {
         title="Who can message you"
         subtitle="Limit who's able to start a Telegraph conversation with you."
       >
-        {messageOptions.map((opt, idx) => (
-          <React.Fragment key={opt.value}>
-            {idx > 0 && <SettingsDivider />}
-            <SettingsRow
-              title={opt.label}
-              onPress={() => handleChange('allow_messages_from', opt.value)}
-              right={
-                <View style={[st.radio, privacy.allow_messages_from === opt.value && st.radioChecked]} />
-              }
-            />
-          </React.Fragment>
-        ))}
+        {messageOptions.map((opt, idx) => {
+          const checked = privacy.allow_messages_from === opt.value;
+          return (
+            <React.Fragment key={opt.value}>
+              {idx > 0 && <SettingsDivider />}
+              <SettingsRow
+                title={opt.label}
+                onPress={() => handleChange('allow_messages_from', opt.value)}
+                accessibilityRole="radio"
+                accessibilityLabel={opt.label}
+                accessibilityState={{ checked }}
+                right={
+                  <View style={[st.radio, checked && st.radioChecked]} />
+                }
+              />
+            </React.Fragment>
+          );
+        })}
       </SettingsSection>
 
       {/* Lists */}
