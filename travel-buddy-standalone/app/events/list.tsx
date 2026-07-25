@@ -131,19 +131,33 @@ export default function EventsScreen() {
         </View>
       </View>
 
-      {/* Active date preset badge */}
-      {datePreset !== 'all' && (
-        <View style={styles.presetBadgeRow}>
-          <View style={styles.presetBadge}>
-            <CalendarX size={12} color={color.signal} />
-            <Text style={styles.presetBadgeText}>{DATE_PRESET_LABELS[datePreset]}</Text>
-            <Pressable hitSlop={8} onPress={() => setDatePreset('all')}>
-              <X size={12} color={color.signal} />
+      {/* Date preset chips */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.chips}
+        contentContainerStyle={styles.chipsContent}
+      >
+        {(Object.keys(DATE_PRESET_LABELS) as DatePreset[]).map((preset) => {
+          const active = datePreset === preset;
+          return (
+            <Pressable
+              key={preset}
+              style={[styles.chip, active && styles.chipActive]}
+              onPress={() => setDatePreset(active && preset !== 'all' ? 'all' : preset)}
+            >
+              {active && preset !== 'all' && (
+                <X size={11} color={color.onInk} style={styles.chipIcon} />
+              )}
+              <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                {DATE_PRESET_LABELS[preset]}
+              </Text>
             </Pressable>
-          </View>
-        </View>
-      )}
+          );
+        })}
+      </ScrollView>
 
+      {/* Status pills */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -242,7 +256,11 @@ const styles = StyleSheet.create({
   emptyBtn:     { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: color.signal, paddingHorizontal: space.lg, paddingVertical: space.md, borderRadius: radius.pill, marginTop: space.sm, ...shadow.card },
   emptyBtnText: { ...t.body, color: color.onInk, fontWeight: '700' },
   list:         { padding: space.lg, gap: space.md },
-  presetBadgeRow:  { paddingHorizontal: space.lg, paddingBottom: space.sm },
-  presetBadge:     { flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start', backgroundColor: '#FFE8E3', paddingHorizontal: space.sm, paddingVertical: 4, borderRadius: radius.pill },
-  presetBadgeText: { ...t.small, color: color.signal, fontWeight: '600' },
+  chips:        { maxHeight: 44 },
+  chipsContent: { paddingHorizontal: space.lg, gap: space.sm, alignItems: 'center' },
+  chip:         { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: color.haze },
+  chipActive:   { backgroundColor: color.signal },
+  chipIcon:     { marginRight: 2 },
+  chipText:     { ...t.small, color: color.mute, fontWeight: '600' },
+  chipTextActive:{ ...t.small, color: color.onInk, fontWeight: '700' },
 });
