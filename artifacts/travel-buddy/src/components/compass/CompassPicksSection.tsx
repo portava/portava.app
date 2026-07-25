@@ -81,6 +81,9 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
     : null;
   const imageUrl = resolveCompassImageUrl(item);
 
+  // Track hero image load errors so we can fall back to the emoji/color strip
+  const [imageError, setImageError] = useState(false);
+
   function navigateToItem() {
     // Fire-and-forget "viewed" outcome — the user actually opened the card.
     reportCompassViewed(item.recommendationToken, item.id);
@@ -117,13 +120,14 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
   return (
     <Pressable style={({ pressed }) => [s.card, pressed && { opacity: 0.85 }]} onPress={navigateToItem}>
       {/* Hero image when the server provides one; emoji fallback for place items */}
-      {imageUrl ? (
+      {imageUrl && !imageError ? (
         <Image
           source={{ uri: imageUrl }}
           style={s.heroImage}
           resizeMode="cover"
           accessibilityLabel={title}
           testID={`compass-pick-image-${item.id}`}
+          onError={() => setImageError(true)}
         />
       ) : placeFallback ? (
         <View style={[s.emojiHeader, { backgroundColor: placeFallback.color + '18' }]}>

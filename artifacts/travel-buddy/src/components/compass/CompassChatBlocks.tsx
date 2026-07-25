@@ -228,8 +228,10 @@ function PlaceBlockCard({ place, onAddToPlan }: {
 }) {
   const openPlace = usePlaceNavigation();
   const [whyOpen, setWhyOpen] = useState(false);
+  // Track hero image load errors so we can fall back to the accent strip
+  const [imageError, setImageError] = useState(false);
   const placeFallback = getPlaceCategoryFallback(place.category ?? '');
-  const hasImage = Boolean(place.headerImageUrl);
+  const hasImage = Boolean(place.headerImageUrl) && !imageError;
   return (
     <>
       <Pressable
@@ -252,6 +254,7 @@ function PlaceBlockCard({ place, onAddToPlan }: {
               resizeMode="cover"
               accessibilityLabel={place.name}
               testID={`compass-block-place-image-${place.id}`}
+              onError={() => setImageError(true)}
             />
           ) : null}
           <View style={s.titleRow}>
