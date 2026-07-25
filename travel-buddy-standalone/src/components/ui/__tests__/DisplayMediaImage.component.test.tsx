@@ -8,6 +8,8 @@
  *   - AvatarImage null user → initials fallback
  *   - AvatarImage broken URL → initials fallback (via onError)
  *   - AvatarImage valid URL → image rendered, no initials
+ *   - useHydratedMedia signed URL → ExpoImage source updated
+ *   - useHydratedMedia null → fallback shown
  *
  * Uses react-test-renderer (not RNTL) for prop inspection and callback
  * triggering — RNTL v14 dropped UNSAFE_getAllByType. This matches the
@@ -19,19 +21,53 @@ import React from 'react';
 import { Text, View } from 'react-native';
 import TestRenderer, { act } from 'react-test-renderer';
 import { DisplayMediaImage, AvatarImage } from '../DisplayMediaImage.tsx';
-import * as MediaSourceModule from '../../../lib/mediaSource.ts';
 
-// ── mediaSource mock ─────────────────────────────────────────────────────────
-// Default: flag-OFF fast path — returns { uri } unchanged.
-// Individual tests override this to simulate flag-ON relay behaviour.
+// ── mediaUrl mock ─────────────────────────────────────────────────────────────
+// useHydratedMedia is re-implemented here using mockHydrateMediaUrls so tests
+// can override the resolved URL per-test without live network access.
 
-const mockMediaSource = jest.fn(async (url: string | null | undefined) =>
-  url ? { uri: url } : { uri: '' },
-);
+const mockHydrateMediaUrls = jest.fn(async (urls: string[]) => {
+  const result: Record<string, string | null> = {};
+  for (const u of urls) result[u] = u; // default: pass-through (flag-OFF fast path)
+  return result;
+});
 
-jest.mock('../../../lib/mediaSource.ts', () => ({
-  ...jest.requireActual('../../../lib/mediaSource.ts'),
-  mediaSource: (...args: any[]) => mockMediaSource(...args),
+// NOTE: intentionally exhaustive — mediaUrl.ts imports React hooks and batchSignMedia
+// at module level; spreading requireActual would trigger fetch/network calls in JSDOM.
+// useHydratedMedia is re-implemented here to call mockHydrateMediaUrls so individual
+// tests can control the hydration result without any network calls.
+jest.mock('../../../services/mediaUrl.ts', () => {
+  const React = require('react');
+  return {
+    PRIVATE_BUCKETS: ['post-media', 'profile-media'],
+    hydrateMediaUrls: (...args: any[]) => mockHydrateMediaUrls(...args),
+    useHydratedMedia: (urls: (string | null | undefined)[]) => {
+      const [resolved, setResolved] = React.useState<Record<string, string | null>>({});
+      const [loading, setLoading] = React.useState(false);
+      const key = React.useMemo(() => {
+        const unique = [...new Set(urls.filter((u: any) => !!u))].sort();
+        return (unique as string[]).join('\0');
+      }, [urls]);
+      React.useEffect(() => {
+        const unique = key ? key.split('\0') : [];
+        if (!unique.length) { setResolved({}); setLoading(false); return; }
+        let cancelled = false;
+        setLoading(true);
+        mockHydrateMediaUrls(unique).then((result: Record<string, string | null>) => {
+          if (!cancelled) { setResolved(result); setLoading(false); }
+        });
+        return () => { cancelled = true; };
+      }, [key]);
+      return { resolved, loading };
+    },
+  };
+});
+
+// Mock _evictBatchSignEntry so cache state is never mutated in tests.
+const mockEvictBatchSignEntry = jest.fn();
+jest.mock('../../../lib/batchSignMedia.ts', () => ({
+  ...jest.requireActual('../../../lib/batchSignMedia.ts'),
+  _evictBatchSignEntry: (...args: any[]) => mockEvictBatchSignEntry(...args),
 }));
 
 // ── expo-image mock ──────────────────────────────────────────────────────────
@@ -45,13 +81,10 @@ jest.mock('expo-image', () => {
       <View
         testID={testID ?? 'mock-expo-image'}
         accessibilityLabel={accessibilityLabel}
-        // Store callbacks on the node so TestRenderer can inspect them.
         onLayout={undefined}
-        // Custom data props for test inspection (camelCase to avoid RN warnings)
         {...{
           'data-on-error': onError,
           'data-on-load': onLoad,
-          // Serialise source so tests can verify relay URL + headers.
           'data-source': JSON.stringify(source ?? null),
         }}
       />
@@ -105,6 +138,16 @@ function create(el: React.ReactElement) {
 function textContent(root: TestRenderer.ReactTestInstance): string[] {
   return root.findAllByType(Text as any).map((n) => n.props.children as string);
 }
+
+// Reset mocks to the default pass-through before every test.
+beforeEach(() => {
+  mockHydrateMediaUrls.mockImplementation(async (urls: string[]) => {
+    const result: Record<string, string | null> = {};
+    for (const u of urls) result[u] = u;
+    return result;
+  });
+  mockEvictBatchSignEntry.mockReset();
+});
 
 // ── DisplayMediaImage ────────────────────────────────────────────────────────
 
@@ -205,10 +248,12 @@ describe('DisplayMediaImage', () => {
 
 describe('AvatarImage', () => {
   beforeEach(() => {
-    // Restore default flag-OFF behaviour between tests.
-    mockMediaSource.mockImplementation(async (url: string | null | undefined) =>
-      url ? { uri: url } : { uri: '' },
-    );
+    // Restore default pass-through behavior between tests.
+    mockHydrateMediaUrls.mockImplementation(async (urls: string[]) => {
+      const result: Record<string, string | null> = {};
+      for (const u of urls) result[u] = u;
+      return result;
+    });
   });
 
   it('renders initials when uri is null and user has a name', () => {
@@ -264,113 +309,92 @@ describe('AvatarImage', () => {
     expect(findExpoImages(tr.root).length).toBe(0);
   });
 
-  it('passes relay URL + auth headers to expo-image when flag is ON', async () => {
-    // Simulate flag-ON: mediaSource rewrites to the relay endpoint and adds auth.
-    const relayUrl = 'https://api.example.com/api/media/file/avatars/user123.jpg';
-    mockMediaSource.mockResolvedValueOnce({
-      uri: relayUrl,
-      headers: { Authorization: 'Bearer test-token' },
-    });
+  it('updates expo-image source to signed URL once useHydratedMedia resolves', async () => {
+    const originalUrl = 'https://supabase.example.com/storage/v1/object/public/profile-media/user123.jpg';
+    const signedUrl = 'https://abc.supabase.co/storage/v1/object/sign/profile-media/user123.jpg?token=xxx';
+
+    mockHydrateMediaUrls.mockResolvedValueOnce({ [originalUrl]: signedUrl });
 
     let tr!: TestRenderer.ReactTestRenderer;
     await act(async () => {
       tr = TestRenderer.create(
         <AvatarImage
-          uri="https://supabase.example.com/storage/v1/object/public/avatars/user123.jpg"
+          uri={originalUrl}
           user={{ displayName: 'Alex Kim' }}
           size={40}
         />,
       );
-      // Allow the mediaSource() promise to settle.
+      // Allow the useHydratedMedia promise to settle.
       await Promise.resolve();
     });
 
     const imgs = findExpoImages(tr.root);
     expect(imgs.length).toBeGreaterThan(0);
-    // The source prop should use the relay URL, not the original Supabase URL.
-    const src = JSON.parse(imgs[0].props['data-source'] ?? 'null') as {
-      uri: string;
-      headers?: Record<string, string>;
-    };
-    expect(src?.uri).toBe(relayUrl);
-    expect(src?.headers?.Authorization).toBe('Bearer test-token');
+    const src = JSON.parse(imgs[0].props['data-source'] ?? 'null') as { uri: string } | null;
+    expect(src?.uri).toBe(signedUrl);
     // Initials must not be shown.
     expect(textContent(tr.root)).not.toContain('AK');
   });
 
-  it('never shows the previous URI relay source after uri prop changes to a new URI', async () => {
-    // Simulate flag-ON for both URIs, each with distinct relay URLs.
-    const relayA = 'https://api.example.com/api/media/file/avatars/a.jpg';
-    const relayB = 'https://api.example.com/api/media/file/avatars/b.jpg';
+  it('never shows the previous signed URL after uri prop changes to a new URI', async () => {
+    const uriA = 'https://supabase.example.com/storage/v1/object/public/profile-media/a.jpg';
+    const uriB = 'https://supabase.example.com/storage/v1/object/public/profile-media/b.jpg';
+    const signedA = `${uriA}?token=a`;
+    const signedB = `${uriB}?token=b`;
 
-    let resolveA!: (v: { uri: string; headers: { Authorization: string } }) => void;
-    let resolveB!: (v: { uri: string; headers: { Authorization: string } }) => void;
-    const promiseA = new Promise<{ uri: string; headers: { Authorization: string } }>(
-      (res) => { resolveA = res; },
-    );
-    const promiseB = new Promise<{ uri: string; headers: { Authorization: string } }>(
-      (res) => { resolveB = res; },
-    );
+    let resolveA!: (v: Record<string, string | null>) => void;
+    let resolveB!: (v: Record<string, string | null>) => void;
 
-    mockMediaSource
-      .mockReturnValueOnce(promiseA)
-      .mockReturnValueOnce(promiseB);
+    mockHydrateMediaUrls
+      .mockImplementationOnce((_urls: string[]) => new Promise((res) => { resolveA = res; }))
+      .mockImplementationOnce((_urls: string[]) => new Promise((res) => { resolveB = res; }));
 
     let tr!: TestRenderer.ReactTestRenderer;
 
-    // Mount with URI A — resolvedSource reset to plain { uri: uriA }.
+    // Mount with URI A.
     await act(async () => {
-      tr = TestRenderer.create(
-        <AvatarImage uri="https://supabase.example.com/storage/v1/object/public/avatars/a.jpg" size={40} />,
-      );
+      tr = TestRenderer.create(<AvatarImage uri={uriA} size={40} />);
     });
 
-    // Update to URI B before A's relay promise resolves.
+    // Update to URI B before A's promise resolves.
     await act(async () => {
-      tr.update(
-        <AvatarImage uri="https://supabase.example.com/storage/v1/object/public/avatars/b.jpg" size={40} />,
-      );
+      tr.update(<AvatarImage uri={uriB} size={40} />);
     });
 
-    // Now resolve A — should be ignored (cancelled).
+    // Resolve A — should be ignored (cancelled effect).
     await act(async () => {
-      resolveA({ uri: relayA, headers: { Authorization: 'Bearer token-a' } });
+      resolveA({ [uriA]: signedA });
       await Promise.resolve();
     });
 
-    // Source must not be the stale relay URL for A.
     const imgs = findExpoImages(tr.root);
     expect(imgs.length).toBeGreaterThan(0);
     const srcAfterA = JSON.parse(imgs[0].props['data-source'] ?? 'null') as { uri: string } | null;
-    expect(srcAfterA?.uri).not.toBe(relayA);
+    expect(srcAfterA?.uri).not.toBe(signedA);
 
     // Resolve B — should be applied.
     await act(async () => {
-      resolveB({ uri: relayB, headers: { Authorization: 'Bearer token-b' } });
+      resolveB({ [uriB]: signedB });
       await Promise.resolve();
     });
 
     const imgsAfterB = findExpoImages(tr.root);
     expect(imgsAfterB.length).toBeGreaterThan(0);
-    const srcAfterB = JSON.parse(imgsAfterB[0].props['data-source'] ?? 'null') as {
-      uri: string;
-      headers?: Record<string, string>;
-    } | null;
-    expect(srcAfterB?.uri).toBe(relayB);
-    expect(srcAfterB?.headers?.Authorization).toBe('Bearer token-b');
+    const srcAfterB = JSON.parse(imgsAfterB[0].props['data-source'] ?? 'null') as { uri: string } | null;
+    expect(srcAfterB?.uri).toBe(signedB);
   });
 
-  it('falls back to initials when relay returns 403 (flag ON, onError fires)', async () => {
-    mockMediaSource.mockResolvedValueOnce({
-      uri: 'https://api.example.com/api/media/file/avatars/private.jpg',
-      headers: { Authorization: 'Bearer test-token' },
-    });
+  it('falls back to initials when onError fires for a non-private-bucket URL', async () => {
+    // avatars bucket is NOT in PRIVATE_BUCKETS — no re-hydration attempt is made,
+    // the component falls back to initials immediately on the first error.
+    const url = 'https://supabase.example.com/storage/v1/object/public/avatars/private.jpg';
+    mockHydrateMediaUrls.mockResolvedValueOnce({ [url]: url });
 
     let tr!: TestRenderer.ReactTestRenderer;
     await act(async () => {
       tr = TestRenderer.create(
         <AvatarImage
-          uri="https://supabase.example.com/storage/v1/object/public/avatars/private.jpg"
+          uri={url}
           user={{ displayName: 'Sam Rivera' }}
           size={40}
         />,
@@ -378,56 +402,55 @@ describe('AvatarImage', () => {
       await Promise.resolve();
     });
 
-    // Image is shown (relay URL in place).
+    // Image is shown.
     expect(findExpoImages(tr.root).length).toBeGreaterThan(0);
 
-    // Relay returns 403 — onError fires.
+    // onError fires — not a private bucket, so initials shown immediately.
     fireOnError(tr.root);
 
-    // Initials chip shown instead of broken circle.
     expect(textContent(tr.root)).toContain('SR');
     expect(findExpoImages(tr.root).length).toBe(0);
   });
 });
 
-// ── DisplayMediaImage — mediaSource pending (first-launch auth window) ────────
+// ── DisplayMediaImage — hydrateMediaUrls loading (auth-window) ────────────────
 //
-// On first app launch the feature-flag cache is empty, so mediaSource() must
-// hit /api/feature-flags before it can resolve. These tests use jest.spyOn to
-// hold mediaSource in the pending state and confirm the component shows a
-// skeleton (not a broken box) throughout that window.
+// While useHydratedMedia is in-flight (e.g. feature-flag cache is cold on first
+// launch), the component must show a skeleton — never a broken box or fallback.
 
-describe('DisplayMediaImage — mediaSource pending (auth-window)', () => {
-  // Hold mediaSource in "pending" state for the duration of each test so we
-  // can inspect the component's appearance during the async resolution window.
+describe('DisplayMediaImage — hydrateMediaUrls loading (auth-window)', () => {
+  // Hold hydrateMediaUrls in "pending" state for the duration of each test so
+  // we can inspect the component's appearance during the async resolution window.
   beforeEach(() => {
-    jest.spyOn(MediaSourceModule, 'mediaSource').mockImplementation(
-      () => new Promise(() => {}), // intentionally never resolves
-    );
+    mockHydrateMediaUrls.mockImplementation(() => new Promise(() => {})); // never resolves
   });
 
   afterEach(() => {
-    jest.restoreAllMocks();
+    // Restore default pass-through behavior.
+    mockHydrateMediaUrls.mockImplementation(async (urls: string[]) => {
+      const result: Record<string, string | null> = {};
+      for (const u of urls) result[u] = u;
+      return result;
+    });
   });
 
-  it('shows skeleton — not a broken fallback box — while mediaSource is pending', () => {
+  it('shows skeleton — not a broken fallback box — while hydrateMediaUrls is pending', () => {
     const tr = create(
       <DisplayMediaImage
-        uri="https://abc123.supabase.co/storage/v1/object/public/media/img.jpg"
+        uri="https://example.com/img.jpg"
         width={100}
         height={100}
         fallbackLabel="Should not appear"
       />,
     );
     // The fallback must NOT be visible during the loading/pending window.
-    // If the component flashed a broken box this label (or an error View)
-    // would be rendered — catching the regression.
     expect(textContent(tr.root)).not.toContain('Should not appear');
+    // ExpoImage IS mounted with the synchronously-initialised plain URI.
+    expect(findExpoImages(tr.root).length).toBeGreaterThan(0);
   });
 
   it('does not render ExpoImage when resolvedSource is null (null uri)', () => {
-    // A null URI means resolvedSource is initialised to null and stays null
-    // even after mediaSource would have resolved — ExpoImage must never mount.
+    // A null URI means resolvedSource is initialised to null — ExpoImage never mounts.
     const tr = create(
       <DisplayMediaImage uri={null} width={100} height={100} fallbackLabel="No image" />,
     );
@@ -435,15 +458,12 @@ describe('DisplayMediaImage — mediaSource pending (auth-window)', () => {
     expect(textContent(tr.root)).toContain('No image');
   });
 
-  it('transitions to MediaFallback after onError (e.g. HTTP 403) — not a blank broken box', () => {
-    // ExpoImage is mounted with the plain URI immediately (resolvedSource is
-    // initialised synchronously so there is no blank-URI flash). If the
-    // server returns 403 before the auth-bearing relay URL is ready, onError
-    // fires. The component must show the designed MediaFallback — never an
-    // unstyled broken-image rectangle.
+  it('transitions to MediaFallback after onError for a non-private-bucket URL', () => {
+    // For URLs outside post-media / profile-media (e.g. CDN, Unsplash) the
+    // component never attempts re-hydration; it transitions to error immediately.
     const tr = create(
       <DisplayMediaImage
-        uri="https://abc123.supabase.co/storage/v1/object/public/media/img.jpg"
+        uri="https://example.com/img.jpg"
         width={100}
         height={100}
         fallbackLabel="Load failed"
@@ -452,7 +472,7 @@ describe('DisplayMediaImage — mediaSource pending (auth-window)', () => {
     // ExpoImage is present initially (plain URI fast-path)
     expect(findExpoImages(tr.root).length).toBeGreaterThan(0);
 
-    // Simulate an HTTP 403 (or any network error) coming back
+    // Simulate HTTP 403 / any network error
     fireOnError(tr.root);
 
     // Designed fallback is now shown

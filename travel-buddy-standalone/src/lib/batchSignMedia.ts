@@ -43,6 +43,15 @@ export function _getCacheSize(): number {
 }
 
 /**
+ * Evict a single URL from the signed-URL cache.
+ * Used by hydrateMediaUrls on re-hydration after a 403/onError so the next
+ * batchSignUrls call for that URL fetches a fresh signed URL from the server.
+ */
+export function _evictBatchSignEntry(url: string): void {
+  _cache.delete(url);
+}
+
+/**
  * Insert or refresh an entry in the LRU cache.
  * - If the key already exists, delete it first so the re-inserted entry
  *   moves to the tail (most-recently-used position).

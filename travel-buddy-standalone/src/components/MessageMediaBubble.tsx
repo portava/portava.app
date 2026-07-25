@@ -17,8 +17,8 @@ import {
   ActivityIndicator,
   Linking,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { X, AlertCircle, RefreshCw } from 'lucide-react-native';
+import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import { SharedVideoPlayer } from './ui/SharedVideoPlayer.tsx';
 import { color, radius, space, type as t } from '../theme/tokens.ts';
@@ -136,12 +136,12 @@ export function MessageMediaBubble({
 
       {mediaType === 'image' ? (
         <Pressable onPress={handleImagePress} style={s.imageWrap}>
-          <Image
-            source={{ uri: mediaUrl ?? undefined }}
-            style={s.image}
-            contentFit="cover"
-            transition={200}
-            accessibilityLabel="Image message"
+          <DisplayMediaImage
+            uri={mediaUrl}
+            width={BUBBLE_MEDIA_WIDTH}
+            height={180}
+            resizeMode="cover"
+            alt="Image message"
           />
         </Pressable>
       ) : (

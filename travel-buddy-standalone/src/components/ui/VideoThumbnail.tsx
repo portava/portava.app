@@ -3,6 +3,9 @@
  *
  * Used in grids/feeds so the full video is never auto-loaded during scroll.
  * Fire onPress to open the actual player.
+ *
+ * The poster URL is resolved through useHydratedMedia() so that when
+ * `post-media` / `profile-media` buckets go private the thumbnail still loads.
  */
 import React from 'react';
 import {
@@ -16,6 +19,7 @@ import {
 import { Image } from 'expo-image';
 import { Play } from 'lucide-react-native';
 import { color, radius } from '../../theme/tokens.ts';
+import { useHydratedMedia } from '../../services/mediaUrl.ts';
 
 export interface VideoThumbnailProps {
   posterUri?: string | null;
@@ -32,6 +36,13 @@ function formatDuration(seconds: number): string {
 }
 
 export function VideoThumbnail({ posterUri, duration, style, onPress }: VideoThumbnailProps) {
+  // Hydrate the poster URL through the signed-URL layer.
+  // undefined = still loading (show image with plain URI); null = server rejected
+  const { resolved: hydratedMap } = useHydratedMedia(posterUri ? [posterUri] : []);
+  const effectivePosterUri = posterUri
+    ? (hydratedMap[posterUri] === null ? null : (hydratedMap[posterUri] ?? posterUri))
+    : null;
+
   return (
     <Pressable
       style={[s.container, style]}
@@ -39,9 +50,9 @@ export function VideoThumbnail({ posterUri, duration, style, onPress }: VideoThu
       accessibilityRole="button"
       accessibilityLabel="Play video"
     >
-      {posterUri ? (
+      {effectivePosterUri ? (
         <Image
-          source={{ uri: posterUri }}
+          source={{ uri: effectivePosterUri }}
           style={StyleSheet.absoluteFill}
           contentFit="cover"
           transition={150}

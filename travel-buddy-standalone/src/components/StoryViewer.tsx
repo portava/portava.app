@@ -10,7 +10,7 @@
  */
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  ActivityIndicator, Animated, Image, Modal, Pressable,
+  ActivityIndicator, Animated, Dimensions, Modal, Pressable,
   StyleSheet, Text, TouchableWithoutFeedback, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,8 +22,10 @@ import { useSession } from '../context/SessionContext.tsx';
 import { formatRelativeTime as formatRelative } from '../lib/dateTime/formatters.ts';
 import { primaryIdentityText } from '../lib/displayIdentity.ts';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
+import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
 
 const STORY_DURATION_MS = 5000;
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
 interface Props {
   visible: boolean;
@@ -135,7 +137,7 @@ export function StoryViewer({ visible, feedUser, onClose }: Props) {
           </Pressable>
         </View>
 
-        {/* Media */}
+        {/* Media — routed through DisplayMediaImage for signed-URL hydration */}
         <TouchableWithoutFeedback
           onLongPress={() => setPaused(true)}
           onPressOut={() => setPaused(false)}
@@ -150,7 +152,12 @@ export function StoryViewer({ visible, feedUser, onClose }: Props) {
           }}
         >
           <View style={{ flex: 1 }}>
-            <Image source={{ uri: current.media_url }} style={s.media} resizeMode="cover" />
+            <DisplayMediaImage
+              uri={current.media_url}
+              width={SCREEN_W}
+              height={SCREEN_H}
+              resizeMode="cover"
+            />
             {current.caption ? (
               <View style={s.captionBg}>
                 <Text style={s.caption}>{current.caption}</Text>
@@ -218,7 +225,6 @@ const s = StyleSheet.create({
   avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.2)' },
   authorName: { color: '#fff', fontWeight: '700', fontSize: 14 },
   timeAgo: { color: 'rgba(255,255,255,0.7)', fontSize: 11 },
-  media: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
   captionBg: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: space.lg, backgroundColor: 'rgba(0,0,0,0.4)' },
   caption: { color: '#fff', fontSize: 15, lineHeight: 22 },
   viewersBtn: { flexDirection: 'row', alignItems: 'center', gap: space.sm, justifyContent: 'center', paddingVertical: space.md },
