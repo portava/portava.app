@@ -1,9 +1,10 @@
 /**
- * CompassPickCard — image error fallback test
+ * CompassPickCard — image error fallback tests
  *
- * Confirms that when the hero Image fires onError (e.g. broken URL), the
- * card switches to the emoji/colour-strip fallback and no Image element
- * remains visible.
+ * 1. Place-type item: onError → emoji/colour-strip fallback appears, Image gone.
+ * 2. Non-place item (event type): onError → neither Image nor emoji fallback
+ *    renders, confirming the blank-box case is at least not a crash — the card
+ *    renders its text content without a hero area.
  *
  * Run with: pnpm test:component
  *
@@ -43,27 +44,16 @@ jest.mock('../../../theme/tokens', () => ({
   shadow: { card: {}, float: {} },
 }));
 
-// NOTE: intentionally exhaustive — useCompassFeed makes real API calls;
-// returning a stable fixture with a broken image URL isolates the assertion.
+// NOTE: intentionally exhaustive — useCompassFeed makes real API calls.
+// `mockFeedItems` is mutated in beforeEach so each test can supply its own
+// fixture without re-registering the mock.
+let mockFeedItems: any[] = [];
 jest.mock('../../../hooks/compass/useCompassFeed.ts', () => ({
   useCompassFeed: () => ({
-    loading:         false,
-    compassEnabled:  true,
+    loading:        false,
+    compassEnabled: true,
     data: {
-      sections: [{
-        items: [{
-          id:       'place-img-1',
-          type:     'place',
-          category: 'food',
-          title:    'Broken Image Bistro',
-          data: {
-            imageUrl:     'https://broken.example.com/no-such-image.jpg',
-            neighborhood: 'Old Town',
-            city:         'Testville',
-          },
-          recommendationToken: 'tok-img-1',
-        }],
-      }],
+      sections:       [{ items: mockFeedItems }],
       safeItems:      [],
       fallback:       false,
       compassEnabled: true,
@@ -73,13 +63,14 @@ jest.mock('../../../hooks/compass/useCompassFeed.ts', () => ({
 
 // NOTE: intentionally exhaustive — resolveCompassImageUrl must return the
 // broken URL so the Image element is initially rendered; only then can
-// onError fire and flip the state to the emoji fallback.
+// onError fire and flip the state.
 jest.mock('../../../utils/compassFormat.ts', () => ({
-  resolveCompassTitle:    (_item: any) => 'Broken Image Bistro',
+  resolveCompassTitle:    (_item: any) => _item?.title ?? 'Card',
   formatCompassSubtitle:  () => null,
-  formatCompassContext:   () => 'Because you like bistros',
-  resolveCompassCategory: () => 'Food',
-  resolveCompassImageUrl: () => 'https://broken.example.com/no-such-image.jpg',
+  formatCompassContext:   () => 'Because it matched your taste',
+  resolveCompassCategory: () => '',
+  resolveCompassImageUrl: (item: any) =>
+    (item?.data?.imageUrl as string | undefined) ?? null,
 }));
 
 // NOTE: intentionally exhaustive — CompassWhySheet uses native modal internals
@@ -113,7 +104,20 @@ jest.mock('../../../context/SessionContext.tsx', () => ({
 describe('CompassPickCard — image error fallback', () => {
   afterEach(() => jest.clearAllMocks());
 
-  it('shows the emoji fallback and hides the Image after onError fires', async () => {
+  it('shows the emoji fallback and hides the Image after onError fires (place item)', async () => {
+    mockFeedItems = [{
+      id:       'place-img-1',
+      type:     'place',
+      category: 'food',
+      title:    'Broken Image Bistro',
+      data: {
+        imageUrl:     'https://broken.example.com/no-such-image.jpg',
+        neighborhood: 'Old Town',
+        city:         'Testville',
+      },
+      recommendationToken: 'tok-img-1',
+    }];
+
     const { getByTestId, queryByTestId } = await render(
       <CompassPicksSection city="Testville" enabled />,
     );
@@ -130,6 +134,47 @@ describe('CompassPickCard — image error fallback', () => {
     await waitFor(() => {
       expect(queryByTestId('compass-pick-image-place-img-1')).toBeNull();
       expect(getByTestId('compass-pick-emoji-place-img-1')).toBeTruthy();
+    });
+  });
+
+  it('renders no hero area — neither Image nor emoji — after onError fires on a non-place item (event type)', async () => {
+    // An event item with a broken imageUrl and no category that maps to a
+    // place fallback. After onError, the ternary reaches the final `null`
+    // branch (placeFallback is null for non-place types), so no hero element
+    // should appear at all. The card must not crash — it should still render
+    // its title text.
+    mockFeedItems = [{
+      id:       'event-img-1',
+      type:     'event',
+      category: '', // no category → no place fallback even if isPlace were true
+      title:    'Broken Image Concert',
+      data: {
+        imageUrl: 'https://broken.example.com/no-such-event.jpg',
+        city:     'Testville',
+      },
+      recommendationToken: 'tok-event-1',
+    }];
+
+    const { getByTestId, queryByTestId, getByText } = await render(
+      <CompassPicksSection city="Testville" enabled />,
+    );
+
+    // Image must be present before the error fires (the broken URL is rendered
+    // initially because imageError starts as false)
+    await waitFor(() => {
+      expect(getByTestId('compass-pick-image-event-img-1')).toBeTruthy();
+    });
+
+    // Simulate the image load error
+    fireEvent(getByTestId('compass-pick-image-event-img-1'), 'error');
+
+    // After the error: no Image, no emoji strip — the blank-box is gracefully
+    // absent rather than an invisible placeholder crashing the layout.
+    await waitFor(() => {
+      expect(queryByTestId('compass-pick-image-event-img-1')).toBeNull();
+      expect(queryByTestId('compass-pick-emoji-event-img-1')).toBeNull();
+      // The card body still renders — title must remain visible
+      expect(getByText('Broken Image Concert')).toBeTruthy();
     });
   });
 });

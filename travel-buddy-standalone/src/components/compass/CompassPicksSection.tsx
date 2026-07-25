@@ -154,7 +154,7 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
         >
           <Text style={s.emojiText}>{categoryFallback.emoji}</Text>
         </View>
-      )}
+      ) : null}
 
       {/* Row 1: type chip + overflow menu */}
       <View style={s.typeRow}>
