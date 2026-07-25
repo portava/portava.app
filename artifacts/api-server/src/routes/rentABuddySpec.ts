@@ -47,13 +47,19 @@ router.get("/rent-a-buddy/buddies/:buddyId/services", asyncHandler(async (req, r
 }));
 
 router.get("/rent-a-buddy/buddies/:buddyId/availability-exceptions", asyncHandler(async (req, res) => {
+  // SEC-03: require auth and exclude the free-text `reason` (health/personal
+  // details). Previously this was unauthenticated and select("*") leaked the
+  // reason to any anonymous caller. Availability dates/times stay visible (they
+  // are functional booking info); only the private reason is withheld.
+  const auth = await requireUser(req, res);
+  if (!auth) return;
   const serviceClient = sc();
   if (!serviceClient) return res.json({ exceptions: [] });
 
   const { from, to } = req.query as Record<string, string | undefined>;
   let query = serviceClient
     .from("buddy_availability_exceptions")
-    .select("*")
+    .select("id, buddy_id, exception_date, end_date, exception_type, start_time, end_time, created_at, updated_at")
     .eq("buddy_id", req.params.buddyId)
     .order("exception_date");
   if (from) query = query.gte("exception_date", from);

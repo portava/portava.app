@@ -1,8 +1,10 @@
 /**
- * Events discovery screen — /events
+ * Events list screen — /events/list
  *
- * Shows upcoming public events filterable by city/category/date.
+ * Shows upcoming public events filterable by city/status.
  * Each card has inline RSVP action.
+ * Distinct from the tab discovery screen (/(tabs)/events) which shows
+ * horizontal sections, date presets, and category rows.
  */
 import React, { useCallback, useRef, useState } from 'react';
 import {

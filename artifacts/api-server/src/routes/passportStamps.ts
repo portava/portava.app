@@ -58,13 +58,14 @@ async function isFlagEnabled(flag: string): Promise<boolean> {
       .select("enabled")
       .eq("flag", flag)
       .maybeSingle();
-    // DB error (e.g. table not yet migrated) → fail-open so dev env works.
-    if (error) return true;
-    // No row means the flag hasn't been seeded yet → treat as enabled.
-    if (data == null) return true;
+    // FL-05: fail-CLOSED to match the shared lib/featureFlags isFlagEnabled
+    // (this local copy previously failed OPEN, an inconsistency). The passport
+    // flags are seeded true by migration 0085, so prod behavior is unchanged.
+    if (error) return false;
+    if (data == null) return false;
     return Boolean((data as any).enabled);
   } catch {
-    return true;
+    return false;
   }
 }
 

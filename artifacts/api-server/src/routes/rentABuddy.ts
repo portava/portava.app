@@ -991,8 +991,10 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
 
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  // Emergency flag: disable_rent_buddy_booking — fail-open on DB error
-  if (await isFlagEnabled(serviceClient, 'disable_rent_buddy_booking')) {
+  // Emergency flags: honor BOTH admin kill-switch names (FL-06 — `disable_rab_bookings`
+  // was an orphan with no reader, so that admin toggle was a silent no-op). Fail-open on DB error.
+  if (await isFlagEnabled(serviceClient, 'disable_rent_buddy_booking')
+      || await isFlagEnabled(serviceClient, 'disable_rab_bookings')) {
     return res.status(404).json({ error: 'feature_disabled', message: 'Rent-a-Buddy bookings are temporarily disabled' });
   }
 

@@ -22,6 +22,7 @@ import {
 } from 'react-native';
 import { ReportSheet } from './ReportSheet.tsx';
 import { router, useFocusEffect } from 'expo-router';
+import { useBlockedIds } from '../context/BlockedIdsContext.tsx';
 import {
   getTripReviews,
   getEventReviews,
@@ -55,6 +56,18 @@ function Stars({ rating, size = 14 }: { rating: number; size?: number }) {
 // ── Review card ───────────────────────────────────────────────────────────────
 
 function ReviewCard({ review, onReport }: { review: Review; onReport?: (reviewId: string, authorId: string | null) => void }) {
+  const { blockedIds, blockerIds } = useBlockedIds();
+
+  function handleAuthorPress() {
+    const reviewer = review.reviewer;
+    if (!reviewer?.handle || review.anonymous) return;
+    const isBlocked = blockedIds.has(reviewer.id) || blockerIds.has(reviewer.id);
+    if (isBlocked) return;
+    router.push(`/u/${reviewer.handle}` as any);
+  }
+
+  const authorTappable = !review.anonymous && !!review.reviewer?.handle;
+
   return (
     <Pressable
       onLongPress={() => onReport?.(review.id, review.reviewer?.id ?? null)}
@@ -67,9 +80,11 @@ function ReviewCard({ review, onReport }: { review: Review; onReport?: (reviewId
           <Text style={s.reviewDate}>{new Date(review.createdAt).toLocaleDateString()}</Text>
         </View>
         {!review.anonymous && review.reviewer ? (
-          <Text style={s.reviewerName}>
-            {review.reviewer.displayName ?? review.reviewer.handle ?? 'Traveler'}
-          </Text>
+          <Pressable onPress={handleAuthorPress} disabled={!authorTappable}>
+            <Text style={[s.reviewerName, authorTappable && s.reviewerNameTappable]}>
+              {review.reviewer.displayName ?? review.reviewer.handle ?? 'Traveler'}
+            </Text>
+          </Pressable>
         ) : (
           <Text style={s.reviewerName}>Anonymous</Text>
         )}
@@ -363,6 +378,7 @@ const s = StyleSheet.create({
   },
   reviewDate:   { fontSize: 11, color: '#9CA3AF' },
   reviewerName: { fontSize: 12, fontWeight: '600', color: '#6B7280', marginBottom: 4 },
+  reviewerNameTappable: { color: '#374151' },
   reviewBody:   { fontSize: 13, color: '#374151', lineHeight: 18 },
 
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },

@@ -30,6 +30,7 @@ import { useSnapshotCache } from '../../src/hooks/useSnapshotCache';
 import type { TripRow } from '../../src/services/trips';
 import { CachedImage } from '../../src/components/CachedImage';
 import { AvatarImage } from '../../src/components/ui/DisplayMediaImage';
+import { useBlockedIds } from '../../src/context/BlockedIdsContext';
 
 function MeetupsShortcut({ count }: { count: number }) {
   const label = count > 9 ? '9+' : count > 0 ? String(count) : null;
@@ -58,6 +59,7 @@ function InviteCard({ invite, onDone }: { invite: TripInvite; onDone: () => void
   const [busy, setBusy] = React.useState<'accept' | 'decline' | null>(null);
   const [tripGone, setTripGone] = React.useState(false);
   const [inviteCoverErr, setInviteCoverErr] = React.useState(false);
+  const { blockedIds, blockerIds } = useBlockedIds();
 
   async function handle(action: 'accept' | 'decline') {
     setBusy(action);
@@ -102,7 +104,16 @@ function InviteCard({ invite, onDone }: { invite: TripInvite; onDone: () => void
         </View>
       )}
       <View style={styles.inviteBody}>
-        <View style={styles.inviteInviterRow}>
+        <Pressable
+          style={styles.inviteInviterRow}
+          onPress={() => {
+            if (!invite.inviter?.handle) return;
+            const isBlocked = blockedIds.has(invite.inviter.id) || blockerIds.has(invite.inviter.id);
+            if (isBlocked) return;
+            router.push(`/u/${invite.inviter.handle}` as any);
+          }}
+          disabled={!invite.inviter?.handle}
+        >
           <AvatarImage
             uri={invite.inviter?.avatarUrl}
             user={{ displayName: invite.inviter?.name }}
@@ -113,7 +124,7 @@ function InviteCard({ invite, onDone }: { invite: TripInvite; onDone: () => void
             <Text style={styles.inviterName}>{invite.inviter?.name ?? 'Someone'}</Text>
             {' invited you'}
           </Text>
-        </View>
+        </Pressable>
         <Text style={styles.inviteTitle} numberOfLines={1}>{invite.tripTitle}</Text>
         <View style={styles.inviteMeta}>
           <MapPin size={12} color={color.mute} />
