@@ -348,11 +348,12 @@ export function TextField(props: TextInputProps) {
 }
 
 export function ChipGrid({
-  options, selected, onToggle,
+  options, selected, onToggle, mode = 'checkbox',
 }: {
   options: { key: string; label: string }[];
   selected: string[];
   onToggle: (key: string) => void;
+  mode?: 'radio' | 'checkbox';
 }) {
   return (
     <View style={st.chipGrid}>
@@ -363,7 +364,7 @@ export function ChipGrid({
             key={key}
             style={[st.chip, on && st.chipOn]}
             onPress={() => onToggle(key)}
-            accessibilityRole="button"
+            accessibilityRole={mode}
             accessibilityState={{ selected: on }}
           >
             <Text style={[st.chipText, on && st.chipTextOn]}>{label}</Text>

@@ -395,6 +395,7 @@ export default function PrivacyVisibilityScreen() {
             options={VIS_OPTIONS}
             selected={[defaultStampVis]}
             onToggle={(key) => { setDefaultStampVis(key); markPassport({ defaultStampVis: key }); }}
+            mode="radio"
           />
         </View>
       </SettingsSection>
@@ -408,6 +409,7 @@ export default function PrivacyVisibilityScreen() {
             options={VIS_OPTIONS}
             selected={[defaultMemoryVis]}
             onToggle={(key) => { setDefaultMemoryVis(key); markPassport({ defaultMemoryVis: key }); }}
+            mode="radio"
           />
         </View>
       </SettingsSection>
