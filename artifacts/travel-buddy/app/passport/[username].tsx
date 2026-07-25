@@ -15,6 +15,7 @@ import { getPublicShowcase, type ShowcaseStamp } from '../../src/services/stampS
 import { blockUser } from '../../src/services/blocks';
 import { submitReport, type ReportReason } from '../../src/services/reports';
 import { useSession } from '../../src/context/SessionContext';
+import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 import { useFollow } from '../../src/hooks/useFollow';
 import { useHighlightRingState } from '../../src/hooks/useHighlightRingState';
 import { HighlightViewer } from '../../src/components/HighlightViewer';
@@ -114,6 +115,7 @@ export default function PassportDeepLinkScreen() {
 
   const { profile, postcards, loading, error, isPrivate, notFound } = state;
   const { isAuthed, userId: viewerUserId } = useSession();
+  const { isEnabled: isFlagEnabled } = useFeatureFlags();
   const isOwner = !!profile && !!viewerUserId && profile.id === viewerUserId;
   const follow = useFollow(profile?.id ?? null);
   const ringState = useHighlightRingState(profile?.id ?? null);
@@ -353,7 +355,7 @@ export default function PassportDeepLinkScreen() {
         />
 
         {/* ── Featured stamps showcase (public, read-only) ── */}
-        {showcaseItems && showcaseItems.length > 0 && (
+        {isFlagEnabled('stamp_showcase_enabled') && showcaseItems && showcaseItems.length > 0 && (
           <PublicStampShowcaseSection
             items={showcaseItems}
             onPress={(item) => {
