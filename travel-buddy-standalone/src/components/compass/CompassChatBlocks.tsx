@@ -17,7 +17,7 @@
  * mutations never fire from a bare tap).
  */
 import React, { useState } from 'react';
-import { View, Text, Pressable, Modal, StyleSheet } from 'react-native';
+import { View, Text, Pressable, Modal, StyleSheet, Image } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
   MapPin, CalendarClock, ChevronRight, Users, Map as MapIcon, Plus, Star, Sparkles,
@@ -228,6 +228,8 @@ function PlaceBlockCard({ place, onAddToPlan }: {
 }) {
   const openPlace = usePlaceNavigation();
   const [whyOpen, setWhyOpen] = useState(false);
+  const placeFallback = getPlaceCategoryFallback(place.category ?? '');
+  const hasImage = Boolean(place.headerImageUrl);
   return (
     <>
       <Pressable
@@ -237,8 +239,21 @@ function PlaceBlockCard({ place, onAddToPlan }: {
         accessibilityLabel={`View ${place.name}`}
         testID={`compass-block-place-${place.id}`}
       >
-        <View style={[s.strip, { backgroundColor: getPlaceCategoryFallback(place.category ?? '').color }]} />
+        {/* Accent strip (hidden when a hero image is shown, to avoid visual noise) */}
+        {!hasImage ? (
+          <View style={[s.strip, { backgroundColor: placeFallback.color }]} />
+        ) : null}
         <View style={s.cardBody}>
+          {/* Hero image — rendered when the server sends headerImageUrl */}
+          {hasImage ? (
+            <Image
+              source={{ uri: place.headerImageUrl! }}
+              style={s.placeHeroImage}
+              resizeMode="cover"
+              accessibilityLabel={place.name}
+              testID={`compass-block-place-image-${place.id}`}
+            />
+          ) : null}
           <View style={s.titleRow}>
             <Text style={s.cardTitle} numberOfLines={1}>{place.name}</Text>
             <ChevronRight size={14} color={color.faint} />
@@ -622,6 +637,7 @@ const s = StyleSheet.create({
   card:       { flexDirection: 'row', backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, overflow: 'hidden' },
   strip:      { width: 3 },
   cardBody:   { flex: 1, padding: space.md, gap: 4 },
+  placeHeroImage: { width: '100%' as const, height: 100, borderRadius: radius.sm, marginBottom: 2 },
   titleRow:   { flexDirection: 'row', alignItems: 'center', gap: space.xs },
   cardTitle:  { ...t.bodyStrong, color: color.ink, flex: 1, fontSize: 13 },
   metaRow:    { flexDirection: 'row', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' },

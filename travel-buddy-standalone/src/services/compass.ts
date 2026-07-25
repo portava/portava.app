@@ -586,6 +586,8 @@ export interface CompassUiPlace {
   openNow?:     boolean | null;
   /** Signed recommendation token for outcome attribution; absent on older payloads. */
   recommendationToken?: string;
+  /** Optional hero photo URL — rendered when present, emoji fallback when absent. */
+  headerImageUrl?: string | null;
 }
 
 export interface CompassUiEvent {

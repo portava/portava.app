@@ -129,6 +129,20 @@ export function formatCompassContext(item: CompassItemLike): string {
   return reason || 'Recommended for you';
 }
 
+/**
+ * Extract an image URL from a CompassFeedItem's data bag.
+ * Checks `imageUrl`, `headerImageUrl`, and `image_url` in that order.
+ * Returns null when none are present or the value is not a non-empty string.
+ */
+export function resolveCompassImageUrl(item: CompassItemLike): string | null {
+  const d = itemData(item);
+  const candidates = [d.imageUrl, d.headerImageUrl, d.image_url];
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim()) return c.trim();
+  }
+  return null;
+}
+
 /** Format the event date + status for a single-line chip label. */
 export function formatCompassEventChip(startsAt?: string | null, endsAt?: string | null): string {
   const start = parseIso(startsAt);

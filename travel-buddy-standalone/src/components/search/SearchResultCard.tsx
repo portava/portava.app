@@ -328,11 +328,7 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
           </View>
         )}
 
-        {!!result.matchedReason && (
-          <Text style={styles.reason} numberOfLines={1}>{result.matchedReason}</Text>
-        )}
-
-        {/* Rating / open status for place results */}
+        {/* Rating + open status for place results */}
         {isPlace && (placeRating != null || placeIsOpen != null) && (
           <View style={styles.placeMetaRow}>
             {placeRating != null && (
@@ -342,19 +338,15 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
               </>
             )}
             {placeIsOpen != null && (
-              <View style={[
-                styles.placeOpenBadge,
-                { backgroundColor: placeIsOpen ? '#16A34A18' : '#DC262618' },
-              ]}>
-                <Text style={[
-                  styles.placeOpenText,
-                  { color: placeIsOpen ? '#16A34A' : '#DC2626' },
-                ]}>
-                  {placeIsOpen ? 'Open' : 'Closed'}
-                </Text>
-              </View>
+              <Text style={[styles.placeOpenBadge, { color: placeIsOpen ? '#047857' : '#B91C1C' }]}>
+                {placeIsOpen ? 'Open' : 'Closed'}
+              </Text>
             )}
           </View>
+        )}
+
+        {!!result.matchedReason && (
+          <Text style={styles.reason} numberOfLines={1}>{result.matchedReason}</Text>
         )}
       </View>
 
@@ -476,8 +468,8 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
 const AVATAR_SIZE = 44;
 
 const thumbStyles = StyleSheet.create({
-  wrap:     { borderRadius: 8, overflow: 'hidden' },
-  fallback: { alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#E8E8E8' },
+  wrap:     { borderRadius: radius.sm, overflow: 'hidden' },
+  fallback: { alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: color.haze },
 });
 
 const styles = StyleSheet.create({
@@ -551,10 +543,6 @@ const styles = StyleSheet.create({
     color: color.mute,
     marginTop: 0,
   },
-  placeMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
-  placeRatingText: { fontSize: 11, color: '#1A1A2E', fontWeight: '600' as const },
-  placeOpenBadge:  { borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 },
-  placeOpenText:   { fontSize: 10, fontWeight: '600' as const },
   locationRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -570,6 +558,22 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: color.signal,
     marginTop: 1,
+  },
+  placeMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 1,
+  },
+  placeRatingText: {
+    fontSize: 11,
+    color: '#F59E0B',
+    fontWeight: '600' as const,
+  },
+  placeOpenBadge: {
+    fontSize: 10,
+    fontWeight: '700' as const,
+    letterSpacing: 0.2,
   },
   actionBtn: {
     flexDirection: 'row',

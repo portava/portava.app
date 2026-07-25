@@ -3,6 +3,7 @@ import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
 import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation, Route, ListPlus } from 'lucide-react-native';
 import type { DiscoveryPlace, PlaceLiveStatus } from '../../services/discovery.ts';
 import { getPlaceLiveStatusCached } from '../../services/discovery.ts';
+import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
 import { checkSaved, saveItem, unsaveItem } from '../../services/collections.ts';
 import { getSavedListIds } from '../../services/discoveryBookmarks.ts';
 import { usePlanPicker } from '../PlanPickerController.tsx';
@@ -34,6 +35,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
   const alreadyAdded = isAdded(place.id);
   const savedCountTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [liveStatus, setLiveStatus] = useState<PlaceLiveStatus | null>(null);
+  const photoUrl = useFsqPhoto(place.name, place.lat, place.lng, place.headerImageUrl);
 
   // Live open-now pill — viewport-gated: FlatList only mounts near-viewport
   // rows, and the 600 ms delay skips cards flung past while scrolling. The
@@ -102,7 +104,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
       {/* Header image — category fallback when no real image available */}
       <View style={styles.imageHeader} testID={`place-card-image-${place.id}`}>
         <DisplayMediaImage
-          uri={place.headerImageUrl ?? null}
+          uri={photoUrl}
           width={0}
           height={HEADER_HEIGHT}
           style={styles.headerImage}

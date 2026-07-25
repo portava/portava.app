@@ -7,9 +7,10 @@
  */
 import React, { useState, useCallback, useRef } from 'react';
 import {
-  View, Text, ScrollView, FlatList, StyleSheet, Image,
-  ActivityIndicator, Pressable, Animated, TextInput, Modal,
+  View, Text, ScrollView, FlatList, StyleSheet,
+  ActivityIndicator, Pressable, Animated, TextInput, Modal, Image,
 } from 'react-native';
+import { getPlaceCategoryFallback } from '../src/utils/placeCategoryFallback';
 import { useFocusEffect, router } from 'expo-router';
 import { FEED_FOCUS_TTL_MS } from '../src/hooks/usePosts';
 import { ScreenHeader } from '../src/components/ScreenHeader';
@@ -20,7 +21,6 @@ import {
   type Collection, type CollectionItem,
 } from '../src/services/collections';
 import { withOptimisticRemoveBool } from '../src/utils/optimisticRemove';
-import { getPlaceCategoryFallback } from '../src/utils/placeCategoryFallback';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
 import {
