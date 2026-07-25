@@ -16,7 +16,6 @@ import {
   Pressable,
   StyleSheet,
   ActivityIndicator,
-  Image,
   Alert,
   Modal,
   Share,
@@ -24,6 +23,7 @@ import {
   TextInput,
   Animated,
 } from 'react-native';
+import { AvatarImage } from './ui/DisplayMediaImage.tsx';
 import { MentionInput, type MentionInputHandle } from './MentionInput.tsx';
 import { MentionSuggestionList } from './MentionSuggestionList.tsx';
 import type { AnyMentionSuggestion } from '../services/tagging.ts';
@@ -618,22 +618,13 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           {memberPreview.length > 0 && (
             <View style={styles.avatarStack}>
               {memberPreview.map((m, i) => (
-                m.avatarUrl ? (
-                  <Image
-                    key={m.id}
-                    source={{ uri: m.avatarUrl }}
-                    style={[styles.stackAvatar, i > 0 && styles.stackAvatarOverlap]}
-                  />
-                ) : (
-                  <View
-                    key={m.id}
-                    style={[styles.stackAvatar, styles.stackAvatarFallback, i > 0 && styles.stackAvatarOverlap]}
-                  >
-                    <Text style={styles.stackAvatarInitial}>
-                      {(m.name?.[0] ?? m.handle?.[0] ?? '?').toUpperCase()}
-                    </Text>
-                  </View>
-                )
+                <AvatarImage
+                  key={m.id}
+                  uri={m.avatarUrl}
+                  user={{ name: m.name ?? undefined, handle: m.handle ?? undefined }}
+                  size={16}
+                  style={[styles.stackAvatar, i > 0 && styles.stackAvatarOverlap]}
+                />
               ))}
             </View>
           )}
@@ -811,15 +802,12 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
                   currentUserId={userId}
                   testID={`msg-sender-identity-${m.id}`}
                 >
-                  <View style={[styles.avatar, styles.avatarSmall]}>
-                    {m.senderAvatarUrl ? (
-                      <Image source={{ uri: m.senderAvatarUrl }} style={styles.avatarSmall} />
-                    ) : (
-                      <Text style={styles.avatarInitial}>
-                        {(m.senderName?.[0] ?? '?').toUpperCase()}
-                      </Text>
-                    )}
-                  </View>
+                  <AvatarImage
+                    uri={m.senderAvatarUrl}
+                    user={{ name: m.senderName ?? undefined, handle: m.senderHandle ?? undefined }}
+                    size={28}
+                    style={[styles.avatar, styles.avatarSmall]}
+                  />
                 </UserIdentityLink>
               )}
               <GroupMessageBubble

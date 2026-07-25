@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
+import { AvatarImage } from './ui/DisplayMediaImage.tsx';
+import { useHydratedMedia } from '../services/mediaUrl.ts';
 import { router } from 'expo-router';
 import { ShieldCheck, Lock, ChevronRight } from 'lucide-react-native';
 import type { TrustValue, TravelStats, Plan, Perk, User } from '../types/models.ts';
@@ -70,7 +72,7 @@ export function BuddyPreview({ buddies }: { buddies: User[] }) {
             onPress={() => router.push(`/profile/${u.handle}`)}
             style={[styles.buddyStackAvatar, { marginLeft: i === 0 ? 0 : -12, zIndex: shown.length - i }]}
           >
-            <Image source={{ uri: u.avatarUrl }} style={styles.buddyStackImg} />
+            <AvatarImage uri={u.avatarUrl} size={34} user={{ name: u.name }} style={styles.buddyStackImg} />
           </Pressable>
         ))}
       </View>
@@ -85,17 +87,21 @@ export function BuddyPreview({ buddies }: { buddies: User[] }) {
 
 function PostcardMediaImage({ url, kind, durationSeconds }: { url: string; kind: 'image' | 'video'; durationSeconds?: number }) {
   const [failed, setFailed] = useState(false);
+  // Route post-media URLs through the signed-URL hydration layer so this surface
+  // keeps working when the media_private_buckets_enabled flag is toggled ON.
+  const { resolved } = useHydratedMedia(failed ? [] : [url]);
+  const hydratedUrl = resolved[url] ?? url;
   if (failed) return <View style={[styles.pcMedia, { backgroundColor: '#E5E7EB' }]} />;
   if (kind === 'video') {
     return (
       <VideoThumbnail
-        posterUri={url}
+        posterUri={hydratedUrl}
         duration={durationSeconds}
         style={styles.pcMedia}
       />
     );
   }
-  return <Image source={{ uri: url }} style={styles.pcMedia} onError={() => setFailed(true)} />;
+  return <Image source={{ uri: hydratedUrl }} style={styles.pcMedia} onError={() => setFailed(true)} />;
 }
 
 /* Postcards/Posts tab — user's posted content with media, caption, location, date. */
@@ -222,7 +228,7 @@ export function BuddyRow({ buddies }: { buddies: User[] }) {
     <View style={styles.buddyRow}>
       {buddies.slice(0, 6).map((u) => (
         <Pressable key={u.id} onPress={() => router.push(`/profile/${u.handle}`)} style={styles.buddy}>
-          <Image source={{ uri: u.avatarUrl }} style={styles.buddyAvatar} />
+          <AvatarImage uri={u.avatarUrl} size={52} user={{ name: u.name }} style={styles.buddyAvatar} />
           <Text style={styles.buddyName} numberOfLines={1}>{u.name.split(' ')[0]}</Text>
         </Pressable>
       ))}

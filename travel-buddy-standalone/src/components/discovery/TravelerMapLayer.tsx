@@ -17,6 +17,7 @@ import { Marker } from '@maplibre/maplibre-react-native';
 import { color } from '../../theme/tokens.ts';
 import { primaryIdentityText } from '../../lib/displayIdentity.ts';
 import type { MapTraveler } from '../../services/mapTravelers.ts';
+import { useHydratedMedia } from '../../services/mediaUrl.ts';
 
 // ── Clustering (pure, grid-based) ─────────────────────────────────────────────
 
@@ -96,13 +97,19 @@ function TravelerAvatarMarker({ traveler, onPress }: {
   onPress: (t: MapTraveler) => void;
 }) {
   const [imgFailed, setImgFailed] = useState(false);
-  const showImage = !!traveler.avatarUrl && !imgFailed;
+  // Route profile-media avatar URLs through the signed-URL hydration layer so
+  // this map-marker surface stays functional when media_private_buckets_enabled
+  // is toggled ON. The bare <Image> is kept as the render leaf to preserve the
+  // freshDot overlay and the white-border ring that live in the same wrapper.
+  const { resolved } = useHydratedMedia(traveler.avatarUrl && !imgFailed ? [traveler.avatarUrl] : []);
+  const hydratedAvatarUrl = (traveler.avatarUrl && resolved[traveler.avatarUrl]) ?? traveler.avatarUrl;
+  const showImage = !!hydratedAvatarUrl && !imgFailed;
   return (
     <Pressable onPress={() => onPress(traveler)} hitSlop={6}>
       <View style={m.avatarWrap}>
         {showImage ? (
           <Image
-            source={{ uri: traveler.avatarUrl as string }}
+            source={{ uri: hydratedAvatarUrl as string }}
             style={m.avatarImg}
             onError={() => setImgFailed(true)}
           />
