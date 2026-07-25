@@ -35,7 +35,12 @@ import { useBlockedIds } from '../../src/context/BlockedIdsContext';
 function MeetupsShortcut({ count }: { count: number }) {
   const label = count > 9 ? '9+' : count > 0 ? String(count) : null;
   return (
-    <Pressable style={styles.meetupsCard} onPress={() => router.push('/meetups' as any)}>
+    <Pressable
+      style={styles.meetupsCard}
+      onPress={() => router.push('/meetups' as any)}
+      accessibilityLabel={count > 0 ? `Meetups — ${count} upcoming` : 'Meetups'}
+      accessibilityRole="button"
+    >
       <View>
         <View style={styles.meetupsIcon}>
           <CalendarClock size={18} color={color.onInk} />
@@ -159,6 +164,8 @@ function InviteCard({ invite, onDone }: { invite: TripInvite; onDone: () => void
               style={[styles.inviteBtn, styles.inviteBtnDecline]}
               onPress={() => handle('decline')}
               disabled={busy !== null}
+              accessibilityLabel="Decline trip invite"
+              accessibilityRole="button"
             >
               {busy === 'decline'
                 ? <ActivityIndicator size={14} color={color.mute} />
@@ -169,6 +176,8 @@ function InviteCard({ invite, onDone }: { invite: TripInvite; onDone: () => void
               style={[styles.inviteBtn, styles.inviteBtnAccept]}
               onPress={() => handle('accept')}
               disabled={busy !== null}
+              accessibilityLabel="Accept trip invite"
+              accessibilityRole="button"
             >
               {busy === 'accept'
                 ? <ActivityIndicator size={14} color={color.onInk} />
@@ -307,7 +316,12 @@ function TripsScreen() {
                 right={
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
                     <NotificationBell />
-                    <Pressable style={styles.newBtn} onPress={() => router.push('/trip/new')}>
+                    <Pressable
+                      style={styles.newBtn}
+                      onPress={() => router.push('/trip/new')}
+                      accessibilityLabel="New trip"
+                      accessibilityRole="button"
+                    >
                       <Plus size={16} color={color.onInk} />
                       <Text style={styles.newBtnText}>New trip</Text>
                     </Pressable>
@@ -323,6 +337,9 @@ function TripsScreen() {
                   key={tab}
                   style={[styles.segBtn, activeTab === tab && styles.segBtnActive]}
                   onPress={() => setActiveTab(tab)}
+                  accessibilityLabel={tab === 'trips' ? 'Trips' : 'Events'}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: activeTab === tab }}
                 >
                   <Text style={[styles.segLabel, activeTab === tab && styles.segLabelActive]}>
                     {tab === 'trips' ? 'Trips' : 'Events'}
@@ -396,6 +413,9 @@ function TripsScreen() {
                   key={tab}
                   style={[styles.segBtn, activeTab === tab && styles.segBtnActive]}
                   onPress={() => setActiveTab(tab)}
+                  accessibilityLabel={tab === 'trips' ? 'Trips' : 'Events'}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: activeTab === tab }}
                 >
                   <Text style={[styles.segLabel, activeTab === tab && styles.segLabelActive]}>
                     {tab === 'trips' ? 'Trips' : 'Events'}

@@ -1,3 +1,15 @@
+/**
+ * Appeals screen — intentionally unlinked from direct in-app navigation.
+ *
+ * This screen is reached exclusively via deep link. The API server's push
+ * notification handlers (src/routes/appeals.ts) send notifications with
+ * `action_url: "/appeals"`, which resolves to this route when the user taps
+ * the notification. It must remain registered as a route even though no
+ * router.push('/appeals') call exists in the app source.
+ *
+ * Do NOT add this screen to any navigation menu; it should only open via
+ * the notification deep-link path.
+ */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
