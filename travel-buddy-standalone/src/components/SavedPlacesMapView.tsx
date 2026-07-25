@@ -17,6 +17,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
 import type { CameraRef, LngLatBounds } from '@maplibre/maplibre-react-native';
 import { MapPin, Route, X } from 'lucide-react-native';
+import { getPlaceCategoryFallback } from '../utils/placeCategoryFallback.ts';
 import type { BookmarkedPlace } from '../services/discoveryBookmarks.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import {
@@ -99,11 +100,12 @@ interface CalloutCardProps {
 }
 
 function CalloutCard({ place, onPlanRoute, onDismiss }: CalloutCardProps) {
+  const fallback = getPlaceCategoryFallback(place.category);
   return (
     <View style={card.wrap}>
       <View style={card.header}>
-        <View style={card.icon}>
-          <MapPin size={14} color={color.signal} />
+        <View style={[card.icon, { backgroundColor: fallback.color + '20' }]}>
+          <Text style={{ fontSize: 16 }}>{fallback.emoji}</Text>
         </View>
         <View style={{ flex: 1 }}>
           <Text style={card.name} numberOfLines={1}>{place.name}</Text>

@@ -7,7 +7,7 @@
  */
 import React, { useState, useCallback, useRef } from 'react';
 import {
-  View, Text, ScrollView, FlatList, StyleSheet,
+  View, Text, ScrollView, FlatList, StyleSheet, Image,
   ActivityIndicator, Pressable, Animated, TextInput, Modal,
 } from 'react-native';
 import { useFocusEffect, router } from 'expo-router';
@@ -20,6 +20,7 @@ import {
   type Collection, type CollectionItem,
 } from '../src/services/collections';
 import { withOptimisticRemoveBool } from '../src/utils/optimisticRemove';
+import { getPlaceCategoryFallback } from '../src/utils/placeCategoryFallback';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
 import {
@@ -106,18 +107,48 @@ function CollectionCard({ col, onPress, onDelete, onRename }: CollectionCardProp
 }
 
 // ── Collection item row ────────────────────────────────────────────────────────
+function PlaceThumb({ coverUrl }: { coverUrl: string | null }) {
+  const fallback = getPlaceCategoryFallback('places');
+  const [failed, setFailed] = React.useState(false);
+  if (coverUrl && !failed) {
+    return (
+      <View style={s.placeThumb} testID="place-collection-thumb">
+        <Image
+          source={{ uri: coverUrl }}
+          style={s.placeThumbImg}
+          resizeMode="cover"
+          onError={() => setFailed(true)}
+        />
+      </View>
+    );
+  }
+  return (
+    <View
+      style={[s.placeThumb, s.placeThumbFallback, { backgroundColor: fallback.color + '20' }]}
+      testID="place-collection-thumb"
+    >
+      <Text style={s.placeThumbEmoji}>{fallback.emoji}</Text>
+    </View>
+  );
+}
+
 function CollectionItemRow({ item }: { item: CollectionItem }) {
   const dest = routeForItem(item);
+  const isPlace = item.entityType === 'place';
   const inner = (
     <View style={s.itemRow}>
-      <View style={s.itemIcon}>
-        <EntityIcon type={item.entityType} size={15} />
-      </View>
+      {isPlace ? (
+        <PlaceThumb coverUrl={item.coverUrl} />
+      ) : (
+        <View style={s.itemIcon}>
+          <EntityIcon type={item.entityType} size={15} />
+        </View>
+      )}
       <View style={s.itemBody}>
         <Text style={s.itemTitle} numberOfLines={1}>
           {item.title ?? item.entityId.slice(0, 8)}
         </Text>
-        <Text style={s.itemMeta}>{item.entityType}</Text>
+        <Text style={s.itemMeta}>{isPlace ? 'Place' : item.entityType}</Text>
       </View>
       {dest ? <NavArrow size={14} color={color.faint} /> : null}
     </View>
@@ -607,6 +638,12 @@ const s = StyleSheet.create({
   itemBody:  { flex: 1, gap: 2 },
   itemTitle: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   itemMeta:  { ...t.small, color: color.mute, fontSize: 11, textTransform: 'capitalize' },
+
+  // Place-specific thumbnail
+  placeThumb:         { width: 40, height: 40, borderRadius: radius.sm, overflow: 'hidden' },
+  placeThumbImg:      { width: 40, height: 40 },
+  placeThumbFallback: { alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: color.haze },
+  placeThumbEmoji:    { fontSize: 18 },
 
   modalBackdrop: {
     ...StyleSheet.absoluteFillObject,

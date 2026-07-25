@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import {
-  View, Text, Pressable, ActivityIndicator, StyleSheet,
+  View, Text, Pressable, ActivityIndicator, StyleSheet, Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import {
   UserPlus, UserCheck, MapPin, Bookmark, BookmarkCheck,
-  Clock, Lock,
+  Clock, Lock, Star,
 } from 'lucide-react-native';
+import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 import { UserAvatarButton } from '../interaction/UserAvatarButton.tsx';
 import { followUser, unfollowUser } from '../../services/follows.ts';
 import { rsvpEvent } from '../../services/events.ts';
@@ -68,6 +69,41 @@ const TYPE_BADGE_TEXT: Record<string, string> = {
 // TypeIcon + resolveRoute now live in ./searchNav (shared with the
 // typeahead SearchSuggestionsPanel so both surfaces stay in lockstep).
 
+// ── Place image with category emoji fallback ──────────────────────────────────
+
+function PlaceImageThumbnail({ imageUrl, category, size }: {
+  imageUrl: string | null;
+  category: string;
+  size: number;
+}) {
+  const fallback = getPlaceCategoryFallback(category);
+  const [imgFailed, setImgFailed] = React.useState(false);
+  if (imageUrl && !imgFailed) {
+    return (
+      <View style={[thumbStyles.wrap, { width: size, height: size }]} testID="place-result-image">
+        <Image
+          source={{ uri: imageUrl }}
+          style={{ width: size, height: size }}
+          resizeMode="cover"
+          onError={() => setImgFailed(true)}
+        />
+      </View>
+    );
+  }
+  return (
+    <View
+      style={[
+        thumbStyles.wrap,
+        thumbStyles.fallback,
+        { width: size, height: size, backgroundColor: fallback.color + '20' },
+      ]}
+      testID="place-result-fallback"
+    >
+      <Text style={{ fontSize: size * 0.38 }}>{fallback.emoji}</Text>
+    </View>
+  );
+}
+
 /** Renders an initials pill consistent with the shared avatar style. */
 function InitialsFallback({ initials, size }: { initials: string; size: number }) {
   return (
@@ -125,7 +161,12 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
   const isTraveler = result.type === 'travelers' || result.type === 'buddies';
   const isEvent = result.type === 'events';
   const isTrip = result.type === 'trips' || result.type === 'plans';
+  const isPlace = result.type === 'places' || result.type === 'hidden_gems';
   const isSaveable = result.type === 'places' || result.type === 'hidden_gems' || result.type === 'posts';
+
+  const placeCategory = (result.metadata?.category as string | undefined) ?? 'places';
+  const placeRating = result.metadata?.rating != null ? Number(result.metadata.rating) : null;
+  const placeIsOpen = result.metadata?.isOpenNow as boolean | undefined;
 
   const label = TYPE_LABELS[result.type] ?? result.type;
   const badgeBg = TYPE_BADGE_BG[result.type] ?? color.haze;
@@ -240,7 +281,7 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
 
   return (
     <Pressable style={styles.row} onPress={navigate}>
-      {/* Left — shared UserAvatarButton for travelers/buddies, icon square for others */}
+      {/* Left — UserAvatarButton for travelers/buddies, image+fallback for places, icon for others */}
       {isTraveler ? (
         <View style={styles.avatarCircle}>
           <UserAvatarButton
@@ -253,6 +294,12 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
             {initialsChild}
           </UserAvatarButton>
         </View>
+      ) : isPlace ? (
+        <PlaceImageThumbnail
+          imageUrl={result.imageUrl}
+          category={placeCategory}
+          size={AVATAR_SIZE}
+        />
       ) : (
         <View style={styles.avatarSquare}>
           <TypeIcon type={result.type} />
@@ -283,6 +330,31 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
 
         {!!result.matchedReason && (
           <Text style={styles.reason} numberOfLines={1}>{result.matchedReason}</Text>
+        )}
+
+        {/* Rating / open status for place results */}
+        {isPlace && (placeRating != null || placeIsOpen != null) && (
+          <View style={styles.placeMetaRow}>
+            {placeRating != null && (
+              <>
+                <Star size={10} color="#F59E0B" fill="#F59E0B" />
+                <Text style={styles.placeRatingText}>{placeRating.toFixed(1)}</Text>
+              </>
+            )}
+            {placeIsOpen != null && (
+              <View style={[
+                styles.placeOpenBadge,
+                { backgroundColor: placeIsOpen ? '#16A34A18' : '#DC262618' },
+              ]}>
+                <Text style={[
+                  styles.placeOpenText,
+                  { color: placeIsOpen ? '#16A34A' : '#DC2626' },
+                ]}>
+                  {placeIsOpen ? 'Open' : 'Closed'}
+                </Text>
+              </View>
+            )}
+          </View>
         )}
       </View>
 
@@ -403,6 +475,11 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
 
 const AVATAR_SIZE = 44;
 
+const thumbStyles = StyleSheet.create({
+  wrap:     { borderRadius: 8, overflow: 'hidden' },
+  fallback: { alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#E8E8E8' },
+});
+
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
@@ -474,6 +551,10 @@ const styles = StyleSheet.create({
     color: color.mute,
     marginTop: 0,
   },
+  placeMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  placeRatingText: { fontSize: 11, color: '#1A1A2E', fontWeight: '600' as const },
+  placeOpenBadge:  { borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 },
+  placeOpenText:   { fontSize: 10, fontWeight: '600' as const },
   locationRow: {
     flexDirection: 'row',
     alignItems: 'center',

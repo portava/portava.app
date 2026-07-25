@@ -18,7 +18,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator,
 } from 'react-native';
-import { Sparkles, CheckCircle, Navigation, Settings2 } from 'lucide-react-native';
+import { Sparkles, CheckCircle, Navigation, Settings2, MapPin } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { useCompassFeed } from '../../hooks/compass/useCompassFeed.ts';
@@ -27,6 +27,7 @@ import { CompassFeedbackMenu } from './CompassFeedbackMenu.tsx';
 import { postCompassAnalyticsEvent, COMPASS_ENGINE_VERSION } from '../../services/compass.ts';
 import type { CompassFeedItem } from '../../services/compass.ts';
 import { resolveCompassTitle, formatCompassSubtitle, formatCompassContext, resolveCompassCategory } from '../../utils/compassFormat.ts';
+import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 
 // ── Action label mapping ──────────────────────────────────────────────────────
 
@@ -72,6 +73,13 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
   const subtitle   = formatCompassSubtitle(item);
   const city       = (item.data?.city as string) ?? null;
 
+  // Place-specific enrichment
+  const isPlace      = (item.type ?? '') === 'place';
+  const placeFallback = isPlace ? getPlaceCategoryFallback(item.category ?? '') : null;
+  const placeAddress  = isPlace
+    ? ((item.data?.neighborhood as string | undefined) ?? (item.data?.address as string | undefined) ?? null)
+    : null;
+
   function navigateToItem() {
     const type = item.type ?? '';
     if (type === 'event') {
@@ -82,7 +90,7 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
     } else if (type === 'place') {
       router.push('/(tabs)/discovery' as any);
     } else if (type === 'traveler' || type === 'user') {
-      const handle = (item.data?.handle as string | undefined) ?? (item.data?.username as string | undefined);
+      const handle = (item.data?.username as string | undefined) ?? (item.data?.handle as string | undefined);
       router.push((handle ? `/u/${encodeURIComponent(handle)}` : '/(tabs)/discovery') as any);
     } else if (type === 'post') {
       router.push(`/post/${item.id}` as any);
@@ -105,6 +113,13 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
 
   return (
     <Pressable style={({ pressed }) => [s.card, pressed && { opacity: 0.85 }]} onPress={navigateToItem}>
+      {/* Category emoji header for place items */}
+      {placeFallback && (
+        <View style={[s.emojiHeader, { backgroundColor: placeFallback.color + '18' }]}>
+          <Text style={s.emojiText}>{placeFallback.emoji}</Text>
+        </View>
+      )}
+
       {/* Row 1: type chip + overflow menu */}
       <View style={s.typeRow}>
         <View style={s.typeChip}>
@@ -132,6 +147,14 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
         <View style={s.cityRow}>
           <Navigation size={9} color={color.faint} />
           <Text style={s.cityText} numberOfLines={1}>{subtitle}</Text>
+        </View>
+      ) : null}
+
+      {/* Address / neighborhood for place picks */}
+      {placeAddress ? (
+        <View style={s.cityRow}>
+          <MapPin size={9} color={color.faint} />
+          <Text style={s.cityText} numberOfLines={1} testID="compass-pick-address">{placeAddress}</Text>
         </View>
       ) : null}
 
@@ -358,6 +381,17 @@ const s = StyleSheet.create({
     paddingHorizontal: space.lg,
     gap: space.sm,
     paddingRight: space.xl,
+  },
+  // Category emoji header for place picks
+  emojiHeader: {
+    borderRadius: radius.sm,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    alignSelf: 'flex-start',
+    marginBottom: 2,
+  },
+  emojiText: {
+    fontSize: 18,
   },
   // Card
   card: {

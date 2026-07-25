@@ -19,6 +19,7 @@ import { Avatar } from './ui.tsx';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
 import type { EventListItem, EventRsvpStatus } from '../services/events.ts';
 import { primaryIdentityText } from '../lib/displayIdentity.ts';
+import { openInMaps } from '../lib/openInMaps.ts';
 
 interface Props {
   event: EventListItem;
@@ -170,14 +171,23 @@ export function EventDiscoveryCard({ event, onPress, onHostPress, onRsvp, isSave
           <Text style={styles.meta} numberOfLines={1}>{formatDate(event.startsAt)}</Text>
         </View>
 
-        {/* Row 4: location */}
+        {/* Row 4: location — tappable to open in maps when coordinates are available */}
         {(event.locationName || event.city) && (
-          <View style={styles.metaRow}>
-            <MapPin size={11} color={color.mute} />
+          <Pressable
+            style={styles.metaRow}
+            onPress={event.locationLat != null && event.locationLng != null
+              ? (e) => { e.stopPropagation?.(); openInMaps(event.locationLat!, event.locationLng!); }
+              : undefined}
+            hitSlop={4}
+          >
+            <MapPin
+              size={11}
+              color={event.locationLat != null && event.locationLng != null ? color.signal : color.mute}
+            />
             <Text style={styles.meta} numberOfLines={1}>
               {event.locationName ?? ''}{event.locationName && event.city ? ', ' : ''}{event.city ?? ''}
             </Text>
-          </View>
+          </Pressable>
         )}
 
         {/* Row 5: host strip (avatar + name + verified badge) */}

@@ -71,9 +71,9 @@ export function StampCard({ stamp, isOwner, onPress }: Props) {
         <View style={[styles.rarityDot, { backgroundColor: rarityColor }]} />
       )}
 
-      {(stamp.city || stamp.country) && (
+      {(stamp.neighborhood || stamp.city || stamp.country) && (
         <Text style={styles.location} numberOfLines={1}>
-          {[stamp.city, stamp.country].filter(Boolean).join(', ')}
+          {[stamp.neighborhood, stamp.city, stamp.country].filter(Boolean).join(', ')}
         </Text>
       )}
 

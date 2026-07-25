@@ -27,6 +27,7 @@ import {
   type CompassUiBlock, type CompassUiPlace, type CompassUiEvent, type CompassUiPerson,
   type CompassComparisonRow, type CompassAskPayload, type CompassUiConfidence,
 } from '../../services/compass.ts';
+import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 import { formatCompassEventChip } from '../../utils/compassFormat.ts';
 import { CompassMiniMap } from './CompassMiniMap';
 import { CompassWhySheet } from './CompassWhySheet.tsx';
@@ -227,6 +228,7 @@ function PlaceBlockCard({ place, onAddToPlan }: {
 }) {
   const openPlace = usePlaceNavigation();
   const [whyOpen, setWhyOpen] = useState(false);
+  const placeFallback = getPlaceCategoryFallback(place.category ?? '');
   return (
     <>
       <Pressable
@@ -236,7 +238,7 @@ function PlaceBlockCard({ place, onAddToPlan }: {
         accessibilityLabel={`View ${place.name}`}
         testID={`compass-block-place-${place.id}`}
       >
-        <View style={[s.strip, { backgroundColor: color.signal }]} />
+        <View style={[s.strip, { backgroundColor: placeFallback.color }]} />
         <View style={s.cardBody}>
           <View style={s.titleRow}>
             <Text style={s.cardTitle} numberOfLines={1}>{place.name}</Text>
