@@ -158,7 +158,7 @@ export function CompassHome({
     if (move.type === 'event')                          router.push(`/event/${move.id}` as any);
     else if (move.type === 'hidden_gem')                router.push(`/gems/${move.id.replace(/^gem:/, '')}` as any);
     else if (move.type === 'place')                     router.push('/(tabs)/discovery' as any);
-    else if (move.type === 'traveler' || move.type === 'user') router.push(`/profile/${move.id}` as any);
+    else if (move.type === 'traveler' || move.type === 'user') router.push('/(tabs)/discovery' as any);
     else if (move.type === 'post')                      router.push(`/post/${move.id}` as any);
     else onAsk(`Tell me more about ${move.title ?? 'your top pick for me'}.`);
   }

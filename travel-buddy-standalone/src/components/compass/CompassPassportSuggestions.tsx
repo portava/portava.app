@@ -84,7 +84,6 @@ function SuggestionCard({
       if (followState === 'following' || followState === 'requested') {
         // Already following → go to profile
         if (handle) router.push(`/u/${encodeURIComponent(handle)}` as any);
-        else if (item.id) router.push(`/profile/${item.id}` as any);
         else router.push('/(tabs)/discovery' as any);
       } else if (followState === 'none' && item.id) {
         // Follow the user
@@ -95,7 +94,6 @@ function SuggestionCard({
         } else {
           onFollowStateChange?.(item.id, 'none');
           if (handle) router.push(`/u/${encodeURIComponent(handle)}` as any);
-          else if (item.id) router.push(`/profile/${item.id}` as any);
           else router.push('/(tabs)/discovery' as any);
         }
       } else {

@@ -315,7 +315,7 @@ export default function LayoverDashboardScreen() {
           buddies={buddies}
           canEdit={!!canEdit}
           onToggleShare={handleToggleShare}
-          onOpenBuddy={(b) => router.push(`/buddy/${b.id}` as any)}
+          onOpenBuddy={(b) => router.push(`/(rent-a-buddy)/buddy/${b.id}` as any)}
         />
       </ScrollView>
       </KeyboardSafeScrollView>
