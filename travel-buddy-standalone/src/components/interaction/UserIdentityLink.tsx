@@ -88,8 +88,9 @@ export function UserIdentityLink({
     userId ? (blockedIds.has(userId) || blockerIds.has(userId)) : false;
 
   function handlePress() {
-    if (disabled || isLoading || isBlocked || !handle) return;
-
+    if (disabled || isBlocked || !handle) return;
+    // If the block list is still loading, navigate anyway — the profile screen
+    // itself enforces the block on arrival.
     try {
       if (userId && currentUserId && userId === currentUserId) {
         // Self-tap → own Passport tab
@@ -105,7 +106,7 @@ export function UserIdentityLink({
   return (
     <Pressable
       onPress={handlePress}
-      disabled={disabled || isLoading || !handle}
+      disabled={disabled || !handle}
       testID={testID}
       style={style}
       // Ensure the pressable doesn't eat pointer events when children are interactive

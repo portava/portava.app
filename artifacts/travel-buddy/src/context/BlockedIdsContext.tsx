@@ -30,15 +30,20 @@ export function BlockedIdsProvider({ children }: { children: React.ReactNode }) 
   const load = useCallback(async () => {
     if (!configured || !isAuthed) return;
     setIsLoading(true);
-    const [blockRes, blockerRes] = await Promise.all([getBlockList(), getBlockerIds()]);
-    setIsLoading(false);
-    if (blockRes.ok && blockRes.data) {
-      setIds(new Set(blockRes.data.map((b) => b.id)));
+    try {
+      const [blockRes, blockerRes] = await Promise.all([getBlockList(), getBlockerIds()]);
+      if (blockRes.ok && blockRes.data) {
+        setIds(new Set(blockRes.data.map((b) => b.id)));
+      }
+      if (blockerRes.ok && blockerRes.data) {
+        setReverseIds(new Set(blockerRes.data));
+      }
+      loaded.current = true;
+    } finally {
+      // Always clear the loading flag even when a fetch hangs or throws,
+      // so identity buttons are never permanently disabled.
+      setIsLoading(false);
     }
-    if (blockerRes.ok && blockerRes.data) {
-      setReverseIds(new Set(blockerRes.data));
-    }
-    loaded.current = true;
   }, [configured, isAuthed]);
 
   useEffect(() => {

@@ -19,7 +19,9 @@ export function UserAvatarButton({ userId, handle, avatarUrl, size = 40, childre
   const isBlocked = blockedIds.has(userId) || blockerIds.has(userId);
 
   function handlePress() {
-    if (disabled || isBlocked || isLoading || !handle) return;
+    if (disabled || isBlocked || !handle) return;
+    // If the block list is still loading, navigate anyway — the block check
+    // will be live on the profile screen itself.
     router.push(`/u/${handle}` as any);
   }
 
@@ -32,7 +34,7 @@ export function UserAvatarButton({ userId, handle, avatarUrl, size = 40, childre
   }
 
   return (
-    <Pressable onPress={handlePress} disabled={disabled || isLoading || !handle}>
+    <Pressable onPress={handlePress} disabled={disabled || !handle}>
       {children ?? (
         <AvatarImage
           uri={avatarUrl}

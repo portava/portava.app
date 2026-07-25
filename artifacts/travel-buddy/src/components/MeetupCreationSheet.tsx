@@ -877,7 +877,7 @@ const sub = StyleSheet.create({
 // ── Main styles ───────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
-  kav:              { position: 'absolute', bottom: 0, left: 0, right: 0 },
+  kav:              { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 },
   backdrop:         { flex: 1, justifyContent: 'flex-end' },
   sheet:            { backgroundColor: color.paperRaised, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderWidth: 1, borderColor: color.haze, maxHeight: '92%' },
   sheetHead:        { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, paddingTop: space.lg, paddingBottom: space.md, borderBottomWidth: 1, borderBottomColor: color.haze },
@@ -901,7 +901,7 @@ const s = StyleSheet.create({
   inviteBody:       { gap: space.sm, marginTop: space.xs },
   searchRow:        { flexDirection: 'row', alignItems: 'center', gap: space.sm, backgroundColor: color.paper, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, paddingHorizontal: space.md, paddingVertical: space.sm },
   searchInput:      { flex: 1, ...t.body, color: color.ink, padding: 0 },
-  candidateList:    { gap: 2, maxHeight: 240 },
+  candidateList:    { gap: 2 },
   candidateRow:     { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: 'transparent' },
   candidateRowActive: { backgroundColor: '#FFF0ED', borderColor: color.signal },
   candidateName:    { ...t.bodyStrong, color: color.ink, fontWeight: '600', fontSize: 14 },

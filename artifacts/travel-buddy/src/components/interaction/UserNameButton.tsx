@@ -19,7 +19,7 @@ export function UserNameButton({ userId, handle, displayName, style, numberOfLin
   const isBlocked = blockedIds.has(userId) || blockerIds.has(userId);
 
   function handlePress() {
-    if (disabled || isBlocked || isLoading || !handle) return;
+    if (disabled || isBlocked || !handle) return;
     router.push(`/u/${handle}` as any);
   }
 
@@ -32,7 +32,7 @@ export function UserNameButton({ userId, handle, displayName, style, numberOfLin
   }
 
   return (
-    <Pressable onPress={handlePress} disabled={disabled || isLoading || !handle}>
+    <Pressable onPress={handlePress} disabled={disabled || !handle}>
       <Text style={[styles.name, style]} numberOfLines={numberOfLines}>
         {primaryIdentityText({ displayName, handle })}
       </Text>

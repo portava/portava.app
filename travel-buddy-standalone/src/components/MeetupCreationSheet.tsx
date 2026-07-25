@@ -877,7 +877,7 @@ const sub = StyleSheet.create({
 // ── Main styles ───────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
-  kav:              { position: 'absolute', bottom: 0, left: 0, right: 0 },
+  kav:              { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 },
   backdrop:         { flex: 1, justifyContent: 'flex-end' },
   sheet:            { backgroundColor: color.paperRaised, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderWidth: 1, borderColor: color.haze, maxHeight: '92%' },
   sheetHead:        { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, paddingTop: space.lg, paddingBottom: space.md, borderBottomWidth: 1, borderBottomColor: color.haze },
