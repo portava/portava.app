@@ -12,17 +12,7 @@ export interface CompassMiniMapPoint {
   lng: number;
 }
 
-/** Great-circle distance in kilometres (haversine). */
-export function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
-  const R = 6371;
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(bLat - aLat);
-  const dLng = toRad(bLng - aLng);
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(h));
-}
+export { haversineKm } from '../../utils/geoDistance.ts';
 
 /** "850 m" under 1 km, otherwise "1.2 km" (one decimal under 10, whole above). */
 export function formatDistanceKm(km: number): string {
