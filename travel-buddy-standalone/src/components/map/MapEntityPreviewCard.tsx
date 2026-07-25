@@ -29,6 +29,7 @@ import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
 import { AvatarImage, DisplayMediaImage } from '../ui/DisplayMediaImage.tsx';
 import type { MapEntity, PassportCountryPayload } from '../../types/mapTypes.ts';
+import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 import { MapEntityActionRow } from './MapEntityActionRow.tsx';
 import type { BuddyProfile } from '../../services/rentABuddy.ts';
 import type { EventListItem } from '../../services/events.ts';
@@ -293,27 +294,50 @@ function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onC
     ? (place as any).attribution as string[]
     : [];
   const detailRoute = entity.detailRoute ?? '/(tabs)/discovery';
+
+  // Category fallback descriptor — used when no real cover image is available.
+  const fallbackDesc = getPlaceCategoryFallback(place.category);
+  // Use specific sub-type label (e.g. "café") if available, otherwise category.
+  const typeLabel = (place.type ?? place.category).replace(/_/g, ' ');
+
   return (
     <>
       <View style={s.topRow}>
-        <View style={[s.iconCircle, { backgroundColor: cfg.color }]}>
-          <MapPin size={20} color="#fff" />
+        {/* Image circle — shows cover if available, category fallback otherwise */}
+        <View style={[s.iconCircle, { backgroundColor: fallbackDesc.color + '22' }]}>
+          <DisplayMediaImage
+            uri={(place as any).headerImageUrl ?? null}
+            width={46}
+            height={46}
+            style={s.iconImg}
+            resizeMode="cover"
+            alt={place.name}
+            fallback={
+              <View
+                testID="map-preview-fallback"
+                style={[s.iconCircle, { backgroundColor: fallbackDesc.color + '33' }]}
+              >
+                <Text style={s.fallbackEmoji}>{fallbackDesc.emoji}</Text>
+              </View>
+            }
+          />
         </View>
         <View style={s.topText}>
           <Text style={s.primaryText} numberOfLines={1}>{place.name}</Text>
-          {place.address ? (
-            <Text style={s.secondaryText} numberOfLines={1}>{place.address}</Text>
-          ) : place.category ? (
-            <Text style={s.secondaryText} numberOfLines={1}>
-              {place.category.replace('_', ' ')}
-            </Text>
-          ) : null}
+          {/* Specific type label — never just raw category */}
+          <Text style={s.secondaryText} numberOfLines={1} testID="place-preview-type">
+            {typeLabel}
+          </Text>
         </View>
       </View>
       <View style={s.chipRow}>
-        {place.category ? (
+        {/* Address or neighborhood on a chip */}
+        {(place.address || (place as any).neighborhood) ? (
           <View style={s.chip}>
-            <Text style={s.chipText}>{place.category.replace('_', ' ')}</Text>
+            <MapPin size={10} color={color.mute} />
+            <Text style={s.chipText} numberOfLines={1}>
+              {(place as any).neighborhood ?? place.address}
+            </Text>
           </View>
         ) : null}
         {place.rating != null && (
@@ -594,6 +618,11 @@ const s = StyleSheet.create({
   placeAttributionRow: {
     marginTop: 4,
     gap: 2,
+  },
+  fallbackEmoji: {
+    fontSize: 18,
+    lineHeight: 24,
+    textAlign: 'center',
   },
   placeAttributionText: {
     fontSize: 10,

@@ -64,6 +64,8 @@ import type { PreviewDetent } from '../../stores/mapStore.tsx';
 import { MapEntityActionRow } from './MapEntityActionRow.tsx';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
 import type { MapEntity, PassportCountryPayload } from '../../types/mapTypes.ts';
+import { DisplayMediaImage, MediaFallback } from '../ui/DisplayMediaImage.tsx';
+import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 import type { BuddyProfile } from '../../services/rentABuddy.ts';
 import type { EventListItem } from '../../services/events.ts';
 import type { HiddenGem } from '../../services/hiddenGems.ts';
@@ -435,32 +437,49 @@ function FriendCardBody({ entity }: { entity: MapEntity<CircleMemberLocation> })
 
 function PlaceCardBody({ entity }: { entity: MapEntity<DiscoveryPlace> }) {
   const place = entity.payload;
-  const cfg = MAP_LAYER_CONFIG.places;
   // attribution may be an array (canonical place) or a single string / null (discovery place).
   const attributionList: string[] = Array.isArray((place as any).attribution)
     ? (place as any).attribution as string[]
     : [];
+  // Category fallback — never show a plain MapPin icon; use themed emoji instead.
+  const fallbackDesc = getPlaceCategoryFallback(place.category);
+  // Specific sub-type label (e.g. "café") if available, otherwise category.
+  const typeLabel = (place.type ?? place.category).replace(/_/g, ' ');
+
   return (
     <>
       <View style={cs.topRow}>
-        <View style={[cs.iconCircle, { backgroundColor: cfg.color }]}>
-          <MapPin size={18} color="#fff" />
+        <View style={[cs.iconCircle, { backgroundColor: fallbackDesc.color + '22' }]}>
+          <DisplayMediaImage
+            uri={(place as any).headerImageUrl ?? null}
+            width={46}
+            height={46}
+            style={cs.iconImg}
+            resizeMode="cover"
+            alt={place.name}
+            fallback={
+              <MediaFallback
+                icon={<Text style={cs.placeEmoji}>{fallbackDesc.emoji}</Text>}
+                bg={fallbackDesc.color + '33'}
+                style={cs.iconImg}
+              />
+            }
+          />
         </View>
         <View style={cs.topText}>
           <Text style={cs.primaryText} numberOfLines={1}>{place.name}</Text>
-          {place.address ? (
-            <Text style={cs.secondaryText} numberOfLines={1}>{place.address}</Text>
-          ) : place.category ? (
-            <Text style={cs.secondaryText} numberOfLines={1}>
-              {place.category.replace('_', ' ')}
-            </Text>
-          ) : null}
+          {/* Specific place type label — never text-only */}
+          <Text style={cs.secondaryText} numberOfLines={1}>{typeLabel}</Text>
         </View>
       </View>
       <View style={cs.chipRow}>
-        {place.category ? (
+        {/* Address / neighborhood chip */}
+        {(place.address || (place as any).neighborhood) ? (
           <View style={cs.chip}>
-            <Text style={cs.chipText}>{place.category.replace('_', ' ')}</Text>
+            <MapPin size={10} color={color.mute} />
+            <Text style={cs.chipText} numberOfLines={1}>
+              {(place as any).neighborhood ?? place.address}
+            </Text>
           </View>
         ) : null}
         {place.rating != null && (
@@ -1459,6 +1478,12 @@ const cs = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  // Place emoji in category fallback
+  placeEmoji: {
+    fontSize: 18,
+    lineHeight: 24,
+    textAlign: 'center',
   },
   // Place attribution footer (canonical place sources)
   attributionRow: {

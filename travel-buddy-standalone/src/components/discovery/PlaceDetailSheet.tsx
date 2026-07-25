@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Linking,
 } from 'react-native';
@@ -10,6 +10,43 @@ import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { categoryColor } from './PlaceCard.tsx';
 import { TripWishlistPicker } from './TripWishlistPicker.tsx';
 import { usePlainBottomInset } from '../../hooks/useBottomInset.ts';
+import { DisplayMediaImage, MediaFallback } from '../ui/DisplayMediaImage.tsx';
+import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
+import { useLocationContext } from '../../context/LocationContext.tsx';
+
+const SHEET_IMAGE_HEIGHT = 180;
+
+// ── Haversine distance (km) ───────────────────────────────────────────────────
+
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLng = (lng2 - lng1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * (Math.PI / 180)) *
+    Math.cos(lat2 * (Math.PI / 180)) *
+    Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// ── Travel-time label ─────────────────────────────────────────────────────────
+
+function travelTimeLabel(distKm: number): string {
+  if (distKm < 2) {
+    const walkMin = Math.max(1, Math.round(distKm * 12)); // ~5 km/h walking
+    return `${walkMin} min walk`;
+  }
+  if (distKm < 6) {
+    const walkMin = Math.round(distKm * 12);
+    const driveMin = Math.max(1, Math.round(distKm * 2)); // ~30 km/h city
+    return `${walkMin} min walk · ${driveMin} min drive`;
+  }
+  const driveMin = Math.max(1, Math.round(distKm * 2));
+  return `~${driveMin} min drive`;
+}
+
+// ── Props ─────────────────────────────────────────────────────────────────────
 
 interface PlaceDetailSheetProps {
   place: DiscoveryPlace | null;
@@ -25,6 +62,9 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
   const [saved, setSaved]               = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [liveStatus, setLiveStatus]     = useState<PlaceLiveStatus | null>(null);
+
+  // User location — used to compute distance when place.distanceKm is absent.
+  const { resolvedLocation } = useLocationContext();
 
   useEffect(() => {
     if (place) {
@@ -51,9 +91,20 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
       ? liveStatus.openNow
       : null;
 
+  // Effective distance — prefer server-supplied value, fall back to computing
+  // from the user's resolved location coords.
+  const distanceKm = useMemo<number | null>(() => {
+    if (place?.distanceKm != null) return place.distanceKm;
+    if (!place || place.lat == null || place.lng == null) return null;
+    const coords = resolvedLocation?.coords;
+    if (!coords) return null;
+    return haversineKm(coords.lat, coords.lng, place.lat, place.lng);
+  }, [place, resolvedLocation]);
+
   if (!place) return null;
 
   const accent = categoryColor(place.category);
+  const fallbackDesc = getPlaceCategoryFallback(place.category);
 
   const openWeb = () => {
     if (place.website) Linking.openURL(place.website).catch(() => {});
@@ -96,24 +147,49 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
         {/* Handle */}
         <View style={styles.handle} />
 
-        {/* Header */}
+        {/* Image header — category fallback when no real image available */}
+        <View style={styles.imageWrap}>
+          <DisplayMediaImage
+            uri={place.headerImageUrl ?? null}
+            width={0}
+            height={SHEET_IMAGE_HEIGHT}
+            style={styles.sheetImage}
+            resizeMode="cover"
+            alt={place.name}
+            fallback={
+              <MediaFallback
+                icon={<Text style={styles.fallbackEmoji}>{fallbackDesc.emoji}</Text>}
+                label={fallbackDesc.label}
+                bg={fallbackDesc.color + '33'}
+                style={StyleSheet.absoluteFill}
+              />
+            }
+            testID="place-sheet-image"
+          />
+          {/* Open/closed overlay on image */}
+          {liveOpenNow != null && (
+            <View
+              style={[styles.liveOverlay, liveOpenNow ? styles.liveOverlayOpen : styles.liveOverlayClosed]}
+              testID={`place-open-now-${place.id}`}
+              accessibilityLabel={liveOpenNow ? 'Open now — verified live' : 'Closed now — verified live'}
+            >
+              <Text style={[styles.liveOverlayText, { color: liveOpenNow ? '#047857' : '#B91C1C' }]}>
+                {liveOpenNow ? 'Open now' : 'Closed now'}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* Header row: name + type + save + close */}
         <View style={styles.header}>
           <View style={[styles.accentDot, { backgroundColor: accent }]} />
           <View style={{ flex: 1 }}>
             <Text style={styles.name} numberOfLines={2}>{place.name}</Text>
             <View style={styles.typeRow}>
-              {place.type ? (
-                <Text style={[styles.type, { color: accent }]}>{capitalize(place.type)}</Text>
-              ) : null}
-              {liveOpenNow != null ? (
-                <Text
-                  style={[styles.openPill, liveOpenNow
-                    ? { color: '#047857', backgroundColor: '#04785716' }
-                    : { color: '#B91C1C', backgroundColor: '#B91C1C16' }]}
-                  testID={`place-open-now-${place.id}`}
-                  accessibilityLabel={liveOpenNow ? 'Open now — verified live' : 'Closed now — verified live'}
-                >
-                  {liveOpenNow ? 'Open now' : 'Closed now'}
+              {/* Specific place type label */}
+              {(place.type || place.category) ? (
+                <Text style={[styles.type, { color: accent }]}>
+                  {capitalize(place.type ?? place.category)}
                 </Text>
               ) : null}
             </View>
@@ -142,14 +218,16 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
           contentContainerStyle={[styles.content, { paddingBottom: plainInset }]}
           showsVerticalScrollIndicator={false}
         >
-          {/* Distance */}
-          {place.distanceKm != null && (
-            <View style={styles.infoRow}>
+          {/* Distance + travel time */}
+          {distanceKm != null && (
+            <View style={styles.infoRow} testID="place-sheet-distance">
               <MapPin size={15} color={color.mute} />
               <Text style={styles.infoText}>
-                {place.distanceKm < 1
-                  ? `${Math.round(place.distanceKm * 1000)}m from city centre`
-                  : `${place.distanceKm}km from city centre`}
+                {distanceKm < 1
+                  ? `${Math.round(distanceKm * 1000)} m away`
+                  : `${distanceKm.toFixed(1)} km away`}
+                {' · '}
+                <Text style={styles.travelTime}>{travelTimeLabel(distanceKm)}</Text>
               </Text>
             </View>
           )}
@@ -180,7 +258,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
               <Text style={styles.infoText}>
                 {place.openingHours}
                 {liveStatus != null && liveOpenNow == null ? (
-                  <Text style={styles.lastKnownNote}>  · Last known hours — can’t verify live</Text>
+                  <Text style={styles.lastKnownNote}>  · Last known hours — can't verify live</Text>
                 ) : null}
               </Text>
             </View>
@@ -224,26 +302,30 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
             </View>
           )}
 
-          {/* Links */}
-          {(place.website || place.phone) && (
-            <View style={styles.section}>
-              <Text style={styles.sectionLabel}>Contact</Text>
-              <View style={styles.linkRow}>
-                {place.website && (
-                  <Pressable style={styles.linkBtn} onPress={openWeb}>
-                    <Globe size={15} color={color.deep} />
-                    <Text style={styles.linkText} numberOfLines={1}>Website</Text>
-                  </Pressable>
-                )}
-                {place.phone && (
-                  <Pressable style={styles.linkBtn} onPress={openPhone}>
-                    <Phone size={15} color={color.deep} />
-                    <Text style={styles.linkText}>{place.phone}</Text>
-                  </Pressable>
-                )}
-              </View>
+          {/* Contact — always shows phone (or "Phone not available") */}
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Contact</Text>
+            <View style={styles.linkRow}>
+              {/* Phone — tappable or "Phone not available" */}
+              <Pressable
+                style={styles.linkBtn}
+                onPress={place.phone ? openPhone : undefined}
+                disabled={!place.phone}
+                testID="place-sheet-phone"
+              >
+                <Phone size={15} color={place.phone ? color.deep : color.faint} />
+                <Text style={[styles.linkText, !place.phone && styles.linkTextNA]}>
+                  {place.phone ?? 'Phone not available'}
+                </Text>
+              </Pressable>
+              {place.website && (
+                <Pressable style={styles.linkBtn} onPress={openWeb}>
+                  <Globe size={15} color={color.deep} />
+                  <Text style={styles.linkText} numberOfLines={1}>Website</Text>
+                </Pressable>
+              )}
             </View>
-          )}
+          </View>
 
           {/* Attribution */}
           <Text style={styles.attribution}>
@@ -295,10 +377,11 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    maxHeight: '82%',
+    maxHeight: '90%',
     backgroundColor: color.paperRaised,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
+    overflow: 'hidden',
     ...shadow.float,
   },
   handle: {
@@ -310,12 +393,49 @@ const styles = StyleSheet.create({
     marginTop: space.md,
     marginBottom: space.sm,
   },
+
+  // ── Image ─────────────────────────────────────────────────────────────────
+  imageWrap: {
+    width: '100%',
+    height: SHEET_IMAGE_HEIGHT,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  sheetImage: {
+    width: '100%' as any,
+    height: SHEET_IMAGE_HEIGHT,
+  },
+  fallbackEmoji: {
+    fontSize: 40,
+    lineHeight: 50,
+    textAlign: 'center',
+  },
+  liveOverlay: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    paddingHorizontal: space.sm,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+  },
+  liveOverlayOpen: {
+    backgroundColor: 'rgba(255,255,255,0.92)',
+  },
+  liveOverlayClosed: {
+    backgroundColor: 'rgba(255,255,255,0.92)',
+  },
+  liveOverlayText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+
+  // ── Header ────────────────────────────────────────────────────────────────
   header: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: space.sm,
     paddingHorizontal: space.lg,
-    paddingBottom: space.md,
+    paddingVertical: space.md,
     borderBottomWidth: 1,
     borderBottomColor: color.haze,
   },
@@ -340,15 +460,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: space.sm,
     marginTop: 2,
-  },
-  openPill: {
-    ...t.stamp,
-    fontSize: 9,
-    fontWeight: '700',
-    paddingHorizontal: space.sm,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-    overflow: 'hidden',
   },
   lastKnownNote: {
     ...t.small,
@@ -389,6 +500,10 @@ const styles = StyleSheet.create({
     ...t.small,
     color: color.mute,
     flex: 1,
+  },
+  travelTime: {
+    color: color.deep,
+    fontWeight: '600',
   },
   mapThumb: {
     flexDirection: 'row',
@@ -454,6 +569,10 @@ const styles = StyleSheet.create({
     color: color.deep,
     fontSize: 14,
     flex: 1,
+  },
+  linkTextNA: {
+    color: color.faint,
+    fontStyle: 'italic',
   },
   attribution: {
     ...t.small,

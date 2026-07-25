@@ -9,6 +9,10 @@ import { usePlanPicker } from '../PlanPickerController.tsx';
 import type { RouteStopDraft } from '../RouteBuilderSheet.tsx';
 import { color, space, radius, type as t, shadow, layout } from '../../theme/tokens.ts';
 import { TripWishlistPicker } from './TripWishlistPicker.tsx';
+import { DisplayMediaImage, MediaFallback } from '../ui/DisplayMediaImage.tsx';
+import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
+
+const HEADER_HEIGHT = 140;
 
 interface PlaceCardProps {
   place: DiscoveryPlace;
@@ -88,170 +92,204 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
     }
   };
 
+  const fallbackDesc = getPlaceCategoryFallback(place.category);
+
   return (
     <Pressable
       style={({ pressed }) => [styles.card, pressed && { opacity: layout.pressedOpacity }]}
       onPress={onPress}
     >
-      {/* Left accent strip */}
-      <View style={[styles.strip, { backgroundColor: accent }]} />
+      {/* Header image — category fallback when no real image available */}
+      <View style={styles.imageHeader} testID={`place-card-image-${place.id}`}>
+        <DisplayMediaImage
+          uri={place.headerImageUrl ?? null}
+          width={0}
+          height={HEADER_HEIGHT}
+          style={styles.headerImage}
+          resizeMode="cover"
+          alt={place.name}
+          fallback={
+            <MediaFallback
+              icon={<Text style={styles.fallbackEmoji}>{fallbackDesc.emoji}</Text>}
+              label={fallbackDesc.label}
+              bg={fallbackDesc.color + '33'}
+              style={StyleSheet.absoluteFill}
+            />
+          }
+          testID={`place-card-img-${place.id}`}
+        />
+        {/* Open/closed overlay pill on the image */}
+        {liveOpenNow != null && (
+          <View
+            style={[styles.liveOverlay, liveOpenNow ? styles.liveOverlayOpen : styles.liveOverlayClosed]}
+            testID={`card-open-now-${place.id}`}
+            accessibilityLabel={liveOpenNow ? 'Open now — verified live' : 'Closed now — verified live'}
+          >
+            <Text style={[styles.liveOverlayText, { color: liveOpenNow ? '#047857' : '#B91C1C' }]}>
+              {liveOpenNow ? 'Open now' : 'Closed now'}
+            </Text>
+          </View>
+        )}
+        {/* Rating overlay on image */}
+        {place.rating != null && (
+          <View style={styles.ratingOverlay}>
+            <Text style={styles.ratingOverlayStar}>★</Text>
+            <Text style={styles.ratingOverlayValue}>{place.rating.toFixed(1)}</Text>
+          </View>
+        )}
+      </View>
 
-      <View style={styles.body}>
-        {/* Top row: name + chevron */}
-        <View style={styles.titleRow}>
-          <Text style={styles.name} numberOfLines={1}>{place.name}</Text>
-          <ChevronRight size={16} color={color.faint} />
-        </View>
+      {/* Content row: accent strip + body */}
+      <View style={styles.contentRow}>
+        {/* Left accent strip */}
+        <View style={[styles.strip, { backgroundColor: accent }]} />
 
-        {/* Type + distance */}
-        <View style={styles.metaRow}>
-          {place.type ? (
-            <View style={[styles.typePill, { backgroundColor: accent + '22' }]}>
-              <Text style={[styles.typeText, { color: accent }]} numberOfLines={1}>
-                {capitalize(place.type)}
-              </Text>
-            </View>
-          ) : null}
-          {place.distanceKm != null && showDistance && (
-            <View style={styles.distBadge}>
-              <MapPin size={10} color="#0891B2" />
-              <Text style={styles.distBadgeText}>
-                {place.distanceKm < 1
-                  ? `${Math.round(place.distanceKm * 1000)} m`
-                  : `${place.distanceKm} km`}
-              </Text>
-            </View>
-          )}
-          {liveOpenNow != null && (
-            <View
-              style={[styles.livePill, liveOpenNow ? styles.livePillOpen : styles.livePillClosed]}
-              testID={`card-open-now-${place.id}`}
-              accessibilityLabel={liveOpenNow ? 'Open now — verified live' : 'Closed now — verified live'}
-            >
-              <Text style={[styles.livePillText, { color: liveOpenNow ? '#047857' : '#B91C1C' }]}>
-                {liveOpenNow ? 'Open now' : 'Closed now'}
-              </Text>
-            </View>
-          )}
-          {place.rating != null && (
-            <View style={styles.ratingBadge}>
-              <Text style={styles.ratingStar}>★</Text>
-              <Text style={styles.ratingValue}>{place.rating.toFixed(1)}</Text>
-            </View>
-          )}
-          {place.openingHours ? (
-            <Text style={styles.hours} numberOfLines={1}>{formatHoursShort(place.openingHours)}</Text>
-          ) : null}
-        </View>
+        <View style={styles.body}>
+          {/* Top row: name + chevron */}
+          <View style={styles.titleRow}>
+            <Text style={styles.name} numberOfLines={1}>{place.name}</Text>
+            <ChevronRight size={16} color={color.faint} />
+          </View>
 
-        {/* Description */}
-        {place.description ? (
-          <Text style={styles.desc} numberOfLines={2}>{place.description}</Text>
-        ) : null}
-
-        {/* Address */}
-        {place.address && !place.description ? (
-          <Text style={styles.address} numberOfLines={1}>{place.address}</Text>
-        ) : null}
-
-        {/* Tags */}
-        {place.tags.length > 0 && (
-          <View style={styles.tagRow}>
-            {place.tags.map((tag) => (
-              <View key={tag} style={styles.tag}>
-                <Text style={styles.tagText}>{tag}</Text>
+          {/* Type + distance + hours */}
+          <View style={styles.metaRow}>
+            {/* Specific place type (e.g. "café", not just "food") */}
+            {(place.type || place.category) && (
+              <View style={[styles.typePill, { backgroundColor: accent + '22' }]}>
+                <Text style={[styles.typeText, { color: accent }]} numberOfLines={1}>
+                  {capitalize(place.type ?? place.category)}
+                </Text>
               </View>
-            ))}
+            )}
+            {place.distanceKm != null && showDistance && (
+              <View style={styles.distBadge}>
+                <MapPin size={10} color="#0891B2" />
+                <Text style={styles.distBadgeText}>
+                  {place.distanceKm < 1
+                    ? `${Math.round(place.distanceKm * 1000)} m`
+                    : `${place.distanceKm} km`}
+                </Text>
+              </View>
+            )}
+            {place.openingHours ? (
+              <Text style={styles.hours} numberOfLines={1}>{formatHoursShort(place.openingHours)}</Text>
+            ) : null}
           </View>
-        )}
 
-        {/* Saved-to-trips badge */}
-        {savedCount > 0 && (
-          <View style={styles.savedBadge}>
-            <ListPlus size={11} color={color.deep} />
-            <Text style={styles.savedBadgeText}>
-              {savedCount === 1 ? 'Saved to 1 trip' : `Saved to ${savedCount} trips`}
-            </Text>
-          </View>
-        )}
-
-        {/* FSQ attribution — required by CC BY 4.0 wherever FSQ data is displayed */}
-        {place.attribution ? (
-          <Text style={styles.attribution} numberOfLines={1}>{place.attribution}</Text>
-        ) : null}
-
-        {/* Action row */}
-        <View style={styles.actionRow}>
-          <Pressable
-            style={({ pressed }) => [
-              styles.actionBtn,
-              alreadyAdded && styles.actionBtnAdded,
-              !alreadyAdded && pressed && { opacity: 0.7 },
-            ]}
-            onPress={alreadyAdded ? undefined : onAddToPlan}
-            disabled={alreadyAdded}
-            hitSlop={6}
-          >
-            {alreadyAdded
-              ? <Check size={14} color={color.deep} />
-              : <Plus size={14} color={color.signal} />
-            }
-            <Text style={[styles.actionText, { color: alreadyAdded ? color.deep : color.signal }]}>
-              {alreadyAdded ? 'Added ✓' : 'Plan'}
-            </Text>
-          </Pressable>
-
-          {onAddToRoute && (
-            <Pressable
-              style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.7 }]}
-              onPress={() => onAddToRoute({
-                id:         `place-${place.id}`,
-                title:      place.name,
-                lat:        place.lat ?? null,
-                lng:        place.lng ?? null,
-                sourceType: 'discovery',
-                sourceId:   place.id,
-                category:   place.category ?? null,
-              })}
-              hitSlop={6}
-            >
-              <Route size={14} color={color.deep} />
-              <Text style={[styles.actionText, { color: color.deep }]}>Route</Text>
-            </Pressable>
+          {/* Neighborhood + address line */}
+          {(place.neighborhood || place.address) && (
+            <View style={styles.addressRow}>
+              <MapPin size={10} color={color.faint} />
+              <Text style={styles.addressText} numberOfLines={1}>
+                {[place.neighborhood, place.address].filter(Boolean).join(' · ')}
+              </Text>
+            </View>
           )}
 
-          {(place.lat != null || place.name) && (
-            <Pressable
-              style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.7 }]}
-              onPress={openDirections}
-              hitSlop={6}
-            >
-              <Navigation size={14} color={color.deep} />
-              <Text style={[styles.actionText, { color: color.deep }]}>Directions</Text>
-            </Pressable>
+          {/* Description */}
+          {place.description ? (
+            <Text style={styles.desc} numberOfLines={2}>{place.description}</Text>
+          ) : null}
+
+          {/* Tags */}
+          {place.tags.length > 0 && (
+            <View style={styles.tagRow}>
+              {place.tags.map((tag) => (
+                <View key={tag} style={styles.tag}>
+                  <Text style={styles.tagText}>{tag}</Text>
+                </View>
+              ))}
+            </View>
           )}
 
-          <Pressable
-            style={({ pressed }) => [styles.saveBtn, saved && styles.saveBtnActive, pressed && { opacity: 0.7 }]}
-            onPress={() => {
-              const next = !saved;
-              setSaved(next);
-              (next ? saveItem('place', place.id) : unsaveItem('place', place.id))
-                .then((ok) => { if (!ok) setSaved(!next); })
-                .catch(() => setSaved(!next));
-            }}
-            hitSlop={6}
-          >
-            <Bookmark size={14} color={saved ? color.signal : color.faint} fill={saved ? color.signal : 'none'} />
-          </Pressable>
+          {/* Saved-to-trips badge */}
+          {savedCount > 0 && (
+            <View style={styles.savedBadge}>
+              <ListPlus size={11} color={color.deep} />
+              <Text style={styles.savedBadgeText}>
+                {savedCount === 1 ? 'Saved to 1 trip' : `Saved to ${savedCount} trips`}
+              </Text>
+            </View>
+          )}
 
-          <Pressable
-            style={({ pressed }) => [styles.wishlistBtn, pressed && { opacity: 0.7 }]}
-            onPress={() => setPickerVisible(true)}
-            hitSlop={6}
-          >
-            <ListPlus size={14} color={color.deep} />
-          </Pressable>
+          {/* FSQ attribution — required by CC BY 4.0 wherever FSQ data is displayed */}
+          {place.attribution ? (
+            <Text style={styles.attribution} numberOfLines={1}>{place.attribution}</Text>
+          ) : null}
+
+          {/* Action row */}
+          <View style={styles.actionRow}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.actionBtn,
+                alreadyAdded && styles.actionBtnAdded,
+                !alreadyAdded && pressed && { opacity: 0.7 },
+              ]}
+              onPress={alreadyAdded ? undefined : onAddToPlan}
+              disabled={alreadyAdded}
+              hitSlop={6}
+            >
+              {alreadyAdded
+                ? <Check size={14} color={color.deep} />
+                : <Plus size={14} color={color.signal} />
+              }
+              <Text style={[styles.actionText, { color: alreadyAdded ? color.deep : color.signal }]}>
+                {alreadyAdded ? 'Added ✓' : 'Plan'}
+              </Text>
+            </Pressable>
+
+            {onAddToRoute && (
+              <Pressable
+                style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.7 }]}
+                onPress={() => onAddToRoute({
+                  id:         `place-${place.id}`,
+                  title:      place.name,
+                  lat:        place.lat ?? null,
+                  lng:        place.lng ?? null,
+                  sourceType: 'discovery',
+                  sourceId:   place.id,
+                  category:   place.category ?? null,
+                })}
+                hitSlop={6}
+              >
+                <Route size={14} color={color.deep} />
+                <Text style={[styles.actionText, { color: color.deep }]}>Route</Text>
+              </Pressable>
+            )}
+
+            {(place.lat != null || place.name) && (
+              <Pressable
+                style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.7 }]}
+                onPress={openDirections}
+                hitSlop={6}
+              >
+                <Navigation size={14} color={color.deep} />
+                <Text style={[styles.actionText, { color: color.deep }]}>Directions</Text>
+              </Pressable>
+            )}
+
+            <Pressable
+              style={({ pressed }) => [styles.saveBtn, saved && styles.saveBtnActive, pressed && { opacity: 0.7 }]}
+              onPress={() => {
+                const next = !saved;
+                setSaved(next);
+                (next ? saveItem('place', place.id) : unsaveItem('place', place.id))
+                  .then((ok) => { if (!ok) setSaved(!next); })
+                  .catch(() => setSaved(!next));
+              }}
+              hitSlop={6}
+            >
+              <Bookmark size={14} color={saved ? color.signal : color.faint} fill={saved ? color.signal : 'none'} />
+            </Pressable>
+
+            <Pressable
+              style={({ pressed }) => [styles.wishlistBtn, pressed && { opacity: 0.7 }]}
+              onPress={() => setPickerVisible(true)}
+              hitSlop={6}
+            >
+              <ListPlus size={14} color={color.deep} />
+            </Pressable>
+          </View>
         </View>
       </View>
 
@@ -273,8 +311,6 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
 
 function formatHoursShort(hours: string): string {
   if (!hours) return '';
-  // Show first token (e.g. "Mo-Fr 09:00-18:00" → "Mo-Fr 09:00-18:00")
-  // Common abbreviation: just show first 24 chars
   return hours.length > 24 ? hours.slice(0, 24) + '…' : hours;
 }
 
@@ -298,8 +334,7 @@ export function categoryColor(cat: string): string {
 
 const styles = StyleSheet.create({
   card: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
+    flexDirection: 'column',
     backgroundColor: color.paperRaised,
     borderRadius: radius.md,
     borderWidth: 1,
@@ -309,10 +344,72 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     ...shadow.card,
   },
+
+  // ── Image header ─────────────────────────────────────────────────────────────
+  imageHeader: {
+    width: '100%',
+    height: HEADER_HEIGHT,
+    overflow: 'hidden',
+    backgroundColor: color.haze,
+    position: 'relative',
+  },
+  headerImage: {
+    width: '100%' as any,
+    height: HEADER_HEIGHT,
+  },
+  fallbackEmoji: {
+    fontSize: 36,
+    lineHeight: 44,
+    textAlign: 'center',
+  },
+  liveOverlay: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    paddingHorizontal: space.sm,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+  },
+  liveOverlayOpen: {
+    backgroundColor: 'rgba(255,255,255,0.92)',
+  },
+  liveOverlayClosed: {
+    backgroundColor: 'rgba(255,255,255,0.92)',
+  },
+  liveOverlayText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  ratingOverlay: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+  },
+  ratingOverlayStar: {
+    fontSize: 10,
+    color: '#F59E0B',
+    lineHeight: 13,
+  },
+  ratingOverlayValue: {
+    fontSize: 10,
+    color: '#fff',
+    fontWeight: '700',
+  },
+
+  // ── Content row (strip + body) ────────────────────────────────────────────────
+  contentRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+  },
   strip: {
     width: 4,
-    borderTopLeftRadius: radius.md,
-    borderBottomLeftRadius: radius.md,
   },
   body: {
     flex: 1,
@@ -362,53 +459,27 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
   },
-  livePill: {
-    paddingHorizontal: space.sm,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-  },
-  livePillOpen: {
-    backgroundColor: '#04785716',
-  },
-  livePillClosed: {
-    backgroundColor: '#B91C1C16',
-  },
-  livePillText: {
-    ...t.stamp,
-    fontSize: 10,
-    fontWeight: '600',
-  },
   hours: {
     ...t.stamp,
     color: color.mute,
     fontSize: 10,
   },
-  ratingBadge: {
+  addressRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 2,
+    gap: 4,
   },
-  ratingStar: {
-    fontSize: 10,
-    color: '#F59E0B',
-    lineHeight: 13,
-  },
-  ratingValue: {
-    ...t.stamp,
-    fontSize: 10,
-    color: color.ink,
-    fontWeight: '600',
+  addressText: {
+    ...t.small,
+    color: color.faint,
+    fontSize: 11,
+    flex: 1,
   },
   desc: {
     ...t.small,
     color: color.mute,
     fontSize: 12,
     lineHeight: 17,
-  },
-  address: {
-    ...t.small,
-    color: color.faint,
-    fontSize: 11,
   },
   tagRow: {
     flexDirection: 'row',
