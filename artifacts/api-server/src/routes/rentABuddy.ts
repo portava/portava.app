@@ -887,7 +887,7 @@ router.get("/rent-a-buddy/by-user/:userId", async (req, res) => {
 
   const { data, error } = await serviceClient
     .from("rent_buddy_profiles")
-    .select("*")
+    .select(BUDDY_PUBLIC_COLUMNS)  // API-05: was select("*") — restrict to public columns like the sibling routes
     .eq("user_id", userId)
     .eq("status", "active")
     .maybeSingle();

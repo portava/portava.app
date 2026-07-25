@@ -41,14 +41,9 @@ function isUuid(s: string) { return UUID_RE.test(s); }
 
 // ── Feature flag ───────────────────────────────────────────────────────────────
 
-async function memoriesEnabled(sc: any): Promise<boolean> {
-  try {
-    const ok = await isFlagEnabled(sc, "memories_enabled");
-    return ok;
-  } catch {
-    return true;
-  }
-}
+// FL-04: removed the dead memoriesEnabled() helper — it was never called and
+// failed OPEN, contradicting the fail-closed isFlagEnabled contract. The Memories
+// routes are intentionally ungated (backend is live).
 
 // ── Visibility helpers ─────────────────────────────────────────────────────────
 

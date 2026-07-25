@@ -70,10 +70,6 @@ export function CachedImage({
  * already present. Only modifies URLs containing 'supabase' so CDN,
  * Unsplash, or other third-party URLs are left unchanged.
  *
- * When the `media_private_buckets_enabled` flag is ON the relay endpoint
- * serves raw files (transform params are stripped by toAppMediaUrl), so
- * this helper's params are only meaningful in the flag-OFF path.
- *
  * @example
  *   withStorageParams(avatarUrl, 'width=100&quality=80')
  *   // → "https://<project>.supabase.co/storage/v1/...?width=100&quality=80"

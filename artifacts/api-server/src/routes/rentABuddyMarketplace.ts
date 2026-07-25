@@ -1131,6 +1131,7 @@ router.post("/rent-a-buddy/me/packages/v2", async (req, res) => {
   } = req.body ?? {};
 
   if (!title || !category || !priceUsd) return sendError(res, 'invalid_payload', "title, category, priceUsd required.");
+  { const p = Number(priceUsd); if (!Number.isFinite(p) || p <= 0 || p > 100000) return sendError(res, 'invalid_payload', "priceUsd must be a positive number up to 100000."); }  // API-07
 
   const needsAdminReview = category === "nightlife" || category === "arrival" || (maxGroup ?? 1) > 4;
   const adminStatus = needsAdminReview ? "pending" : "approved";

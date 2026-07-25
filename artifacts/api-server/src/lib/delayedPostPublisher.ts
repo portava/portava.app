@@ -162,7 +162,7 @@ export async function runDelayedPostPublisher(opts?: { client?: any }): Promise<
   errors: number;
 }> {
   _publishCallCount++;
-  const db = opts?.client ?? resolveClient();
+  const db = (opts && "client" in opts) ? opts.client : resolveClient();  // honor explicit null (was: ?? swallowed it)
 
   if (!db) {
     logger.warn("delayedPostPublisher: service client not ready — skipping");
