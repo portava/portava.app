@@ -15,6 +15,7 @@ import {
 import type { LucideIcon } from 'lucide-react-native';
 import { usePublicPassport } from '../../src/hooks/usePublicPassport';
 import { useFollow } from '../../src/hooks/useFollow';
+import { PrivateRequestButton } from '../../src/components/ui/PrivateRequestButton';
 import { useHighlightRingState, viewedHighlightIds } from '../../src/hooks/useHighlightRingState';
 import { useFriendStatus } from '../../src/hooks/useFriends';
 import { useMessagePermission } from '../../src/hooks/useMessaging';
@@ -572,7 +573,7 @@ function PublicPassportScreenNative() {
   const { username } = useLocalSearchParams<{ username: string }>();
   const { userId: currentUserId } = useSession();
 
-  const { profile, postcards, loading, error, isPrivate, notFound, isBlocked, blockedTargetId } = usePublicPassport(username ?? '');
+  const { profile, postcards, loading, error, isPrivate, isFriend, friendRequestPending, privateProfileId, notFound, isBlocked, blockedTargetId } = usePublicPassport(username ?? '');
   const follow = useFollow(profile?.id ?? null);
   const ringState = useHighlightRingState(profile?.id ?? null);
 
@@ -802,14 +803,28 @@ function PublicPassportScreenNative() {
       );
     }
 
-    if (isPrivate) {
+    if (isPrivate && !isFriend) {
       return (
         <View style={{ flex: 1 }}>
           {navHeader}
           <View style={styles.center}>
             <Text style={styles.stateIcon}>🔒</Text>
             <Text style={styles.stateTitle}>This Passport is private</Text>
-            <Text style={styles.stateSub}>Only the owner can see this Passport.</Text>
+            <Text style={styles.stateSub}>
+              {friendRequestPending
+                ? 'Your request is pending. The owner must accept before you can view their Passport.'
+                : 'Send a friend request to view this Passport.'}
+            </Text>
+            {/* Show request CTA for non-own profiles.
+                privateProfileId is set from the sentinel; social?.id is a fallback
+                that resolves once the social load completes. */}
+            {!isOwn && (privateProfileId ?? social?.id) && (
+              <PrivateRequestButton
+                userId={(privateProfileId ?? social?.id)!}
+                initialPending={friendRequestPending}
+                style={styles.privateWallBtn}
+              />
+            )}
           </View>
         </View>
       );
@@ -1167,6 +1182,7 @@ const styles = StyleSheet.create({
   menuItem: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.md },
   menuItemText: { ...t.body, fontSize: 14, fontWeight: '600' },
   menuItemBorder: { borderTopWidth: 1, borderTopColor: color.haze },
+  privateWallBtn: { marginTop: space.md, minWidth: 180 },
   reportSubLabel: { ...t.small, color: color.mute, marginBottom: space.sm },
   reasonRow: {
     flexDirection: 'row', alignItems: 'center', gap: space.md,
