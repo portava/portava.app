@@ -134,13 +134,19 @@ function OptionSheet({
   title, options, onSelect, onClose,
 }: { title: string; options: OptionItem[]; onSelect: (k: string) => void; onClose: () => void }) {
   return (
-    <Pressable style={sx.sheetOverlay} onPress={onClose}>
+    <Pressable style={sx.sheetOverlay} onPress={onClose} accessibilityLabel="Close" accessibilityRole="button">
       <Pressable style={sx.sheet} onPress={(e) => e.stopPropagation()}>
         <Text style={sx.sheetTitle}>{title}</Text>
         {options.map((opt, i) => (
           <React.Fragment key={opt.key}>
             {i > 0 && <View style={sx.sheetDivider} />}
-            <Pressable style={sx.sheetRow} onPress={() => onSelect(opt.key)}>
+            <Pressable
+              style={sx.sheetRow}
+              onPress={() => onSelect(opt.key)}
+              accessibilityRole="radio"
+              accessibilityLabel={`${opt.label}: ${opt.desc}`}
+              accessibilityState={{ checked: opt.selected }}
+            >
               <View style={{ flex: 1, gap: 2 }}>
                 <Text style={[sx.sheetOptionLabel, opt.selected && sx.sheetOptionSelected]}>{opt.label}</Text>
                 <Text style={sx.sheetOptionDesc}>{opt.desc}</Text>
@@ -169,6 +175,9 @@ function DefaultPicker({
             style={[sx.radioRow, active && sx.radioRowActive]}
             onPress={() => onChange(opt.value)}
             disabled={disabled}
+            accessibilityRole="radio"
+            accessibilityLabel={`${opt.label}: ${opt.sub}`}
+            accessibilityState={{ checked: active }}
           >
             <View style={[sx.radio, active && sx.radioChecked]} />
             <View style={{ flex: 1 }}>
