@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, TextInput,
-  Image, ActivityIndicator, Switch,
+  Image, ActivityIndicator, Switch, Platform,
 } from 'react-native';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 // (KeyboardSafeScrollView is the bare KAV wrapper — the composer page brings
@@ -14,7 +14,7 @@ import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import {
   X, Check, PenLine, HelpCircle, Gem, Camera, Mail, UtensilsCrossed,
-  MapPin, SlidersHorizontal, Video as VideoIcon,
+  MapPin, SlidersHorizontal, Video as VideoIcon, ImageIcon,
 } from 'lucide-react-native';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -71,9 +71,9 @@ function needsPlace(t: PostTypeId)  { return t === 'share_hidden_gem' || t === '
 function requiresMedia(t: PostTypeId) { return t === 'share_postcard'; }
 function requiresPhoto(t: PostTypeId) { return t === 'share_postcard'; }
 function photoLabel(t: PostTypeId) {
-  if (requiresMedia(t)) return 'Add photo or video (required)';
-  if (t === 'share_moment') return 'Add photo (recommended)';
-  return 'Add photo (optional)';
+  if (requiresMedia(t)) return 'Photo or video (required)';
+  if (t === 'share_moment') return 'Photo or video (recommended)';
+  return 'Photo or video (optional)';
 }
 
 function validate(
@@ -164,9 +164,12 @@ export function PulseFilterSheet({
 export function UnifiedPostComposer({
   onClose,
   onSuccess,
+  openCameraOnMount = false,
 }: {
   onClose: () => void;
   onSuccess?: () => void;
+  /** When true, the camera launches immediately on mount (native only). */
+  openCameraOnMount?: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const { create, submitting } = usePostActions();
@@ -246,13 +249,59 @@ export function UnifiedPostComposer({
   // single-item `media` state and filter-editor flow.
   const pulseComposer = useMediaComposer('pulse');
 
+  // Auto-open camera on mount (native only). Fires exactly once.
+  // If the user captures something, 'share_moment' is auto-selected and the
+  // asset is fed into the filter-editor pipeline. Cancelling simply shows the
+  // regular composer so the user can pick a type and add media manually.
+  const didAutoOpenCamera = useRef(false);
+  useEffect(() => {
+    if (!openCameraOnMount || didAutoOpenCamera.current || Platform.OS === 'web') return;
+    didAutoOpenCamera.current = true;
+    (async () => {
+      try {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) return;
+        const result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ['images', 'videos'],
+          quality: 0.92,
+          videoMaxDuration: 60,
+        });
+        if (result.canceled || !result.assets?.[0]) return;
+        const asset = result.assets[0];
+        const mime = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
+        const picked: PickedMedia = {
+          uri: asset.uri,
+          mimeType: mime,
+          fileName: asset.fileName ?? null,
+          fileSize: asset.fileSize ?? null,
+          width: asset.width,
+          height: asset.height,
+          type: asset.type as 'image' | 'video',
+          duration: asset.duration != null ? asset.duration / 1000 : null,
+        };
+        const v = validateMedia(picked, { maxVideoDurationSeconds: 60 });
+        if (!v.ok) { setError(v.message); return; }
+        // Auto-select 'share_moment' so the form is immediately usable
+        setSelectedType('share_moment');
+        setAddToPassport(true);
+        if (picked.type === 'video') {
+          // Videos skip the filter editor
+          setMedia(picked);
+        } else {
+          setFilterEditorPending(picked);
+          setFilterEditorOpen(true);
+        }
+      } catch { /* silently show regular composer */ }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally no deps — runs once on mount
+
   function openPickerSheet() {
     setError(null);
     pulseComposer.openSheet();
   }
 
   function handlePickResult(asset: ImagePicker.ImagePickerAsset) {
-    const allowVideo = selectedType === 'share_postcard';
     const mime = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
     const durationSec = asset.duration != null ? asset.duration / 1000 : null;
     const picked: PickedMedia = {
@@ -262,11 +311,19 @@ export function UnifiedPostComposer({
       type: asset.type as 'image' | 'video',
       duration: durationSec,
     };
-    const v = validateMedia(picked, allowVideo ? { maxVideoDurationSeconds: 10 } : undefined);
+    // Allow video for all post types. Highlights get a shorter limit (10s);
+    // everything else gets up to 60s.
+    const maxDuration = selectedType === 'share_highlight' ? 10 : 60;
+    const v = validateMedia(picked, { maxVideoDurationSeconds: maxDuration });
     if (!v.ok) { setError(v.message); return; }
     if (selectedType === 'share_postcard' || selectedType === 'share_moment') setAddToPassport(true);
-    setFilterEditorPending(picked);
-    setFilterEditorOpen(true);
+    if (picked.type === 'video') {
+      // Videos skip the filter editor — store directly.
+      setMedia(picked);
+    } else {
+      setFilterEditorPending(picked);
+      setFilterEditorOpen(true);
+    }
   }
 
   const handleFilterApply = useCallback((result: FilterApplyResult) => {
@@ -333,9 +390,8 @@ export function UnifiedPostComposer({
         mediaType = outcome.mediaType ?? undefined;
       }
 
-      const cat = TYPE_CATEGORY[selectedType];
       const placePrefix = needsPlace(selectedType) && placeName.trim() ? `📍 ${placeName.trim()}\n` : '';
-      const content = `[${cat}] ${placePrefix}${text.trim()}`.trim();
+      const content = `${placePrefix}${text.trim()}`.trim();
 
       let locationFields: Record<string, unknown> = { locationSource: 'none' };
       if (selectedPlace) {
@@ -569,8 +625,14 @@ export function UnifiedPostComposer({
                       </View>
                     ) : (
                       <View style={uc.mediaEmpty}>
-                        <Camera size={22} color={color.mute} />
-                        <Text style={uc.mediaEmptyText}>Tap to add photo</Text>
+                        <View style={uc.mediaEmptyIcons}>
+                          <Camera size={20} color={color.mute} />
+                          <ImageIcon size={20} color={color.mute} />
+                        </View>
+                        <Text style={uc.mediaEmptyText}>
+                          {selectedType === 'share_highlight' ? 'Photo or video (up to 10s)' : 'Photo or video'}
+                        </Text>
+                        <Text style={uc.mediaEmptySub}>Camera · Library</Text>
                       </View>
                     )}
                   </Pressable>
@@ -783,8 +845,8 @@ export function UnifiedPostComposer({
         visible={pulseComposer.sheetVisible}
         onClose={pulseComposer.closeSheet}
         onResult={(asset) => { pulseComposer.closeSheet(); handlePickResult(asset); }}
-        allowsVideo={selectedType === 'share_postcard'}
-        videoMaxDuration={10}
+        allowsVideo={true}
+        videoMaxDuration={selectedType === 'share_highlight' ? 10 : 60}
         title="Add media"
       />
     </View>
@@ -900,8 +962,10 @@ const uc = StyleSheet.create({
     backgroundColor: color.paperRaised,
     overflow: 'hidden',
   },
-  mediaEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 6 },
-  mediaEmptyText: { ...t.small, color: color.mute },
+  mediaEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 5 },
+  mediaEmptyIcons: { flexDirection: 'row', gap: 10, marginBottom: 2 },
+  mediaEmptyText: { ...t.small, color: color.mute, fontWeight: '600' },
+  mediaEmptySub: { ...t.small, fontSize: 10, color: color.faint },
   mediaPreviewWrap: { flex: 1 },
   mediaPreview: { width: '100%', height: '100%' },
   mediaRemove: {

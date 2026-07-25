@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Pressable, StyleSheet, Alert, useWindowDimensions } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Alert, Share, useWindowDimensions } from 'react-native';
 import { CachedImage, withStorageParams } from './CachedImage.tsx';
 import { AvatarImage } from './ui/DisplayMediaImage.tsx';
 import { batchSignUrls } from '../lib/batchSignMedia.ts';
@@ -78,6 +78,15 @@ function AuthorRow({
     ? primaryIdentityText({ name: item.author.name, username: item.author.username })
     : '';
 
+  async function sharePost() {
+    const permalink = `https://travelbuddy.app/posts/${item.id}`;
+    try {
+      await Share.share({ message: `Check out this post!\n${permalink}`, url: permalink });
+    } catch {
+      // user cancelled or share unavailable — silent
+    }
+  }
+
   function openOverflow() {
     if (isOwner) {
       Alert.alert('Post Options', undefined, [
@@ -101,10 +110,12 @@ function AuthorRow({
               },
             ]),
         },
+        { text: 'Share post', onPress: sharePost },
         { text: 'Cancel', style: 'cancel' },
       ]);
     } else {
       Alert.alert('Post Options', undefined, [
+        { text: 'Share post', onPress: sharePost },
         { text: 'Report', onPress: () => setReportOpen(true) },
         {
           text: 'Hide from feed',
@@ -239,7 +250,11 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
   const tripLabel = item.tripLabel ?? undefined;
 
   return (
-    <View style={[s.postCard, width > 600 ? s.postCardWide : undefined]}>
+    <Pressable
+      style={({ pressed }) => [s.postCard, width > 600 ? s.postCardWide : undefined, pressed && { opacity: 0.93 }]}
+      onPress={() => router.push(`/post/${item.id}` as any)}
+      accessible={false}
+    >
       {/* ── Immersive media frame ── */}
       <View style={[s.postMedia, { height: mediaHeight }]}>
         {(item.media?.[0]?.thumbnail_url ?? item.media?.[0]?.url ?? item.mediaUrl) && !mediaFailed ? (
@@ -335,7 +350,7 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
           />
         </View>
       </View>
-    </View>
+    </Pressable>
   );
 }
 

@@ -50,6 +50,7 @@ function postRowToFeedItem(p: PostRow): PulseFeedItem {
       id: p.authorId,
       name: p.author?.name ?? 'Traveler',
       avatarUrl: p.author?.avatarUrl ?? '',
+      username: p.author?.handle ?? null,
     },
     createdAt: p.createdAt,
     timeAgo: timeAgo(p.createdAt),

@@ -1,16 +1,17 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, ActivityIndicator, RefreshControl } from 'react-native';
 import { getCommentCountSnapshot, subscribeCommentCount } from '../../src/lib/commentCountStore';
 import { router, useFocusEffect } from 'expo-router';
 import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import { PulseHeader } from '../../src/components/PulseHeader';
 import { FitsCard, FlexibleStrip } from '../../src/components/PulseFits';
+import { ExploreTodaySection } from '../../src/components/ExploreTodaySection';
 import { PulseFeedCard } from '../../src/components/PulseFeedCard';
 import { PulseFilterSheet } from '../../src/components/PulseCreate';
 import { Chip } from '../../src/components/ui';
 import { TravelEmptyState } from '../../src/components/primitives';
 import { useCityPulse } from '../../src/hooks/useCityPulse';
-import { useFollowingFeed } from '../../src/hooks/usePosts';
+import { useFollowingFeed, FOCUS_REFETCH_TTL_MS } from '../../src/hooks/usePosts';
 import { usePulseFeed } from '../../src/hooks/usePulseFeed';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useCircleFlag } from '../../src/hooks/useCircleFlag';
@@ -27,9 +28,13 @@ import { ActiveLayoverPill } from '../../src/components/layover/ActiveLayoverPil
 import { Plane, Users, MapPin } from 'lucide-react-native';
 import { PeopleYouMayKnow } from '../../src/components/PeopleYouMayKnow';
 import { CircleCompassSuggestions } from '../../src/components/CircleCompassSuggestions';
-import { useBottomInset } from '../../src/hooks/useBottomInset';
 import { LivePulseRail } from '../../src/components/LivePulseRail';
 import { useLivePulse } from '../../src/hooks/useLivePulse';
+import { fireRankOutcome } from '../../src/hooks/useRankOutcome';
+import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useBottomInset } from '../../src/hooks/useBottomInset';
+import { useScreenTiming } from '../../src/hooks/useScreenTiming';
+import { useSnapshotCache } from '../../src/hooks/useSnapshotCache';
 
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
 
@@ -45,6 +50,7 @@ function postRowToFeedItem(p: PostRow): PulseFeedItem {
       id: p.authorId,
       name: p.author?.name ?? 'Traveler',
       avatarUrl: p.author?.avatarUrl ?? '',
+      username: p.author?.handle ?? null,
     },
     createdAt: p.createdAt,
     timeAgo: timeAgo(p.createdAt),
@@ -86,7 +92,6 @@ function timeAgo(iso: string): string {
 }
 
 function Pulse() {
-  const bottomInset = useBottomInset();
   const [feedMode, setFeedMode] = useState<FeedMode>('forYou');
   const [active, setActive] = useState<PulseFilter[]>(['All']);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -103,6 +108,13 @@ function Pulse() {
     () => new Map(getCommentCountSnapshot()),
   );
 
+  const navBarScrollHandler = useNavBarScrollHandler();
+  const bottomInset = useBottomInset();
+  const { markFirstContent, epoch } = useScreenTiming('Pulse');
+
+  // Stale-while-revalidate: pre-paint the Pulse feed from the previous session's
+  // snapshot before any network round-trip completes.
+  const { snapshot: pulseSnapshot, save: savePulseSnapshot, clear: clearPulseSnapshot } = useSnapshotCache<PulseFeedItem[]>('pulse');
   const { locationState, openCityPicker } = useLocationContext();
   const activeCity = locationState.place.city ?? null;
   const activeCitySlug = (activeCity ?? '').toLowerCase().replace(/\s+/g, '-');
@@ -117,7 +129,7 @@ function Pulse() {
     }).catch(() => { /* best-effort: silently ignore if not logged in yet */ });
   }, []);
 
-  const { buckets, status } = useCityPulse({ currentCitySlug: activeCitySlug, interests: [], categoryAffinities });
+  const { buckets, events, status } = useCityPulse({ currentCitySlug: activeCitySlug, interests: [], categoryAffinities });
 
   const livePulse = useLivePulse({
     context: activeCitySlug ? 'currentCity' : 'myPlans',
@@ -134,6 +146,10 @@ function Pulse() {
   });
   const followingFeed = useFollowingFeed();
 
+  // Tracks when the last Pulse/following feed reload fired so focus-driven
+  // reloads are skipped within the TTL window (avoids refetch storms on tab switches).
+  const lastPulseFetchAt = useRef(0);
+
   // When any post is deleted, remove it from both feeds so it cannot reappear on refresh
   const handlePostDeleted = useCallback((id: string) => {
     pulseFeed.markDeleted(id);
@@ -148,10 +164,16 @@ function Pulse() {
       if (snapshot.size > 0) {
         setCommentCountOverrides(new Map(snapshot));
       }
-      pulseFeed.reload();
-      if (feedMode === 'following') followingFeed.reload();
+      // TTL guard: skip the network reload if data is still fresh (60 s).
+      // Pull-to-refresh resets lastPulseFetchAt.current = 0 to bypass this.
+      if (Date.now() - lastPulseFetchAt.current >= FOCUS_REFETCH_TTL_MS) {
+        pulseFeed.reload();
+        if (feedMode === 'following') followingFeed.reload();
+        lastPulseFetchAt.current = Date.now();
+      }
       // Refresh the Live Pulse rail whenever the Pulse tab is focused so
       // users always see fresh data on re-open, not just on mount or pull-to-refresh.
+      // This is a lightweight subscription refresh — kept outside the TTL guard.
       livePulse.refresh();
     }, [pulseFeed.reload, followingFeed.reload, feedMode, livePulse.refresh]),
   );
@@ -175,44 +197,55 @@ function Pulse() {
   }, [followingFeed.reload]);
 
   const handleRefresh = useCallback(() => {
+    // Reset TTL so the next focus-driven reload fires unconditionally.
+    lastPulseFetchAt.current = 0;
+    // Clear snapshot so pull-to-refresh forces a full network reload.
+    clearPulseSnapshot();
     setPeopleRefreshKey((k) => k + 1);
     livePulse.refresh();
     if (feedMode === 'following') followingFeed.reload();
     else pulseFeed.reload();
-  }, [feedMode, followingFeed.reload, pulseFeed.reload, livePulse.refresh]);
+  }, [feedMode, followingFeed.reload, pulseFeed.reload, livePulse.refresh, clearPulseSnapshot]);
+
+  // Track whether the initial network load has completed — once true, live data
+  // (even empty) always wins over the snapshot so stale items are never sticky.
+  const [pulseLoadedOnce, setPulseLoadedOnce] = useState(false);
+  useEffect(() => {
+    if (!pulseFeed.loading && !pulseLoadedOnce) setPulseLoadedOnce(true);
+  }, [pulseFeed.loading]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Perf timing: before first load, fire when snapshot has data;
+  // after first load, fire only when live data is present.
+  useEffect(() => {
+    const hasContent = pulseLoadedOnce
+      ? pulseFeed.items.length > 0
+      : pulseFeed.items.length > 0 || (pulseSnapshot?.length ?? 0) > 0;
+    if (hasContent) markFirstContent();
+  }, [epoch, pulseLoadedOnce, pulseFeed.items.length > 0, (pulseSnapshot?.length ?? 0) > 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fits = [...buckets.fitsAvailability, ...buckets.openNearby];
   const noFits = fits.length === 0;
 
-  // pulseFeed.items are already PulseFeedItem[] (pre-mapped by usePulseFeed)
+  // pulseFeed.items are already PulseFeedItem[] (pre-mapped by usePulseFeed).
+  // Use snapshot only while the initial load is in-flight. Once any response
+  // arrives (even empty) live data always wins — no stale items left on screen.
   const realItems = useMemo<PulseFeedItem[]>(
-    () => pulseFeed.items,
-    [pulseFeed.items],
+    () => pulseLoadedOnce ? pulseFeed.items : (pulseSnapshot ?? pulseFeed.items),
+    [pulseFeed.items, pulseSnapshot, pulseLoadedOnce],
   );
 
+  // Persist feed items to the snapshot cache after each successful load.
+  // Save even on empty arrays so a genuinely-empty feed clears the old snapshot.
+  useEffect(() => {
+    if (!pulseFeed.loading && !pulseFeed.error) {
+      savePulseSnapshot(pulseFeed.items);
+    }
+  }, [pulseFeed.items, pulseFeed.loading, pulseFeed.error, savePulseSnapshot]);
+
   const forYouFeed = useMemo<PulseFeedItem[]>(() => {
-    // Each quick filter maps to a real item predicate; multiple active
-    // filters are OR'd together. 'All' short-circuits to everything.
-    const matchesFilter = (item: PulseFeedItem, f: PulseFilter): boolean => {
-      switch (f) {
-        case 'Posts': return item.type === 'post';
-        case 'Questions': return item.type === 'question';
-        case 'Plans': return item.type === 'plan';
-        case 'Hidden Gems': return item.type === 'hidden_gem';
-        case 'Itineraries': return item.type === 'itinerary';
-        case 'Circle':
-          return item.type === 'circle_activity'
-            || item.source === 'circle'
-            || item.visibility === 'circle';
-        case 'Fits My Time': return item.availabilityMatch === true;
-        default:
-          // Category-style filters (Food, Nightlife, …) match on tags.
-          return item.tags?.some((t) => t.toLowerCase() === f.toLowerCase()) ?? false;
-      }
-    };
-    const filteredReal = active.includes('All')
+    const filteredReal = active.includes('All') || active.includes('Posts')
       ? realItems
-      : realItems.filter((item) => active.some((f) => matchesFilter(item, f)));
+      : realItems.filter(() => false);
     // Place cards only shown in All / default view (not when a specific type filter is active)
     const showPlaceCards = active.includes('All') && realItems.length < 5;
     return [...filteredReal, ...(showPlaceCards ? pulseFeed.placeCards : [])];
@@ -279,30 +312,38 @@ function Pulse() {
       <LivePulseRail pulse={livePulse} />
 
       {activeCity ? (
-        <>
-          {/* Fits your time */}
-          <View style={styles.fitsHead}>
-            <Text style={styles.sectionTitle}>Fits your time</Text>
-            <View style={styles.insideBadge}><Text style={styles.insideText}>Inside your availability</Text></View>
-            <View style={{ flex: 1 }} />
-            {fits.length > 0 && (
-              <Pressable onPress={() => router.push('/(tabs)/trips')}><Text style={styles.viewAll}>View all ({fits.length})</Text></Pressable>
-            )}
-          </View>
-          {noFits ? (
-            <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>{status === 'not_set' ? 'Set your availability to see better matches.' : 'No plans fit your availability yet.'}</Text>
-              <Text style={styles.emptySub}>Check flexible options below or create a plan.</Text>
+        status === 'not_set' ? (
+          // ── Explore Today — user has no availability set ─────────────────
+          // Availability improves personalisation but must not gate Pulse's
+          // usefulness. Show what's happening in the city right now instead of
+          // a dead-end message telling the user to set availability first.
+          <ExploreTodaySection events={events} city={activeCity} />
+        ) : (
+          <>
+            {/* Fits your time — only visible when availability is set */}
+            <View style={styles.fitsHead}>
+              <Text style={styles.sectionTitle}>Fits your time</Text>
+              <View style={styles.insideBadge}><Text style={styles.insideText}>Inside your availability</Text></View>
+              <View style={{ flex: 1 }} />
+              {fits.length > 0 && (
+                <Pressable onPress={() => router.push('/(tabs)/trips')}><Text style={styles.viewAll}>View all ({fits.length})</Text></Pressable>
+              )}
             </View>
-          ) : (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.fitsStrip}>
-              {fits.map((e) => <FitsCard key={e.id} ev={e} />)}
-            </ScrollView>
-          )}
+            {noFits ? (
+              <View style={styles.empty}>
+                <Text style={styles.emptyTitle}>No plans fit your availability yet.</Text>
+                <Text style={styles.emptySub}>Check flexible options below or create a plan.</Text>
+              </View>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.fitsStrip}>
+                {fits.map((e) => <FitsCard key={e.id} ev={e} />)}
+              </ScrollView>
+            )}
 
-          {/* When you're flexible */}
-          <FlexibleStrip events={buckets.flexible} />
-        </>
+            {/* When you're flexible */}
+            <FlexibleStrip events={buckets.flexible} />
+          </>
+        )
       ) : (
         <Pressable style={styles.cityCta} onPress={openCityPicker}>
           <MapPin size={16} color={color.signal} />
@@ -466,13 +507,15 @@ function Pulse() {
         ListHeaderComponent={Header}
         ListFooterComponent={Footer}
         renderItem={({ item }) => (
-          <View style={{ paddingHorizontal: space.lg }}>
-            <PulseFeedCard item={item} onDeleteSuccess={() => handlePostDeleted(item.id)} />
+          <View style={{ paddingHorizontal: space.lg }} onTouchStart={() => fireRankOutcome(item.id, 'pulse', 'tap', pulseFeed.sessionId)}>
+            <PulseFeedCard item={item} onDeleteSuccess={() => handlePostDeleted(item.id)} sessionId={pulseFeed.sessionId} />
           </View>
         )}
         ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
         contentContainerStyle={{ paddingBottom: bottomInset }}
         showsVerticalScrollIndicator={false}
+        onScroll={navBarScrollHandler}
+        scrollEventThrottle={16}
         onEndReached={() => {
           if (feedMode === 'following') followingFeed.loadMore();
           else pulseFeed.loadMore();

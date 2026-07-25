@@ -16,7 +16,7 @@
  */
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator,
+  View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, Image,
 } from 'react-native';
 import { Sparkles, CheckCircle, Navigation, Settings2, MapPin } from 'lucide-react-native';
 import { router } from 'expo-router';
@@ -24,9 +24,9 @@ import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { useCompassFeed } from '../../hooks/compass/useCompassFeed.ts';
 import { CompassWhySheet } from './CompassWhySheet.tsx';
 import { CompassFeedbackMenu } from './CompassFeedbackMenu.tsx';
-import { postCompassAnalyticsEvent, COMPASS_ENGINE_VERSION } from '../../services/compass.ts';
+import { postCompassAnalyticsEvent, reportCompassViewed, COMPASS_ENGINE_VERSION } from '../../services/compass.ts';
 import type { CompassFeedItem } from '../../services/compass.ts';
-import { resolveCompassTitle, formatCompassSubtitle, formatCompassContext, resolveCompassCategory } from '../../utils/compassFormat.ts';
+import { resolveCompassTitle, formatCompassSubtitle, formatCompassContext, resolveCompassCategory, resolveCompassImageUrl } from '../../utils/compassFormat.ts';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 
 // ── Action label mapping ──────────────────────────────────────────────────────
@@ -48,12 +48,29 @@ function actionLabel(type: string): string {
 function CardSkeleton() {
   return (
     <View style={[s.card, s.skeletonCard]}>
+      <View style={[s.skeletonBar, { width: '100%', height: 90, borderRadius: radius.sm, marginBottom: space.xs }]} />
       <View style={[s.skeletonBar, { width: 54, height: 9, marginBottom: 6 }]} />
       <View style={[s.skeletonBar, { width: 110, height: 12, marginBottom: space.sm }]} />
       <View style={[s.skeletonBar, { width: 90, height: 9, marginBottom: space.sm }]} />
       <View style={[s.skeletonBar, { width: 70, height: 28, borderRadius: radius.md }]} />
     </View>
   );
+}
+
+/**
+ * Map a Compass item to a category string that getPlaceCategoryFallback can
+ * use for the emoji + color header. Falls back on item.type when no category
+ * is present so every card gets a meaningful visual.
+ */
+function resolveCompassFallbackCategory(item: CompassFeedItem): string {
+  const cat  = (item.category ?? '').trim();
+  if (cat) return cat;
+  const type = item.type ?? '';
+  if (type === 'event')                                        return 'events';
+  if (type === 'traveler' || type === 'user' || type === 'buddy') return 'for_you';
+  if (type === 'hidden_gem')                                   return 'places';
+  if (type === 'trip')                                         return 'outdoors';
+  return 'places';
 }
 
 // ── Individual compass pick card ──────────────────────────────────────────────
@@ -75,12 +92,19 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
 
   // Place-specific enrichment
   const isPlace      = (item.type ?? '') === 'place';
-  const placeFallback = isPlace ? getPlaceCategoryFallback(item.category ?? '') : null;
-  const placeAddress  = isPlace
+  const placeAddress = isPlace
     ? ((item.data?.neighborhood as string | undefined) ?? (item.data?.address as string | undefined) ?? null)
     : null;
+  const imageUrl = resolveCompassImageUrl(item);
+  // Category fallback applies to ALL item types — every card gets a header.
+  const categoryFallback = getPlaceCategoryFallback(resolveCompassFallbackCategory(item));
+
+  // Track hero image load errors so we can fall back to the emoji/color strip
+  const [imageError, setImageError] = useState(false);
 
   function navigateToItem() {
+    // Fire-and-forget "viewed" outcome — the user actually opened the card.
+    reportCompassViewed(item.recommendationToken, item.id);
     const type = item.type ?? '';
     if (type === 'event') {
       router.push(`/event/${item.id}` as any);
@@ -113,10 +137,22 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
 
   return (
     <Pressable style={({ pressed }) => [s.card, pressed && { opacity: 0.85 }]} onPress={navigateToItem}>
-      {/* Category emoji header for place items */}
-      {placeFallback && (
-        <View style={[s.emojiHeader, { backgroundColor: placeFallback.color + '18' }]}>
-          <Text style={s.emojiText}>{placeFallback.emoji}</Text>
+      {/* Hero image when the server provides one; emoji+colour header for all items */}
+      {imageUrl && !imageError ? (
+        <Image
+          source={{ uri: imageUrl }}
+          style={s.heroImage}
+          resizeMode="cover"
+          accessibilityLabel={title}
+          testID={`compass-pick-image-${item.id}`}
+          onError={() => setImageError(true)}
+        />
+      ) : (
+        <View
+          style={[s.emojiHeader, { backgroundColor: categoryFallback.color + '22' }]}
+          testID={`compass-pick-emoji-${item.id}`}
+        >
+          <Text style={s.emojiText}>{categoryFallback.emoji}</Text>
         </View>
       )}
 
@@ -142,7 +178,7 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
       {/* Title */}
       <Text style={s.cardTitle} numberOfLines={2}>{title}</Text>
 
-      {/* Real metadata line */}
+      {/* Real metadata line (date/time + status + city + category) */}
       {subtitle ? (
         <View style={s.cityRow}>
           <Navigation size={9} color={color.faint} />
@@ -205,7 +241,7 @@ function SectionHeader({ city, onSwitchCity }: SectionHeaderProps) {
       ) : null}
       <Pressable
         style={s.gearBtn}
-        onPress={() => router.push('/compass-settings' as any)}
+        onPress={() => router.push('/compass-preferences' as any)}
         hitSlop={8}
         accessibilityLabel="Compass settings"
       >
@@ -382,16 +418,24 @@ const s = StyleSheet.create({
     gap: space.sm,
     paddingRight: space.xl,
   },
-  // Category emoji header for place picks
-  emojiHeader: {
+  // Hero image — shown when the server sends an imageUrl
+  heroImage: {
+    width: '100%' as const,
+    height: 90,
     borderRadius: radius.sm,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    alignSelf: 'flex-start',
     marginBottom: 2,
   },
+  // Full-width emoji+colour header — shown for all card types when no real image
+  emojiHeader: {
+    width: '100%' as const,
+    height: 90,
+    borderRadius: radius.sm,
+    marginBottom: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   emojiText: {
-    fontSize: 18,
+    fontSize: 34,
   },
   // Card
   card: {

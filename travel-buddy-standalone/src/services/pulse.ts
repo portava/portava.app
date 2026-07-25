@@ -133,6 +133,7 @@ export function pulsePostToFeedItem(p: PulsePost): PulseFeedItem {
       id: p.authorId,
       name: p.author?.name ?? 'Traveler',
       avatarUrl: p.author?.avatarUrl ?? '',
+      username: p.author?.username ?? null,
     },
     createdAt: p.createdAt,
     timeAgo: timeAgo(p.createdAt),

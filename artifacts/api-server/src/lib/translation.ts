@@ -10,7 +10,7 @@
  * NEVER log full message body. Only log message_id, status, source/target, provider, error code.
  */
 
-import { openai } from './openai';
+import { getOpenAI } from './openai';
 
 // ── Shapes ────────────────────────────────────────────────────────────────────
 
@@ -74,7 +74,7 @@ const ISO_LANGUAGE_NAMES: Record<string, string> = {
 export class OpenAITranslationProvider implements TranslationProvider {
   async detectLanguage(text: string): Promise<DetectLanguageResult> {
     const snippet = text.slice(0, 200);
-    const completion = await openai.chat.completions.create({
+    const completion = await getOpenAI().chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         {
@@ -101,7 +101,7 @@ export class OpenAITranslationProvider implements TranslationProvider {
 
   async translateText(text: string, source: string, target: string): Promise<TranslateTextResult> {
     const targetName = ISO_LANGUAGE_NAMES[target] ?? target;
-    const completion = await openai.chat.completions.create({
+    const completion = await getOpenAI().chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         {

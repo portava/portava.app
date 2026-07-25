@@ -6,7 +6,7 @@
  * NEVER writes to the database — the client must call the normal trip-create
  * endpoint after the user confirms the draft.
  *
- * Extraction discipline matches reservationExtract: gpt-5-mini, temperature 0,
+ * Extraction discipline matches reservationExtract: gpt-4o-mini, temperature 0,
  * strict JSON, UGC-wrapped input treated as data (never instructions), facts
  * only — nothing invented, unknown fields omitted.
  */
@@ -76,21 +76,7 @@ router.post("/trips/draft-from-text", asyncHandler(async (req, res) => {
     return;
   }
 
-  // Temporary: log body shape to diagnose empty-body 400s
-  const { logger: reqLogger } = req as any;
-  (reqLogger ?? console).info(
-    { bodyKeys: Object.keys(req.body ?? {}), contentType: req.headers["content-type"], rawBody: typeof req.body },
-    "tripDraft: body debug",
-  );
-
-  // Accept body sent as JSON string (some RN fetch polyfills send body before
-  // Content-Type is recognised, leaving req.body unparsed as a string).
-  let bodySource: unknown = req.body;
-  if (typeof bodySource === "string") {
-    try { bodySource = JSON.parse(bodySource); } catch { /* leave as-is */ }
-  }
-
-  const parsed = BodySchema.safeParse(bodySource ?? {});
+  const parsed = BodySchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "text is required (max 2000 chars)");
     return;
@@ -100,7 +86,7 @@ router.post("/trips/draft-from-text", asyncHandler(async (req, res) => {
   let draft: z.infer<typeof DraftSchema>;
   try {
     const completion = await getOpenAI().chat.completions.create({
-      model:                 "gpt-5-mini",
+      model:                 "gpt-4o-mini",
       temperature:           0,
       max_completion_tokens: 400,
       messages: [

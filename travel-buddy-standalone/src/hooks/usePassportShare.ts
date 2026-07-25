@@ -1,13 +1,10 @@
 /**
  * usePassportShare — captures the PassportShareCard and opens the native share sheet.
  *
- * Uses react-native-share which supports sharing a file + text on both iOS and
- * Android (EXTRA_STREAM + EXTRA_TEXT on Android; UIActivityViewController on iOS).
- *
  * Share payload:
  *   - title:   "@<username>'s Portava Passport"
  *   - message: human-readable text with deep-link + web fallback URL
- *   - url:     captured JPEG file URI (both platforms)
+ *   - image:   captured JPEG (iOS: via RN Share url field; Android: expo-sharing)
  *
  * Fallback: if image capture or image-share fails, opens text-only share so
  * the deep-link + web fallback URL always reaches the recipient.
@@ -20,11 +17,13 @@
  *
  * Pure helper functions (makeDeepLink, makeWebFallback, toFileUri) live in
  * src/services/passportShareUtils.ts so they can be tested in Node.js.
+ *
+ * Uses the built-in RN Share API + expo-sharing (no extra native linking needed).
  */
 import { useRef, useState, useCallback } from 'react';
-import { View } from 'react-native';
+import { View, Share, Platform } from 'react-native';
+import * as ExpoSharing from 'expo-sharing';
 import { captureRef } from 'react-native-view-shot';
-import NativeShare from 'react-native-share';
 import { makeDeepLink, makeWebFallback, toFileUri } from '../services/passportShareUtils.ts';
 
 export interface PassportShareState {
@@ -70,26 +69,34 @@ export function usePassportShare(username: string | null) {
 
       if (imageUri) {
         try {
-          await NativeShare.open({
-            title,
-            message,
-            url: imageUri,
-            type: 'image/jpeg',
-            failOnCancel: false,
-          });
+          if (Platform.OS === 'ios') {
+            // iOS: built-in Share supports file:// url + message text together
+            await Share.share({ message, url: imageUri });
+          } else {
+            // Android: expo-sharing handles file URIs
+            const available = await ExpoSharing.isAvailableAsync();
+            if (available) {
+              await ExpoSharing.shareAsync(imageUri, {
+                mimeType: 'image/jpeg',
+                dialogTitle: title,
+              });
+            } else {
+              await Share.share({ message, title });
+            }
+          }
           return;
         } catch (imgErr: any) {
           const msg = imgErr?.message ?? '';
-          if (msg.includes('User did not share') || msg.includes('cancelled')) return;
+          if (msg.includes('cancelled') || msg.includes('User did not share')) return;
           /* Image share failed — fall through to text-only */
         }
       }
 
       /* Text-only fallback: deep-link + web URL always reach the recipient */
-      await NativeShare.open({ title, message, failOnCancel: false });
+      await Share.share({ message, title });
     } catch (e: any) {
       const msg = e?.message ?? '';
-      if (!msg.includes('User did not share') && !msg.includes('cancelled')) {
+      if (!msg.includes('cancelled') && !msg.includes('User did not share')) {
         setState((s) => ({ ...s, error: 'Could not open share sheet' }));
       }
     } finally {

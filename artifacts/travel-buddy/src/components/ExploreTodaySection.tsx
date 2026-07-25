@@ -156,7 +156,7 @@ export function ExploreTodaySection({
         <Text style={s.fallbackSub}>Be the first — create a plan for today.</Text>
         <Pressable
           style={s.fallbackBtn}
-          onPress={() => router.push('/create' as any)}
+          onPress={() => router.push('/trip/new' as any)}
         >
           <Text style={s.fallbackBtnText}>Create a plan</Text>
         </Pressable>

@@ -71,7 +71,11 @@ interface PostCardProps {
 function PendingPostCard({ post, onReleaseNow, onCancel, onMakePrivate }: PostCardProps) {
   const preview = post.content.replace(/^\[[^\]]+\]\s*/, '').slice(0, 120);
   return (
-    <View style={s.card}>
+    <Pressable
+      style={({ pressed }) => [s.card, pressed && { opacity: 0.88 }]}
+      onPress={() => router.push(`/post/${post.id}` as any)}
+      accessible={false}
+    >
       <View style={s.cardHeader}>
         <View style={[s.statusChip, { backgroundColor: statusColor(post) + '18' }]}>
           <Clock size={12} color={statusColor(post)} />
@@ -94,20 +98,20 @@ function PendingPostCard({ post, onReleaseNow, onCancel, onMakePrivate }: PostCa
       )}
 
       <View style={s.actions}>
-        <Pressable style={s.actionBtn} onPress={onReleaseNow}>
+        <Pressable style={s.actionBtn} onPress={(e) => { e.stopPropagation?.(); onReleaseNow(); }}>
           <Zap size={14} color={color.deep} />
           <Text style={s.actionBtnText}>Release now</Text>
         </Pressable>
-        <Pressable style={[s.actionBtn, s.privateBtn]} onPress={onMakePrivate}>
+        <Pressable style={[s.actionBtn, s.privateBtn]} onPress={(e) => { e.stopPropagation?.(); onMakePrivate(); }}>
           <XCircle size={14} color={color.mute} />
           <Text style={[s.actionBtnText, { color: color.mute }]}>Make private</Text>
         </Pressable>
-        <Pressable style={[s.actionBtn, s.cancelBtn]} onPress={onCancel}>
+        <Pressable style={[s.actionBtn, s.cancelBtn]} onPress={(e) => { e.stopPropagation?.(); onCancel(); }}>
           <XCircle size={14} color={color.signal} />
           <Text style={[s.actionBtnText, { color: color.signal }]}>Cancel</Text>
         </Pressable>
       </View>
-    </View>
+    </Pressable>
   );
 }
 

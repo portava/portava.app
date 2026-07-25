@@ -131,12 +131,21 @@ export function formatCompassContext(item: CompassItemLike): string {
 
 /**
  * Extract an image URL from a CompassFeedItem's data bag.
- * Checks `imageUrl`, `headerImageUrl`, and `image_url` in that order.
- * Returns null when none are present or the value is not a non-empty string.
+ * Checks all known image field names across item types (place, event, buddy,
+ * hidden_gem) in priority order. Returns null when none are present.
  */
 export function resolveCompassImageUrl(item: CompassItemLike): string | null {
   const d = itemData(item);
-  const candidates = [d.imageUrl, d.headerImageUrl, d.image_url];
+  const candidates = [
+    d.imageUrl,
+    d.headerImageUrl,
+    d.image_url,
+    d.coverPhotoUrl, // buddy items from /compass/recommendations
+    d.coverUrl,      // alternate field name
+    d.cover_url,     // snake_case variant (events raw DB column)
+    d.photoUrl,      // community place photos
+    d.photo_url,
+  ];
   for (const c of candidates) {
     if (typeof c === 'string' && c.trim()) return c.trim();
   }

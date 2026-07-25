@@ -27,5 +27,5 @@ export default function Create() {
     }
   }
 
-  return <UnifiedPostComposer onClose={dismiss} onSuccess={dismiss} />;
+  return <UnifiedPostComposer onClose={dismiss} onSuccess={dismiss} openCameraOnMount />;
 }
