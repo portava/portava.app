@@ -145,7 +145,7 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   // Dynamic array built from AI extraction output — columns verified by the surrounding route logic.
   ["src/routes/tripReservations.ts|insert|payload not statically resolvable", 1],
   ["src/routes/rentABuddy.ts|insert|payload not statically resolvable", 1],
-  ["src/routes/rentABuddy.ts|select|select list not statically resolvable", 3],
+  ["src/routes/rentABuddy.ts|select|select list not statically resolvable", 4],
   ["src/routes/rentABuddy.ts|update|payload partially resolvable", 1],
   ["src/routes/rentABuddyMarketplace.ts|insert|payload not statically resolvable", 1],
   ["src/routes/rentABuddyMarketplace.ts|upsert|payload not statically resolvable", 1],

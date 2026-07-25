@@ -323,11 +323,6 @@ export default function TabLayout() {
       />
       <Tabs.Screen name="events" options={{ title: 'Events', href: null }} />
       <Tabs.Screen
-        name="create-tab"
-        options={{ title: 'Post', href: null }}
-        listeners={{ tabPress: (e) => { e.preventDefault(); router.push('/create'); } }}
-      />
-      <Tabs.Screen
         name="trips"
         options={{ title: 'Trips' }}
         listeners={{
