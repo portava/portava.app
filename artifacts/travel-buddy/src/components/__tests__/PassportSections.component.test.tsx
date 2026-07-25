@@ -218,6 +218,24 @@ describe('BuddyPreview avatar fallback', () => {
     // First avatar falls back to initials
     expect(textContent(tr.root)).toContain('CD');
   });
+
+  it('count label reflects the full list length when some buddies have null avatarUrls', () => {
+    // 3 buddies: one with a valid URL, two with null — the label must say "3 buddies"
+    const buddies = [
+      makeUser({ id: 'u1', name: 'Alice Nomad', avatarUrl: 'https://example.com/ok.jpg' }),
+      makeUser({ id: 'u2', name: 'Bob Wander', avatarUrl: null as any }),
+      makeUser({ id: 'u3', name: 'Carol Drift', avatarUrl: null as any }),
+    ];
+    const tr = create(<BuddyPreview buddies={buddies} />);
+
+    // React renders `{buddies.length} buddies` as array children [3, " buddies"].
+    // Normalise each node's children to a flat string before asserting.
+    const flatTexts = textContent(tr.root).map((c) =>
+      Array.isArray(c) ? (c as unknown[]).join('') : String(c),
+    );
+    // The label must use the full list length (3), not just the non-null subset (1)
+    expect(flatTexts).toContain('3 buddies');
+  });
 });
 
 // ── BuddyRow ──────────────────────────────────────────────────────────────────
