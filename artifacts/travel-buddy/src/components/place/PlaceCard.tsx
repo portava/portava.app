@@ -3,8 +3,15 @@
  *
  * Renders:
  *   - Header image via DisplayMediaImage (category artwork / MediaFallback — never blank)
- *   - Name, neighborhood, address
+ *   - Name, neighborhood, address (tappable → opens map)
  *   - Status badge when status !== 'active'
+ *   - Price level chip
+ *   - Open/closed badge + today's hours
+ *   - Phone row (tappable tel: link, or "Phone not available")
+ *   - Website row (tappable)
+ *   - Booking URL button (when present)
+ *   - Gallery images horizontal scroll (from galleryImages)
+ *   - Amenities list
  *   - Provider rating and Portava traveler score as TWO separate labeled rows
  *     when both are present — never merged into one number
  *   - Attribution footer: one Text per entry in attribution[]
@@ -12,11 +19,22 @@
  * When place is null, renders nothing.
  */
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { MapPin, Star } from 'lucide-react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet, Linking } from 'react-native';
+import { MapPin, Star, Phone, Globe, Clock, ExternalLink } from 'lucide-react-native';
 import { DisplayMediaImage, MediaFallback } from '../ui/DisplayMediaImage.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import type { CanonicalPlace, PlaceStatus } from '../../types/canonicalPlace.ts';
+import type { CanonicalPlace, PlaceStatus, NormalizedOpeningHours, PriceLevel } from '../../types/canonicalPlace.ts';
+import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
+
+// ── Price level labels ────────────────────────────────────────────────────────
+
+const PRICE_LABELS: Record<PriceLevel, string> = {
+  free:          'Free',
+  inexpensive:   '$',
+  moderate:      '$$',
+  expensive:     '$$$',
+  very_expensive:'$$$$',
+};
 
 // ── Status badge helpers ──────────────────────────────────────────────────────
 
@@ -42,6 +60,35 @@ function StatusBadge({ status }: { status: Exclude<PlaceStatus, 'active'> }) {
   );
 }
 
+// ── Hours helpers ─────────────────────────────────────────────────────────────
+
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function getTodayHours(hours: NormalizedOpeningHours | null | undefined): { open: string; close: string } | null {
+  if (!hours || hours.length === 0) return null;
+  const today = new Date().getDay();
+  return hours.find((h) => h.dayOfWeek === today) ?? null;
+}
+
+function formatTodayHoursLabel(hours: NormalizedOpeningHours): string {
+  const today = new Date().getDay();
+  const entry = hours.find((h) => h.dayOfWeek === today);
+  if (!entry) return 'Closed today';
+  return `${DAY_NAMES[today]}: ${entry.open} – ${entry.close}`;
+}
+
+// ── Open map helper ───────────────────────────────────────────────────────────
+
+function openInMap(place: CanonicalPlace) {
+  if (place.coordinates.lat != null && place.coordinates.lng != null) {
+    const url = `https://www.google.com/maps/search/?api=1&query=${place.coordinates.lat},${place.coordinates.lng}`;
+    Linking.openURL(url).catch(() => {});
+  } else if (place.formattedAddress || place.address) {
+    const q = encodeURIComponent(place.formattedAddress ?? place.address ?? place.name);
+    Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${q}`).catch(() => {});
+  }
+}
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 export interface PlaceCardProps {
@@ -53,26 +100,29 @@ export interface PlaceCardProps {
 export function PlaceCard({ place }: PlaceCardProps) {
   if (!place) return null;
 
-  const hasBothRatings =
-    place.rating != null && place.travelerScore != null;
+  const hasBothRatings = place.rating != null && place.travelerScore != null;
+  const todayHours = getTodayHours(place.openingHours);
+  const fallbackDesc = getPlaceCategoryFallback(place.category);
+  const displayAddress = place.formattedAddress ?? place.address;
 
   return (
     <View style={pc.container}>
-      {/* Header image */}
+      {/* Header image — category fallback when no real image available */}
       <DisplayMediaImage
-        uri={place.imageUrl ?? null}
+        uri={place.headerImageUrl ?? place.imageUrl ?? null}
         width={0}
         height={220}
         style={pc.headerImage}
+        resizeMode="cover"
+        alt={place.name}
         fallback={
           <MediaFallback
-            icon={<MapPin size={32} color={color.mute} />}
-            label={place.category.replace(/_/g, ' ')}
+            icon={<Text style={pc.fallbackEmoji}>{fallbackDesc.emoji}</Text>}
+            label={fallbackDesc.label}
+            bg={fallbackDesc.color + '33'}
             style={pc.headerImageFallback}
           />
         }
-        alt={place.name}
-        resizeMode="cover"
       />
 
       {/* Content */}
@@ -85,21 +135,101 @@ export function PlaceCard({ place }: PlaceCardProps) {
         {/* Name */}
         <Text style={pc.name}>{place.name}</Text>
 
-        {/* Category chip */}
+        {/* Category chip + price level chip */}
         <View style={pc.chipRow}>
           <View style={pc.chip}>
             <Text style={pc.chipText}>{place.category.replace(/_/g, ' ')}</Text>
           </View>
+          {place.priceLevel && (
+            <View style={[pc.chip, pc.priceChip]}>
+              <Text style={[pc.chipText, pc.priceChipText]}>
+                {PRICE_LABELS[place.priceLevel]}
+              </Text>
+            </View>
+          )}
+          {/* Open/closed real-time badge */}
+          {place.isOpenNow != null && (
+            <View style={[pc.openBadge, place.isOpenNow ? pc.openBadgeOpen : pc.openBadgeClosed]}>
+              <Text style={[pc.openBadgeText, { color: place.isOpenNow ? '#047857' : '#B91C1C' }]}>
+                {place.isOpenNow ? 'Open now' : 'Closed now'}
+              </Text>
+            </View>
+          )}
         </View>
 
-        {/* Neighborhood + address */}
-        {(place.neighborhood || place.address) && (
-          <View style={pc.locationRow}>
-            <MapPin size={13} color={color.mute} />
-            <Text style={pc.locationText} numberOfLines={2}>
-              {[place.neighborhood, place.address].filter(Boolean).join(' · ')}
-            </Text>
+        {/* Today's hours */}
+        {place.openingHours && todayHours && (
+          <View style={pc.infoRow}>
+            <Clock size={13} color={color.mute} />
+            <Text style={pc.infoText}>{formatTodayHoursLabel(place.openingHours)}</Text>
           </View>
+        )}
+        {place.openingHours && !todayHours && (
+          <View style={pc.infoRow}>
+            <Clock size={13} color={color.faint} />
+            <Text style={[pc.infoText, pc.infoTextNA]}>Hours not available</Text>
+          </View>
+        )}
+
+        {/* Neighborhood + full address — tappable → opens map */}
+        {(place.neighborhood || displayAddress) && (
+          <Pressable
+            style={pc.infoRow}
+            onPress={() => openInMap(place)}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${displayAddress ?? place.neighborhood} in maps`}
+          >
+            <MapPin size={13} color={color.deep} />
+            <Text style={[pc.infoText, pc.infoTextLink]} numberOfLines={3}>
+              {[place.neighborhood, displayAddress].filter(Boolean).join('\n')}
+            </Text>
+          </Pressable>
+        )}
+        {!place.neighborhood && !displayAddress && (
+          <View style={pc.infoRow}>
+            <MapPin size={13} color={color.faint} />
+            <Text style={[pc.infoText, pc.infoTextNA]}>Address unavailable</Text>
+          </View>
+        )}
+
+        {/* Phone — tappable or "Phone not available" */}
+        <Pressable
+          style={pc.infoRow}
+          onPress={place.phone ? () => Linking.openURL(`tel:${place.phone}`).catch(() => {}) : undefined}
+          disabled={!place.phone}
+          accessibilityRole={place.phone ? 'button' : 'text'}
+          testID="place-card-phone"
+        >
+          <Phone size={13} color={place.phone ? color.deep : color.faint} />
+          <Text style={[pc.infoText, place.phone ? pc.infoTextLink : pc.infoTextNA]}>
+            {place.phone ?? 'Phone not available'}
+          </Text>
+        </Pressable>
+
+        {/* Website */}
+        {place.website && (
+          <Pressable
+            style={pc.infoRow}
+            onPress={() => Linking.openURL(place.website!).catch(() => {})}
+            accessibilityRole="button"
+          >
+            <Globe size={13} color={color.deep} />
+            <Text style={[pc.infoText, pc.infoTextLink]} numberOfLines={1}>
+              {place.website.replace(/^https?:\/\/(www\.)?/, '')}
+            </Text>
+          </Pressable>
+        )}
+
+        {/* Booking URL button */}
+        {place.bookingUrl && (
+          <Pressable
+            style={pc.bookingBtn}
+            onPress={() => Linking.openURL(place.bookingUrl!).catch(() => {})}
+            accessibilityRole="button"
+          >
+            <ExternalLink size={14} color="#fff" />
+            <Text style={pc.bookingBtnText}>Book Now</Text>
+          </Pressable>
         )}
 
         {/* Ratings — rendered as separate labeled rows, never blended */}
@@ -111,6 +241,9 @@ export function PlaceCard({ place }: PlaceCardProps) {
                 ? `${place.ratingProvider ?? 'Provider'} rating: `
                 : 'Rating: '}
               <Text style={pc.ratingValue}>{place.rating.toFixed(1)}</Text>
+              {place.reviewCount != null && (
+                <Text style={pc.ratingCount}> ({place.reviewCount.toLocaleString()})</Text>
+              )}
             </Text>
           </View>
         )}
@@ -124,6 +257,46 @@ export function PlaceCard({ place }: PlaceCardProps) {
           </View>
         )}
       </View>
+
+      {/* Gallery — horizontal scroll of additional images */}
+      {place.galleryImages && place.galleryImages.length > 0 && (
+        <View style={pc.gallerySection}>
+          <Text style={pc.galleryLabel}>Photos</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={pc.galleryRow}
+          >
+            {place.galleryImages.slice(0, 8).map((url, i) => (
+              <DisplayMediaImage
+                key={i}
+                uri={url}
+                width={110}
+                height={80}
+                style={pc.galleryThumb}
+                resizeMode="cover"
+                alt={`${place.name} photo ${i + 1}`}
+              />
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Amenities */}
+      {place.amenities && place.amenities.length > 0 && (
+        <View style={pc.amenitiesSection}>
+          <Text style={pc.galleryLabel}>Amenities</Text>
+          <View style={pc.amenitiesRow}>
+            {place.amenities.map((amenity) => (
+              <View key={amenity} style={pc.amenityChip}>
+                <Text style={pc.amenityText}>
+                  {amenity.replace(/_/g, ' ')}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
 
       {/* Attribution footer — always rendered, one Text per entry */}
       {place.attribution.length > 0 && (
@@ -156,6 +329,11 @@ const pc = StyleSheet.create({
     width: '100%' as any,
     height: 220,
     backgroundColor: color.haze,
+  },
+  fallbackEmoji: {
+    fontSize: 48,
+    lineHeight: 58,
+    textAlign: 'center',
   },
 
   content: {
@@ -203,18 +381,67 @@ const pc = StyleSheet.create({
     color: color.mute,
     textTransform: 'capitalize',
   },
+  priceChip: {
+    backgroundColor: '#ECFDF5',
+  },
+  priceChipText: {
+    color: '#065F46',
+    fontWeight: '700',
+  },
+  openBadge: {
+    paddingHorizontal: space.sm,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+  },
+  openBadgeOpen: {
+    backgroundColor: '#04785712',
+  },
+  openBadgeClosed: {
+    backgroundColor: '#B91C1C12',
+  },
+  openBadgeText: {
+    ...t.small,
+    fontSize: 11,
+    fontWeight: '700',
+  },
 
-  locationRow: {
+  infoRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 4,
-    marginBottom: 2,
+    gap: 6,
+    marginTop: 2,
   },
-  locationText: {
+  infoText: {
     ...t.small,
     color: color.mute,
     flex: 1,
     lineHeight: 18,
+    fontSize: 13,
+  },
+  infoTextLink: {
+    color: color.deep,
+    textDecorationLine: 'underline',
+  },
+  infoTextNA: {
+    color: color.faint,
+    fontStyle: 'italic',
+  },
+
+  bookingBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.sm,
+    backgroundColor: color.signal,
+    borderRadius: radius.md,
+    paddingVertical: space.md,
+    marginTop: space.xs,
+  },
+  bookingBtnText: {
+    ...t.bodyStrong,
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 14,
   },
 
   ratingRow: {
@@ -232,7 +459,59 @@ const pc = StyleSheet.create({
     fontWeight: '700',
     color: color.ink,
   },
+  ratingCount: {
+    fontWeight: '400',
+    color: color.faint,
+    fontSize: 11,
+  },
 
+  // ── Gallery ───────────────────────────────────────────────────────────────
+  gallerySection: {
+    paddingHorizontal: space.md,
+    paddingBottom: space.md,
+    gap: space.sm,
+  },
+  galleryLabel: {
+    ...t.stamp,
+    color: color.faint,
+    fontSize: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  galleryRow: {
+    flexDirection: 'row',
+    gap: space.sm,
+  },
+  galleryThumb: {
+    borderRadius: radius.sm,
+    overflow: 'hidden',
+  },
+
+  // ── Amenities ─────────────────────────────────────────────────────────────
+  amenitiesSection: {
+    paddingHorizontal: space.md,
+    paddingBottom: space.md,
+    gap: space.sm,
+  },
+  amenitiesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.xs,
+  },
+  amenityChip: {
+    backgroundColor: color.haze,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.sm,
+    paddingVertical: 3,
+  },
+  amenityText: {
+    ...t.stamp,
+    fontSize: 11,
+    color: color.mute,
+    textTransform: 'capitalize',
+  },
+
+  // ── Attribution footer ─────────────────────────────────────────────────────
   attributionFooter: {
     paddingHorizontal: space.md,
     paddingVertical: space.sm,

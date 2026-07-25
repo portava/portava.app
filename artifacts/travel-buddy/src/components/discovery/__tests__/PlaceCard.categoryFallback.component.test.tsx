@@ -1,12 +1,11 @@
 /**
- * Component tests for PlaceCard — FSQ attribution label visibility.
+ * PlaceCard (discovery) — category fallback image test
  *
- * Covers:
- *   1. Attribution text renders when place.attribution is set (FSQ CC BY 4.0)
- *   2. No attribution text appears when place.attribution is null
- *   3. No attribution text appears when place.attribution is undefined
+ * Confirms that the card renders the category fallback block whenever
+ * `headerImageUrl` is absent (null, undefined, or not set), so no place
+ * ever shows a gray blank box.
  *
- * Run with:  pnpm test:component
+ * Run with: pnpm test:component
  *
  * RNTL v14: render() is async — always await the mount helper.
  */
@@ -19,8 +18,8 @@ import type { DiscoveryPlace } from '../../../services/discovery.ts';
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
 // NOTE: intentionally exhaustive — the real discovery module imports Supabase
-// native internals that crash under jest-expo; only the live-status function is
-// needed and we control its return value entirely in these attribution tests.
+// native internals that crash under jest-expo; only the live-status function
+// is needed and we control its return value entirely.
 jest.mock('../../../services/discovery', () => ({
   getPlaceLiveStatusCached: jest.fn().mockResolvedValue(null),
 }));
@@ -46,15 +45,14 @@ jest.mock('../../PlanPickerController', () => ({
 }));
 
 // NOTE: intentionally exhaustive — TripWishlistPicker pulls in its own service
-// chain and Modal; stubbing to null prevents a secondary dependency cascade that
-// is orthogonal to attribution rendering.
+// chain and Modal; stubbing to null prevents a secondary dependency cascade.
 jest.mock('../TripWishlistPicker', () => ({
   TripWishlistPicker: () => null,
 }));
 
 // NOTE: expo-image pulls in native modules that crash under jest-expo.
 // DisplayMediaImage is mocked to render its `fallback` prop when uri is null,
-// which mirrors the real component's behaviour and keeps attribution tests stable.
+// which mirrors the real component's behaviour.
 jest.mock('../../ui/DisplayMediaImage.tsx', () => ({
   DisplayMediaImage: ({ uri, fallback, children, testID }: any) => {
     const { View } = require('react-native');
@@ -89,8 +87,8 @@ jest.mock('../../../theme/tokens', () => ({
     onInk:       '#FFFFFF',
   },
   space:  { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32, xxxl: 48 },
-  radius: { sm: 4, md: 8, pill: 999 },
-  type:   { heading: {}, bodyStrong: {}, small: {}, stamp: {} },
+  radius: { sm: 4, md: 8, lg: 12, pill: 999 },
+  type:   { heading: {}, bodyStrong: {}, body: {}, small: {}, stamp: {} },
   shadow: { card: {}, float: {} },
   layout: { pressedOpacity: 0.7 },
 }));
@@ -98,16 +96,16 @@ jest.mock('../../../theme/tokens', () => ({
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
 const BASE_PLACE: DiscoveryPlace = {
-  id:           'place-fsq-1',
-  name:         'Café du Marché',
+  id:           'place-fb-1',
+  name:         'Sunset Beach Bar',
   category:     'food',
-  type:         'café',
+  type:         'bar',
   description:  null,
   distanceKm:   null,
-  lat:          48.8566,
-  lng:          2.3522,
+  lat:          14.5,
+  lng:          121.0,
   tags:         [],
-  address:      '12 Rue de Rivoli, Paris',
+  address:      '1 Beach Rd',
   website:      null,
   phone:        null,
   openingHours: null,
@@ -129,42 +127,47 @@ async function mountCard(place: DiscoveryPlace) {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('PlaceCard — FSQ attribution label', () => {
+describe('PlaceCard (discovery) — category fallback image', () => {
   afterEach(() => jest.clearAllMocks());
 
-  it('renders the attribution text when place.attribution is set', async () => {
-    const place: DiscoveryPlace = {
-      ...BASE_PLACE,
-      attribution: 'Foursquare CC BY 4.0',
-    };
+  it('renders the category fallback when headerImageUrl is absent (undefined)', async () => {
+    const place: DiscoveryPlace = { ...BASE_PLACE };
+    // No headerImageUrl field — should show fallback block
 
-    const { getByText } = await mountCard(place);
+    const { getByTestId } = await mountCard(place);
 
     await waitFor(() => {
-      expect(getByText('Foursquare CC BY 4.0')).toBeTruthy();
+      expect(getByTestId('media-fallback')).toBeTruthy();
     });
   });
 
-  it('does not render any attribution text when place.attribution is null', async () => {
-    const place: DiscoveryPlace = {
-      ...BASE_PLACE,
-      attribution: null,
-    };
+  it('renders the category fallback when headerImageUrl is null', async () => {
+    const place: DiscoveryPlace = { ...BASE_PLACE, headerImageUrl: null };
 
-    const { queryByText } = await mountCard(place);
+    const { getByTestId } = await mountCard(place);
 
-    // Allow async effects (live-status, saved-count) to settle before asserting.
-    await waitFor(() => expect(queryByText('Foursquare CC BY 4.0')).toBeNull());
+    await waitFor(() => {
+      expect(getByTestId('media-fallback')).toBeTruthy();
+    });
   });
 
-  it('does not render any attribution text when place.attribution is undefined', async () => {
-    const place: DiscoveryPlace = {
-      ...BASE_PLACE,
-      // attribution omitted — field is optional in DiscoveryPlace
-    };
+  it('renders the category-specific fallback label for the "food" category', async () => {
+    const place: DiscoveryPlace = { ...BASE_PLACE, category: 'food' };
 
-    const { queryByText } = await mountCard(place);
+    const { getByTestId } = await mountCard(place);
 
-    await waitFor(() => expect(queryByText('Foursquare CC BY 4.0')).toBeNull());
+    await waitFor(() => {
+      expect(getByTestId('media-fallback-label')).toBeTruthy();
+    });
+  });
+
+  it('shows the image container even when there is no headerImageUrl', async () => {
+    const place: DiscoveryPlace = { ...BASE_PLACE };
+
+    const { getByTestId } = await mountCard(place);
+
+    await waitFor(() => {
+      expect(getByTestId(`place-card-image-${place.id}`)).toBeTruthy();
+    });
   });
 });

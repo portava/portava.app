@@ -36,11 +36,18 @@ export interface DiscoveryPlace {
   lng: number | null;
   tags: string[];
   address: string | null;
+  /** Neighborhood label (when available from the provider). */
+  neighborhood?: string | null;
   website: string | null;
   phone: string | null;
   openingHours: string | null;
   rating: number | null;
   isOpenNow: boolean | null;
+  /**
+   * Primary cover image URL. Null / absent means no image is available;
+   * UI falls back to category artwork via PlaceCategoryFallback.
+   */
+  headerImageUrl?: string | null;
   /** Data-source attribution text for the venue detail view. When present,
    *  replaces the default OSM attribution footer. */
   attribution?: string | null;
