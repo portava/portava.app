@@ -13,38 +13,9 @@ import { usePlainBottomInset } from '../../hooks/useBottomInset.ts';
 import { DisplayMediaImage, MediaFallback } from '../ui/DisplayMediaImage.tsx';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 import { useLocationContext } from '../../context/LocationContext.tsx';
+import { haversineKm, travelTimeLabel } from '../../utils/geoDistance.ts';
 
 const SHEET_IMAGE_HEIGHT = 180;
-
-// ── Haversine distance (km) ───────────────────────────────────────────────────
-
-function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6371;
-  const dLat = (lat2 - lat1) * (Math.PI / 180);
-  const dLng = (lng2 - lng1) * (Math.PI / 180);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * (Math.PI / 180)) *
-    Math.cos(lat2 * (Math.PI / 180)) *
-    Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-// ── Travel-time label ─────────────────────────────────────────────────────────
-
-function travelTimeLabel(distKm: number): string {
-  if (distKm < 2) {
-    const walkMin = Math.max(1, Math.round(distKm * 12)); // ~5 km/h walking
-    return `${walkMin} min walk`;
-  }
-  if (distKm < 6) {
-    const walkMin = Math.round(distKm * 12);
-    const driveMin = Math.max(1, Math.round(distKm * 2)); // ~30 km/h city
-    return `${walkMin} min walk · ${driveMin} min drive`;
-  }
-  const driveMin = Math.max(1, Math.round(distKm * 2));
-  return `~${driveMin} min drive`;
-}
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
