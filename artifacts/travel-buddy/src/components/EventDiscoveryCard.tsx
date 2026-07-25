@@ -9,6 +9,7 @@
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { CachedImage, withStorageParams } from './CachedImage.tsx';
+import { useHydratedMedia } from '../services/mediaUrl.ts';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import {
   CalendarClock, MapPin, Users, ChevronRight,
@@ -71,6 +72,10 @@ export function EventDiscoveryCard({ event, onPress, onHostPress, onRsvp, isSave
   const stateLabel = STATE_LABEL[event.state] ?? event.state;
   const catColor = event.category ? (CATEGORY_COLORS[event.category] ?? color.signal) : color.signal;
   const [imgFailed, setImgFailed] = useState(false);
+  // Route cover URLs through signed-URL hydration so this surface keeps working
+  // when the media_private_buckets_enabled flag is toggled ON.
+  const { resolved: coverResolved } = useHydratedMedia(event.coverUrl && !imgFailed ? [event.coverUrl] : []);
+  const hydratedCoverUrl = (event.coverUrl && coverResolved[event.coverUrl]) ?? event.coverUrl ?? undefined;
 
   const isOpen = ['open', 'started'].includes(event.state);
   const isFull = event.state === 'full';
@@ -87,14 +92,14 @@ export function EventDiscoveryCard({ event, onPress, onHostPress, onRsvp, isSave
       <View style={[styles.stripe, { backgroundColor: stateColor }]} />
 
       {/* Cover thumbnail */}
-      {event.coverUrl && !imgFailed && event.coverMediaType === 'video' ? (
+      {hydratedCoverUrl && !imgFailed && event.coverMediaType === 'video' ? (
         <VideoThumbnail
-          posterUri={event.coverUrl}
+          posterUri={hydratedCoverUrl}
           style={styles.thumb}
           onPress={onPress}
         />
-      ) : event.coverUrl && !imgFailed ? (
-        <CachedImage source={{ uri: withStorageParams(event.coverUrl, 'width=600&quality=80') }} style={styles.thumb} resizeMode="cover" onError={() => setImgFailed(true)} />
+      ) : hydratedCoverUrl && !imgFailed ? (
+        <CachedImage source={{ uri: withStorageParams(hydratedCoverUrl, 'width=600&quality=80') }} style={styles.thumb} resizeMode="cover" onError={() => setImgFailed(true)} />
       ) : (
         <View style={[styles.thumb, styles.thumbPlaceholder, { backgroundColor: catColor + '22' }]}>
           <CalendarClock size={20} color={catColor} />

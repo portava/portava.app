@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert, useWindowDimensions } from 'react-native';
 import { CachedImage, withStorageParams } from './CachedImage.tsx';
+import { AvatarImage } from './ui/DisplayMediaImage.tsx';
 import { batchSignUrls } from '../lib/batchSignMedia.ts';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
@@ -67,7 +68,6 @@ function AuthorRow({
   const ringState = useHighlightRingState(item.author?.id ?? null);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
-  const [avatarError, setAvatarError] = useState(false);
   const AVATAR_SIZE = 40;
 
   const handleAuthorPress = item.author?.username
@@ -133,19 +133,12 @@ function AuthorRow({
           gap={2}
           onPress={ringState?.hasActive ? () => setViewerOpen(true) : handleAuthorPress}
         >
-          {avatarError || !item.author.avatarUrl ? (
-            <View style={[s.avatar, s.avatarFallback]}>
-              <Text style={s.avatarFallbackText}>
-                {(authorText.replace(/^@/, '') || '?').charAt(0).toUpperCase()}
-              </Text>
-            </View>
-          ) : (
-            <CachedImage
-              source={{ uri: withStorageParams(item.author.avatarUrl, 'width=100&quality=80') }}
-              style={s.avatar}
-              onError={() => setAvatarError(true)}
-            />
-          )}
+          <AvatarImage
+            uri={item.author.avatarUrl ?? undefined}
+            user={{ name: item.author.name ?? undefined, username: item.author.username ?? undefined }}
+            size={AVATAR_SIZE}
+            style={s.avatar}
+          />
         </HighlightRing>
       ) : null}
       <View style={{ flex: 1 }}>
@@ -511,8 +504,9 @@ function CircleCard({ item }: { item: PulseFeedItem }) {
               style={{ marginLeft: i === 0 ? 0 : -9, zIndex: 4 - i }}
               testID={`identity-link-${p.id}`}
             >
-              <CachedImage
-                source={{ uri: withStorageParams(p.avatarUrl, 'width=100&quality=80') }}
+              <AvatarImage
+                uri={p.avatarUrl ?? undefined}
+                size={30}
                 style={s.circleAvatar}
               />
             </UserIdentityLink>

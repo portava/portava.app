@@ -165,6 +165,9 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
           {/* Media picker */}
           {mediaUri ? (
             <View style={s.previewContainer}>
+              {/* mediaUri is always a local device file URI (file:// or content://)
+                  set by the media picker — never a stored bucket URL — so no
+                  signed-URL hydration is needed here. */}
               <Image source={{ uri: mediaUri }} style={s.preview} resizeMode="cover" />
               <Pressable onPress={() => setMediaUri(null)} style={s.clearMedia}>
                 <X size={16} color="#fff" />

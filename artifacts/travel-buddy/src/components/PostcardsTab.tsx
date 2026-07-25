@@ -4,6 +4,7 @@ import {
   Alert, StyleSheet, ScrollView, useWindowDimensions,
 } from 'react-native';
 import { CachedImage, withStorageParams } from './CachedImage.tsx';
+import { useHydratedMedia } from '../services/mediaUrl.ts';
 import { router } from 'expo-router';
 import { MapPin, Pin, MoreHorizontal, Plus, PlayCircle, Clock, AlertCircle, Layers, ChevronDown } from 'lucide-react-native';
 import type { PassportPostcard } from '../types/models.ts';
@@ -155,6 +156,11 @@ function PostcardTile({
   const hasFailed = allMedia.length > 0 && !firstReady && allMedia.every((m) => m.processing_status === 'failed');
   const isCarousel = allMedia.length > 1;
 
+  // Route post-media URLs through the signed-URL hydration layer so this
+  // surface keeps working when media_private_buckets_enabled is toggled ON.
+  const { resolved: mediaResolved } = useHydratedMedia(displayUri ? [displayUri] : []);
+  const hydratedUri = (displayUri && mediaResolved[displayUri]) ?? displayUri;
+
   const location = [card.locationCity ?? card.locationName, card.locationCountry]
     .filter(Boolean).join(', ');
 
@@ -166,9 +172,9 @@ function PostcardTile({
       accessibilityRole="button"
       accessibilityLabel={`Postcard${location ? ` from ${location}` : ''}`}
     >
-      {displayUri ? (
+      {hydratedUri ? (
         <>
-          <CachedImage source={{ uri: withStorageParams(displayUri, 'width=400&quality=80') }} style={pc.media} resizeMode="cover" />
+          <CachedImage source={{ uri: withStorageParams(hydratedUri, 'width=400&quality=80') }} style={pc.media} resizeMode="cover" />
           {/* Passport-stamp overlay — parse-gated; malformed data renders nothing */}
           {displayItem ? <MediaStampOverlay raw={displayItem.stamp_overlay} /> : null}
         </>

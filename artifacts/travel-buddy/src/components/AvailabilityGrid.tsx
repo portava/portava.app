@@ -11,8 +11,9 @@
  */
 import React, { useState } from 'react';
 import {
-  View, Text, ScrollView, Pressable, Modal, Image, StyleSheet, Platform,
+  View, Text, ScrollView, Pressable, Modal, StyleSheet, Platform,
 } from 'react-native';
+import { AvatarImage } from './ui/DisplayMediaImage.tsx';
 import { router } from 'expo-router';
 import { CalendarPlus, X } from 'lucide-react-native';
 import { type MemberAvailability, type Weekday } from '../services/availability.ts';
@@ -69,14 +70,12 @@ function formatFullDate(date: string): string {
 // ── Avatar ────────────────────────────────────────────────────────────────────
 
 function MemberAvatar({ m, size = 22 }: { m: MemberAvailability; size?: number }) {
-  const style = { width: size, height: size, borderRadius: size / 2 };
-  if (m.avatarUrl) return <Image source={{ uri: m.avatarUrl }} style={style} />;
   return (
-    <View style={[style, g.avatarFb]}>
-      <Text style={{ fontSize: size * 0.42, fontWeight: '700', color: color.mute }}>
-        {((m.name ?? m.handle ?? '?')[0]).toUpperCase()}
-      </Text>
-    </View>
+    <AvatarImage
+      uri={m.avatarUrl}
+      user={{ name: m.name ?? undefined, handle: m.handle ?? undefined }}
+      size={size}
+    />
   );
 }
 

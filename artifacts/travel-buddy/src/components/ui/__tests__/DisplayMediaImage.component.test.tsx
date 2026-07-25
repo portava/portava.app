@@ -413,6 +413,101 @@ describe('AvatarImage', () => {
   });
 });
 
+// ── DisplayMediaImage — 403 → evict → re-hydrate → success ────────────────────
+
+describe('DisplayMediaImage — 403 re-hydrate sequence', () => {
+  it('evicts cache entry and retries with a fresh signed URL after a 403 on a post-media URL', async () => {
+    const originalUrl =
+      'https://supabase.example.com/storage/v1/object/public/post-media/photo.jpg';
+    const freshSignedUrl =
+      'https://abc.supabase.co/storage/v1/object/sign/post-media/photo.jpg?token=fresh';
+
+    // Call 1: initial useHydratedMedia hook resolution (pass-through when flag OFF)
+    // Call 2: hydrateMediaUrls called directly by handleError after the 403
+    mockHydrateMediaUrls
+      .mockResolvedValueOnce({ [originalUrl]: originalUrl })
+      .mockResolvedValueOnce({ [originalUrl]: freshSignedUrl });
+
+    let tr!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      tr = TestRenderer.create(
+        <DisplayMediaImage
+          uri={originalUrl}
+          width={200}
+          height={200}
+          fallbackLabel="load-failed"
+        />,
+      );
+      // Allow the initial useHydratedMedia promise to settle.
+      await Promise.resolve();
+    });
+
+    // Image should be mounted (loading phase, not error).
+    expect(findExpoImages(tr.root).length).toBeGreaterThan(0);
+    expect(textContent(tr.root)).not.toContain('load-failed');
+
+    // Simulate a 403 / onError event on the ExpoImage.
+    await act(async () => {
+      const imgs = findExpoImages(tr.root);
+      const cb = imgs[0].props['data-on-error'];
+      cb();
+      // Flush the re-hydration promise chain (two microtask ticks).
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // _evictBatchSignEntry must have been called with the original URL.
+    expect(mockEvictBatchSignEntry).toHaveBeenCalledWith(originalUrl);
+
+    // The component should NOT be showing the error fallback — it received a
+    // fresh signed URL and updated its source.
+    expect(textContent(tr.root)).not.toContain('load-failed');
+
+    // ExpoImage should still be mounted with the fresh signed URL.
+    const imgs = findExpoImages(tr.root);
+    expect(imgs.length).toBeGreaterThan(0);
+    const src = JSON.parse(imgs[0].props['data-source'] ?? 'null') as { uri: string } | null;
+    expect(src?.uri).toBe(freshSignedUrl);
+  });
+
+  it('transitions to fallback when re-hydration returns null for the post-media URL', async () => {
+    const originalUrl =
+      'https://supabase.example.com/storage/v1/object/public/post-media/gone.jpg';
+
+    mockHydrateMediaUrls
+      .mockResolvedValueOnce({ [originalUrl]: originalUrl }) // initial hook
+      .mockResolvedValueOnce({ [originalUrl]: null });        // re-hydration → null (server rejected)
+
+    let tr!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      tr = TestRenderer.create(
+        <DisplayMediaImage
+          uri={originalUrl}
+          width={200}
+          height={200}
+          fallbackLabel="rejected"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    // Image shown initially.
+    expect(findExpoImages(tr.root).length).toBeGreaterThan(0);
+
+    // Simulate 403.
+    await act(async () => {
+      const cb = findExpoImages(tr.root)[0].props['data-on-error'];
+      cb();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Server returned null → fallback shown.
+    expect(textContent(tr.root)).toContain('rejected');
+    expect(findExpoImages(tr.root).length).toBe(0);
+  });
+});
+
 // ── DisplayMediaImage — hydrateMediaUrls loading (auth-window) ────────────────
 //
 // While useHydratedMedia is in-flight (e.g. feature-flag cache is cold on first
