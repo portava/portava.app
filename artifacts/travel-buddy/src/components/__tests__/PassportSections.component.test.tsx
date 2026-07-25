@@ -282,4 +282,37 @@ describe('BuddyRow avatar fallback', () => {
     fireOnError(tr.root, 0);
     expect(textContent(tr.root)).toContain('GH');
   });
+
+  it('renders at most 6 avatars even when given 10 buddies', () => {
+    const buddies = [
+      makeUser({ id: 'u1', name: 'Alpha One', avatarUrl: null as any }),
+      makeUser({ id: 'u2', name: 'Beta Two', avatarUrl: null as any }),
+      makeUser({ id: 'u3', name: 'Gamma Three', avatarUrl: null as any }),
+      makeUser({ id: 'u4', name: 'Delta Four', avatarUrl: null as any }),
+      makeUser({ id: 'u5', name: 'Epsilon Five', avatarUrl: null as any }),
+      makeUser({ id: 'u6', name: 'Zeta Six', avatarUrl: null as any }),
+      makeUser({ id: 'u7', name: 'Eta Seven', avatarUrl: null as any }),
+      makeUser({ id: 'u8', name: 'Theta Eight', avatarUrl: null as any }),
+      makeUser({ id: 'u9', name: 'Iota Nine', avatarUrl: null as any }),
+      makeUser({ id: 'u10', name: 'Kappa Ten', avatarUrl: null as any }),
+    ];
+    const tr = create(<BuddyRow buddies={buddies} />);
+
+    // Each rendered buddy shows their first name as a label.
+    // With null avatarUrl each buddy also shows initials, so filter to
+    // just the first-name tokens (single-word strings that match our fixture names).
+    const firstNames = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta', 'Eta', 'Theta', 'Iota', 'Kappa'];
+    const texts = textContent(tr.root);
+    const renderedFirstNames = texts.filter((t) => firstNames.includes(t as string));
+
+    // Only the first 6 should appear; buddies 7-10 must be absent.
+    expect(renderedFirstNames.length).toBe(6);
+    expect(renderedFirstNames).toEqual(['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta']);
+
+    // The 7th+ buddy names must not appear at all.
+    expect(texts).not.toContain('Eta');
+    expect(texts).not.toContain('Theta');
+    expect(texts).not.toContain('Iota');
+    expect(texts).not.toContain('Kappa');
+  });
 });
