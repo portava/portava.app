@@ -471,7 +471,7 @@ async function notifyBookingParty(
 // GET /api/rent-a-buddy/cities/:city/available
 // Returns { available: boolean, code?: string } based on the city rollout table.
 // Does NOT require authentication — used by Event Detail to gate the "Find a Buddy" CTA.
-router.get("/api/rent-a-buddy/cities/:city/available", async (req, res) => {
+router.get("/rent-a-buddy/cities/:city/available", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ available: false, code: "service_unavailable" });
 
@@ -548,7 +548,7 @@ function hasMeetupBase(r: Record<string, unknown>): boolean {
     && typeof r.meetup_base_lng === "number" && Number.isFinite(r.meetup_base_lng);
 }
 
-router.post("/api/rent-a-buddy/search", async (req, res) => {
+router.post("/rent-a-buddy/search", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ buddies: [], total: 0, page: 1, perPage: 20 });
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
@@ -656,7 +656,7 @@ router.post("/api/rent-a-buddy/search", async (req, res) => {
 // Canonical public-facing endpoint.  All filter params are query-string so
 // the URL is bookmarkable / cache-friendly without a request body.
 
-router.get("/api/buddies", async (req, res) => {
+router.get("/buddies", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ buddies: [], total: 0, page: 1, perPage: 20 });
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
@@ -812,7 +812,7 @@ router.get("/api/buddies", async (req, res) => {
 
 // ── Buddy profile ─────────────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/buddies/:buddyId", async (req, res) => {
+router.get("/rent-a-buddy/buddies/:buddyId", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ buddy: null, packages: [], addons: [], reviews: [], availability: [], savedByMe: false });
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
@@ -876,7 +876,7 @@ router.get("/api/rent-a-buddy/buddies/:buddyId", async (req, res) => {
   });
 });
 
-router.get("/api/rent-a-buddy/by-user/:userId", async (req, res) => {
+router.get("/rent-a-buddy/by-user/:userId", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ buddy: null });
 
@@ -897,7 +897,7 @@ router.get("/api/rent-a-buddy/by-user/:userId", async (req, res) => {
   return res.json({ buddy: mapProfile(data) });
 });
 
-router.get("/api/rent-a-buddy/buddies/:buddyId/availability", async (req, res) => {
+router.get("/rent-a-buddy/buddies/:buddyId/availability", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ availability: [] });
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
@@ -920,7 +920,7 @@ router.get("/api/rent-a-buddy/buddies/:buddyId/availability", async (req, res) =
 // Returns upcoming availability exceptions (vacation/blocked ranges) for a buddy
 // so the booking date picker can disable those dates before the traveller submits.
 // Only exposes date-range + type — no reasons or private details.
-router.get("/api/rent-a-buddy/buddies/:buddyId/blocked-dates", async (req, res) => {
+router.get("/rent-a-buddy/buddies/:buddyId/blocked-dates", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ blocked: [] });
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
@@ -948,7 +948,7 @@ router.get("/api/rent-a-buddy/buddies/:buddyId/blocked-dates", async (req, res) 
   });
 });
 
-router.get("/api/rent-a-buddy/buddies/:buddyId/reviews", async (req, res) => {
+router.get("/rent-a-buddy/buddies/:buddyId/reviews", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ reviews: [], total: 0 });
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
@@ -982,7 +982,7 @@ router.get("/api/rent-a-buddy/buddies/:buddyId/reviews", async (req, res) => {
 
 // ── Bookings — Create ──────────────────────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/bookings", async (req, res) => {
+router.post("/rent-a-buddy/bookings", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -1331,7 +1331,7 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
   return res.status(201).json({ booking: mapBooking(booking), policyText: POLICY_TEXT });
 });
 
-router.get("/api/rent-a-buddy/bookings", async (req, res) => {
+router.get("/rent-a-buddy/bookings", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1346,7 +1346,7 @@ router.get("/api/rent-a-buddy/bookings", async (req, res) => {
   return res.json({ bookings: (data ?? []).map(mapBooking) });
 });
 
-router.get("/api/rent-a-buddy/bookings/:bookingId", async (req, res) => {
+router.get("/rent-a-buddy/bookings/:bookingId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1376,7 +1376,7 @@ router.get("/api/rent-a-buddy/bookings/:bookingId", async (req, res) => {
 
 // ── Bookings — Payment ────────────────────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/pay-deposit", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/pay-deposit", async (req, res) => {
   // Payment module not yet implemented. Return 503 so no booking is ever
   // marked "paid" and no false milestone notification is sent to the traveler.
   return res.status(503).json({
@@ -1386,7 +1386,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/pay-deposit", async (req, res
   });
 });
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/pay-full", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/pay-full", async (req, res) => {
   // Payment module not yet implemented. Return 503 so no booking is ever
   // marked "paid" and no false milestone notification is sent to the traveler.
   return res.status(503).json({
@@ -1398,7 +1398,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/pay-full", async (req, res) =
 
 // ── Bookings — Cancel ─────────────────────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1500,7 +1500,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => 
 
 // ── Bookings — Buddy lifecycle (accept / decline / start / complete) ───────────
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1626,7 +1626,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => 
   return res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/decline", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/decline", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1683,7 +1683,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/decline", async (req, res) =>
 // Creates buddy_booking_change_requests rows (one per changed field) that the
 // other party accepts/declines via respond-change-request.
 // A proposed date must not fall inside the buddy's blocked/vacation ranges.
-router.post("/api/rent-a-buddy/bookings/:bookingId/suggest", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/suggest", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1765,7 +1765,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/suggest", async (req, res) =>
   return res.status(201).json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/start", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/start", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1821,7 +1821,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/start", async (req, res) => {
   return res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/complete", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -2053,7 +2053,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
 // POST /api/rent-a-buddy/bookings/:bookingId/add-time
 // Traveler or buddy adds extra hours to an in-progress or confirmed booking and
 // emits a rent_buddy_extra_time system milestone on the thread.
-router.post("/api/rent-a-buddy/bookings/:bookingId/add-time", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/add-time", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -2111,7 +2111,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/add-time", async (req, res) =
 // POST /api/rent-a-buddy/bookings/:bookingId/stay-connected
 // Either party (traveler or buddy) calls this to opt into keeping the thread open after completion.
 // Both parties must call before completion fires for the thread to remain open.
-router.post("/api/rent-a-buddy/bookings/:bookingId/stay-connected", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/stay-connected", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -2146,7 +2146,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/stay-connected", async (req, 
   return res.json({ ok: true, optedIn: true });
 });
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/thread", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/thread", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -2236,7 +2236,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/thread", async (req, res) => 
 
 // ── Bookings — Cash balance confirmation ──────────────────────────────────────
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/confirm-cash", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/confirm-cash", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -2298,7 +2298,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/confirm-cash", async (req, re
 
 // ── Bookings — Route management ───────────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/route", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/route", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -2335,7 +2335,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/route", async (req, res) => {
   return res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/route-change", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/route-change", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -2391,7 +2391,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/route-change", async (req, re
   return res.status(201).json({ routeChangeRequest: changeReq });
 });
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/route-change/:changeId/approve", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/route-change/:changeId/approve", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -2439,7 +2439,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/route-change/:changeId/approv
   return res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/route-change/:changeId/decline", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/route-change/:changeId/decline", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -2488,7 +2488,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/route-change/:changeId/declin
 
 // ── Bookings — Reviews ────────────────────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/review", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/review", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -2646,7 +2646,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/review", async (req, res) => 
 
 // ── Bookings — Report (no immediate trust penalty; admin reviews) ─────────────
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/report", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/report", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -2698,7 +2698,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/report", async (req, res) => 
 //       above (handles status transition to "cancelled" + emit + compass invalidation).
 //       The routes below are stubs for features pending payment-module integration.
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/reschedule", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/reschedule", async (req, res) => {
   res.status(501).json({
     error:  "pending_implementation",
     message: "Reschedule requests are not yet implemented. Please contact support.",
@@ -2709,7 +2709,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/reschedule", async (req, res)
 // Either party files a dispute. Opens a rent_buddy_disputes row and moves booking to 'disputed'.
 // Allowed statuses: in_progress, completed_pending_traveler_confirmation, completed.
 // For completed_pending_traveler_confirmation, must be within dispute_window_expires_at.
-router.post("/api/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -2811,7 +2811,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) =>
 
 // GET /api/rent-a-buddy/bookings/:bookingId/dispute
 // Returns the open dispute for a booking, if any.
-router.get("/api/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) => {
+router.get("/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -2839,7 +2839,7 @@ router.get("/api/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) => 
   return res.json({ dispute: dispute ?? null });
 });
 
-router.get("/api/rent-a-buddy/bookings/:bookingId/refund-eligibility", async (req, res) => {
+router.get("/rent-a-buddy/bookings/:bookingId/refund-eligibility", async (req, res) => {
   res.status(501).json({
     error:  "pending_implementation",
     message: "Refund eligibility check is not yet implemented. See cancellation policy for manual refund guidance.",
@@ -2849,7 +2849,7 @@ router.get("/api/rent-a-buddy/bookings/:bookingId/refund-eligibility", async (re
 // POST /api/rent-a-buddy/bookings/:bookingId/no-show
 // Either party reports the other did not appear. Creates a safety checkin, opens a dispute,
 // and moves the booking to 'disputed'. Works for confirmed or in_progress bookings.
-router.post("/api/rent-a-buddy/bookings/:bookingId/no-show", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/no-show", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -2930,7 +2930,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/no-show", async (req, res) =>
 
 // ── Safety routes ─────────────────────────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/safety/checkin", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/safety/checkin", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -2971,7 +2971,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/safety/checkin", async (req, 
   return res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/safety/feel-unsafe", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/safety/feel-unsafe", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3004,7 +3004,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/safety/feel-unsafe", async (r
   return res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/safety/end-early", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/safety/end-early", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3038,7 +3038,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/safety/end-early", async (req
   return res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/safety/emergency-phrase", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/safety/emergency-phrase", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3087,7 +3087,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/safety/emergency-phrase", asy
 
 // ── Application ───────────────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/apply", async (req, res) => {
+router.get("/rent-a-buddy/apply", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3109,7 +3109,7 @@ router.get("/api/rent-a-buddy/apply", async (req, res) => {
   return res.json({ application: mapApplication(data, profileRow) });
 });
 
-router.post("/api/rent-a-buddy/apply", async (req, res) => {
+router.post("/rent-a-buddy/apply", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3199,7 +3199,7 @@ router.post("/api/rent-a-buddy/apply", async (req, res) => {
 
 // ── Buddy me profile ──────────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/me/profile", async (req, res) => {
+router.get("/rent-a-buddy/me/profile", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3214,7 +3214,7 @@ router.get("/api/rent-a-buddy/me/profile", async (req, res) => {
   return res.json({ profile: mapProfile(data) });
 });
 
-router.patch("/api/rent-a-buddy/me/profile", async (req, res) => {
+router.patch("/rent-a-buddy/me/profile", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3269,7 +3269,7 @@ router.patch("/api/rent-a-buddy/me/profile", async (req, res) => {
   return res.json({ ok: true });
 });
 
-router.patch("/api/rent-a-buddy/me/availability", async (req, res) => {
+router.patch("/rent-a-buddy/me/availability", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3295,7 +3295,7 @@ router.patch("/api/rent-a-buddy/me/availability", async (req, res) => {
   return res.json({ ok: true });
 });
 
-router.get("/api/rent-a-buddy/me/requests", async (req, res) => {
+router.get("/rent-a-buddy/me/requests", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3320,7 +3320,7 @@ router.get("/api/rent-a-buddy/me/requests", async (req, res) => {
 
 // ── Saved ─────────────────────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/saved", async (req, res) => {
+router.get("/rent-a-buddy/saved", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3334,7 +3334,7 @@ router.get("/api/rent-a-buddy/saved", async (req, res) => {
   return res.json({ saved: (data ?? []).map((row: any) => mapProfile(row.rent_buddy_profiles)) });
 });
 
-router.post("/api/rent-a-buddy/saved/:buddyId", async (req, res) => {
+router.post("/rent-a-buddy/saved/:buddyId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3345,7 +3345,7 @@ router.post("/api/rent-a-buddy/saved/:buddyId", async (req, res) => {
   return res.json({ ok: true });
 });
 
-router.delete("/api/rent-a-buddy/saved/:buddyId", async (req, res) => {
+router.delete("/rent-a-buddy/saved/:buddyId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3358,7 +3358,7 @@ router.delete("/api/rent-a-buddy/saved/:buddyId", async (req, res) => {
 
 // ── Waitlist ──────────────────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/waitlist", async (req, res) => {
+router.get("/rent-a-buddy/waitlist", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3373,7 +3373,7 @@ router.get("/api/rent-a-buddy/waitlist", async (req, res) => {
   return res.json({ waitlist: (data ?? []).map((r: any) => ({ id: r.id, city: r.city, category: r.category, createdAt: r.created_at })) });
 });
 
-router.post("/api/rent-a-buddy/waitlist", async (req, res) => {
+router.post("/rent-a-buddy/waitlist", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3412,7 +3412,7 @@ router.post("/api/rent-a-buddy/waitlist", async (req, res) => {
   return res.status(201).json({ ok: true });
 });
 
-router.delete("/api/rent-a-buddy/waitlist/:city", async (req, res) => {
+router.delete("/rent-a-buddy/waitlist/:city", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3428,7 +3428,7 @@ router.delete("/api/rent-a-buddy/waitlist/:city", async (req, res) => {
 
 // ── Buddy Dashboard ───────────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/dashboard", async (req, res) => {
+router.get("/rent-a-buddy/dashboard", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3463,7 +3463,7 @@ router.get("/api/rent-a-buddy/dashboard", async (req, res) => {
   });
 });
 
-router.get("/api/rent-a-buddy/dashboard/requests", async (req, res) => {
+router.get("/rent-a-buddy/dashboard/requests", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3482,7 +3482,7 @@ router.get("/api/rent-a-buddy/dashboard/requests", async (req, res) => {
   return res.json({ requests: (data ?? []).map(mapBooking) });
 });
 
-router.patch("/api/rent-a-buddy/dashboard/offer", async (req, res) => {
+router.patch("/rent-a-buddy/dashboard/offer", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3504,7 +3504,7 @@ router.patch("/api/rent-a-buddy/dashboard/offer", async (req, res) => {
   return res.json({ ok: true });
 });
 
-router.get("/api/rent-a-buddy/dashboard/availability", async (req, res) => {
+router.get("/rent-a-buddy/dashboard/availability", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3553,7 +3553,7 @@ router.get("/api/rent-a-buddy/dashboard/availability", async (req, res) => {
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-router.patch("/api/rent-a-buddy/dashboard/availability/settings", async (req, res) => {
+router.patch("/rent-a-buddy/dashboard/availability/settings", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3611,7 +3611,7 @@ router.patch("/api/rent-a-buddy/dashboard/availability/settings", async (req, re
   return res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/dashboard/availability", async (req, res) => {
+router.post("/rent-a-buddy/dashboard/availability", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3644,7 +3644,7 @@ router.post("/api/rent-a-buddy/dashboard/availability", async (req, res) => {
 
 // ── Dashboard — Packages ──────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/dashboard/packages", async (req, res) => {
+router.get("/rent-a-buddy/dashboard/packages", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3656,7 +3656,7 @@ router.get("/api/rent-a-buddy/dashboard/packages", async (req, res) => {
   return res.json({ packages: data ?? [] });
 });
 
-router.post("/api/rent-a-buddy/dashboard/packages", async (req, res) => {
+router.post("/rent-a-buddy/dashboard/packages", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3685,7 +3685,7 @@ router.post("/api/rent-a-buddy/dashboard/packages", async (req, res) => {
   return res.status(201).json({ pkg: data });
 });
 
-router.patch("/api/rent-a-buddy/dashboard/packages/:packageId", async (req, res) => {
+router.patch("/rent-a-buddy/dashboard/packages/:packageId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3709,7 +3709,7 @@ router.patch("/api/rent-a-buddy/dashboard/packages/:packageId", async (req, res)
   return res.json({ ok: true });
 });
 
-router.delete("/api/rent-a-buddy/dashboard/packages/:packageId", async (req, res) => {
+router.delete("/rent-a-buddy/dashboard/packages/:packageId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3723,7 +3723,7 @@ router.delete("/api/rent-a-buddy/dashboard/packages/:packageId", async (req, res
 
 // ── Dashboard — Addons ────────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/dashboard/addons", async (req, res) => {
+router.get("/rent-a-buddy/dashboard/addons", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3735,7 +3735,7 @@ router.get("/api/rent-a-buddy/dashboard/addons", async (req, res) => {
   return res.json({ addons: data ?? [] });
 });
 
-router.post("/api/rent-a-buddy/dashboard/addons", async (req, res) => {
+router.post("/rent-a-buddy/dashboard/addons", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3755,7 +3755,7 @@ router.post("/api/rent-a-buddy/dashboard/addons", async (req, res) => {
   return res.status(201).json({ addon: data });
 });
 
-router.patch("/api/rent-a-buddy/dashboard/addons/:addonId", async (req, res) => {
+router.patch("/rent-a-buddy/dashboard/addons/:addonId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3775,7 +3775,7 @@ router.patch("/api/rent-a-buddy/dashboard/addons/:addonId", async (req, res) => 
   return res.json({ ok: true });
 });
 
-router.delete("/api/rent-a-buddy/dashboard/addons/:addonId", async (req, res) => {
+router.delete("/rent-a-buddy/dashboard/addons/:addonId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3789,7 +3789,7 @@ router.delete("/api/rent-a-buddy/dashboard/addons/:addonId", async (req, res) =>
 
 // ── Dashboard — Earnings ──────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/dashboard/earnings", async (req, res) => {
+router.get("/rent-a-buddy/dashboard/earnings", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3829,7 +3829,7 @@ router.get("/api/rent-a-buddy/dashboard/earnings", async (req, res) => {
 
 // ── Admin — Applications ──────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/admin/applications", async (req, res) => {
+router.get("/rent-a-buddy/admin/applications", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient } = admin;
@@ -3867,7 +3867,7 @@ router.get("/api/rent-a-buddy/admin/applications", async (req, res) => {
   });
 });
 
-router.patch("/api/rent-a-buddy/admin/applications/:appId", async (req, res) => {
+router.patch("/rent-a-buddy/admin/applications/:appId", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId } = admin;
@@ -3970,7 +3970,7 @@ router.patch("/api/rent-a-buddy/admin/applications/:appId", async (req, res) => 
 
 // ── Admin — Buddies & Bookings ────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/admin/buddies", async (req, res) => {
+router.get("/rent-a-buddy/admin/buddies", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient } = admin;
@@ -3994,7 +3994,7 @@ router.get("/api/rent-a-buddy/admin/buddies", async (req, res) => {
   return res.json({ buddies: (data ?? []).map(mapProfile), total: count ?? 0 });
 });
 
-router.post("/api/rent-a-buddy/admin/buddies/:buddyId/suspend", async (req, res) => {
+router.post("/rent-a-buddy/admin/buddies/:buddyId/suspend", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId } = admin;
@@ -4009,7 +4009,7 @@ router.post("/api/rent-a-buddy/admin/buddies/:buddyId/suspend", async (req, res)
   return res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/admin/buddies/:buddyId/reactivate", async (req, res) => {
+router.post("/rent-a-buddy/admin/buddies/:buddyId/reactivate", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId } = admin;
@@ -4021,7 +4021,7 @@ router.post("/api/rent-a-buddy/admin/buddies/:buddyId/reactivate", async (req, r
   return res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/admin/buddies/:buddyId/feature", async (req, res) => {
+router.post("/rent-a-buddy/admin/buddies/:buddyId/feature", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId } = admin;
@@ -4033,7 +4033,7 @@ router.post("/api/rent-a-buddy/admin/buddies/:buddyId/feature", async (req, res)
   return res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/admin/buddies/:buddyId/unfeature", async (req, res) => {
+router.post("/rent-a-buddy/admin/buddies/:buddyId/unfeature", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId } = admin;
@@ -4045,7 +4045,7 @@ router.post("/api/rent-a-buddy/admin/buddies/:buddyId/unfeature", async (req, re
   return res.json({ ok: true });
 });
 
-router.patch("/api/rent-a-buddy/admin/buddies/:buddyId/level", async (req, res) => {
+router.patch("/rent-a-buddy/admin/buddies/:buddyId/level", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId } = admin;
@@ -4059,7 +4059,7 @@ router.patch("/api/rent-a-buddy/admin/buddies/:buddyId/level", async (req, res) 
   return res.json({ ok: true });
 });
 
-router.patch("/api/rent-a-buddy/admin/buddies/:buddyId/categories", async (req, res) => {
+router.patch("/rent-a-buddy/admin/buddies/:buddyId/categories", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId } = admin;
@@ -4075,7 +4075,7 @@ router.patch("/api/rent-a-buddy/admin/buddies/:buddyId/categories", async (req, 
 
 // ── Admin — review moderation ─────────────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/admin/reviews/:reviewId/approve", async (req, res) => {
+router.post("/rent-a-buddy/admin/reviews/:reviewId/approve", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId } = admin;
@@ -4135,7 +4135,7 @@ router.post("/api/rent-a-buddy/admin/reviews/:reviewId/approve", async (req, res
   return res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/admin/reviews/:reviewId/reject", async (req, res) => {
+router.post("/rent-a-buddy/admin/reviews/:reviewId/reject", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId } = admin;
@@ -4193,7 +4193,7 @@ router.post("/api/rent-a-buddy/admin/reviews/:reviewId/reject", async (req, res)
   return res.json({ ok: true });
 });
 
-router.get("/api/rent-a-buddy/admin/reviews", async (req, res) => {
+router.get("/rent-a-buddy/admin/reviews", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient } = admin;
@@ -4212,7 +4212,7 @@ router.get("/api/rent-a-buddy/admin/reviews", async (req, res) => {
   return res.json({ reviews: data ?? [], total: count ?? 0, page });
 });
 
-router.get("/api/rent-a-buddy/admin/bookings", async (req, res) => {
+router.get("/rent-a-buddy/admin/bookings", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient } = admin;
@@ -4242,7 +4242,7 @@ router.get("/api/rent-a-buddy/admin/bookings", async (req, res) => {
   return res.json({ bookings: (data ?? []).map(mapBooking), total: count ?? 0 });
 });
 
-router.get("/api/rent-a-buddy/admin/analytics", async (req, res) => {
+router.get("/rent-a-buddy/admin/analytics", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient } = admin;
@@ -4297,7 +4297,7 @@ router.get("/api/rent-a-buddy/admin/analytics", async (req, res) => {
 
 // ── Admin — Safety flags ──────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/admin/safety/flags", async (req, res) => {
+router.get("/rent-a-buddy/admin/safety/flags", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient } = admin;
@@ -4320,7 +4320,7 @@ router.get("/api/rent-a-buddy/admin/safety/flags", async (req, res) => {
   return res.json({ flags: data ?? [], total: count ?? 0 });
 });
 
-router.post("/api/rent-a-buddy/admin/safety/flags/:flagId/dismiss", async (req, res) => {
+router.post("/rent-a-buddy/admin/safety/flags/:flagId/dismiss", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId } = admin;
@@ -4350,7 +4350,7 @@ router.post("/api/rent-a-buddy/admin/safety/flags/:flagId/dismiss", async (req, 
   return res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/admin/safety/flags/:flagId/confirm", async (req, res) => {
+router.post("/rent-a-buddy/admin/safety/flags/:flagId/confirm", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId } = admin;
@@ -4406,7 +4406,7 @@ router.post("/api/rent-a-buddy/admin/safety/flags/:flagId/confirm", async (req, 
   return res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/admin/safety/flags/:flagId/escalate", async (req, res) => {
+router.post("/rent-a-buddy/admin/safety/flags/:flagId/escalate", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId } = admin;
@@ -4438,7 +4438,7 @@ router.post("/api/rent-a-buddy/admin/safety/flags/:flagId/escalate", async (req,
 
 // ── Admin — Safety events ─────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/admin/safety/events", async (req, res) => {
+router.get("/rent-a-buddy/admin/safety/events", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient } = admin;
@@ -4461,7 +4461,7 @@ router.get("/api/rent-a-buddy/admin/safety/events", async (req, res) => {
 
 // ── Admin — User limits ───────────────────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/admin/users/:userId/limits", async (req, res) => {
+router.post("/rent-a-buddy/admin/users/:userId/limits", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId: adminId } = admin;
@@ -4510,7 +4510,7 @@ router.post("/api/rent-a-buddy/admin/users/:userId/limits", async (req, res) => 
   return res.status(201).json({ limits: data });
 });
 
-router.patch("/api/rent-a-buddy/admin/users/:userId/limits", async (req, res) => {
+router.patch("/rent-a-buddy/admin/users/:userId/limits", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId: adminId } = admin;
@@ -4643,7 +4643,7 @@ async function getLaunchControl(
 
 // ── Eligibility check ──────────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/me/eligibility", async (req, res) => {
+router.get("/rent-a-buddy/me/eligibility", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user, client } = auth;
@@ -4727,7 +4727,7 @@ router.get("/api/rent-a-buddy/me/eligibility", async (req, res) => {
 
 // ── Location availability & launch status ──────────────────────────────────────
 
-router.get("/api/rent-a-buddy/availability/location", async (req, res) => {
+router.get("/rent-a-buddy/availability/location", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ available: false, waitlistOnly: false, reason: "service_unavailable" });
 
@@ -4768,7 +4768,7 @@ router.get("/api/rent-a-buddy/availability/location", async (req, res) => {
   });
 });
 
-router.get("/api/rent-a-buddy/launch-status", async (req, res) => {
+router.get("/rent-a-buddy/launch-status", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ enabled: false, categories: {} });
 
@@ -4797,7 +4797,7 @@ router.get("/api/rent-a-buddy/launch-status", async (req, res) => {
 
 // ── Admin — Launch controls CRUD ──────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/admin/launch-controls", async (req, res) => {
+router.get("/rent-a-buddy/admin/launch-controls", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient } = admin;
@@ -4810,7 +4810,7 @@ router.get("/api/rent-a-buddy/admin/launch-controls", async (req, res) => {
   return res.json({ controls: data ?? [] });
 });
 
-router.post("/api/rent-a-buddy/admin/launch-controls", async (req, res) => {
+router.post("/rent-a-buddy/admin/launch-controls", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId } = admin;
@@ -4871,7 +4871,7 @@ router.post("/api/rent-a-buddy/admin/launch-controls", async (req, res) => {
   return res.status(201).json({ control: data, ok: true });
 });
 
-router.patch("/api/rent-a-buddy/admin/launch-controls/:controlId", async (req, res) => {
+router.patch("/rent-a-buddy/admin/launch-controls/:controlId", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId } = admin;
@@ -4901,7 +4901,7 @@ router.patch("/api/rent-a-buddy/admin/launch-controls/:controlId", async (req, r
 
 // ── Mutual tagging consent ─────────────────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/tag-consent", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/tag-consent", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user, client } = auth;
@@ -4963,7 +4963,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/tag-consent", async (req, res
   return res.status(201).json({ consent, ok: true });
 });
 
-router.post("/api/rent-a-buddy/tag-consents/:consentId/approve", async (req, res) => {
+router.post("/rent-a-buddy/tag-consents/:consentId/approve", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user, client } = auth;
@@ -4983,7 +4983,7 @@ router.post("/api/rent-a-buddy/tag-consents/:consentId/approve", async (req, res
   return res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/tag-consents/:consentId/decline", async (req, res) => {
+router.post("/rent-a-buddy/tag-consents/:consentId/decline", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user, client } = auth;
@@ -5005,7 +5005,7 @@ router.post("/api/rent-a-buddy/tag-consents/:consentId/decline", async (req, res
   return res.json({ ok: true });
 });
 
-router.delete("/api/rent-a-buddy/tag-consents/:consentId", async (req, res) => {
+router.delete("/rent-a-buddy/tag-consents/:consentId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user, client } = auth;
@@ -5044,7 +5044,7 @@ const SUPPORT_WINDOWS: Record<string, number | null> = {
   other: 168,
 };
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/support/report", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/support/report", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user, client } = auth;
@@ -5141,7 +5141,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/support/report", async (req, 
   });
 });
 
-router.get("/api/rent-a-buddy/admin/support/reports", async (req, res) => {
+router.get("/rent-a-buddy/admin/support/reports", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient } = admin;
@@ -5162,7 +5162,7 @@ router.get("/api/rent-a-buddy/admin/support/reports", async (req, res) => {
   return res.json({ reports: data ?? [], total: count ?? 0 });
 });
 
-router.patch("/api/rent-a-buddy/admin/support/reports/:reportId", async (req, res) => {
+router.patch("/rent-a-buddy/admin/support/reports/:reportId", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient } = admin;
@@ -5191,7 +5191,7 @@ router.patch("/api/rent-a-buddy/admin/support/reports/:reportId", async (req, re
   return res.json({ ok: true });
 });
 
-router.get("/api/rent-a-buddy/admin/support/templates", async (req, res) => {
+router.get("/rent-a-buddy/admin/support/templates", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient } = admin;
@@ -5206,7 +5206,7 @@ router.get("/api/rent-a-buddy/admin/support/templates", async (req, res) => {
 
 // ── Risk review status ─────────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/admin/risk-review", async (req, res) => {
+router.get("/rent-a-buddy/admin/risk-review", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient } = admin;
@@ -5225,7 +5225,7 @@ router.get("/api/rent-a-buddy/admin/risk-review", async (req, res) => {
   return res.json({ profiles: data ?? [], total: count ?? 0 });
 });
 
-router.post("/api/rent-a-buddy/admin/users/:userId/risk-status", async (req, res) => {
+router.post("/rent-a-buddy/admin/users/:userId/risk-status", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId: adminId } = admin;
@@ -5269,7 +5269,7 @@ router.post("/api/rent-a-buddy/admin/users/:userId/risk-status", async (req, res
 
 // ── Repeat-abuse pattern detector (run on-demand by admin or triggered job) ────
 
-router.post("/api/rent-a-buddy/admin/run-risk-scan", async (req, res) => {
+router.post("/rent-a-buddy/admin/run-risk-scan", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient } = admin;
@@ -5344,7 +5344,7 @@ export const TRAINING_CHECKLIST_ITEMS = [
   { key: "nightlife_rules",         label: "Read the Nightlife Guide rules (public meetup required, no unapproved guests, Safe Return prompt)" },
 ];
 
-router.get("/api/rent-a-buddy/me/training-checklist", async (req, res) => {
+router.get("/rent-a-buddy/me/training-checklist", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user, client } = auth;
@@ -5375,7 +5375,7 @@ router.get("/api/rent-a-buddy/me/training-checklist", async (req, res) => {
   return res.json({ checklist, allComplete: checklist.every((i) => i.completed) });
 });
 
-router.post("/api/rent-a-buddy/me/training-checklist/:itemKey", async (req, res) => {
+router.post("/rent-a-buddy/me/training-checklist/:itemKey", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user, client } = auth;
@@ -5426,7 +5426,7 @@ router.post("/api/rent-a-buddy/me/training-checklist/:itemKey", async (req, res)
 
 // ── Admin — Nightlife buddy sign-off ──────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/admin/buddies/:buddyId/nightlife-approve", async (req, res) => {
+router.post("/rent-a-buddy/admin/buddies/:buddyId/nightlife-approve", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId: adminId } = admin;
@@ -5457,7 +5457,7 @@ router.post("/api/rent-a-buddy/admin/buddies/:buddyId/nightlife-approve", async 
 // ── Delayed-posting default note ───────────────────────────────────────────────
 // Returns whether the user has an active Rent a Buddy booking and the default posting rules.
 
-router.get("/api/rent-a-buddy/me/posting-defaults", async (req, res) => {
+router.get("/rent-a-buddy/me/posting-defaults", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user, client } = auth;
@@ -5485,7 +5485,7 @@ router.get("/api/rent-a-buddy/me/posting-defaults", async (req, res) => {
 
 // ── Admin — access log for sensitive booking context ───────────────────────────
 
-router.get("/api/rent-a-buddy/admin/bookings/:bookingId/sensitive", async (req, res) => {
+router.get("/rent-a-buddy/admin/bookings/:bookingId/sensitive", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId } = admin;
@@ -5529,7 +5529,7 @@ router.get("/api/rent-a-buddy/admin/bookings/:bookingId/sensitive", async (req, 
 
 // ── Buddy verification override (admin) ────────────────────────────────────────
 
-router.patch("/api/rent-a-buddy/admin/users/:userId/verification", async (req, res) => {
+router.patch("/rent-a-buddy/admin/users/:userId/verification", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc: serviceClient, userId: adminId } = admin;
@@ -5585,7 +5585,7 @@ export function nightlifePublicMeetupViolation(meetupLocation: string, category:
 // The /api/rent-a-buddy/dashboard/earnings route already exists in the
 // main router section. We add a richer breakdown endpoint here.
 
-router.get("/api/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
+router.get("/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user, client } = auth;
@@ -5673,7 +5673,7 @@ router.get("/api/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
 // Call on a schedule (cron / Supabase pg_cron / external scheduler).
 // Accessible without user auth — restrict at the infrastructure / firewall level.
 
-router.post("/api/internal/buddy-requests/expire", async (req, res) => {
+router.post("/internal/buddy-requests/expire", async (req, res) => {
   // Require a shared secret (SESSION_SECRET) to prevent unauthenticated callers from
   // triggering mass state transitions. Callers must set X-Internal-Key: <SESSION_SECRET>.
   const internalKey = req.headers["x-internal-key"];
@@ -5842,7 +5842,7 @@ router.post("/api/internal/buddy-requests/expire", async (req, res) => {
 // Only valid for completed_pending_traveler_confirmation status.
 // Moves to completed, archives thread, notifies buddy.
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/traveler-confirm", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/traveler-confirm", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -5915,7 +5915,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/traveler-confirm", async (req
 // Returns the public event log for a booking (admin_only events excluded).
 // Both the traveler and the buddy can call this.
 
-router.get("/api/rent-a-buddy/bookings/:bookingId/events", async (req, res) => {
+router.get("/rent-a-buddy/bookings/:bookingId/events", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -5957,7 +5957,7 @@ router.get("/api/rent-a-buddy/bookings/:bookingId/events", async (req, res) => {
 //   changeField: 'date' | 'start_time' | 'duration_h' | 'service' | 'price_usd'
 //   proposedValue: JSONB (e.g. { date: "2025-09-01" } or { duration_h: 4 })
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/change-request", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/change-request", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -6067,7 +6067,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/change-request", async (req, 
 //
 // Body: { changeRequestId, decision: "accept" | "decline", responseNote? }
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/respond-change-request", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/respond-change-request", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -6166,7 +6166,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/respond-change-request", asyn
 // Requires: bookingDate (fresh date); optional overrides: startTime, durationH, groupSize.
 // Uses current buddy pricing; keeps service category, city, and notes from original.
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);

@@ -172,8 +172,8 @@ before(async () => {
   // Same alias rewrite as production so tests exercise the alias URLs the mobile
   // client actually calls (e.g. /api/admin/buddy-bookings/:id/resolve-dispute).
   app.use(specAliasRewrite);
-  app.use(rentABuddyRouter);
-  app.use(rentABuddySpecRouter);
+  app.use("/api", rentABuddyRouter);
+  app.use("/api", rentABuddySpecRouter);
   app.use(marketplaceRouter);
   server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

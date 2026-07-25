@@ -125,15 +125,30 @@ export async function resolveProfileVisibility(
     return { visibility: "full", privacySettings };
   }
 
-  // followers_only or private: check if viewer is a follower or friend
+  // Non-public tiers — decide what grants access:
+  //   • "followers_only": an accepted friendship OR a follow grants access
+  //     (following is an open action for this softer tier).
+  //   • "private" (is_private / passport_visibility=private / any other
+  //     non-public value): APPROVAL-REQUIRED. Only an accepted friendship
+  //     (user_friendships, created when the owner accepts a request) grants
+  //     access. A raw user_follows edge is UNAPPROVED — POST /follow inserts it
+  //     with no owner approval — so it must NOT unlock private content.
+  //     (Audit SEC-01: a stranger could self-follow a private account and read
+  //     its followers-only posts/stamps/trips.) Fail-closed: anything that isn't
+  //     the explicit "followers_only" tier is treated as approval-required.
   if (viewerId) {
     const ua = viewerId < targetId ? viewerId : targetId;
     const ub = viewerId < targetId ? targetId : viewerId;
+    const followTierGrantsAccess = profileVis === "followers_only";
     const [friendRes, followRes] = await Promise.all([
       sc.from("user_friendships").select("user_a").eq("user_a", ua).eq("user_b", ub).maybeSingle(),
-      sc.from("user_follows").select("follower_id").eq("follower_id", viewerId).eq("following_id", targetId).maybeSingle(),
+      followTierGrantsAccess
+        ? sc.from("user_follows").select("follower_id").eq("follower_id", viewerId).eq("following_id", targetId).maybeSingle()
+        : Promise.resolve({ data: null }),
     ]);
-    if (friendRes.data || followRes.data) {
+    const grantedByFriend = Boolean(friendRes.data);
+    const grantedByFollow = followTierGrantsAccess && Boolean(followRes.data);
+    if (grantedByFriend || grantedByFollow) {
       return { visibility: "followers_only", privacySettings };
     }
   }

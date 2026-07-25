@@ -134,7 +134,7 @@ describe("A — Booking state transition: accept (Requested → Scheduled)", () 
     const { default: rentABuddyRouter } = await import("../routes/rentABuddy.js");
     const app = express();
     app.use(express.json());
-    app.use(rentABuddyRouter);
+    app.use("/api", rentABuddyRouter);
     server = createServer(app);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     port = (server.address() as { port: number }).port;
@@ -415,7 +415,7 @@ describe("C — Full-payload application: wizard fields persist and round-trip v
     const { default: rentABuddyRouter } = await import("../routes/rentABuddy.js");
     const app = express();
     app.use(express.json());
-    app.use(rentABuddyRouter);
+    app.use("/api", rentABuddyRouter);
     server = createServer(app);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     port = (server.address() as { port: number }).port;

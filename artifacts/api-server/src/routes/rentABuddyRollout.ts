@@ -473,7 +473,7 @@ function nextStatus(current: CityRolloutStatus): CityRolloutStatus | null {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/admin/rent-buddy/rollout/cities
-router.get("/api/admin/rent-buddy/rollout/cities", asyncHandler(async (req, res) => {
+router.get("/admin/rent-buddy/rollout/cities", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -487,7 +487,7 @@ router.get("/api/admin/rent-buddy/rollout/cities", asyncHandler(async (req, res)
 }));
 
 // POST /api/admin/rent-buddy/rollout/cities
-router.post("/api/admin/rent-buddy/rollout/cities", asyncHandler(async (req, res) => {
+router.post("/admin/rent-buddy/rollout/cities", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -528,7 +528,7 @@ router.post("/api/admin/rent-buddy/rollout/cities", asyncHandler(async (req, res
 }));
 
 // GET /api/admin/rent-buddy/rollout/cities/:id
-router.get("/api/admin/rent-buddy/rollout/cities/:id", asyncHandler(async (req, res) => {
+router.get("/admin/rent-buddy/rollout/cities/:id", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -544,7 +544,7 @@ router.get("/api/admin/rent-buddy/rollout/cities/:id", asyncHandler(async (req, 
 }));
 
 // PATCH /api/admin/rent-buddy/rollout/cities/:id
-router.patch("/api/admin/rent-buddy/rollout/cities/:id", asyncHandler(async (req, res) => {
+router.patch("/admin/rent-buddy/rollout/cities/:id", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -573,7 +573,7 @@ router.patch("/api/admin/rent-buddy/rollout/cities/:id", asyncHandler(async (req
 }));
 
 // POST /api/admin/rent-buddy/rollout/cities/:id/advance-status
-router.post("/api/admin/rent-buddy/rollout/cities/:id/advance-status", asyncHandler(async (req, res) => {
+router.post("/admin/rent-buddy/rollout/cities/:id/advance-status", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -649,7 +649,7 @@ router.post("/api/admin/rent-buddy/rollout/cities/:id/advance-status", asyncHand
 }));
 
 // POST /api/admin/rent-buddy/rollout/cities/:id/pause
-router.post("/api/admin/rent-buddy/rollout/cities/:id/pause", asyncHandler(async (req, res) => {
+router.post("/admin/rent-buddy/rollout/cities/:id/pause", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -683,7 +683,7 @@ router.post("/api/admin/rent-buddy/rollout/cities/:id/pause", asyncHandler(async
 }));
 
 // POST /api/admin/rent-buddy/rollout/cities/:id/resume
-router.post("/api/admin/rent-buddy/rollout/cities/:id/resume", asyncHandler(async (req, res) => {
+router.post("/admin/rent-buddy/rollout/cities/:id/resume", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -721,7 +721,7 @@ router.post("/api/admin/rent-buddy/rollout/cities/:id/resume", asyncHandler(asyn
 }));
 
 // GET /api/admin/rent-buddy/rollout/cities/:id/metrics
-router.get("/api/admin/rent-buddy/rollout/cities/:id/metrics", asyncHandler(async (req, res) => {
+router.get("/admin/rent-buddy/rollout/cities/:id/metrics", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -836,7 +836,7 @@ router.get("/api/admin/rent-buddy/rollout/cities/:id/metrics", asyncHandler(asyn
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/admin/rent-buddy/beta-access
-router.get("/api/admin/rent-buddy/beta-access", asyncHandler(async (req, res) => {
+router.get("/admin/rent-buddy/beta-access", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -856,7 +856,7 @@ router.get("/api/admin/rent-buddy/beta-access", asyncHandler(async (req, res) =>
 }));
 
 // POST /api/admin/rent-buddy/beta-access
-router.post("/api/admin/rent-buddy/beta-access", asyncHandler(async (req, res) => {
+router.post("/admin/rent-buddy/beta-access", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -893,7 +893,7 @@ router.post("/api/admin/rent-buddy/beta-access", asyncHandler(async (req, res) =
 }));
 
 // PATCH /api/admin/rent-buddy/beta-access/:id
-router.patch("/api/admin/rent-buddy/beta-access/:id", asyncHandler(async (req, res) => {
+router.patch("/admin/rent-buddy/beta-access/:id", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -912,7 +912,7 @@ router.patch("/api/admin/rent-buddy/beta-access/:id", asyncHandler(async (req, r
 }));
 
 // POST /api/admin/rent-buddy/beta-access/:id/revoke
-router.post("/api/admin/rent-buddy/beta-access/:id/revoke", asyncHandler(async (req, res) => {
+router.post("/admin/rent-buddy/beta-access/:id/revoke", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -944,7 +944,7 @@ router.post("/api/admin/rent-buddy/beta-access/:id/revoke", asyncHandler(async (
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/admin/rent-buddy/qa/checklists
-router.get("/api/admin/rent-buddy/qa/checklists", asyncHandler(async (req, res) => {
+router.get("/admin/rent-buddy/qa/checklists", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -958,7 +958,7 @@ router.get("/api/admin/rent-buddy/qa/checklists", asyncHandler(async (req, res) 
 }));
 
 // POST /api/admin/rent-buddy/qa/checklists
-router.post("/api/admin/rent-buddy/qa/checklists", asyncHandler(async (req, res) => {
+router.post("/admin/rent-buddy/qa/checklists", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -979,7 +979,7 @@ router.post("/api/admin/rent-buddy/qa/checklists", asyncHandler(async (req, res)
 }));
 
 // PATCH /api/admin/rent-buddy/qa/checklists/:id
-router.patch("/api/admin/rent-buddy/qa/checklists/:id", asyncHandler(async (req, res) => {
+router.patch("/admin/rent-buddy/qa/checklists/:id", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -1004,7 +1004,7 @@ router.patch("/api/admin/rent-buddy/qa/checklists/:id", asyncHandler(async (req,
 }));
 
 // POST /api/admin/rent-buddy/qa/checklists/:id/mark-passed
-router.post("/api/admin/rent-buddy/qa/checklists/:id/mark-passed", asyncHandler(async (req, res) => {
+router.post("/admin/rent-buddy/qa/checklists/:id/mark-passed", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -1035,7 +1035,7 @@ router.post("/api/admin/rent-buddy/qa/checklists/:id/mark-passed", asyncHandler(
 }));
 
 // POST /api/admin/rent-buddy/qa/checklists/:id/mark-failed
-router.post("/api/admin/rent-buddy/qa/checklists/:id/mark-failed", asyncHandler(async (req, res) => {
+router.post("/admin/rent-buddy/qa/checklists/:id/mark-failed", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -1070,7 +1070,7 @@ router.post("/api/admin/rent-buddy/qa/checklists/:id/mark-failed", asyncHandler(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/admin/rent-buddy/global-controls
-router.get("/api/admin/rent-buddy/global-controls", asyncHandler(async (req, res) => {
+router.get("/admin/rent-buddy/global-controls", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -1079,7 +1079,7 @@ router.get("/api/admin/rent-buddy/global-controls", asyncHandler(async (req, res
 }));
 
 // PATCH /api/admin/rent-buddy/global-controls
-router.patch("/api/admin/rent-buddy/global-controls", asyncHandler(async (req, res) => {
+router.patch("/admin/rent-buddy/global-controls", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -1117,7 +1117,7 @@ router.patch("/api/admin/rent-buddy/global-controls", asyncHandler(async (req, r
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/admin/rent-buddy/audit-log
-router.get("/api/admin/rent-buddy/audit-log", asyncHandler(async (req, res) => {
+router.get("/admin/rent-buddy/audit-log", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
@@ -1145,7 +1145,7 @@ router.get("/api/admin/rent-buddy/audit-log", asyncHandler(async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/rent-buddy/launch-status
-router.get("/api/rent-buddy/launch-status", asyncHandler(async (req, res) => {
+router.get("/rent-buddy/launch-status", asyncHandler(async (req, res) => {
   const sc = getServiceClient();
   if (!sc) {
     return res.json({ available: false, status: "unknown", message: "Service temporarily unavailable." });
@@ -1212,7 +1212,7 @@ function statusToMessage(status: CityRolloutStatus, city: string): string {
 
 // POST /api/rent-buddy/waitlist
 // Rollout-aware waitlist join — respects feature flag, city status, and global controls.
-router.post("/api/rent-buddy/waitlist", asyncHandler(async (req, res) => {
+router.post("/rent-buddy/waitlist", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
 
@@ -1236,7 +1236,7 @@ router.post("/api/rent-buddy/waitlist", asyncHandler(async (req, res) => {
 }));
 
 // GET /api/rent-buddy/me/beta-status
-router.get("/api/rent-buddy/me/beta-status", asyncHandler(async (req, res) => {
+router.get("/rent-buddy/me/beta-status", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
 

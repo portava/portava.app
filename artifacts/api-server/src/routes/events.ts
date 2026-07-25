@@ -1812,6 +1812,76 @@ router.get("/events/near-trip/:tripId", async (req, res) => {
 
 // ── GET /api/events/:id ───────────────────────────────────────────────────────
 
+// ── GET /api/events/following ─────────────────────────────────────────────────
+// Upcoming events hosted by users the viewer follows. Declared BEFORE
+// `/events/:id` so it isn't shadowed by the param route (audit API-03: the client
+// calls /api/events/following, which previously fell through to /events/:id and
+// failed the UUID check). Same access gates as the detail/browse endpoints.
+router.get("/events/following", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
+  const cursor = (req.query.cursor as string) ?? null;
+
+  const { data: followRows } = await sc
+    .from("user_follows").select("following_id").eq("follower_id", user.id);
+  const hostIds = [...new Set(((followRows as any[]) ?? []).map((r: any) => r.following_id as string))];
+  if (hostIds.length === 0) { res.json({ events: [], cursor: null }); return; }
+
+  let query = sc
+    .from("events")
+    .select("*")
+    .in("host_id", hostIds)
+    .not("state", "in", '("cancelled","archived","draft")')
+    .order("starts_at", { ascending: true, nullsFirst: false })
+    .limit(limit * 3);
+  if (cursor) query = query.gt("starts_at", cursor);
+
+  const { data: events, error } = await query;
+  if (error) { req.log.error({ err: error }, "following events"); sendError(res, "db_error", error.message); return; }
+
+  const filtered: any[] = [];
+  for (const ev of (events as any[]) ?? []) {
+    if (filtered.length >= limit) break;
+    if (!await canViewEvent(sc, ev as any, user.id)) continue;
+    if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
+    const elig = await checkEventEligibility(sc, ev as any, user.id);
+    if (!elig.ok) continue;
+    filtered.push(ev);
+  }
+
+  const hostIdSet = [...new Set(filtered.map((e: any) => e.host_id as string))];
+  const hpMap: Record<string, { name?: string | null; avatar_url?: string | null }> = {};
+  if (hostIdSet.length > 0) {
+    const { data: hps } = await sc.from("profiles").select("id, name, avatar_url").in("id", hostIdSet);
+    const allowedNames = await nameVisibilitySet(sc, hostIdSet);
+    for (const p of (hps as any[]) ?? []) hpMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
+  }
+
+  const filteredIds = filtered.map((e: any) => e.id as string);
+  const rsvpMap: Record<string, string> = {};
+  if (filteredIds.length > 0) {
+    const { data: rsvps } = await sc
+      .from("event_rsvps").select("event_id, status").eq("user_id", user.id).in("event_id", filteredIds);
+    for (const r of (rsvps as any[]) ?? []) rsvpMap[(r as any).event_id as string] = (r as any).status as string;
+  }
+
+  const nextCursor = filtered.length === limit ? (filtered[filtered.length - 1].starts_at ?? null) : null;
+
+  res.json({
+    events: filtered.map((e: any) => ({
+      ...formatEvent(e, user.id, { hostProfile: hpMap[e.host_id as string] }),
+      myRsvp: rsvpMap[e.id as string] ?? null,
+    })),
+    cursor: nextCursor,
+  });
+});
+
 router.get("/events/:id", async (req, res) => {
   const ctx = await requireUser(req, res);
   if (!ctx) return;
@@ -1933,12 +2003,21 @@ router.patch("/events/:id", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const ok = await isHostOrCoHost(sc, id, user.id);
-  if (!ok) { sendError(res, "forbidden", "Only host or co-host can edit this event"); return; }
+  const role = await getEventRole(sc, id, user.id);
+  if (role !== "host" && role !== "co_host") { sendError(res, "forbidden", "Only host or co-host can edit this event"); return; }
 
   const parsed = UpdateEventSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
   const b = parsed.data;
+
+  // SEC-04: event lifecycle `state` and `visibility` are HOST-ONLY. Co-hosts may
+  // edit details but must not cancel/archive/reopen or change who can see the
+  // event — otherwise PATCH bypasses the host-only cancel/postpone/archive/publish
+  // routes.
+  if ((b.state !== undefined || b.visibility !== undefined) && role !== "host") {
+    sendError(res, "forbidden", "Only the host can change event state or visibility");
+    return;
+  }
 
   // Fetch current event to detect key-detail changes for notifications
   const { data: current } = await sc.from("events").select("*").eq("id", id).maybeSingle();
@@ -3720,12 +3799,21 @@ router.post("/events/:id/reviews", async (req, res) => {
 router.get("/events/:id/reviews", async (req, res) => {
   const ctx = await requireUser(req, res);
   if (!ctx) return;
+  const { user } = ctx;
 
   const { id } = req.params;
   if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // SEC-05: reviews inherit the event's visibility — gate exactly like the detail
+  // route so a private/invite-only event's reviews aren't readable by anyone
+  // holding the UUID.
+  const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+  if (!await canViewEvent(sc, ev as any, user.id)) { sendError(res, "not_found", "Event not found or access denied"); return; }
+  if (await isBlocked(sc, user.id, (ev as any).host_id)) { sendError(res, "not_found", "Event not found or access denied"); return; }
 
   const page  = Math.max(1, parseInt((req.query.page as string) ?? "1"));
   const limit = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));

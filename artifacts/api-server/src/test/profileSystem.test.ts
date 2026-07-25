@@ -359,17 +359,19 @@ describe("GET /api/users/:username/passport — viewer state", () => {
     assert.ok(!body.viewer, "no viewer on limited preview");
   });
 
-  it("private account + follower: returns full profile", async () => {
+  it("private account + follower (unapproved): returns limited_preview — SEC-01", async () => {
     const state = baseState();
-    // Make ME follow BOB
+    // ME merely follows BOB (a raw, unapproved follow). BOB is private.
+    // Pre-SEC-01 this wrongly returned BOB's full private profile.
     state.user_follows = [...(state.user_follows ?? []), { follower_id: ME, following_id: BOB }];
     setup(state);
     const r = await req("/users/bob_user/passport");
     assert.equal(r.status, 200);
     const body = await r.json() as any;
-    assert.ok(!body.visibility, "should not have visibility=private stub");
-    assert.equal(body.id, BOB);
-    assert.equal(body.viewer?.is_following, true);
+    // SEC-01: an unapproved follow must NOT unlock a private profile — the viewer
+    // must be an accepted friend (see the "private account + friend" test below).
+    assert.equal(body.visibility, "private", "private profile stays limited_preview for a mere follower");
+    assert.ok(!body.bio, "private content must not be exposed to an unapproved follower");
   });
 
   it("private account + friend: returns full profile", async () => {

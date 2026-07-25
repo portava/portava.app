@@ -111,7 +111,7 @@ before(async () => {
     req.body = injectedBody;
     next();
   });
-  app.use(rentABuddyRouter);
+  app.use("/api", rentABuddyRouter);
 
   _setTestClient(makeServiceClient() as any, true);
   _setTestServiceClient(makeServiceClient() as any);

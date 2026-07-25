@@ -29,7 +29,7 @@ async function requireAdminCtx(req: any, res: any) {
 
 // ── buddy_services ─────────────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/buddies/:buddyId/services", asyncHandler(async (req, res) => {
+router.get("/rent-a-buddy/buddies/:buddyId/services", asyncHandler(async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ services: [] });
 
@@ -46,7 +46,7 @@ router.get("/api/rent-a-buddy/buddies/:buddyId/services", asyncHandler(async (re
   return res.json({ services: data ?? [] });
 }));
 
-router.get("/api/rent-a-buddy/buddies/:buddyId/availability-exceptions", asyncHandler(async (req, res) => {
+router.get("/rent-a-buddy/buddies/:buddyId/availability-exceptions", asyncHandler(async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ exceptions: [] });
 
@@ -64,7 +64,7 @@ router.get("/api/rent-a-buddy/buddies/:buddyId/availability-exceptions", asyncHa
   return res.json({ exceptions: data ?? [] });
 }));
 
-router.get("/api/me/buddy-services", asyncHandler(async (req, res) => {
+router.get("/me/buddy-services", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -86,7 +86,7 @@ router.get("/api/me/buddy-services", asyncHandler(async (req, res) => {
   return res.json({ services: data ?? [] });
 }));
 
-router.post("/api/me/buddy-services", asyncHandler(async (req, res) => {
+router.post("/me/buddy-services", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -129,7 +129,7 @@ router.post("/api/me/buddy-services", asyncHandler(async (req, res) => {
   return res.status(201).json({ service: data });
 }));
 
-router.patch("/api/me/buddy-services/:serviceId", asyncHandler(async (req, res) => {
+router.patch("/me/buddy-services/:serviceId", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -177,7 +177,7 @@ router.patch("/api/me/buddy-services/:serviceId", asyncHandler(async (req, res) 
   return res.json({ service: data });
 }));
 
-router.delete("/api/me/buddy-services/:serviceId", asyncHandler(async (req, res) => {
+router.delete("/me/buddy-services/:serviceId", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -199,7 +199,7 @@ router.delete("/api/me/buddy-services/:serviceId", asyncHandler(async (req, res)
   return res.json({ ok: true });
 }));
 
-router.post("/api/admin/rent-a-buddy/services/:serviceId/approve", asyncHandler(async (req, res) => {
+router.post("/admin/rent-a-buddy/services/:serviceId/approve", asyncHandler(async (req, res) => {
   const adminCtx = await requireAdminCtx(req, res);
   if (!adminCtx) return;
   const { serviceClient } = adminCtx;
@@ -216,7 +216,7 @@ router.post("/api/admin/rent-a-buddy/services/:serviceId/approve", asyncHandler(
   return res.json({ service: data });
 }));
 
-router.post("/api/admin/rent-a-buddy/services/:serviceId/disable", asyncHandler(async (req, res) => {
+router.post("/admin/rent-a-buddy/services/:serviceId/disable", asyncHandler(async (req, res) => {
   const adminCtx = await requireAdminCtx(req, res);
   if (!adminCtx) return;
   const { serviceClient } = adminCtx;
@@ -235,7 +235,7 @@ router.post("/api/admin/rent-a-buddy/services/:serviceId/disable", asyncHandler(
 
 // ── buddy_availability_exceptions ──────────────────────────────────────────────
 
-router.get("/api/me/buddy-availability-exceptions", asyncHandler(async (req, res) => {
+router.get("/me/buddy-availability-exceptions", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -261,7 +261,7 @@ router.get("/api/me/buddy-availability-exceptions", asyncHandler(async (req, res
   return res.json({ exceptions: data ?? [] });
 }));
 
-router.post("/api/me/buddy-availability-exceptions", asyncHandler(async (req, res) => {
+router.post("/me/buddy-availability-exceptions", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -299,7 +299,7 @@ router.post("/api/me/buddy-availability-exceptions", asyncHandler(async (req, re
   return res.status(201).json({ exception: data });
 }));
 
-router.patch("/api/me/buddy-availability-exceptions/:exceptionId", asyncHandler(async (req, res) => {
+router.patch("/me/buddy-availability-exceptions/:exceptionId", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -334,7 +334,7 @@ router.patch("/api/me/buddy-availability-exceptions/:exceptionId", asyncHandler(
   return res.json({ exception: data });
 }));
 
-router.delete("/api/me/buddy-availability-exceptions/:exceptionId", asyncHandler(async (req, res) => {
+router.delete("/me/buddy-availability-exceptions/:exceptionId", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -359,7 +359,7 @@ router.delete("/api/me/buddy-availability-exceptions/:exceptionId", asyncHandler
 // ── buddy_booking_events read ──────────────────────────────────────────────────
 // Also accessible at /api/buddy-bookings/:id/events via URL alias in app.ts
 
-router.get("/api/rent-a-buddy/bookings/:bookingId/events", asyncHandler(async (req, res) => {
+router.get("/rent-a-buddy/bookings/:bookingId/events", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -396,7 +396,7 @@ router.get("/api/rent-a-buddy/bookings/:bookingId/events", asyncHandler(async (r
 
 // POST /api/rent-a-buddy/buddies/:buddyId/request — create a booking targeting a specific buddy
 // Also accessible at /api/buddies/:buddyId/request via app.ts URL alias
-router.post("/api/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -505,7 +505,7 @@ router.post("/api/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (re
 
 // POST /api/rent-a-buddy/bookings/:bookingId/check-in
 // Also accessible at /api/buddy-bookings/:bookingId/check-in via URL alias
-router.post("/api/rent-a-buddy/bookings/:bookingId/check-in", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/check-in", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -562,7 +562,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/check-in", asyncHandler(async
 // Also accessible at /api/buddy-bookings/:bookingId/safety-checkins via URL alias
 // Returns the full check-in history for a booking. Only the traveler and the
 // buddy on the booking may access this data; all other callers receive 403.
-router.get("/api/rent-a-buddy/bookings/:bookingId/safety-checkins", asyncHandler(async (req, res) => {
+router.get("/rent-a-buddy/bookings/:bookingId/safety-checkins", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -599,7 +599,7 @@ router.get("/api/rent-a-buddy/bookings/:bookingId/safety-checkins", asyncHandler
 // Also accessible at /api/buddy-bookings/:bookingId/safety-events via URL alias
 // Returns the safety event history for a booking. Only the traveler and the
 // buddy on the booking may access this data; all other callers receive 403.
-router.get("/api/rent-a-buddy/bookings/:bookingId/safety-events", asyncHandler(async (req, res) => {
+router.get("/rent-a-buddy/bookings/:bookingId/safety-events", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -636,7 +636,7 @@ router.get("/api/rent-a-buddy/bookings/:bookingId/safety-events", asyncHandler(a
 
 // POST /api/rent-a-buddy/bookings/:bookingId/report-no-show
 // Also accessible at /api/buddy-bookings/:bookingId/report-no-show via URL alias
-router.post("/api/rent-a-buddy/bookings/:bookingId/report-no-show", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/report-no-show", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -731,7 +731,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/report-no-show", asyncHandler
 // ── me/buddy-bookings explicit (also covered by app.ts URL alias) ──────────────
 
 // GET /api/me/buddy-bookings — traveler's own bookings list (explicit route)
-router.get("/api/me/buddy-bookings", asyncHandler(async (req, res) => {
+router.get("/me/buddy-bookings", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -760,7 +760,7 @@ router.get("/api/me/buddy-bookings", asyncHandler(async (req, res) => {
 // GET /api/rent-a-buddy/admin/buddies/pending
 // Also accessible at /api/admin/buddies/pending via URL alias
 // Must be registered before the parameterized /:buddyId routes in this router.
-router.get("/api/rent-a-buddy/admin/buddies/pending", asyncHandler(async (req, res) => {
+router.get("/rent-a-buddy/admin/buddies/pending", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -790,7 +790,7 @@ router.get("/api/rent-a-buddy/admin/buddies/pending", asyncHandler(async (req, r
 
 // POST /api/rent-a-buddy/admin/buddies/:buddyId/approve
 // Also accessible at /api/admin/buddies/:buddyId/approve via URL alias
-router.post("/api/rent-a-buddy/admin/buddies/:buddyId/approve", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/admin/buddies/:buddyId/approve", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -827,7 +827,7 @@ router.post("/api/rent-a-buddy/admin/buddies/:buddyId/approve", asyncHandler(asy
 
 // POST /api/rent-a-buddy/admin/buddies/:buddyId/reject
 // Also accessible at /api/admin/buddies/:buddyId/reject via URL alias
-router.post("/api/rent-a-buddy/admin/buddies/:buddyId/reject", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/admin/buddies/:buddyId/reject", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -865,7 +865,7 @@ router.post("/api/rent-a-buddy/admin/buddies/:buddyId/reject", asyncHandler(asyn
 // POST /api/rent-a-buddy/admin/buddies/:buddyId/unsuspend
 // Also accessible at /api/admin/buddies/:buddyId/unsuspend via URL alias
 // Semantic alias for reactivate (both set admin_status → active).
-router.post("/api/rent-a-buddy/admin/buddies/:buddyId/unsuspend", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/admin/buddies/:buddyId/unsuspend", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -904,7 +904,7 @@ router.post("/api/rent-a-buddy/admin/buddies/:buddyId/unsuspend", asyncHandler(a
 
 // POST /api/rent-a-buddy/buddies/:buddyId/favorite
 // Also accessible at /api/buddies/:buddyId/favorite via app.ts URL alias
-router.post("/api/rent-a-buddy/buddies/:buddyId/favorite", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/buddies/:buddyId/favorite", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -921,7 +921,7 @@ router.post("/api/rent-a-buddy/buddies/:buddyId/favorite", asyncHandler(async (r
 // POST /api/rent-a-buddy/buddies/:buddyId/unfavorite — POST method alias for clients that
 // cannot issue DELETE requests (e.g. some mobile HTTP stacks).
 // Also accessible at /api/buddies/:buddyId/unfavorite via app.ts URL alias
-router.post("/api/rent-a-buddy/buddies/:buddyId/unfavorite", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/buddies/:buddyId/unfavorite", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -937,7 +937,7 @@ router.post("/api/rent-a-buddy/buddies/:buddyId/unfavorite", asyncHandler(async 
 
 // DELETE /api/rent-a-buddy/buddies/:buddyId/unfavorite
 // Also accessible at /api/buddies/:buddyId/unfavorite via app.ts URL alias
-router.delete("/api/rent-a-buddy/buddies/:buddyId/unfavorite", asyncHandler(async (req, res) => {
+router.delete("/rent-a-buddy/buddies/:buddyId/unfavorite", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -964,7 +964,7 @@ router.delete("/api/rent-a-buddy/buddies/:buddyId/unfavorite", asyncHandler(asyn
 //
 // "verification" item is only present (and blocks allComplete) when one or more
 // of the buddy's categories requires ID verification to go live.
-router.get("/api/rent-a-buddy/me/profile/checklist", asyncHandler(async (req, res) => {
+router.get("/rent-a-buddy/me/profile/checklist", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1138,7 +1138,7 @@ router.get("/api/rent-a-buddy/me/profile/checklist", asyncHandler(async (req, re
 // are empty. All fields must be filled before the profile can enter review.
 // Returns 422 { error: "verification_required", verification_status } if a
 // restricted category (e.g. nightlife) requires ID verification first.
-router.post("/api/rent-a-buddy/me/profile/submit", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/me/profile/submit", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1264,7 +1264,7 @@ router.post("/api/rent-a-buddy/me/profile/submit", asyncHandler(async (req, res)
 
 // POST /api/rent-a-buddy/me/profile/pause — pause an active buddy profile
 // Also accessible at /api/me/buddy-profile/pause via app.ts URL alias
-router.post("/api/rent-a-buddy/me/profile/pause", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/me/profile/pause", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1295,7 +1295,7 @@ router.post("/api/rent-a-buddy/me/profile/pause", asyncHandler(async (req, res) 
 
 // POST /api/rent-a-buddy/me/profile/resume — resume a paused buddy profile
 // Also accessible at /api/me/buddy-profile/resume via app.ts URL alias
-router.post("/api/rent-a-buddy/me/profile/resume", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/me/profile/resume", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1332,7 +1332,7 @@ router.post("/api/rent-a-buddy/me/profile/resume", asyncHandler(async (req, res)
 // POST /api/rent-a-buddy/admin/kill-switch
 // Also accessible at /api/admin/rent-a-buddy/kill-switch via app.ts URL alias
 // Toggles or sets the global rent-a-buddy kill switch (disables all bookings globally).
-router.post("/api/rent-a-buddy/admin/kill-switch", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/admin/kill-switch", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1379,7 +1379,7 @@ router.post("/api/rent-a-buddy/admin/kill-switch", asyncHandler(async (req, res)
 
 // GET /api/rent-a-buddy/admin/city-status
 // Also accessible at /api/admin/rent-a-buddy/city-status via app.ts URL alias
-router.get("/api/rent-a-buddy/admin/city-status", asyncHandler(async (req, res) => {
+router.get("/rent-a-buddy/admin/city-status", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1398,7 +1398,7 @@ router.get("/api/rent-a-buddy/admin/city-status", asyncHandler(async (req, res) 
 
 // PATCH /api/rent-a-buddy/admin/city-status/:city
 // Also accessible at /api/admin/rent-a-buddy/city-status/:city via app.ts URL alias
-router.patch("/api/rent-a-buddy/admin/city-status/:city", asyncHandler(async (req, res) => {
+router.patch("/rent-a-buddy/admin/city-status/:city", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1442,7 +1442,7 @@ router.patch("/api/rent-a-buddy/admin/city-status/:city", asyncHandler(async (re
 
 // GET /api/rent-a-buddy/admin/category-status
 // Also accessible at /api/admin/rent-a-buddy/category-status via app.ts URL alias
-router.get("/api/rent-a-buddy/admin/category-status", asyncHandler(async (req, res) => {
+router.get("/rent-a-buddy/admin/category-status", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1463,7 +1463,7 @@ router.get("/api/rent-a-buddy/admin/category-status", asyncHandler(async (req, r
 
 // PATCH /api/rent-a-buddy/admin/category-status/:category
 // Also accessible at /api/admin/rent-a-buddy/category-status/:category via app.ts URL alias
-router.patch("/api/rent-a-buddy/admin/category-status/:category", asyncHandler(async (req, res) => {
+router.patch("/rent-a-buddy/admin/category-status/:category", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1510,7 +1510,7 @@ router.patch("/api/rent-a-buddy/admin/category-status/:category", asyncHandler(a
 
 // POST /api/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute
 // Also accessible at /api/admin/buddy-bookings/:bookingId/resolve-dispute via app.ts URL alias
-router.post("/api/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1594,7 +1594,7 @@ router.post("/api/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", async
 // POST /api/rent-a-buddy/me/profile — create (or upsert) the caller's buddy profile.
 // Spec route: POST /api/me/buddy-profile → rewritten by app.ts alias to this path.
 // Separate from /submit (which transitions an existing draft to pending_review).
-router.post("/api/rent-a-buddy/me/profile", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/me/profile", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1638,7 +1638,7 @@ router.post("/api/rent-a-buddy/me/profile", asyncHandler(async (req, res) => {
 
 // GET /api/me/buddy-requests — list all booking requests where the caller is the buddy.
 // Also accessible at /api/rent-a-buddy/me/buddy-requests via app.ts alias.
-router.get("/api/me/buddy-requests", asyncHandler(async (req, res) => {
+router.get("/me/buddy-requests", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1669,7 +1669,7 @@ router.get("/api/me/buddy-requests", asyncHandler(async (req, res) => {
 
 // PATCH /api/me/buddy-availability — update (upsert) availability rows for the caller's buddy profile.
 // Also accessible at /api/rent-a-buddy/me/availability via app.ts alias.
-router.patch("/api/me/buddy-availability", asyncHandler(async (req, res) => {
+router.patch("/me/buddy-availability", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1706,7 +1706,7 @@ router.patch("/api/me/buddy-availability", asyncHandler(async (req, res) => {
 
 // PATCH /api/me/buddy-availability-exceptions — bulk-upsert availability exceptions.
 // (Item-level PATCH /:exceptionId already exists above.)
-router.patch("/api/me/buddy-availability-exceptions", asyncHandler(async (req, res) => {
+router.patch("/me/buddy-availability-exceptions", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1747,7 +1747,7 @@ router.patch("/api/me/buddy-availability-exceptions", asyncHandler(async (req, r
 
 // GET /api/admin/buddy-reports — list buddy safety/support reports for admin review.
 // Also accessible at /api/rent-a-buddy/admin/buddy-reports via app.ts alias.
-router.get("/api/rent-a-buddy/admin/buddy-reports", asyncHandler(async (req, res) => {
+router.get("/rent-a-buddy/admin/buddy-reports", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1773,7 +1773,7 @@ router.get("/api/rent-a-buddy/admin/buddy-reports", asyncHandler(async (req, res
 // POST /api/rent-a-buddy/admin/city-status — collection-level city status update.
 // Accepts { city, status, notes, buddyCap } in the request body.
 // Also accessible at /api/admin/rent-a-buddy/city-status via app.ts URL alias.
-router.post("/api/rent-a-buddy/admin/city-status", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/admin/city-status", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1812,7 +1812,7 @@ router.post("/api/rent-a-buddy/admin/city-status", asyncHandler(async (req, res)
 // POST /api/rent-a-buddy/admin/category-status — collection-level category status update.
 // Accepts { category, enabled, notes } in the request body.
 // Also accessible at /api/admin/rent-a-buddy/category-status via app.ts URL alias.
-router.post("/api/rent-a-buddy/admin/category-status", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/admin/category-status", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1846,7 +1846,7 @@ router.post("/api/rent-a-buddy/admin/category-status", asyncHandler(async (req, 
 // POST /api/rent-a-buddy/admin/city-status/:city
 // POST alias required by spec in addition to PATCH variant.
 // Also accessible at /api/admin/rent-a-buddy/city-status/:city via app.ts URL alias
-router.post("/api/rent-a-buddy/admin/city-status/:city", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/admin/city-status/:city", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1884,7 +1884,7 @@ router.post("/api/rent-a-buddy/admin/city-status/:city", asyncHandler(async (req
 // POST /api/rent-a-buddy/admin/category-status/:category
 // POST alias required by spec in addition to PATCH variant.
 // Also accessible at /api/admin/rent-a-buddy/category-status/:category via app.ts URL alias
-router.post("/api/rent-a-buddy/admin/category-status/:category", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/admin/category-status/:category", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1918,7 +1918,7 @@ router.post("/api/rent-a-buddy/admin/category-status/:category", asyncHandler(as
 
 // POST /api/rent-a-buddy/admin/payouts/:payoutId/hold
 // Also accessible at /api/admin/buddy-payouts/:payoutId/hold via app.ts URL alias
-router.post("/api/rent-a-buddy/admin/payouts/:payoutId/hold", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/admin/payouts/:payoutId/hold", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -1956,7 +1956,7 @@ router.post("/api/rent-a-buddy/admin/payouts/:payoutId/hold", asyncHandler(async
 
 // POST /api/rent-a-buddy/admin/payouts/:payoutId/release
 // Also accessible at /api/admin/buddy-payouts/:payoutId/release via app.ts URL alias
-router.post("/api/rent-a-buddy/admin/payouts/:payoutId/release", asyncHandler(async (req, res) => {
+router.post("/rent-a-buddy/admin/payouts/:payoutId/release", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);

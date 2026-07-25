@@ -169,7 +169,7 @@ function makeClient() {
 before(async () => {
   const app = express();
   app.use(express.json());
-  app.use(rentABuddyRouter);
+  app.use("/api", rentABuddyRouter);
 
   await new Promise<void>((resolve) => {
     server = app.listen(0, "127.0.0.1", resolve);

@@ -134,8 +134,8 @@ function makeServiceClient() {
 before(async () => {
   const app = express();
   app.use(express.json());
-  app.use(rentABuddyRouter);
-  app.use(rentABuddyMarketplaceRouter);
+  app.use("/api", rentABuddyRouter);
+  app.use("/api", rentABuddyMarketplaceRouter);
 
   _setTestClient(makeAuthClient(USER_ID) as any, true);
   _setTestServiceClient(makeServiceClient() as any);

@@ -44,7 +44,8 @@
     "test:stamp-catalog-conflict": "node --import tsx/esm --test src/test/stampCatalogConflictCollapse.test.ts",
     "test:stamp-revoke": "node --import tsx/esm --test src/test/stampRevoke.test.ts",
     "test:stamp-preview": "node --import tsx/esm --test src/test/stampPreviewVisibility.test.ts",
-    "test:globe-trotter-legacy": "node --import tsx/esm --test src/test/globeTrotterLegacyRetirement.test.ts"
+    "test:globe-trotter-legacy": "node --import tsx/esm --test src/test/globeTrotterLegacyRetirement.test.ts",
+    "check:api-prefix": "node --import tsx/esm src/scripts/checkNoApiRoutePrefix.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

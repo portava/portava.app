@@ -173,7 +173,7 @@ before(async () => {
   // Same alias rewrite as production (app.ts): /api/buddy-bookings/* →
   // /api/rent-a-buddy/bookings/* served by the canonical rentABuddy router.
   app.use(specAliasRewrite);
-  app.use(rentABuddyRouter);
+  app.use("/api", rentABuddyRouter);
 
   await new Promise<void>((resolve) => {
     server = app.listen(0, "127.0.0.1", resolve);

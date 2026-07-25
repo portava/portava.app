@@ -132,7 +132,7 @@ before(async () => {
 
   const app = express();
   app.use(express.json());
-  app.use(rentABuddyRouter);
+  app.use("/api", rentABuddyRouter);
   server = http.createServer(app);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const addr = server.address() as { port: number };

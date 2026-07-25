@@ -307,7 +307,7 @@ function toBuddyScoringData(row: any, trustScore: number): BuddyScoringData {
 
 // ── Match preferences ─────────────────────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/match/preferences", async (req, res) => {
+router.post("/rent-a-buddy/match/preferences", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -344,7 +344,7 @@ router.post("/api/rent-a-buddy/match/preferences", async (req, res) => {
 
 // ── Run match ─────────────────────────────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/match", async (req, res) => {
+router.post("/rent-a-buddy/match", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -444,7 +444,7 @@ router.post("/api/rent-a-buddy/match", async (req, res) => {
 
 // ── Discovery sections ────────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/sections", async (req, res) => {
+router.get("/rent-a-buddy/sections", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -515,7 +515,7 @@ router.get("/api/rent-a-buddy/sections", async (req, res) => {
 
 // ── Available Now ─────────────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/available-now", async (req, res) => {
+router.get("/rent-a-buddy/available-now", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -537,7 +537,7 @@ router.get("/api/rent-a-buddy/available-now", async (req, res) => {
 
 // ── Top in city ───────────────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/cities/:city/top", async (req, res) => {
+router.get("/rent-a-buddy/cities/:city/top", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -558,7 +558,7 @@ router.get("/api/rent-a-buddy/cities/:city/top", async (req, res) => {
 
 // ── Availability settings ─────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/me/availability-settings", async (req, res) => {
+router.get("/rent-a-buddy/me/availability-settings", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -575,7 +575,7 @@ router.get("/api/rent-a-buddy/me/availability-settings", async (req, res) => {
   res.json({ settings: data ?? null });
 });
 
-router.patch("/api/rent-a-buddy/me/availability-settings", async (req, res) => {
+router.patch("/rent-a-buddy/me/availability-settings", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -610,7 +610,7 @@ router.patch("/api/rent-a-buddy/me/availability-settings", async (req, res) => {
 
 // ── Available Now toggle ──────────────────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/me/available-now", async (req, res) => {
+router.post("/rent-a-buddy/me/available-now", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -634,7 +634,7 @@ router.post("/api/rent-a-buddy/me/available-now", async (req, res) => {
   res.json({ ok: true, availableUntil: until });
 });
 
-router.delete("/api/rent-a-buddy/me/available-now", async (req, res) => {
+router.delete("/rent-a-buddy/me/available-now", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -668,7 +668,7 @@ async function notifyWaitlistedTravelers(svc: any, buddyProfile: any) {
 
 // ── Request a Buddy ───────────────────────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/requests", async (req, res) => {
+router.post("/rent-a-buddy/requests", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -849,7 +849,7 @@ export async function notifyEligibleBuddies(svc: any, request: any) {
   );
 }
 
-router.get("/api/rent-a-buddy/requests/:requestId", async (req, res) => {
+router.get("/rent-a-buddy/requests/:requestId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -873,7 +873,7 @@ router.get("/api/rent-a-buddy/requests/:requestId", async (req, res) => {
   res.json({ request: mapRequest(data) });
 });
 
-router.get("/api/rent-a-buddy/me/matching-requests", async (req, res) => {
+router.get("/rent-a-buddy/me/matching-requests", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -896,7 +896,7 @@ router.get("/api/rent-a-buddy/me/matching-requests", async (req, res) => {
 
 // ── Offers ────────────────────────────────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/requests/:requestId/offers", async (req, res) => {
+router.post("/rent-a-buddy/requests/:requestId/offers", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -957,7 +957,7 @@ router.post("/api/rent-a-buddy/requests/:requestId/offers", async (req, res) => 
   res.status(201).json({ offer: mapOffer(data) });
 });
 
-router.get("/api/rent-a-buddy/requests/:requestId/offers", async (req, res) => {
+router.get("/rent-a-buddy/requests/:requestId/offers", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -990,7 +990,7 @@ router.get("/api/rent-a-buddy/requests/:requestId/offers", async (req, res) => {
   res.json({ offers });
 });
 
-router.get("/api/rent-a-buddy/me/offers", async (req, res) => {
+router.get("/rent-a-buddy/me/offers", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -1006,7 +1006,7 @@ router.get("/api/rent-a-buddy/me/offers", async (req, res) => {
   res.json({ offers: (data ?? []).map(mapOffer) });
 });
 
-router.post("/api/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
+router.post("/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -1083,7 +1083,7 @@ router.post("/api/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
   res.json({ booking: bk, bookingId: bk.id });
 });
 
-router.post("/api/rent-a-buddy/offers/:offerId/decline", async (req, res) => {
+router.post("/rent-a-buddy/offers/:offerId/decline", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -1100,7 +1100,7 @@ router.post("/api/rent-a-buddy/offers/:offerId/decline", async (req, res) => {
   res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/offers/:offerId/withdraw", async (req, res) => {
+router.post("/rent-a-buddy/offers/:offerId/withdraw", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -1117,7 +1117,7 @@ router.post("/api/rent-a-buddy/offers/:offerId/withdraw", async (req, res) => {
 
 // ── Packages (v2) ─────────────────────────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/me/packages/v2", async (req, res) => {
+router.post("/rent-a-buddy/me/packages/v2", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -1162,7 +1162,7 @@ router.post("/api/rent-a-buddy/me/packages/v2", async (req, res) => {
   res.status(201).json({ pkg: mapPackage(data), requiresAdminReview: needsAdminReview });
 });
 
-router.patch("/api/rent-a-buddy/me/packages/v2/:packageId", async (req, res) => {
+router.patch("/rent-a-buddy/me/packages/v2/:packageId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -1209,7 +1209,7 @@ router.patch("/api/rent-a-buddy/me/packages/v2/:packageId", async (req, res) => 
   res.json({ pkg: mapPackage(data) });
 });
 
-router.get("/api/rent-a-buddy/buddies/:buddyId/packages", async (req, res) => {
+router.get("/rent-a-buddy/buddies/:buddyId/packages", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -1225,7 +1225,7 @@ router.get("/api/rent-a-buddy/buddies/:buddyId/packages", async (req, res) => {
   res.json({ packages: (data ?? []).map(mapPackage) });
 });
 
-router.get("/api/rent-a-buddy/packages/:packageId", async (req, res) => {
+router.get("/rent-a-buddy/packages/:packageId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -1240,7 +1240,7 @@ router.get("/api/rent-a-buddy/packages/:packageId", async (req, res) => {
   res.json({ pkg: { ...mapPackage(data), stops: (data as any).stops ?? [] } });
 });
 
-router.post("/api/rent-a-buddy/packages/:packageId/book", async (req, res) => {
+router.post("/rent-a-buddy/packages/:packageId/book", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -1333,7 +1333,7 @@ router.post("/api/rent-a-buddy/packages/:packageId/book", async (req, res) => {
 
 // ── Add-ons ───────────────────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/buddies/:buddyId/addons", async (req, res) => {
+router.get("/rent-a-buddy/buddies/:buddyId/addons", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -1349,7 +1349,7 @@ router.get("/api/rent-a-buddy/buddies/:buddyId/addons", async (req, res) => {
   res.json({ addons: data ?? [] });
 });
 
-router.post("/api/rent-a-buddy/me/addons", async (req, res) => {
+router.post("/rent-a-buddy/me/addons", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -1380,7 +1380,7 @@ router.post("/api/rent-a-buddy/me/addons", async (req, res) => {
   res.status(201).json({ addon: data });
 });
 
-router.patch("/api/rent-a-buddy/me/addons/:addonId", async (req, res) => {
+router.patch("/rent-a-buddy/me/addons/:addonId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -1407,7 +1407,7 @@ router.patch("/api/rent-a-buddy/me/addons/:addonId", async (req, res) => {
   res.json({ addon: data });
 });
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/addons", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/addons", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -1493,7 +1493,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/addons", async (req, res) => 
 
 // ── Tips ──────────────────────────────────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/bookings/:bookingId/tip", async (req, res) => {
+router.post("/rent-a-buddy/bookings/:bookingId/tip", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -1547,7 +1547,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/tip", async (req, res) => {
 
 // ── Saved Buddies (enhanced) ──────────────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/buddies/:buddyId/save", async (req, res) => {
+router.post("/rent-a-buddy/buddies/:buddyId/save", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -1567,7 +1567,7 @@ router.post("/api/rent-a-buddy/buddies/:buddyId/save", async (req, res) => {
   res.json({ ok: true });
 });
 
-router.delete("/api/rent-a-buddy/buddies/:buddyId/save", async (req, res) => {
+router.delete("/rent-a-buddy/buddies/:buddyId/save", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -1578,7 +1578,7 @@ router.delete("/api/rent-a-buddy/buddies/:buddyId/save", async (req, res) => {
   res.json({ ok: true });
 });
 
-router.get("/api/rent-a-buddy/me/saved-buddies", async (req, res) => {
+router.get("/rent-a-buddy/me/saved-buddies", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -1602,7 +1602,7 @@ router.get("/api/rent-a-buddy/me/saved-buddies", async (req, res) => {
   res.json({ saved: results });
 });
 
-router.post("/api/rent-a-buddy/buddies/:buddyId/book-again", async (req, res) => {
+router.post("/rent-a-buddy/buddies/:buddyId/book-again", async (req, res) => {
   // Forward to /bookings creation with buddy pre-filled
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -1638,7 +1638,7 @@ router.post("/api/rent-a-buddy/buddies/:buddyId/book-again", async (req, res) =>
 
 // ── Waitlist (v2) ─────────────────────────────────────────────────────────────
 
-router.post("/api/rent-a-buddy/waitlist/v2", async (req, res) => {
+router.post("/rent-a-buddy/waitlist/v2", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -1689,7 +1689,7 @@ router.post("/api/rent-a-buddy/waitlist/v2", async (req, res) => {
   res.status(201).json({ entry: data });
 });
 
-router.get("/api/rent-a-buddy/me/waitlist/v2", async (req, res) => {
+router.get("/rent-a-buddy/me/waitlist/v2", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -1704,7 +1704,7 @@ router.get("/api/rent-a-buddy/me/waitlist/v2", async (req, res) => {
   res.json({ waitlist: data ?? [] });
 });
 
-router.delete("/api/rent-a-buddy/waitlist/:waitlistId", async (req, res) => {
+router.delete("/rent-a-buddy/waitlist/:waitlistId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -1721,7 +1721,7 @@ router.delete("/api/rent-a-buddy/waitlist/:waitlistId", async (req, res) => {
 
 // ── Pricing suggestion ────────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/pricing/suggestion", async (req, res) => {
+router.get("/rent-a-buddy/pricing/suggestion", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
 
@@ -1742,7 +1742,7 @@ router.get("/api/rent-a-buddy/pricing/suggestion", async (req, res) => {
 
 // ── Earnings ──────────────────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/me/earnings/summary", async (req, res) => {
+router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -1835,7 +1835,7 @@ router.get("/api/rent-a-buddy/me/earnings/summary", async (req, res) => {
   });
 });
 
-router.get("/api/rent-a-buddy/me/earnings/ledger", async (req, res) => {
+router.get("/rent-a-buddy/me/earnings/ledger", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
@@ -1908,7 +1908,7 @@ async function createEarningsLedgerEntry(svc: any, booking: any, buddyProfileId:
 
 // ── Admin Marketplace ─────────────────────────────────────────────────────────
 
-router.get("/api/rent-a-buddy/admin/marketplace/analytics", async (req, res) => {
+router.get("/rent-a-buddy/admin/marketplace/analytics", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { svc } = admin;
@@ -2002,7 +2002,7 @@ router.get("/api/rent-a-buddy/admin/marketplace/analytics", async (req, res) => 
   });
 });
 
-router.get("/api/rent-a-buddy/admin/marketplace/cities", async (req, res) => {
+router.get("/rent-a-buddy/admin/marketplace/cities", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { svc } = admin;
@@ -2023,7 +2023,7 @@ router.get("/api/rent-a-buddy/admin/marketplace/cities", async (req, res) => {
   res.json({ cities: cityMap });
 });
 
-router.post("/api/rent-a-buddy/admin/profiles/:id/feature", async (req, res) => {
+router.post("/rent-a-buddy/admin/profiles/:id/feature", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { svc } = admin;
@@ -2047,7 +2047,7 @@ router.post("/api/rent-a-buddy/admin/profiles/:id/feature", async (req, res) => 
   res.json({ ok: true });
 });
 
-router.delete("/api/rent-a-buddy/admin/profiles/:id/feature", async (req, res) => {
+router.delete("/rent-a-buddy/admin/profiles/:id/feature", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { svc } = admin;
@@ -2065,7 +2065,7 @@ router.delete("/api/rent-a-buddy/admin/profiles/:id/feature", async (req, res) =
   res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/admin/profiles/:id/city-ambassador", async (req, res) => {
+router.post("/rent-a-buddy/admin/profiles/:id/city-ambassador", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { svc } = admin;
@@ -2090,7 +2090,7 @@ router.post("/api/rent-a-buddy/admin/profiles/:id/city-ambassador", async (req, 
   res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/admin/packages/:id/approve", async (req, res) => {
+router.post("/rent-a-buddy/admin/packages/:id/approve", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { svc } = admin;
@@ -2123,7 +2123,7 @@ router.post("/api/rent-a-buddy/admin/packages/:id/approve", async (req, res) => 
   res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/admin/packages/:id/disable", async (req, res) => {
+router.post("/rent-a-buddy/admin/packages/:id/disable", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { svc } = admin;
@@ -2157,7 +2157,7 @@ router.post("/api/rent-a-buddy/admin/packages/:id/disable", async (req, res) => 
   res.json({ ok: true });
 });
 
-router.get("/api/rent-a-buddy/admin/pricing/outliers", async (req, res) => {
+router.get("/rent-a-buddy/admin/pricing/outliers", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { svc } = admin;
@@ -2174,7 +2174,7 @@ router.get("/api/rent-a-buddy/admin/pricing/outliers", async (req, res) => {
   res.json({ outliers: data ?? [] });
 });
 
-router.patch("/api/rent-a-buddy/admin/fee-rules", async (req, res) => {
+router.patch("/rent-a-buddy/admin/fee-rules", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { svc } = admin;
@@ -2203,7 +2203,7 @@ router.patch("/api/rent-a-buddy/admin/fee-rules", async (req, res) => {
   res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/admin/users/:userId/force-public-meetup", async (req, res) => {
+router.post("/rent-a-buddy/admin/users/:userId/force-public-meetup", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { svc } = admin;
@@ -2225,7 +2225,7 @@ router.post("/api/rent-a-buddy/admin/users/:userId/force-public-meetup", async (
   res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/admin/users/:userId/force-full-in-app", async (req, res) => {
+router.post("/rent-a-buddy/admin/users/:userId/force-full-in-app", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { svc } = admin;
@@ -2248,7 +2248,7 @@ router.post("/api/rent-a-buddy/admin/users/:userId/force-full-in-app", async (re
   res.json({ ok: true });
 });
 
-router.post("/api/rent-a-buddy/admin/restrictions/city-category", async (req, res) => {
+router.post("/rent-a-buddy/admin/restrictions/city-category", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { svc } = admin;

@@ -297,7 +297,7 @@ describe("profile data-leak prevention", () => {
     app.use(express.json());
     app.use("/api", profileRouter);
     app.use("/api", followsRouter);
-    app.use(rentABuddyRouter);
+    app.use("/api", rentABuddyRouter);
 
     server = http.createServer(app);
     await new Promise<void>((resolve) => server.listen(0, resolve));
@@ -1220,8 +1220,8 @@ describe("completedBookings counter source-of-truth", () => {
     const app = express();
     app.use(express.json());
     app.use("/api", followsRouter);
-    app.use(rentABuddyRouter);
-    app.use(rentABuddyMarketplaceRouter);
+    app.use("/api", rentABuddyRouter);
+    app.use("/api", rentABuddyMarketplaceRouter);
 
     srv = http.createServer(app);
     await new Promise<void>((resolve) => srv.listen(0, resolve));
