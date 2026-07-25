@@ -8,6 +8,7 @@ import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { Users, Globe } from 'lucide-react-native';
 import { color, space, type as t } from '../../theme/tokens.ts';
 import { TG, TG_AVATAR, TG_SPACING } from '../../theme/telegraphTokens.ts';
+import { useHydratedMedia } from '../../services/mediaUrl.ts';
 
 // ── TelegraphAvatar ───────────────────────────────────────────────────────────
 
@@ -23,6 +24,15 @@ interface TelegraphAvatarProps {
 export function TelegraphAvatar({ kind = 'single', uri, name, size = TG_AVATAR.row }: TelegraphAvatarProps) {
   const r = kind === 'single' ? size / 2 : size * 0.3;
   const base = { width: size, height: size, borderRadius: r };
+
+  // Hydrate the URI through the signed-URL layer so that when post-media /
+  // profile-media buckets go private the avatar still loads.
+  const { resolved: hydratedMap } = useHydratedMedia(uri ? [uri] : []);
+  // undefined = still loading (show image with plain URI); null = server rejected
+  const effectiveUri = uri
+    ? (hydratedMap[uri] === null ? null : (hydratedMap[uri] ?? uri))
+    : null;
+
   if (kind === 'trip') {
     return (
       <View style={[base, av.group, { backgroundColor: '#E0EFEC' }]}>
@@ -37,7 +47,9 @@ export function TelegraphAvatar({ kind = 'single', uri, name, size = TG_AVATAR.r
       </View>
     );
   }
-  if (uri) return <Image source={{ uri }} style={[base, { backgroundColor: color.haze }]} />;
+  if (effectiveUri) {
+    return <Image source={{ uri: effectiveUri }} style={[base, { backgroundColor: color.haze }]} />;
+  }
   return (
     <View style={[base, av.fallback]}>
       <Text style={[av.initial, { fontSize: size * 0.38 }]}>
