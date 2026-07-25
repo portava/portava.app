@@ -26,6 +26,7 @@ import type { PassportStampNew, NewStampVisibility } from '../../src/services/st
 import { stampToLegacy, makeStampShareLinks } from '../../src/services/stampShareUtils';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import { StampAdmireBlock } from '../../src/components/stamps/StampAdmireBlock';
+import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 
@@ -70,6 +71,7 @@ function StampDetailContent({
   const [copied, setCopied] = useState(false);
   const navBarScrollHandler = useNavBarScrollHandler();
   const { cardRef, share, sharing } = useStampShare(stamp, null);
+  const { isEnabled: isFlagEnabled } = useFeatureFlags();
 
   const legacy = stampToLegacy(stamp);
   const rarity = stamp.definition?.rarity;
@@ -152,8 +154,10 @@ function StampDetailContent({
           </Text>
         </View>
 
-        {/* Admire block */}
-        <StampAdmireBlock userStampId={stamp.id} isOwner={isOwner} />
+        {/* Admire block — hidden when stamp_admire_enabled flag is off */}
+        {isFlagEnabled('stamp_admire_enabled') && (
+          <StampAdmireBlock userStampId={stamp.id} isOwner={isOwner} />
+        )}
 
         {stamp.isRevoked && (
           <View style={styles.revokedBanner}>

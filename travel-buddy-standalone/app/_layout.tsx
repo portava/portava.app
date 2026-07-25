@@ -24,6 +24,7 @@ import { StampEarnedToastProvider } from '../src/components/stamps/StampEarnedTo
 import { setNotificationHandler, setNotificationChannelAsync } from '../src/lib/safeNotifications';
 import { BlockedIdsProvider } from '../src/context/BlockedIdsContext';
 import { CallProvider } from '../src/context/CallContext';
+import { FeatureFlagsProvider } from '../src/context/FeatureFlagsContext';
 import { CallRealtimeBinding } from '../src/components/calls/CallRealtimeBinding';
 import { CallSurface } from '../src/components/calls/CallSurface';
 import { createLiveKitBridge } from '../src/services/livekitBridge';
@@ -108,6 +109,7 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
+        <FeatureFlagsProvider>
         <SessionProvider>
           <BlockedIdsProvider>
           <CompassProvider>
@@ -156,6 +158,7 @@ export default function RootLayout() {
           </CompassProvider>
           </BlockedIdsProvider>
         </SessionProvider>
+        </FeatureFlagsProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

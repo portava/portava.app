@@ -43,6 +43,7 @@ import { TOGGLEABLE_LAYERS } from '../../src/types/mapTypes.ts';
 import { MapCarousel } from '../../src/components/map/MapCarousel.tsx';
 import type { MapCarouselRef } from '../../src/components/map/MapCarousel.tsx';
 import { MapStoreProvider, useMapStore } from '../../src/stores/mapStore.tsx';
+import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx';
 
 // ── Lazy-load native map component only on native ─────────────────────────────
 // This avoids importing MapLibre on web where it would crash.
@@ -316,6 +317,8 @@ function FullScreenMapScreenInner() {
     focusId?: string;
     mode?: string;
   }>();
+
+  const { isEnabled: isFlagEnabled } = useFeatureFlags();
 
   const {
     enabledLayers,
@@ -877,36 +880,38 @@ function FullScreenMapScreenInner() {
         </View>
       ) : null}
 
-      {/* ── AskCompassBar + active filter label — floating bottom overlay ── */}
-      {/* pointerEvents="box-none" lets map touches pass through the transparent
-          areas; the bar and chips capture their own touch events normally. */}
-      <View style={s.bottomOverlay} pointerEvents="box-none">
-        {/* Active Compass filter label — shown while a query is active */}
-        {compassQuery ? (
-          <View style={s.filterLabel}>
-            <Text style={s.filterLabelText} numberOfLines={1}>
-              Showing: {compassQuery}
-            </Text>
-            <Pressable
-              style={s.filterClearBtn}
-              onPress={handleCompassClear}
-              hitSlop={8}
-            >
-              <XIcon size={12} color="#fff" />
-            </Pressable>
-          </View>
-        ) : null}
+      {/* ── AskCompassBar + active filter label — floating bottom overlay ──
+          Only rendered when the map_search_enabled feature flag is on.
+          If the flag is off (or unknown / fetch failed), the bar is hidden. */}
+      {isFlagEnabled('map_search_enabled') && (
+        <View style={s.bottomOverlay} pointerEvents="box-none">
+          {/* Active Compass filter label — shown while a query is active */}
+          {compassQuery ? (
+            <View style={s.filterLabel}>
+              <Text style={s.filterLabelText} numberOfLines={1}>
+                Showing: {compassQuery}
+              </Text>
+              <Pressable
+                style={s.filterClearBtn}
+                onPress={handleCompassClear}
+                hitSlop={8}
+              >
+                <XIcon size={12} color="#fff" />
+              </Pressable>
+            </View>
+          ) : null}
 
-        {/* Ask Compass search bar */}
-        <AskCompassBar
-          city={title ?? ''}
-          userLat={userLat}
-          userLng={userLng}
-          bottomInset={insets.bottom}
-          onResults={handleCompassResults}
-          onClear={handleCompassClear}
-        />
-      </View>
+          {/* Ask Compass search bar */}
+          <AskCompassBar
+            city={title ?? ''}
+            userLat={userLat}
+            userLng={userLng}
+            bottomInset={insets.bottom}
+            onResults={handleCompassResults}
+            onClear={handleCompassClear}
+          />
+        </View>
+      )}
 
       {/* Layer filter bottom sheet */}
       <MapFilterSheet
