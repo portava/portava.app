@@ -774,6 +774,15 @@ function EventsTabScreen() {
               </View>
             )
           )}
+          {/* Browse all events — always-visible entry point to the full filterable list */}
+          <Pressable
+            style={styles.browseAllBtn}
+            onPress={() => router.push('/events/list' as any)}
+          >
+            <Text style={styles.browseAllText}>Browse all events</Text>
+            <ChevronRight size={14} color={color.signal} />
+          </Pressable>
+
           <NavBarFiller />
         </ScrollView>
       )}
@@ -851,6 +860,9 @@ const styles = StyleSheet.create({
   emptySub:           { ...t.body, color: color.mute, textAlign: 'center', maxWidth: 280 },
   emptyBtn:           { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: color.signal, paddingHorizontal: space.lg, paddingVertical: space.md, borderRadius: radius.pill, marginTop: space.sm, ...shadow.card },
   emptyBtnText:       { ...t.body, color: color.onInk, fontWeight: '700' },
+
+  browseAllBtn:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, marginHorizontal: space.lg, marginTop: space.lg, marginBottom: space.sm, paddingVertical: space.md, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
+  browseAllText:      { ...t.body, color: color.signal, fontWeight: '700' },
 });
 
 
