@@ -116,6 +116,92 @@ describe('PlaceCard — status badge', () => {
   });
 });
 
+// ── Hours ─────────────────────────────────────────────────────────────────────
+
+describe('PlaceCard — today\'s hours', () => {
+  // Build a full 7-day schedule so the test is agnostic to the day it runs on.
+  const allDayHours = [0, 1, 2, 3, 4, 5, 6].map((d) => ({
+    dayOfWeek: d,
+    open:      '09:00',
+    close:     '22:00',
+  }));
+
+  const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const todayName = DAY_NAMES[new Date().getDay()];
+
+  it('shows the formatted hours string when openingHours contains today\'s entry', async () => {
+    const place = makePlace({ openingHours: allDayHours });
+    const { getByText } = await render(<PlaceCard place={place} />);
+    // e.g. "Mon: 09:00 – 22:00"
+    expect(getByText(new RegExp(`${todayName}: 09:00`))).toBeTruthy();
+  });
+
+  it('does not show "Hours not available" when a valid today entry exists', async () => {
+    const place = makePlace({ openingHours: allDayHours });
+    const { queryByText } = await render(<PlaceCard place={place} />);
+    expect(queryByText('Hours not available')).toBeNull();
+  });
+
+  it('renders "Hours not available" when openingHours is an empty array', async () => {
+    const place = makePlace({ openingHours: [] });
+    const { getByText } = await render(<PlaceCard place={place} />);
+    expect(getByText('Hours not available')).toBeTruthy();
+  });
+
+  it('renders "Hours not available" when openingHours has no entry for today', async () => {
+    // Provide entries only for a day that is definitely NOT today.
+    const today = new Date().getDay();
+    const notToday = (today + 1) % 7;
+    const place = makePlace({
+      openingHours: [{ dayOfWeek: notToday, open: '10:00', close: '20:00' }],
+    });
+    const { getByText } = await render(<PlaceCard place={place} />);
+    expect(getByText('Hours not available')).toBeTruthy();
+  });
+
+  it('does not render any hours row when openingHours is null', async () => {
+    const place = makePlace({ openingHours: null });
+    const { queryByText } = await render(<PlaceCard place={place} />);
+    expect(queryByText('Hours not available')).toBeNull();
+    // No formatted hours label either
+    expect(queryByText(new RegExp(`${todayName}:`))).toBeNull();
+  });
+});
+
+describe('PlaceCard — open/closed badge', () => {
+  it('shows "Open now" badge when isOpenNow is true', async () => {
+    const place = makePlace({ isOpenNow: true });
+    const { getByText } = await render(<PlaceCard place={place} />);
+    expect(getByText('Open now')).toBeTruthy();
+  });
+
+  it('shows "Closed now" badge when isOpenNow is false', async () => {
+    const place = makePlace({ isOpenNow: false });
+    const { getByText } = await render(<PlaceCard place={place} />);
+    expect(getByText('Closed now')).toBeTruthy();
+  });
+
+  it('shows no open/closed badge when isOpenNow is null/undefined', async () => {
+    const place = makePlace();
+    const { queryByText } = await render(<PlaceCard place={place} />);
+    expect(queryByText('Open now')).toBeNull();
+    expect(queryByText('Closed now')).toBeNull();
+  });
+
+  it('renders open badge alongside today\'s hours when both isOpenNow and openingHours are set', async () => {
+    const allDayHours = [0, 1, 2, 3, 4, 5, 6].map((d) => ({
+      dayOfWeek: d,
+      open:      '08:00',
+      close:     '21:00',
+    }));
+    const place = makePlace({ isOpenNow: true, openingHours: allDayHours });
+    const { getByText } = await render(<PlaceCard place={place} />);
+    expect(getByText('Open now')).toBeTruthy();
+    const todayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
+    expect(getByText(new RegExp(`${todayName}: 08:00`))).toBeTruthy();
+  });
+});
+
 describe('PlaceCard — separate rating rows', () => {
   it('renders provider rating and traveler score as separate rows when both present', async () => {
     const place = makePlace({
