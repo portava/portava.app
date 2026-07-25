@@ -176,6 +176,13 @@ router.use(wishlistRouter);
 router.use(profileTabsRouter);
 router.use(tripsExpansionRouter);
 router.use(postcardsRouter);
+// Stamp Wave 2 routers (stampShowcase, stampAdmire) must be registered BEFORE
+// stampsRouter. stamps.ts registers `GET /stamps/:stampId` which returns 400
+// for non-UUID paths (e.g. "showcase") without calling next(), so any static
+// /stamps/* path in a later router would be unreachable. Feature-flag gating
+// is enforced inside each handler (isFlagEnabled), not by router ordering.
+router.use(stampShowcaseRouter);
+router.use(stampAdmireRouter);
 router.use(stampsRouter);
 router.use(adminStampsRouter);
 router.use(adminGeocodeRouter);
@@ -199,10 +206,6 @@ router.use(tripBudgetIntelRouter);
 router.use(tripReservationsRouter);
 router.use(tripDraftRouter);
 router.use(neighborhoodsRouter);
-// Stamp Wave 2 (2026-07-23): showcase + admire. Registered after stampsRouter
-// so the stamp_system_v2_enabled gate (path-scoped to /stamps*) governs them.
-router.use(stampShowcaseRouter);
-router.use(stampAdmireRouter);
 router.use(countryEssentialsRouter);
 router.use(fsqPlacesRouter);
 router.use(mapSearchRouter);
