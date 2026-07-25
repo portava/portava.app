@@ -10,6 +10,8 @@
  *   - batches are capped at ≤50 URLs per request
  *   - cache does not grow past MAX_CACHE_SIZE (LRU eviction)
  *   - LRU: the least-recently-used entry is evicted first
+ *   - cache TTL derived from server ttlSeconds minus 5-minute safety buffer
+ *   - URL near actual expiry (within safety buffer) triggers re-sign
  */
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
@@ -188,7 +190,10 @@ describe('batchSignUrls', () => {
 
   it('expired cache entry triggers a fresh sign request — not served stale', async () => {
     const FIXED_NOW = 1_000_000_000;
-    const TTL_MS = 45 * 60 * 1000; // must match CACHE_TTL_MS in batchSignMedia.ts
+    // Server returns ttlSeconds=3600; cache TTL = (3600 - 300) * 1000 = 55 min
+    const SERVER_TTL_S = 3600;
+    const SAFETY_BUFFER_S = 5 * 60;
+    const CACHE_TTL_MS = (SERVER_TTL_S - SAFETY_BUFFER_S) * 1000; // 55 minutes
     let signCallCount = 0;
 
     // Fix time at FIXED_NOW and prime the cache
@@ -202,7 +207,7 @@ describe('batchSignUrls', () => {
         const body = JSON.parse(opts.body);
         const signed: Record<string, string> = {};
         for (const u of body.urls) signed[u] = `${u}?token=old`;
-        return { ok: true, json: async () => ({ signed, ttlSeconds: 3600 }) };
+        return { ok: true, json: async () => ({ signed, ttlSeconds: SERVER_TTL_S }) };
       }
       throw new Error(`Unexpected fetch: ${url}`);
     };
@@ -210,8 +215,8 @@ describe('batchSignUrls', () => {
     assert.equal(first.get(URL_A), `${URL_A}?token=old`, 'initial sign should return old token');
     assert.equal(signCallCount, 1, 'sign endpoint called once on first miss');
 
-    // Advance time past the TTL so the cached entry is expired
-    Date.now = () => FIXED_NOW + TTL_MS + 1;
+    // Advance time past the cache TTL so the cached entry is expired
+    Date.now = () => FIXED_NOW + CACHE_TTL_MS + 1;
     // Update stub to return a distinct "new" token so we can distinguish fresh vs stale
     (globalThis as any).fetch = async (url: string, opts?: any) => {
       if (url.includes('/api/feature-flags')) {
@@ -222,7 +227,7 @@ describe('batchSignUrls', () => {
         const body = JSON.parse(opts.body);
         const signed: Record<string, string> = {};
         for (const u of body.urls) signed[u] = `${u}?token=new`;
-        return { ok: true, json: async () => ({ signed, ttlSeconds: 3600 }) };
+        return { ok: true, json: async () => ({ signed, ttlSeconds: SERVER_TTL_S }) };
       }
       throw new Error(`Unexpected fetch: ${url}`);
     };
@@ -232,6 +237,71 @@ describe('batchSignUrls', () => {
       second.get(URL_A),
       `${URL_A}?token=new`,
       'should return the freshly signed URL, not the stale cached one'
+    );
+  });
+
+  it('near-expiry safety buffer: re-signs before server token expires', async () => {
+    // The server issues tokens with a 3600s lifetime.
+    // The cache should evict at (3600 - 300)s = 3300s so the client re-signs
+    // while the token still has ~5 minutes of life left — preventing mid-session 403s.
+    const FIXED_NOW = 2_000_000_000;
+    const SERVER_TTL_S = 3600;
+    const SAFETY_BUFFER_S = 5 * 60; // 300 s
+    const CACHE_TTL_MS = (SERVER_TTL_S - SAFETY_BUFFER_S) * 1000; // 3300 s
+    let signCallCount = 0;
+
+    Date.now = () => FIXED_NOW;
+    (globalThis as any).fetch = async (url: string, opts?: any) => {
+      if (url.includes('/api/feature-flags')) {
+        return { ok: true, json: async () => ({ flags: { media_private_buckets_enabled: true } }) };
+      }
+      if (url.includes('/api/media/sign')) {
+        signCallCount++;
+        const body = JSON.parse(opts.body);
+        const signed: Record<string, string> = {};
+        for (const u of body.urls) signed[u] = `${u}?token=first`;
+        return { ok: true, json: async () => ({ signed, ttlSeconds: SERVER_TTL_S }) };
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    };
+
+    // Prime the cache
+    await batchSignUrls([URL_A]);
+    assert.equal(signCallCount, 1);
+
+    // Advance to just before cache expiry — should still be a hit
+    Date.now = () => FIXED_NOW + CACHE_TTL_MS - 1;
+    signCallCount = 0;
+    const hitResult = await batchSignUrls([URL_A]);
+    assert.equal(signCallCount, 0, 'should be a cache hit just before safety-buffer expiry');
+    assert.equal(hitResult.get(URL_A), `${URL_A}?token=first`);
+
+    // Advance to just after cache expiry but still within the server token's 3600s window
+    // (safety buffer kicks in: 3300s elapsed < 3600s server TTL)
+    Date.now = () => FIXED_NOW + CACHE_TTL_MS + 1;
+    (globalThis as any).fetch = async (url: string, opts?: any) => {
+      if (url.includes('/api/feature-flags')) {
+        return { ok: true, json: async () => ({ flags: { media_private_buckets_enabled: true } }) };
+      }
+      if (url.includes('/api/media/sign')) {
+        signCallCount++;
+        const body = JSON.parse(opts.body);
+        const signed: Record<string, string> = {};
+        for (const u of body.urls) signed[u] = `${u}?token=refreshed`;
+        return { ok: true, json: async () => ({ signed, ttlSeconds: SERVER_TTL_S }) };
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    };
+    const refreshResult = await batchSignUrls([URL_A]);
+    assert.equal(
+      signCallCount,
+      1,
+      'safety buffer should evict the entry before the actual token expires, triggering a re-sign'
+    );
+    assert.equal(
+      refreshResult.get(URL_A),
+      `${URL_A}?token=refreshed`,
+      'should return the freshly re-signed URL, not the near-expiry stale one'
     );
   });
 
