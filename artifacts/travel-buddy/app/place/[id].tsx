@@ -22,6 +22,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Flag, MapPin, Globe, Phone, Tag, Bookmark, Navigation, Clock, Star, ListPlus } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { getCanonicalPlace } from '../../src/services/places';
+import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 import { PlaceCard } from '../../src/components/place/PlaceCard';
 import { PlaceReportSheet } from '../../src/components/PlaceReportSheet';
 import { MapEntityActionRow } from '../../src/components/map/MapEntityActionRow';
@@ -295,6 +296,8 @@ export default function PlaceDetailScreen() {
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
   const city = Array.isArray(params.city) ? params.city[0] : (params.city ?? null);
 
+  const { isEnabled: isFlagEnabled } = useFeatureFlags();
+
   const [canonicalPlace, setCanonicalPlace] = useState<CanonicalPlace | null | undefined>(undefined);
   const [reportOpen, setReportOpen] = useState(false);
 
@@ -302,9 +305,14 @@ export default function PlaceDetailScreen() {
   const discoveryPlace = parsePlaceJson(params.placeJson);
 
   useEffect(() => {
-    if (!id) { setCanonicalPlace(null); return; }
+    // When external_places_enabled flag is off, skip the canonical fetch entirely
+    // and fall through to the discovery fallback — fail-soft, no crash.
+    if (!id || !isFlagEnabled('external_places_enabled')) {
+      setCanonicalPlace(null);
+      return;
+    }
     void getCanonicalPlace(id).then(setCanonicalPlace);
-  }, [id]);
+  }, [id, isFlagEnabled]);
 
   const placeName = canonicalPlace?.name ?? discoveryPlace?.name ?? 'Place';
 

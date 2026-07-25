@@ -39,6 +39,7 @@ import { loadCachedCounts, saveCachedCounts } from '../../src/services/discovery
 import { DiscoveryEventPostCard } from '../../src/components/discovery/DiscoveryEventPostCard';
 import type { DiscoveryEventPost } from '../../src/types/discovery';
 import { freshToken } from '../../src/services/apiToken';
+import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 
 /** Returns the value only when it is a real, finite number — otherwise null. */
 function finiteOrNull(v: number | null | undefined): number | null {
@@ -88,6 +89,7 @@ export default function DiscoveryHub() {
   const insets = useSafeAreaInsets();
   const bottomInset = useBottomInset();
   const { isAuthed } = useSession();
+  const { isEnabled: isFlagEnabled } = useFeatureFlags();
   const { open: openPlanPicker } = usePlanPicker();
   const {
     locationState, showCityPicker, openCityPicker, closeCityPicker, isLoading,
@@ -497,7 +499,7 @@ export default function DiscoveryHub() {
         </View>
         <View style={styles.headerRight}>
           <DestinationBar destination={destination} onSelectPlace={handleSelectPlaceFromBar} />
-          {isAuthed && (
+          {isAuthed && isFlagEnabled('external_places_enabled') && (
             <Pressable
               style={styles.sharePlaceBtn}
               onPress={() => setSubmitPlaceOpen(true)}

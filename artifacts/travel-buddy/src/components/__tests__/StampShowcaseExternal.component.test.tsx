@@ -76,6 +76,13 @@ jest.mock('../stamps/StampDetailModal', () => ({
   StampDetailModal: () => null,
 }));
 
+// NOTE: FeatureFlagsContext fetches from the API on mount; stub returns all
+// flags enabled so the showcase gate passes. Server-side (getMyShowcase→null)
+// hiding is tested separately via mockGetMyShowcase return values.
+jest.mock('../../context/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ isEnabled: () => true, loading: false }),
+}));
+
 // NOTE: intentionally exhaustive — StampShowcaseRow calls AccessibilityInfo and
 // Animated native modules. Stub surfaces testID and count so this file can
 // assert visibility without ambiguity.

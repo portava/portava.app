@@ -110,6 +110,13 @@ jest.mock('../stamps/StampShowcaseRow', () => {
   };
 });
 
+// NOTE: FeatureFlagsContext fetches from the API on mount; stub returns all
+// flags enabled so the showcase gate passes. Server-side (getMyShowcase→null)
+// hiding is tested separately via mockGetMyShowcase return values below.
+jest.mock('../../context/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ isEnabled: () => true, loading: false }),
+}));
+
 // NOTE: intentionally exhaustive — StampShowcaseCurationSheet imports Modal,
 // PanResponder, and native image modules; stub surfaces just enough to assert
 // open/close wiring in StampsTab. Full sheet tests live in the companion file.

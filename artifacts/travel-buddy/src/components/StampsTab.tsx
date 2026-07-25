@@ -24,6 +24,7 @@ import { StampShowcaseCurationSheet } from './stamps/StampShowcaseCurationSheet.
 import { getMyShowcase } from '../services/stampShowcase.ts';
 import type { ShowcaseStamp } from '../services/stampShowcase.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { useFeatureFlags } from '../context/FeatureFlagsContext.tsx';
 
 /** Client-side category filter — maps filter pills to actual DB category values.
  *
@@ -123,6 +124,7 @@ export function StampsTab({
   const external = data !== undefined;
   // All hooks must be declared before any early return (Rules of Hooks).
   const { blockedIds, blockerIds } = useBlockedIds();
+  const { isEnabled: isFlagEnabled } = useFeatureFlags();
   const [allStamps, setAllStamps]     = useState<PassportStampNew[]>([]);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState<string | null>(null);
@@ -313,8 +315,10 @@ export function StampsTab({
       {/* Category filter strip (shown for both views so public profiles can browse) */}
       <StampCategoryFilter selected={category} onCategoryChange={setCategory} />
 
-      {/* Showcase: curated stamps — only shown to the owner when flag is on */}
-      {isOwner && !viewingUsername && showcase !== null && (
+      {/* Showcase: curated stamps — only shown to the owner when:
+          (a) stamp_showcase_enabled client flag is on, AND
+          (b) server returned data (showcase !== null). */}
+      {isFlagEnabled('stamp_showcase_enabled') && isOwner && !viewingUsername && showcase !== null && (
         showcase.length > 0 ? (
           <StampShowcaseRow
             items={showcase}
@@ -392,7 +396,7 @@ export function StampsTab({
       />
 
       {/* Showcase curation sheet (owner only, when feature flag is on) */}
-      {isOwner && !viewingUsername && showcase !== null && (
+      {isFlagEnabled('stamp_showcase_enabled') && isOwner && !viewingUsername && showcase !== null && (
         <StampShowcaseCurationSheet
           visible={showCuration}
           stamps={effStamps}
