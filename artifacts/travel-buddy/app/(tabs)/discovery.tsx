@@ -24,6 +24,7 @@ import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { listMyTrips } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { getAvailableNow, type BuddyProfile } from '../../src/services/rentABuddy';
+import { BuddyCardSkeleton } from '../../src/components/BuddyCard';
 import { CompassBuddyRow } from '../../src/components/compass/CompassBuddyRow';
 import { CityConfidenceBadge } from '../../src/components/compass/CityConfidenceBadge';
 import { useSession } from '../../src/context/SessionContext';
@@ -680,7 +681,7 @@ export default function DiscoveryHub() {
       )}
 
       {/* ── For You tab: buddy strip + compass picks (hidden on category tabs) ── */}
-      {activeTab === 'for_you' && (availableBuddies.length > 0 || buddyCityNotAvailable) && (
+      {activeTab === 'for_you' && (availableBuddies.length > 0 || buddyCityNotAvailable || (buddyStripLoading && availableBuddies.length === 0)) && (
         <SectionErrorBoundary label="AvailableNow">
         <View style={buddyStrip.wrap}>
           <View style={buddyStrip.header}>
@@ -690,7 +691,16 @@ export default function DiscoveryHub() {
               <Text style={buddyStrip.seeAll}>See all</Text>
             </Pressable>
           </View>
-          {buddyCityNotAvailable ? (
+          {buddyStripLoading && availableBuddies.length === 0 ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={buddyStrip.scroll}
+            >
+              <BuddyCardSkeleton />
+              <BuddyCardSkeleton />
+            </ScrollView>
+          ) : buddyCityNotAvailable ? (
             <View style={buddyStrip.comingSoon}>
               <Text style={buddyStrip.comingSoonText}>Coming soon to {currentCity ?? 'your city'}</Text>
             </View>

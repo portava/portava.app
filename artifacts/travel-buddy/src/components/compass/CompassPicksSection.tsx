@@ -183,7 +183,7 @@ function SectionHeader({ city, onSwitchCity }: SectionHeaderProps) {
       ) : null}
       <Pressable
         style={s.gearBtn}
-        onPress={() => router.push('/compass-settings' as any)}
+        onPress={() => router.push('/compass-preferences' as any)}
         hitSlop={8}
         accessibilityLabel="Compass settings"
       >
