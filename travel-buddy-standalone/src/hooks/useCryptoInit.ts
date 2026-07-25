@@ -17,7 +17,7 @@ import { runE0Migration } from '../lib/e0Migration.ts';
 import { initCryptoIdentity } from '../lib/cryptoIdentity.ts';
 import { freshToken } from '../services/apiToken.ts';
 
-const API_BASE = (process.env['EXPO_PUBLIC_API_URL'] ?? '').replace(/\/$/, '');
+const API_BASE = (process.env['EXPO_PUBLIC_API_BASE_URL'] ?? '').replace(/\/$/, '');
 
 async function authHeaders(): Promise<Record<string, string> | null> {
   const token = await freshToken();

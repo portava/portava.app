@@ -149,7 +149,7 @@ async function _ensureDeviceRegistered(
   if (identityPub && deviceId) {
     const result = await (async () => {
       try {
-        const url = process.env.EXPO_PUBLIC_API_URL ?? '';
+        const url = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
         const token = await freshToken();
         if (!token) return;
         await fetch(`${url}/api/me/devices/${deviceId}/public-key`, {
