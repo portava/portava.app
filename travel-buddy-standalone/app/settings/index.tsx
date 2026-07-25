@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, Pressable, Switch, StyleSheet, TextInput, Alert, ActivityIndicator } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { Zap, Brain, Globe } from 'lucide-react-native';
+import { Zap, Brain } from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { useSession } from '../../src/context/SessionContext';
 import { supabase } from '../../src/lib/supabase';
@@ -10,8 +10,6 @@ import { updateTelegraphChatSettings, getTelegraphChatSettings } from '../../src
 import { fetchPreferences, patchPreferences, resetLearnedPreferences } from '../../src/services/intelligence';
 import { deactivateAccount, requestAccountDeletion, reactivateAccount } from '../../src/services/profile';
 import { resolveAccountButton, applyReactivateResult } from './settings.machine';
-import { SUPPORTED_LANGUAGES } from '../language-picker';
-import { useLanguagePreference } from '../../src/context/LanguagePreferenceContext';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { KILL_SWITCH_FLAGS } from '../../src/screens/admin/featureFlags.machine';
 
@@ -70,8 +68,6 @@ export default function Settings() {
       if (typeof s.show_telegraph_circle === 'boolean') setTelegraphCircle(s.show_telegraph_circle);
     }).catch(() => {});
   }, []);
-
-  const { preferredLanguage } = useLanguagePreference();
 
   const [prefLoading, setPrefLoading] = useState(false);
   const [prefSaving, setPrefSaving] = useState(false);
@@ -247,8 +243,6 @@ export default function Settings() {
       router.push('/muted-users' as any);
     } else if (label === 'Restricted accounts') {
       router.push('/restricted-users' as any);
-    } else if (label === 'Saved profiles') {
-      router.push('/saved-profiles' as any);
     } else if (label === 'Safety & Privacy') {
       router.push('/profile/edit/safety' as any);
     } else if (label === 'Edit profile') {
@@ -269,8 +263,6 @@ export default function Settings() {
       router.push('/safety-history' as any);
     } else if (label === 'Emergency Contacts') {
       router.push('/profile/edit/emergency-contacts' as any);
-    } else if (label === 'Report history') {
-      router.push('/report-history' as any);
     } else if (label === 'Compass Preferences') {
       router.push('/compass-preferences' as any);
     } else if (label === 'Compass Settings') {
@@ -290,7 +282,7 @@ export default function Settings() {
     await updateTelegraphChatSettings({ [key]: value }).catch(() => {});
   }
 
-  const SAFETY_ITEMS = ['Blocked accounts', 'Muted accounts', 'Restricted accounts', 'Saved profiles', 'Safety & Privacy', 'Safe Return history', 'Emergency Contacts', 'Report history'];
+  const SAFETY_ITEMS = ['Blocked accounts', 'Muted accounts', 'Restricted accounts', 'Safety & Privacy', 'Safe Return history', 'Emergency Contacts'];
   const ACCOUNT_ITEMS = ['Edit profile', 'Change password', 'Notifications', 'Location settings', 'Compass Preferences', 'Compass Settings', 'My Appeals'];
 
   const INTERESTS_OPTIONS = ['beach', 'food', 'nightlife', 'adventure', 'culture', 'wellness', 'photography', 'shopping', 'luxury', 'backpacking'];
@@ -497,38 +489,6 @@ export default function Settings() {
             </>
           )}
         </View>
-
-        {/* Language section */}
-        {live && (
-          <View style={{ gap: space.sm }}>
-            <View style={styles.sectionHeader}>
-              <Globe size={13} color={color.deep} />
-              <Text style={styles.h}>Language</Text>
-            </View>
-            <Text style={styles.sectionDesc}>
-              Incoming messages will be translated into your chosen language. Clear the selection to use your device locale.
-            </Text>
-            <Pressable
-              style={({ pressed }) => [styles.langRow, pressed && { opacity: layout.pressedOpacity }]}
-              onPress={() =>
-                router.push({
-                  pathname: '/language-picker' as any,
-                  params: { current: preferredLanguage ?? '', via: 'language-settings' },
-                })
-              }
-            >
-              <View style={{ flex: 1 }}>
-                <Text style={styles.langRowLabel}>Translation language</Text>
-                <Text style={styles.langRowValue}>
-                  {preferredLanguage
-                    ? (SUPPORTED_LANGUAGES.find((l) => l.code === preferredLanguage)?.name ?? preferredLanguage)
-                    : 'Device locale (default)'}
-                </Text>
-              </View>
-              <Text style={styles.langChevron}>›</Text>
-            </Pressable>
-          </View>
-        )}
 
         {/* Admin section — visible to users with role = 'admin' */}
         {isAdmin && (
