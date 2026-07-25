@@ -17,7 +17,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CameraRef } from '@maplibre/maplibre-react-native';
 import {
-  View, Text, Pressable, StyleSheet, Platform,
+  View, Text, Pressable, StyleSheet, Platform, ActivityIndicator,
 } from 'react-native';
 import { useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { router } from 'expo-router';
@@ -361,18 +361,44 @@ function FullScreenMapScreenInner() {
   // ── Discovery places ───────────────────────────────────────────────────────
   // Fetch discovery places when the caller requests the "places" entity layer
   // and a destination city name is available (passed as the `title` param from
-  // the discovery tab).  Falls back to an empty array on error so the map
-  // still renders — only place pins are missing, not the whole map.
+  // the discovery tab).  Tracks loading / error / empty states so the map can
+  // surface meaningful feedback instead of a silent blank pin layer.
   const [places, setPlaces] = useState<DiscoveryPlace[]>([]);
+  const [placesLoading, setPlacesLoading] = useState(false);
+  const [placesError, setPlacesError] = useState<string | null>(null);
+  // Increment to re-trigger the places fetch (retry mechanism).
+  const [placesRetryCount, setPlacesRetryCount] = useState(0);
+  // Tracks whether at least one places fetch has settled (success or error).
+  // Uses a ref so flipping it never causes an extra render; the accompanying
+  // setPlacesLoading(false) call provides the re-render trigger.
+  const placesFetchedRef = useRef(false);
+
+  const handlePlacesRetry = useCallback(() => {
+    setPlacesRetryCount((n) => n + 1);
+  }, []);
+
   const destination = title; // city name string, e.g. "Cebu City"
 
+  // Whether the places layer has been requested and a destination is available.
+  const placesLayerActive =
+    entityTypes.split(',').map((s: string) => s.trim()).includes('places') && !!destination;
+
+  // Zero-results state: fetch completed, no error, but the list is empty.
+  // placesFetchedRef guards against the initial false-positive before the
+  // first fetch settles (setPlacesLoading(false) triggers the re-render that
+  // reads this ref, so it is always current when evaluated).
+  const placesEmpty =
+    placesLayerActive && placesFetchedRef.current && !placesLoading && !placesError && places.length === 0;
+
   useEffect(() => {
-    if (!entityTypes.split(',').map((s: string) => s.trim()).includes('places')) return;
-    if (!destination) return;
+    if (!placesLayerActive) return;
 
     let cancelled = false;
+    setPlacesError(null);
+    setPlacesLoading(true);
+
     getDiscoveryPlaces(
-      destination,
+      destination!,
       category,
       { radiusKm: 10, openNow: false, minRating: null },
       1,
@@ -386,15 +412,27 @@ function FullScreenMapScreenInner() {
       userLng,
     ).then((res) => {
       if (cancelled) return;
+      placesFetchedRef.current = true;
+      setPlacesLoading(false);
       if (res.ok && Array.isArray(res.data?.places)) {
         setPlaces(res.data.places);
+        setPlacesError(null);
+      } else {
+        setPlaces([]);
+        setPlacesError((!res.ok && res.error) ? res.error : 'Could not load nearby places');
       }
-    }).catch(() => {
-      // Non-fatal: map renders without place pins rather than crashing.
+    }).catch((e: unknown) => {
+      if (cancelled) return;
+      placesFetchedRef.current = true;
+      setPlaces([]); // clear any stale pins so the error card is visible
+      setPlacesLoading(false);
+      setPlacesError(e instanceof Error ? e.message : 'Network error');
     });
 
     return () => { cancelled = true; };
-  }, [destination, category, entityTypes, paramLat, paramLng, userLat, userLng]);
+  // placesRetryCount is intentionally included to allow retry on demand.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [destination, category, entityTypes, paramLat, paramLng, userLat, userLng, placesRetryCount]);
 
   // ── Passport stamp entities ────────────────────────────────────────────────
   // In passport mode, fetch country-level stamp data and synthesise MapEntities.
@@ -841,6 +879,15 @@ function FullScreenMapScreenInner() {
         onFiltersPress={() => setFilterSheetOpen(true)}
       />
 
+      {/* Places loading indicator — small spinner overlay while getDiscoveryPlaces
+          is in-flight.  Rendered over the map (not in the carousel) so the user
+          sees immediate feedback even before the carousel area appears. */}
+      {placesLayerActive && placesLoading ? (
+        <View style={s.placesLoadingOverlay} pointerEvents="none">
+          <ActivityIndicator size="small" color="#fff" />
+        </View>
+      ) : null}
+
       {/* Bottom carousel — floats above the AskCompassBar; z-index below MapTopControls */}
       <MapCarousel
         ref={carouselRef}
@@ -852,6 +899,10 @@ function FullScreenMapScreenInner() {
         passportLoading={mode === 'passport' ? passportLoading : undefined}
         passportError={mode === 'passport' ? passportError : undefined}
         onPassportRetry={mode === 'passport' ? handlePassportRetry : undefined}
+        placesLoading={placesLayerActive ? placesLoading : undefined}
+        placesError={placesLayerActive ? placesError : undefined}
+        placesEmpty={placesLayerActive ? placesEmpty : undefined}
+        onPlacesRetry={placesLayerActive ? handlePlacesRetry : undefined}
         style={[
           s.carousel,
           { bottom: insets.bottom + 16 },
@@ -981,6 +1032,17 @@ const s = StyleSheet.create({
     color: '#fff',
     fontSize: 11,
     fontWeight: '600',
+  },
+  // Places loading indicator — small spinner centered over the map
+  placesLoadingOverlay: {
+    position: 'absolute',
+    top: '50%' as any,
+    alignSelf: 'center',
+    zIndex: 12,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderRadius: radius.pill,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
   },
   // Active filter label chip
   filterLabel: {
