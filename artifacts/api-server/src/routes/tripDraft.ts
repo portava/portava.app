@@ -76,7 +76,21 @@ router.post("/trips/draft-from-text", asyncHandler(async (req, res) => {
     return;
   }
 
-  const parsed = BodySchema.safeParse(req.body ?? {});
+  // Temporary: log body shape to diagnose empty-body 400s
+  const { logger: reqLogger } = req as any;
+  (reqLogger ?? console).info(
+    { bodyKeys: Object.keys(req.body ?? {}), contentType: req.headers["content-type"], rawBody: typeof req.body },
+    "tripDraft: body debug",
+  );
+
+  // Accept body sent as JSON string (some RN fetch polyfills send body before
+  // Content-Type is recognised, leaving req.body unparsed as a string).
+  let bodySource: unknown = req.body;
+  if (typeof bodySource === "string") {
+    try { bodySource = JSON.parse(bodySource); } catch { /* leave as-is */ }
+  }
+
+  const parsed = BodySchema.safeParse(bodySource ?? {});
   if (!parsed.success) {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "text is required (max 2000 chars)");
     return;
