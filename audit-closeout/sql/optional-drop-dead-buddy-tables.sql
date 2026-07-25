@@ -1,0 +1,20 @@
+-- DB-05 (OPTIONAL, DESTRUCTIVE) — drop the 7 verified-dead legacy buddy_* tables.
+--
+-- These were superseded by the rent_buddy_* schema and are referenced by NO
+-- current code (verified across api-server/src and travel-buddy/src). They are
+-- safe to drop, but this is IRREVERSIBLE — take a backup / run on staging first.
+--
+-- NOT auto-applied. Review, then run in the Supabase SQL editor if you want the
+-- cleanup. The other buddy_* tables (buddy_bookings [compat view], buddy_profiles,
+-- buddy_services, buddy_availability_exceptions, buddy_booking_events,
+-- buddy_booking_change_requests) are STILL IN USE — do not drop those.
+
+-- BEGIN;
+-- DROP TABLE IF EXISTS buddy_addons       CASCADE;
+-- DROP TABLE IF EXISTS buddy_applications CASCADE;
+-- DROP TABLE IF EXISTS buddy_availability CASCADE;
+-- DROP TABLE IF EXISTS buddy_packages     CASCADE;
+-- DROP TABLE IF EXISTS buddy_reviews      CASCADE;
+-- DROP TABLE IF EXISTS buddy_saved        CASCADE;
+-- DROP TABLE IF EXISTS buddy_waitlist     CASCADE;
+-- COMMIT;
