@@ -587,6 +587,69 @@ function PassportErrorCard({
   );
 }
 
+// ── Places loading placeholder card ──────────────────────────────────────────
+
+function PlacesLoadingCard() {
+  return (
+    <View style={[cs.card, cs.emptyCard]} accessibilityRole="text">
+      <MapPin size={22} color={color.mute} />
+      <Text style={cs.emptyTitle}>Loading places…</Text>
+      <Text style={cs.emptyBody}>Finding places nearby, hang tight.</Text>
+    </View>
+  );
+}
+
+// ── Places error card ─────────────────────────────────────────────────────────
+
+function PlacesErrorCard({ onRetry }: { onRetry?: () => void }) {
+  return (
+    <View style={[cs.card, cs.emptyCard]} accessibilityRole="text">
+      <View style={cs.errorIconCircle}>
+        <AlertTriangle size={20} color="#B45309" />
+      </View>
+      <Text style={cs.emptyTitle}>Couldn't load places</Text>
+      <Text style={cs.emptyBody}>
+        There was a problem fetching nearby places. Check your connection and try again.
+      </Text>
+      {onRetry && (
+        <Pressable
+          style={cs.retryBtn}
+          onPress={onRetry}
+          accessibilityRole="button"
+          accessibilityLabel="Retry loading places"
+        >
+          <RefreshCw size={13} color="#fff" />
+          <Text style={cs.emptyBtnText}>Tap to retry</Text>
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+// ── Places empty card ─────────────────────────────────────────────────────────
+
+function PlacesEmptyCard({ onRetry }: { onRetry?: () => void }) {
+  return (
+    <View style={[cs.card, cs.emptyCard]} accessibilityRole="text">
+      <MapPin size={22} color={color.mute} />
+      <Text style={cs.emptyTitle}>No places found nearby</Text>
+      <Text style={cs.emptyBody}>
+        We couldn't find any places in this area. Try a different location or category.
+      </Text>
+      {onRetry && (
+        <Pressable
+          style={cs.emptyBtn}
+          onPress={onRetry}
+          accessibilityRole="button"
+          accessibilityLabel="Refresh places"
+        >
+          <Text style={cs.emptyBtnText}>Refresh</Text>
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
 // ── Full-detent extended entity detail ───────────────────────────────────────
 //
 // Shown only when previewDetent === 'full'. Surfaces description, extra stats,
@@ -876,6 +939,14 @@ interface MapCarouselProps {
   passportError?: string | null;
   /** Passport mode: called when the user taps "Retry". */
   onPassportRetry?: () => void;
+  /** Places layer: true while the getDiscoveryPlaces fetch is in-flight. */
+  placesLoading?: boolean;
+  /** Places layer: non-null when getDiscoveryPlaces returned ok:false or threw. */
+  placesError?: string | null;
+  /** Places layer: true when the fetch succeeded but returned zero results. */
+  placesEmpty?: boolean;
+  /** Places layer: called when the user taps "Retry" or "Refresh". */
+  onPlacesRetry?: () => void;
   /**
    * Called immediately before any card detail push (router.push). The map
    * screen uses this to distinguish a back-nav re-focus from a tab-switch
@@ -895,6 +966,10 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
       passportLoading,
       passportError,
       onPassportRetry,
+      placesLoading,
+      placesError,
+      placesEmpty,
+      onPlacesRetry,
       onBeforeNavigate,
       style,
     },
@@ -1013,6 +1088,9 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
       if (entities.length === 0) {
         if (passportLoading) return <PassportLoadingCard />;
         if (passportError)   return <PassportErrorCard onRetry={onPassportRetry} />;
+        if (placesLoading)   return <PlacesLoadingCard />;
+        if (placesError)     return <PlacesErrorCard onRetry={onPlacesRetry} />;
+        if (placesEmpty)     return <PlacesEmptyCard onRetry={onPlacesRetry} />;
         return <EmptyCard onFiltersPress={onFiltersPress} />;
       }
       return (
