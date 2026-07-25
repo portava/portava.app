@@ -82,6 +82,8 @@ export interface DiscoveryPlace {
   /** Data-source attribution text. Set for FSQ-sourced places; absent for OSM
    *  places so the client falls back to the OSM copyright footer. */
   attribution?: string | null;
+  /** Primary cover image URL (from discovery_places.image_url). Null = no image. */
+  headerImageUrl?: string | null;
 }
 
 /** Public shape returned in all API responses. */
@@ -519,6 +521,7 @@ async function queryDbPlaces(
           rating: row.rating != null ? parseFloat(String(row.rating)) : null,
           isOpenNow: null,
           savedCount: (row.saved_count as number) ?? 0,
+          headerImageUrl: (row.image_url ?? null) as string | null,
           attribution: (row.source as string | null)?.startsWith("fsq")
             ? "Place data © Foursquare (CC BY 4.0)"
             : null,

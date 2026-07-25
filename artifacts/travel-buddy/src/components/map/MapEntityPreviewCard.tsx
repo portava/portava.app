@@ -11,6 +11,7 @@
  * payload when available.
  */
 import React from 'react';
+import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
 import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
 import {
@@ -299,6 +300,7 @@ function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onC
   const fallbackDesc = getPlaceCategoryFallback(place.category);
   // Use specific sub-type label (e.g. "café") if available, otherwise category.
   const typeLabel = (place.type ?? place.category).replace(/_/g, ' ');
+  const photoUrl = useFsqPhoto(place.name, place.lat, place.lng, (place as any).headerImageUrl);
 
   return (
     <>
@@ -306,7 +308,7 @@ function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onC
         {/* Image circle — shows cover if available, category fallback otherwise */}
         <View style={[s.iconCircle, { backgroundColor: fallbackDesc.color + '22' }]}>
           <DisplayMediaImage
-            uri={(place as any).headerImageUrl ?? null}
+            uri={photoUrl}
             width={46}
             height={46}
             style={s.iconImg}

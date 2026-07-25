@@ -73,6 +73,7 @@ import type { TripRow } from '../../services/trips.ts';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
 import { openDirectThread } from '../../services/messaging.ts';
 import type { CircleMemberLocation } from '../../services/map.ts';
+import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -445,13 +446,14 @@ function PlaceCardBody({ entity }: { entity: MapEntity<DiscoveryPlace> }) {
   const fallbackDesc = getPlaceCategoryFallback(place.category);
   // Specific sub-type label (e.g. "café") if available, otherwise category.
   const typeLabel = (place.type ?? place.category).replace(/_/g, ' ');
+  const photoUrl = useFsqPhoto(place.name, place.lat, place.lng, (place as any).headerImageUrl);
 
   return (
     <>
       <View style={cs.topRow}>
         <View style={[cs.iconCircle, { backgroundColor: fallbackDesc.color + '22' }]}>
           <DisplayMediaImage
-            uri={(place as any).headerImageUrl ?? null}
+            uri={photoUrl}
             width={46}
             height={46}
             style={cs.iconImg}

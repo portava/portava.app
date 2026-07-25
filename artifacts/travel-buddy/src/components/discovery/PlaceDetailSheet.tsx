@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
 import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Linking,
 } from 'react-native';
@@ -36,6 +37,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
 
   // User location — used to compute distance when place.distanceKm is absent.
   const { resolvedLocation } = useLocationContext();
+  const photoUrl = useFsqPhoto(place?.name ?? '', place?.lat, place?.lng, place?.headerImageUrl);
 
   useEffect(() => {
     if (place) {
@@ -121,7 +123,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
         {/* Image header — category fallback when no real image available */}
         <View style={styles.imageWrap}>
           <DisplayMediaImage
-            uri={place.headerImageUrl ?? null}
+            uri={photoUrl}
             width={0}
             height={SHEET_IMAGE_HEIGHT}
             style={styles.sheetImage}
