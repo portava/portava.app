@@ -267,11 +267,18 @@ export default function MemoryDetailScreen() {
           <View>
             {items.map((item) => (
               <View key={item.id} style={s.mediaItem}>
-                <Image
-                  source={{ uri: item.mediaUrl }}
-                  style={s.mediaImage}
-                  resizeMode="cover"
-                />
+                {item.mediaUrl ? (
+                  <Image
+                    source={{ uri: item.mediaUrl }}
+                    style={s.mediaImage}
+                    resizeMode="cover"
+                    onError={() => {/* expo-image shows blank on error; container provides fallback bg */}}
+                  />
+                ) : (
+                  <View style={[s.mediaImage, s.mediaFallback]}>
+                    <Text style={s.mediaFallbackText}>Photo unavailable</Text>
+                  </View>
+                )}
                 {item.caption ? (
                   <Text style={s.mediaCaption}>{item.caption}</Text>
                 ) : null}
@@ -427,6 +434,15 @@ const s = StyleSheet.create({
   mediaImage: {
     width: SCREEN_W,
     height: SCREEN_W,
+  },
+  mediaFallback: {
+    backgroundColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mediaFallbackText: {
+    ...(t.small as object),
+    color: color.mute,
   },
   mediaCaption: {
     ...(t.small as object),
