@@ -90,7 +90,7 @@ jest.mock('../../../lib/displayIdentity', () => ({
 
 // ── Import under test (after mocks) ──────────────────────────────────────────
 
-import { TravelerClusterMarkers } from '../TravelerMapLayer.tsx';
+import { TravelerClusterMarkers, clusterTravelers } from '../TravelerMapLayer.tsx';
 import type { MapTraveler } from '../../../services/mapTravelers.ts';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -266,5 +266,181 @@ describe('TravelerAvatarMarker — signed-URL hydration and fallback', () => {
 
     // Initials for "Bob Explorer" = "BE".
     expect(textContent(tr.root)).toContain('BE');
+  });
+});
+
+// ── clusterTravelers — fan-out unit tests ─────────────────────────────────────
+
+describe('clusterTravelers — fan-out at zoom ≥ 15', () => {
+  /** Three travelers who all share the exact same city centroid. */
+  const CENTROID_LAT = 48.8566;
+  const CENTROID_LNG = 2.3522;
+
+  const makeTraveler = (id: string): MapTraveler => ({
+    id,
+    handle: id,
+    displayName: id,
+    avatarUrl: null,
+    verified: false,
+    openToMeet: true,
+    city: 'Paris',
+    country: 'FR',
+    freshness: 'live',
+    precision: 'city',
+    lat: CENTROID_LAT,
+    lng: CENTROID_LNG,
+  });
+
+  const THREE_TRAVELERS = [
+    makeTraveler('traveler-a'),
+    makeTraveler('traveler-b'),
+    makeTraveler('traveler-c'),
+  ];
+
+  it('returns 3 separate single-item clusters (fan-out, not one cluster) at zoom=15', () => {
+    const clusters = clusterTravelers(THREE_TRAVELERS, 15);
+
+    // All three must be fanned into individual clusters.
+    expect(clusters).toHaveLength(3);
+    clusters.forEach((c) => {
+      expect(c.items).toHaveLength(1);
+    });
+  });
+
+  it('fan positions all differ from the raw centroid', () => {
+    const clusters = clusterTravelers(THREE_TRAVELERS, 15);
+
+    clusters.forEach((c) => {
+      // At least one coordinate must differ from the centroid — either lat or
+      // lng (or both) is offset by the ring radius.
+      const sameAsRaw = c.lat === CENTROID_LAT && c.lng === CENTROID_LNG;
+      expect(sameAsRaw).toBe(false);
+    });
+  });
+
+  it('fan positions are mutually distinct', () => {
+    const clusters = clusterTravelers(THREE_TRAVELERS, 15);
+
+    // No two fanned clusters share the same position.
+    for (let i = 0; i < clusters.length; i++) {
+      for (let j = i + 1; j < clusters.length; j++) {
+        const same =
+          clusters[i].lat === clusters[j].lat &&
+          clusters[i].lng === clusters[j].lng;
+        expect(same).toBe(false);
+      }
+    }
+  });
+
+  it('cluster keys are unique and contain "fan:" to identify fanned items', () => {
+    const clusters = clusterTravelers(THREE_TRAVELERS, 15);
+
+    const keys = clusters.map((c) => c.key);
+    const uniqueKeys = new Set(keys);
+    expect(uniqueKeys.size).toBe(3);
+
+    keys.forEach((k) => {
+      expect(k).toContain('fan:');
+    });
+  });
+
+  it('does NOT fan out at zoom=14 — stacked travelers merge into one cluster', () => {
+    const clusters = clusterTravelers(THREE_TRAVELERS, 14);
+
+    // Below zoom 15 the three travelers collapse into a single multi-item cluster.
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].items).toHaveLength(3);
+  });
+});
+
+// ── TravelerClusterMarkers — fanned marker tap test ───────────────────────────
+
+describe('TravelerClusterMarkers — tapping a fanned marker', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('fires onPressTraveler with the correct traveler when a fanned marker is tapped', () => {
+    const CENTROID_LAT = 48.8566;
+    const CENTROID_LNG = 2.3522;
+
+    const makeTraveler = (id: string): MapTraveler => ({
+      id,
+      handle: id,
+      displayName: id,
+      avatarUrl: null,
+      verified: false,
+      openToMeet: true,
+      city: 'Paris',
+      country: 'FR',
+      freshness: 'live',
+      precision: 'city',
+      lat: CENTROID_LAT,
+      lng: CENTROID_LNG,
+    });
+
+    const travelers = [
+      makeTraveler('traveler-a'),
+      makeTraveler('traveler-b'),
+      makeTraveler('traveler-c'),
+    ];
+
+    const onPressTraveler = jest.fn();
+    const onPressCluster = jest.fn();
+
+    let tr!: TestRenderer.ReactTestRenderer;
+    act(() => {
+      tr = TestRenderer.create(
+        <TravelerClusterMarkers
+          travelers={travelers}
+          zoom={15}
+          onPressTraveler={onPressTraveler}
+          onPressCluster={onPressCluster}
+        />,
+      );
+    });
+
+    // At zoom=15 all three stacked travelers are fanned into individual
+    // single-item clusters — each rendered as a TravelerAvatarMarker inside a
+    // Pressable.
+    //
+    // TestRenderer's findAll traverses component fiber nodes AND host nodes.
+    // The TravelerAvatarMarker element itself carries `onPress={onPressTraveler}`
+    // as a JSX prop — calling that directly fires the mock with no traveler
+    // argument (wrong).  We exclude any node whose onPress IS the mock itself
+    // (those are the component fiber prop-forwarding nodes); the Pressable
+    // wrapper closures are always a different reference: `() => onPress(t)`.
+    const tappables = tr.root.findAll(
+      (node) =>
+        typeof node.props.onPress === 'function' &&
+        node.props.onPress !== onPressTraveler &&
+        node.props.onPress !== onPressCluster,
+      { deep: true },
+    );
+    // There must be at least 3 tappable closures (one per fanned traveler).
+    expect(tappables.length).toBeGreaterThanOrEqual(3);
+
+    // Tap them all.  Duplicates from multi-depth traversal are expected; the
+    // important assertion is which traveler payloads were fired.
+    tappables.forEach((p) => {
+      act(() => {
+        p.props.onPress();
+      });
+    });
+
+    // Every fanned traveler must have triggered onPressTraveler at least once.
+    // (Duplicates from TestRenderer's multi-depth traversal are expected and
+    // acceptable — the marker is reachable and passes the right payload.)
+    expect(onPressTraveler).toHaveBeenCalled();
+
+    const calledIds = onPressTraveler.mock.calls.map(
+      ([t]: [MapTraveler]) => t.id,
+    );
+    const uniqueCalledIds = [...new Set(calledIds)];
+    // All three fanned travelers must appear in the calls.
+    expect(uniqueCalledIds.sort()).toEqual(['traveler-a', 'traveler-b', 'traveler-c']);
+
+    // Cluster press handler must not have been fired.
+    expect(onPressCluster).not.toHaveBeenCalled();
   });
 });
