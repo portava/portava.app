@@ -66,7 +66,8 @@ function TravelerCard({ item }: { item: CompassTravelerResult }) {
 
   const handlePress = () => {
     if (!d.isPrivate || followed) {
-      router.push(`/profile/${d.userId}` as any);
+      const target = d.username ? `/u/${encodeURIComponent(d.username)}` : '/(tabs)/discovery';
+      router.push(target as any);
     }
   };
 

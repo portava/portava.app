@@ -79,7 +79,7 @@ function NowChip({ ev }: { ev: CityEvent }) {
   return (
     <Pressable
       style={s.nowChip}
-      onPress={() => router.push(`/events/${ev.id}` as any)}
+      onPress={() => router.push(`/event/${ev.id}` as any)}
     >
       <View style={s.liveDotSm} />
       <View style={s.nowChipBody}>
@@ -96,7 +96,7 @@ function ChronRow({ ev }: { ev: CityEvent }) {
   return (
     <Pressable
       style={s.chronRow}
-      onPress={() => router.push(`/events/${ev.id}` as any)}
+      onPress={() => router.push(`/event/${ev.id}` as any)}
     >
       <Text style={s.chronTime}>{fmtTime(ev.startAt)}</Text>
       <View style={s.chronDivider} />

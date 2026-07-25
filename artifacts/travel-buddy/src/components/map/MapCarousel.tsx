@@ -886,7 +886,7 @@ export function MapEntityCard({
         // Navigate to the canonical place detail screen when a detailRoute is
         // present (e.g. /place/abc123), otherwise fall back to the Discover tab.
         onBeforeNavigate?.();
-        router.push((entity.detailRoute ?? '/(tabs)/discover') as any);
+        router.push((entity.detailRoute ?? '/(tabs)/discovery') as any);
         break;
     }
   };

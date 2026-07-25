@@ -292,7 +292,7 @@ function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onC
   const attributionList: string[] = Array.isArray((place as any).attribution)
     ? (place as any).attribution as string[]
     : [];
-  const detailRoute = entity.detailRoute ?? '/(tabs)/discover';
+  const detailRoute = entity.detailRoute ?? '/(tabs)/discovery';
   return (
     <>
       <View style={s.topRow}>

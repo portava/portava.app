@@ -84,7 +84,8 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
     } else if (type === 'place') {
       router.push('/(tabs)/discovery' as any);
     } else if (type === 'traveler' || type === 'user') {
-      router.push(`/profile/${item.id}` as any);
+      const handle = (item.data?.username as string | undefined) ?? (item.data?.handle as string | undefined);
+      router.push((handle ? `/u/${encodeURIComponent(handle)}` : '/(tabs)/discovery') as any);
     } else if (type === 'post') {
       router.push(`/post/${item.id}` as any);
     } else {

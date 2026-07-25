@@ -719,12 +719,10 @@ export default function SignIn() {
           {isSignin && (
             <View style={s.featureRow} accessibilityLabel="App features">
               {FEATURES.map(f => (
-                <Pressable
+                <View
                   key={f.label}
                   style={s.featureItem}
-                  onPress={() => {}}     /* presentational — no nav target yet */
-                  hitSlop={4}
-                  accessibilityRole="button"
+                  accessibilityRole="none"
                   accessibilityLabel={`${f.label}: ${f.sub}`}
                 >
                   <Ionicons
@@ -734,7 +732,7 @@ export default function SignIn() {
                   />
                   <Text style={[s.featureLabel, { color: f.color }]}>{f.label}</Text>
                   <Text style={s.featureSub}>{f.sub}</Text>
-                </Pressable>
+                </View>
               ))}
             </View>
           )}
