@@ -13,15 +13,25 @@
  *   5. ai_generated     — AI header/representation
  *   6. category_fallback— static branded fallback
  */
-import type { ImageSource, ResolvedHeaderImage } from "./types.js";
+import type { ImageAccuracyStatus, ImageProvenanceFields, ImageSource, ResolvedHeaderImage } from "./types.js";
 
 const RANK: Record<ImageSource, number> = {
+  // ── Legacy values (kept for backward compatibility) ──────────────────────────
   user_upload: 6,
   official: 5,
   provider: 4,
   portava_media: 3,
   ai_generated: 2,
   category_fallback: 1,
+  // ── New ImageSourceType classifications (Task 2705) ───────────────────────────
+  // "official" is shared with legacy, already ranked above.
+  trusted_provider: 4,        // major licensed provider — same tier as legacy 'provider'
+  tourism_authority: 4,       // official tourism board — on par with trusted_provider
+  verified_owner: 5,          // owner-verified upload — equal to official partner media
+  verified_user_photo: 3,     // community photo verified by a moderator
+  reference_grounded_ai: 2,   // AI with real-place reference — same tier as ai_generated
+  generic_ai_illustration: 1, // generic AI, no real reference — above fallback only marginally
+  map_fallback: 0,            // last resort: map thumbnail / street-view capture
 };
 
 export function sourceRank(s: ImageSource): number {
@@ -29,7 +39,7 @@ export function sourceRank(s: ImageSource): number {
 }
 
 /** A candidate image from some source. url null/empty means "not available". */
-export interface HeaderCandidate {
+export interface HeaderCandidate extends Partial<ImageProvenanceFields> {
   url: string | null | undefined;
   source: ImageSource;
   attribution?: string;

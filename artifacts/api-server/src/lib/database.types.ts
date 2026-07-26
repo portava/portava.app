@@ -460,6 +460,8 @@ export type Database = {
           submitted_by: string | null
           tag: string | null
           verified: boolean
+          image_source_type: string | null
+          image_accuracy_status: string
         }
         Insert: {
           blurb?: string | null
@@ -484,6 +486,8 @@ export type Database = {
           submitted_by?: string | null
           tag?: string | null
           verified?: boolean
+          image_source_type?: string | null
+          image_accuracy_status?: string
         }
         Update: {
           blurb?: string | null
@@ -508,6 +512,8 @@ export type Database = {
           submitted_by?: string | null
           tag?: string | null
           verified?: boolean
+          image_source_type?: string | null
+          image_accuracy_status?: string
         }
         Relationships: [
           {
@@ -1393,6 +1399,175 @@ export type Database = {
           flag?: string
           metadata?: Json | null
           updated_at?: string
+        }
+        Relationships: []
+      }
+      generated_visuals: {
+        Row: {
+          id: string
+          owner_user_id: string | null
+          entity_type: string
+          entity_id: string
+          purpose: string
+          provider: string
+          model: string | null
+          prompt_version: string
+          prompt_hash: string
+          input_snapshot: Json
+          final_prompt: string | null
+          negative_prompt: string | null
+          style: string
+          aspect_ratio: string
+          status: string
+          source_image_url: string | null
+          storage_path: string | null
+          thumbnail_path: string | null
+          card_path: string | null
+          hero_path: string | null
+          share_path: string | null
+          moderation_status: string | null
+          moderation_details: Json | null
+          failure_code: string | null
+          failure_message: string | null
+          attempt_count: number
+          generation_cost_estimate: number | null
+          generated_at: string | null
+          accepted_at: string | null
+          replaced_at: string | null
+          created_at: string
+          updated_at: string
+          retry_after: string | null
+          locked_until: string | null
+          locked_by: string | null
+          // Provenance columns (20260809)
+          image_source_type: string | null
+          accuracy_status: string
+          canonical_place_id: string | null
+          provider_place_id: string | null
+          source_url: string | null
+          source_provider: string | null
+          source_license: string | null
+          source_attribution: string | null
+          reference_asset_ids: Json | null
+          reference_image_count: number | null
+          generated_with_ai: boolean
+          generation_method: string | null
+          verification_status: string | null
+          verified_by: string | null
+          verified_at: string | null
+          disclaimer_required: boolean
+          disclaimer_text: string | null
+          last_accuracy_reviewed_at: string | null
+        }
+        Insert: {
+          id?: string
+          owner_user_id?: string | null
+          entity_type: string
+          entity_id: string
+          purpose: string
+          provider: string
+          model?: string | null
+          prompt_version: string
+          prompt_hash: string
+          input_snapshot?: Json
+          final_prompt?: string | null
+          negative_prompt?: string | null
+          style?: string
+          aspect_ratio?: string
+          status?: string
+          source_image_url?: string | null
+          storage_path?: string | null
+          thumbnail_path?: string | null
+          card_path?: string | null
+          hero_path?: string | null
+          share_path?: string | null
+          moderation_status?: string | null
+          moderation_details?: Json | null
+          failure_code?: string | null
+          failure_message?: string | null
+          attempt_count?: number
+          generation_cost_estimate?: number | null
+          generated_at?: string | null
+          accepted_at?: string | null
+          replaced_at?: string | null
+          created_at?: string
+          updated_at?: string
+          retry_after?: string | null
+          locked_until?: string | null
+          locked_by?: string | null
+          image_source_type?: string | null
+          accuracy_status?: string
+          canonical_place_id?: string | null
+          provider_place_id?: string | null
+          source_url?: string | null
+          source_provider?: string | null
+          source_license?: string | null
+          source_attribution?: string | null
+          reference_asset_ids?: Json | null
+          reference_image_count?: number | null
+          generated_with_ai?: boolean
+          generation_method?: string | null
+          verification_status?: string | null
+          verified_by?: string | null
+          verified_at?: string | null
+          disclaimer_required?: boolean
+          disclaimer_text?: string | null
+          last_accuracy_reviewed_at?: string | null
+        }
+        Update: {
+          id?: string
+          owner_user_id?: string | null
+          entity_type?: string
+          entity_id?: string
+          purpose?: string
+          provider?: string
+          model?: string | null
+          prompt_version?: string
+          prompt_hash?: string
+          input_snapshot?: Json
+          final_prompt?: string | null
+          negative_prompt?: string | null
+          style?: string
+          aspect_ratio?: string
+          status?: string
+          source_image_url?: string | null
+          storage_path?: string | null
+          thumbnail_path?: string | null
+          card_path?: string | null
+          hero_path?: string | null
+          share_path?: string | null
+          moderation_status?: string | null
+          moderation_details?: Json | null
+          failure_code?: string | null
+          failure_message?: string | null
+          attempt_count?: number
+          generation_cost_estimate?: number | null
+          generated_at?: string | null
+          accepted_at?: string | null
+          replaced_at?: string | null
+          created_at?: string
+          updated_at?: string
+          retry_after?: string | null
+          locked_until?: string | null
+          locked_by?: string | null
+          image_source_type?: string | null
+          accuracy_status?: string
+          canonical_place_id?: string | null
+          provider_place_id?: string | null
+          source_url?: string | null
+          source_provider?: string | null
+          source_license?: string | null
+          source_attribution?: string | null
+          reference_asset_ids?: Json | null
+          reference_image_count?: number | null
+          generated_with_ai?: boolean
+          generation_method?: string | null
+          verification_status?: string | null
+          verified_by?: string | null
+          verified_at?: string | null
+          disclaimer_required?: boolean
+          disclaimer_text?: string | null
+          last_accuracy_reviewed_at?: string | null
         }
         Relationships: []
       }
@@ -3265,6 +3440,123 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      place_image_reports: {
+        Row: {
+          id: string
+          place_id: string
+          image_url: string
+          reported_by: string | null
+          report_reason: string
+          status: string
+          confidence_adjustment: number | null
+          reviewed_by: string | null
+          reviewed_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          place_id: string
+          image_url: string
+          reported_by?: string | null
+          report_reason?: string
+          status?: string
+          confidence_adjustment?: number | null
+          reviewed_by?: string | null
+          reviewed_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          place_id?: string
+          image_url?: string
+          reported_by?: string | null
+          report_reason?: string
+          status?: string
+          confidence_adjustment?: number | null
+          reviewed_by?: string | null
+          reviewed_at?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "place_image_reports_reported_by_fkey"
+            columns: ["reported_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "place_image_reports_reviewed_by_fkey"
+            columns: ["reviewed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      places: {
+        Row: {
+          id: string
+          name: string
+          normalized_name: string
+          primary_category: string
+          latitude: number | null
+          longitude: number | null
+          address: string | null
+          city: string | null
+          neighborhood: string | null
+          country_code: string | null
+          canonical_location_id: string | null
+          status: string
+          merged_into_place_id: string | null
+          field_freshness: Json
+          created_at: string
+          updated_at: string
+          image_source_type: string | null
+          image_accuracy_status: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          normalized_name: string
+          primary_category?: string
+          latitude?: number | null
+          longitude?: number | null
+          address?: string | null
+          city?: string | null
+          neighborhood?: string | null
+          country_code?: string | null
+          canonical_location_id?: string | null
+          status?: string
+          merged_into_place_id?: string | null
+          field_freshness?: Json
+          created_at?: string
+          updated_at?: string
+          image_source_type?: string | null
+          image_accuracy_status?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          normalized_name?: string
+          primary_category?: string
+          latitude?: number | null
+          longitude?: number | null
+          address?: string | null
+          city?: string | null
+          neighborhood?: string | null
+          country_code?: string | null
+          canonical_location_id?: string | null
+          status?: string
+          merged_into_place_id?: string | null
+          field_freshness?: Json
+          created_at?: string
+          updated_at?: string
+          image_source_type?: string | null
+          image_accuracy_status?: string
+        }
+        Relationships: []
       }
       plan_attendance_events: {
         Row: {

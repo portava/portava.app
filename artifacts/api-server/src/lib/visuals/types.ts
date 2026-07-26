@@ -23,14 +23,86 @@ export type VisualEntityType =
   | "group"
   | "content";
 
-/** Image provenance, highest-trust first. Order matters — see priority.ts. */
+/**
+ * Nine canonical source classifications for real-place image accuracy.
+ * Ordered roughly highest-trust first; see priority.ts for numeric ranks.
+ */
+export type ImageSourceType =
+  | "official"               // venue's own media or officially licensed photo
+  | "trusted_provider"       // major licensed photo provider (Getty, Unsplash licensed, etc.)
+  | "tourism_authority"      // national/city tourism board or CVB image
+  | "verified_owner"         // venue owner-verified upload via the platform
+  | "verified_user_photo"    // community photo explicitly verified by a moderator
+  | "reference_grounded_ai"  // AI generation that used real reference images as input
+  | "generic_ai_illustration"// AI generation with no real-place reference
+  | "category_fallback"      // static branded fallback keyed on category
+  | "map_fallback";          // last-resort map thumbnail / street-view capture
+
+/**
+ * Image provenance — backward-compatible superset of the legacy ImageSource union.
+ * Old literal values (`user_upload`, `provider`, `portava_media`, `ai_generated`)
+ * remain valid members so existing callers compile without change.
+ */
 export type ImageSource =
+  | ImageSourceType
+  // Legacy values kept for backward compatibility:
   | "user_upload"
-  | "official"
   | "provider"
   | "portava_media"
-  | "ai_generated"
-  | "category_fallback";
+  | "ai_generated";
+
+/** Five accuracy states covering the full real-place verification lifecycle. */
+export type ImageAccuracyStatus =
+  | "verified_real"       // confirmed to depict the actual place
+  | "reference_grounded"  // AI/illustration grounded in real reference assets
+  | "illustrative_only"   // generic representation — clearly not a real photo
+  | "unverified"          // default; no human or automated check performed yet
+  | "rejected";           // confirmed NOT to depict the place; must be replaced
+
+/**
+ * Provenance metadata that travels alongside every image in the accuracy pipeline.
+ * All fields are nullable — existing rows that predate the accuracy work carry none.
+ */
+export interface ImageProvenanceFields {
+  /** Which of the nine source classifications applies. */
+  imageSourceType?: ImageSourceType | null;
+  /** Current accuracy assessment. Defaults to 'unverified'. */
+  accuracyStatus?: ImageAccuracyStatus | null;
+  /** Canonical places.id this visual is bound to (null for non-place entities). */
+  canonicalPlaceId?: string | null;
+  /** Provider's own place identifier (e.g. FSQ id, Google place_id). */
+  providerPlaceId?: string | null;
+  /** Direct URL to the source photo at the provider. */
+  sourceUrl?: string | null;
+  /** Provider name: 'getty', 'unsplash', 'tripadvisor', 'portava', 'user', … */
+  sourceProvider?: string | null;
+  /** SPDX license identifier or free-text description. */
+  sourceLicense?: string | null;
+  /** Attribution string required by the license. */
+  sourceAttribution?: string | null;
+  /** Array of reference_asset ids used as input during AI generation. */
+  referenceAssetIds?: string[] | null;
+  /** Count of reference images provided to the AI generator. */
+  referenceImageCount?: number | null;
+  /** True when the final image was produced by an AI model. */
+  generatedWithAi?: boolean | null;
+  /** Generation method used: 'dalle3', 'sdxl', 'flux', … */
+  generationMethod?: string | null;
+  /** Current verification pipeline state. */
+  verificationStatus?: string | null;
+  /** User id of the reviewer who last changed verification_status. */
+  verifiedBy?: string | null;
+  /** Timestamp of the last verification action. */
+  verifiedAt?: string | null;
+  /** When true, the UI must render a disclaimer alongside this image. */
+  disclaimerRequired?: boolean | null;
+  /** Disclaimer copy to show (e.g. "AI-generated representation"). */
+  disclaimerText?: string | null;
+  /** When this row was last reviewed by the accuracy pipeline. */
+  lastAccuracyReviewedAt?: string | null;
+  /** When a newer image replaced this one (terminal state). */
+  replacedAt?: string | null;
+}
 
 export type GenerationStatus =
   | "not_requested"
@@ -132,4 +204,10 @@ export interface ResolvedHeaderImage {
   generatedVisualId?: string;
   /** true for AI place representations — drives the "AI-generated representation" label. */
   isRepresentation: boolean;
+  /** Accuracy classification; undefined when not yet assessed. */
+  accuracyStatus?: ImageAccuracyStatus | null;
+  /** When true the UI must show a disclaimer alongside this image. */
+  disclaimerRequired?: boolean | null;
+  /** Disclaimer copy to display (e.g. "AI-generated representation"). */
+  disclaimerText?: string | null;
 }
