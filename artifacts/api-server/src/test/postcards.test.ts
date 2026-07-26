@@ -57,6 +57,11 @@ let allPostcards: any[] = [];
 let allProfiles: any[] = [];
 let allUserStamps: any[] = [];
 let allStampDefs: any[] = [];
+let allBlocks: any[] = [];
+let allFriendships: any[] = [];
+let allFollows: any[] = [];
+let allPrivacySettings: any[] = [];
+let allAccountStates: any[] = [];
 // One-shot failure injection for the next posts INSERT (simulates PostgREST
 // schema-cache errors like PGRST204). Consumed by builder.single().
 let failNextPostsInsert: { code: string; message: string } | null = null;
@@ -77,9 +82,14 @@ function resetDb() {
   allPostcards = [];
   failNextPostsInsert = null;
   allProfiles = [
-    { id: OWNER_ID, role: 'user', username: 'owner' },
-    { id: OTHER_ID, role: 'user', username: 'other' },
+    { id: OWNER_ID, role: 'user', username: 'owner', handle: 'owner', passport_visibility: 'public', is_private: false, account_status: 'active' },
+    { id: OTHER_ID, role: 'user', username: 'other', handle: 'other', passport_visibility: 'public', is_private: false, account_status: 'active' },
   ];
+  allBlocks = [];
+  allFriendships = [];
+  allFollows = [];
+  allPrivacySettings = [];
+  allAccountStates = [];
   failNextMediaUpdate = null;
   allStampDefs = [
     { id: DEF_TOKYO_ID,    name: 'Tokyo',  city: 'Tokyo', country: 'Japan',       rarity: 'common', is_active: true,  universal_artwork_url: 'https://cdn.test/art/tokyo.png' },
@@ -234,9 +244,14 @@ function buildFakeClient(tokenToId: Record<string, string>) {
       if (table === 'posts')                   rows = Object.values(posts).map((r) => ({ ...r }));
       else if (table === 'post_media')         rows = allPostMedia.map((r) => ({ ...r }));
       else if (table === 'passport_postcards') rows = allPostcards.map((r) => ({ ...r }));
-      else if (table === 'profiles')           rows = allProfiles.map((r) => ({ ...r }));
-      else if (table === 'user_stamps')        rows = allUserStamps.map((r) => ({ ...r }));
-      else if (table === 'stamp_definitions')  rows = allStampDefs.map((r) => ({ ...r }));
+      else if (table === 'profiles')               rows = allProfiles.map((r) => ({ ...r }));
+      else if (table === 'user_stamps')            rows = allUserStamps.map((r) => ({ ...r }));
+      else if (table === 'stamp_definitions')      rows = allStampDefs.map((r) => ({ ...r }));
+      else if (table === 'blocks')                 rows = allBlocks.map((r) => ({ ...r }));
+      else if (table === 'user_friendships')       rows = allFriendships.map((r) => ({ ...r }));
+      else if (table === 'user_follows')           rows = allFollows.map((r) => ({ ...r }));
+      else if (table === 'profile_privacy_settings') rows = allPrivacySettings.map((r) => ({ ...r }));
+      else if (table === 'user_account_states')    rows = allAccountStates.map((r) => ({ ...r }));
       // All other tables (feature_flags, hashtags, text_spans, etc.) return empty arrays
       return builder(table, rows);
     },
@@ -1160,5 +1175,225 @@ describe('POST /api/postcards/:id/media/:mediaId/complete — stamp overlay', ()
     assert.ok(!('stampOverlayError' in body));
     const row = allPostMedia.find((m) => m.id === MEDIA_ID);
     assert.ok(!('stamp_overlay' in (row ?? {})));
+  });
+});
+
+// ── GET /api/users/:username/passport/postcards — visibility gating [C2 fix] ──
+//
+// Verifies that the postcards wall enforces passport_visibility correctly:
+//   • public profiles  → visible to unauthenticated callers
+//   • followers_only   → requires an authenticated follower or friend
+//   • private          → always blocked
+//   • unavailable/blocked accounts → sentinel responses
+//
+// The fake client exposes `blocks`, `user_friendships`, `user_follows`, and
+// `user_account_states` tables so resolveProfileVisibility runs the same code
+// path as in production — no mocking of the helper itself.
+
+describe('GET /users/:username/passport/postcards — visibility gating', () => {
+  // Stable IDs for this describe block
+  const VIEWER_ID   = '00000000-0000-0000-0000-000000000d01';
+  const TARGET_ID   = '00000000-0000-0000-0000-000000000d02';
+  const POSTCARD_ID = 'cc000000-0000-0000-0000-000000000001';
+  const TOKEN_VIEWER = 'fake-viewer-token';
+
+  function seedTargetProfile(overrides: Record<string, any> = {}) {
+    allProfiles.push({
+      id: TARGET_ID,
+      handle: 'target',
+      username: 'target',
+      role: 'user',
+      passport_visibility: 'public',
+      is_private: false,
+      account_status: 'active',
+      ...overrides,
+    });
+  }
+
+  function seedPublicPostcard() {
+    allPostcards.push({
+      id: POSTCARD_ID, post_id: POST_ID, user_id: TARGET_ID,
+      media_url: null, caption: 'Hello world', location_name: 'Shibuya',
+      location_city: 'Tokyo', location_country: 'Japan',
+      location_verified: true, stamp_eligible: false, visibility: 'public',
+      status: 'active', pinned_at: null, note: null,
+      created_at: '2026-07-01T00:00:00Z',
+    });
+  }
+
+  /** Wire in the viewer token so getOptionalViewerId resolves correctly. */
+  function withViewer() {
+    _setTestClient(
+      buildFakeClient({
+        [TOKEN_OWNER]: OWNER_ID,
+        [TOKEN_OTHER]: OTHER_ID,
+        [TOKEN_VIEWER]: VIEWER_ID,
+      }),
+      true,
+    );
+  }
+
+  // Also seed the viewer as a profile so auth.getUser works
+  function seedViewerProfile() {
+    allProfiles.push({
+      id: VIEWER_ID, handle: 'viewer', username: 'viewer',
+      role: 'user', passport_visibility: 'public', is_private: false, account_status: 'active',
+    });
+  }
+
+  it('returns postcards for a public profile — anonymous caller (share-link case)', async () => {
+    seedTargetProfile({ passport_visibility: 'public' });
+    seedPublicPostcard();
+
+    const { status, body } = await apiReq('GET', '/users/target/passport/postcards');
+    assert.equal(status, 200);
+    assert.ok(Array.isArray(body.postcards), 'should include postcards array');
+    assert.equal(body.postcards.length, 1, 'public postcard should be visible');
+    assert.equal(body.postcards[0].caption, 'Hello world');
+    assert.ok(!('private' in body), 'no private sentinel for public profile');
+  });
+
+  it('returns an empty array for a public profile with no postcards', async () => {
+    seedTargetProfile({ passport_visibility: 'public' });
+
+    const { status, body } = await apiReq('GET', '/users/target/passport/postcards');
+    assert.equal(status, 200);
+    assert.deepEqual(body.postcards, []);
+  });
+
+  it('blocks anonymous caller from a followers_only profile — returns private sentinel [C2]', async () => {
+    seedTargetProfile({ passport_visibility: 'followers_only', is_private: false });
+    seedPublicPostcard();
+
+    // No Authorization header → viewerId is null → limited_preview
+    const { status, body } = await apiReq('GET', '/users/target/passport/postcards');
+    assert.equal(status, 200);
+    assert.equal(body.private, true, 'followers_only should be blocked for anonymous callers');
+    assert.deepEqual(body.postcards, [], 'postcards must be empty in the private sentinel');
+  });
+
+  it('blocks authenticated non-follower from a followers_only profile — returns private sentinel [C2]', async () => {
+    seedTargetProfile({ passport_visibility: 'followers_only', is_private: false });
+    seedPublicPostcard();
+    seedViewerProfile();
+    withViewer();
+    // No friendship or follow seeded → limited_preview
+
+    const { status, body } = await apiReq('GET', '/users/target/passport/postcards', undefined, TOKEN_VIEWER);
+    assert.equal(status, 200);
+    assert.equal(body.private, true, 'non-follower should be blocked from followers_only profile');
+    assert.deepEqual(body.postcards, []);
+  });
+
+  it('grants authenticated follower access to a followers_only profile [C2]', async () => {
+    seedTargetProfile({ passport_visibility: 'followers_only', is_private: false });
+    seedPublicPostcard();
+    seedViewerProfile();
+    withViewer();
+    // Viewer follows the target → resolveProfileVisibility returns "followers_only" (granted)
+    allFollows.push({ follower_id: VIEWER_ID, following_id: TARGET_ID });
+
+    const { status, body } = await apiReq('GET', '/users/target/passport/postcards', undefined, TOKEN_VIEWER);
+    assert.equal(status, 200);
+    assert.ok(Array.isArray(body.postcards), 'follower should see the postcards array');
+    assert.equal(body.postcards.length, 1, 'postcard should be visible to follower');
+    assert.ok(!('private' in body), 'no private sentinel for an authenticated follower');
+  });
+
+  it('grants authenticated friend access to a followers_only profile [C2]', async () => {
+    seedTargetProfile({ passport_visibility: 'followers_only', is_private: false });
+    seedPublicPostcard();
+    seedViewerProfile();
+    withViewer();
+    // Friendship row: user_a = min(VIEWER_ID, TARGET_ID), user_b = max
+    const ua = VIEWER_ID < TARGET_ID ? VIEWER_ID : TARGET_ID;
+    const ub = VIEWER_ID < TARGET_ID ? TARGET_ID : VIEWER_ID;
+    allFriendships.push({ user_a: ua, user_b: ub });
+
+    const { status, body } = await apiReq('GET', '/users/target/passport/postcards', undefined, TOKEN_VIEWER);
+    assert.equal(status, 200);
+    assert.ok(Array.isArray(body.postcards));
+    assert.equal(body.postcards.length, 1, 'friend should see postcards of a followers_only profile');
+    assert.ok(!('private' in body));
+  });
+
+  it('blocks any non-owner caller from a private profile — follower denied', async () => {
+    seedTargetProfile({ passport_visibility: 'private', is_private: true });
+    seedPublicPostcard();
+    seedViewerProfile();
+    withViewer();
+    // Even with a follow, private profile postcard wall is always blocked
+    allFollows.push({ follower_id: VIEWER_ID, following_id: TARGET_ID });
+
+    const { status, body } = await apiReq('GET', '/users/target/passport/postcards', undefined, TOKEN_VIEWER);
+    assert.equal(status, 200);
+    assert.equal(body.private, true, 'private profile must always return private sentinel');
+    assert.deepEqual(body.postcards, []);
+  });
+
+  it('blocks a friend of a private account from the postcard wall — private is always closed [C2]', async () => {
+    // A friend can view the passport profile itself, but the postcard wall must
+    // remain blocked. resolveProfileVisibility returns "followers_only" (granted)
+    // for friends of private accounts; the route must override this for postcards.
+    seedTargetProfile({ passport_visibility: 'private', is_private: true });
+    seedPublicPostcard();
+    seedViewerProfile();
+    withViewer();
+    // Seed a friendship — viewer IS a friend of the target
+    const ua = VIEWER_ID < TARGET_ID ? VIEWER_ID : TARGET_ID;
+    const ub = VIEWER_ID < TARGET_ID ? TARGET_ID : VIEWER_ID;
+    allFriendships.push({ user_a: ua, user_b: ub });
+
+    const { status, body } = await apiReq('GET', '/users/target/passport/postcards', undefined, TOKEN_VIEWER);
+    assert.equal(status, 200);
+    assert.equal(body.private, true, 'friend of a private account must not see the postcard wall');
+    assert.deepEqual(body.postcards, [], 'postcards must be empty in the private sentinel');
+    assert.ok(!('blocked' in body));
+  });
+
+  it('returns postcards for the owner regardless of followers_only setting', async () => {
+    // OWNER accessing their own followers_only profile
+    allProfiles.find((p: any) => p.id === OWNER_ID).passport_visibility = 'followers_only';
+    seedPublicPostcard();
+    // Replace target postcard with one owned by OWNER for this test
+    allPostcards[0].user_id = OWNER_ID;
+
+    // Re-use allProfiles: OWNER's handle is 'owner' (set in resetDb)
+    const { status, body } = await apiReq('GET', '/users/owner/passport/postcards', undefined, TOKEN_OWNER);
+    assert.equal(status, 200, 'owner should always see their own postcards');
+    assert.ok(Array.isArray(body.postcards));
+    assert.ok(!('private' in body));
+  });
+
+  it('returns unavailable sentinel for a deactivated account', async () => {
+    seedTargetProfile({ account_status: 'deactivated' });
+    seedPublicPostcard();
+
+    const { status, body } = await apiReq('GET', '/users/target/passport/postcards');
+    assert.equal(status, 200);
+    assert.equal(body.unavailable, true);
+    assert.deepEqual(body.postcards, []);
+    assert.ok(!('private' in body));
+  });
+
+  it('returns blocked sentinel when a block relationship exists', async () => {
+    seedTargetProfile({ passport_visibility: 'public' });
+    seedPublicPostcard();
+    seedViewerProfile();
+    withViewer();
+    // Seed a block row — or() in the fake client is a no-op so any row triggers
+    allBlocks.push({ blocker_id: TARGET_ID, blocked_id: VIEWER_ID });
+
+    const { status, body } = await apiReq('GET', '/users/target/passport/postcards', undefined, TOKEN_VIEWER);
+    assert.equal(status, 200);
+    assert.equal(body.blocked, true, 'blocked relationship should return blocked sentinel');
+    assert.deepEqual(body.postcards, []);
+    assert.ok(!('private' in body));
+  });
+
+  it('returns 404 for a username that does not exist', async () => {
+    // No profile seeded for 'nobody'
+    const { status } = await apiReq('GET', '/users/nobody/passport/postcards');
+    assert.equal(status, 404);
   });
 });

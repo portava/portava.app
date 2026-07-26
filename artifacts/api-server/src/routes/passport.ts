@@ -311,10 +311,13 @@ router.get("/users/:username/passport", async (req, res) => {
 });
 
 /* ===========================================================================
- * GET /users/:username/passport/postcards — public postcard wall (no auth required)
+ * GET /users/:username/passport/postcards — postcard wall (optional auth)
  * ===========================================================================
- * Uses service-role client so recipients of a share link can view postcards
- * without logging in. Never exposes exact GPS.
+ * Uses service-role client. Unauthenticated share-link recipients can view
+ * postcards for PUBLIC profiles. Followers-only profiles require the caller
+ * to be an authenticated follower or friend. Private profiles are always
+ * blocked. Block relationships and account-status checks are applied.
+ * Never exposes exact GPS.
  */
 router.get("/users/:username/passport/postcards", async (req, res) => {
   const sc = getServiceClient();
@@ -327,7 +330,7 @@ router.get("/users/:username/passport/postcards", async (req, res) => {
 
   const { data: profile, error: profileErr } = await sc
     .from("profiles")
-    .select("id, passport_visibility")
+    .select("id, passport_visibility, is_private, account_status")
     .eq("handle", username)
     .maybeSingle();
 
@@ -335,7 +338,48 @@ router.get("/users/:username/passport/postcards", async (req, res) => {
     sendError(res, "not_found", "User not found");
     return;
   }
-  if (profile.passport_visibility === "private") {
+
+  const targetId: string = profile.id;
+  const viewerId = await getOptionalViewerId(sc, req);
+  const isMe = viewerId === targetId;
+
+  // ── Visibility guard ───────────────────────────────────────────────────────
+  // resolveProfileVisibility handles account-status, block relationships, and
+  // follower/friend checks — the same pattern used by the passport route.
+  let visibility: string;
+  try {
+    const result = await resolveProfileVisibility(sc, viewerId, targetId, profile);
+    visibility = result.visibility;
+  } catch (e: any) {
+    req.log.error({ err: e }, "passport/postcards: visibility check failed");
+    sendError(res, "db_error", e.message ?? "Visibility check failed");
+    return;
+  }
+
+  if (visibility === "unavailable") {
+    res.status(200).json({ unavailable: true, postcards: [] });
+    return;
+  }
+
+  if (visibility === "blocked") {
+    res.status(200).json({ blocked: true, postcards: [] });
+    return;
+  }
+
+  // Private-passport accounts' postcard walls are always blocked for non-owners,
+  // even when resolveProfileVisibility grants "followers_only" access (i.e. when
+  // the viewer is a friend of a private account).  The passport itself may be
+  // viewable to friends, but the postcard wall is an additional surface that
+  // requires explicit opt-in via passport_visibility = 'followers_only'.
+  const isPrivatePassport = profile.passport_visibility === "private" || profile.is_private === true;
+  if (!isMe && isPrivatePassport) {
+    res.status(200).json({ private: true, postcards: [] });
+    return;
+  }
+
+  // "limited_preview" means the caller is unauthenticated (or authenticated
+  // but not a follower/friend) for a followers_only account.
+  if (!isMe && visibility === "limited_preview") {
     res.status(200).json({ private: true, postcards: [] });
     return;
   }

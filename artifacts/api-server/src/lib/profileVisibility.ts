@@ -115,10 +115,15 @@ export async function resolveProfileVisibility(
   } catch { /* table missing → null */ }
 
   // ── 4. Effective visibility level ─────────────────────────────────────────
+  // Derive effective visibility: privacy settings row wins; fall back to the
+  // profile-level fields.  All three privacy tiers must be mapped so that
+  // callers without a profile_privacy_settings row still get the correct tier.
   const profileVis =
     privacySettings?.profile_visibility ??
     (targetProfileRow.passport_visibility === "private" || targetProfileRow.is_private
       ? "private"
+      : targetProfileRow.passport_visibility === "followers_only"
+      ? "followers_only"
       : "public");
 
   if (profileVis === "public") {
