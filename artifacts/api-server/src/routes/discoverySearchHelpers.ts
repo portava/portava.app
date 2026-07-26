@@ -380,13 +380,26 @@ export function parseTimeIntent(q: string, tz?: string | null): TimeIntentResult
         break;
       }
       case "this_weekend": {
-        const dow      = localNow.getUTCDay();
-        const daysToSat = dow === 0 ? 6 : (6 - dow);
-        const satMs    = localMidnight + daysToSat * 24 * 3600_000;
-        const monMs    = satMs + 2 * 24 * 3600_000;
-        const startMs  = dow === 0 || dow === 6 ? localMidnight : satMs;
-        startsAfter    = toUtc(startMs);
-        startsBefore   = toUtc(monMs);
+        const dow = localNow.getUTCDay();
+        let startMs: number;
+        let endMs: number;
+        if (dow === 0) {
+          // Sunday — today is the last day of the weekend; window = today only (≤ 24h)
+          startMs = localMidnight;
+          endMs   = localMidnight + 24 * 3600_000;
+        } else if (dow === 6) {
+          // Saturday — this weekend spans today + tomorrow (≤ 48h)
+          startMs = localMidnight;
+          endMs   = localMidnight + 2 * 24 * 3600_000;
+        } else {
+          // Weekday — coming Sat + Sun (≤ 48h)
+          const daysToSat = 6 - dow;
+          const satMs     = localMidnight + daysToSat * 24 * 3600_000;
+          startMs = satMs;
+          endMs   = satMs + 2 * 24 * 3600_000;
+        }
+        startsAfter  = toUtc(startMs);
+        startsBefore = toUtc(endMs);
         break;
       }
       case "next_week": {

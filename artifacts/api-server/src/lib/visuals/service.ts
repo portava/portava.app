@@ -21,6 +21,26 @@ import { NEGATIVE_PROMPT } from "./promptBuilder.js";
 import { promptHash } from "./promptHash.js";
 import { coerceStyle, styleIsIllustrated } from "./styles.js";
 import { buildDerivatives, dataUrlToBuffer } from "./derivatives.js";
+
+/**
+ * Convert a provider image URL to a raw image Buffer.
+ * Handles two shapes the provider may return:
+ *   • data: URL (base64-encoded) — decoded directly, no network call.
+ *   • https:// URL — fetched over the network, then returned as Buffer.
+ * Throws on network errors or non-OK HTTP status.
+ */
+export async function imageDataToBuffer(imageDataUrl: string): Promise<Buffer> {
+  if (imageDataUrl.startsWith("data:")) {
+    return dataUrlToBuffer(imageDataUrl);
+  }
+  // Remote URL — fetch and buffer
+  const res = await fetch(imageDataUrl);
+  if (!res.ok) {
+    throw new Error(`Failed to download provider image: ${res.status} ${imageDataUrl.slice(0, 80)}`);
+  }
+  const ab = await res.arrayBuffer();
+  return Buffer.from(ab);
+}
 import { mayApplyGenerated } from "./priority.js";
 import { fallbackUrl } from "./providers/categoryFallbackProvider.js";
 import { OpenAIImageProvider } from "./providers/openaiImageProvider.js";
@@ -151,7 +171,7 @@ export async function requestGeneration(req: GenerationRequest): Promise<Generat
   const finalPrompt = buildPrompt(snapshot);
   const hash = promptHash(snapshot);
 
-  // Reuse: an existing ready image with the same hash → no new provider charge.
+  // Reuse: an existing active image with the same hash → no new provider charge.
   if (!req.force) {
     const { data: existing } = await sc
       .from("generated_visuals")
@@ -164,6 +184,18 @@ export async function requestGeneration(req: GenerationRequest): Promise<Generat
       .limit(1)
       .maybeSingle();
     if (existing) return { ok: true, status: existing.status === "ready" ? "ready" : "queued", visualId: existing.id };
+  } else {
+    // Force regenerate: retire all active rows for this entity+purpose so the
+    // partial-unique index doesn't conflict when we insert the new job. This
+    // correctly handles re-generating the same snapshot (same hash) because the
+    // old row is moved out of the active set before the insert.
+    await sc
+      .from("generated_visuals")
+      .update({ status: "replaced", updated_at: new Date().toISOString() })
+      .eq("entity_type", req.entityType)
+      .eq("entity_id", req.entityId)
+      .eq("purpose", req.purpose)
+      .in("status", ["queued", "generating", "ready"]);
   }
 
   const useProvider = providerEnabled && purposeEnabled;
@@ -278,7 +310,7 @@ export async function processJob(visualId: string): Promise<void> {
 
   // Real image → build derivatives, upload, finalize.
   try {
-    const source = dataUrlToBuffer(result.imageDataUrl);
+    const source = await imageDataToBuffer(result.imageDataUrl);
     const derivatives = await buildDerivatives(source);
     const urls: Record<string, string> = {};
     const paths: Record<string, string> = {};
@@ -367,6 +399,11 @@ async function finalizeVisual(sc: any, job: any, args: FinalizeArgs): Promise<vo
       header_image_generated_id: job.id,
       header_image_attribution: args.source === "ai_generated" ? "AI-generated representation" : null,
       header_image_updated_at: now,
+    }).eq("id", job.entity_id);
+  } else if (job.entity_type === "trip") {
+    // Trips use cover_url for their header image.
+    await sc.from("trips").update({
+      cover_url: heroUrl,
     }).eq("id", job.entity_id);
   }
 }

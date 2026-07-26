@@ -25,6 +25,10 @@ export function canonicalSnapshot(s: VisualInputSnapshot): Record<string, unknow
     title: norm(s.title),
     category: norm(s.category),
     subcategory: norm(s.subcategory),
+    // description is used as the "Activity" line in event prompts and must be
+    // included so that editing an event's description invalidates the hash and
+    // triggers a fresh generation instead of reusing a stale image.
+    description: norm(s.description),
     city: norm(s.city),
     neighborhood: norm(s.neighborhood),
     country: norm(s.country),

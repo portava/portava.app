@@ -137,6 +137,10 @@ router.get(
       .maybeSingle();
     if (error) return sendError(res, "db_error");
     if (!data) return sendError(res, "not_found");
+    // Enforce entity ownership — must be the host/owner/admin of the underlying entity.
+    if (!(await canEditEntity(sc, data.entity_type, data.entity_id, auth.user.id))) {
+      return sendError(res, "forbidden");
+    }
     return res.json({ visual: data });
   }),
 );
@@ -151,6 +155,10 @@ router.get(
     if (!ENTITY_TYPES.includes(et as any)) return sendError(res, "invalid_payload", "bad entityType");
     const sc = getServiceClient();
     if (!sc) return sendError(res, "server_not_configured");
+    // Enforce entity ownership before listing any visuals.
+    if (!(await canEditEntity(sc, et as VisualEntityType, req.params.entityId, auth.user.id))) {
+      return sendError(res, "forbidden");
+    }
     const { data, error } = await sc
       .from("generated_visuals")
       .select("id, purpose, status, style, source_image_url, hero_path, created_at")

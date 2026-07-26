@@ -238,9 +238,9 @@ router.get("/users/:username/passport", async (req, res) => {
       displayName: privacySettings?.show_real_name === true
         ? ((data.display_name ?? data.name) ?? null)
         : null,
-      // Avatar is shown on the minimal private-profile header (profile picture
-      // is considered minimal public info; the user opted in by setting one).
-      avatarUrl: (data as any).avatar_url ?? null,
+      // Avatar is withheld in limited_preview — private profiles should not
+      // leak any personal imagery to unauthenticated or non-follower viewers.
+      avatarUrl: null,
       accountStatus: (data as any).account_status ?? "active",
       visibility: "private",
       is_friend: isFriend,
