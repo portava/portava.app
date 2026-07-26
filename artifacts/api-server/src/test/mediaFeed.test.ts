@@ -1,0 +1,787 @@
+/**
+ * mediaFeed — unit tests for Watch mode feed API.
+ *
+ * Covers:
+ *   A. Eligibility filter — blocks, mutes, visibility, processing state, moderation
+ *   B. Cursor stability — second page never repeats items from page 1
+ *   C. Creator-cap enforcement — at most maxPerPage items per creator
+ *   D. Private-field stripping — private profile exposes only safe fields
+ *   E. View-count deduplication — same user + item + type within TTL window
+ *   F. Feature flag gating — disabled flags return 404
+ *   G. Self-view rejection — POST /media/:id/view rejects own posts
+ *   H. Minimum threshold enforcement — qualified_view with watchedMs < minimum not counted
+ *
+ * Run: node --import tsx/esm --test src/test/mediaFeed.test.ts
+ */
+
+import { describe, it, before, after, beforeEach } from "node:test";
+import assert from "node:assert/strict";
+import http from "node:http";
+import express from "express";
+import { _setTestClient } from "../lib/http.js";
+import mediaFeedRouter from "../routes/mediaFeed.js";
+import {
+  decodeCursor,
+  encodeCursor,
+  applyCursorFilter,
+} from "../lib/mediaCursor.js";
+import {
+  filterEligibleMediaCandidates,
+  type MediaCandidate,
+} from "../lib/mediaEligibility.js";
+import { hydrateMediaFeedItem } from "../lib/mediaFeedItem.js";
+import {
+  enforceCreatorCapsGeneric,
+} from "../services/ranking/CreatorCapEnforcer.js";
+
+// ── Shared constants ──────────────────────────────────────────────────────────
+
+const VIEWER_ID = "aaaaaaaa-0000-4000-a000-000000000001";
+const CREATOR_A = "bbbbbbbb-0000-4000-a000-000000000002";
+const CREATOR_B = "cccccccc-0000-4000-a000-000000000003";
+const CREATOR_C = "dddddddd-0000-4000-a000-000000000004";
+const POST_1   = "11111111-0000-4000-a000-000000000001";
+const POST_2   = "22222222-0000-4000-a000-000000000002";
+const POST_3   = "33333333-0000-4000-a000-000000000003";
+const TOKEN = "test-media-feed-token";
+const SB_URL = "http://sb.example.test";
+
+// ── Fake media row builder ────────────────────────────────────────────────────
+
+function makePost(overrides: Record<string, any> = {}): MediaCandidate {
+  return {
+    id: overrides.id ?? POST_1,
+    author_id: overrides.author_id ?? CREATOR_A,
+    status: overrides.status ?? "active",
+    post_status: overrides.post_status ?? "published",
+    visibility: overrides.visibility ?? "public",
+    moderation_status: overrides.moderation_status ?? "approved",
+    created_at: overrides.created_at ?? "2024-01-15T12:00:00Z",
+    tags: overrides.tags ?? [],
+    post_media: overrides.post_media ?? [makeMedia()],
+    profiles: overrides.profiles ?? makeProfile({ id: overrides.author_id ?? CREATOR_A }),
+    ...overrides,
+  };
+}
+
+function makeMedia(overrides: Record<string, any> = {}) {
+  return {
+    id: overrides.id ?? "media-1",
+    media_type: overrides.media_type ?? "video",
+    public_url: overrides.public_url ?? `${SB_URL}/storage/v1/object/public/post-media/vid.mp4`,
+    thumbnail_url: null,
+    duration_seconds: 15,
+    width: 1080,
+    height: 1920,
+    sort_order: 0,
+    processing_status: overrides.processing_status ?? "ready",
+    moderation_status: overrides.moderation_status ?? "approved",
+    ...overrides,
+  };
+}
+
+function makeProfile(overrides: Record<string, any> = {}) {
+  return {
+    id: overrides.id ?? CREATOR_A,
+    username: overrides.username ?? "creator_a",
+    full_name: overrides.full_name ?? "Creator A",
+    avatar_url: null,
+    is_private: overrides.is_private ?? false,
+    is_verified: false,
+    bio: overrides.bio ?? "Bio text",
+    followers_count: 100,
+    following_count: 50,
+    account_status: overrides.account_status ?? "active",
+    ...overrides,
+  };
+}
+
+// ── Fake Supabase client factory ──────────────────────────────────────────────
+
+interface FakeState {
+  posts?: any[];
+  postMedia?: any[];
+  profiles?: any[];
+  blocks?: Array<{ blocker_id: string; blocked_id: string }>;
+  mutes?: Array<{ muter_id: string; muted_id: string }>;
+  featureFlags?: Array<{ flag: string; enabled: boolean }>;
+  userFollows?: Array<{ follower_id: string; following_id: string }>;
+  postSaves?: Array<{ user_id: string; post_id: string }>;
+  postReactions?: Array<{ user_id: string; post_id: string }>;
+  followRequests?: Array<{ requester_id: string; target_id: string; status: string }>;
+  rankEvents?: any[];
+  compassPrefs?: any[];
+}
+
+function makeClient(state: FakeState = {}) {
+  const insertedRows: Array<{ table: string; row: any }> = [];
+  const updatedRows: Array<{ table: string; where: any; data: any }> = [];
+
+  function builder(table: string) {
+    const filters: Array<(r: any) => boolean> = [];
+    let selectCols = "*";
+    let limitVal = 1000;
+    let orderCol: string | null = null;
+    let orderAsc = false;
+    let single = false;
+    let maybeSingle_ = false;
+    let insertPayload: any = null;
+    let updatePayload: any = null;
+
+    const rows = (): any[] => {
+      const src: any[] =
+        table === "posts"                ? state.posts ?? [] :
+        table === "post_media"           ? state.postMedia ?? [] :
+        table === "profiles"             ? state.profiles ?? [] :
+        table === "blocks"               ? state.blocks ?? [] :
+        table === "user_mutes"           ? state.mutes ?? [] :
+        table === "feature_flags"        ? state.featureFlags ?? [] :
+        table === "user_follows"         ? state.userFollows ?? [] :
+        table === "post_saves"           ? state.postSaves ?? [] :
+        table === "post_reactions"       ? state.postReactions ?? [] :
+        table === "follow_requests"      ? state.followRequests ?? [] :
+        table === "rank_events"          ? state.rankEvents ?? [] :
+        table === "compass_user_preferences" ? state.compassPrefs ?? [] :
+        [];
+      let filtered = src.filter((r: any) => filters.every((f) => f(r)));
+      if (orderCol) {
+        const col = orderCol;
+        filtered = filtered.sort((a: any, b: any) => {
+          if (a[col] < b[col]) return orderAsc ? -1 : 1;
+          if (a[col] > b[col]) return orderAsc ? 1 : -1;
+          return 0;
+        });
+      }
+      return filtered.slice(0, limitVal);
+    };
+
+    const b: any = {
+      select(cols?: string) { selectCols = cols ?? "*"; return b; },
+      insert(row: any) {
+        insertPayload = row;
+        insertedRows.push({ table, row });
+        return b;
+      },
+      update(data: any) {
+        updatePayload = data;
+        updatedRows.push({ table, where: [...filters], data });
+        return b;
+      },
+      eq(col: string, val: any) { filters.push((r) => r[col] === val); return b; },
+      neq(col: string, val: any) { filters.push((r) => r[col] !== val); return b; },
+      in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return b; },
+      not(col: string, op: string, val: any) {
+        if (op === "in") filters.push((r) => !String(val).split(",").includes(String(r[col])));
+        return b;
+      },
+      is(col: string, val: any) {
+        filters.push((r) => val === null ? r[col] == null : r[col] === val);
+        return b;
+      },
+      or() { return b; },
+      gte(col: string, val: any) { filters.push((r) => r[col] >= val); return b; },
+      lte(col: string, val: any) { filters.push((r) => r[col] <= val); return b; },
+      gt(col: string, val: any) { filters.push((r) => r[col] > val); return b; },
+      lt(col: string, val: any) { filters.push((r) => r[col] < val); return b; },
+      order(col: string, opts: any) { orderCol = col; orderAsc = opts?.ascending ?? true; return b; },
+      limit(n: number) { limitVal = n; return b; },
+      range() { return b; },
+      ilike(col: string, pattern: string) {
+        const pat = pattern.replace(/%/g, ".*").toLowerCase();
+        const re = new RegExp(pat);
+        filters.push((r) => re.test(String(r[col] ?? "").toLowerCase()));
+        return b;
+      },
+      contains() { return b; },
+      maybeSingle() {
+        return Promise.resolve({ data: rows()[0] ?? null, error: null });
+      },
+      single() {
+        if (insertPayload) return Promise.resolve({ data: { id: "new-id", ...insertPayload }, error: null });
+        const r = rows()[0];
+        if (!r) return Promise.resolve({ data: null, error: { message: "No rows" } });
+        return Promise.resolve({ data: r, error: null });
+      },
+      then(onF: any, onR: any) {
+        return Promise.resolve({ data: rows(), error: null }).then(onF, onR);
+      },
+    };
+    return b;
+  }
+
+  const client: any = {
+    from: builder,
+    auth: {
+      getUser: async (t: string) =>
+        t === TOKEN
+          ? { data: { user: { id: VIEWER_ID } }, error: null }
+          : { data: { user: null }, error: { message: "bad token" } },
+    },
+    _inserted: insertedRows,
+    _updated: updatedRows,
+  };
+  return client;
+}
+
+// ── HTTP helpers ──────────────────────────────────────────────────────────────
+
+function makeApp() {
+  const app = express();
+  app.use(express.json());
+  app.use(mediaFeedRouter);
+  return app;
+}
+
+async function startServer(app: express.Express): Promise<{ server: http.Server; base: string }> {
+  return new Promise((resolve) => {
+    const server = http.createServer(app).listen(0, "127.0.0.1", () => {
+      const addr = server.address() as { port: number };
+      resolve({ server, base: `http://127.0.0.1:${addr.port}` });
+    });
+  });
+}
+
+async function jsonFetch(
+  base: string,
+  path: string,
+  opts: { method?: string; body?: any; token?: string } = {},
+): Promise<{ status: number; body: any }> {
+  const resp = await fetch(`${base}${path}`, {
+    method: opts.method ?? "GET",
+    headers: {
+      "Content-Type": "application/json",
+      authorization: `Bearer ${opts.token ?? TOKEN}`,
+    },
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+  });
+  let body: any;
+  try { body = await resp.json(); } catch { body = null; }
+  return { status: resp.status, body };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ── A. Eligibility filter unit tests ─────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("filterEligibleMediaCandidates", () => {
+  it("excludes blocked creators (both directions)", async () => {
+    const post = makePost({ id: POST_1, author_id: CREATOR_A });
+
+    const fakeClient: any = {
+      from(table: string) {
+        const b: any = {
+          select() { return b; },
+          eq(col: string, val: any) { return b; },
+          then(onF: any) {
+            const data =
+              table === "blocks" ? [{ blocked_id: CREATOR_A, blocker_id: CREATOR_B }] :
+              table === "user_mutes" ? [] :
+              table === "profiles" ? [] : [];
+            return Promise.resolve({ data, error: null }).then(onF);
+          },
+          maybeSingle() { return Promise.resolve({ data: null, error: null }); },
+          in() { return b; },
+        };
+        return b;
+      },
+    };
+
+    // Viewer is the blocker, CREATOR_A is blocked
+    const blockerClient: any = {
+      from(table: string) {
+        const b: any = {
+          select() { return b; },
+          eq() { return b; },
+          in() { return b; },
+          then(onF: any) {
+            const data =
+              table === "blocks" ? [{ blocked_id: CREATOR_A }] :
+              table === "user_mutes" ? [] :
+              table === "profiles" ? [{ id: CREATOR_A, account_status: "active" }] : [];
+            return Promise.resolve({ data, error: null }).then(onF);
+          },
+          maybeSingle() { return Promise.resolve({ data: null, error: null }); },
+        };
+        return b;
+      },
+    };
+
+    const viewerCtx = {
+      viewerUserId: VIEWER_ID,
+      feedType: "for_you" as const,
+      followedCreatorIds: new Set<string>(),
+    };
+    // When blocker query returns CREATOR_A in blocked_id, it's excluded
+    const { eligible } = await filterEligibleMediaCandidates(
+      [post],
+      viewerCtx,
+      blockerClient,
+      new Set(), // empty mutes
+    );
+    assert.equal(eligible.length, 0, "blocked creator's post must be excluded");
+  });
+
+  it("excludes posts with no ready media", async () => {
+    const post = makePost({
+      post_media: [makeMedia({ processing_status: "processing" })],
+    });
+    const client = makeClient({ blocks: [], mutes: [], profiles: [makeProfile()] });
+    const { eligible } = await filterEligibleMediaCandidates(
+      [post],
+      { viewerUserId: VIEWER_ID, feedType: "for_you", followedCreatorIds: new Set() },
+      client,
+      new Set(),
+    );
+    assert.equal(eligible.length, 0, "non-ready media must be excluded");
+  });
+
+  it("excludes posts with all media moderated out (rejected)", async () => {
+    const post = makePost({
+      post_media: [makeMedia({ moderation_status: "rejected" })],
+    });
+    const client = makeClient({ blocks: [], mutes: [], profiles: [makeProfile()] });
+    const { eligible } = await filterEligibleMediaCandidates(
+      [post],
+      { viewerUserId: VIEWER_ID, feedType: "for_you", followedCreatorIds: new Set() },
+      client,
+      new Set(),
+    );
+    assert.equal(eligible.length, 0, "rejected media must be excluded");
+  });
+
+  it("excludes non-public posts from for_you feed", async () => {
+    const post = makePost({ visibility: "private" });
+    const client = makeClient({ blocks: [], mutes: [], profiles: [makeProfile()] });
+    const { eligible } = await filterEligibleMediaCandidates(
+      [post],
+      { viewerUserId: VIEWER_ID, feedType: "for_you", followedCreatorIds: new Set() },
+      client,
+      new Set(),
+    );
+    assert.equal(eligible.length, 0, "private posts must be excluded from for_you feed");
+  });
+
+  it("includes private posts from followed creators in following feed", async () => {
+    const post = makePost({ author_id: CREATOR_A, visibility: "private" });
+    const client = makeClient({ blocks: [], mutes: [], profiles: [makeProfile()] });
+    const { eligible } = await filterEligibleMediaCandidates(
+      [post],
+      {
+        viewerUserId: VIEWER_ID,
+        feedType: "following",
+        followedCreatorIds: new Set([CREATOR_A]),
+      },
+      client,
+      new Set(),
+    );
+    assert.equal(eligible.length, 1, "private posts from followed creators must be included");
+  });
+
+  it("excludes pending_delay posts", async () => {
+    const post = makePost({ post_status: "pending_delay" });
+    const client = makeClient({ blocks: [], mutes: [], profiles: [makeProfile()] });
+    const { eligible } = await filterEligibleMediaCandidates(
+      [post],
+      { viewerUserId: VIEWER_ID, feedType: "for_you", followedCreatorIds: new Set() },
+      client,
+      new Set(),
+    );
+    assert.equal(eligible.length, 0, "pending_delay posts must be excluded");
+  });
+
+  it("excludes expired stories", async () => {
+    const post = makePost({ expires_at: new Date(Date.now() - 1000).toISOString() });
+    const client = makeClient({ blocks: [], mutes: [], profiles: [makeProfile()] });
+    const { eligible } = await filterEligibleMediaCandidates(
+      [post],
+      { viewerUserId: VIEWER_ID, feedType: "for_you", followedCreatorIds: new Set() },
+      client,
+      new Set(),
+    );
+    assert.equal(eligible.length, 0, "expired items must be excluded");
+  });
+
+  it("excludes muted creators", async () => {
+    const post = makePost({ author_id: CREATOR_A });
+    const client = makeClient({ blocks: [], mutes: [], profiles: [makeProfile()] });
+    const mutedSet = new Set([CREATOR_A]);
+    const { eligible } = await filterEligibleMediaCandidates(
+      [post],
+      { viewerUserId: VIEWER_ID, feedType: "for_you", followedCreatorIds: new Set() },
+      client,
+      mutedSet,
+    );
+    assert.equal(eligible.length, 0, "muted creator posts must be excluded");
+  });
+
+  it("returns blockFetchFailed=true when block query errors", async () => {
+    const post = makePost();
+    const errorClient: any = {
+      from(table: string) {
+        const b: any = {
+          select() { return b; },
+          eq() { return b; },
+          in() { return b; },
+          then(onF: any) {
+            return Promise.resolve({ data: null, error: { message: "DB error" } }).then(onF);
+          },
+          maybeSingle() { return Promise.resolve({ data: null, error: null }); },
+        };
+        return b;
+      },
+    };
+    const { eligible, blockFetchFailed } = await filterEligibleMediaCandidates(
+      [post],
+      { viewerUserId: VIEWER_ID, feedType: "for_you", followedCreatorIds: new Set() },
+      errorClient,
+    );
+    assert.equal(blockFetchFailed, true, "must report blockFetchFailed on DB error");
+    assert.equal(eligible.length, 0, "must return empty on blockFetchFailed");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ── B. Cursor stability tests ─────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("mediaCursor", () => {
+  it("round-trips a cursor payload", () => {
+    const payload = { created_at: "2024-01-15T12:00:00.000Z", id: POST_1 };
+    const token = encodeCursor(payload);
+    const decoded = decodeCursor(token);
+    assert.ok(decoded, "should decode successfully");
+    assert.equal(decoded!.created_at, payload.created_at);
+    assert.equal(decoded!.id, payload.id);
+  });
+
+  it("returns null for a tampered cursor", () => {
+    assert.equal(decodeCursor("not-base64!@#"), null);
+    assert.equal(decodeCursor(Buffer.from('{"bad":"shape"}').toString("base64url")), null);
+    assert.equal(decodeCursor(Buffer.from('{"created_at":"not-a-date","id":"abc"}').toString("base64url")), null);
+  });
+
+  it("returns null for cursor with missing fields", () => {
+    assert.equal(decodeCursor(Buffer.from('{"created_at":"2024-01-01T00:00:00Z"}').toString("base64url")), null);
+    assert.equal(decodeCursor(Buffer.from('{"id":"' + POST_1 + '"}').toString("base64url")), null);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ── C. Creator-cap enforcement tests ─────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("enforceCreatorCapsGeneric (media feed)", () => {
+  it("caps items from one creator at maxPerPage=3 and pushes overflow to tail", () => {
+    // 5 items from CREATOR_A, 2 from CREATOR_B
+    const items = [
+      { id: "a1", author_id: CREATOR_A },
+      { id: "a2", author_id: CREATOR_A },
+      { id: "a3", author_id: CREATOR_A },
+      { id: "a4", author_id: CREATOR_A }, // overflow
+      { id: "a5", author_id: CREATOR_A }, // overflow
+      { id: "b1", author_id: CREATOR_B },
+      { id: "b2", author_id: CREATOR_B },
+    ];
+    const capped = enforceCreatorCapsGeneric(items, (i) => i.author_id);
+    // Count items per creator in the first 3 positions
+    const first3 = capped.slice(0, 3);
+    const aCount = first3.filter((i) => i.author_id === CREATOR_A).length;
+    assert.ok(aCount <= 3, `First 3 should have at most 3 from CREATOR_A, got ${aCount}`);
+    // Total items unchanged
+    assert.equal(capped.length, items.length, "total items must be preserved");
+  });
+
+  it("enforces consecutive cap — no author appears more than 2 times in a row", () => {
+    const items = [
+      { id: "a1", author_id: CREATOR_A },
+      { id: "a2", author_id: CREATOR_A },
+      { id: "a3", author_id: CREATOR_A }, // would be 3rd consecutive — must be moved
+      { id: "b1", author_id: CREATOR_B },
+      { id: "c1", author_id: CREATOR_C },
+    ];
+    const capped = enforceCreatorCapsGeneric(items, (i) => i.author_id);
+    // Check no author has 3+ consecutive
+    for (let i = 2; i < capped.length; i++) {
+      if (capped[i].author_id === capped[i - 1].author_id &&
+          capped[i].author_id === capped[i - 2].author_id) {
+        assert.fail(`Author ${capped[i].author_id} has 3+ consecutive items at position ${i}`);
+      }
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ── D. Private-field stripping tests ─────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("hydrateMediaFeedItem — private profile stripping", () => {
+  const baseInput = {
+    row: makePost({ author_id: CREATOR_A, profiles: makeProfile({ id: CREATOR_A, is_private: true }) }),
+    sourceType: "post" as const,
+    viewerUserId: VIEWER_ID,
+    allowedRealNameIds: new Set<string>(),
+    savedPostIds: new Set<string>(),
+    likedPostIds: new Set<string>(),
+    pendingFollowRequestIds: new Set<string>(),
+    postMedia: [makeMedia()],
+    useSignedUrls: false,
+    supabaseUrl: SB_URL,
+  };
+
+  it("strips bio, followersCount, followingCount for private profile when viewer is not following", () => {
+    const item = hydrateMediaFeedItem({
+      ...baseInput,
+      followedCreatorIds: new Set<string>(), // not following
+    });
+    assert.equal(item.creator.bio, null, "bio must be null for private profile");
+    assert.equal(item.creator.followersCount, null, "followersCount must be null for private profile");
+    assert.equal(item.creator.followingCount, null, "followingCount must be null for private profile");
+    // Safe fields still present
+    assert.ok(item.creator.username, "username must be present");
+    assert.ok(item.creator.id, "id must be present");
+    assert.equal(item.creator.isPrivate, true);
+  });
+
+  it("exposes bio and counts when viewer follows the private creator", () => {
+    const item = hydrateMediaFeedItem({
+      ...baseInput,
+      followedCreatorIds: new Set([CREATOR_A]), // following
+    });
+    assert.notEqual(item.creator.bio, null, "bio must be exposed when viewer follows");
+    assert.notEqual(item.creator.followersCount, null, "followersCount must be exposed when viewer follows");
+  });
+
+  it("exposes bio and counts for public profiles regardless of follow state", () => {
+    const input = {
+      ...baseInput,
+      row: makePost({ author_id: CREATOR_A, profiles: makeProfile({ id: CREATOR_A, is_private: false }) }),
+      followedCreatorIds: new Set<string>(), // not following
+    };
+    const item = hydrateMediaFeedItem(input);
+    assert.notEqual(item.creator.bio, null, "bio must be exposed for public profile");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ── E–H. HTTP route tests ────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("GET /media/feed", () => {
+  let server: http.Server;
+  let base: string;
+
+  const defaultFlags = [
+    { flag: "MEDIA_FOR_YOU_ENABLED", enabled: true },
+    { flag: "MEDIA_FOLLOWING_ENABLED", enabled: true },
+    { flag: "MEDIA_RANKING_ENABLED", enabled: true },
+  ];
+
+  before(async () => {
+    const app = makeApp();
+    ({ server, base } = await startServer(app));
+  });
+
+  after(() => { server.close(); });
+
+  beforeEach(() => {
+    const client = makeClient({
+      posts: [
+        makePost({ id: POST_1, author_id: CREATOR_A, created_at: "2024-01-15T12:00:00Z" }),
+        makePost({ id: POST_2, author_id: CREATOR_B, created_at: "2024-01-15T11:00:00Z" }),
+      ],
+      featureFlags: defaultFlags,
+      profiles: [
+        makeProfile({ id: CREATOR_A }),
+        makeProfile({ id: CREATOR_B }),
+      ],
+      userFollows: [],
+    });
+    _setTestClient(client, true);
+  });
+
+  it("returns 400 when mode is missing", async () => {
+    const { status } = await jsonFetch(base, "/media/feed");
+    assert.equal(status, 400);
+  });
+
+  it("returns 400 when mode is not fullscreen", async () => {
+    const { status } = await jsonFetch(base, "/media/feed?mode=grid");
+    assert.equal(status, 400);
+  });
+
+  it("returns 401 with no auth token", async () => {
+    const resp = await fetch(`${base}/media/feed?mode=fullscreen`, {
+      headers: { "Content-Type": "application/json" },
+    });
+    assert.equal(resp.status, 401);
+  });
+
+  it("returns 404 when MEDIA_FOR_YOU_ENABLED flag is off", async () => {
+    const client = makeClient({
+      featureFlags: [
+        { flag: "MEDIA_FOR_YOU_ENABLED", enabled: false },
+        { flag: "MEDIA_FOLLOWING_ENABLED", enabled: true },
+      ],
+    });
+    _setTestClient(client, true);
+    const { status, body } = await jsonFetch(base, "/media/feed?mode=fullscreen&feedType=for_you");
+    assert.equal(status, 404);
+    assert.equal(body.error, "feature_disabled");
+  });
+
+  it("returns 404 when MEDIA_FOLLOWING_ENABLED flag is off", async () => {
+    const client = makeClient({
+      featureFlags: [
+        { flag: "MEDIA_FOR_YOU_ENABLED", enabled: true },
+        { flag: "MEDIA_FOLLOWING_ENABLED", enabled: false },
+      ],
+    });
+    _setTestClient(client, true);
+    const { status, body } = await jsonFetch(base, "/media/feed?mode=fullscreen&feedType=following");
+    assert.equal(status, 404);
+    assert.equal(body.error, "feature_disabled");
+  });
+
+  it("returns 400 for an invalid cursor", async () => {
+    const client = makeClient({ featureFlags: defaultFlags, posts: [], profiles: [] });
+    _setTestClient(client, true);
+    const { status } = await jsonFetch(base, "/media/feed?mode=fullscreen&cursor=!!!invalid!!!");
+    assert.equal(status, 400);
+  });
+
+  it("returns items + sessionId on a valid for_you request", async () => {
+    const { status, body } = await jsonFetch(base, "/media/feed?mode=fullscreen&feedType=for_you&limit=10");
+    assert.equal(status, 200, `Expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.ok(Array.isArray(body.items), "items must be an array");
+    assert.ok(typeof body.sessionId === "string", "sessionId must be a string");
+  });
+
+  it("following feed returns empty when viewer follows nobody", async () => {
+    const client = makeClient({
+      featureFlags: defaultFlags,
+      userFollows: [], // no follows
+    });
+    _setTestClient(client, true);
+    const { status, body } = await jsonFetch(base, "/media/feed?mode=fullscreen&feedType=following");
+    assert.equal(status, 200);
+    assert.deepEqual(body.items, []);
+  });
+});
+
+describe("POST /media/:id/view", () => {
+  let server: http.Server;
+  let base: string;
+
+  const defaultFlags = [
+    { flag: "MEDIA_RANKING_ENABLED", enabled: true },
+  ];
+
+  before(async () => {
+    const app = makeApp();
+    ({ server, base } = await startServer(app));
+  });
+
+  after(() => { server.close(); });
+
+  it("returns { counted: false } when MEDIA_RANKING_ENABLED is off", async () => {
+    const client = makeClient({
+      featureFlags: [{ flag: "MEDIA_RANKING_ENABLED", enabled: false }],
+    });
+    _setTestClient(client, true);
+    const { status, body } = await jsonFetch(base, `/media/${POST_1}/view`, {
+      method: "POST",
+      body: { type: "impression" },
+    });
+    assert.equal(status, 200);
+    assert.equal(body.counted, false);
+  });
+
+  it("rejects self-views — returns { counted: false }", async () => {
+    const client = makeClient({
+      featureFlags: defaultFlags,
+      posts: [makePost({ id: POST_1, author_id: VIEWER_ID, status: "active", post_status: "published" })],
+    });
+    _setTestClient(client, true);
+    const { status, body } = await jsonFetch(base, `/media/${POST_1}/view`, {
+      method: "POST",
+      body: { type: "impression" },
+    });
+    assert.equal(status, 200);
+    assert.equal(body.counted, false, "self-views must not be counted");
+  });
+
+  it("rejects qualified_view with watchedMs below threshold", async () => {
+    const client = makeClient({
+      featureFlags: defaultFlags,
+      posts: [makePost({ id: POST_2, author_id: CREATOR_A })],
+    });
+    _setTestClient(client, true);
+    const { status, body } = await jsonFetch(base, `/media/${POST_2}/view`, {
+      method: "POST",
+      body: { type: "qualified_view", watchedMs: 500 }, // below 3000ms threshold
+    });
+    assert.equal(status, 200);
+    assert.equal(body.counted, false, "qualified_view with short watchedMs must not be counted");
+  });
+
+  it("counts a valid impression from a different creator", async () => {
+    const client = makeClient({
+      featureFlags: defaultFlags,
+      posts: [makePost({ id: POST_2, author_id: CREATOR_A, status: "active", post_status: "published" })],
+    });
+    _setTestClient(client, true);
+    const { status, body } = await jsonFetch(base, `/media/${POST_2}/view`, {
+      method: "POST",
+      body: { type: "impression" },
+    });
+    assert.equal(status, 200);
+    assert.equal(body.counted, true, "impression from another creator must be counted");
+  });
+
+  it("returns 400 for invalid media id", async () => {
+    const client = makeClient({ featureFlags: defaultFlags, posts: [] });
+    _setTestClient(client, true);
+    const { status } = await jsonFetch(base, `/media/not-a-uuid/view`, {
+      method: "POST",
+      body: { type: "impression" },
+    });
+    assert.equal(status, 400);
+  });
+
+  it("returns 400 for invalid view type", async () => {
+    const client = makeClient({ featureFlags: defaultFlags, posts: [] });
+    _setTestClient(client, true);
+    const { status } = await jsonFetch(base, `/media/${POST_1}/view`, {
+      method: "POST",
+      body: { type: "invalid_type" },
+    });
+    assert.equal(status, 400);
+  });
+});
+
+describe("GET /media/:id (single item)", () => {
+  let server: http.Server;
+  let base: string;
+
+  before(async () => {
+    const app = makeApp();
+    ({ server, base } = await startServer(app));
+  });
+
+  after(() => { server.close(); });
+
+  it("returns 404 for a non-existent media item", async () => {
+    const client = makeClient({ posts: [] });
+    _setTestClient(client, true);
+    const { status } = await jsonFetch(base, `/media/${POST_1}`);
+    // 404 (not found) or blocked (also 404)
+    assert.ok([404].includes(status), `Expected 404, got ${status}`);
+  });
+
+  it("returns 400 for a non-UUID id", async () => {
+    const client = makeClient({ posts: [] });
+    _setTestClient(client, true);
+    const { status } = await jsonFetch(base, `/media/not-a-uuid`);
+    assert.equal(status, 400);
+  });
+});

@@ -213,6 +213,11 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/services/trust/TrustEventService.ts|select|select list not statically resolvable", 1],
   // E2EE key-package upload — payload built from a dynamic array of base64 strings.
   ["src/routes/keyPackages.ts|insert|payload not statically resolvable", 1],
+  // mediaFeed: select strings compose FEED_POST_COLUMNS, POST_MEDIA_COLUMNS, PROFILE_COLUMNS constants
+  // (two select sites); insert payload in impression logging is an array built at runtime.
+  // All columns verified against live schema.
+  ["src/routes/mediaFeed.ts|insert|payload not statically resolvable", 1],
+  ["src/routes/mediaFeed.ts|select|select list not statically resolvable", 2],
 ]);
 
 // ── Read-path baseline ────────────────────────────────────────────────────────

@@ -103,6 +103,7 @@ import stampAdmireRouter from "./stampAdmire";
 import countryEssentialsRouter from "./countryEssentials";
 import mapSearchRouter from "./mapSearch";
 import mediaFileRouter from "./mediaFile";
+import mediaFeedRouter from "./mediaFeed";
 import placesCanonicalRouter from "./placesCanonical";
 import fsqPlacesRouter from "./fsqPlaces";
 import ogRouter from "./og";
@@ -219,6 +220,7 @@ router.use(countryEssentialsRouter);
 router.use(fsqPlacesRouter);
 router.use(mapSearchRouter);
 router.use(mediaFileRouter);
+router.use(mediaFeedRouter);
 router.use(placesCanonicalRouter);
 router.use(ogRouter);
 
