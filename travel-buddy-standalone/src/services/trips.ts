@@ -92,6 +92,8 @@ export interface TripRow {
   delayedPostingDefault: boolean;
   preciseLocationVisible: boolean;
   planEditPermission: string | null;
+  /** Whether non-members can see the trip's cover image. Default false for private trips. */
+  showHeaderPublicly: boolean;
 }
 
 function mapTrip(r: any): TripRow {
@@ -118,6 +120,7 @@ function mapTrip(r: any): TripRow {
     delayedPostingDefault: r.delayed_posting_default ?? false,
     preciseLocationVisible: r.precise_location_visible ?? false,
     planEditPermission: r.plan_edit_permission ?? null,
+    showHeaderPublicly: r.show_header_publicly ?? false,
   };
 }
 
@@ -166,6 +169,8 @@ export interface CreateTripInput {
   coverUrl?: string | null;
   coverMediaType?: 'image' | 'video' | null;
   tripNotes?: string | null;
+  /** Whether non-members can see the trip's cover image. */
+  showHeaderPublicly?: boolean;
 }
 
 export async function createTrip(input: CreateTripInput): Promise<TripRow | null> {
@@ -200,6 +205,7 @@ export async function createTrip(input: CreateTripInput): Promise<TripRow | null
       coverUrl: input.coverUrl,
       coverMediaType: input.coverMediaType ?? null,
       tripNotes: input.tripNotes ?? null,
+      showHeaderPublicly: input.showHeaderPublicly ?? false,
     }),
   });
 
@@ -228,6 +234,7 @@ export async function updateTrip(id: string, patch: Partial<CreateTripInput & { 
   if (patch.coverMediaType !== undefined) body.coverMediaType = patch.coverMediaType;
   if (patch.tripNotes !== undefined) body.tripNotes = patch.tripNotes;
   if (patch.progress !== undefined) body.progress = patch.progress;
+  if (patch.showHeaderPublicly !== undefined) body.showHeaderPublicly = patch.showHeaderPublicly;
   const res = await fetch(`${apiBase}/api/trips/${id}`, {
     method: 'PATCH',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },

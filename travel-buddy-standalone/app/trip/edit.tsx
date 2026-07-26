@@ -50,6 +50,8 @@ export default function EditTrip() {
   const [error, setError] = useState<string | null>(null);
   const [calOpen, setCalOpen] = useState(false);
   const [placeOpen, setPlaceOpen] = useState(false);
+  // Whether non-members can see the cover image (only meaningful for private/buddies trips).
+  const [showHeaderPublicly, setShowHeaderPublicly] = useState(false);
 
   // ── Multi-city ────────────────────────────────────────────────────────────
   const [multiCity, setMultiCity] = useState(false);
@@ -81,6 +83,7 @@ export default function EditTrip() {
       setTripNotes(tr.tripNotes ?? '');
       setCoverUrl(tr.coverUrl ?? null);
       setCoverMediaType(tr.coverMediaType ?? null);
+      setShowHeaderPublicly(tr.showHeaderPublicly ?? false);
       setLoading(false);
     }).catch(() => { setLoadError('Could not load trip.'); setLoading(false); });
   }, [id, live, userId]);
@@ -181,6 +184,8 @@ export default function EditTrip() {
         // Coercing to undefined would silently omit the field and leave the old cover.
         coverUrl: coverUrl,
         coverMediaType: coverMediaType,
+        // Public trips always show header; private/buddies respect the toggle.
+        showHeaderPublicly: visibility === 'public' ? true : showHeaderPublicly,
       });
       if (!updated) { setError('Could not save changes. Try again.'); return; }
       router.replace(`/trip/${id}` as any);
@@ -190,7 +195,7 @@ export default function EditTrip() {
       setBusy(false);
       saveLock.current = false;
     }
-  }, [title, place, live, id, startDate, endDate, visibility, tripNotes, coverUrl, coverMediaType]);
+  }, [title, place, live, id, startDate, endDate, visibility, tripNotes, coverUrl, coverMediaType, showHeaderPublicly]);
 
   if (!live) {
     return (
@@ -396,6 +401,25 @@ export default function EditTrip() {
           </View>
         </View>
 
+        {/* Cover image privacy — only relevant for non-public trips */}
+        {visibility !== 'public' && (
+          <View style={styles.toggleRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.toggleLabel}>Show cover image to non-members</Text>
+              <Text style={styles.toggleSub}>
+                When off, non-members see a generic placeholder instead of your cover photo
+              </Text>
+            </View>
+            <Switch
+              value={showHeaderPublicly}
+              onValueChange={setShowHeaderPublicly}
+              trackColor={{ true: color.signal, false: color.haze }}
+              thumbColor={color.paperRaised}
+              accessibilityLabel="Show cover image to non-members"
+            />
+          </View>
+        )}
+
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
         <Pressable style={[styles.saveBtn, busy && { opacity: 0.7 }]} onPress={save} disabled={busy}>
@@ -428,6 +452,13 @@ export default function EditTrip() {
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.lg },
+  toggleRow: {
+    flexDirection: 'row', alignItems: 'center', gap: space.md,
+    backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze,
+    borderRadius: radius.md, paddingHorizontal: space.lg, paddingVertical: space.md,
+  },
+  toggleLabel: { ...t.body, color: color.ink, marginBottom: 2 },
+  toggleSub: { ...t.small, color: color.mute },
   label: { ...t.stamp, fontFamily: 'Courier', color: color.mute, marginBottom: space.sm },
   input: {
     ...t.body, color: color.ink,
