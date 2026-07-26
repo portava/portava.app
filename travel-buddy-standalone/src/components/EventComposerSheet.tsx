@@ -13,11 +13,13 @@ import {
   View, Text, TextInput, Pressable, StyleSheet,
   ScrollView, Switch, ActivityIndicator, Image,
 } from 'react-native';
-import { X, ChevronRight, ChevronLeft, CalendarClock, MapPin, Settings2, Eye, Clock, Camera, ImageIcon, Video as VideoIcon } from 'lucide-react-native';
+import { X, ChevronRight, ChevronLeft, CalendarClock, MapPin, Settings2, Eye, Clock, Camera, ImageIcon, Video as VideoIcon, RefreshCw } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { MediaSourceSheet } from './ui/MediaSourceSheet.tsx';
-import { createEvent, type CreateEventInput, type EventSummary, type EventVisibility } from '../services/events.ts';
+import { createEvent, updateEvent, type CreateEventInput, type UpdateEventInput, type EventSummary, type EventVisibility } from '../services/events.ts';
 import { uploadMedia } from '../services/media.ts';
+import { GeneratedHeaderPicker } from './visuals/GeneratedHeaderPicker.tsx';
+import { useFeatureFlags } from '../context/FeatureFlagsContext.tsx';
 import { VIDEO_MAX_DURATION_SECONDS } from '../constants/mediaLimits.ts';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import { GlobalCalendarPicker } from './selectors/GlobalCalendarPicker.tsx';
@@ -29,6 +31,10 @@ import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 interface Props {
   onDismiss: () => void;
   onCreated: (ev: EventSummary) => void;
+  /** When set, the sheet is in edit mode — all fields are pre-populated. */
+  initialEvent?: EventSummary;
+  /** Called after a successful edit save. */
+  onUpdated?: (ev: EventSummary) => void;
 }
 
 type Step = 'basics' | 'location' | 'settings' | 'review';
@@ -77,24 +83,37 @@ function formatDateTimeReview(dateISO: string | null, timeHHmm: string | null): 
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function EventComposerSheet({ onDismiss, onCreated }: Props) {
+export function EventComposerSheet({ onDismiss, onCreated, initialEvent, onUpdated }: Props) {
+  const { isEnabled } = useFeatureFlags();
+  const isEditMode = !!initialEvent;
+
   const [step, setStep] = useState<Step>('basics');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [locationPickerVisible, setLocationPickerVisible] = useState(false);
 
   // Basics — dates use ISO strings; times use HH:mm
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [startDateStr, setStartDateStr] = useState<string | null>(null);
-  const [startTime,    setStartTime]    = useState<string | null>(null);
-  const [endDateStr,   setEndDateStr]   = useState<string | null>(null);
-  const [endTime,      setEndTime]      = useState<string | null>(null);
-  const [category, setCategory] = useState('');
+  const [title, setTitle]           = useState(initialEvent?.title ?? '');
+  const [description, setDescription] = useState(initialEvent?.description ?? '');
+  const [startDateStr, setStartDateStr] = useState<string | null>(
+    initialEvent?.startsAt ? initialEvent.startsAt.slice(0, 10) : null,
+  );
+  const [startTime, setStartTime] = useState<string | null>(
+    initialEvent?.startsAt ? initialEvent.startsAt.slice(11, 16) : null,
+  );
+  const [endDateStr, setEndDateStr] = useState<string | null>(
+    initialEvent?.endsAt ? initialEvent.endsAt.slice(0, 10) : null,
+  );
+  const [endTime, setEndTime] = useState<string | null>(
+    initialEvent?.endsAt ? initialEvent.endsAt.slice(11, 16) : null,
+  );
+  const [category, setCategory] = useState(initialEvent?.category ?? '');
 
   // Cover media
-  const [coverUrl, setCoverUrl] = useState<string | null>(null);
-  const [coverMediaType, setCoverMediaType] = useState<'image' | 'video' | null>(null);
+  const [coverUrl, setCoverUrl] = useState<string | null>(initialEvent?.coverUrl ?? null);
+  const [coverMediaType, setCoverMediaType] = useState<'image' | 'video' | null>(
+    initialEvent?.coverMediaType ?? null,
+  );
   const [coverLocalUri, setCoverLocalUri] = useState<string | null>(null);
   const [uploadingCover, setUploadingCover] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -105,21 +124,41 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
   const [timePickerFor, setTimePickerFor] = useState<'start' | 'end' | null>(null);
 
   // Location
-  const [locationName, setLocationName] = useState('');
-  const [city, setCity] = useState('');
-  const [country, setCountry] = useState('');
+  const [locationName, setLocationName] = useState(initialEvent?.locationName ?? '');
+  const [city, setCity] = useState(initialEvent?.city ?? '');
+  const [country, setCountry] = useState(initialEvent?.country ?? '');
 
   // Settings
-  const [maxAttendees, setMaxAttendees] = useState('');
-  const [ageMin, setAgeMin] = useState('');
-  const [ageMax, setAgeMax] = useState('');
-  const [trustScoreMin, setTrustScoreMin] = useState('');
-  const [verifiedOnly, setVerifiedOnly] = useState(false);
-  const [visibility, setVisibility] = useState<EventVisibility>('public');
-  const [chatEnabled, setChatEnabled] = useState(true);
-  const [waitlistEnabled, setWaitlistEnabled] = useState(true);
-  const [priceType, setPriceType] = useState<'free' | 'external'>('free');
-  const [priceUrl, setPriceUrl] = useState('');
+  const [maxAttendees, setMaxAttendees] = useState(
+    initialEvent?.maxAttendees != null ? String(initialEvent.maxAttendees) : '',
+  );
+  const [ageMin, setAgeMin] = useState(
+    initialEvent?.ageMin != null ? String(initialEvent.ageMin) : '',
+  );
+  const [ageMax, setAgeMax] = useState(
+    initialEvent?.ageMax != null ? String(initialEvent.ageMax) : '',
+  );
+  const [trustScoreMin, setTrustScoreMin] = useState(
+    initialEvent?.trustScoreMin != null ? String(initialEvent.trustScoreMin) : '',
+  );
+  const [verifiedOnly, setVerifiedOnly]   = useState(initialEvent?.verifiedOnly ?? false);
+  const [visibility, setVisibility]       = useState<EventVisibility>(initialEvent?.visibility ?? 'public');
+  const [chatEnabled, setChatEnabled]     = useState(initialEvent?.chatEnabled ?? true);
+  const [waitlistEnabled, setWaitlistEnabled] = useState(initialEvent?.waitlistEnabled ?? true);
+  const [priceType, setPriceType] = useState<'free' | 'external'>(
+    (initialEvent?.priceType as 'free' | 'external') ?? 'free',
+  );
+  const [priceUrl, setPriceUrl] = useState(initialEvent?.priceUrl ?? '');
+
+  // ── AI header state (create-mode draft + edit-mode banner) ─────────────────
+  /** Event ID for AI generation: real ID in edit mode, or draft ID in create mode. */
+  const [draftEventId, setDraftEventId] = useState<string | null>(initialEvent?.id ?? null);
+  /** Dismissed state for the "details changed" banner in edit mode. */
+  const [headerUpdateDismissed, setHeaderUpdateDismissed] = useState(false);
+  /** Increment to externally trigger regeneration from the banner. */
+  const [regenerateTriggerKey, setRegenerateTriggerKey] = useState(0);
+  /** Prevent auto-suggest from firing more than once per session. */
+  const autoSuggestFiredRef = React.useRef(false);
 
   const stepIndex = STEPS.indexOf(step);
   const isFirst = stepIndex === 0;
@@ -171,6 +210,63 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
     setUploadError(null);
   }
 
+  // ── AI header: draft creation + auto-suggest ──────────────────────────────
+
+  /**
+   * In create mode, creates a minimal draft event the first time we need an
+   * entity ID (for AI generation). Returns the existing draftEventId when
+   * already created. In edit mode, returns the existing event ID directly.
+   */
+  async function createDraftIfNeeded(): Promise<string | null> {
+    if (draftEventId) return draftEventId;
+    const res = await createEvent({
+      title: title.trim() || 'Draft',
+      publishNow: false,
+    });
+    if (!res.ok || !res.data) return null;
+    setDraftEventId(res.data.id);
+    return res.data.id;
+  }
+
+  // Auto-suggest: fires once when title + start date are both set, the flag is
+  // ON, and the user has not uploaded a cover. Creates a silent draft first to
+  // obtain an entity ID, then triggers the picker via the draftEventId state.
+  React.useEffect(() => {
+    if (isEditMode) return;                          // edit mode has its own flow
+    if (autoSuggestFiredRef.current) return;
+    if (!isEnabled('ai_event_auto_suggest_enabled')) return;
+    if (!title.trim() || !startDateStr) return;
+    if (coverUrl || coverLocalUri) return;           // user already uploaded
+
+    autoSuggestFiredRef.current = true;
+
+    // Debounce 1.5 s so rapid edits don't spam draft creation.
+    const timer = setTimeout(async () => {
+      const eid = await createDraftIfNeeded();
+      if (eid) {
+        // Increment the trigger so GeneratedHeaderPicker fires requestGeneration
+        // now that an entity ID exists. The ref-based guard in the picker ensures
+        // this is ignored on mount (lastTriggerRef starts at the initial value),
+        // so this increment always represents a real post-mount intent to generate.
+        setRegenerateTriggerKey((k) => k + 1);
+      }
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, startDateStr, coverUrl, coverLocalUri]);
+
+  // ── Edit-mode change detection for the "update header?" banner ────────────
+
+  const hasChangedMajorFields = isEditMode && (
+    title       !== (initialEvent?.title ?? '')           ||
+    description !== (initialEvent?.description ?? '')     ||
+    locationName!== (initialEvent?.locationName ?? '')    ||
+    startDateStr!== (initialEvent?.startsAt?.slice(0, 10) ?? null)
+  );
+  const showHeaderUpdateBanner =
+    isEditMode && hasChangedMajorFields && !headerUpdateDismissed;
+
   function nextStep() {
     if (step === 'basics') {
       if (!title.trim()) { setError('Title is required'); return; }
@@ -203,31 +299,64 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
     setSaving(true);
     setError(null);
 
-    const input: CreateEventInput = {
-      title: title.trim(),
-      description: description.trim() || undefined,
+    const sharedFields = {
+      title:        title.trim(),
+      description:  description.trim() || undefined,
       locationName: locationName.trim() || undefined,
-      city: city.trim() || undefined,
-      country: country.trim() || undefined,
-      startsAt: buildISODateTime(startDateStr, startTime),
-      endsAt:   buildISODateTime(endDateStr,   endTime),
-      coverUrl: coverUrl ?? undefined,
+      city:         city.trim() || undefined,
+      country:      country.trim() || undefined,
+      startsAt:     buildISODateTime(startDateStr, startTime),
+      endsAt:       buildISODateTime(endDateStr,   endTime),
+      coverUrl:     coverUrl ?? undefined,
       coverMediaType: coverMediaType ?? undefined,
-      category: category.trim() || undefined,
+      category:     category.trim() || undefined,
       maxAttendees: maxAttendees ? parseInt(maxAttendees) : undefined,
-      ageMin: ageMin ? parseInt(ageMin) : undefined,
-      ageMax: ageMax ? parseInt(ageMax) : undefined,
-      trustScoreMin: trustScoreMin ? parseFloat(trustScoreMin) : undefined,
+      ageMin:       ageMin ? parseInt(ageMin) : undefined,
+      ageMax:       ageMax ? parseInt(ageMax) : undefined,
+      trustScoreMin:trustScoreMin ? parseFloat(trustScoreMin) : undefined,
       verifiedOnly: verifiedOnly || undefined,
       visibility,
       chatEnabled,
       waitlistEnabled,
       priceType,
-      priceUrl: priceType === 'external' && priceUrl.trim() ? priceUrl.trim() : undefined,
-      publishNow,
+      priceUrl:     priceType === 'external' && priceUrl.trim() ? priceUrl.trim() : undefined,
     };
 
-    const res = await createEvent(input);
+    // ── Edit mode ───────────────────────────────────────────────────────────
+    if (isEditMode && initialEvent) {
+      const updateInput: UpdateEventInput = {
+        ...sharedFields,
+        state: publishNow ? 'open' : 'draft',
+      };
+      const res = await updateEvent(initialEvent.id, updateInput);
+      setSaving(false);
+      if (!res.ok || !res.data) {
+        setError(res.message ?? 'Failed to save event');
+        return;
+      }
+      onUpdated?.(res.data);
+      return;
+    }
+
+    // ── Create mode: if a draft was created for AI generation, update it ───
+    if (draftEventId) {
+      const updateInput: UpdateEventInput = {
+        ...sharedFields,
+        state: publishNow ? 'open' : 'draft',
+      };
+      const res = await updateEvent(draftEventId, updateInput);
+      setSaving(false);
+      if (!res.ok || !res.data) {
+        setError(res.message ?? 'Failed to create event');
+        return;
+      }
+      onCreated(res.data);
+      return;
+    }
+
+    // ── Create mode: no draft yet, create fresh ────────────────────────────
+    const createInput: CreateEventInput = { ...sharedFields, publishNow };
+    const res = await createEvent(createInput);
     setSaving(false);
     if (!res.ok || !res.data) {
       setError(res.message ?? 'Failed to create event');
@@ -248,7 +377,7 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
         <View style={s.sheet}>
           {/* Header */}
           <View style={s.head}>
-            <Text style={s.headTitle}>New Event</Text>
+            <Text style={s.headTitle}>{isEditMode ? 'Edit Event' : 'New Event'}</Text>
             <View style={s.stepIndicator}>
               {STEPS.map((st, i) => (
                 <View key={st} style={[s.stepDot, i <= stepIndex && s.stepDotActive]} />
@@ -353,6 +482,45 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
                 {uploadError ? (
                   <Text style={s.uploadErrorText}>{uploadError}</Text>
                 ) : null}
+
+                {/* ── AI header picker ── */}
+                <Text style={s.label}>AI header image (optional)</Text>
+
+                {/* Edit-mode banner: major fields changed → offer to update header */}
+                {showHeaderUpdateBanner && (
+                  <View style={s.headerUpdateBanner}>
+                    <RefreshCw size={13} color="#B45309" />
+                    <Text style={s.headerUpdateBannerText}>
+                      Your details changed — update header?
+                    </Text>
+                    <Pressable
+                      style={s.headerUpdateBtn}
+                      onPress={() => {
+                        setRegenerateTriggerKey((k) => k + 1);
+                        setHeaderUpdateDismissed(true);
+                      }}
+                      hitSlop={6}
+                    >
+                      <Text style={s.headerUpdateBtnText}>Update</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => setHeaderUpdateDismissed(true)}
+                      hitSlop={8}
+                    >
+                      <X size={14} color={color.mute} />
+                    </Pressable>
+                  </View>
+                )}
+
+                <GeneratedHeaderPicker
+                  entityType="event"
+                  entityId={draftEventId}
+                  purpose="event_header"
+                  currentImageUri={previewUri}
+                  onUpload={() => setCoverSheetOpen(true)}
+                  onRequestEntityId={createDraftIfNeeded}
+                  regenerateTrigger={regenerateTriggerKey}
+                />
 
                 {/* Start date */}
                 <Text style={s.label}>Start date</Text>
@@ -618,16 +786,22 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
                   onPress={() => handleSave(true)}
                   disabled={saving || uploadingCover}
                 >
-                  <Text style={s.publishBtnText}>{saving ? 'Publishing…' : 'Publish event'}</Text>
+                  <Text style={s.publishBtnText}>
+                    {saving
+                      ? (isEditMode ? 'Saving…' : 'Publishing…')
+                      : (isEditMode ? 'Save changes' : 'Publish event')}
+                  </Text>
                 </Pressable>
 
-                <Pressable
-                  style={[s.draftBtn, (saving || uploadingCover) && { opacity: 0.6 }]}
-                  onPress={() => handleSave(false)}
-                  disabled={saving || uploadingCover}
-                >
-                  <Text style={s.draftBtnText}>Save as draft</Text>
-                </Pressable>
+                {!isEditMode && (
+                  <Pressable
+                    style={[s.draftBtn, (saving || uploadingCover) && { opacity: 0.6 }]}
+                    onPress={() => handleSave(false)}
+                    disabled={saving || uploadingCover}
+                  >
+                    <Text style={s.draftBtnText}>Save as draft</Text>
+                  </Pressable>
+                )}
               </>
             )}
 
@@ -763,4 +937,34 @@ const s = StyleSheet.create({
   navBackText:{ ...t.body, color: color.mute, fontWeight: '600' },
   navNext:    { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: color.ink, paddingHorizontal: space.lg, paddingVertical: space.sm, borderRadius: radius.pill },
   navNextText:{ ...t.body, color: color.onInk, fontWeight: '700' },
+  // ── Header-update banner (edit mode) ───────────────────────────────────────
+  headerUpdateBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: radius.md,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+  },
+  headerUpdateBannerText: {
+    ...t.small,
+    color: '#92400E',
+    flex: 1,
+    fontWeight: '500',
+  },
+  headerUpdateBtn: {
+    backgroundColor: '#B45309',
+    borderRadius: radius.pill,
+    paddingHorizontal: space.sm,
+    paddingVertical: 4,
+  },
+  headerUpdateBtnText: {
+    ...t.small,
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 11,
+  },
 });
