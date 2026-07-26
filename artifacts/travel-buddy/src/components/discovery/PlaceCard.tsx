@@ -35,6 +35,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
   const [pickerVisible, setPickerVisible] = useState(false);
   const [savedCount, setSavedCount]     = useState(0);
   const accent = categoryColor(place.category);
+
   const { isAdded } = usePlanPicker();
   const alreadyAdded = isAdded(place.id);
   const savedCountTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

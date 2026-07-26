@@ -57,6 +57,30 @@ function CardSkeleton() {
   );
 }
 
+// ── Generic hero fallback (non-place types, no image or broken image) ─────────
+
+const GENERIC_FALLBACK_ICONS: Record<string, React.ComponentType<{ size: number; color: string }>> = {
+  event:    Calendar,
+  traveler: User,
+  user:     User,
+  trip:     Map,
+  buddy:    Users,
+};
+
+interface GenericFallbackProps { type: string; itemId: string }
+
+function GenericHeroFallback({ type, itemId }: GenericFallbackProps) {
+  const Icon = GENERIC_FALLBACK_ICONS[type] ?? Sparkles;
+  return (
+    <View
+      style={[s.emojiHeader, s.genericFallback]}
+      testID={`compass-pick-generic-fallback-${itemId}`}
+    >
+      <Icon size={28} color={color.mute} />
+    </View>
+  );
+}
+
 function resolveCompassFallbackCategory(item: CompassFeedItem): string {
 
   const cat  = (item.category ?? '').trim();
