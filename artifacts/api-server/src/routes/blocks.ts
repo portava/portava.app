@@ -1,12 +1,13 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
-import { publishToUsers } from "../lib/telegraphEvents";
+import { publishToUsers, terminateUserConnections } from "../lib/telegraphEvents";
 import { getServiceClient } from "../lib/supabase.js";
 import { invalidateCompassProfile } from "../compass/CompassProfileService.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { invalidateCompassHomeCache } from "./compassHome.js";
 import { resolveInteractionPermissions } from "../services/interactionPermissions.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
+import { _clearMediaAccessCache } from "../lib/mediaAccess.js";
 
 const router = Router();
 
@@ -92,6 +93,10 @@ router.post("/users/:userId/block", async (req, res) => {
     invalidateCompassCache(sc, target, "blocked_by"),
   ]);
 
+  // Evict the per-(viewer,object) media-access allow-cache for both parties so
+  // neither side retains a stale "allowed" entry for the other's media.
+  _clearMediaAccessCache();
+
   res.status(200).json({ blocked: true, userId: target });
 
   // Realtime: let the blocker's other sessions refresh (threads/follow state
@@ -100,6 +105,11 @@ router.post("/users/:userId/block", async (req, res) => {
     type: "user.blocked",
     payload: { blockedId: target },
   });
+
+  // Force-close any live SSE connections for the blocked user so they cannot
+  // continue to receive events from the blocker's session.  Runs after the
+  // response is sent — best-effort, non-blocking.
+  terminateUserConnections(target);
 
   // Blocking mid-call force-ends any open direct call between the two users
   // (server-side room termination + call.ended to both). Fire-and-forget.

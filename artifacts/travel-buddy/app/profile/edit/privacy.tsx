@@ -19,6 +19,8 @@ import {
 } from '../../../src/services/profile';
 import { applyPrivacyChange } from '../../../src/services/privacySettingsLogic';
 import { useSession } from '../../../src/context/SessionContext';
+import { _clearSnapshot } from '../../../src/hooks/snapshotCacheUtils';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PP } from '../../../src/theme/passportTokens';
 import { space, radius, type as t } from '../../../src/theme/tokens';
 import {
@@ -34,7 +36,7 @@ const VIS_OPTIONS = [
 ];
 
 export default function PrivacyVisibilityScreen() {
-  const { isAuthed, configured } = useSession();
+  const { isAuthed, configured, userId } = useSession();
   const live = configured && isAuthed;
 
   // ── Immediate-save privacy settings (from settings/privacy.tsx) ──
@@ -192,6 +194,9 @@ export default function PrivacyVisibilityScreen() {
       setPassportDirty(false);
       setPassportSave('saved');
       setTimeout(() => setPassportSave('idle'), 1500);
+      // Invalidate the stale-while-revalidate passport snapshot so the next
+      // open re-fetches from the server with the updated privacy settings.
+      if (userId) _clearSnapshot(AsyncStorage, 'passport-v2', userId);
     } catch (e) {
       setPassportSave('error');
       setPassportError(e instanceof Error ? e.message : 'Save failed');

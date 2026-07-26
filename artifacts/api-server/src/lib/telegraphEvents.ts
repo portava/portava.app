@@ -42,7 +42,11 @@ export type TelegraphEventType =
   | "call.group_ended"
   | "call.room_updated"
   | "call.role_changed"
-  | "call.removed_from_room";
+  | "call.removed_from_room"
+  /** Sent to the client before closing a connection whose access has been revoked. */
+  | "access.revoked"
+  /** Sent to the client when the maximum connection lifetime is reached — client should reconnect. */
+  | "reconnect";
 
 export interface TelegraphEvent {
   type: TelegraphEventType;
@@ -78,6 +82,80 @@ export function setBroadcastHook(
   hook: (userIds: string[], event: TelegraphEvent) => void,
 ): void {
   _broadcastHook = hook;
+}
+
+// ── Connection terminator registry ────────────────────────────────────────────
+
+/**
+ * userId -> set of close callbacks (one per open SSE connection).
+ * Each callback sends an access.revoked event then ends the response.
+ */
+const terminators = new Map<string, Set<() => void>>();
+
+/**
+ * Register a termination callback for a live SSE connection.  Returns an
+ * unregister function that must be called on cleanup (alongside unsubscribe).
+ */
+export function registerTerminator(userId: string, terminate: () => void): () => void {
+  let set = terminators.get(userId);
+  if (!set) {
+    set = new Set();
+    terminators.set(userId, set);
+  }
+  set.add(terminate);
+  return () => {
+    const s = terminators.get(userId);
+    if (!s) return;
+    s.delete(terminate);
+    if (s.size === 0) terminators.delete(userId);
+  };
+}
+
+// ── Terminate broadcast hook ──────────────────────────────────────────────────
+
+/**
+ * Optional hook registered by telegraphBroadcast so that terminateUserConnections
+ * propagates the revocation signal to other server instances as well.
+ */
+let _terminateBroadcastHook: ((userId: string) => void) | null = null;
+
+/**
+ * Register the cross-instance terminate hook.  Called once at startup by
+ * initTelegraphBroadcast().
+ */
+export function setTerminateBroadcastHook(hook: (userId: string) => void): void {
+  _terminateBroadcastHook = hook;
+}
+
+/**
+ * Force-close all active SSE connections for a user on THIS instance only.
+ * Used by telegraphBroadcast when it receives a remote terminate signal so it
+ * doesn't re-broadcast and cause infinite loops.
+ */
+export function terminateUserConnectionsLocal(userId: string): void {
+  const set = terminators.get(userId);
+  if (!set) return;
+  // Copy to avoid mutation during iteration.
+  for (const fn of Array.from(set)) {
+    try { fn(); } catch { /* socket may already be closed */ }
+  }
+}
+
+/**
+ * Force-close all active SSE connections for a user (e.g. after a block).
+ * Terminates local connections immediately and fans the revocation signal out
+ * to other instances via the registered broadcast hook (if any).
+ * Safe to call when the user has no live connections.
+ */
+export function terminateUserConnections(userId: string): void {
+  terminateUserConnectionsLocal(userId);
+  if (_terminateBroadcastHook) {
+    try {
+      _terminateBroadcastHook(userId);
+    } catch (err) {
+      logger.warn({ err, userId }, "telegraph terminate broadcast hook threw");
+    }
+  }
 }
 
 // ── Subscriber management ─────────────────────────────────────────────────────

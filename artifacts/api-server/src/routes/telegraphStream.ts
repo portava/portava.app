@@ -20,6 +20,7 @@ import { getServiceClient } from "../lib/supabase";
 import { requireUser, sendError } from "../lib/http";
 import {
   subscribe,
+  registerTerminator,
   publishToThread,
   type TelegraphEvent,
 } from "../lib/telegraphEvents";
@@ -30,6 +31,14 @@ const UUID = /^[0-9a-f-]{36}$/i;
 
 /** Heartbeat keeps proxies from closing the idle socket and detects dead peers. */
 const HEARTBEAT_MS = 25_000;
+
+/**
+ * Maximum lifetime for a single SSE connection.  After this interval the
+ * server sends a `reconnect` event and closes the socket so the client
+ * re-authenticates.  This ensures revoked sessions (blocked user, privacy
+ * change) cannot hold open an indefinite connection.
+ */
+const MAX_CONNECTION_AGE_MS = 30 * 60 * 1000; // 30 minutes
 
 router.get("/telegraph/stream", async (req, res) => {
   // Token from Authorization header (preferred) or ?token= query (EventSource).
@@ -93,8 +102,43 @@ router.get("/telegraph/stream", async (req, res) => {
     if (cleanedUp) return;
     cleanedUp = true;
     clearInterval(heartbeat);
+    clearTimeout(maxAgeTimer);
+    unregisterTerminator();
     unsubscribe();
   };
+
+  /**
+   * Terminator: called by terminateUserConnections() when access is revoked
+   * (e.g. after a block).  Sends an access.revoked signal then closes.
+   * The data payload includes `type` so the client parser can dispatch it
+   * to registered listeners before the socket closes.
+   */
+  const terminate = () => {
+    try {
+      res.write(
+        `event: access.revoked\ndata: ${JSON.stringify({ type: "access.revoked", code: 4403, ts: new Date().toISOString() })}\n\n`,
+      );
+    } catch { /* socket already gone */ }
+    res.end();
+  };
+  const unregisterTerminator = registerTerminator(userId, terminate);
+
+  /**
+   * Maximum connection lifetime — forces a reconnect so the client
+   * re-authenticates.  Ensures revoked sessions (block, privacy change) cannot
+   * hold an SSE connection open indefinitely.
+   * The data payload includes `type` so the client parser can react immediately
+   * (reset failure count, reconnect with a fresh token).
+   */
+  const maxAgeTimer = setTimeout(() => {
+    try {
+      res.write(
+        `event: reconnect\ndata: ${JSON.stringify({ type: "reconnect", reason: "max_age", ts: new Date().toISOString() })}\n\n`,
+      );
+    } catch { /* socket already gone */ }
+    res.end();
+  }, MAX_CONNECTION_AGE_MS);
+  maxAgeTimer.unref?.();
 
   req.on("close", cleanup);
   res.on("close", cleanup);

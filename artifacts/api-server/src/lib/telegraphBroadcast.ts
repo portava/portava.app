@@ -30,12 +30,16 @@ import type { Database } from "./database.types";
 import { logger } from "./logger";
 import {
   setBroadcastHook,
+  setTerminateBroadcastHook,
   publishToUsersLocal,
+  terminateUserConnectionsLocal,
   type TelegraphEvent,
 } from "./telegraphEvents";
 
 const CHANNEL_NAME = "telegraph:events";
 const BROADCAST_EVENT = "publish";
+/** Broadcast event name for cross-instance connection termination signals. */
+const TERMINATE_EVENT = "terminate";
 /** Versioned prefix so a schema change automatically invalidates old signatures. */
 const HMAC_CONTEXT = "telegraph-broadcast-v1";
 
@@ -204,6 +208,44 @@ export function initTelegraphBroadcast(): void {
     },
   );
 
+  // ── Receive remote terminate signals ────────────────────────────────────────
+  // Mirror of the publish receive handler, but calls terminateUserConnectionsLocal
+  // instead of publishToUsersLocal, so revocations issued on other instances
+  // immediately close matching connections here without re-broadcasting.
+
+  channel.on(
+    "broadcast",
+    { event: TERMINATE_EVENT },
+    ({ payload }: { payload: BroadcastPayload }) => {
+      if (
+        !payload ||
+        typeof payload.sourceInstanceId !== "string" ||
+        !Array.isArray(payload.userIds) ||
+        typeof payload.event !== "object" ||
+        payload.event === null ||
+        typeof payload.sig !== "string"
+      ) {
+        logger.warn("telegraphBroadcast: malformed terminate payload — rejected");
+        return;
+      }
+      if (payload.sourceInstanceId === INSTANCE_ID) return;
+      if (!verifySignature(payload, secret)) {
+        logger.warn(
+          { sourceInstance: payload.sourceInstanceId },
+          "telegraphBroadcast: terminate HMAC verification failed — rejected",
+        );
+        return;
+      }
+      logger.debug(
+        { sourceInstance: payload.sourceInstanceId, count: payload.userIds.length },
+        "telegraphBroadcast: received verified terminate signal",
+      );
+      for (const uid of payload.userIds) {
+        if (typeof uid === "string" && uid) terminateUserConnectionsLocal(uid);
+      }
+    },
+  );
+
   // ── Channel status ──────────────────────────────────────────────────────────
 
   channel.subscribe((status, err) => {
@@ -259,6 +301,36 @@ export function initTelegraphBroadcast(): void {
       })
       .catch((err: unknown) => {
         logger.warn({ err, type: event.type }, "telegraphBroadcast: send threw");
+      });
+  });
+
+  // ── Register the terminate hook ──────────────────────────────────────────────
+
+  // Wire terminateUserConnections() into the cross-instance channel so that
+  // revocation (e.g. after a block) reaches SSE connections on other instances.
+  setTerminateBroadcastHook((userId) => {
+    const event: TelegraphEvent = {
+      type: "access.revoked",
+      ts: new Date().toISOString(),
+    };
+    const payload: BroadcastPayload = {
+      sourceInstanceId: INSTANCE_ID,
+      userIds: [userId],
+      event,
+      sig: signPayload(INSTANCE_ID, [userId], event, secret),
+    };
+
+    channel
+      .send({ type: "broadcast", event: TERMINATE_EVENT, payload })
+      .then((result) => {
+        if (result === "rate limited") {
+          logger.warn({ userId }, "telegraphBroadcast: terminate rate limited — remote close delayed");
+        } else if (result === "timed out") {
+          logger.warn({ userId }, "telegraphBroadcast: terminate send timed out");
+        }
+      })
+      .catch((err: unknown) => {
+        logger.warn({ err, userId }, "telegraphBroadcast: terminate send threw");
       });
   });
 }

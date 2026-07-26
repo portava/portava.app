@@ -41,7 +41,11 @@ export type TelegraphEventType =
   | 'call.group_ended'
   | 'call.room_updated'
   | 'call.role_changed'
-  | 'call.removed_from_room';
+  | 'call.removed_from_room'
+  /** Server closed this connection because access was revoked (e.g. after a block). Client should reconnect with a fresh token. */
+  | 'access.revoked'
+  /** Server closed this connection to force re-authentication (max lifetime reached). Client should reconnect immediately. */
+  | 'reconnect';
 
 export interface TelegraphEvent {
   type: TelegraphEventType;
@@ -208,12 +212,50 @@ class TelegraphRealtime {
     try {
       const evt = JSON.parse(dataLine) as TelegraphEvent;
       if (!evt || typeof evt.type !== 'string') return;
+
+      // Control events: dispatch to listeners first so consumers can react
+      // (e.g. clear cached user data after access.revoked), then reconnect
+      // immediately with a fresh token rather than entering the normal failure
+      // backoff path.
+      if (evt.type === 'access.revoked' || evt.type === 'reconnect') {
+        for (const l of this.eventListeners) {
+          try { l(evt); } catch { /* isolate consumer errors */ }
+        }
+        this.immediateReconnect();
+        return;
+      }
+
       for (const l of this.eventListeners) {
         try { l(evt); } catch { /* isolate consumer errors */ }
       }
     } catch {
       // Ignore the `connected` handshake and any malformed frame.
     }
+  }
+
+  /**
+   * Reconnect immediately after a server-initiated close (access.revoked or
+   * max-age reconnect signal).  Resets the failure counter so the connection
+   * is not mis-classified as a persistent failure, and bypasses the backoff
+   * timer so the fresh auth token is sent without delay.
+   */
+  private immediateReconnect() {
+    if (this.xhr) {
+      try { this.xhr.abort(); } catch { /* noop */ }
+      this.xhr = null;
+    }
+    if (this.stopped) return;
+    // Reset failure tracking — this was a clean server-side close, not a fault.
+    this.failureCount = 0;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    // Small delay to let the server fully flush before we reconnect.
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.connect();
+    }, 100);
   }
 
   private handleDisconnect() {
