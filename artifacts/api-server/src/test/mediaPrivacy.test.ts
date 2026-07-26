@@ -1285,6 +1285,74 @@ describe("GET /api/media/feed — auth + eligibility integration", () => {
       "geo-restricted 'US,CA' post must appear for a US viewer — both SQL and in-memory filters should allow it",
     );
   });
+
+  it("private post media URLs use the relay path — never raw CDN — when served over the wire", async () => {
+    // Wire a state where VIEWER follows AUTHOR so the following feed returns
+    // both the public post (visibility='public') and the private post
+    // (visibility='private') from the same creator.
+    const state = baseState();
+    state.userFollows = [{ follower_id: VIEWER_ID, following_id: AUTHOR_ID }];
+    _setTestClient(makeClient(state) as any, true);
+
+    const res = await request(
+      "GET",
+      "/api/media/feed?mode=fullscreen&feedType=following",
+      { token: TOKEN },
+    );
+    assert.equal(res.status, 200, `expected 200 got ${res.status}: ${JSON.stringify(res.body)}`);
+
+    const items: any[] = res.body.items ?? [];
+    const privatePost = items.find((i: any) => i.id === POST_PRIVATE_ID);
+    assert.ok(
+      privatePost,
+      "private post from followed creator should appear in the following feed",
+    );
+
+    // Every media item on a private post must be served through the relay.
+    const privateMedia: any[] = privatePost.media ?? [];
+    assert.ok(privateMedia.length > 0, "private post should have at least one media item");
+    for (const m of privateMedia) {
+      assert.ok(
+        typeof m.url === "string" && m.url.startsWith("/api/media/file/"),
+        `private post media URL must start with /api/media/file/, got: ${m.url}`,
+      );
+      assert.ok(
+        !m.url.startsWith("https://"),
+        `private post media URL must NOT be a direct public URL, got: ${m.url}`,
+      );
+    }
+  });
+
+  it("public post media URLs do NOT use the relay — direct CDN URL is served", async () => {
+    // The for_you feed returns the public post directly. Its media URL should be
+    // the stored public_url (direct CDN), not the relay path.
+    const res = await request(
+      "GET",
+      "/api/media/feed?mode=fullscreen&feedType=for_you",
+      { token: TOKEN },
+    );
+    assert.equal(res.status, 200, `expected 200 got ${res.status}: ${JSON.stringify(res.body)}`);
+
+    const items: any[] = res.body.items ?? [];
+    const publicPost = items.find((i: any) => i.id === POST_PUBLIC_ID);
+    assert.ok(
+      publicPost,
+      "public post should appear in the for_you feed",
+    );
+
+    const publicMedia: any[] = publicPost.media ?? [];
+    assert.ok(publicMedia.length > 0, "public post should have at least one media item");
+    for (const m of publicMedia) {
+      assert.ok(
+        typeof m.url === "string" && !m.url.startsWith("/api/media/file/"),
+        `public post media URL must NOT use relay path, got: ${m.url}`,
+      );
+      assert.ok(
+        m.url.startsWith("https://"),
+        `public post media URL must be a direct HTTPS URL, got: ${m.url}`,
+      );
+    }
+  });
 });
 
 // ── RLS policy tests (unit-level — simulates policy USING-clause logic) ────────

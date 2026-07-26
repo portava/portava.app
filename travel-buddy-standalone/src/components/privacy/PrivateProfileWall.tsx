@@ -28,6 +28,12 @@ interface Props {
   onRequestSent?: () => void;
 }
 
+/** First character of displayName, falling back to handle, uppercased. */
+function getInitial(displayName: string | null, handle: string | null): string {
+  const primary = displayName ?? handle ?? '?';
+  return primary.charAt(0).toUpperCase();
+}
+
 export function PrivateProfileWall({
   profile,
   friendRequestPending = false,
