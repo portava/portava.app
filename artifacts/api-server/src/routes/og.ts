@@ -6,6 +6,18 @@
  * Returns an HTML page whose <head> contains Open Graph and Twitter Card meta
  * tags used by link-preview scrapers (Slack, iMessage, WhatsApp, Twitter/X).
  *
+ * iMessage / WhatsApp compatibility notes
+ * ─────────────────────────────────────────
+ * • iMessage requires og:image:width + og:image:height to render the preview
+ *   card at all — without them it silently falls back to the plain URL.
+ * • WhatsApp caches the first response it receives, so private entities must
+ *   send Cache-Control: no-store so the generic card is never cached against
+ *   a URL that may later become public.
+ * • twitter:card must be "summary_large_image" (not "summary") for landscape
+ *   cover photos — otherwise Telegram and Slack show a tiny thumbnail.
+ * • og:image:secure_url is required by some Slack/iMessage parsers when the
+ *   image is served over HTTPS (which it always is in production).
+ *
  * Privacy rules
  * ─────────────
  * • Private / non-public profiles, events, trips → generic title + noindex/nofollow.
@@ -72,19 +84,59 @@ async function blocked(sc: any, userA: string, userB: string): Promise<boolean> 
 // HTML builder
 // ---------------------------------------------------------------------------
 
+/**
+ * Image layout hint.
+ *
+ * "square"  → avatar-style (400×400); twitter:card = "summary"
+ * "banner"  → landscape cover photo (1200×630); twitter:card = "summary_large_image"
+ */
+type ImageLayout = "square" | "banner";
+
 function buildOgHtml(opts: {
   title: string;
   description: string;
   url: string;
   imageUrl?: string | null;
+  imageLayout?: ImageLayout;
   noindex: boolean;
   siteName?: string;
 }): string {
-  const { title, description, url, imageUrl, noindex, siteName = "Portava" } = opts;
+  const {
+    title,
+    description,
+    url,
+    imageUrl,
+    imageLayout = "banner",
+    noindex,
+    siteName = "Portava",
+  } = opts;
+
   const robots = noindex ? "noindex, nofollow" : "index, follow";
-  const imgMeta = imageUrl
-    ? `<meta property="og:image" content="${escXml(imageUrl)}" />\n  <meta name="twitter:image" content="${escXml(imageUrl)}" />`
-    : "";
+
+  // Twitter card type depends on image shape.
+  // "summary_large_image" is needed for landscape banners (events, trips).
+  // "summary" is used for square avatars and the no-image fallback.
+  const twitterCard = imageUrl && imageLayout === "banner" ? "summary_large_image" : "summary";
+
+  // Standard expected pixel dimensions for each layout.
+  const [imgW, imgH]: [number, number] =
+    imageLayout === "square" ? [400, 400] : [1200, 630];
+
+  let imgMeta = "";
+  if (imageUrl) {
+    const isHttps = imageUrl.startsWith("https://");
+    imgMeta = [
+      `<meta property="og:image" content="${escXml(imageUrl)}" />`,
+      isHttps
+        ? `<meta property="og:image:secure_url" content="${escXml(imageUrl)}" />`
+        : "",
+      `<meta property="og:image:width" content="${imgW}" />`,
+      `<meta property="og:image:height" content="${imgH}" />`,
+      `<meta name="twitter:image" content="${escXml(imageUrl)}" />`,
+    ]
+      .filter(Boolean)
+      .join("\n  ");
+  }
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -98,7 +150,7 @@ function buildOgHtml(opts: {
   <meta property="og:description" content="${escXml(description)}" />
   <meta property="og:url" content="${escXml(url)}" />
   ${imgMeta}
-  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:card" content="${twitterCard}" />
   <meta name="twitter:title" content="${escXml(title)}" />
   <meta name="twitter:description" content="${escXml(description)}" />
 </head>
@@ -150,14 +202,24 @@ router.get("/og/:type/:id", asyncHandler(async (req, res) => {
   // Derive a stable canonical URL from the request host.
   const origin = `${req.protocol}://${req.get("host")}`;
 
-  // OG pages are briefly cacheable; preview scrapers respect Cache-Control.
-  res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
   res.type("text/html; charset=utf-8");
 
   const viewerId = await getViewerId(sc, req);
   const { title: gTitle, description: gDesc } = GENERIC[type]!;
-  const fallback = (path: string) =>
-    buildOgHtml({ title: gTitle, description: gDesc, url: `${origin}${path}`, noindex: true });
+
+  /**
+   * Fallback (private/missing) card.
+   *
+   * Cache-Control: no-store — WhatsApp and Telegram cache the first response
+   * they receive for a URL and will serve that cached card indefinitely.
+   * Using no-store ensures they re-fetch when the entity becomes public, and
+   * prevents the generic card from being stored against a URL that the entity
+   * owner may later make public.
+   */
+  const fallback = (path: string) => {
+    res.setHeader("Cache-Control", "no-store");
+    return buildOgHtml({ title: gTitle, description: gDesc, url: `${origin}${path}`, noindex: true });
+  };
 
   // ── Profile ────────────────────────────────────────────────────────────────
   if (type === "profile") {
@@ -181,6 +243,10 @@ router.get("/og/:type/:id", asyncHandler(async (req, res) => {
       return;
     }
 
+    // Public profile: brief cache so scrapers can share the same response,
+    // but short enough to pick up avatar changes.
+    res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+
     const handle = (profile as any).handle ? `@${(profile as any).handle}` : "Traveler";
     const bio = ((profile as any).bio as string | null) ?? "";
     res.send(buildOgHtml({
@@ -188,6 +254,7 @@ router.get("/og/:type/:id", asyncHandler(async (req, res) => {
       description: bio.slice(0, 200) || `Check out ${handle}'s travel passport on Portava.`,
       url: `${origin}/u/${(profile as any).handle ?? idSafe}`,
       imageUrl: (profile as any).avatar_url ?? null,
+      imageLayout: "square",
       noindex: false,
     }));
     return;
@@ -216,6 +283,8 @@ router.get("/og/:type/:id", asyncHandler(async (req, res) => {
       return;
     }
 
+    res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+
     // Public event: safe fields only — no exact venue/address/coordinates.
     const loc = [(ev as any).city, (ev as any).country].filter(Boolean).join(", ");
     const rawDesc = ((ev as any).description as string | null) ?? "";
@@ -226,6 +295,7 @@ router.get("/og/:type/:id", asyncHandler(async (req, res) => {
       description: desc,
       url: `${origin}/events/${idSafe}`,
       imageUrl: (ev as any).cover_url ?? null,
+      imageLayout: "banner",
       noindex: false,
     }));
     return;
@@ -253,6 +323,8 @@ router.get("/og/:type/:id", asyncHandler(async (req, res) => {
       return;
     }
 
+    res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+
     // Public trip: safe fields — no exact dates, hotel names, addresses, or
     // coordinates. Destination city only if the owner opted in.
     const showCity = (trip as any).show_destination_city !== false;
@@ -266,6 +338,7 @@ router.get("/og/:type/:id", asyncHandler(async (req, res) => {
       description: desc,
       url: `${origin}/trips/${idSafe}`,
       imageUrl: (trip as any).cover_url ?? null,
+      imageLayout: "banner",
       noindex: false,
     }));
     return;
