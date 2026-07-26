@@ -133,7 +133,7 @@ export function PassportHero({
   return (
     <View style={styles.card}>
       <PassportHeroBackdrop />
-      {isVerified && <View style={styles.inkStamp}><PassportInkStamp rotate={-8} /></View>}
+      {!hidePrivateFields && isVerified && <View style={styles.inkStamp}><PassportInkStamp rotate={-8} /></View>}
 
       {/* Top label */}
       <View style={styles.topRow}>
