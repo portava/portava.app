@@ -6,6 +6,7 @@ import { getPlaceLiveStatusCached } from '../../services/discovery.ts';
 import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
 import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
 import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
+import { fallbackUriFor } from '../../lib/visuals/fallbackAssets.ts';
 import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
 import { checkSaved, saveItem, unsaveItem } from '../../services/collections.ts';
 import { getSavedListIds } from '../../services/discoveryBookmarks.ts';
@@ -62,7 +63,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
   const resolved = resolveHeaderImage(_resolverCandidates, {
     entityType: 'place',
     category: place.category,
-    fallbackUrlFor: () => null,
+    fallbackUrlFor: fallbackUriFor,
   });
 
   // Live open-now pill — viewport-gated: FlatList only mounts near-viewport

@@ -10,6 +10,7 @@ import {
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
 import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
+import { fallbackUriFor } from '../../lib/visuals/fallbackAssets.ts';
 import { UserAvatarButton } from '../interaction/UserAvatarButton.tsx';
 import { followUser, unfollowUser } from '../../services/follows.ts';
 import { rsvpEvent } from '../../services/events.ts';
@@ -88,7 +89,7 @@ function PlaceImageThumbnail({ imageUrl, category, size }: {
   const resolved = resolveHeaderImage(_searchCandidates, {
     entityType: 'place',
     category,
-    fallbackUrlFor: () => null,
+    fallbackUrlFor: fallbackUriFor,
   });
   const resolvedUrl = resolved?.url ?? null;
 

@@ -27,6 +27,7 @@ import type { CanonicalPlace, PlaceStatus, NormalizedOpeningHours, PriceLevel } 
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
 import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
+import { fallbackUriFor } from '../../lib/visuals/fallbackAssets.ts';
 import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
 
 // ── Price level labels ────────────────────────────────────────────────────────
@@ -123,7 +124,7 @@ export function PlaceCard({ place }: PlaceCardProps) {
   const resolvedCanonical = resolveHeaderImage(_canonicalCandidates, {
     entityType: 'place',
     category: place.category,
-    fallbackUrlFor: () => null,
+    fallbackUrlFor: fallbackUriFor,
   });
 
   return (

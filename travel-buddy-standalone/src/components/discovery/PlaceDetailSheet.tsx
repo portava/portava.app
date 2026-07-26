@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
 import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
 import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
+import { fallbackUriFor } from '../../lib/visuals/fallbackAssets.ts';
 import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
 import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Linking,
@@ -59,7 +60,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
   const resolvedSheet = place ? resolveHeaderImage(_sheetCandidates, {
     entityType: 'place',
     category: place.category,
-    fallbackUrlFor: () => null,
+    fallbackUrlFor: fallbackUriFor,
   }) : null;
 
   useEffect(() => {

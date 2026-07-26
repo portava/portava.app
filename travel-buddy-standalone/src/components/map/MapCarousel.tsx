@@ -76,6 +76,7 @@ import type { CircleMemberLocation } from '../../services/map.ts';
 import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
 import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
 import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
+import { fallbackUriFor } from '../../lib/visuals/fallbackAssets.ts';
 import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -475,7 +476,7 @@ function PlaceCardBody({ entity }: { entity: MapEntity<DiscoveryPlace> }) {
   const resolvedCarousel = resolveHeaderImage(_carouselCandidates, {
     entityType: 'place',
     category: place.category,
-    fallbackUrlFor: () => null,
+    fallbackUrlFor: fallbackUriFor,
   });
 
   return (
