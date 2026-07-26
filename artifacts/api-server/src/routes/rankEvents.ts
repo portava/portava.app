@@ -17,9 +17,13 @@ import { getServiceClient } from "../lib/supabase";
 import { asyncHandler } from "../lib/asyncHandler";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 import { upsertDistributionStats } from "../services/ranking/DiscoveryRankingService.js";
+import { RankingEvent, OUTCOME_TO_ANALYTICS_EVENT } from "../services/ranking/rankingAnalytics.js";
 
 const router = Router();
 
+// Existing outcome values — kept for backward compatibility with clients
+// sending the legacy string values.  New outcome event types are emitted
+// as additional analytics rows using the typed RankingEvent constants.
 const OUTCOME_VALUES = ["tap", "save", "join", "rsvp", "attended"] as const;
 const SURFACE_VALUES = ["pulse", "discovery", "events"] as const;
 
@@ -98,6 +102,30 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
     outcome === "save" ? "saved"  :
     "went"; // join / rsvp / attended
   void linkOutcomeSignal(sc, user.id, item_id, stage, `route:rank_event_${outcome}`);
+
+  // Emit typed analytics event for this outcome (fire-and-forget).
+  // Maps the legacy outcome string to the new RankingEvent constant so
+  // analytics pipelines can filter by the canonical event_type name.
+  // Backward compatibility: the existing `outcome` field on the row is
+  // already updated above — this is an additive analytics insert only.
+  const analyticsEventType = OUTCOME_TO_ANALYTICS_EVENT[outcome];
+  if (analyticsEventType) {
+    void sc
+      .from("rank_events")
+      .insert({
+        event_type:  analyticsEventType,
+        item_id,
+        surface,
+        user_id:     user.id,
+        session_id:  session_id ?? null,
+        served_at:   new Date().toISOString(),
+        // Analytics sentinel — prevents impression-finding query from matching
+        outcome:     "analytics",
+      })
+      .then(() => {}, (err: unknown) => {
+        req.log.warn({ err, outcome, analyticsEventType }, "rank-events/outcome: analytics insert failed (non-fatal)");
+      });
+  }
 
   // Update content_distribution_stats for this item — fire-and-forget.
   // An outcome confirms the impression was real: increment eligible_impressions

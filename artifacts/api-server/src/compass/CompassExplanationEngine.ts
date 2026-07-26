@@ -35,6 +35,21 @@
 import { createHmac } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+// ── Explanation key constants ─────────────────────────────────────────────────
+// Use these instead of raw string literals to avoid typos and enable
+// find-all-references when changing key names.
+
+/** Item is from a new creator the viewer may find interesting nearby. */
+export const EXPLANATION_KEY_NEW_CREATOR_NEARBY       = "new_creator_nearby";
+/** Item is from a creator who recently became active again in the viewer's city. */
+export const EXPLANATION_KEY_RETURNING_CREATOR_ACTIVE = "returning_creator_active";
+/** Item is gaining organic interest in the viewer's area. */
+export const EXPLANATION_KEY_GAINING_INTEREST         = "gaining_interest";
+/** Item is useful to travelers who share the viewer's plans. */
+export const EXPLANATION_KEY_HELPFUL_TO_TRAVELERS     = "helpful_to_travelers";
+/** Item was recently updated with new content. */
+export const EXPLANATION_KEY_RECENTLY_UPDATED         = "recently_updated";
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 export const GENERIC_INELIGIBLE =
@@ -95,6 +110,17 @@ const TEMPLATES: Record<TemplateKey, string> = {
   ":fair_exposure":   "This {type} is getting a boost to help new voices reach travelers like you.",
   ":local":           "This {type} is based in {city}, just like you.",
   ":diversity_pick":  "We added this {type} to bring more variety to your feed.",
+
+  // ── New ranking-signal explanation keys ────────────────────────────────────
+  // These are standalone keys (no section:type structure) used by
+  // DiscoveryRankingService when a specific boost path selects an item.
+  // They do NOT disclose that an item is boosted for underexposure,
+  // anti-gaming, or any moderation reason.
+  "new_creator_nearby:":       "A new creator you may like",
+  "returning_creator_active:": "Recently active again in {city}",
+  "gaining_interest:":         "Gaining interest in your area",
+  "helpful_to_travelers:":     "Helpful to travelers with similar plans",
+  "recently_updated:":         "Recently updated",
 
   // ── Section-level defaults ──────────────────────────────────────────────────
   "for_you:":             "Matched to your travel style and interests.",

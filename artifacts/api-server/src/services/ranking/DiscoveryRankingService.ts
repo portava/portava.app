@@ -21,6 +21,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkItemEligibility } from "./EligibilityChecker.js";
 import { getActivityParams, getWeights, getPenalties } from "./rankingConfig.js";
+import { RankingEvent } from "./rankingAnalytics.js";
 
 // ── Surface names ─────────────────────────────────────────────────────────────
 
@@ -556,6 +557,47 @@ function calcSpamPenalty(rawSpamPenalty: number, max: number): number {
   return Math.min(max, (rawSpamPenalty / 25) * max);
 }
 
+// ── Analytics event writer ────────────────────────────────────────────────────
+
+/**
+ * Write a single ranking analytics event to rank_events asynchronously.
+ * Fire-and-forget — never throws.  Errors are logged but never propagate.
+ *
+ * Safe fields only: event_type, item_id, surface, content_type,
+ * user_id (viewer), session_id.  No score components or private PII.
+ */
+function writeRankAnalyticAsync(
+  db:           SupabaseClient | null,
+  eventType:    string,
+  itemId:       string,
+  itemType:     string,
+  surface:      SurfaceName,
+  viewerId:     string,
+  sessionId:    string | null,
+): void {
+  if (!db) return;
+  try {
+    void db
+      .from("rank_events")
+      .insert({
+        event_type:   eventType,
+        item_id:      itemId,
+        content_type: itemType,
+        surface,
+        user_id:      viewerId,
+        session_id:   sessionId ?? null,
+        served_at:    new Date().toISOString(),
+        // Analytics rows use outcome='analytics' so the impression-finding
+        // query (.eq("outcome","impression")) never accidentally matches them.
+        outcome:      "analytics",
+      })
+      .then(() => {}, (err: unknown) => {
+        // Non-fatal: analytics must never affect feed latency or correctness
+        void err;
+      });
+  } catch { /* non-fatal */ }
+}
+
 // ── Debug sample writer ───────────────────────────────────────────────────────
 
 const SAMPLE_RATE = 10; // 1-in-10
@@ -722,6 +764,13 @@ export async function rankItems(
       continue;
     }
 
+    // Analytics: item passed eligibility gate (fire-and-forget)
+    writeRankAnalyticAsync(
+      db, RankingEvent.ITEM_ELIGIBLE,
+      input.itemId, input.itemType, surface,
+      viewer.viewerId, viewer.sessionId ?? null,
+    );
+
     // Activity data for this item's creator
     const activityData = input.creatorId
       ? (activityScores.get(input.creatorId) ?? { score: 0, spam_penalty: 0 })
@@ -813,6 +862,35 @@ export async function rankItems(
     };
 
     outputs.push(output);
+
+    // Analytics: item received a final score (fire-and-forget)
+    writeRankAnalyticAsync(
+      db, RankingEvent.ITEM_SCORED,
+      input.itemId, input.itemType, surface,
+      viewer.viewerId, viewer.sessionId ?? null,
+    );
+
+    // Analytics: activity boost events (fire-and-forget)
+    if (!shadowMode && activityBoost > 0) {
+      const boostedEvent =
+        rawActivityBoost >= activityParams.maxBoost
+          ? RankingEvent.ACTIVITY_BOOST_CAPPED
+          : RankingEvent.ACTIVITY_BOOST_APPLIED;
+      writeRankAnalyticAsync(
+        db, boostedEvent,
+        input.itemId, input.itemType, surface,
+        viewer.viewerId, viewer.sessionId ?? null,
+      );
+    }
+
+    // Analytics: fatigue penalty (fire-and-forget)
+    if (fatiguePenalty > 0) {
+      writeRankAnalyticAsync(
+        db, RankingEvent.FATIGUE_PENALTY_APPLIED,
+        input.itemId, input.itemType, surface,
+        viewer.viewerId, viewer.sessionId ?? null,
+      );
+    }
 
     // Debug sample (fire-and-forget)
     if (experimentEnabled && db) {

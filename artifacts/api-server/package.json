@@ -55,7 +55,8 @@
     "test:event-privacy": "node --import tsx/esm --test src/test/eventPrivacy.test.ts",
     "test:trip-privacy": "node --import tsx/esm --test src/test/tripPrivacy.test.ts",
     "test:rls-privacy": "node --import tsx/esm --test src/test/rlsPrivacy.test.ts",
-    "test:cross-system-privacy": "node --import tsx/esm --test src/test/crossSystemPrivacy.test.ts"
+    "test:cross-system-privacy": "node --import tsx/esm --test src/test/crossSystemPrivacy.test.ts",
+    "test:ranking-explanation-analytics": "node --import tsx/esm --test src/test/ranking-explanation-analytics.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
