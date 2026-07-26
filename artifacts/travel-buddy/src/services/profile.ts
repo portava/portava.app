@@ -75,7 +75,15 @@ export interface UpdateProfileInput {
   interests?: string[];
   passportVisibility?: 'public' | 'followers_only' | 'private';
   avatarUrl?: string;
+  /** Pixel width of the uploaded avatar (from upload response). */
+  avatarImageWidth?: number | null;
+  /** Pixel height of the uploaded avatar (from upload response). */
+  avatarImageHeight?: number | null;
   coverUrl?: string;
+  /** Pixel width of the uploaded cover photo (from upload response). */
+  coverImageWidth?: number | null;
+  /** Pixel height of the uploaded cover photo (from upload response). */
+  coverImageHeight?: number | null;
   travelStyle?: string | null;
   openToMeet?: boolean;
   spokenLanguages?: string[];
@@ -157,7 +165,7 @@ export async function checkUsername(username: string): Promise<{ available: bool
 
 /* ---------- Avatar upload ---------- */
 
-export async function uploadAvatar(uri: string, mimeType = 'image/jpeg'): Promise<ProfileResult<{ url: string; path: string | null }>> {
+export async function uploadAvatar(uri: string, mimeType = 'image/jpeg'): Promise<ProfileResult<{ url: string; path: string | null; width?: number | null; height?: number | null }>> {
   if (!isSupabaseConfigured || !apiBase()) {
     return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
   }
@@ -187,7 +195,7 @@ export async function uploadAvatar(uri: string, mimeType = 'image/jpeg'): Promis
       return { ok: false, data: null, errorKind: 'upload_failed', message: (body as any)?.message ?? `Upload failed (${res.status})` };
     }
     const body = await res.json();
-    return { ok: true, data: { url: body.url, path: body.path ?? null } };
+    return { ok: true, data: { url: body.url, path: body.path ?? null, width: body.width ?? null, height: body.height ?? null } };
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'upload_failed', message: e instanceof Error ? e.message : 'Unknown' };
@@ -196,7 +204,7 @@ export async function uploadAvatar(uri: string, mimeType = 'image/jpeg'): Promis
 
 /* ---------- Cover photo upload ---------- */
 
-export async function uploadCover(uri: string, mimeType = 'image/jpeg'): Promise<ProfileResult<{ url: string; path: string | null }>> {
+export async function uploadCover(uri: string, mimeType = 'image/jpeg'): Promise<ProfileResult<{ url: string; path: string | null; width?: number | null; height?: number | null }>> {
   if (!isSupabaseConfigured || !apiBase()) {
     return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
   }
@@ -226,7 +234,7 @@ export async function uploadCover(uri: string, mimeType = 'image/jpeg'): Promise
       return { ok: false, data: null, errorKind: 'upload_failed', message: (body as any)?.message ?? `Upload failed (${res.status})` };
     }
     const body = await res.json();
-    return { ok: true, data: { url: body.url, path: body.path ?? null } };
+    return { ok: true, data: { url: body.url, path: body.path ?? null, width: body.width ?? null, height: body.height ?? null } };
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'upload_failed', message: e instanceof Error ? e.message : 'Unknown' };

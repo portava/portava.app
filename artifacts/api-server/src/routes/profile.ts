@@ -352,7 +352,11 @@ const patchProfileSchema = z.object({
   interests: z.array(z.string().max(50)).max(20).optional(),
   passportVisibility: z.enum(["public", "followers_only", "private"]).optional(),
   avatarUrl: appMediaRef.nullish(),
+  avatarImageWidth: z.number().int().positive().nullish(),
+  avatarImageHeight: z.number().int().positive().nullish(),
   coverUrl: appMediaRef.nullish(),
+  coverImageWidth: z.number().int().positive().nullish(),
+  coverImageHeight: z.number().int().positive().nullish(),
   travelStyle: z.string().max(50).nullish(),
   openToMeet: z.boolean().optional(),
   spokenLanguages: z.array(z.string().max(50)).max(20).optional(),
@@ -412,6 +416,8 @@ router.patch("/me/profile", async (req, res) => {
   if (p.interests !== undefined) row.interests = p.interests;
   if (p.passportVisibility !== undefined) row.passport_visibility = p.passportVisibility;
   if (p.avatarUrl !== undefined) row.avatar_url = p.avatarUrl;
+  if (p.avatarImageWidth  !== undefined) row.avatar_image_width  = p.avatarImageWidth;
+  if (p.avatarImageHeight !== undefined) row.avatar_image_height = p.avatarImageHeight;
   if (p.travelStyle !== undefined) row.travel_style = p.travelStyle;
   if (p.openToMeet !== undefined) row.open_to_meet = p.openToMeet;
   if (p.spokenLanguages !== undefined) row.spoken_languages = p.spokenLanguages;
@@ -426,6 +432,8 @@ router.patch("/me/profile", async (req, res) => {
   if (p.planningStyle !== undefined) row.planning_style = p.planningStyle;
   if (p.publicSocialLinks !== undefined) row.public_social_links = p.publicSocialLinks;
   if (p.coverUrl !== undefined) row.cover_photo_url = p.coverUrl;
+  if (p.coverImageWidth  !== undefined) row.cover_image_width  = p.coverImageWidth;
+  if (p.coverImageHeight !== undefined) row.cover_image_height = p.coverImageHeight;
   if (p.preferredLanguage !== undefined) {
     if (p.preferredLanguage !== null && !SUPPORTED_LANGUAGE_CODES.has(p.preferredLanguage)) {
       sendError(res, "invalid_payload", `Unsupported language code: "${p.preferredLanguage}". Supported: ${[...SUPPORTED_LANGUAGE_CODES].join(", ")}`);
@@ -823,7 +831,7 @@ router.post(
       return;
     }
 
-    res.status(201).json({ url: `${AVATAR_BUCKET}/${path}`, path });
+    res.status(201).json({ url: `${AVATAR_BUCKET}/${path}`, path, width: prepped.img.width, height: prepped.img.height });
   },
 );
 
@@ -894,7 +902,7 @@ router.post(
       return;
     }
 
-    res.status(201).json({ url: `${AVATAR_BUCKET}/${path}`, path });
+    res.status(201).json({ url: `${AVATAR_BUCKET}/${path}`, path, width: prepped.img.width, height: prepped.img.height });
   },
 );
 

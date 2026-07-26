@@ -244,7 +244,7 @@ router.get("/og/:type/:id", asyncHandler(async (req, res) => {
   if (type === "profile") {
     const { data: profile } = await sc
       .from("profiles")
-      .select("id, handle, display_name, name, bio, avatar_url, is_private, passport_visibility, account_status")
+      .select("id, handle, display_name, name, bio, avatar_url, avatar_image_width, avatar_image_height, is_private, passport_visibility, account_status")
       .or(`handle.eq.${idSafe},id.eq.${idSafe}`)
       .maybeSingle();
 
@@ -274,6 +274,8 @@ router.get("/og/:type/:id", asyncHandler(async (req, res) => {
       url: `${origin}/u/${(profile as any).handle ?? idSafe}`,
       imageUrl: (profile as any).avatar_url ?? null,
       imageLayout: "square",
+      imageWidth: (profile as any).avatar_image_width ?? null,
+      imageHeight: (profile as any).avatar_image_height ?? null,
       noindex: false,
     }));
     return;
@@ -285,7 +287,7 @@ router.get("/og/:type/:id", asyncHandler(async (req, res) => {
 
     const { data: ev } = await sc
       .from("events")
-      .select("id, title, description, city, country, visibility, host_id, state, cover_url")
+      .select("id, title, description, city, country, visibility, host_id, state, cover_url, cover_image_width, cover_image_height")
       .eq("id", idSafe)
       .maybeSingle();
 
@@ -315,6 +317,8 @@ router.get("/og/:type/:id", asyncHandler(async (req, res) => {
       url: `${origin}/events/${idSafe}`,
       imageUrl: (ev as any).cover_url ?? null,
       imageLayout: "banner",
+      imageWidth: (ev as any).cover_image_width ?? null,
+      imageHeight: (ev as any).cover_image_height ?? null,
       noindex: false,
     }));
     return;
@@ -326,7 +330,7 @@ router.get("/og/:type/:id", asyncHandler(async (req, res) => {
 
     const { data: trip } = await sc
       .from("trips")
-      .select("id, title, destination_city, destination_country, visibility, owner_id, cover_url, show_destination_city")
+      .select("id, title, destination_city, destination_country, visibility, owner_id, cover_url, cover_image_width, cover_image_height, show_destination_city")
       .eq("id", idSafe)
       .maybeSingle();
 
@@ -358,6 +362,8 @@ router.get("/og/:type/:id", asyncHandler(async (req, res) => {
       url: `${origin}/trips/${idSafe}`,
       imageUrl: (trip as any).cover_url ?? null,
       imageLayout: "banner",
+      imageWidth: (trip as any).cover_image_width ?? null,
+      imageHeight: (trip as any).cover_image_height ?? null,
       noindex: false,
     }));
     return;

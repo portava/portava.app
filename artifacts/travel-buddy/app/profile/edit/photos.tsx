@@ -125,6 +125,8 @@ export default function PhotosScreen() {
           return;
         }
         patch.avatarUrl = upRes.data!.url;
+        patch.avatarImageWidth  = upRes.data!.width  ?? undefined;
+        patch.avatarImageHeight = upRes.data!.height ?? undefined;
         uploadedAvatarPath = upRes.data!.path;
       }
 
@@ -141,6 +143,8 @@ export default function PhotosScreen() {
           return;
         }
         patch.coverUrl = upRes.data!.url;
+        patch.coverImageWidth  = upRes.data!.width  ?? undefined;
+        patch.coverImageHeight = upRes.data!.height ?? undefined;
         uploadedCoverPath = upRes.data!.path;
       }
 

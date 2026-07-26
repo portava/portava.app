@@ -41,6 +41,7 @@ export default function NewTrip() {
 
   // ── Cover photo ───────────────────────────────────────────────────────────
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [coverImageDims, setCoverImageDims] = useState<{ width: number | null; height: number | null } | null>(null);
   const [coverUploading, setCoverUploading] = useState(false);
 
   // ── Save state ────────────────────────────────────────────────────────────
@@ -88,6 +89,7 @@ export default function NewTrip() {
         return;
       }
       setCoverUrl(upload.url);
+      setCoverImageDims({ width: upload.width ?? null, height: upload.height ?? null });
     } finally {
       setCoverUploading(false);
     }
@@ -206,6 +208,8 @@ export default function NewTrip() {
         visibility: 'private',
         tripNotes: tripNotes.trim() || null,
         coverUrl: coverUrl ?? undefined,
+        coverImageWidth:  coverImageDims?.width  ?? undefined,
+        coverImageHeight: coverImageDims?.height ?? undefined,
       });
       if (!trip) { setError('Could not create the trip. Try again.'); return; }
 

@@ -23,6 +23,7 @@ Record every migration here once applied and verified against
 | `20260727_compass_live.sql` | 2026-07-21 (Phase 12 Compass Live — `compass_live_sessions` per-user live-session records: rolling JSONB context, checks/nudges counters, end-of-session summary; one active session per user via partial unique index) | table + all 11 columns confirmed via `information_schema.columns`; `live_sessions_own` policy confirmed via `pg_policy` (Management API status 201) |
 | `0156` RLS addendum (`ALTER TABLE call_moderation_actions ENABLE ROW LEVEL SECURITY`) | 2026-07-19 (Phase 7 readiness audit — original 0156 omitted RLS on the audit table) | `pg_class.relrowsecurity = true` confirmed live; no policies on purpose (service-role-only table) |
 | `20260724_reviews_photos_column.sql` | 2026-07-24 (task 2408 — adds `reviews.photos TEXT[] NOT NULL DEFAULT '{}'` so POST/PATCH /api/reviews can persist up to 3 photo URLs per review) | `column_name=photos`, `data_type=ARRAY`, `column_default='{}'::text[]` confirmed via `information_schema.columns` (Management API status 201) |
+| `20260802_image_dimensions.sql` | 2026-07-26 (adds `cover_image_width`/`cover_image_height` to `events` and `trips`; adds `avatar_image_width`/`avatar_image_height`/`cover_image_width`/`cover_image_height` to `profiles` — lets the OG route emit exact `og:image:width`/`og:image:height` tags required by iMessage for the large preview card) | all 8 columns confirmed via `information_schema.columns` (Management API returned `[]`) |
 
 ## Wizard-write-path drift audit — 2026-07-20 (task 1925)
 

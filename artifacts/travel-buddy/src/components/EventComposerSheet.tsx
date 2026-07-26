@@ -115,6 +115,8 @@ export function EventComposerSheet({ onDismiss, onCreated, initialEvent, onUpdat
     initialEvent?.coverMediaType ?? null,
   );
   const [coverLocalUri, setCoverLocalUri] = useState<string | null>(null);
+  const [coverImageWidth, setCoverImageWidth] = useState<number | null>(null);
+  const [coverImageHeight, setCoverImageHeight] = useState<number | null>(null);
   const [uploadingCover, setUploadingCover] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [coverSheetOpen, setCoverSheetOpen] = useState(false);
@@ -201,12 +203,16 @@ export function EventComposerSheet({ onDismiss, onCreated, initialEvent, onUpdat
       return;
     }
     setCoverUrl(uploadResult.url);
+    setCoverImageWidth(uploadResult.width ?? null);
+    setCoverImageHeight(uploadResult.height ?? null);
   }
 
   function handleRemoveCover() {
     setCoverUrl(null);
     setCoverMediaType(null);
     setCoverLocalUri(null);
+    setCoverImageWidth(null);
+    setCoverImageHeight(null);
     setUploadError(null);
   }
 
@@ -309,6 +315,8 @@ export function EventComposerSheet({ onDismiss, onCreated, initialEvent, onUpdat
       endsAt:       buildISODateTime(endDateStr,   endTime),
       coverUrl:     coverUrl ?? undefined,
       coverMediaType: coverMediaType ?? undefined,
+      coverImageWidth:  coverImageWidth ?? undefined,
+      coverImageHeight: coverImageHeight ?? undefined,
       category:     category.trim() || undefined,
       maxAttendees: maxAttendees ? parseInt(maxAttendees) : undefined,
       ageMin:       ageMin ? parseInt(ageMin) : undefined,

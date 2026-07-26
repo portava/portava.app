@@ -239,7 +239,7 @@ router.post("/trips", async (req, res) => {
     return;
   }
 
-  const { title, destinationCity, destinationCountry, startDate, endDate, visibility, coverUrl, coverMediaType, tripNotes, showHeaderPublicly } = req.body;
+  const { title, destinationCity, destinationCountry, startDate, endDate, visibility, coverUrl, coverMediaType, coverImageWidth, coverImageHeight, tripNotes, showHeaderPublicly } = req.body;
 
   // Date conflict check — applies even when title/city are absent (draft support)
   if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
@@ -264,6 +264,8 @@ router.post("/trips", async (req, res) => {
       visibility: visibility ?? "private",
       cover_url: coverUrl ?? null,
       cover_media_type: coverMediaType ?? null,
+      cover_image_width: (coverImageWidth as number | null | undefined) ?? null,
+      cover_image_height: (coverImageHeight as number | null | undefined) ?? null,
       trip_notes: tripNotes ?? null,
       // Public trips always show header publicly; respect client preference for private/buddies.
       show_header_publicly: typeof showHeaderPublicly === "boolean"
@@ -606,6 +608,8 @@ const PatchTripSchema = z.object({
   openToMeet:              z.boolean().optional(),
   coverUrl:                z.string().url().nullable().optional(),
   coverMediaType:          z.enum(['image', 'video']).nullable().optional(),
+  coverImageWidth:         z.number().int().positive().nullable().optional(),
+  coverImageHeight:        z.number().int().positive().nullable().optional(),
   tripNotes:               z.string().nullable().optional(),
   showOnProfile:           z.boolean().optional(),
   showInDiscovery:         z.boolean().optional(),
@@ -665,6 +669,8 @@ router.patch("/trips/:tripId", async (req, res) => {
   if (b.openToMeet             !== undefined) patch.open_to_meet             = b.openToMeet;
   if (b.coverUrl               !== undefined) patch.cover_url                = b.coverUrl;
   if (b.coverMediaType         !== undefined) patch.cover_media_type         = b.coverMediaType;
+  if (b.coverImageWidth        !== undefined) patch.cover_image_width        = b.coverImageWidth;
+  if (b.coverImageHeight       !== undefined) patch.cover_image_height       = b.coverImageHeight;
   if (b.tripNotes              !== undefined) patch.trip_notes               = b.tripNotes;
   if (b.showOnProfile          !== undefined) patch.show_on_profile          = b.showOnProfile;
   if (b.showInDiscovery        !== undefined) patch.show_in_discovery        = b.showInDiscovery;

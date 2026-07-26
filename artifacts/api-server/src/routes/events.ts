@@ -453,6 +453,8 @@ const CreateEventSchema = z.object({
   endsAt:          z.string().optional(),
   coverUrl:        z.string().url().optional().nullable(),
   coverMediaType:  z.enum(["image", "video"]).optional().nullable(),
+  coverImageWidth:  z.number().int().positive().optional().nullable(),
+  coverImageHeight: z.number().int().positive().optional().nullable(),
   maxAttendees:    z.number().int().positive().optional().nullable(),
   ageMin:          z.number().int().min(18).max(100).optional().nullable(),
   ageMax:          z.number().int().min(18).max(100).optional().nullable(),
@@ -483,6 +485,8 @@ const UpdateEventSchema = z.object({
   endsAt:          z.string().nullable().optional(),
   coverUrl:        z.string().url().nullable().optional(),
   coverMediaType:  z.enum(["image", "video"]).nullable().optional(),
+  coverImageWidth:  z.number().int().positive().nullable().optional(),
+  coverImageHeight: z.number().int().positive().nullable().optional(),
   maxAttendees:    z.number().int().positive().nullable().optional(),
   ageMin:          z.number().int().min(18).max(100).nullable().optional(),
   ageMax:          z.number().int().min(18).max(100).nullable().optional(),
@@ -566,8 +570,10 @@ router.post("/events", async (req, res) => {
       location_lng:     b.locationLng ?? null,
       starts_at:        b.startsAt ?? null,
       ends_at:          b.endsAt ?? null,
-      cover_url:        b.coverUrl ?? null,
-      cover_media_type: b.coverMediaType ?? null,
+      cover_url:         b.coverUrl ?? null,
+      cover_media_type:  b.coverMediaType ?? null,
+      cover_image_width:  b.coverImageWidth ?? null,
+      cover_image_height: b.coverImageHeight ?? null,
       max_attendees:    b.maxAttendees ?? null,
       age_min:          b.ageMin ?? null,
       age_max:          b.ageMax ?? null,
@@ -1669,8 +1675,10 @@ router.post("/events/drafts/:draftId/publish", async (req, res) => {
     location_lng:     b.locationLng ?? null,
     starts_at:        b.startsAt,
     ends_at:          b.endsAt ?? null,
-    cover_url:        b.coverUrl ?? null,
-    cover_media_type: b.coverMediaType ?? null,
+    cover_url:         b.coverUrl ?? null,
+    cover_media_type:  b.coverMediaType ?? null,
+    cover_image_width:  b.coverImageWidth ?? null,
+    cover_image_height: b.coverImageHeight ?? null,
     max_attendees:    b.maxAttendees ?? null,
     age_min:          b.ageMin ?? null,
     age_max:          b.ageMax ?? null,
@@ -2059,8 +2067,10 @@ router.patch("/events/:id", async (req, res) => {
   if (b.locationLng     !== undefined) patch.location_lng     = b.locationLng;
   if (b.startsAt        !== undefined) patch.starts_at        = b.startsAt;
   if (b.endsAt          !== undefined) patch.ends_at          = b.endsAt;
-  if (b.coverUrl        !== undefined) patch.cover_url        = b.coverUrl;
-  if (b.coverMediaType  !== undefined) patch.cover_media_type = b.coverMediaType;
+  if (b.coverUrl        !== undefined) patch.cover_url         = b.coverUrl;
+  if (b.coverMediaType  !== undefined) patch.cover_media_type  = b.coverMediaType;
+  if (b.coverImageWidth  !== undefined) patch.cover_image_width  = b.coverImageWidth;
+  if (b.coverImageHeight !== undefined) patch.cover_image_height = b.coverImageHeight;
   if (b.maxAttendees    !== undefined) patch.max_attendees    = b.maxAttendees;
   if (b.ageMin          !== undefined) patch.age_min          = b.ageMin;
   if (b.ageMax          !== undefined) patch.age_max          = b.ageMax;

@@ -168,6 +168,10 @@ export interface CreateTripInput {
   visibility?: TripVisibility;
   coverUrl?: string | null;
   coverMediaType?: 'image' | 'video' | null;
+  /** Pixel width of the cover image (stored for OG preview tags). */
+  coverImageWidth?: number | null;
+  /** Pixel height of the cover image (stored for OG preview tags). */
+  coverImageHeight?: number | null;
   tripNotes?: string | null;
   /** Whether non-members can see the trip's cover image. */
   showHeaderPublicly?: boolean;
@@ -204,6 +208,8 @@ export async function createTrip(input: CreateTripInput): Promise<TripRow | null
       visibility: input.visibility ?? 'private',
       coverUrl: input.coverUrl,
       coverMediaType: input.coverMediaType ?? null,
+      coverImageWidth: input.coverImageWidth ?? null,
+      coverImageHeight: input.coverImageHeight ?? null,
       tripNotes: input.tripNotes ?? null,
       showHeaderPublicly: input.showHeaderPublicly ?? false,
     }),
@@ -232,6 +238,8 @@ export async function updateTrip(id: string, patch: Partial<CreateTripInput & { 
   if (patch.visibility !== undefined) body.visibility = patch.visibility;
   if (patch.coverUrl !== undefined) body.coverUrl = patch.coverUrl;
   if (patch.coverMediaType !== undefined) body.coverMediaType = patch.coverMediaType;
+  if (patch.coverImageWidth !== undefined) body.coverImageWidth = patch.coverImageWidth;
+  if (patch.coverImageHeight !== undefined) body.coverImageHeight = patch.coverImageHeight;
   if (patch.tripNotes !== undefined) body.tripNotes = patch.tripNotes;
   if (patch.progress !== undefined) body.progress = patch.progress;
   if (patch.showHeaderPublicly !== undefined) body.showHeaderPublicly = patch.showHeaderPublicly;
