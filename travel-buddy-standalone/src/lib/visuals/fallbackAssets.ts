@@ -9,7 +9,7 @@
  * Slugs must exactly match the `fallbackSlug()` return values in
  * resolveHeaderImage.ts and categoryFallbackProvider.ts.
  */
-import { Image } from 'react-native';
+import { Image, Platform } from 'react-native';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const ASSET_MAP: Record<string, number> = {
@@ -36,8 +36,9 @@ const ASSET_MAP: Record<string, number> = {
 /**
  * Resolve a bundled fallback WebP URI for the given slug.
  *
- * Returns a `file://` or `asset://` URI that can be passed directly to an
- * Image `source` prop or as a URL string to DisplayMediaImage.
+ * On native: returns a `file://` or `asset://` URI via `Image.resolveAssetSource`.
+ * On web: returns a relative path string (`/assets/fallbacks/<slug>.webp`)
+ * because `resolveAssetSource` may return an empty object or throw on Expo web.
  *
  * Returns `null` only when the slug is unrecognised (should not happen if
  * `fallbackSlug()` in resolveHeaderImage.ts is kept in sync).
@@ -45,6 +46,9 @@ const ASSET_MAP: Record<string, number> = {
 export function fallbackUriFor(slug: string): string | null {
   const assetId = ASSET_MAP[slug];
   if (assetId == null) return null;
+  if (Platform.OS === 'web') {
+    return `/assets/fallbacks/${slug}.webp`;
+  }
   try {
     return Image.resolveAssetSource(assetId).uri;
   } catch {
