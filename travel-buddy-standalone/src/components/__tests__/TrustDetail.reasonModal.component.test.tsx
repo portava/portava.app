@@ -70,6 +70,16 @@ describe('TrustDetail reason modal', () => {
     mockConfirm.mockImplementation(() => deferred({}));
 
     await render(<TrustDetailScreen />);
+
+    // The screen now shows the access gate modal first. Submit a reason so
+    // the data load fires and the trust-event list renders.
+    // changeText is bare; waitFor confirms value committed before pressing.
+    fireEvent.changeText(screen.getByTestId('reason-input'), 'audit access check');
+    await waitFor(() =>
+      expect(screen.getByTestId('reason-input').props.value).toBe('audit access check'),
+    );
+    fireEvent.press(screen.getByTestId('reason-confirm-btn'));
+
     await waitFor(() => expect(screen.getByText('Confirm')).toBeTruthy());
 
     // No modal yet
@@ -105,6 +115,14 @@ describe('TrustDetail reason modal', () => {
     mockConfirm.mockImplementation(() => deferred({}));
 
     await render(<TrustDetailScreen />);
+
+    // Submit the access gate so the data load fires.
+    fireEvent.changeText(screen.getByTestId('reason-input'), 'audit access check');
+    await waitFor(() =>
+      expect(screen.getByTestId('reason-input').props.value).toBe('audit access check'),
+    );
+    fireEvent.press(screen.getByTestId('reason-confirm-btn'));
+
     await waitFor(() => expect(screen.getByText('Confirm')).toBeTruthy());
 
     // Bare press — sync setState; waitFor confirms modal appears.

@@ -555,3 +555,68 @@ export async function revokeInviteLink(tripId: string, linkId: string): Promise<
   });
   return res.ok || res.status === 204;
 }
+
+/**
+ * Request access to a private trip. The server creates a pending access
+ * request that the trip owner can approve or deny.
+ */
+export async function requestTripAccess(tripId: string): Promise<{ ok: boolean }> {
+  const token = await freshToken();
+  if (!token) return { ok: false };
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  try {
+    const res = await fetch(`${apiBase}/api/trips/${tripId}/join-request`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    return { ok: res.ok };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/**
+ * Fetch a minimal private-trip preview when the viewer does not have access.
+ * Returns null when the trip is public (full data available via getTrip) or
+ * when the endpoint is not yet implemented by the backend.
+ *
+ * The preview shape matches PrivateTripPreview from the privacy components.
+ */
+export async function fetchTripPrivatePreview(tripId: string): Promise<{
+  isPrivate: true;
+  id: string;
+  title: string | null;
+  coverImageUrl: string | null;
+  ownerDisplayName: string | null;
+  ownerHandle: string | null;
+  ownerId: string | null;
+  myJoinRequestStatus: 'pending' | null;
+} | null> {
+  try {
+    const token = await freshToken();
+    const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(`${apiBase}/api/trips/${tripId}`, { headers });
+    if (!res.ok) return null;
+    const d = await res.json();
+    if (d?.isPrivate === true || d?.locked === true) {
+      return {
+        isPrivate: true,
+        id: d.id ?? d.tripId ?? tripId,
+        title: d.title ?? null,
+        coverImageUrl: d.coverImageUrl ?? d.coverUrl ?? null,
+        ownerDisplayName: d.ownerDisplayName ?? d.owner?.displayName ?? null,
+        ownerHandle: d.ownerHandle ?? d.owner?.handle ?? null,
+        ownerId: d.ownerId ?? d.owner?.id ?? null,
+        myJoinRequestStatus: d.myJoinRequestStatus ?? d.myAccessRequestStatus ?? null,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}

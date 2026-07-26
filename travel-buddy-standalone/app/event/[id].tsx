@@ -60,6 +60,7 @@ import { getAttendeeActionSet, type EventLifecycleState } from '../../src/lib/ev
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { useStickyBarInset } from '../../src/hooks/useBottomInset';
 import { FOCUS_REFETCH_TTL_MS } from '../../src/hooks/usePosts';
+import { PrivateEventCard, type PrivateEventPreview } from '../../src/components/privacy/PrivateEventCard';
 
 const STATE_BADGE: Record<string, { label: string; bg: string; fg: string }> = {
   draft:     { label: 'Draft',          bg: color.haze, fg: color.mute },
@@ -125,6 +126,8 @@ export default function EventDetailScreen() {
   const { markFirstContent, epoch } = useScreenTiming('EventDetail');
 
   const [event, setEvent] = useState<EventDetail | null>(null);
+  /** Set when the API returns a private-event sentinel (isPrivate: true). */
+  const [privateEvent, setPrivateEvent] = useState<PrivateEventPreview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showDashboard, setShowDashboard] = useState(false);
@@ -152,16 +155,30 @@ export default function EventDetailScreen() {
     setLoading(true);
     setError(null);
     setIsLocked(false);
+    setPrivateEvent(null);
     const res = await getEvent(id as string);
-    if (!res.ok) setError(res.message ?? 'Failed to load event');
-    else if ((res.data as any)?.locked === true) {
-      // Private / invite-only event — server returned the locked sentinel.
-      setIsLocked(true);
+    if (!res.ok) {
+      setError(res.message ?? 'Failed to load event');
     } else {
-      setEvent(res.data ?? null);
-      setIsSaved(!!(res.data as any)?.isSaved);
-      // Hydrate pending-request state from backend truth on every load/refresh
-      setHasPendingRequest(res.data?.myJoinRequestStatus === 'pending');
+      const d = res.data as any;
+      if (d?.locked === true || d?.isPrivate === true) {
+        // Full private-event sentinel: minimal preview fields available.
+        setPrivateEvent({
+          isPrivate: true,
+          id: d.id ?? d.eventId ?? id,
+          title: d.title ?? null,
+          coverImageUrl: d.coverImageUrl ?? d.coverUrl ?? null,
+          hostDisplayName: d.host?.displayName ?? d.hostDisplayName ?? null,
+          hostHandle: d.host?.handle ?? d.hostHandle ?? null,
+          hostId: d.host?.id ?? d.hostId ?? null,
+          myJoinRequestStatus: d.myJoinRequestStatus === 'pending' ? 'pending' : null,
+        });
+      } else {
+        setEvent(res.data ?? null);
+        setIsSaved(!!(res.data as any)?.isSaved);
+        // Hydrate pending-request state from backend truth on every load/refresh
+        setHasPendingRequest(res.data?.myJoinRequestStatus === 'pending');
+      }
     }
     setLoading(false);
   }, [id]);
@@ -443,6 +460,23 @@ export default function EventDetailScreen() {
             </View>
           )}
         </>
+      ) : privateEvent ? (
+        /* Private / invite-only event — show minimal wall, no address/times/attendees */
+        <ScrollView contentContainerStyle={{ paddingBottom: barInset }} showsVerticalScrollIndicator={false}>
+          <View style={[styles.header, { paddingTop: insets.top + space.sm }]}>
+            <Pressable style={styles.headerBtn} onPress={() => router.back()} hitSlop={8}>
+              <ArrowLeft size={22} color={color.ink} />
+            </Pressable>
+            <Text style={styles.headerTitle} numberOfLines={1}>
+              {privateEvent.title ?? 'Private Event'}
+            </Text>
+            <View style={styles.headerRight} />
+          </View>
+          <PrivateEventCard
+            event={privateEvent}
+            onRequestSent={() => setHasPendingRequest(true)}
+          />
+        </ScrollView>
       ) : event && (event.state === 'cancelled' || event.state === 'archived') ? (
         <>
           <View style={[styles.header, { paddingTop: insets.top + space.sm }]}>

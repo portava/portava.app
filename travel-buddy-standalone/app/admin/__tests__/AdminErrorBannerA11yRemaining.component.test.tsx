@@ -14,7 +14,7 @@
  */
 
 import React from 'react';
-import { render, waitFor, screen } from '@testing-library/react-native';
+import { render, waitFor, screen, fireEvent } from '@testing-library/react-native';
 
 // ── Module mocks ─────────────────────────────────────────────────────────────
 
@@ -122,6 +122,17 @@ describe('remaining admin error banners are announced to screen readers', () => 
   it('trust detail: load-failure banner has alert role + assertive live region', async () => {
     mockFetchTrustDetail.mockRejectedValue(new Error('trust down'));
     render(<TrustDetailScreen />);
+
+    // Wait for the access gate modal to fully render before interacting with it.
+    // The screen now shows the gate first; submitting a reason fires the data
+    // load which rejects, surfacing the error banner.
+    await waitFor(() => expect(screen.getByTestId('reason-input')).toBeTruthy(), { timeout: 5000 });
+    fireEvent.changeText(screen.getByTestId('reason-input'), 'audit access check');
+    await waitFor(() =>
+      expect(screen.getByTestId('reason-input').props.value).toBe('audit access check'),
+    );
+    fireEvent.press(screen.getByTestId('reason-confirm-btn'));
+
     await waitFor(() => expect(screen.getByTestId('trust-detail-error')).toBeTruthy(), { timeout: 5000 });
     expectAlertBanner('trust-detail-error');
     expect(screen.getByText('trust down')).toBeTruthy();

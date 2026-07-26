@@ -199,26 +199,37 @@ export default function TrustDetailScreen() {
   useRequireAdmin();
   const { userId } = useLocalSearchParams<{ userId: string }>();
   const [detail, setDetail]           = useState<TrustUserDetail | null>(null);
-  const [loading, setLoading]         = useState(true);
+  // Starts false — loading is deferred until accessReason is provided.
+  const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState<string | null>(null);
   const [restrictModal, setRestrictModal] = useState(false);
   const [actioning, setActioning]     = useState<string | null>(null);
+  /**
+   * Access reason provided by the admin before loading private trust data.
+   * Null until the admin submits the access gate prompt; the data load is
+   * deferred until this is set and sent as X-Admin-Access-Reason header.
+   */
+  const [accessReason, setAccessReason] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (reason?: string) => {
     if (!userId) return;
     try {
       setError(null);
-      const d = await fetchUserTrustDetail(userId);
+      const d = await fetchUserTrustDetail(userId, reason);
       setDetail(d);
     } catch (e: any) {
       setError(e?.message ?? 'Failed to load trust detail');
     }
   }, [userId]);
 
+  // Data load is gated behind the access reason prompt. Only fires once the
+  // admin has entered a reason; subsequent calls (reload after actions) reuse
+  // the stored reason so the prompt is not shown again in the same session.
   useEffect(() => {
+    if (!accessReason) return;
     setLoading(true);
-    load().finally(() => setLoading(false));
-  }, [load]);
+    load(accessReason).finally(() => setLoading(false));
+  }, [load, accessReason]);
 
   // Cross-platform reason prompt (Alert.prompt is iOS-only — a silent no-op
   // on Android/web), backed by a modal with a TextInput.
@@ -295,6 +306,24 @@ export default function TrustDetailScreen() {
     }
   };
 
+  // Access gate — shown before any private trust data is loaded.
+  // The early return here guarantees `accessReason` is non-null for all code below.
+  if (!accessReason) {
+    return (
+      <View style={s.container}>
+        <ReasonPromptModal
+          visible
+          title="Enter access reason"
+          message="Provide a reason for accessing this user's private trust profile. This is logged for the admin audit trail."
+          placeholder="Reason for access…"
+          confirmLabel="Access record"
+          onCancel={() => router.back()}
+          onSubmit={(reason) => setAccessReason(reason)}
+        />
+      </View>
+    );
+  }
+
   if (loading) {
     return <View style={s.centered}><ActivityIndicator size="large" color="#3B82F6" /></View>;
   }
@@ -308,7 +337,7 @@ export default function TrustDetailScreen() {
         accessibilityLiveRegion="assertive"
       >
         <Text style={s.errorText}>{error ?? 'Not found'}</Text>
-        <TouchableOpacity style={s.retryBtn} onPress={() => { setLoading(true); load().finally(() => setLoading(false)); }}>
+        <TouchableOpacity style={s.retryBtn} onPress={() => { setLoading(true); load(accessReason).finally(() => setLoading(false)); }}>
           <Text style={s.retryText}>Retry</Text>
         </TouchableOpacity>
       </View>
@@ -452,6 +481,7 @@ export default function TrustDetailScreen() {
         onApplied={load}
       />
 
+      {/* Action-level reason prompts (confirm/dismiss events, lift caps/restrictions) */}
       <ReasonPromptModal
         visible={reasonPrompt != null}
         title={reasonPrompt?.title ?? ''}
@@ -459,6 +489,7 @@ export default function TrustDetailScreen() {
         onCancel={() => { reasonPrompt?.resolve(null); setReasonPrompt(null); }}
         onSubmit={(value) => { reasonPrompt?.resolve(value); setReasonPrompt(null); }}
       />
+
     </>
   );
 }

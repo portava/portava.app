@@ -122,8 +122,15 @@ export async function fetchReviews(opts?: {
 
 // ── User trust detail ──────────────────────────────────────────────────────────
 
-export async function fetchUserTrustDetail(userId: string): Promise<TrustUserDetail> {
-  const res = await authedFetch(trustUrl('users', userId));
+/**
+ * @param userId       Target user's ID.
+ * @param accessReason Reason string sent as `X-Admin-Access-Reason` header.
+ *                     Required for audit logging; omit only in automated tests.
+ */
+export async function fetchUserTrustDetail(userId: string, accessReason?: string): Promise<TrustUserDetail> {
+  const res = await authedFetch(trustUrl('users', userId), {
+    headers: accessReason ? { 'X-Admin-Access-Reason': accessReason } : {},
+  });
   if (!res.ok) throw new Error(`fetchUserTrustDetail failed: ${res.status}`);
   return res.json();
 }

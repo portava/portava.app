@@ -15,7 +15,7 @@ import {
 import type { LucideIcon } from 'lucide-react-native';
 import { usePublicPassport } from '../../src/hooks/usePublicPassport';
 import { useFollow } from '../../src/hooks/useFollow';
-import { PrivateRequestButton } from '../../src/components/ui/PrivateRequestButton';
+import { PrivateProfileWall, type PrivateProfilePreview } from '../../src/components/privacy/PrivateProfileWall';
 import { useHighlightRingState, viewedHighlightIds } from '../../src/hooks/useHighlightRingState';
 import { useFriendStatus } from '../../src/hooks/useFriends';
 import { useMessagePermission } from '../../src/hooks/useMessaging';
@@ -805,55 +805,25 @@ function PublicPassportScreenNative() {
     }
 
     if (isPrivate && !isFriend) {
-      // Build a minimal profile shell from the sentinel preview data so the
-      // locked header can render an avatar, display name, and @handle.
-      const minimalPrivateProfile: PublicProfile = {
-        id: previewProfile?.id ?? (privateProfileId ?? social?.id ?? ''),
-        username: previewProfile?.handle ?? username ?? null,
+      // Build the minimal safe preview from the private sentinel fields.
+      // bio, homeCity, homeCountry, interests, stats and tabs are intentionally
+      // absent — they are not part of PrivateProfilePreview and must not appear
+      // in the DOM even as null props on PassportHero.
+      const wallProfile: PrivateProfilePreview = {
+        id: previewProfile?.id ?? privateProfileId ?? social?.id ?? '',
+        handle: previewProfile?.handle ?? username ?? null,
         displayName: previewProfile?.displayName ?? null,
-        bio: null,
         avatarUrl: previewProfile?.avatarUrl ?? null,
-        homeCity: null,
-        homeCountry: null,
-        travelStyle: null,
-        interests: [],
-        verified: false,
-        verificationStatus: 'unverified',
-        verifiedAt: null,
-        passportVisibility: 'private',
-        createdAt: null,
       };
       return (
         <View style={{ flex: 1 }}>
           {navHeader}
           <ScrollView showsVerticalScrollIndicator={false}>
-            <PassportHero
-              profile={minimalPrivateProfile}
-              isOwner={false}
-              isPrivateView
-              isFollowing={follow.isFollowing}
-              followLoading={follow.loading || follow.toggling}
-              onFollowPress={!isOwn ? follow.toggle : undefined}
+            <PrivateProfileWall
+              profile={wallProfile}
+              friendRequestPending={friendRequestPending}
+              isOwnProfile={isOwn}
             />
-            <View style={styles.center}>
-              <Text style={styles.stateIcon}>🔒</Text>
-              <Text style={styles.stateTitle}>This Passport is private</Text>
-              <Text style={styles.stateSub}>
-                {friendRequestPending
-                  ? 'Your request is pending. The owner must accept before you can view their Passport.'
-                  : 'Send a friend request to view this Passport.'}
-              </Text>
-              {/* Show request CTA for non-own profiles.
-                  privateProfileId is set from the sentinel; social?.id is a fallback
-                  that resolves once the social load completes. */}
-              {!isOwn && (privateProfileId ?? social?.id) && (
-                <PrivateRequestButton
-                  userId={(privateProfileId ?? social?.id)!}
-                  initialPending={friendRequestPending}
-                  style={styles.privateWallBtn}
-                />
-              )}
-            </View>
           </ScrollView>
         </View>
       );
