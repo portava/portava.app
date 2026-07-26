@@ -7,7 +7,10 @@ import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
 import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Linking,
 } from 'react-native';
-import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star, ListPlus } from 'lucide-react-native';
+import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star, ListPlus, Sparkles } from 'lucide-react-native';
+import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';
+import { useSession } from '../../context/SessionContext.tsx';
+import { GenerateHeaderSheet } from '../events/GenerateHeaderSheet.tsx';
 import type { DiscoveryPlace, PlaceLiveStatus } from '../../services/discovery.ts';
 import { getPlaceLiveStatus } from '../../services/discovery.ts';
 import { checkSaved, toggleSave } from '../../services/collections.ts';
@@ -38,23 +41,39 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
   const [saved, setSaved]               = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [liveStatus, setLiveStatus]     = useState<PlaceLiveStatus | null>(null);
+  const [generateSheetVisible, setGenerateSheetVisible] = useState(false);
+  // Local override applied when an AI header is accepted — so the image updates
+  // immediately without needing to refetch the parent data.
+  const [localAiHeaderUrl, setLocalAiHeaderUrl] = useState<string | null>(null);
+
+  // Feature flag + role guard for the "Generate header image" admin action.
+  const { isEnabled } = useFeatureFlags();
+  const { role } = useSession();
+  const canGenerateHeader = isEnabled('ai_place_headers_enabled') && role === 'admin';
 
   // User location — used to compute distance when place.distanceKm is absent.
   const { resolvedLocation } = useLocationContext();
-  const isAiHeader = place?.headerImageSource === 'ai_generated';
-  const fsqPassthrough = isAiHeader ? undefined : (place?.headerImageUrl ?? undefined);
+  const effectiveHeaderUrl = localAiHeaderUrl ?? place?.headerImageUrl ?? null;
+  const effectiveHeaderSource = localAiHeaderUrl ? 'ai_generated' : (place?.headerImageSource ?? null);
+  const isAiHeader = effectiveHeaderSource === 'ai_generated';
+  const fsqPassthrough = isAiHeader ? undefined : (effectiveHeaderUrl ?? undefined);
   const photoUrl = useFsqPhoto(place?.name ?? '', place?.lat, place?.lng, fsqPassthrough);
+
+  // Reset local override when a different place is shown.
+  useEffect(() => {
+    setLocalAiHeaderUrl(null);
+  }, [place?.id]);
 
   // Build candidates with real source metadata so the resolver can set
   // isRepresentation correctly for the AI disclosure label.
   const _sheetCandidates: HeaderCandidate[] = [];
-  if (place?.headerImageUrl) {
+  if (effectiveHeaderUrl) {
     _sheetCandidates.push({
-      url: place.headerImageUrl,
-      source: (place.headerImageSource as HeaderCandidate['source']) ?? 'provider',
+      url: effectiveHeaderUrl,
+      source: (effectiveHeaderSource as HeaderCandidate['source']) ?? 'provider',
     });
   }
-  if (photoUrl && photoUrl !== place?.headerImageUrl) {
+  if (photoUrl && photoUrl !== effectiveHeaderUrl) {
     _sheetCandidates.push({ url: photoUrl, source: 'provider' });
   }
   const resolvedSheet = place ? resolveHeaderImage(_sheetCandidates, {
@@ -334,6 +353,18 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
           </Text>
         </ScrollView>
 
+        {/* Admin: generate AI header image */}
+        {canGenerateHeader && (
+          <Pressable
+            style={styles.generateHeaderBtn}
+            onPress={() => setGenerateSheetVisible(true)}
+            testID="place-sheet-generate-header-btn"
+          >
+            <Sparkles size={15} color={color.signal} />
+            <Text style={styles.generateHeaderText}>Generate header image</Text>
+          </Pressable>
+        )}
+
         {/* Footer actions */}
         <View style={styles.footer}>
           <Pressable style={styles.dirBtn} onPress={openDirections}>
@@ -360,6 +391,19 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
         onClose={() => setPickerVisible(false)}
         onSaved={() => setPickerVisible(false)}
       />
+
+      {canGenerateHeader && (
+        <GenerateHeaderSheet
+          visible={generateSheetVisible}
+          entityType="place"
+          entityId={place.id}
+          onDismiss={() => setGenerateSheetVisible(false)}
+          onAccepted={(url) => {
+            setLocalAiHeaderUrl(url);
+            setGenerateSheetVisible(false);
+          }}
+        />
+      )}
     </Modal>
   );
 }
@@ -586,6 +630,25 @@ const styles = StyleSheet.create({
     fontSize: 10,
     textAlign: 'center',
     marginTop: space.md,
+  },
+  generateHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.sm,
+    marginHorizontal: space.lg,
+    marginBottom: space.sm,
+    paddingVertical: space.sm + 2,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: color.signal + '55',
+    backgroundColor: color.signal + '0D',
+  },
+  generateHeaderText: {
+    ...t.small,
+    color: color.signal,
+    fontWeight: '600',
+    fontSize: 13,
   },
   footer: {
     flexDirection: 'row',
