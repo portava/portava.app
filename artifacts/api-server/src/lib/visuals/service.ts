@@ -18,6 +18,7 @@ import {
   promptVersionFor,
 } from "./promptBuilder.js";
 import { NEGATIVE_PROMPT } from "./promptBuilder.js";
+import { verifyPlaceImage } from "./realPlaceVerification.js";
 import { promptHash } from "./promptHash.js";
 import { coerceStyle, styleIsIllustrated } from "./styles.js";
 import { buildDerivatives, dataUrlToBuffer } from "./derivatives.js";
@@ -75,11 +76,17 @@ export interface GenerationRequest {
   preferences?: VisualPreferences;
   /** When true, skip the reuse-cache and force a fresh job (regenerate). */
   force?: boolean;
+  /**
+   * Verified reference image URLs for specific real-place generation.
+   * When the entity is a specific named real place, these are required —
+   * without them, generation is skipped and a fallback image is served instead.
+   */
+  referenceImageUrls?: string[];
 }
 
 export interface GenerationOutcome {
   ok: boolean;
-  status: "queued" | "ready" | "blocked" | "rate_limited" | "disabled" | "error";
+  status: "queued" | "ready" | "blocked" | "rate_limited" | "disabled" | "error" | "no_reference_fallback";
   visualId?: string;
   error?: string;
 }
@@ -103,15 +110,28 @@ export function buildSnapshot(
   row: Record<string, any>,
   style: string,
   prefs?: VisualPreferences,
+  referenceImageUrls?: string[],
 ): VisualInputSnapshot {
   const s = coerceStyle(style);
+
+  // Determine whether this is a specific named real-world place (not a generic content card).
+  // A place is "specific" when it has a canonical_place_id, a provider_place_id, or both
+  // a name and city that together uniquely identify a real-world location.
+  const canonicalPlaceId: string | null = row.canonical_place_id ?? null;
+  const providerPlaceId: string | null = row.provider_place_id ?? null;
+  const name = cleanText(row.title ?? row.name);
+  const city = cleanText(row.city);
+  const isSpecificRealPlace: boolean =
+    entityType === "place" &&
+    !!(canonicalPlaceId || providerPlaceId || (name && city));
+
   return {
     entityType,
     purpose,
-    title: cleanText(row.title ?? row.name),
+    title: name,
     category: cleanEnum(row.category ?? row.primary_category),
     subcategory: cleanEnum(row.subcategory),
-    city: cleanText(row.city),
+    city,
     neighborhood: cleanText(row.neighborhood),
     country: cleanText(row.country),
     description: cleanText(row.description, 400),
@@ -125,6 +145,10 @@ export function buildSnapshot(
     renderMode: prefs?.renderMode ?? (styleIsIllustrated(s) ? "illustrated" : "realistic"),
     people: prefs?.people ?? "auto",
     promptVersion: promptVersionFor(purpose),
+    isSpecificRealPlace,
+    referenceImageUrls: referenceImageUrls && referenceImageUrls.length > 0 ? referenceImageUrls : null,
+    canonicalPlaceId,
+    providerPlaceId,
   };
 }
 
@@ -189,8 +213,27 @@ export async function requestGeneration(req: GenerationRequest): Promise<Generat
   const row = await loadEntity(sc, req.entityType, req.entityId);
   if (!row) return { ok: false, status: "error", error: "entity_not_found" };
 
-  const snapshot = buildSnapshot(req.entityType, req.purpose, row, req.style ?? "portava_editorial", req.preferences);
+  const snapshot = buildSnapshot(req.entityType, req.purpose, row, req.style ?? "portava_editorial", req.preferences, req.referenceImageUrls);
+
+  // No-reference fallback: specific real places cannot be generated text-only.
+  // Skip the provider entirely and tell the caller to serve a category/map fallback.
+  if (snapshot.isSpecificRealPlace && !snapshot.referenceImageUrls?.length) {
+    emitVisualEvent("visual_generation_no_reference", {
+      entity_type: req.entityType,
+      entity_id:   req.entityId,
+      purpose:     req.purpose,
+      style:       snapshot.style,
+      status:      "no_reference_fallback",
+    });
+    return { ok: false, status: "no_reference_fallback", error: "specific_place_requires_reference_images" };
+  }
+
   const finalPrompt = buildPrompt(snapshot);
+  // buildPrompt returns null when generation is blocked (should not reach here after
+  // the isSpecificRealPlace guard above, but defend anyway).
+  if (finalPrompt === null) {
+    return { ok: false, status: "no_reference_fallback", error: "prompt_generation_blocked" };
+  }
   const hash = promptHash(snapshot);
 
   // Reuse: an existing active image with the same hash → no new provider charge.
@@ -291,7 +334,7 @@ export async function loadEntity(
   if (entityType === "place") {
     const { data } = await sc
       .from("discovery_places")
-      .select("id, name, category, city, country, description, header_image_url, header_image_source, header_image_updated_at")
+      .select("id, name, category, city, country, description, header_image_url, header_image_source, header_image_updated_at, canonical_place_id, provider_place_id")
       .eq("id", entityId)
       .maybeSingle();
     return data ?? null;
@@ -348,21 +391,28 @@ export async function processJob(visualId: string): Promise<void> {
   }
 
   // Category-fallback provider returns a static URL — store it directly, no derivatives.
+  // For specific real places this path is only reached when a fallback was explicitly
+  // requested; we always attach a disclaimer in that case.
   if (provider.name === "category_fallback") {
+    const snapshot: VisualInputSnapshot = job.input_snapshot ?? {};
+    const isSRP = snapshot.isSpecificRealPlace ?? false;
     await finalizeVisual(sc, job, {
       urls: { hero: result.imageDataUrl },
       provider: provider.name,
       model: result.model,
       source: "category_fallback",
       startedAt,
+      accuracyStatus: "illustrative_only",
+      disclaimerRequired: isSRP,
+      disclaimerText: isSRP ? "Representative image — not a photo of the actual location." : null,
     });
     return;
   }
 
   // Real image → build derivatives, upload, finalize.
   try {
-    const source = await imageDataToBuffer(result.imageDataUrl);
-    const derivatives = await buildDerivatives(source);
+    const rawBuffer = await imageDataToBuffer(result.imageDataUrl);
+    const derivatives = await buildDerivatives(rawBuffer);
     const urls: Record<string, string> = {};
     const paths: Record<string, string> = {};
     for (const d of derivatives) {
@@ -375,14 +425,54 @@ export async function processJob(visualId: string): Promise<void> {
       urls[d.key] = pub?.publicUrl ?? path;
       paths[d.key] = path;
     }
+
+    // Determine source type based on snapshot: reference-grounded vs generic AI.
+    const snapshot: VisualInputSnapshot = job.input_snapshot ?? {};
+    const hasRefs = (snapshot.referenceImageUrls ?? []).length > 0;
+    const aiSource = hasRefs ? "reference_grounded_ai" : "generic_ai_illustration";
+
+    // Run verification before accepting the output.
+    const heroUrlForVerification =
+      urls.hero ?? urls.master ?? urls.card ?? Object.values(urls)[0] ?? result.imageDataUrl;
+    const verification = verifyPlaceImage({
+      imageUrl: heroUrlForVerification,
+      imageSource: aiSource,
+      generatedWithAi: true,
+      referenceImageUrls: snapshot.referenceImageUrls ?? null,
+      canonicalPlaceId: snapshot.canonicalPlaceId ?? null,
+      providerPlaceId: snapshot.providerPlaceId ?? null,
+      officialName: snapshot.title ?? null,
+      city: snapshot.city ?? null,
+      currentAccuracyStatus: null,
+      isSpecificRealPlace: snapshot.isSpecificRealPlace ?? false,
+    });
+
+    if (!verification.permitted || verification.accuracyStatus === "rejected") {
+      // Verification rejected this output — store as failed, never serve.
+      await sc.from("generated_visuals").update({
+        status: "failed",
+        failure_code: "verification_rejected",
+        failure_message: verification.rejectionReason?.slice(0, 300) ?? "verification rejected",
+        accuracy_status: "rejected",
+        disclaimer_required: verification.disclaimerRequired,
+        disclaimer_text: verification.disclaimerText,
+        attempt_count: (job.attempt_count ?? 0) + 1,
+        updated_at: new Date().toISOString(),
+      }).eq("id", visualId);
+      return;
+    }
+
     await finalizeVisual(sc, job, {
       urls,
       paths,
       provider: provider.name,
       model: result.model,
       cost: result.costEstimate,
-      source: "ai_generated",
+      source: aiSource,
       startedAt,
+      accuracyStatus: verification.accuracyStatus,
+      disclaimerRequired: verification.disclaimerRequired,
+      disclaimerText: verification.disclaimerText,
     });
   } catch (err: any) {
     await sc.from("generated_visuals").update({
@@ -403,6 +493,12 @@ interface FinalizeArgs {
   cost?: number;
   source: ImageSource;
   startedAt: string;
+  /** Accuracy classification to write on the generated_visuals row. */
+  accuracyStatus?: string | null;
+  /** Whether a disclaimer must be shown alongside this image. */
+  disclaimerRequired?: boolean | null;
+  /** Disclaimer copy to display. */
+  disclaimerText?: string | null;
 }
 
 /** Mark the visual ready and apply it to the entity if priority rules still allow. */
@@ -420,6 +516,9 @@ async function finalizeVisual(sc: any, job: any, args: FinalizeArgs): Promise<vo
     storage_path: args.paths?.master ?? null,
     source_image_url: heroUrl ?? null,
     generation_cost_estimate: args.cost ?? null,
+    accuracy_status: args.accuracyStatus ?? null,
+    disclaimer_required: args.disclaimerRequired ?? null,
+    disclaimer_text: args.disclaimerText ?? null,
     generated_at: now,
     updated_at: now,
   }).eq("id", job.id);

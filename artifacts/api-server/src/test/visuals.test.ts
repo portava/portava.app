@@ -15,6 +15,7 @@ import { promptHash, canonicalSnapshot, stableStringify } from "../lib/visuals/p
 import { buildEventPrompt, buildPlacePrompt, NEGATIVE_PROMPT, promptVersionFor } from "../lib/visuals/promptBuilder.js";
 import { resolveHeaderImage, sourceRank, mayApplyGenerated } from "../lib/visuals/priority.js";
 import { fallbackSlug } from "../lib/visuals/providers/categoryFallbackProvider.js";
+import { verifyPlaceImage } from "../lib/visuals/realPlaceVerification.js";
 import type { VisualInputSnapshot } from "../lib/visuals/types.js";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
@@ -847,5 +848,515 @@ describe("visuals route — authorization", () => {
       body: JSON.stringify({ entityType: "event", entityId: EVENT_ID, purpose: "event_header" }),
     });
     assert.equal(res.status, 401);
+  });
+});
+
+// ── buildPlacePrompt: specific real-place gate ────────────────────────────────
+
+test("buildPlacePrompt returns null for a specific real place with no reference images", () => {
+  const result = buildPlacePrompt(
+    snap({
+      entityType: "place",
+      purpose: "place_header",
+      title: "Kawasan Falls",
+      city: "Cebu",
+      country: "Philippines",
+      isSpecificRealPlace: true,
+      referenceImageUrls: null,
+    }),
+  );
+  assert.equal(result, null, "text-only generation must be blocked for specific named real places");
+});
+
+test("buildPlacePrompt returns null for a specific real place with an empty reference array", () => {
+  const result = buildPlacePrompt(
+    snap({
+      entityType: "place",
+      purpose: "place_header",
+      title: "Kawasan Falls",
+      city: "Cebu",
+      isSpecificRealPlace: true,
+      referenceImageUrls: [],
+    }),
+  );
+  assert.equal(result, null, "empty reference array must also trigger the block");
+});
+
+test("buildPlacePrompt returns a reference-grounded prompt when refs are present for a specific real place", () => {
+  const result = buildPlacePrompt(
+    snap({
+      entityType: "place",
+      purpose: "place_header",
+      title: "Kawasan Falls",
+      city: "Cebu",
+      country: "Philippines",
+      isSpecificRealPlace: true,
+      referenceImageUrls: ["https://cdn.example.com/kawasan-ref1.jpg"],
+    }),
+  );
+  assert.ok(result !== null, "reference-grounded prompt must be returned when refs are present");
+  assert.match(result!, /grounded/i, "prompt must mention it is grounded in reference images");
+  assert.match(result!, /Kawasan Falls/, "prompt must include the place name");
+  assert.match(result!, /STRICT TRUTHFULNESS RULES/i, "prompt must include strict truthfulness rules");
+  assert.match(result!, /do NOT invent/i, "prompt must forbid inventing structures");
+});
+
+test("buildPlacePrompt returns a non-null creative prompt for a non-specific place", () => {
+  const result = buildPlacePrompt(
+    snap({
+      entityType: "place",
+      purpose: "place_header",
+      title: "A Restaurant",
+      city: "Manila",
+      isSpecificRealPlace: false,
+    }),
+  );
+  assert.ok(result !== null, "generic place prompt must always be returned");
+  assert.match(result!, /representation/i, "generic place prompt must say representation");
+});
+
+test("buildPlacePrompt reference-grounded prompt includes ref count", () => {
+  const result = buildPlacePrompt(
+    snap({
+      entityType: "place",
+      purpose: "place_header",
+      title: "Machu Picchu",
+      city: "Cusco",
+      country: "Peru",
+      isSpecificRealPlace: true,
+      referenceImageUrls: [
+        "https://cdn.example.com/mp-ref1.jpg",
+        "https://cdn.example.com/mp-ref2.jpg",
+      ],
+    }),
+  );
+  assert.ok(result !== null);
+  assert.match(result!, /2 verified reference images/, "prompt must state the reference count");
+});
+
+// ── verifyPlaceImage: eight-question verdict ──────────────────────────────────
+
+test("verifyPlaceImage: official source for a specific place → permitted, no disclaimer", () => {
+  const result = verifyPlaceImage({
+    imageUrl: "https://cdn.example.com/official.jpg",
+    imageSource: "official",
+    generatedWithAi: false,
+    isSpecificRealPlace: true,
+    canonicalPlaceId: "place-001",
+  });
+  assert.equal(result.permitted, true);
+  assert.equal(result.isSpecificRealPlace, true);
+  assert.equal(result.hasVerifiedRealImage, true);
+  assert.equal(result.sourcePermitted, true);
+  assert.equal(result.matchesCanonicalPlace, true);
+  assert.equal(result.generatedWithAi, false);
+  assert.equal(result.usedVerifiedReferences, false);
+  assert.equal(result.characteristicsPreserved, true);
+  assert.equal(result.disclaimerRequired, false);
+  assert.equal(result.accuracyStatus, "verified_real");
+  assert.equal(result.disclaimerText, null);
+  assert.equal(result.rejectionReason, null);
+});
+
+test("verifyPlaceImage: generic AI for a specific place with no refs → rejected, disclaimer", () => {
+  const result = verifyPlaceImage({
+    imageUrl: "https://cdn.example.com/ai.jpg",
+    imageSource: "generic_ai_illustration",
+    generatedWithAi: true,
+    referenceImageUrls: null,
+    isSpecificRealPlace: true,
+    canonicalPlaceId: "place-001",
+  });
+  assert.equal(result.permitted, false, "text-only AI must not be permitted for a specific real place");
+  assert.equal(result.disclaimerRequired, true);
+  assert.ok(result.disclaimerText !== null);
+  assert.ok(result.rejectionReason !== null);
+  assert.equal(result.accuracyStatus, "illustrative_only");
+});
+
+test("verifyPlaceImage: reference-grounded AI with refs → permitted, disclaimer required", () => {
+  const result = verifyPlaceImage({
+    imageUrl: "https://cdn.example.com/ai-ref.jpg",
+    imageSource: "reference_grounded_ai",
+    generatedWithAi: true,
+    referenceImageUrls: ["https://cdn.example.com/ref1.jpg"],
+    isSpecificRealPlace: true,
+    canonicalPlaceId: "place-001",
+  });
+  assert.equal(result.permitted, true);
+  assert.equal(result.usedVerifiedReferences, true);
+  assert.equal(result.characteristicsPreserved, true);
+  assert.equal(result.disclaimerRequired, true, "reference-grounded AI still needs a disclaimer for specific places");
+  assert.ok(result.disclaimerText !== null);
+  assert.equal(result.accuracyStatus, "reference_grounded");
+  assert.equal(result.rejectionReason, null);
+});
+
+test("verifyPlaceImage: previously rejected image → not permitted", () => {
+  const result = verifyPlaceImage({
+    imageUrl: "https://cdn.example.com/wrong.jpg",
+    imageSource: "official",
+    generatedWithAi: false,
+    isSpecificRealPlace: true,
+    canonicalPlaceId: "place-001",
+    currentAccuracyStatus: "rejected",
+  });
+  assert.equal(result.permitted, false);
+  assert.equal(result.matchesCanonicalPlace, false);
+  assert.equal(result.accuracyStatus, "rejected");
+});
+
+test("verifyPlaceImage: non-specific place with generic AI → permitted, no disclaimer", () => {
+  const result = verifyPlaceImage({
+    imageUrl: "https://cdn.example.com/ai.jpg",
+    imageSource: "generic_ai_illustration",
+    generatedWithAi: true,
+    isSpecificRealPlace: false,
+  });
+  assert.equal(result.permitted, true, "generic AI is permitted for non-specific places");
+  assert.equal(result.disclaimerRequired, false, "disclaimer not required for non-specific places");
+  assert.equal(result.rejectionReason, null);
+});
+
+test("verifyPlaceImage: category_fallback for a specific place → permitted with disclaimer", () => {
+  const result = verifyPlaceImage({
+    imageUrl: "https://cdn.example.com/fallback.webp",
+    imageSource: "category_fallback",
+    generatedWithAi: false,
+    isSpecificRealPlace: true,
+  });
+  assert.equal(result.permitted, true);
+  assert.equal(result.disclaimerRequired, true);
+  assert.ok(result.disclaimerText?.includes("Representative image"));
+  assert.equal(result.accuracyStatus, "illustrative_only");
+});
+
+// ── sourceRank: nine canonical types in correct spec order ───────────────────
+
+test("sourceRank: nine canonical types are in strict spec order", () => {
+  const order: Array<Parameters<typeof sourceRank>[0]> = [
+    "official",
+    "trusted_provider",
+    "tourism_authority",
+    "verified_owner",
+    "verified_user_photo",
+    "reference_grounded_ai",
+    "generic_ai_illustration",
+    "category_fallback",
+    "map_fallback",
+  ];
+  for (let i = 0; i < order.length - 1; i++) {
+    assert.ok(
+      sourceRank(order[i]) > sourceRank(order[i + 1]),
+      `${order[i]} (${sourceRank(order[i])}) must outrank ${order[i + 1]} (${sourceRank(order[i + 1])})`,
+    );
+  }
+});
+
+test("sourceRank: legacy user_upload beats official (highest priority)", () => {
+  assert.ok(sourceRank("user_upload") > sourceRank("official"));
+});
+
+test("sourceRank: legacy provider ranks at same tier as trusted_provider", () => {
+  assert.equal(sourceRank("provider"), sourceRank("trusted_provider"));
+});
+
+test("sourceRank: legacy ai_generated ranks at same tier as reference_grounded_ai", () => {
+  assert.equal(sourceRank("ai_generated"), sourceRank("reference_grounded_ai"));
+});
+
+// ── resolveHeaderImage: disclaimer logic and canonical ID guard ──────────────
+
+test("resolveHeaderImage sets disclaimerRequired for sub-verified_user_photo source on specific real place", () => {
+  const r = resolveHeaderImage(
+    [{ url: "https://cdn.example.com/ai.webp", source: "generic_ai_illustration" }],
+    { entityType: "place", isSpecificRealPlace: true },
+  );
+  assert.ok(r !== null);
+  assert.equal(r!.disclaimerRequired, true);
+  assert.ok(r!.disclaimerText !== null);
+});
+
+test("resolveHeaderImage does NOT set disclaimerRequired for verified_user_photo on specific real place", () => {
+  const r = resolveHeaderImage(
+    [{ url: "https://cdn.example.com/verified.jpg", source: "verified_user_photo" }],
+    { entityType: "place", isSpecificRealPlace: true },
+  );
+  assert.ok(r !== null);
+  assert.equal(r!.disclaimerRequired, null);
+});
+
+test("resolveHeaderImage does NOT set disclaimerRequired for official on specific real place", () => {
+  const r = resolveHeaderImage(
+    [{ url: "https://cdn.example.com/official.jpg", source: "official" }],
+    { entityType: "place", isSpecificRealPlace: true },
+  );
+  assert.ok(r !== null);
+  assert.equal(r!.disclaimerRequired, null);
+});
+
+test("resolveHeaderImage rejects candidates with mismatched canonicalPlaceId", () => {
+  const r = resolveHeaderImage(
+    [
+      { url: "https://cdn.example.com/wrong-place.jpg", source: "official", canonicalPlaceId: "place-999" },
+      { url: "https://cdn.example.com/fallback.webp", source: "category_fallback", canonicalPlaceId: null },
+    ],
+    { entityType: "place", isSpecificRealPlace: true, canonicalPlaceId: "place-001" },
+  );
+  assert.ok(r !== null, "should still resolve with the unlinked fallback");
+  // The official photo from place-999 must be excluded
+  assert.equal(r!.source, "category_fallback", "wrong-place official must be excluded; fallback wins");
+});
+
+test("resolveHeaderImage allows candidates with no canonicalPlaceId when entity has one", () => {
+  const r = resolveHeaderImage(
+    [
+      { url: "https://cdn.example.com/photo.jpg", source: "trusted_provider", canonicalPlaceId: null },
+    ],
+    { entityType: "place", isSpecificRealPlace: true, canonicalPlaceId: "place-001" },
+  );
+  assert.ok(r !== null, "candidate with no canonicalPlaceId must pass through");
+  assert.equal(r!.source, "trusted_provider");
+});
+
+test("resolveHeaderImage passes through accuracyStatus from winning candidate", () => {
+  const r = resolveHeaderImage(
+    [{ url: "https://cdn.example.com/photo.jpg", source: "official", accuracyStatus: "verified_real" }],
+    { entityType: "place" },
+  );
+  assert.equal(r?.accuracyStatus, "verified_real");
+});
+
+// ── requestGeneration: no_reference_fallback for specific real places ─────────
+
+test("requestGeneration returns no_reference_fallback for a specific real place with no ref images", async () => {
+  const PLACE_ID = "place-specific-001";
+
+  const fakeClient = {
+    from(table: string) {
+      let _eqCols: Record<string, any> = {};
+      const b: any = {
+        select()                     { return b; },
+        insert()                     { return b; },
+        update()                     { return b; },
+        eq(col: string, val: any)    { _eqCols[col] = val; return b; },
+        in()                         { return b; },
+        gte()                        { return b; },
+        limit()                      { return b; },
+        order()                      { return b; },
+        maybeSingle()                { return b.single(); },
+        async single() {
+          if (table === "feature_flags") return { data: null, error: null };
+          if (table === "generated_visuals") {
+            if (_eqCols["moderation_status"] === "entity_blocked") return { data: null, error: null };
+            return { data: null, error: null };
+          }
+          if (table === "discovery_places") {
+            // Return a place with canonical_place_id → isSpecificRealPlace = true
+            return {
+              data: {
+                id: PLACE_ID,
+                name: "Kawasan Falls",
+                category: "attraction",
+                city: "Cebu",
+                country: "Philippines",
+                description: "A beautiful tiered waterfall",
+                canonical_place_id: "canonical-place-kawasan-001",
+                provider_place_id: "fsq-12345",
+                header_image_url: null,
+                header_image_source: null,
+                header_image_updated_at: null,
+              },
+              error: null,
+            };
+          }
+          return { data: null, error: null };
+        },
+        async then(onF: any) { return onF({ data: [], error: null, count: 0 }); },
+      };
+      return b;
+    },
+    auth: { getUser: async () => ({ data: { user: null }, error: null }) },
+  };
+
+  _setTestClient(fakeClient as any, true);
+  try {
+    const outcome = await requestGeneration({
+      entityType: "place",
+      entityId: PLACE_ID,
+      purpose: "place_header",
+      ownerUserId: ALICE_ID,
+      // No referenceImageUrls — specific place without refs
+    });
+    assert.equal(outcome.ok, false, "no_reference_fallback is not ok=true");
+    assert.equal(outcome.status, "no_reference_fallback", `expected no_reference_fallback, got ${outcome.status}`);
+    assert.equal(outcome.error, "specific_place_requires_reference_images");
+  } finally {
+    _setTestClient(null as any, false);
+  }
+});
+
+test("requestGeneration returns no_reference_fallback for a place that has name+city even without canonical_place_id", async () => {
+  // Per spec: a place with name+city uniquely identifies a real-world location → it IS specific.
+  // ALL named places in a city require reference images for AI generation.
+  const NAMED_PLACE_ID = "place-named-001";
+
+  const fakeClient = {
+    from(table: string) {
+      let _eqCols: Record<string, any> = {};
+      const b: any = {
+        select()                     { return b; },
+        insert()                     { return b; },
+        update()                     { return b; },
+        eq(col: string, val: any)    { _eqCols[col] = val; return b; },
+        in()                         { return b; },
+        gte()                        { return b; },
+        limit()                      { return b; },
+        order()                      { return b; },
+        maybeSingle()                { return b.single(); },
+        async single() {
+          if (table === "feature_flags") return { data: null, error: null };
+          if (table === "generated_visuals") {
+            if (_eqCols["moderation_status"] === "entity_blocked") return { data: null, error: null };
+            return { data: null, error: null };
+          }
+          if (table === "discovery_places") {
+            // Has name + city but no canonical/provider IDs — still specific by spec
+            return {
+              data: {
+                id: NAMED_PLACE_ID,
+                name: "Harbor Catch",
+                category: "food",
+                city: "Cebu City",
+                country: "Philippines",
+                description: null,
+                canonical_place_id: null,
+                provider_place_id: null,
+                header_image_url: null,
+                header_image_source: null,
+                header_image_updated_at: null,
+              },
+              error: null,
+            };
+          }
+          return { data: null, error: null };
+        },
+        async then(onF: any) { return onF({ data: [], error: null, count: 0 }); },
+      };
+      return b;
+    },
+    auth: { getUser: async () => ({ data: { user: null }, error: null }) },
+  };
+
+  _setTestClient(fakeClient as any, true);
+  try {
+    const outcome = await requestGeneration({
+      entityType: "place",
+      entityId: NAMED_PLACE_ID,
+      purpose: "place_header",
+      ownerUserId: ALICE_ID,
+    });
+    // name + city → isSpecificRealPlace=true → no refs → no_reference_fallback
+    assert.equal(outcome.status, "no_reference_fallback",
+      "a named place in a city is a specific real place and must require reference images");
+  } finally {
+    _setTestClient(null as any, false);
+  }
+});
+
+// ── no_reference_fallback route: 200 not 500 ─────────────────────────────────
+
+describe("visuals route — no_reference_fallback returns 200 not 500", () => {
+  let url: string;
+  let close: () => Promise<void>;
+
+  const SPECIFIC_PLACE_ID = "place-specific-route-001";
+
+  function makeSpecificPlaceClient() {
+    // Alice is admin so she can generate visuals for places
+    return {
+      from(table: string) {
+        let _eqCols: Record<string, any> = {};
+        const b: any = {
+          select()                     { return b; },
+          insert()                     { return b; },
+          update()                     { return b; },
+          eq(col: string, val: any)    { _eqCols[col] = val; return b; },
+          in()                         { return b; },
+          gte()                        { return b; },
+          limit()                      { return b; },
+          order()                      { return b; },
+          maybeSingle()                { return b.single(); },
+          async single() {
+            if (table === "feature_flags") return { data: null, error: null };
+            if (table === "profiles") return { data: { id: ALICE_ID, role: "admin" }, error: null };
+            if (table === "generated_visuals") {
+              if (_eqCols["moderation_status"] === "entity_blocked") return { data: null, error: null };
+              return { data: null, error: null };
+            }
+            if (table === "discovery_places") {
+              return {
+                data: {
+                  id: SPECIFIC_PLACE_ID,
+                  name: "Kawasan Falls",
+                  category: "attraction",
+                  city: "Cebu",
+                  country: "Philippines",
+                  description: null,
+                  canonical_place_id: "canonical-kawasan-001",
+                  provider_place_id: null,
+                  header_image_url: null,
+                  header_image_source: null,
+                  header_image_updated_at: null,
+                },
+                error: null,
+              };
+            }
+            return { data: null, error: null };
+          },
+          async then(onF: any) { return onF({ data: [], error: null, count: 0 }); },
+        };
+        return b;
+      },
+      auth: {
+        getUser: async (token: string) => {
+          if (token === "alice-tok") return { data: { user: { id: ALICE_ID } }, error: null };
+          return { data: { user: null }, error: { message: "invalid token" } };
+        },
+      },
+    };
+  }
+
+  before(async () => {
+    const { default: router } = await import("../routes/visuals.js");
+    _setTestClient(makeSpecificPlaceClient() as any, true);
+    const srv = await listenRandom(makeExpressApp(router));
+    url = srv.url;
+    close = srv.close;
+  });
+  after(async () => {
+    _setTestClient(null as any, false);
+    await close();
+  });
+
+  test("POST /visuals/generate for a specific real place without refs → 200 with no_reference_fallback (not 500)", async () => {
+    const res = await fetch(`${url}/api/visuals/generate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer alice-tok",
+      },
+      body: JSON.stringify({
+        entityType: "place",
+        entityId: SPECIFIC_PLACE_ID,
+        purpose: "place_header",
+      }),
+    });
+    assert.equal(res.status, 200, `expected 200 for no_reference_fallback, got ${res.status}`);
+    const body: any = await res.json();
+    assert.equal(body.status, "no_reference_fallback");
+    assert.equal(body.disclaimerRequired, true);
+    assert.ok(body.disclaimerText, "disclaimerText must be present");
+    assert.ok(body.message, "message must explain why generation was skipped");
   });
 });

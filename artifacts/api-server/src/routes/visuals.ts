@@ -14,6 +14,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { coerceStyle } from "../lib/visuals/styles.js";
 import {
   requestGeneration,
+  categoryFallbackUrl,
   type GenerationRequest,
 } from "../lib/visuals/service.js";
 import { emitVisualEvent } from "../lib/visuals/analytics.js";
@@ -102,6 +103,21 @@ router.post(
       if (outcome.status === "rate_limited") return sendError(res, "rate_limited", outcome.error);
       if (outcome.status === "disabled") return sendError(res, "feature_disabled", outcome.error);
       if (outcome.status === "blocked") return sendError(res, "forbidden", outcome.error ?? "Visual blocked by content policy");
+      if (outcome.status === "no_reference_fallback") {
+        // Expected policy outcome for specific named real places without verified
+        // reference images. Generation is skipped; serve a category fallback instead.
+        return res.status(200).json({
+          status: "no_reference_fallback",
+          entityType,
+          entityId,
+          purpose,
+          style: request.style,
+          fallbackImageUrl: categoryFallbackUrl(entityType === "place" ? parsed.data.entityType : null, entityType),
+          disclaimerRequired: true,
+          disclaimerText: "Representative image — not a photo of the actual location.",
+          message: "Generation skipped: specific real places require verified reference images.",
+        });
+      }
       return sendError(res, "db_error", outcome.error);
     }
 
@@ -186,7 +202,7 @@ router.post(
     if (!(await canEditEntity(sc, prior.entity_type, prior.entity_id, auth.user.id))) {
       return sendError(res, "forbidden");
     }
-    const outcome = await requestGeneration({
+    const regenOutcome = await requestGeneration({
       entityType: prior.entity_type,
       entityId: prior.entity_id,
       purpose: prior.purpose,
@@ -194,13 +210,24 @@ router.post(
       style: prior.style,
       force: true,
     });
-    if (!outcome.ok) {
-      if (outcome.status === "rate_limited") return sendError(res, "rate_limited", outcome.error);
-      if (outcome.status === "blocked") return sendError(res, "forbidden", outcome.error ?? "Visual blocked by content policy");
-      return sendError(res, "db_error", outcome.error);
+    if (!regenOutcome.ok) {
+      if (regenOutcome.status === "rate_limited") return sendError(res, "rate_limited", regenOutcome.error);
+      if (regenOutcome.status === "blocked") return sendError(res, "forbidden", regenOutcome.error ?? "Visual blocked by content policy");
+      if (regenOutcome.status === "no_reference_fallback") {
+        return res.status(200).json({
+          status: "no_reference_fallback",
+          entityType: prior.entity_type,
+          entityId: prior.entity_id,
+          fallbackImageUrl: categoryFallbackUrl(null, prior.entity_type),
+          disclaimerRequired: true,
+          disclaimerText: "Representative image — not a photo of the actual location.",
+          message: "Regeneration skipped: specific real places require verified reference images.",
+        });
+      }
+      return sendError(res, "db_error", regenOutcome.error);
     }
     // The VisualGenerationWorker picks up the queued row asynchronously.
-    return res.status(202).json({ id: outcome.visualId, status: outcome.status });
+    return res.status(202).json({ id: regenOutcome.visualId, status: regenOutcome.status });
   }),
 );
 

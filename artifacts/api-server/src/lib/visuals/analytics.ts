@@ -21,7 +21,8 @@ export type VisualEventName =
   | "visual_generation_accepted"
   | "visual_generation_regenerated"
   | "visual_generation_replaced"
-  | "visual_generation_removed";
+  | "visual_generation_removed"
+  | "visual_generation_no_reference";
 
 export interface VisualEventMetadata {
   entity_type: string;

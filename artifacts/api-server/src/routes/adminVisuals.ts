@@ -375,6 +375,18 @@ router.post("/admin/visuals/:id/regenerate", asyncHandler(async (req, res) => {
     if (outcome.status === "rate_limited") return sendError(res, "rate_limited", outcome.error);
     if (outcome.status === "disabled")     return sendError(res, "feature_disabled", outcome.error);
     if (outcome.status === "blocked")      return sendError(res, "forbidden", outcome.error ?? "entity_blocked");
+    if (outcome.status === "no_reference_fallback") {
+      // Expected policy outcome for specific named real places without reference images.
+      // Return 200 — not an error — with the fallback contract for the admin client.
+      return res.json({
+        status: "no_reference_fallback",
+        entityType: existing.entity_type,
+        entityId: existing.entity_id,
+        disclaimerRequired: true,
+        disclaimerText: "Representative image — not a photo of the actual location.",
+        message: "Regeneration skipped: specific real places require verified reference images.",
+      });
+    }
     return sendError(res, "db_error", outcome.error);
   }
 

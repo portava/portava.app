@@ -104,6 +104,65 @@ export interface ImageProvenanceFields {
   replacedAt?: string | null;
 }
 
+/**
+ * Input to the real-place image verification service.
+ * Describes a candidate image and the entity it is supposed to depict.
+ */
+export interface PlaceImageVerificationInput {
+  /** The candidate image URL to evaluate. */
+  imageUrl: string;
+  /** The source type of the candidate image. */
+  imageSource: ImageSourceType;
+  /** Whether the image was produced by an AI model. */
+  generatedWithAi: boolean;
+  /** Reference image URLs that were used as input during AI generation, if any. */
+  referenceImageUrls?: string[] | null;
+  /** The canonical place ID this image is supposed to depict. */
+  canonicalPlaceId?: string | null;
+  /** The provider's own place identifier (e.g. FSQ id, Google place_id). */
+  providerPlaceId?: string | null;
+  /** The official name of the place. */
+  officialName?: string | null;
+  /** The place's city. */
+  city?: string | null;
+  /** The current accuracy status of the image, if previously assessed. */
+  currentAccuracyStatus?: ImageAccuracyStatus | null;
+  /** True when the entity is a confirmed specific named real-world location. */
+  isSpecificRealPlace: boolean;
+}
+
+/**
+ * Result from the real-place image verification service.
+ * Answers the eight spec questions for every candidate image.
+ */
+export interface PlaceImageVerificationResult {
+  /** Q1: Is this entity a specific named real-world place? */
+  isSpecificRealPlace: boolean;
+  /** Q2: Is there a verified real image of this place available? */
+  hasVerifiedRealImage: boolean;
+  /** Q3: Is the image source permitted for use (licensing, policy)? */
+  sourcePermitted: boolean;
+  /** Q4: Does this image match the canonical place being displayed? */
+  matchesCanonicalPlace: boolean;
+  /** Q5: Was AI used to produce this image? */
+  generatedWithAi: boolean;
+  /** Q6: Were verified real reference images used during AI generation? */
+  usedVerifiedReferences: boolean;
+  /** Q7: Do the defining visual characteristics of the place survive in this image? */
+  characteristicsPreserved: boolean;
+  /** Q8: Must a disclaimer be shown alongside this image? */
+  disclaimerRequired: boolean;
+
+  /** Whether this image is permitted to be served as the primary image. */
+  permitted: boolean;
+  /** The accuracy classification assigned after verification. */
+  accuracyStatus: ImageAccuracyStatus;
+  /** Disclaimer copy to display when disclaimerRequired is true. */
+  disclaimerText: string | null;
+  /** Human-readable reason when permitted is false. */
+  rejectionReason: string | null;
+}
+
 export type GenerationStatus =
   | "not_requested"
   | "queued"
@@ -153,6 +212,25 @@ export interface VisualInputSnapshot {
   renderMode: "realistic" | "illustrated";
   people: "auto" | "people" | "no_people";
   promptVersion: string;
+  /**
+   * True when the entity is a specific named real-world location (not a generic content card).
+   * Derived from the presence of canonical_place_id, provider_place_id, or a name+city combo.
+   * When true, text-only AI generation is blocked unless reference images are supplied.
+   */
+  isSpecificRealPlace?: boolean | null;
+  /**
+   * URLs of verified real reference images to ground AI generation.
+   * Only populated when the entity has confirmed real-world photos available.
+   */
+  referenceImageUrls?: string[] | null;
+  /**
+   * Canonical places.id for this entity, when it resolves to a canonical place row.
+   */
+  canonicalPlaceId?: string | null;
+  /**
+   * Provider's own place identifier (e.g. FSQ id, Google place_id).
+   */
+  providerPlaceId?: string | null;
 }
 
 export interface ImageGenerationInput {

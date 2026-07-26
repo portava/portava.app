@@ -4,6 +4,12 @@
  * Raw user text is NEVER sent as the complete provider prompt. Everything is routed
  * through a controlled template + the server-side style instruction. Shared negative
  * constraints keep output safe for UI overlay and truthful for real places.
+ *
+ * ## Specific real-place policy
+ * When `snapshot.isSpecificRealPlace` is true, text-only generation is BLOCKED.
+ * `buildPlacePrompt` returns `null` unless `snapshot.referenceImageUrls` contains
+ * at least one verified reference image URL. When references are present, the prompt
+ * is reference-grounded and follows strict truthfulness rules.
  */
 import type { VisualInputSnapshot } from "./types.js";
 import { styleInstruction, styleIsIllustrated } from "./styles.js";
@@ -67,7 +73,30 @@ export function buildEventPrompt(s: VisualInputSnapshot): string {
     .join("\n");
 }
 
-export function buildPlacePrompt(s: VisualInputSnapshot): string {
+/**
+ * Build a place prompt.
+ *
+ * Returns `null` when `snapshot.isSpecificRealPlace` is true and no reference
+ * images are available — text-only AI generation is blocked for specific named
+ * real-world places to prevent fabricated imagery.
+ *
+ * When reference images are present for a specific real place, returns a strict
+ * reference-grounded prompt that follows all spec truthfulness rules.
+ */
+export function buildPlacePrompt(s: VisualInputSnapshot): string | null {
+  const refUrls = s.referenceImageUrls ?? [];
+
+  // ── Specific real-place policy ────────────────────────────────────────────
+  if (s.isSpecificRealPlace) {
+    if (refUrls.length === 0) {
+      // Block: text-only generation is forbidden for specific named places.
+      return null;
+    }
+    // Reference-grounded prompt: strictly preserves defining characteristics.
+    return buildReferenceGroundedPlacePrompt(s, refUrls);
+  }
+
+  // ── Generic / category-based place (not a specific named real place) ──────
   const style = styleInstruction(s.style);
   const descriptor = [s.subcategory ?? s.category, s.venue].filter(Boolean).join(" ");
   const body = lines([
@@ -93,6 +122,54 @@ export function buildPlacePrompt(s: VisualInputSnapshot): string {
     .join("\n");
 }
 
+/**
+ * Build a strict reference-grounded prompt for a specific named real place.
+ *
+ * Prompt rules (spec §PROMPT RULES):
+ *   - Uses the supplied verified reference images as the visual foundation.
+ *   - Preserves exact defining characteristics visible in the references.
+ *   - Does NOT invent structures, landmarks, or features not in the references.
+ *   - Does NOT alter the location, orientation, or setting.
+ *   - Maintains photographic truthfulness throughout.
+ *   - Signals the source count so the provider knows references were supplied.
+ */
+function buildReferenceGroundedPlacePrompt(
+  s: VisualInputSnapshot,
+  referenceImageUrls: string[],
+): string {
+  const style = styleInstruction(s.style);
+  const placeName = s.title ?? s.venue ?? "this place";
+  const locationStr = [s.city, s.country].filter(Boolean).join(", ");
+  const refCount = referenceImageUrls.length;
+
+  const body = lines([
+    ["Place name", placeName],
+    ["Location", locationStr || null],
+    ["Category", [s.category, s.subcategory].filter(Boolean).join(" / ") || null],
+    ["Setting", s.setting],
+    ["Notable traits", s.traits && s.traits.length ? s.traits.join(", ") : null],
+  ]);
+
+  return [
+    `Create a premium editorial header image of ${placeName}${locationStr ? ` in ${locationStr}` : ""}.`,
+    `This image MUST be grounded in the ${refCount} verified reference image${refCount !== 1 ? "s" : ""} provided.`,
+    body,
+    "STRICT TRUTHFULNESS RULES:",
+    "- Preserve the exact defining visual characteristics shown in the reference images.",
+    "- Do NOT invent structures, landmarks, or features that are not present in the references.",
+    "- Do NOT alter the location, geographical setting, or orientation of the place.",
+    "- Do NOT replace, remove, or add major architectural or natural features.",
+    "- Maintain photographic truthfulness: this must look like the actual place.",
+    "- The output will be labelled as an AI-enhanced representation; ensure it is faithful.",
+    `Visual style: ${style}.`,
+    peopleClause(s),
+    COMPOSITION,
+    "No readable text or logos. Do not add signage that is not in the reference images.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 export function buildGenericPrompt(s: VisualInputSnapshot): string {
   const style = styleInstruction(s.style);
   const body = lines([
@@ -111,8 +188,13 @@ export function buildGenericPrompt(s: VisualInputSnapshot): string {
     .join("\n");
 }
 
-/** Dispatch by purpose. */
-export function buildPrompt(s: VisualInputSnapshot): string {
+/**
+ * Dispatch by purpose.
+ *
+ * Returns `null` when generation is blocked — callers must handle null and
+ * route to a category_fallback or map_fallback instead of calling the provider.
+ */
+export function buildPrompt(s: VisualInputSnapshot): string | null {
   switch (s.purpose) {
     case "event_header":
       return buildEventPrompt(s);
