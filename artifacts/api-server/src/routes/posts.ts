@@ -1013,16 +1013,20 @@ router.get("/posts", async (req, res) => {
 
   // Exclude posts from private-profile authors. The global feed is shown to all
   // authenticated users; private accounts' content must not surface to non-followers.
-  // (The following feed is separate and may show private-account posts to approved
-  // followers since those users explicitly chose to follow them.)
-  const privateAuthorIds: string[] = [];
+  // We check three sources so a user who set privacy via any route is covered:
+  //   1. profiles.is_private = true  (synced from privacy PATCH)
+  //   2. profiles.passport_visibility = 'private'  (separate passport toggle)
+  //   3. profile_privacy_settings.profile_visibility = 'private'  (canonical settings row)
+  const privateAuthorIdSet = new Set<string>();
   try {
-    const { data: privateProfiles } = await svc
-      .from("profiles")
-      .select("id")
-      .or("is_private.eq.true,passport_visibility.eq.private");
-    for (const p of privateProfiles ?? []) privateAuthorIds.push((p as any).id);
+    const [profRes, settingsRes] = await Promise.all([
+      svc.from("profiles").select("id").or("is_private.eq.true,passport_visibility.eq.private"),
+      svc.from("profile_privacy_settings").select("user_id").eq("profile_visibility", "private"),
+    ]);
+    for (const p of profRes.data ?? []) privateAuthorIdSet.add((p as any).id);
+    for (const p of settingsRes.data ?? []) privateAuthorIdSet.add((p as any).user_id);
   } catch { /* best-effort: feed degrades gracefully if this lookup fails */ }
+  const privateAuthorIds = [...privateAuthorIdSet];
 
   let q = svc
     .from("posts")

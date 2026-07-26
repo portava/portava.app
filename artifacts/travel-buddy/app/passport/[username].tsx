@@ -59,6 +59,9 @@ export default function PassportDeepLinkScreen() {
   const [tab, setTab] = useState<PassportTabKey>('postcards');
   const [statsIconOnly, setStatsIconOnly] = useState(false);
   const [availStatusSheetOpen, setAvailStatusSheetOpen] = useState(false);
+  // Tracks a request sent this session so the header badge can flip to "Pending"
+  // without a full data reload. Must live here — above all early returns.
+  const [requestSent, setRequestSent] = useState(false);
   const insets = useSafeAreaInsets();
   const navBarScrollHandler = useNavBarScrollHandler();
   const bottomInset = usePlainBottomInset();
@@ -183,8 +186,6 @@ export default function PassportDeepLinkScreen() {
       </View>
     );
   }
-
-  const [requestSent, setRequestSent] = useState(false);
 
   if (isPrivate && !isFriend) {
     // The passport header (avatar, name, @handle) is always public.
