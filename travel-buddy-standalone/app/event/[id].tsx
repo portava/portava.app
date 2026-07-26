@@ -142,14 +142,22 @@ export default function EventDetailScreen() {
   // when the viewer sends a request in this session.
   const [hasPendingRequest, setHasPendingRequest] = useState(false);
   const [reportSheetVisible, setReportSheetVisible] = useState(false);
+  // Set when the API returns { locked: true } — the event exists but the viewer
+  // is not authorized.  Renders a private-wall screen rather than an empty
+  // full-detail layout with undefined fields.
+  const [isLocked, setIsLocked] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
     setError(null);
+    setIsLocked(false);
     const res = await getEvent(id as string);
     if (!res.ok) setError(res.message ?? 'Failed to load event');
-    else {
+    else if ((res.data as any)?.locked === true) {
+      // Private / invite-only event — server returned the locked sentinel.
+      setIsLocked(true);
+    } else {
       setEvent(res.data ?? null);
       setIsSaved(!!(res.data as any)?.isSaved);
       // Hydrate pending-request state from backend truth on every load/refresh
@@ -389,6 +397,27 @@ export default function EventDetailScreen() {
             <View style={styles.headerRight} />
           </View>
           <View style={styles.center}><ActivityIndicator color={color.signal} /></View>
+        </>
+      ) : isLocked ? (
+        <>
+          {/* Private-wall header */}
+          <View style={[styles.header, { paddingTop: insets.top + space.sm }]}>
+            <Pressable style={styles.headerBtn} onPress={() => router.back()} hitSlop={8}>
+              <ArrowLeft size={22} color={color.ink} />
+            </Pressable>
+            <Text style={styles.headerTitle} numberOfLines={1}>Event</Text>
+            <View style={styles.headerRight} />
+          </View>
+          <View style={styles.center}>
+            <Lock size={36} color={color.mute} style={{ marginBottom: space.md }} />
+            <Text style={styles.errorText}>This event is private.</Text>
+            <Text style={[styles.errorText, { color: color.faint, marginTop: space.xs, fontSize: 13 }]}>
+              You need an invitation to view the details.
+            </Text>
+            <Pressable onPress={() => router.back()} style={[styles.retryBtn, { marginTop: space.lg }]}>
+              <Text style={styles.retryText}>Go back</Text>
+            </Pressable>
+          </View>
         </>
       ) : error ? (
         <>
