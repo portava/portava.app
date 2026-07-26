@@ -12,7 +12,7 @@ import {
   MoreVertical, Share2, Flag, Flag as FlagFill,
   MapPin, Heart, MessageCircle, UserCircle, Pencil,
 } from 'lucide-react-native';
-import { ScreenHeader } from '../../src/components/ScreenHeader';
+import { AppHeader } from '../../src/components/ui/AppHeader';
 import { ReportSheet } from '../../src/components/ReportSheet';
 import { CommentsSection } from '../../src/components/CommentsSheet';
 import { MediaStampOverlay } from '../../src/components/StampOverlayBadge';
@@ -278,7 +278,14 @@ export default function PostDetail() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <ScreenHeader title="Post" back right={headerRight} />
+      <AppHeader
+        variant="detail"
+        title="Post"
+        onBack={router.back}
+        rightActions={post ? [
+          { icon: <MoreVertical size={22} color={color.ink} />, onPress: () => setOverflowOpen(true), accessibilityLabel: 'More options' },
+        ] : []}
+      />
       <KeyboardSafeScrollView>
         <ScrollView
           ref={scrollRef}

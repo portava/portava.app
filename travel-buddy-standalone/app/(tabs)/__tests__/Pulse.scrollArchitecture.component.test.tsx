@@ -140,15 +140,24 @@ jest.mock('../../../src/context/LocationContext', () => ({
   }),
 }));
 
-// ── PulseHeader — sentinel stub ───────────────────────────────────────────────
-// Renders a Text node so toJSON tree-walking can confirm PulseHeader appears
-// as a direct sibling ABOVE the FlatList in the new fixed-header architecture.
-// NOTE: intentional stub — not under test here.
+// ── PulseHeader — kept for import compat (index.tsx no longer imports it) ─────
+// NOTE: intentional stub — PulseHeader was replaced by AppHeader; kept so any
+// residual transitive import doesn't crash the test suite.
 jest.mock('../../../src/components/PulseHeader', () => ({
-  PulseHeader: () => {
+  PulseHeader: () => null,
+}));
+
+// ── AppHeader — sentinel stub ─────────────────────────────────────────────────
+// Renders a Text node so toJSON tree-walking can confirm AppHeader appears
+// as a direct sibling ABOVE the FlatList (fixed-header position, same as
+// the old PulseHeader). Overflow actions not under test here.
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/components/ui/AppHeader.tsx', () => ({
+  AppHeader: () => {
     const { Text } = require('react-native');
-    return <Text>__PulseHeaderSentinel__</Text>;
+    return <Text>__AppHeaderSentinel__</Text>;
   },
+  OVERLAY_HEADER_HEIGHT: 44,
 }));
 
 // ── LivePulseRail — sentinel stub ─────────────────────────────────────────────
@@ -205,7 +214,7 @@ function subtreeHasText(node: any, text: string): boolean {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('Pulse screen — scroll architecture', () => {
-  it('PulseHeader renders as a direct sibling ABOVE the FlatList — fixed header design', async () => {
+  it('AppHeader renders as a direct sibling ABOVE the FlatList — fixed header design', async () => {
     const Pulse = require('../index.tsx').default;
 
     const { toJSON } = await render(<Pulse />);
@@ -213,12 +222,12 @@ describe('Pulse screen — scroll architecture', () => {
 
     const tree = toJSON() as any;
 
-    // Root is a View whose direct children include PulseHeader (sentinel) and
+    // Root is a View whose direct children include AppHeader (sentinel) and
     // the FlatList (as ScrollView). Both should appear at this level.
     const rootChildren: any[] = Array.isArray(tree?.children) ? tree.children : [];
 
     const hasSentinelAtRoot = rootChildren.some((child: any) =>
-      subtreeHasText(child, '__PulseHeaderSentinel__'),
+      subtreeHasText(child, '__AppHeaderSentinel__'),
     );
     expect(hasSentinelAtRoot).toBe(true);
   });
@@ -243,7 +252,7 @@ describe('Pulse screen — scroll architecture', () => {
     expect(railInScroll).toBe(true);
   });
 
-  it('PulseHeader sentinel is NOT inside the FlatList scroll container — it is a fixed sibling', async () => {
+  it('AppHeader sentinel is NOT inside the FlatList scroll container — it is a fixed sibling', async () => {
     const Pulse = require('../index.tsx').default;
 
     const { toJSON } = await render(<Pulse />);
@@ -251,10 +260,10 @@ describe('Pulse screen — scroll architecture', () => {
 
     const tree = toJSON() as any;
 
-    // Verify the new architecture: PulseHeader does NOT scroll with the list.
+    // Verify the architecture: AppHeader does NOT scroll with the list.
     const scrollViews = findScrollViews(tree);
     const headerInScroll = scrollViews.some((sv) =>
-      subtreeHasText(sv, '__PulseHeaderSentinel__'),
+      subtreeHasText(sv, '__AppHeaderSentinel__'),
     );
     expect(headerInScroll).toBe(false);
   });

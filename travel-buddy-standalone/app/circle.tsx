@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { View, Text, ScrollView, Image, Pressable, StyleSheet, ActivityIndicator, RefreshControl, Alert, TextInput } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MessageCircle, CalendarClock, ChevronDown, ChevronUp, Compass, Shield, UserPlus } from 'lucide-react-native';
-import { ScreenHeader } from '../src/components/ScreenHeader';
+import { AppHeader } from '../src/components/ui/AppHeader';
 import { getMyFollowing, getMyFollowers, type FollowUser } from '../src/services/follows';
 import { sendTripInvite } from '../src/services/friends';
 import { getTrip } from '../src/services/trips';
@@ -268,18 +268,13 @@ export default function Circle() {
         onScroll={navBarScrollHandler}
         scrollEventThrottle={16}
       >
-        <ScreenHeader
+        <AppHeader
+          variant="detail"
           title="Circle"
-          back
-          right={
-            <Pressable
-              onPress={() => router.push('/discover' as any)}
-              hitSlop={8}
-              style={styles.discoverBtn}
-            >
-              <Compass size={22} color={color.signal} />
-            </Pressable>
-          }
+          onBack={router.back}
+          rightActions={[
+            { icon: <Compass size={22} color={color.signal} />, onPress: () => router.push('/discover' as any), accessibilityLabel: 'Discover travelers' },
+          ]}
         />
 
         {tripId ? (

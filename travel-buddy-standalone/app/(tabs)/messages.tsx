@@ -1,7 +1,7 @@
 import React, { useCallback } from 'react';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, router } from 'expo-router';
 import { TelegraphInboxScreen } from '../../src/components/TelegraphInboxScreen';
-import { ScreenHeader } from '../../src/components/ScreenHeader';
+import { AppHeader } from '../../src/components/ui/AppHeader';
 import { postCompassFrontloadEvent } from '../../src/services/compass';
 
 export default function MessagesTab() {
@@ -11,7 +11,7 @@ export default function MessagesTab() {
 
   return (
     <>
-      <ScreenHeader title="Messages" back />
+      <AppHeader variant="detail" title="Messages" onBack={router.back} />
       <TelegraphInboxScreen topInset={0} />
     </>
   );

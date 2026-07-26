@@ -10,9 +10,10 @@ import {
   TextInput, Alert, ActivityIndicator, Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
 import { KeyboardSafeScrollView } from '../../../src/components/ui/KeyboardSafeView';
 import { Phone, Mail, User, Plus, Trash2, Edit2, ShieldCheck, X } from 'lucide-react-native';
-import { ScreenHeader } from '../../../src/components/ScreenHeader';
+import { AppHeader } from '../../../src/components/ui/AppHeader';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import {
   listEmergencyContacts,
@@ -374,16 +375,13 @@ export default function EmergencyContactsScreen() {
 
   return (
     <View style={styles.root}>
-      <ScreenHeader
+      <AppHeader
+        variant="detail"
         title="Emergency Contacts"
-        back
-        right={
-          contacts.length > 0 && contacts.length < 10 ? (
-            <Pressable onPress={openAdd} hitSlop={8} style={styles.addBtn}>
-              <Plus size={18} color={color.deep} />
-            </Pressable>
-          ) : undefined
-        }
+        onBack={router.back}
+        rightActions={contacts.length > 0 && contacts.length < 10 ? [
+          { icon: <Plus size={18} color={color.deep} />, onPress: openAdd, accessibilityLabel: 'Add emergency contact' },
+        ] : []}
       />
 
       {loading ? (

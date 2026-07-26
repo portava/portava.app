@@ -13,6 +13,10 @@
  *     5. In Watch mode (default) the FAB shows "Create a post".
  *     6. After selecting Gems, the FAB shows "Add a Gem".
  *
+ * Chip presence/absence is queried by testID (mode-chip-watch / mode-chip-grid /
+ * mode-chip-gems) rather than by text, because the overlay AppHeader also renders
+ * the current mode name as its title — making getByText ambiguous.
+ *
  * Run with: pnpm --filter @workspace/travel-buddy run test:component
  */
 
@@ -102,23 +106,24 @@ describe('MediaScreen — mode-selector chips', () => {
 
   it('all three chips (Watch, Grid, Gems) appear when all mode flags are on', async () => {
     await renderWithFlags(ALL_FLAGS_ON);
-    expect(screen.getByText('Watch')).toBeTruthy();
-    expect(screen.getByText('Grid')).toBeTruthy();
-    expect(screen.getByText('Gems')).toBeTruthy();
+    // Query chips by testID — avoids ambiguity with the overlay header title.
+    expect(screen.getByTestId('mode-chip-watch')).toBeTruthy();
+    expect(screen.getByTestId('mode-chip-grid')).toBeTruthy();
+    expect(screen.getByTestId('mode-chip-gems')).toBeTruthy();
   });
 
   it('Grid chip is absent when MEDIA_VIEW_MODE_GRID_ENABLED is off', async () => {
     await renderWithFlags({ ...ALL_FLAGS_ON, MEDIA_VIEW_MODE_GRID_ENABLED: false });
-    expect(screen.getByText('Watch')).toBeTruthy();
-    expect(screen.queryByText('Grid')).toBeNull();
-    expect(screen.getByText('Gems')).toBeTruthy();
+    expect(screen.getByTestId('mode-chip-watch')).toBeTruthy();
+    expect(screen.queryByTestId('mode-chip-grid')).toBeNull();
+    expect(screen.getByTestId('mode-chip-gems')).toBeTruthy();
   });
 
   it('Gems chip is absent when MEDIA_VIEW_MODE_HIDDEN_GEMS_ENABLED is off', async () => {
     await renderWithFlags({ ...ALL_FLAGS_ON, MEDIA_VIEW_MODE_HIDDEN_GEMS_ENABLED: false });
-    expect(screen.getByText('Watch')).toBeTruthy();
-    expect(screen.getByText('Grid')).toBeTruthy();
-    expect(screen.queryByText('Gems')).toBeNull();
+    expect(screen.getByTestId('mode-chip-watch')).toBeTruthy();
+    expect(screen.getByTestId('mode-chip-grid')).toBeTruthy();
+    expect(screen.queryByTestId('mode-chip-gems')).toBeNull();
   });
 
   it('mode selector is not rendered when only one mode is enabled', async () => {
@@ -127,10 +132,10 @@ describe('MediaScreen — mode-selector chips', () => {
       MEDIA_VIEW_MODE_GRID_ENABLED: false,
       MEDIA_VIEW_MODE_HIDDEN_GEMS_ENABLED: false,
     });
-    // Selector only renders when enabledModes.length > 1.
-    expect(screen.queryByText('Watch')).toBeNull();
-    expect(screen.queryByText('Grid')).toBeNull();
-    expect(screen.queryByText('Gems')).toBeNull();
+    // Selector only renders when enabledModes.length > 1 — confirm no chips.
+    expect(screen.queryByTestId('mode-chip-watch')).toBeNull();
+    expect(screen.queryByTestId('mode-chip-grid')).toBeNull();
+    expect(screen.queryByTestId('mode-chip-gems')).toBeNull();
   });
 });
 
@@ -149,8 +154,8 @@ describe('MediaScreen — FAB button', () => {
   it('FAB label switches to "Add a Gem" after selecting Gems mode', async () => {
     await renderWithFlags(ALL_FLAGS_ON);
 
-    // Tap the Gems chip to switch mode.
-    fireEvent.press(screen.getByText('Gems'));
+    // Tap the Gems chip to switch mode — use testID to avoid text ambiguity.
+    fireEvent.press(screen.getByTestId('mode-chip-gems'));
     await act(async () => {});
 
     expect(screen.getByRole('button', { name: 'Add a Gem' })).toBeTruthy();

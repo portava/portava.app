@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, Image, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
-import { ScreenHeader } from '../ScreenHeader.tsx';
+import { AppHeader } from '../ui/AppHeader.tsx';
 import { getBlockList, unblockUser, type BlockedUser } from '../../services/blocks.ts';
 import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
@@ -36,7 +36,7 @@ export function SocialSafetyControlsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <ScreenHeader title="Safety & Privacy" back />
+      <AppHeader variant="detail" title="Safety & Privacy" onBack={router.back} />
       <View style={s.section}>
         <Text style={s.sectionTitle}>Blocked accounts</Text>
         {loading ? (

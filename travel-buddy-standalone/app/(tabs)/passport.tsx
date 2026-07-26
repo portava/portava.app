@@ -46,6 +46,7 @@ import { PassportHighlightsStrip } from '../../src/components/passport/PassportH
 import { PassportAboutSection } from '../../src/components/passport/PassportAboutSection';
 import { PassportSafetySection } from '../../src/components/passport/PassportSafetySection';
 import { PP, PP_LABEL } from '../../src/theme/passportTokens';
+import { AppHeader } from '../../src/components/ui/AppHeader';
 import { PassportSectionReorderSheet } from '../../src/components/passport/PassportSectionReorderSheet';
 import { resolveSectionOrder, resolveHiddenSections, type PassportSectionKey } from '../../src/components/passport/passportSections';
 import { PassportTabReorderSheet } from '../../src/components/passport/PassportTabReorderSheet';
@@ -592,11 +593,18 @@ function PassportContent({
     <View style={s.root}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingTop: insets.top, paddingBottom: bottomInset }}
+        contentContainerStyle={{ paddingBottom: bottomInset }}
         showsVerticalScrollIndicator={false}
         onScroll={handleScroll}
         scrollEventThrottle={16}
       >
+        <AppHeader
+          variant="primary"
+          title="Passport"
+          rightActions={[
+            { icon: <Share2 size={22} color={color.ink} />, onPress: share, accessibilityLabel: 'Share passport' },
+          ]}
+        />
         {sectionOrder.map((sectionKey) => (
           <React.Fragment key={sectionKey}>
             {sectionKey === 'identity' && (

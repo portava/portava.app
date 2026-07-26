@@ -6,7 +6,7 @@ import {
 import { KeyboardSafeScrollView } from '../src/components/ui/KeyboardSafeView';
 import { router } from 'expo-router';
 import { Search, X, RefreshCw, Sparkles } from 'lucide-react-native';
-import { ScreenHeader } from '../src/components/ScreenHeader';
+import { AppHeader } from '../src/components/ui/AppHeader';
 import { TravelerRow } from '../src/components/TravelerRow';
 import { TravelerRowSkeleton } from '../src/components/TravelerRowSkeleton';
 import { searchUsers, getSuggestedTravelers, clearSuggestionsSeen, type TravelerSearchResult } from '../src/services/follows';
@@ -99,7 +99,7 @@ export default function DiscoverScreen() {
 
   return (
     <View style={styles.root}>
-      <ScreenHeader title="Find Travelers" back />
+      <AppHeader variant="detail" title="Find Travelers" onBack={router.back} />
 
       <KeyboardSafeScrollView>
         <View style={styles.searchRow}>

@@ -13,7 +13,7 @@ import {
 } from '../../src/services/compass';
 import type { CompassAskResponse, CompassPendingProposal, CompassUiPlace } from '../../src/services/compass';
 import { CompassChatBlocks } from '../../src/components/compass/CompassChatBlocks';
-import { ScreenHeader } from '../../src/components/ScreenHeader';
+import { AppHeader } from '../../src/components/ui/AppHeader';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { CompassHome } from '../../src/components/compass/CompassHome';
@@ -234,7 +234,7 @@ export default function AiChat() {
 
   return (
     <KeyboardSafeScrollView style={{ backgroundColor: color.paper }}>
-      <ScreenHeader title="AI Buddy" back />
+      <AppHeader variant="detail" title="AI Buddy" onBack={router.back} />
       <ScrollView
         ref={scroll}
         contentContainerStyle={{ padding: space.lg, gap: space.md }}

@@ -9,9 +9,9 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, router } from 'expo-router';
 import { ShieldOff } from 'lucide-react-native';
-import { ScreenHeader } from '../src/components/ScreenHeader';
+import { AppHeader } from '../src/components/ui/AppHeader';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { getBlockList, unblockUser } from '../src/services/blocks';
 import type { BlockedUser } from '../src/services/blocks';
@@ -58,7 +58,7 @@ export default function BlockedUsersScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <ScreenHeader title="Blocked accounts" back />
+      <AppHeader variant="detail" title="Blocked accounts" onBack={router.back} />
       {loading ? (
         <View style={s.center}>
           <ActivityIndicator color={color.signal} />
