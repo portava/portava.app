@@ -13,6 +13,7 @@
 import { useState, useEffect } from 'react';
 import type { PublicProfile, PassportPostcard } from '../types/models.ts';
 import { getPublicPassport, getPublicPostcards } from '../services/profile.ts';
+import { useSocialVersion } from './useSocialVersion.ts';
 
 /** Minimal safe fields returned by the private sentinel — enough for the locked header. */
 export interface PrivatePreviewProfile {
@@ -65,6 +66,7 @@ const EMPTY_STATE: PublicPassportState = {
 
 export function usePublicPassport(username: string): PublicPassportState {
   const [state, setState] = useState<PublicPassportState>({ ...EMPTY_STATE });
+  const socialVersion = useSocialVersion();
 
   useEffect(() => {
     if (!username) return;
@@ -139,7 +141,7 @@ export function usePublicPassport(username: string): PublicPassportState {
     });
 
     return () => { alive = false; };
-  }, [username]);
+  }, [username, socialVersion]);
 
   return state;
 }

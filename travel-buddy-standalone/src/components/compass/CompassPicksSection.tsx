@@ -454,7 +454,7 @@ const s = StyleSheet.create({
     borderRadius: radius.sm,
     marginBottom: 2,
   },
-  // Full-width emoji+colour header — shown for all card types when no real image
+  // Full-width emoji+colour header — shown for place cards when no real image
   emojiHeader: {
     width: '100%' as const,
     height: 90,

@@ -10,6 +10,7 @@
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { followUser, unfollowUser, getFollowStatus } from '../services/follows.ts';
+import { bumpSocialVersion } from './useSocialVersion.ts';
 
 export interface FollowState {
   isFollowing: boolean;
@@ -105,6 +106,7 @@ export function useFollow(userId: string | null, options?: UseFollowOptions): Fo
       return false;
     } else {
       setState((s) => ({ ...s, toggling: false }));
+      bumpSocialVersion();
       return true;
     }
   }, [userId, state.isFollowing, state.toggling]);
