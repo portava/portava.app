@@ -26,7 +26,8 @@ import {
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { useVisualGeneration } from '../../hooks/useVisualGeneration.ts';
-import type { VisualStyle, VisualEntityType, VisualPurpose } from '../../hooks/useVisualGeneration.ts';
+import type { VisualStyle, VisualEntityType, VisualPurpose, GeneratedVisual, GenerationStatus } from '../../hooks/useVisualGeneration.ts';
+import { useVisualStatusChannel } from '../../hooks/useVisualStatusChannel.ts';
 import { StylePickerSheet } from './StylePickerSheet.tsx';
 
 // ── Shimmer skeleton ──────────────────────────────────────────────────────────
@@ -126,6 +127,45 @@ export function GeneratedHeaderPicker({
   const [stylePickerOpen, setStylePickerOpen] = useState(false);
   const [currentStyle, setCurrentStyle]       = useState<VisualStyle>('portava_editorial');
 
+  // ── Realtime status channel — auto-resolves queued/generating → ready ──────
+  // These local overrides take effect the moment the realtime payload arrives,
+  // eliminating the need to wait for the next poll cycle.
+  const [rtVisual, setRtVisual]   = useState<GeneratedVisual | null>(null);
+  const [rtStatus, setRtStatus]   = useState<GenerationStatus | null>(null);
+
+  useVisualStatusChannel({
+    entityType,
+    entityId,
+    // Picker manages generation directly — no competing higher-priority source.
+    currentSource: null,
+    onReady: (payload) => {
+      setRtStatus('ready');
+      setRtVisual({
+        id:       payload.id,
+        imageUrl: payload.imageUrl,
+        style:    payload.style,
+        status:   'ready',
+      });
+    },
+  });
+
+  // Clear rt overrides whenever the entity changes (matches gen hook reset).
+  useEffect(() => {
+    setRtVisual(null);
+    setRtStatus(null);
+  }, [entityId]);
+
+  // Clear rt overrides whenever the poll-driven status moves away from 'ready'
+  // (e.g. the user taps Remove → not_requested, or Regenerate → queued).
+  // This ensures Remove and subsequent generation cycles are never masked by
+  // a stale realtime snapshot.
+  useEffect(() => {
+    if (gen.status !== 'ready') {
+      setRtVisual(null);
+      setRtStatus(null);
+    }
+  }, [gen.status]);
+
   /**
    * pendingStyle: set when the user clicked Generate but entityId was null.
    * Once entityId becomes non-null the effect below fires the deferred request.
@@ -192,7 +232,11 @@ export function GeneratedHeaderPicker({
 
   // ── Derived state ───────────────────────────────────────────────────────────
 
-  const { status, generatedVisual, error, isLoading, generationEnabled } = gen;
+  const { error, isLoading, generationEnabled } = gen;
+  // rtStatus/rtVisual override the poll-driven values the moment a realtime
+  // event arrives — eliminating the need to wait for the next poll cycle.
+  const status         = rtStatus ?? gen.status;
+  const generatedVisual = rtVisual ?? gen.generatedVisual;
   const hasUpload  = !!(currentImageUri);
   const isInFlight = status === 'queued' || status === 'generating' || isLoading || pendingStyle !== null;
   const isReady    = status === 'ready';
