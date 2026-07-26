@@ -13,6 +13,12 @@ import { useState, useCallback, useRef } from 'react';
 import { fetchGridFeed } from '../services/mediaFeed.ts';
 import type { MediaGridItem, GridFilter } from '../types/media.ts';
 
+/** Viewer coordinates used when filter=nearby is active. */
+interface NearbyCoords {
+  lat: number;
+  lng: number;
+}
+
 // ── State shape ───────────────────────────────────────────────────────────────
 
 interface GridSlot {
@@ -41,7 +47,12 @@ function genSessionId(): string {
 
 export interface GridFeedState {
   filter: GridFilter;
-  setFilter: (f: GridFilter) => void;
+  /**
+   * Switch to a new filter.
+   * For filter=nearby, pass the viewer's coordinates so they can be forwarded
+   * to the API for radius filtering.
+   */
+  setFilter: (f: GridFilter, coords?: NearbyCoords) => void;
 
   items: MediaGridItem[];
   loading: boolean;
@@ -59,6 +70,9 @@ export function useGridFeed(): GridFeedState {
   // Single slot — filter switches reset state entirely.
   const slotRef = useRef<GridSlot>(newSlot(genSessionId()));
 
+  // Nearby coordinates — stored so loadFeed / loadMore can re-use them.
+  const nearbyCoords = useRef<NearbyCoords | undefined>(undefined);
+
   // Trigger re-render by bumping a version counter.
   const [, bumpVersion] = useState(0);
   const rerender = useCallback(() => bumpVersion((v) => v + 1), []);
@@ -73,10 +87,14 @@ export function useGridFeed(): GridFeedState {
       slotRef.current = { ...s, loading: true, error: null };
       rerender();
 
+      const coords = f === 'nearby' ? nearbyCoords.current : undefined;
+
       const result = await fetchGridFeed({
         filter: f,
         cursor: cursor ?? undefined,
         sessionId: slotRef.current.sessionId,
+        lat: coords?.lat,
+        lng: coords?.lng,
       });
 
       if (result.ok && result.data) {
@@ -107,7 +125,8 @@ export function useGridFeed(): GridFeedState {
   // ── Public API ──────────────────────────────────────────────────────────────
 
   const setFilter = useCallback(
-    (f: GridFilter) => {
+    (f: GridFilter, coords?: NearbyCoords) => {
+      nearbyCoords.current = f === 'nearby' ? coords : undefined;
       setFilterState(f);
       // Reset state and immediately fetch the first page for the new filter.
       slotRef.current = newSlot(genSessionId());
