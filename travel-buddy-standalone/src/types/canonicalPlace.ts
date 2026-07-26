@@ -116,6 +116,11 @@ export interface CanonicalPlace {
    * Null means no image is available; UI falls back to category artwork.
    */
   headerImageUrl?: string | null;
+  /**
+   * How the header image was sourced. Drives resolver priority and AI
+   * representation disclosure label in the canonical place detail card.
+   */
+  headerImageSource?: 'ai_generated' | 'provider' | 'user_upload' | 'official' | 'portava_media' | null;
   /** Additional gallery image URLs (ordered; may be empty). */
   galleryImages?: string[];
   /** Legacy cover image — superseded by headerImageUrl; kept for back-compat. */

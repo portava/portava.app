@@ -12,6 +12,9 @@
  */
 import React from 'react';
 import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
+import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
+import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
+import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
 import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
 import {
@@ -103,9 +106,14 @@ function EventCard({ entity, onClose }: { entity: MapEntity<EventListItem>; onCl
     <>
       <View style={s.topRow}>
         <View style={[s.iconCircle, { backgroundColor: cfg.color }]}>
-          {ev.coverUrl
-            ? <DisplayMediaImage uri={ev.coverUrl} width={46} height={46} style={s.iconImg} fallbackIcon={<CalendarDays size={20} color="#fff" />} fallbackBg={cfg.color} />
-            : <CalendarDays size={20} color="#fff" />}
+          <DisplayMediaImage
+            uri={ev.coverUrl ?? null}
+            width={46}
+            height={46}
+            style={s.iconImg}
+            fallbackIcon={<CalendarDays size={20} color="#fff" />}
+            fallbackBg={cfg.color}
+          />
         </View>
         <View style={s.topText}>
           <Text style={s.primaryText} numberOfLines={2}>{ev.title}</Text>
@@ -300,7 +308,30 @@ function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onC
   const fallbackDesc = getPlaceCategoryFallback(place.category);
   // Use specific sub-type label (e.g. "café") if available, otherwise category.
   const typeLabel = (place.type ?? place.category).replace(/_/g, ' ');
-  const photoUrl = useFsqPhoto(place.name, place.lat, place.lng, (place as any).headerImageUrl);
+  // When AI-generated, fetch FSQ independently — a real photo can override the AI candidate.
+  const _previewHeaderSource = (place as any).headerImageSource as string | null | undefined;
+  const _previewFsqPassthrough = _previewHeaderSource === 'ai_generated'
+    ? undefined
+    : ((place as any).headerImageUrl as string | undefined ?? undefined);
+  const photoUrl = useFsqPhoto(place.name, place.lat, place.lng, _previewFsqPassthrough);
+
+  // Build candidates with real source metadata so isRepresentation is correct.
+  const _previewCandidates: HeaderCandidate[] = [];
+  const _headerSource = _previewHeaderSource;
+  if ((place as any).headerImageUrl) {
+    _previewCandidates.push({
+      url: (place as any).headerImageUrl as string,
+      source: (_headerSource as HeaderCandidate['source']) ?? 'provider',
+    });
+  }
+  if (photoUrl && photoUrl !== (place as any).headerImageUrl) {
+    _previewCandidates.push({ url: photoUrl, source: 'provider' });
+  }
+  const resolvedPreview = resolveHeaderImage(_previewCandidates, {
+    entityType: 'place',
+    category: place.category,
+    fallbackUrlFor: () => null,
+  });
 
   return (
     <>
@@ -308,7 +339,7 @@ function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onC
         {/* Image circle — shows cover if available, category fallback otherwise */}
         <View style={[s.iconCircle, { backgroundColor: fallbackDesc.color + '22' }]}>
           <DisplayMediaImage
-            uri={photoUrl}
+            uri={resolvedPreview?.url ?? null}
             width={46}
             height={46}
             style={s.iconImg}
@@ -356,6 +387,10 @@ function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onC
             <Text key={i} style={s.placeAttributionText}>{attr}</Text>
           ))}
         </View>
+      )}
+      {/* AI-generated representation disclosure */}
+      {resolvedPreview?.isRepresentation && (
+        <AiRepresentationLabel testID={`map-preview-ai-label-${place.id}`} />
       )}
       <Pressable
         style={[s.cta, { backgroundColor: cfg.color }]}

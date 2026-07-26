@@ -8,6 +8,8 @@ import {
   Clock, Lock, Star,
 } from 'lucide-react-native';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
+import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
+import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
 import { UserAvatarButton } from '../interaction/UserAvatarButton.tsx';
 import { followUser, unfollowUser } from '../../services/follows.ts';
 import { rsvpEvent } from '../../services/events.ts';
@@ -78,11 +80,23 @@ function PlaceImageThumbnail({ imageUrl, category, size }: {
 }) {
   const fallback = getPlaceCategoryFallback(category);
   const [imgFailed, setImgFailed] = React.useState(false);
-  if (imageUrl && !imgFailed) {
+
+  // Route through resolver for consistent priority logic.
+  const _searchCandidates: HeaderCandidate[] = imageUrl
+    ? [{ url: imageUrl, source: 'provider' }]
+    : [];
+  const resolved = resolveHeaderImage(_searchCandidates, {
+    entityType: 'place',
+    category,
+    fallbackUrlFor: () => null,
+  });
+  const resolvedUrl = resolved?.url ?? null;
+
+  if (resolvedUrl && !imgFailed) {
     return (
       <View style={[thumbStyles.wrap, { width: size, height: size }]} testID="place-result-image">
         <Image
-          source={{ uri: imageUrl }}
+          source={{ uri: resolvedUrl }}
           style={{ width: size, height: size }}
           resizeMode="cover"
           onError={() => setImgFailed(true)}

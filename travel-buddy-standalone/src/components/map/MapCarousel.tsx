@@ -74,6 +74,9 @@ import type { DiscoveryPlace } from '../../services/discovery.ts';
 import { openDirectThread } from '../../services/messaging.ts';
 import type { CircleMemberLocation } from '../../services/map.ts';
 import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
+import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
+import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
+import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -279,9 +282,14 @@ function EventCardBody({ entity }: { entity: MapEntity<EventListItem> }) {
     <>
       <View style={cs.topRow}>
         <View style={[cs.iconCircle, { backgroundColor: MAP_LAYER_CONFIG.events.color }]}>
-          {ev.coverUrl
-            ? <Image source={{ uri: ev.coverUrl }} style={cs.iconImg} />
-            : <CalendarDays size={18} color="#fff" />}
+          <DisplayMediaImage
+            uri={ev.coverUrl ?? null}
+            width={46}
+            height={46}
+            style={cs.iconImg}
+            fallbackIcon={<CalendarDays size={18} color="#fff" />}
+            fallbackBg={MAP_LAYER_CONFIG.events.color}
+          />
         </View>
         <View style={cs.topText}>
           <Text style={cs.primaryText} numberOfLines={2}>{ev.title}</Text>
@@ -446,14 +454,36 @@ function PlaceCardBody({ entity }: { entity: MapEntity<DiscoveryPlace> }) {
   const fallbackDesc = getPlaceCategoryFallback(place.category);
   // Specific sub-type label (e.g. "café") if available, otherwise category.
   const typeLabel = (place.type ?? place.category).replace(/_/g, ' ');
-  const photoUrl = useFsqPhoto(place.name, place.lat, place.lng, (place as any).headerImageUrl);
+  // When AI-generated, fetch FSQ independently — a real photo can override the AI candidate.
+  const _carouselHeaderSource = (place as any).headerImageSource as string | null | undefined;
+  const _carouselFsqPassthrough = _carouselHeaderSource === 'ai_generated'
+    ? undefined
+    : ((place as any).headerImageUrl as string | undefined ?? undefined);
+  const photoUrl = useFsqPhoto(place.name, place.lat, place.lng, _carouselFsqPassthrough);
+
+  // Build candidates with real source metadata so isRepresentation is correct.
+  const _carouselCandidates: HeaderCandidate[] = [];
+  if ((place as any).headerImageUrl) {
+    _carouselCandidates.push({
+      url: (place as any).headerImageUrl as string,
+      source: (_carouselHeaderSource as HeaderCandidate['source']) ?? 'provider',
+    });
+  }
+  if (photoUrl && photoUrl !== (place as any).headerImageUrl) {
+    _carouselCandidates.push({ url: photoUrl, source: 'provider' });
+  }
+  const resolvedCarousel = resolveHeaderImage(_carouselCandidates, {
+    entityType: 'place',
+    category: place.category,
+    fallbackUrlFor: () => null,
+  });
 
   return (
     <>
       <View style={cs.topRow}>
         <View style={[cs.iconCircle, { backgroundColor: fallbackDesc.color + '22' }]}>
           <DisplayMediaImage
-            uri={photoUrl}
+            uri={resolvedCarousel?.url ?? null}
             width={46}
             height={46}
             style={cs.iconImg}
@@ -508,6 +538,10 @@ function PlaceCardBody({ entity }: { entity: MapEntity<DiscoveryPlace> }) {
             <Text key={i} style={cs.attributionText}>{attr}</Text>
           ))}
         </View>
+      )}
+      {/* AI-generated representation disclosure */}
+      {resolvedCarousel?.isRepresentation && (
+        <AiRepresentationLabel testID={`map-carousel-ai-label-${place.id}`} />
       )}
     </>
   );

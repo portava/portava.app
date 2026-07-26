@@ -588,6 +588,11 @@ export interface CompassUiPlace {
   recommendationToken?: string;
   /** Optional hero photo URL — rendered when present, emoji fallback when absent. */
   headerImageUrl?: string | null;
+  /**
+   * How the hero image was sourced. Used by the client resolver to set the
+   * correct priority and flag AI representations for disclosure.
+   */
+  headerImageSource?: 'ai_generated' | 'provider' | 'user_upload' | 'official' | 'portava_media' | null;
 }
 
 export interface CompassUiEvent {
