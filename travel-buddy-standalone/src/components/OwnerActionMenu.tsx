@@ -3,7 +3,7 @@ import { View, Text, Pressable, Modal, StyleSheet, Share } from 'react-native';
 import { router } from 'expo-router';
 import {
   Edit3, Eye, Share2, MessageCircle,
-  Bookmark, Shield, Settings, Info, LayoutGrid, Columns,
+  Bookmark, Shield, Settings, Info, LayoutGrid, Columns, Plus,
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 
@@ -18,6 +18,8 @@ interface Props {
   onArrangeSections?: () => void;
   /** Optional: opens the passport tab reorder sheet. */
   onArrangeTabs?: () => void;
+  /** Optional: opens the CreateHubSheet. */
+  onCreatePress?: () => void;
 }
 
 const ACTIONS = [
@@ -47,6 +49,13 @@ const ACTIONS = [
         await Share.share({ message: `Check out my Travel Buddy Passport: ${url}`, url });
       } catch {}
     },
+  },
+  {
+    label: 'Create',
+    icon: Plus,
+    bg: '#FFF4E8',
+    iconColor: '#E07B39',
+    onPress: (handlers: Props) => { handlers.onClose(); handlers.onCreatePress?.(); },
   },
   {
     label: 'Arrange',
@@ -100,9 +109,9 @@ const ACTIONS = [
 ] as const;
 
 export function OwnerActionMenu({
-  visible, onClose, username, onEditProfile, onSettings, onViewAsPublic, onArrangeSections, onArrangeTabs,
+  visible, onClose, username, onEditProfile, onSettings, onViewAsPublic, onArrangeSections, onArrangeTabs, onCreatePress,
 }: Props) {
-  const handlers: Props = { visible, onClose, username, onEditProfile, onSettings, onViewAsPublic, onArrangeSections, onArrangeTabs };
+  const handlers: Props = { visible, onClose, username, onEditProfile, onSettings, onViewAsPublic, onArrangeSections, onArrangeTabs, onCreatePress };
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
