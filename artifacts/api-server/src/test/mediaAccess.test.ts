@@ -368,6 +368,56 @@ describe("GET /api/media/file — public vs signed mode", () => {
     assert.equal(r.body.signed[pub(`${OWNER}/orphan2.jpg`)], null);
   });
 
+  it("batch /media/sign: bare path for AI-generated cover image returns a non-null signed URL", async () => {
+    // Bare paths are what the AI visuals service stores after upload
+    // (e.g. "post-media/generated-visuals/event/<uuid>/<uuid>/hero.webp").
+    // appStorageUrlInfo() was fixed (task 2616) to parse these; this test
+    // exercises the full POST /media/sign handler call chain with a bare-path
+    // input so that a future regression in the chain is caught immediately.
+    const EVENT_UUID = "f1000000-0000-4000-a000-000000000001";
+    const VIS_UUID   = "f2000000-0000-4000-a000-000000000001";
+    const gvRelPath  = `generated-visuals/event/${EVENT_UUID}/${VIS_UUID}/hero.webp`;
+    const barePath   = `post-media/${gvRelPath}`;        // bare input sent by client
+    const fullUrl    = pub(gvRelPath);                   // full-URL format for same object
+
+    _clearMediaAccessCache();
+    setClients(makeClient({
+      generatedVisuals: [{
+        hero_path: gvRelPath,
+        entity_type: "event",
+        entity_id: EVENT_UUID,
+        owner_user_id: OWNER,
+        status: "ready",
+      }],
+      events: [{ id: EVENT_UUID, host_id: OWNER, visibility: "public", state: "live" }],
+      posts: [
+        // full-URL entry re-uses the same post-media path so authorizeMediaAccess
+        // also resolves the full-URL format via post_media or generated_visuals.
+        { author_id: OWNER, visibility: "public", status: "active", post_status: "published", trip_id: null, media_urls: [fullUrl] },
+      ],
+    }));
+
+    const r = await req("POST", "/api/media/sign", {
+      urls: [barePath, fullUrl],
+    });
+
+    assert.equal(r.status, 200);
+
+    // Bare path must resolve to a signed URL — not null.
+    const bareResult = r.body.signed[barePath];
+    assert.ok(bareResult !== null && bareResult !== undefined,
+      `expected a signed URL for bare path, got: ${bareResult}`);
+    assert.ok(String(bareResult).includes("token=signed"),
+      `expected signed token in URL, got: ${bareResult}`);
+
+    // Full-URL format must still work too.
+    const fullResult = r.body.signed[fullUrl];
+    assert.ok(fullResult !== null && fullResult !== undefined,
+      `expected a signed URL for full URL, got: ${fullResult}`);
+    assert.ok(String(fullResult).includes("token=signed"),
+      `expected signed token in URL, got: ${fullResult}`);
+  });
+
   // ── show_header_publicly generic-cover fallback ─────────────────────────────
 
   const EVENT_ID = "d1000000-0000-4000-a000-000000000001";
