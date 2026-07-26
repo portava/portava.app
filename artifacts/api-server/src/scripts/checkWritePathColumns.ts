@@ -153,6 +153,10 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/rentABuddySpec.ts|upsert|payload not statically resolvable", 2],
   ["src/routes/requests.ts|select|select list not statically resolvable", 1],
   ["src/routes/routePlan.ts|insert|payload not statically resolvable", 2],
+  // PENDING_SELECT and HISTORY_SELECT are const string variables — the script cannot
+  // follow variable references. All columns are verified against the generated_visuals
+  // migration (0194_generated_visuals.sql).
+  ["src/routes/adminVisuals.ts|select|select list not statically resolvable", 2],
   ["src/routes/stampCatalog.ts|select|select list not statically resolvable", 4],
   ["src/routes/stampShowcase.ts|insert|payload not statically resolvable", 1],
   ["src/routes/stampShowcase.ts|select|select list not statically resolvable", 1],

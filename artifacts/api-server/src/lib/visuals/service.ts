@@ -172,6 +172,19 @@ export async function requestGeneration(req: GenerationRequest): Promise<Generat
     }
   }
 
+  // Entity-level block guard: if an admin has set moderation_status='entity_blocked'
+  // on any visual for this entity, refuse all future generation attempts outright.
+  // This persists across force-regenerate and daily-limit resets.
+  const { data: blocked } = await sc
+    .from("generated_visuals")
+    .select("id")
+    .eq("entity_type", req.entityType)
+    .eq("entity_id", req.entityId)
+    .eq("moderation_status", "entity_blocked")
+    .limit(1)
+    .maybeSingle();
+  if (blocked) return { ok: false, status: "blocked", error: "entity_blocked" };
+
   // Load canonical entity from DB — never trust client-provided entity fields.
   const row = await loadEntity(sc, req.entityType, req.entityId);
   if (!row) return { ok: false, status: "error", error: "entity_not_found" };

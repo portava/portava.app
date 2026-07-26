@@ -226,6 +226,12 @@ export default function ConnectedFeaturesScreen() {
       {isAdmin && (
         <SettingsSection title="Admin">
           <SettingsRow
+            title="AI Visuals"
+            subtitle="Visual generation dashboard & moderation"
+            onPress={() => router.push('/admin/visuals' as any)}
+          />
+          <SettingsDivider />
+          <SettingsRow
             title="Feature Flags"
             onPress={() => router.push('/admin/feature-flags' as any)}
           />

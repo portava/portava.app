@@ -241,6 +241,7 @@ test("requestGeneration force=true retires active rows and queues a fresh job", 
   const fakeClient = {
     from(table: string) {
       let _filters: Array<(r: any) => boolean> = [];
+      let _eqCols: Record<string, any> = {};
       let _isUpdate = false;
       let _updatePayload: any = null;
       let _isInsert = false;
@@ -251,7 +252,7 @@ test("requestGeneration force=true retires active rows and queues a fresh job", 
         insert(row: any)             { _isInsert = true; _insertPayload = row; return b; },
         update(row: any)             { _isUpdate = true; _updatePayload = row; return b; },
         delete()                     { return b; },
-        eq(col: string, val: any)    { _filters.push((r) => r[col] === val); return b; },
+        eq(col: string, val: any)    { _filters.push((r) => r[col] === val); _eqCols[col] = val; return b; },
         in(col: string, vals: any[]) { _filters.push((r) => vals.includes(r[col])); return b; },
         gte()                        { return b; },
         lte()                        { return b; },
@@ -276,8 +277,10 @@ test("requestGeneration force=true retires active rows and queues a fresh job", 
           if (table === "feature_flags") return { data: null, error: null };
           // events: return the entity row
           if (table === "events") return { data: { id: EVENT_ID, title: "Test Event", header_image_source: null, header_image_updated_at: null }, error: null };
-          // generated_visuals: return existing ready visual for the cache-hit check
           if (table === "generated_visuals") {
+            // Entity-block guard: no block exists in this test scenario
+            if (_eqCols["moderation_status"] === "entity_blocked") return { data: null, error: null };
+            // Cache-hit / reuse check: return existing ready visual
             return { data: { id: VISUAL_ID, status: "ready" }, error: null };
           }
           return { data: null, error: null };
@@ -314,6 +317,95 @@ test("requestGeneration force=true retires active rows and queues a fresh job", 
     assert.ok(updatedToReplaced.length > 0, "expected at least one 'replaced' update call");
     // A new row must have been inserted.
     assert.ok(insertedCount > 0, "expected a new visual job to be inserted");
+  } finally {
+    _setTestClient(null as any, false);
+  }
+});
+
+// ── Entity-block guard in requestGeneration ───────────────────────────────────
+
+// Helper: builds a minimal fake client that returns a row with the given
+// moderation_status for any generated_visuals maybeSingle call.
+function makeEntityBlockedClient(existingStatus: string) {
+  return {
+    from(table: string) {
+      let _eqCols: Record<string, any> = {};
+      const b: any = {
+        select()                     { return b; },
+        insert()                     { return b; },
+        update()                     { return b; },
+        eq(col: string, val: any)    { _eqCols[col] = val; return b; },
+        in()                         { return b; },
+        gte()                        { return b; },
+        limit()                      { return b; },
+        order()                      { return b; },
+        maybeSingle()                { return b.single(); },
+        async single() {
+          if (table === "feature_flags") return { data: null, error: null };
+          if (table === "generated_visuals") {
+            // The entity-block guard queries for moderation_status='entity_blocked'
+            if (_eqCols["moderation_status"] === "entity_blocked") {
+              // Return the blocked sentinel row regardless of the row's actual status
+              return { data: { id: VISUAL_ID, status: existingStatus, moderation_status: "entity_blocked" }, error: null };
+            }
+          }
+          return { data: null, error: null };
+        },
+        async then(onF: any) { return onF({ data: [], error: null, count: 0 }); },
+      };
+      return b;
+    },
+    auth: { getUser: async () => ({ data: { user: null }, error: null }) },
+  };
+}
+
+test("requestGeneration is blocked when entity has moderation_status=entity_blocked on a ready row", async () => {
+  _setTestClient(makeEntityBlockedClient("ready") as any, true);
+  try {
+    const outcome = await requestGeneration({
+      entityType:  "event",
+      entityId:    EVENT_ID,
+      purpose:     "event_header",
+      ownerUserId: ALICE_ID,
+    });
+    assert.equal(outcome.ok, false, "expected generation to be blocked");
+    assert.equal(outcome.status, "blocked");
+    assert.equal(outcome.error, "entity_blocked");
+  } finally {
+    _setTestClient(null as any, false);
+  }
+});
+
+test("requestGeneration is blocked when entity has moderation_status=entity_blocked on a failed row (non-active status)", async () => {
+  _setTestClient(makeEntityBlockedClient("failed") as any, true);
+  try {
+    const outcome = await requestGeneration({
+      entityType:  "event",
+      entityId:    EVENT_ID,
+      purpose:     "event_header",
+      ownerUserId: ALICE_ID,
+    });
+    assert.equal(outcome.ok, false, "entity block must be enforced even when the sentinel row has status=failed");
+    assert.equal(outcome.status, "blocked");
+    assert.equal(outcome.error, "entity_blocked");
+  } finally {
+    _setTestClient(null as any, false);
+  }
+});
+
+test("requestGeneration is blocked when entity has moderation_status=entity_blocked on an already-blocked row", async () => {
+  _setTestClient(makeEntityBlockedClient("blocked") as any, true);
+  try {
+    const outcome = await requestGeneration({
+      entityType:  "event",
+      entityId:    EVENT_ID,
+      purpose:     "event_header",
+      ownerUserId: ALICE_ID,
+      force:       true, // even force=true must respect the entity block
+    });
+    assert.equal(outcome.ok, false, "entity block must be enforced even with force=true");
+    assert.equal(outcome.status, "blocked");
+    assert.equal(outcome.error, "entity_blocked");
   } finally {
     _setTestClient(null as any, false);
   }
