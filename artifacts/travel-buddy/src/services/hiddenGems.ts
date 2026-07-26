@@ -219,6 +219,8 @@ export async function submitGem(input: {
   accessibility?: string;
   /** Crowd level estimate: 'quiet' | 'moderate' | 'busy' | 'very_busy'. */
   crowdLevel?: string;
+  /** UUID of the trip to attach this gem to at submission time (optional). */
+  tripId?: string;
 }): Promise<HiddenGem> {
   const data = await apiFetch<{ gem: any }>('/api/hidden-gems', {
     method: 'POST',

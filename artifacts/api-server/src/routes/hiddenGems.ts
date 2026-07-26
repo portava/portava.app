@@ -159,6 +159,8 @@ const submitSchema = z.object({
   accessibility: z.string().max(500).optional().nullable(),
   /** Crowd level estimate (optional). */
   crowdLevel: z.enum(VALID_CROWD_LEVELS).optional().nullable(),
+  /** UUID of the trip to attach this gem to at submission time (optional). */
+  tripId: z.string().uuid().optional().nullable(),
 });
 
 const updateSchema = z.object({
@@ -282,6 +284,53 @@ router.post("/hidden-gems", async (req, res) => {
     }
   }
 
+  // ── tripId validation ────────────────────────────────────────────────────────
+  // When the caller provides a tripId, verify:
+  //   1. The trip exists and is active or upcoming.
+  //   2. The caller is the trip owner or an accepted member.
+  // Client-side filtering is not sufficient; enforce ownership server-side.
+  if (parsed.data.tripId) {
+    const [tripRes, memberRes] = await Promise.all([
+      sc
+        .from("trips")
+        .select("id, owner_id, status")
+        .eq("id", parsed.data.tripId)
+        .maybeSingle(),
+      sc
+        .from("trip_members")
+        .select("role")
+        .eq("trip_id", parsed.data.tripId)
+        .eq("user_id", user.id)
+        .in("role", ["owner", "member"])
+        .maybeSingle(),
+    ]);
+
+    const tripRow = tripRes.data as any;
+    if (!tripRow) {
+      res.status(422).json({ error: "invalid_payload", message: "Trip not found." });
+      return;
+    }
+
+    const allowedStatuses = ["active", "upcoming"];
+    if (!allowedStatuses.includes(tripRow.status)) {
+      res.status(422).json({
+        error: "invalid_payload",
+        message: "Gems can only be attached to active or upcoming trips.",
+      });
+      return;
+    }
+
+    const isOwner = tripRow.owner_id === user.id;
+    const isMember = !!(memberRes.data);
+    if (!isOwner && !isMember) {
+      res.status(403).json({
+        error: "forbidden",
+        message: "You are not a member of this trip.",
+      });
+      return;
+    }
+  }
+
   try {
     const gem = await submitGem(sc, { ...parsed.data, submittedBy: user.id });
     const safe = await applyGemPrivacy(gem, sc, user.id);
@@ -315,6 +364,55 @@ router.get("/hidden-gems", async (req, res) => {
   }
   if (req.query.verificationLevel) opts.verificationLevel = req.query.verificationLevel as string;
   if (req.query.submittedBy)       opts.submittedBy = req.query.submittedBy as string;
+
+  // tripId filter: return gems explicitly attached to this trip at submission time.
+  // Requires auth + caller must be the trip owner or an accepted member.
+  if (callerTripId && UUID_RE.test(callerTripId) && !opts.submittedBy) {
+    // Auth is required for this filtered view.
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { user } = auth;
+
+    // Verify trip exists and caller is a member or owner.
+    const [tripRes, memberRes] = await Promise.all([
+      sc
+        .from("trips")
+        .select("id, owner_id, status")
+        .eq("id", callerTripId)
+        .maybeSingle(),
+      sc
+        .from("trip_members")
+        .select("role")
+        .eq("trip_id", callerTripId)
+        .eq("user_id", user.id)
+        .in("role", ["owner", "member"])
+        .maybeSingle(),
+    ]);
+
+    const tripRow = tripRes.data as any;
+    if (!tripRow) { sendError(res, "not_found", "Trip not found"); return; }
+
+    const isOwner = tripRow.owner_id === user.id;
+    const isMember = !!(memberRes.data);
+    if (!isOwner && !isMember) {
+      res.status(403).json({ error: "forbidden", message: "You are not a member of this trip." });
+      return;
+    }
+
+    try {
+      const { data: tripGems } = await sc
+        .from("hidden_gems")
+        .select("*")
+        .eq("trip_id", callerTripId)
+        .eq("status", "active")
+        .order("created_at", { ascending: false })
+        .limit(opts.limit);
+      const safe = await applyGemPrivacyBatch(tripGems ?? [], sc, user.id, callerTripId);
+      return res.json({ gems: safe, total: safe.length });
+    } catch (err: any) {
+      return sendError(res, "db_error", err.message);
+    }
+  }
 
   // submittedBy: return gems submitted by a specific user (public guide profile queries)
   if (opts.submittedBy) {

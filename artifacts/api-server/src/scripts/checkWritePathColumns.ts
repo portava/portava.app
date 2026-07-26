@@ -108,6 +108,7 @@ const ALLOWLIST = new Set<string>([
   "hidden_gems.crowd_level",
   "hidden_gems.source_confirmation",
   "hidden_gems.visibility",
+  "hidden_gems.trip_id",
 ]);
 
 // Tables that are not real live relations and should be skipped entirely

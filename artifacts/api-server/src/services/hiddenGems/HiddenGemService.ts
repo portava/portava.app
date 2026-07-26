@@ -16,6 +16,7 @@ const GEM_SELECT_COLS = `
   submitted_by, guide_verified_by,
   save_count, visit_count, report_count,
   image_url, canonical_place_id, source_type, moderation_status,
+  trip_id,
   created_at, updated_at
 `.trim();
 
@@ -52,6 +53,8 @@ export interface CreateGemInput {
   accessibility?: string | null;
   /** Crowd level estimate: 'quiet' | 'moderate' | 'busy' | 'very_busy'. */
   crowdLevel?: string | null;
+  /** UUID of the trip to attach this gem to at submission time (optional). */
+  tripId?: string | null;
 }
 
 export interface GemListOptions {
@@ -112,6 +115,9 @@ export async function submitGem(db: SupabaseClient, input: CreateGemInput) {
         : {}),
       ...(input.crowdLevel !== undefined
         ? { crowd_level: input.crowdLevel }
+        : {}),
+      ...(input.tripId !== undefined
+        ? { trip_id: input.tripId }
         : {}),
     })
     .select(GEM_SELECT_COLS)

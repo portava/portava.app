@@ -18,7 +18,7 @@
  *   3. POST /api/hidden-gems with canonical_place_id + source_confirmation=true
  *   4. Show "Your gem is being prepared" processing state
  */
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -42,6 +42,7 @@ import { MediaPickerButton } from '../ui/MediaPickerButton.tsx';
 import { MediaSourceSheet } from '../ui/MediaSourceSheet.tsx';
 import { GlobalPlacePicker } from '../selectors/GlobalPlacePicker.tsx';
 import { submitGem, type GemCategory } from '../../services/hiddenGems.ts';
+import { listMyTrips, type TripRow } from '../../services/trips.ts';
 import type { Place } from '../../lib/location/placeTypes.ts';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -137,12 +138,39 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
   const [tips, setTips] = useState('');
   const [crowdLevel, setCrowdLevel] = useState<CrowdLevel | null>(null);
 
+  // ── Trip picker ──────────────────────────────────────────────────────────────
+  const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
+  const [activeTrips, setActiveTrips] = useState<TripRow[]>([]);
+  const [tripsLoading, setTripsLoading] = useState(false);
+
   // ── Errors ──────────────────────────────────────────────────────────────────
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [globalError, setGlobalError] = useState<string | null>(null);
 
   // ── Processed gem ID (for status polling) ───────────────────────────────────
   const [gemId, setGemId] = useState<string | null>(null);
+
+  // ── Load active trips when entering details step ─────────────────────────────
+  useEffect(() => {
+    if (step !== 'details') return;
+    let cancelled = false;
+    setTripsLoading(true);
+    listMyTrips()
+      .then((trips) => {
+        if (cancelled) return;
+        const active = trips.filter(
+          (t) => t.status === 'active' || t.status === 'upcoming',
+        );
+        setActiveTrips(active);
+      })
+      .catch(() => {
+        // Non-fatal — trip picker just stays empty
+      })
+      .finally(() => {
+        if (!cancelled) setTripsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [step]);
 
   // ── Place picker callback ────────────────────────────────────────────────────
   const handlePlaceSelect = useCallback((place: Place) => {
@@ -236,6 +264,7 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
         crowdLevel: crowdLevel ?? undefined,
         safetyNotes: tips.trim() || undefined,
         visibility,
+        tripId: selectedTripId ?? undefined,
       });
 
       setGemId(gem.id);
@@ -671,6 +700,36 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
             maxLength={1000}
             editable={!submitting}
           />
+        </View>
+
+        {/* Add to trip */}
+        <View style={styles.field}>
+          <Text style={styles.label}>Add to a trip</Text>
+          {tripsLoading ? (
+            <ActivityIndicator size="small" color={color.signal} style={{ alignSelf: 'flex-start', marginTop: 4 }} />
+          ) : activeTrips.length === 0 ? (
+            <Text style={styles.hint}>No active or upcoming trips found.</Text>
+          ) : (
+            <View style={styles.chipRow}>
+              {activeTrips.map((trip) => (
+                <Pressable
+                  key={trip.id}
+                  style={[styles.chip, selectedTripId === trip.id && styles.chipActive]}
+                  onPress={() => setSelectedTripId(selectedTripId === trip.id ? null : trip.id)}
+                >
+                  <Text
+                    style={[styles.chipText, selectedTripId === trip.id && styles.chipTextActive]}
+                    numberOfLines={1}
+                  >
+                    {trip.title}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+          <Text style={styles.hint}>
+            Attach this gem to one of your active trips — optional.
+          </Text>
         </View>
 
         {/* Global error */}
