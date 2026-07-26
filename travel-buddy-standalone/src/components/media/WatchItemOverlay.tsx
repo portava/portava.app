@@ -49,6 +49,7 @@ import {
   Calendar,
   Map,
   Compass,
+  Camera,
 } from 'lucide-react-native';
 import { color, space, type as t, radius } from '../../theme/tokens.ts';
 import { useFollow } from '../../hooks/useFollow.ts';
@@ -142,6 +143,8 @@ export interface WatchItemOverlayProps {
   onComment: () => void;
   onSave: () => void;
   onMore: () => void;
+  /** When true, the create button routes to /media/add-gem and shows "Add a Gem" label. */
+  isGemsMode?: boolean;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -156,9 +159,18 @@ export function WatchItemOverlay({
   onComment,
   onSave,
   onMore,
+  isGemsMode = false,
 }: WatchItemOverlayProps) {
   const insets = useSafeAreaInsets();
   const [captionExpanded, setCaptionExpanded] = useState(false);
+
+  const handleCreate = useCallback(() => {
+    if (isGemsMode) {
+      router.push('/media/add-gem' as any);
+    } else {
+      router.push('/create');
+    }
+  }, [isGemsMode]);
 
   const handleShare = useCallback(async () => {
     try {
@@ -204,6 +216,21 @@ export function WatchItemOverlay({
         style={s.scrim}
         pointerEvents="none"
       />
+
+      {/* ── Create button — top-right corner ──────────────────────── */}
+      <Pressable
+        style={[s.createBtn, { top: insets.top + 12 }]}
+        onPress={handleCreate}
+        accessibilityRole="button"
+        accessibilityLabel={isGemsMode ? 'Add a Gem' : 'Create a post'}
+        hitSlop={8}
+      >
+        {isGemsMode ? (
+          <Text style={s.createBtnText}>+ Gem</Text>
+        ) : (
+          <Camera size={16} color="#fff" strokeWidth={2} />
+        )}
+      </Pressable>
 
       {/* Bottom content */}
       <View style={[s.bottom, { paddingBottom: bottomPad }]} pointerEvents="box-none">
@@ -496,6 +523,25 @@ const s = StyleSheet.create({
     ...t.stamp,
     color: 'rgba(255,255,255,0.75)',
     flexShrink: 1,
+  },
+  // Create button — top-right corner
+  createBtn: {
+    position: 'absolute',
+    right: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  createBtnText: {
+    ...t.stamp,
+    color: '#fff',
+    fontWeight: '700',
   },
   // Right column
   rightCol: {
