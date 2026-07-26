@@ -77,11 +77,14 @@ function pruneViewDedup(): void {
 
 /** Columns projected from posts for media feed (never include exact GPS). */
 const FEED_POST_COLUMNS =
-  "id, author_id, trip_id, content, visibility, status, post_status, " +
+  "id, author_id, trip_id, content, visibility, status, post_status, publish_at, " +
   "created_at, tags, category, " +
   "location_name, location_city, location_country, location_source, " +
   "save_count, like_count, comment_count, view_count, qualified_view_count, " +
-  "has_video, primary_media_type, moderation_status";
+  "has_video, primary_media_type, moderation_status, " +
+  // Eligibility fields: geo + age restriction gates in filterEligibleMediaCandidates.
+  // Both gates are fail-closed; omitting these fields would silently bypass them.
+  "geo_restriction, age_restriction_enabled, age_min, age_max";
 
 const POST_MEDIA_COLUMNS =
   "id, media_type, public_url, thumbnail_url, duration_seconds, " +
@@ -110,6 +113,9 @@ const viewBodySchema = z.object({
 // ── GET /api/media/feed ───────────────────────────────────────────────────────
 
 router.get("/media/feed", asyncHandler(async (req, res) => {
+  // Single clock read — all timestamp derivations in this handler use nowMs.
+  const nowMs = Date.now();
+
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -174,6 +180,12 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     .select(feedSelect)
     .eq("status", "active")
     .eq("has_video", true)  // Watch mode: video-first
+    // Delayed posting: exclude items scheduled for future publication.
+    // publish_at IS NULL covers posts with no scheduled time (most posts).
+    // This is a belt-and-suspenders guard — post_status='published' is the
+    // primary delayed-post gate; publish_at ensures the DB scheduler hasn't
+    // already set the time but missed flipping post_status.
+    .or("publish_at.is.null,publish_at.lte." + new Date(nowMs).toISOString())
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(candidateLimit);
@@ -236,7 +248,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
       .select("item_id")
       .eq("user_id", user.id)
       .eq("surface", "watch_feed")
-      .gte("served_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
+      .gte("served_at", new Date(nowMs - 7 * 24 * 60 * 60 * 1000).toISOString())
       .limit(500);
     for (const r of (seenRows as any[]) ?? []) seenIds.add(r.item_id as string);
   } catch { /* non-fatal */ }
@@ -340,6 +352,8 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     ]);
 
   const supabaseUrl = process.env.SUPABASE_URL ?? "";
+  // API base URL for relay URLs (relative when empty — works in all environments).
+  const apiBaseUrl = process.env.API_BASE_URL ?? "";
 
   const items: MediaFeedItem[] = page.map((c) => {
     const postMedia = Array.isArray(c.post_media) ? c.post_media : [];
@@ -353,8 +367,9 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
       followedCreatorIds,
       pendingFollowRequestIds: pendingFollowSet,
       postMedia,
-      useSignedUrls: false,
+      useSignedUrls: true,
       supabaseUrl,
+      apiBaseUrl,
     });
   });
 
@@ -362,7 +377,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   void (async () => {
     try {
       if (items.length === 0) return;
-      const servedAt = new Date().toISOString();
+      const servedAt = new Date(nowMs).toISOString();
       const impressionRows = items.map((item, idx) => {
         const rankedItem = ranked.find((r) => r.candidate.id === item.id);
         return {
@@ -500,8 +515,9 @@ router.get("/media/:id", asyncHandler(async (req, res) => {
     followedCreatorIds: followedIds,
     pendingFollowRequestIds: pendingFollowSet,
     postMedia,
-    useSignedUrls: false,
+    useSignedUrls: true,
     supabaseUrl: process.env.SUPABASE_URL ?? "",
+    apiBaseUrl: process.env.API_BASE_URL ?? "",
   });
 
   res.json({ item });

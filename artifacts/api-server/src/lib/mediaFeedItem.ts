@@ -3,17 +3,31 @@
  *
  * hydrateMediaFeedItem maps a raw DB row (post + related data) to the
  * canonical MediaFeedItem shape, enforcing private-field stripping and
- * resolving signed vs. public URLs through existing mediaAccess.ts logic.
+ * resolving relay vs. public URLs.
  *
- * Private-profile items expose only: avatar, displayName, username, isPrivate,
- * and follow/request action — no bio, counts, trips, etc.
- *
- * Private media rows resolve to signed URLs; public rows use public URLs.
+ * Privacy rules enforced here:
+ *   1. Private-profile creator → only safe minimal fields exposed:
+ *      { id, username, displayName, avatarUrl, isPrivate, relationshipStatus }
+ *      No bio, follower counts, following counts, or isVerified.
+ *   2. Private media (post.visibility !== 'public') → relay URL
+ *      (/api/media/file/<bucket>/<path>) instead of direct public URL.
+ *      The relay enforces auth + serves a short-lived signed URL.
+ *   3. Private linked event/trip → only safe header fields exposed.
+ *   4. Location → NEVER contains raw coordinates; only name/city/country.
  */
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { publicUrlFor } from "./mediaAccess.js";
 
 // ── Public types ──────────────────────────────────────────────────────────────
+
+/**
+ * Relationship status of the viewer towards the creator.
+ * Follows the same taxonomy as the social graph.
+ */
+export type RelationshipStatus =
+  | "self"
+  | "following"
+  | "pending_follow"
+  | "none";
 
 export interface MediaFeedCreator {
   id: string;
@@ -22,8 +36,20 @@ export interface MediaFeedCreator {
   displayName: string;
   avatarUrl: string | null;
   isPrivate: boolean;
-  isVerified: boolean;
-  /** Null when creator has a private profile and viewer is not a follower. */
+  /**
+   * Viewer's relationship towards this creator.
+   * Always present so clients can render the correct CTA.
+   */
+  relationshipStatus: RelationshipStatus;
+  /**
+   * Only set when the creator has a public profile (or is the viewer).
+   * Null when the creator is private and the viewer is not an approved follower.
+   */
+  isVerified: boolean | null;
+  /**
+   * Only set when the creator has a public profile (or the viewer follows them).
+   * Null for private-profile creators whose details are not exposed.
+   */
   followersCount: number | null;
   followingCount: number | null;
   bio: string | null;
@@ -47,6 +73,11 @@ export interface MediaFeedStats {
   commentCount: number;
 }
 
+/**
+ * Safe location shape — NEVER contains raw coordinates.
+ * Only human-readable place labels and canonical IDs are included so that
+ * exact GPS positions can never be inferred from the feed response.
+ */
 export interface MediaFeedLocation {
   name: string | null;
   city: string | null;
@@ -74,9 +105,9 @@ export interface MediaFeedLinkedEntity {
   id: string;
   title: string;
   isPrivate: boolean;
-  /** Safe header image — may be null for private entities. */
+  /** Safe header image — may be null for private entities when show_header_publicly=false. */
   coverImageUrl: string | null;
-  /** Host or owner display name. */
+  /** Host or owner display name (may be null for private entities). */
   ownerDisplayName: string | null;
   ownerUsername: string | null;
 }
@@ -122,35 +153,140 @@ export interface HydrateInput {
   pendingFollowRequestIds: Set<string>;
   /** media_assets rows pre-fetched for the post (post_media child rows). */
   postMedia: any[];
-  /** Whether the media bucket is private (determines signed vs public URL). */
+  /**
+   * When true, private media items get relay URLs (/api/media/file/…) instead
+   * of public storage URLs. Always set to true in production; public URL is
+   * only returned when the post visibility is 'public'.
+   *
+   * @deprecated Use the relay URL path unconditionally. This flag is retained
+   * for backward compat and will be removed once all callers are updated.
+   */
   useSignedUrls: boolean;
   supabaseUrl: string;
+  /**
+   * Base URL of the API relay — used to construct /api/media/file/… URLs.
+   * Defaults to "" (relative URL) when not supplied.
+   */
+  apiBaseUrl?: string;
 }
+
+// ── Private entity field strippers ────────────────────────────────────────────
+
+/**
+ * Strip a private event's fields down to the safe preview shape.
+ *
+ * Used when `linkedEntity.type = 'event'` and the event's privacy column
+ * indicates it is private and the viewer is not a member/RSVP holder.
+ *
+ * Safe fields: id, type, title, isPrivate, coverImageUrl (gated by
+ * show_header_publicly), ownerDisplayName, ownerUsername.
+ * Stripped: exact address, coordinates, dates, venue, attendees, invite codes.
+ */
+export function stripPrivateEventFields(
+  entity: any,
+  opts: {
+    viewerIsHost: boolean;
+    showHeaderPublicly?: boolean;
+  },
+): MediaFeedLinkedEntity {
+  const showHeader = opts.viewerIsHost || (opts.showHeaderPublicly !== false);
+  return {
+    type: "event",
+    id: entity.id as string,
+    title: entity.title as string,
+    isPrivate: true,
+    coverImageUrl: showHeader ? ((entity.cover_url ?? entity.coverUrl ?? null) as string | null) : null,
+    ownerDisplayName: (entity.host_display_name ?? entity.hostDisplayName ?? null) as string | null,
+    ownerUsername: (entity.host_username ?? entity.hostUsername ?? null) as string | null,
+  };
+}
+
+/**
+ * Strip a private trip's fields down to the safe preview shape.
+ *
+ * Safe fields: id, type, title, isPrivate, coverImageUrl (gated by
+ * show_header_publicly), ownerDisplayName, ownerUsername.
+ * Stripped: hotel, meeting point, itinerary, exact dates, members, invite codes.
+ */
+export function stripPrivateTripFields(
+  entity: any,
+  opts: {
+    viewerIsOwner: boolean;
+    showHeaderPublicly?: boolean;
+  },
+): MediaFeedLinkedEntity {
+  const showHeader = opts.viewerIsOwner || (opts.showHeaderPublicly !== false);
+  return {
+    type: "trip",
+    id: entity.id as string,
+    title: entity.title as string,
+    isPrivate: true,
+    coverImageUrl: showHeader ? ((entity.cover_url ?? entity.coverUrl ?? null) as string | null) : null,
+    ownerDisplayName: (entity.owner_display_name ?? entity.ownerDisplayName ?? null) as string | null,
+    ownerUsername: (entity.owner_username ?? entity.ownerUsername ?? null) as string | null,
+  };
+}
+
+// ── Relay URL helper ──────────────────────────────────────────────────────────
+
+/**
+ * Build a relay URL for private media access.
+ * The relay enforces auth + issues a short-lived signed URL.
+ *
+ * Format: `${apiBase}/api/media/file/<bucket>/<path>`
+ */
+function relayUrlFor(
+  bucket: string,
+  storagePath: string,
+  apiBaseUrl: string = "",
+): string {
+  return `${apiBaseUrl}/api/media/file/${bucket}/${storagePath}`;
+}
+
+// ── Hydrator ──────────────────────────────────────────────────────────────────
 
 /**
  * Map a raw DB row to a hydrated MediaFeedItem.
  *
  * Privacy rules:
- *   - Private profile creator → strip bio, followersCount, followingCount.
- *   - Private media → URL is left as the storage path for the caller to sign.
- *     (Caller must resolve signed URLs via the /api/media/file relay.)
+ *   - Private profile creator → strip bio, followersCount, followingCount,
+ *     isVerified. Only expose: id, username, displayName, avatarUrl,
+ *     isPrivate, relationshipStatus.
+ *   - Private media (post.visibility !== 'public') → relay URL so the client
+ *     always goes through the auth + signing relay. This ensures private
+ *     media bytes are never world-readable via guessable public URLs.
+ *   - Location → only name/city/country. No coordinates in any code path.
  */
 export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
   const { row, sourceType, viewerUserId, allowedRealNameIds, savedPostIds,
     likedPostIds, followedCreatorIds, pendingFollowRequestIds,
-    postMedia, supabaseUrl } = input;
+    postMedia, supabaseUrl, apiBaseUrl = "" } = input;
 
   // ── Creator ────────────────────────────────────────────────────────────────
   const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
   const creatorId: string = row.author_id ?? row.owner_id ?? "";
   const isOwnPost = creatorId === viewerUserId;
   const isFollowing = followedCreatorIds.has(creatorId);
+  const hasPendingFollow = pendingFollowRequestIds.has(creatorId);
   const creatorIsPrivate = Boolean(profile?.is_private);
 
+  // Relationship status
+  const relationshipStatus: RelationshipStatus = isOwnPost
+    ? "self"
+    : isFollowing
+    ? "following"
+    : hasPendingFollow
+    ? "pending_follow"
+    : "none";
+
+  // Display name: real name only when opted in
   const displayName =
     (isOwnPost || allowedRealNameIds.has(creatorId))
       ? (profile?.full_name ?? profile?.username ?? "")
       : (profile?.username ?? "");
+
+  // Private profile: strip all sensitive fields when viewer is not a follower
+  const viewerCanSeePrivateDetails = !creatorIsPrivate || isFollowing || isOwnPost;
 
   const creator: MediaFeedCreator = {
     id: creatorId,
@@ -158,21 +294,16 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
     displayName,
     avatarUrl: profile?.avatar_url ?? null,
     isPrivate: creatorIsPrivate,
-    isVerified: Boolean(profile?.is_verified),
-    // Strip counts for private profiles when viewer isn't following
-    followersCount: (!creatorIsPrivate || isFollowing || isOwnPost)
-      ? (profile?.followers_count ?? null)
-      : null,
-    followingCount: (!creatorIsPrivate || isFollowing || isOwnPost)
-      ? (profile?.following_count ?? null)
-      : null,
-    // Strip bio for private profiles when viewer isn't following
-    bio: (!creatorIsPrivate || isFollowing || isOwnPost)
-      ? (profile?.bio ?? null)
-      : null,
+    relationshipStatus,
+    // Strip isVerified, counts, and bio for private profiles when viewer isn't following
+    isVerified: viewerCanSeePrivateDetails ? Boolean(profile?.is_verified) : null,
+    followersCount: viewerCanSeePrivateDetails ? (profile?.followers_count ?? null) : null,
+    followingCount: viewerCanSeePrivateDetails ? (profile?.following_count ?? null) : null,
+    bio: viewerCanSeePrivateDetails ? (profile?.bio ?? null) : null,
   };
 
   // ── Media items ────────────────────────────────────────────────────────────
+  const isPrivatePost = row.visibility !== "public";
   const mediaItems: MediaFeedMediaItem[] = (postMedia ?? [])
     .filter((m: any) =>
       m.processing_status === "ready" &&
@@ -181,17 +312,35 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
     )
     .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
     .map((m: any) => {
-      // Resolve the public URL from storage path or existing public_url
-      let url: string = m.public_url ?? "";
-      if (!url && m.storage_path && supabaseUrl) {
-        const bucket = m.storage_bucket ?? "post-media";
-        url = publicUrlFor(bucket, m.storage_path) ?? "";
+      const bucket = m.storage_bucket ?? "post-media";
+      const storagePath: string = m.storage_path ?? "";
+
+      let url: string;
+      if (isPrivatePost && storagePath) {
+        // Private post: always use the relay path so clients go through auth + signing.
+        // The relay (GET /api/media/file/:bucket/*path) enforces authorization and
+        // issues a short-lived signed URL (1-hour TTL) via Supabase Storage.
+        // Never return a raw storage path or unsigned URL for private content.
+        url = relayUrlFor(bucket, storagePath, apiBaseUrl);
+      } else {
+        // Public post: prefer the stored public URL; fall back to constructing one.
+        url = m.public_url ?? "";
+        if (!url && storagePath && supabaseUrl) {
+          url = publicUrlFor(bucket, storagePath) ?? "";
+        }
       }
+
+      let thumbnailUrl: string | null = m.thumbnail_url ?? null;
+      // For private posts, relay the thumbnail too when it's a storage path
+      if (isPrivatePost && m.thumbnail_path && !thumbnailUrl) {
+        thumbnailUrl = relayUrlFor(bucket, m.thumbnail_path, apiBaseUrl);
+      }
+
       return {
         id: m.id,
         type: (m.media_type === "video" ? "video" : "image") as "image" | "video",
         url,
-        thumbnailUrl: m.thumbnail_url ?? null,
+        thumbnailUrl,
         durationSeconds: m.duration_seconds ?? null,
         width: m.width ?? null,
         height: m.height ?? null,
@@ -207,7 +356,10 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
     commentCount: row.comment_count ?? 0,
   };
 
-  // ── Location ───────────────────────────────────────────────────────────────
+  // ── Location — coordinates NEVER included ─────────────────────────────────
+  // Only human-readable labels are exposed. Raw latitude/longitude are never
+  // projected from the DB select (see FEED_POST_COLUMNS in mediaFeed.ts) and
+  // are explicitly omitted here to prevent accidental leakage.
   const hasLocation = row.location_city || row.location_name || row.location_country;
   const location: MediaFeedLocation | null = hasLocation
     ? {
@@ -223,12 +375,12 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
     hasLiked: likedPostIds.has(itemId),
     hasSaved: savedPostIds.has(itemId),
     isFollowingCreator: isFollowing || isOwnPost,
-    hasFollowRequestPending: pendingFollowRequestIds.has(creatorId),
+    hasFollowRequestPending: hasPendingFollow,
   };
 
   // ── Privacy & moderation ───────────────────────────────────────────────────
   const privacy: MediaFeedPrivacy = {
-    isPrivate: row.visibility !== "public",
+    isPrivate: isPrivatePost,
   };
 
   const moderation: MediaFeedModeration = {

@@ -31,6 +31,7 @@
     "test:crew-map": "node --import tsx/esm --test src/test/tripCrewMap.test.ts",
     "test:trip-completion": "node --import tsx/esm --test src/test/tripCompletion.test.ts",
     "test:rls-privacy-baseline": "node --import tsx/esm --test src/test/rlsPrivacyBaseline.test.ts",
+    "test:media-privacy": "node --import tsx/esm --test src/test/mediaPrivacy.test.ts",
     "seed:demo-profile": "node --env-file-if-exists=.env --import tsx/esm src/scripts/seed-demo-profile.ts",
     "seed:demo-social": "node --env-file-if-exists=.env --import tsx/esm src/scripts/seed-demo-social.ts",
     "verify:demo-profile": "node --env-file-if-exists=.env --import tsx/esm src/scripts/verify-demo-profile.ts",

@@ -3,15 +3,18 @@
  *
  * filterEligibleMediaCandidates enforces ALL eligibility gates BEFORE any
  * scoring occurs. Gates (in order):
- *   1. Processing state — only ready media
- *   2. Moderation state — not flagged or rejected
- *   3. Visibility — public only (for_you) or followed-creator (following)
- *   4. Post status — only active/published posts
- *   5. Blocks — bidirectional fail-closed
- *   6. Mutes — viewer muted the creator
- *   7. Creator account status — suspended creators excluded
- *   8. Story expiration — expired stories excluded
- *   9. Creator suspension from DB profile
+ *   1. Blocks — bidirectional fail-closed
+ *   2. Mutes — viewer muted the creator
+ *   3. Creator account status — suspended/banned creators excluded
+ *   4. Post status — only active posts
+ *   5. Delayed-publish gate — post_status must be 'published' (or absent)
+ *   6. Delayed-post publish_at gate — publish_at must be <= now() when set
+ *   7. Visibility — public only (for_you) or followed-creator (following)
+ *   8. Moderation gate — must be 'approved' (or null/unset for unmoderated content)
+ *   9. Story expiration — expired stories excluded
+ *  10. Media readiness gate — at least one ready, unrejected media row
+ *  11. Geo-restriction gate — best-effort viewer country check
+ *  12. Age-restriction gate — best-effort viewer age check
  *
  * Fail-closed: if blocks cannot be fetched, return empty (never risk surfacing
  * content from blocked users).
@@ -25,6 +28,18 @@ export interface ViewerCtx {
   feedType: FeedType;
   /** IDs the viewer follows — required when feedType='following'. */
   followedCreatorIds: Set<string>;
+  /**
+   * Viewer's ISO-3166-1 alpha-2 country code — used for geo-restriction
+   * enforcement. Omit when unknown; items with geo_restriction will be
+   * excluded for safety.
+   */
+  viewerCountry?: string | null;
+  /**
+   * Viewer's age in full years — used for age-restriction enforcement.
+   * Omit when unknown; items with age_restriction_enabled will be excluded
+   * for safety.
+   */
+  viewerAge?: number | null;
 }
 
 export interface EligibilityResult {
@@ -42,6 +57,8 @@ export interface MediaCandidate {
   visibility?: string;
   moderation_status?: string;
   expires_at?: string | null;
+  /** Scheduled publish time — when set and in the future, item is suppressed. */
+  publish_at?: string | null;
   created_at: string;
   /** post_media child rows (pre-fetched). */
   post_media?: any[];
@@ -49,6 +66,18 @@ export interface MediaCandidate {
   profiles?: any;
   /** Raw tags array. */
   tags?: string[];
+  /**
+   * Geo-restriction: comma-separated list of ISO-3166-1 alpha-2 country codes
+   * that are ALLOWED to see this item.  Null/absent = no restriction.
+   */
+  geo_restriction?: string | null;
+  /**
+   * When true the item has an age restriction.  The companion age_min /
+   * age_max columns specify the allowed range.
+   */
+  age_restriction_enabled?: boolean | null;
+  age_min?: number | null;
+  age_max?: number | null;
   [key: string]: unknown;
 }
 
@@ -142,6 +171,12 @@ export async function filterEligibleMediaCandidates(
     const postStatus = c.post_status;
     if (postStatus && postStatus !== "published") return false;
 
+    // publish_at gate: if set, must be <= now (delayed post not yet due)
+    if (c.publish_at) {
+      const publishAt = new Date(c.publish_at).getTime();
+      if (publishAt > now) return false;
+    }
+
     // Visibility gate
     const visibility = c.visibility ?? "public";
     if (viewerCtx.feedType === "following") {
@@ -154,11 +189,11 @@ export async function filterEligibleMediaCandidates(
       if (visibility !== "public") return false;
     }
 
-    // Moderation gate
+    // Moderation gate: must be explicitly 'approved', or unmoderated (null/absent).
+    // Items with any other moderation status (pending, flagged, rejected, removed, etc.)
+    // are excluded. This is stricter than the previous allow-all-except-rejected logic.
     const modStatus = c.moderation_status;
-    if (modStatus === "rejected" || modStatus === "flagged" || modStatus === "removed") {
-      return false;
-    }
+    if (modStatus && modStatus !== "approved") return false;
 
     // Expiration gate (for stories)
     if (c.expires_at) {
@@ -179,6 +214,28 @@ export async function filterEligibleMediaCandidates(
         m.moderation_status !== "flagged",
     );
     if (readyMedia.length === 0) return false;
+
+    // Geo-restriction gate: when present, viewer's country must be in the allow-list.
+    // Fail-closed: if geo_restriction is set and viewer country is unknown, exclude.
+    if (c.geo_restriction) {
+      const allowedCountries = (c.geo_restriction as string)
+        .split(",")
+        .map((s) => s.trim().toUpperCase())
+        .filter(Boolean);
+      if (allowedCountries.length > 0) {
+        if (!viewerCtx.viewerCountry) return false;
+        if (!allowedCountries.includes(viewerCtx.viewerCountry.toUpperCase())) return false;
+      }
+    }
+
+    // Age-restriction gate: when enabled, viewer's age must be within [age_min, age_max].
+    // Fail-closed: if age_restriction_enabled is true and viewer age is unknown, exclude.
+    if (c.age_restriction_enabled) {
+      if (viewerCtx.viewerAge == null) return false;
+      const ageMin = c.age_min ?? 0;
+      const ageMax = c.age_max ?? Number.MAX_SAFE_INTEGER;
+      if (viewerCtx.viewerAge < ageMin || viewerCtx.viewerAge > ageMax) return false;
+    }
 
     return true;
   });
