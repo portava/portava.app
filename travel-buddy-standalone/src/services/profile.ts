@@ -354,7 +354,14 @@ function enrichPostcard(raw: Record<string, unknown>): PassportPostcard {
   };
 }
 
-export async function getPublicPostcards(username: string): Promise<ProfileResult<PassportPostcard[]>> {
+export type PostcardsSentinel = 'private' | 'blocked' | 'unavailable';
+
+export type PublicPostcardsResult =
+  | { ok: true; data: PassportPostcard[]; sentinel?: undefined }
+  | { ok: true; data: PassportPostcard[]; sentinel: PostcardsSentinel }
+  | { ok: false; data: null; errorKind?: string; message?: string };
+
+export async function getPublicPostcards(username: string): Promise<PublicPostcardsResult> {
   if (!apiBase()) return { ok: true, data: [] };
 
   try {
@@ -363,6 +370,10 @@ export async function getPublicPostcards(username: string): Promise<ProfileResul
     );
     if (!res.ok) return { ok: true, data: [] };
     const body = await res.json();
+    // Detect sentinel shapes returned by the API.
+    if (body.blocked === true)     return { ok: true, data: [], sentinel: 'blocked' };
+    if (body.unavailable === true) return { ok: true, data: [], sentinel: 'unavailable' };
+    if (body.private === true)     return { ok: true, data: [], sentinel: 'private' };
     const raw: Record<string, unknown>[] = body.postcards ?? [];
     return { ok: true, data: raw.map(enrichPostcard) };
   } catch {

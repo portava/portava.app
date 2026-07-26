@@ -10,7 +10,7 @@ import {
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, MoreVertical } from 'lucide-react-native';
-import { getPublicProfile, getPublicPostcards } from '../../src/services/profile';
+import { getPublicProfile, getPublicPostcards, type PostcardsSentinel } from '../../src/services/profile';
 import { getPublicShowcase, type ShowcaseStamp } from '../../src/services/stampShowcase';
 import { blockUser } from '../../src/services/blocks';
 import { submitReport, type ReportReason } from '../../src/services/reports';
@@ -47,6 +47,7 @@ interface ScreenState {
   error: string | null;
   isPrivate: boolean;
   notFound: boolean;
+  postcardSentinel: PostcardsSentinel | null;
 }
 
 export default function PassportDeepLinkScreen() {
@@ -55,13 +56,13 @@ export default function PassportDeepLinkScreen() {
 
   const [state, setState] = useState<ScreenState>({
     profile: null, postcards: [], loading: true,
-    error: null, isPrivate: false, notFound: false,
+    error: null, isPrivate: false, notFound: false, postcardSentinel: null,
   });
 
   useEffect(() => {
     if (!username) return;
     let alive = true;
-    setState({ profile: null, postcards: [], loading: true, error: null, isPrivate: false, notFound: false });
+    setState({ profile: null, postcards: [], loading: true, error: null, isPrivate: false, notFound: false, postcardSentinel: null });
 
     getPublicProfile(username).then(async (res) => {
       if (!alive) return;
@@ -104,7 +105,11 @@ export default function PassportDeepLinkScreen() {
 
       const pcRes = await getPublicPostcards(username);
       if (alive) {
-        setState((s) => ({ ...s, postcards: pcRes.ok ? (pcRes.data ?? []) : [] }));
+        setState((s) => ({
+          ...s,
+          postcards: pcRes.ok ? (pcRes.data ?? []) : [],
+          postcardSentinel: pcRes.ok ? (pcRes.sentinel ?? null) : null,
+        }));
       }
     }).catch(() => {
       if (alive) setState((s) => ({ ...s, loading: false, error: 'Failed to load profile' }));
@@ -382,7 +387,7 @@ export default function PassportDeepLinkScreen() {
               </View>
               <View style={vs.tabRule} />
               <View style={{ marginTop: space.md }}>
-                {tab === 'postcards' && <PostcardsTab postcards={postcards} isOwner={false} />}
+                {tab === 'postcards' && <PostcardsTab postcards={postcards} isOwner={false} sentinel={state.postcardSentinel ?? undefined} />}
                 {tab === 'stamps'    && <StampsTab stamps={[]} viewingUsername={username} viewingUserId={profile?.id} />}
                 {tab === 'map'       && <MapTab postcards={postcards} />}
                 {tab === 'memories'  && <MemoriesTab memories={[]} onReload={() => {}} />}
