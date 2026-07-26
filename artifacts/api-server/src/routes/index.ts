@@ -104,6 +104,8 @@ import countryEssentialsRouter from "./countryEssentials";
 import mapSearchRouter from "./mapSearch";
 import mediaFileRouter from "./mediaFile";
 import mediaFeedRouter from "./mediaFeed";
+import adminMediaRouter from "./adminMedia.js";
+import mediaAnalyticsBatchRouter from "./mediaAnalyticsBatch.js";
 import placesCanonicalRouter from "./placesCanonical";
 import fsqPlacesRouter from "./fsqPlaces";
 import ogRouter from "./og";
@@ -221,6 +223,8 @@ router.use(fsqPlacesRouter);
 router.use(mapSearchRouter);
 router.use(mediaFileRouter);
 router.use(mediaFeedRouter);
+router.use(adminMediaRouter);
+router.use(mediaAnalyticsBatchRouter);
 router.use(placesCanonicalRouter);
 router.use(ogRouter);
 

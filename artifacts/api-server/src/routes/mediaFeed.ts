@@ -40,6 +40,7 @@ import { rankCandidates } from "../lib/portavaRank.js";
 import {
   enforceCreatorCapsGeneric,
 } from "../services/ranking/CreatorCapEnforcer.js";
+import { recordMediaEvent } from "../lib/mediaAnalytics.js";
 
 const router = Router();
 
@@ -396,6 +397,15 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     } catch { /* non-fatal */ }
   })();
 
+  // ── Analytics (fire-and-forget) ────────────────────────────────────────────
+  recordMediaEvent("impression", {
+    viewer_id:  user.id,
+    feed_type:  feedType,
+    mode:       "watch",
+    surface:    "watch_feed",
+    session_id: sessionId,
+  }, sc);
+
   res.json({ items, nextCursor, sessionId });
 }));
 
@@ -645,6 +655,26 @@ router.post("/media/:id/view", asyncHandler(async (req, res) => {
   } catch (err) {
     req.log.warn({ err, type, itemId: id }, "media/view: rank_events insert threw");
     counted = false;
+  }
+
+  // ── Analytics (fire-and-forget) ────────────────────────────────────────────
+  if (counted) {
+    recordMediaEvent(
+      type === "rewatch" ? "rewatch" :
+      type === "completion" ? "completion" :
+      type === "qualified_view" ? "qualified_view" : "impression",
+      {
+        media_id:    id,
+        post_id:     id,
+        viewer_id:   user.id,
+        session_id:  sessionId ?? undefined,
+        watched_ms:  watchedMs ?? undefined,
+        mode:        "watch",
+        surface:     "watch_feed",
+        is_rewatch:  type === "rewatch",
+      },
+      sc,
+    );
   }
 
   res.json({ counted });

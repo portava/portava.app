@@ -91,6 +91,26 @@ const CONFIG_KEY_META: Record<string, ConfigKeyMeta> = {
   "ranking.caps.maxConsecutive":       { description: "Max consecutive items from one creator",          min: 1, max: 10  },
   "ranking.caps.fatigueHalfLifeHours": { description: "Fatigue score decay half-life (hours)",          min: 1, max: 720 },
   "ranking.caps.fatigueThreshold":     { description: "Impression count that triggers fatigue window",  min: 1, max: 100 },
+
+  // ── Media destination (Watch · Grid · Gems) ───────────────────────────────
+  // Creator caps for media feed — same semantics as ranking.caps.* above but
+  // applied to the Watch / Grid / Gems surfaces independently.
+  "ranking.media.creatorCapPerPage":         { description: "Max media items from one creator per feed page",         min: 1, max: 20  },
+  "ranking.media.creatorCapConsecutive":     { description: "Max consecutive media items from one creator",           min: 1, max: 10  },
+  "ranking.media.fatigueWindowHours":        { description: "Fatigue suppression window for a viewer–creator pair (hours)", min: 1, max: 720 },
+  "ranking.media.fatigueImpressionTrigger":  { description: "Impressions before fatigue suppression activates",       min: 1, max: 100 },
+
+  // Boost thresholds applied to under-exposed media items
+  "ranking.media.underexposedBoostScore":    { description: "Score boost for under-exposed media items",              min: 0, max: 50  },
+  "ranking.media.underexposedAgeLimitHours": { description: "Max age (hours) an item can receive the under-exposed boost", min: 1, max: 720 },
+
+  // Qualitative view weighting
+  "ranking.media.qualifiedViewWeight":       { description: "Score weight for qualified-view signals vs. impressions", min: 0, max: 10  },
+  "ranking.media.completionWeight":          { description: "Score weight for completion signals",                     min: 0, max: 10  },
+
+  // Gems-specific
+  "ranking.media.gemsProximityRadiusKm":     { description: "Proximity radius (km) used when geo-ranking Gems items", min: 1, max: 500 },
+  "ranking.media.gemsBoostVerifiedPlace":    { description: "Score boost for Gems linked to a verified/canonical place", min: 0, max: 25  },
 };
 
 /**
