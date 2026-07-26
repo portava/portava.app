@@ -65,6 +65,7 @@ export function MediaModeSelector({ modes, selectedMode, onSelect }: MediaModeSe
         return (
           <Pressable
             key={key}
+            testID={`mode-chip-${key}`}
             style={({ pressed }) => [
               styles.item,
               active && (immersive ? styles.itemActiveImmersive : styles.itemActiveSolid),

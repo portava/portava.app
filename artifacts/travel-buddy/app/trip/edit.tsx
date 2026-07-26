@@ -7,7 +7,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { router, useLocalSearchParams } from 'expo-router';
 import { CalendarDays, MapPin, X, ImagePlus, Film } from 'lucide-react-native';
-import { ScreenHeader } from '../../src/components/ScreenHeader';
+import { AppHeader } from '../../src/components/ui/AppHeader';
 import { useSession } from '../../src/context/SessionContext';
 import { getTrip, updateTrip } from '../../src/services/trips';
 import { uploadMedia, type PickedMedia } from '../../src/services/media';
@@ -205,7 +205,7 @@ export default function EditTrip() {
   if (!live) {
     return (
       <View style={{ flex: 1, backgroundColor: color.paper }}>
-        <ScreenHeader title="Edit trip" back />
+        <AppHeader variant="detail" title="Edit trip" onBack={router.back} />
         <View style={styles.center}>
           <Text style={styles.errorText}>Sign in to edit trips.</Text>
         </View>
@@ -216,7 +216,7 @@ export default function EditTrip() {
   if (loading) {
     return (
       <View style={{ flex: 1, backgroundColor: color.paper }}>
-        <ScreenHeader title="Edit trip" back />
+        <AppHeader variant="detail" title="Edit trip" onBack={router.back} />
         <View style={styles.center}><ActivityIndicator color={color.signal} /></View>
       </View>
     );
@@ -225,7 +225,7 @@ export default function EditTrip() {
   if (notOwner) {
     return (
       <View style={{ flex: 1, backgroundColor: color.paper }}>
-        <ScreenHeader title="Edit trip" back />
+        <AppHeader variant="detail" title="Edit trip" onBack={router.back} />
         <View style={styles.center}>
           <Text style={styles.errorText}>Only the trip owner can edit this trip.</Text>
         </View>
@@ -236,7 +236,7 @@ export default function EditTrip() {
   if (loadError) {
     return (
       <View style={{ flex: 1, backgroundColor: color.paper }}>
-        <ScreenHeader title="Edit trip" back />
+        <AppHeader variant="detail" title="Edit trip" onBack={router.back} />
         <View style={styles.center}>
           <Text style={styles.errorText}>{loadError}</Text>
         </View>
@@ -249,7 +249,7 @@ export default function EditTrip() {
 
   return (
     <KeyboardSafeScrollView style={{ backgroundColor: color.paper }}>
-      <ScreenHeader title="Edit trip" back />
+      <AppHeader variant="detail" title="Edit trip" onBack={router.back} />
       <ScrollView
         contentContainerStyle={{ padding: space.lg, gap: space.lg }}
         keyboardShouldPersistTaps="handled"

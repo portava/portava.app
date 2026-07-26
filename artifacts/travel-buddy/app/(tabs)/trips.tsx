@@ -16,7 +16,7 @@ import {
   ChevronRight, Check, X, Plane, Briefcase,
 } from 'lucide-react-native';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
-import { ScreenHeader } from '../../src/components/ScreenHeader';
+import { AppHeader } from '../../src/components/ui/AppHeader';
 import { Stamp } from '../../src/components/ui';
 import { useSession } from '../../src/context/SessionContext';
 import { useMyTrips, usePendingTripInvites } from '../../src/hooks/useBackend';
@@ -312,26 +312,14 @@ function TripsScreen() {
               />
             }
           >
-            {/* ScreenHeader and segControl now scroll with content */}
-            <View style={{ paddingTop: insets.top }}>
-              <ScreenHeader
-                title="Trips"
-                right={
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-                    <NotificationBell />
-                    <Pressable
-                      style={styles.newBtn}
-                      onPress={() => router.push('/trip/new')}
-                      accessibilityLabel="New trip"
-                      accessibilityRole="button"
-                    >
-                      <Plus size={16} color={color.onInk} />
-                      <Text style={styles.newBtnText}>New trip</Text>
-                    </Pressable>
-                  </View>
-                }
-              />
-            </View>
+            <AppHeader
+              variant="primary"
+              title="Trips"
+              rightActions={[
+                { icon: <NotificationBell />, accessibilityLabel: 'Notifications' },
+                { icon: <Plus size={22} color={color.ink} />, onPress: () => router.push('/trip/new'), accessibilityLabel: 'New trip' },
+              ]}
+            />
 
             {/* Segmented tab control — Trips | Events */}
             <View style={styles.segControl}>

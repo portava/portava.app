@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { CalendarClock, Check, Plus, Trash2, MapPin, Sparkles, Zap } from 'lucide-react-native';
-import { ScreenHeader } from '../src/components/ScreenHeader';
+import { AppHeader } from '../src/components/ui/AppHeader';
 import { useAvailabilityStore } from '../src/context/AvailabilityStore';
 import { resolveStatus, STATUS_LABEL } from '../src/lib/availability';
 import type { Weekday, TimeBlock } from '../src/types/models';
@@ -73,7 +73,7 @@ export default function AvailabilityScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <ScreenHeader title="Availability" back />
+      <AppHeader variant="detail" title="Availability" onBack={router.back} />
       <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.xl, paddingBottom: space.xxxl }} showsVerticalScrollIndicator={false} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
 
         {/* Current status */}

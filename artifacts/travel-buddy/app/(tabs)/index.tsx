@@ -3,7 +3,8 @@ import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, Activit
 import { getCommentCountSnapshot, subscribeCommentCount } from '../../src/lib/commentCountStore';
 import { router, useFocusEffect } from 'expo-router';
 import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
-import { PulseHeader } from '../../src/components/PulseHeader';
+import { AppHeader } from '../../src/components/ui/AppHeader';
+import { NotificationBell } from '../../src/components/NotificationBell';
 import { FitsCard, FlexibleStrip } from '../../src/components/PulseFits';
 import { ExploreTodaySection } from '../../src/components/ExploreTodaySection';
 import { PulseFeedCard } from '../../src/components/PulseFeedCard';
@@ -16,7 +17,6 @@ import { usePulseFeed } from '../../src/hooks/usePulseFeed';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useCircleFlag } from '../../src/hooks/useCircleFlag';
 import { fetchPreferences } from '../../src/services/intelligence';
-import { STATUS_LABEL } from '../../src/lib/availability';
 import type { PulseFilter, PulseFeedItem } from '../../src/types/models';
 import type { PostRow } from '../../src/services/posts';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
@@ -25,7 +25,7 @@ import { LocationPermissionPrompt } from '../../src/components/LocationPermissio
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { ActiveLayoverPill } from '../../src/components/layover/ActiveLayoverPill';
-import { Plane, Users, MapPin } from 'lucide-react-native';
+import { Plane, Users, MapPin, MessageCircle, PlusCircle } from 'lucide-react-native';
 import { PeopleYouMayKnow } from '../../src/components/PeopleYouMayKnow';
 import { CircleCompassSuggestions } from '../../src/components/CircleCompassSuggestions';
 import { LivePulseRail } from '../../src/components/LivePulseRail';
@@ -495,14 +495,17 @@ function Pulse() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <PulseHeader
-        city={activeCity ?? ''}
-        cityFull={activeCity ?? ''}
-        availabilityText={status === 'not_set' ? 'Availability not set' : STATUS_LABEL[status]}
-        filterCount={filterCount}
-        onSearch={() => router.push('/search' as any)}
-        onFilter={() => setSheetOpen(true)}
-        onCityPress={openCityPicker}
+      <AppHeader
+        variant="primary"
+        title="Pulse"
+        rightActions={[
+          { icon: <NotificationBell />, accessibilityLabel: 'Notifications' },
+          { icon: <MessageCircle size={22} color={color.ink} />, onPress: () => router.push('/(tabs)/messages' as any), accessibilityLabel: 'Messages' },
+          { icon: <PlusCircle size={22} color={color.ink} />, onPress: () => router.push('/create' as any), accessibilityLabel: 'Create post' },
+        ]}
+        overflowActions={[
+          { label: filterCount > 0 ? `Filters (${filterCount})` : 'Filters', onPress: () => setSheetOpen(true) },
+        ]}
       />
       <FlatList
         data={feed}

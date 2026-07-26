@@ -1,3 +1,7 @@
+/**
+ * @deprecated Use `AppHeader` from `src/components/ui/AppHeader` instead.
+ * All primary tab screens and nested stack screens have been migrated to AppHeader variants.
+ */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';

@@ -3,7 +3,7 @@ import { View, Text, TextInput, Pressable, ActivityIndicator, ScrollView, StyleS
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { router } from 'expo-router';
 import { CalendarDays, MapPin, X, Sparkles, ImagePlus } from 'lucide-react-native';
-import { ScreenHeader } from '../../src/components/ScreenHeader';
+import { AppHeader } from '../../src/components/ui/AppHeader';
 import { useSession } from '../../src/context/SessionContext';
 import { createTrip } from '../../src/services/trips';
 import { draftTripFromText } from '../../src/services/tripIntel';
@@ -249,7 +249,7 @@ export default function NewTrip() {
 
   return (
     <KeyboardSafeScrollView style={{ backgroundColor: color.paper }}>
-      <ScreenHeader title="New trip" back />
+      <AppHeader variant="detail" title="New trip" onBack={router.back} />
 
       <ScrollView
         contentContainerStyle={{ padding: space.lg, gap: space.lg }}

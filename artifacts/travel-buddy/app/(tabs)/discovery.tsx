@@ -20,6 +20,7 @@ import { DiscoveryCategoryTab } from '../../src/components/discovery/DiscoveryCa
 import { PlaceDetailSheet } from '../../src/components/discovery/PlaceDetailSheet';
 import { ForYouTab } from '../../src/components/discovery/ForYouTab';
 import { DestinationBar } from '../../src/components/discovery/DestinationBar';
+import { AppHeader } from '../../src/components/ui/AppHeader';
 import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { listMyTrips } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
@@ -493,26 +494,16 @@ export default function DiscoveryHub() {
   // destination bar, search bar, context-mode chips, category tabs, highlights
   // and buddy strip — to scroll off-screen so content fills the viewport.
   const discoveryHeader = useMemo(() => (
-    <View style={{ paddingTop: insets.top }}>
-      {/* ── Compass icon + "Discover" title + DestinationBar + share-place button ── */}
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Compass size={22} color={color.signal} />
-          <Text style={styles.headerTitle}>Discovery</Text>
-        </View>
-        <View style={styles.headerRight}>
-          <DestinationBar destination={destination} onSelectPlace={handleSelectPlaceFromBar} />
-          {isAuthed && isFlagEnabled('external_places_enabled') && (
-            <Pressable
-              style={styles.sharePlaceBtn}
-              onPress={() => setSubmitPlaceOpen(true)}
-              hitSlop={12}
-              accessibilityLabel="Share a place"
-            >
-              <PlusCircle size={20} color={color.signal} />
-            </Pressable>
-          )}
-        </View>
+    <View>
+      <AppHeader
+        variant="primary"
+        title="Discovery"
+        rightActions={isAuthed && isFlagEnabled('external_places_enabled') ? [
+          { icon: <PlusCircle size={20} color={color.signal} />, onPress: () => setSubmitPlaceOpen(true), accessibilityLabel: 'Share a place' },
+        ] : []}
+      />
+      <View style={{ paddingHorizontal: space.lg, paddingVertical: 6 }}>
+        <DestinationBar destination={destination} onSelectPlace={handleSelectPlaceFromBar} />
       </View>
 
       {/* Freshness indicator — shown when location is last-known or home-only */}

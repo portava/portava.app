@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, Image, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
-import { ScreenHeader } from '../src/components/ScreenHeader';
+import { router } from 'expo-router';
+import { AppHeader } from '../src/components/ui/AppHeader';
 import { getRestrictList, unrestrictUser, type RestrictedUser } from '../src/services/restrict';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
@@ -30,7 +31,7 @@ export default function RestrictedUsersScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <ScreenHeader title="Restricted Accounts" back />
+      <AppHeader variant="detail" title="Restricted Accounts" onBack={router.back} />
       <View style={s.content}>
         {loading ? (
           <ActivityIndicator color={color.signal} style={{ marginTop: space.xl }} />

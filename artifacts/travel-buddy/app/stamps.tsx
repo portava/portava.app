@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, Pressable, Modal, StyleSheet, ActivityIndicator } from 'react-native';
 import { X } from 'lucide-react-native';
-import { ScreenHeader } from '../src/components/ScreenHeader';
+import { router } from 'expo-router';
+import { AppHeader } from '../src/components/ui/AppHeader';
 import { PulseFilterRail } from '../src/components/PulseFilterRail';
 import { StampArtwork } from '../src/components/StampArtwork';
 import { getMyPassportStamps, updateStampVisibility } from '../src/services/passportStamps';
@@ -100,7 +101,7 @@ export default function StampsPage() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <ScreenHeader title="STAMPS" back />
+      <AppHeader variant="detail" title="STAMPS" onBack={router.back} />
 
       <PulseFilterRail
         filters={FILTERS.map((f) => f.label)}

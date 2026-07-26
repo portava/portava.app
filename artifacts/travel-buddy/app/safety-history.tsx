@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { Shield, CheckCircle, AlertCircle, Clock, X, ChevronLeft } from 'lucide-react-native';
-import { ScreenHeader } from '../src/components/ScreenHeader';
+import { AppHeader } from '../src/components/ui/AppHeader';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { getHistory, type SafeReturnSession, type SafeReturnSessionEvents } from '../src/services/safeReturn';
 import { SafeReturnSetupSheet } from '../src/components/safeReturn/SafeReturnSetupSheet';
@@ -185,7 +185,7 @@ export default function SafetyHistoryScreen() {
 
   return (
     <View style={styles.root}>
-      <ScreenHeader title="Safe Return History" back />
+      <AppHeader variant="detail" title="Safe Return History" onBack={router.back} />
 
       {loading ? (
         <View style={styles.center}>

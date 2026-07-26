@@ -3,9 +3,9 @@ import {
   View, Text, FlatList, Pressable, Image, StyleSheet,
   ActivityIndicator, Alert,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, router } from 'expo-router';
 import { VolumeX } from 'lucide-react-native';
-import { ScreenHeader } from '../src/components/ScreenHeader';
+import { AppHeader } from '../src/components/ui/AppHeader';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { getMuteList, unmuteUser } from '../src/services/mutes';
 import type { MutedUser } from '../src/services/mutes';
@@ -59,7 +59,7 @@ export default function MutedUsersScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <ScreenHeader title="Muted accounts" back />
+      <AppHeader variant="detail" title="Muted accounts" onBack={router.back} />
 
       {loading ? (
         <View style={s.center}>

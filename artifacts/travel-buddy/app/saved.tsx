@@ -13,7 +13,7 @@ import {
 import { getPlaceCategoryFallback } from '../src/utils/placeCategoryFallback';
 import { useFocusEffect, router } from 'expo-router';
 import { FEED_FOCUS_TTL_MS } from '../src/hooks/usePosts';
-import { ScreenHeader } from '../src/components/ScreenHeader';
+import { AppHeader } from '../src/components/ui/AppHeader';
 import { color, space, radius, shadow, type as t } from '../src/theme/tokens';
 import {
   getCollections, createCollection, deleteCollection, updateCollection,
@@ -460,7 +460,7 @@ export default function SavedScreen() {
         <>
           {loading ? (
             <View style={{ flex: 1 }}>
-              <ScreenHeader title="Saved" back />
+              <AppHeader variant="detail" title="Saved" onBack={router.back} />
               <View style={s.center}><ActivityIndicator color={color.signal} /></View>
             </View>
           ) : collections.length === 0 ? (
@@ -469,7 +469,7 @@ export default function SavedScreen() {
               onScroll={navBarScrollHandler}
               scrollEventThrottle={16}
             >
-              <ScreenHeader title="Saved" back />
+              <AppHeader variant="detail" title="Saved" onBack={router.back} />
               <Bookmark size={40} color={color.haze} />
               <Text style={s.emptyTitle}>Nothing saved yet</Text>
               <Text style={s.emptySub}>
@@ -505,7 +505,7 @@ export default function SavedScreen() {
               scrollEventThrottle={16}
               ListHeaderComponent={
                 <>
-                  <ScreenHeader title="Saved" back />
+                  <AppHeader variant="detail" title="Saved" onBack={router.back} />
                   <Pressable style={s.newCollectionRow} onPress={() => setCreateOpen(true)}>
                     <FolderPlus size={18} color={color.deep} />
                     <Text style={s.newCollectionText}>New collection</Text>

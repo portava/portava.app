@@ -6,7 +6,7 @@ import {
 import { KeyboardSafeScrollView } from '../src/components/ui/KeyboardSafeView';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Search, X, Clock, Zap, MapPin, AlertCircle } from 'lucide-react-native';
-import { ScreenHeader } from '../src/components/ScreenHeader';
+import { AppHeader } from '../src/components/ui/AppHeader';
 import { SearchResultCard } from '../src/components/search/SearchResultCard';
 import {
   searchUnified,
@@ -348,7 +348,7 @@ export default function SearchScreen() {
         onEndReachedThreshold={0.4}
         ListHeaderComponent={
           <View style={{ backgroundColor: color.paper }}>
-            <ScreenHeader title="Search" back />
+            <AppHeader variant="detail" title="Search" onBack={router.back} />
 
             {/* Search bar */}
             <View style={styles.searchBar}>

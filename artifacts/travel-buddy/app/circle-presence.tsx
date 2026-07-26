@@ -21,7 +21,7 @@ import {
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Settings, Radio, Users, Pause, WifiOff, AlertCircle, MapPin } from 'lucide-react-native';
 
-import { ScreenHeader } from '../src/components/ScreenHeader';
+import { AppHeader } from '../src/components/ui/AppHeader';
 import { SafeReturnSetupSheet } from '../src/components/safeReturn/SafeReturnSetupSheet';
 import { CircleMemberRow } from '../src/components/circle/CircleMemberRow';
 import { CheckInActions } from '../src/components/circle/CheckInActions';
@@ -197,7 +197,7 @@ export default function CirclePresenceScreen() {
   if (screenState === 'loading') {
     return (
       <View style={g.screen}>
-        <ScreenHeader title={contextLabel} />
+        <AppHeader variant="detail" title={contextLabel} />
         <View style={g.center}>
           <ActivityIndicator size="large" color={color.signal} />
         </View>
@@ -208,7 +208,7 @@ export default function CirclePresenceScreen() {
   if (screenState === 'error') {
     return (
       <View style={g.screen}>
-        <ScreenHeader title={contextLabel} />
+        <AppHeader variant="detail" title={contextLabel} />
         <View style={g.center}>
           <AlertCircle size={40} color={color.faint} />
           <Text style={g.stateTitle}>Couldn't load Circle.</Text>
@@ -224,7 +224,7 @@ export default function CirclePresenceScreen() {
   if (screenState === 'feature_disabled') {
     return (
       <View style={g.screen}>
-        <ScreenHeader title={contextLabel} />
+        <AppHeader variant="detail" title={contextLabel} />
         <View style={g.center}>
           <Radio size={40} color={color.faint} />
           <Text style={g.stateTitle}>Find Your Circle disabled.</Text>
@@ -247,7 +247,7 @@ export default function CirclePresenceScreen() {
         : 'Accept your invitation and RSVP going to join the Event Circle.';
     return (
       <View style={g.screen}>
-        <ScreenHeader title={contextLabel} />
+        <AppHeader variant="detail" title={contextLabel} />
         <View style={g.center}>
           <Users size={40} color={color.faint} />
           <Text style={g.stateTitle}>{msg}</Text>
@@ -262,7 +262,7 @@ export default function CirclePresenceScreen() {
       contextType === 'trip' ? 'This trip has ended.' : 'This event has ended.';
     return (
       <View style={g.screen}>
-        <ScreenHeader title={contextLabel} />
+        <AppHeader variant="detail" title={contextLabel} />
         <View style={g.center}>
           <Radio size={40} color={color.faint} />
           <Text style={g.stateTitle}>{msg}</Text>
@@ -275,7 +275,7 @@ export default function CirclePresenceScreen() {
   if (screenState === 'sharing_off') {
     return (
       <View style={g.screen}>
-        <ScreenHeader title={contextLabel} />
+        <AppHeader variant="detail" title={contextLabel} />
         <View style={g.center}>
           <WifiOff size={40} color={color.faint} />
           <Text style={g.stateTitle}>Find Your Circle is off.</Text>
@@ -339,7 +339,7 @@ export default function CirclePresenceScreen() {
 
   const listHeader = (
     <View style={g.headerArea}>
-      <ScreenHeader title={contextLabel} />
+      <AppHeader variant="detail" title={contextLabel} />
       {globalPaused && (
         <View style={g.pauseBanner}>
           <Pause size={14} color={color.mute} />

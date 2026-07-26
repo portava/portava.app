@@ -38,6 +38,7 @@ import { GemsFeed } from '../../src/components/media/GemsFeed';
 import { MediaQuickCreateSheet } from '../../src/components/media/MediaQuickCreateSheet';
 import { mediaEvents } from '../../src/lib/mediaEvents';
 import { color, shadow } from '../../src/theme/tokens';
+import { AppHeader, OVERLAY_HEADER_HEIGHT } from '../../src/components/ui/AppHeader';
 import { useBottomInset } from '../../src/hooks/useBottomInset';
 
 // ── Mode definitions ──────────────────────────────────────────────────────────
@@ -109,10 +110,18 @@ function MediaScreenInner() {
         )}
       </View>
 
+      {/* ── Overlay header for immersive modes (Watch / Gems) ───────── */}
+      {isImmersive && (
+        <AppHeader
+          variant="overlay"
+          title={selectedMode === 'watch' ? 'Watch' : 'Gems'}
+        />
+      )}
+
       {/* ── Mode selector — overlaid at the top, inside safe area ───── */}
       {enabledModes.length > 1 && (
         <View
-          style={[styles.selectorOverlay, { top: insets.top + 8 }]}
+          style={[styles.selectorOverlay, { top: insets.top + (isImmersive ? OVERLAY_HEADER_HEIGHT + 4 : 8) }]}
           pointerEvents="box-none"
         >
           <MediaModeSelector
