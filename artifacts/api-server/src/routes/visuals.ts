@@ -14,9 +14,9 @@ import { getServiceClient } from "../lib/supabase.js";
 import { coerceStyle } from "../lib/visuals/styles.js";
 import {
   requestGeneration,
-  processJob,
   type GenerationRequest,
 } from "../lib/visuals/service.js";
+import { emitVisualEvent } from "../lib/visuals/analytics.js";
 import type { VisualEntityType, VisualPurpose } from "../lib/visuals/types.js";
 
 const router = Router();
@@ -104,10 +104,7 @@ router.post(
       return sendError(res, "db_error", outcome.error);
     }
 
-    // Fire the async job without blocking the response.
-    if (outcome.visualId && outcome.status === "queued") {
-      void processJob(outcome.visualId);
-    }
+    // The VisualGenerationWorker picks up the queued row asynchronously.
     return res.status(202).json({
       id: outcome.visualId,
       status: outcome.status,
@@ -200,7 +197,7 @@ router.post(
       if (outcome.status === "rate_limited") return sendError(res, "rate_limited", outcome.error);
       return sendError(res, "db_error", outcome.error);
     }
-    if (outcome.visualId) void processJob(outcome.visualId);
+    // The VisualGenerationWorker picks up the queued row asynchronously.
     return res.status(202).json({ id: outcome.visualId, status: outcome.status });
   }),
 );
@@ -215,7 +212,7 @@ router.post(
     if (!sc) return sendError(res, "server_not_configured");
     const { data: v } = await sc
       .from("generated_visuals")
-      .select("entity_type, entity_id, status")
+      .select("entity_type, entity_id, purpose, style, status")
       .eq("id", req.params.id)
       .maybeSingle();
     if (!v) return sendError(res, "not_found");
@@ -227,6 +224,14 @@ router.post(
       .from("generated_visuals")
       .update({ accepted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq("id", req.params.id);
+    emitVisualEvent("visual_generation_accepted", {
+      entity_type: v.entity_type,
+      entity_id:   v.entity_id,
+      purpose:     v.purpose,
+      style:       v.style,
+      status:      "ready",
+      visual_id:   req.params.id,
+    });
     return res.json({ ok: true });
   }),
 );
@@ -241,7 +246,7 @@ router.delete(
     if (!sc) return sendError(res, "server_not_configured");
     const { data: v } = await sc
       .from("generated_visuals")
-      .select("entity_type, entity_id")
+      .select("entity_type, entity_id, purpose, style")
       .eq("id", req.params.id)
       .maybeSingle();
     if (!v) return sendError(res, "not_found");
@@ -253,6 +258,14 @@ router.delete(
       .from("generated_visuals")
       .update({ status: "replaced", replaced_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq("id", req.params.id);
+    emitVisualEvent("visual_generation_removed", {
+      entity_type: v.entity_type,
+      entity_id:   v.entity_id,
+      purpose:     v.purpose,
+      style:       v.style,
+      status:      "replaced",
+      visual_id:   req.params.id,
+    });
     return res.json({ ok: true });
   }),
 );

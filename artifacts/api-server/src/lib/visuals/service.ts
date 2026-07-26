@@ -21,6 +21,7 @@ import { NEGATIVE_PROMPT } from "./promptBuilder.js";
 import { promptHash } from "./promptHash.js";
 import { coerceStyle, styleIsIllustrated } from "./styles.js";
 import { buildDerivatives, dataUrlToBuffer } from "./derivatives.js";
+import { emitVisualEvent } from "./analytics.js";
 
 /**
  * Convert a provider image URL to a raw image Buffer.
@@ -140,12 +141,20 @@ async function countToday(sc: any, column: "owner_user_id" | null, value?: strin
 }
 
 /**
- * Synchronous entry point: validate, dedupe, create the job. Returns immediately.
- * The caller (route) fires processJob() without awaiting.
+ * Synchronous entry point: validate, dedupe, create the queued job row. Returns
+ * immediately — the VisualGenerationWorker picks it up asynchronously.
  */
 export async function requestGeneration(req: GenerationRequest): Promise<GenerationOutcome> {
   const sc: any = getServiceClient();
   if (!sc) return { ok: false, status: "error", error: "server_not_configured" };
+
+  emitVisualEvent("visual_generation_requested", {
+    entity_type: req.entityType,
+    entity_id:   req.entityId,
+    purpose:     req.purpose,
+    style:       req.style ?? null,
+    status:      "requested",
+  });
 
   const providerEnabled = await isFlagEnabled(sc, "ai_visual_provider_enabled");
   const purposeEnabled = await isFlagEnabled(sc, purposeFlag(req.purpose));
@@ -183,7 +192,17 @@ export async function requestGeneration(req: GenerationRequest): Promise<Generat
       .in("status", ["queued", "generating", "ready"])
       .limit(1)
       .maybeSingle();
-    if (existing) return { ok: true, status: existing.status === "ready" ? "ready" : "queued", visualId: existing.id };
+    if (existing) {
+      emitVisualEvent("visual_generation_reused", {
+        entity_type: req.entityType,
+        entity_id:   req.entityId,
+        purpose:     req.purpose,
+        style:       snapshot.style,
+        status:      existing.status,
+        visual_id:   existing.id,
+      });
+      return { ok: true, status: existing.status === "ready" ? "ready" : "queued", visualId: existing.id };
+    }
   } else {
     // Force regenerate: retire all active rows for this entity+purpose so the
     // partial-unique index doesn't conflict when we insert the new job. This
@@ -196,6 +215,14 @@ export async function requestGeneration(req: GenerationRequest): Promise<Generat
       .eq("entity_id", req.entityId)
       .eq("purpose", req.purpose)
       .in("status", ["queued", "generating", "ready"]);
+
+    emitVisualEvent("visual_generation_regenerated", {
+      entity_type: req.entityType,
+      entity_id:   req.entityId,
+      purpose:     req.purpose,
+      style:       snapshot.style,
+      status:      "replaced",
+    });
   }
 
   const useProvider = providerEnabled && purposeEnabled;
@@ -220,6 +247,17 @@ export async function requestGeneration(req: GenerationRequest): Promise<Generat
     .single();
 
   if (error || !job) return { ok: false, status: "error", error: error?.message ?? "insert_failed" };
+
+  emitVisualEvent("visual_generation_queued", {
+    entity_type: req.entityType,
+    entity_id:   req.entityId,
+    purpose:     req.purpose,
+    style:       snapshot.style,
+    status:      "queued",
+    visual_id:   job.id,
+    provider:    useProvider ? "openai" : "category_fallback",
+  });
+
   return { ok: true, status: "queued", visualId: job.id };
 }
 

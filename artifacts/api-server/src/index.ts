@@ -22,6 +22,7 @@ import { getServiceClient } from "./lib/supabase";
 import { initCityTimezonePersistence } from "./compass/CompassGraphEngine.js";
 import { assertRequiredEnv } from "./lib/envValidation";
 import { startWorkerLoop, queryStampWorkerHealth, startHealthMonitorLoop } from "./lib/stamps/generationWorker";
+import { startVisualGenerationWorker } from "./lib/visuals/generationWorker";
 import { startFxRefreshLoop } from "./lib/fxRefreshScheduler";
 import { startXXCatalogSweeper } from "./lib/stamps/xxCatalogRepair";
 import { startCorrectionSweep } from "./lib/stamps/countryGeocoder";
@@ -86,6 +87,12 @@ app.listen(port, (err) => {
     const intervalMs = Number(process.env.STAMP_WORKER_INTERVAL_MS) || 30_000;
     startWorkerLoop(intervalMs);
   }
+
+  // Visual generation worker — polls generated_visuals for queued jobs,
+  // applies exponential-backoff retries, and emits structured analytics.
+  // Unconditionally started: it is a low-overhead poller; jobs are only
+  // created when generation is explicitly requested via the API.
+  startVisualGenerationWorker();
 
   // FX daily refresh — only when FX_REFRESH_ENABLED=true. Pulls ECB reference
   // rates (frankfurter.dev) into fx_rates once a day so budget conversions stay
