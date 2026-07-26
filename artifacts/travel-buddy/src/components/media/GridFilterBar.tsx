@@ -49,7 +49,14 @@ const ALL_CHIPS: ChipDef[] = [
 
 export interface GridFilterBarProps {
   selectedFilter: GridFilter;
-  onFilterChange: (filter: GridFilter) => void;
+  /**
+   * Called when the user selects a chip.
+   * For filter=nearby the caller also receives the viewer's current coordinates
+   * so it can forward them to the API. Coordinates are omitted for all other
+   * filters and when the position fetch fails (callers should fall back to
+   * showing all public posts).
+   */
+  onFilterChange: (filter: GridFilter, coords?: { lat: number; lng: number }) => void;
 }
 
 // ── Hook: location permission ─────────────────────────────────────────────────
@@ -98,11 +105,32 @@ export function GridFilterBar({ selectedFilter, onFilterChange }: GridFilterBarP
       >
         {visibleChips.map((chip) => {
           const active = selectedFilter === chip.key;
+
+          const handlePress = async () => {
+            if (chip.key === 'nearby') {
+              try {
+                const Location = await import('expo-location');
+                const pos = await Location.getCurrentPositionAsync({
+                  accuracy: Location.Accuracy.Balanced,
+                });
+                onFilterChange('nearby', {
+                  lat: pos.coords.latitude,
+                  lng: pos.coords.longitude,
+                });
+              } catch {
+                // Position unavailable — fall back to server-side all-public behaviour.
+                onFilterChange('nearby');
+              }
+            } else {
+              onFilterChange(chip.key);
+            }
+          };
+
           return (
             <Pressable
               key={chip.key}
               style={[styles.chip, active && styles.chipActive]}
-              onPress={() => onFilterChange(chip.key)}
+              onPress={handlePress}
               accessibilityRole="button"
               accessibilityState={{ selected: active }}
               accessibilityLabel={chip.label}

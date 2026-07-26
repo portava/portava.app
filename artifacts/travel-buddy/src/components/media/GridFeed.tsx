@@ -207,11 +207,11 @@ export function GridFeed() {
 
   // ── Filter change ───────────────────────────────────────────────────────────
   const handleFilterChange = useCallback(
-    (f: GridFilter) => {
+    (f: GridFilter, coords?: { lat: number; lng: number }) => {
       // Reset scroll restoration so the new filter starts at the top.
       hasRestored.current = false;
       setModeState('grid', { scrollOffset: 0 });
-      setFilter(f);
+      setFilter(f, coords);
     },
     [setFilter, setModeState],
   );

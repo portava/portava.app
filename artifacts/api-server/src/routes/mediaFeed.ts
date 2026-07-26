@@ -100,11 +100,14 @@ function pruneViewDedup(): void {
  * Includes only the fields needed to render a static poster tile.
  * Eligibility fields (geo_restriction / age_restriction_*) are still present
  * because filterEligibleMediaCandidates requires them to be fail-closed.
+ * location_lat / location_lng are included for the nearby radius filter;
+ * they are never forwarded to the client (hydrateMediaGridItem omits them).
  */
 const GRID_POST_COLUMNS =
   "id, author_id, has_video, primary_media_type, " +
   "view_count, qualified_view_count, " +
   "location_name, location_city, location_country, " +
+  "location_lat, location_lng, " +
   "created_at, category, " +
   "status, post_status, visibility, moderation_status, publish_at, " +
   "geo_restriction, age_restriction_enabled, age_min, age_max, tags";
@@ -362,6 +365,10 @@ const gridQuerySchema = z.object({
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(MAX_LIMIT).optional().default(DEFAULT_LIMIT),
   sessionId: z.string().optional(),
+  /** Viewer latitude — required for filter=nearby to produce a real radius filter. */
+  lat: z.coerce.number().min(-90).max(90).optional(),
+  /** Viewer longitude — required for filter=nearby to produce a real radius filter. */
+  lng: z.coerce.number().min(-180).max(180).optional(),
 });
 
 const gemsQuerySchema = z.object({
@@ -395,6 +402,25 @@ const GEM_FEED_COLUMNS = "id, name, category, city, country, neighborhood, descr
 
 /** km radius used for near_me bounding-box pre-filter. */
 const NEAR_ME_RADIUS_KM = 25;
+
+/** Radius (km) used by filter=nearby on the grid feed. */
+const NEARBY_GRID_RADIUS_KM = 50;
+
+/**
+ * Haversine great-circle distance in kilometres.
+ * Used for the in-memory precision pass after the DB bounding-box pre-filter.
+ */
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLng = (lng2 - lng1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * (Math.PI / 180)) *
+    Math.cos(lat2 * (Math.PI / 180)) *
+    Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 const viewBodySchema = z.object({
   type: z.enum(["impression", "qualified_view", "completion", "rewatch"]),
   watchedMs: z.number().int().min(0).optional(),
@@ -444,7 +470,7 @@ async function handleGridFeed(req: any, res: any): Promise<void> {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid query");
     return;
   }
-  const { filter, limit, sessionId: clientSessionId } = parsed.data;
+  const { filter, limit, sessionId: clientSessionId, lat: queryLat, lng: queryLng } = parsed.data;
   const cursorToken = parsed.data.cursor;
   const sessionId = clientSessionId ?? randomUUID();
 
@@ -525,9 +551,24 @@ async function handleGridFeed(req: any, res: any): Promise<void> {
       query = query.in("id", [...savedPostIds]);
       break;
     case "all":
-    case "nearby":
     default:
       query = query.eq("visibility", "public");
+      break;
+    case "nearby":
+      query = query.eq("visibility", "public");
+      // Bounding-box pre-filter at the DB level (fast index scan).
+      // Posts without coordinates are excluded — they can't be "nearby" anything.
+      // A second in-memory Haversine pass removes corner-of-the-box false positives.
+      if (queryLat != null && queryLng != null) {
+        const deltaLat = NEARBY_GRID_RADIUS_KM / 111.0;
+        const deltaLng =
+          NEARBY_GRID_RADIUS_KM / (111.0 * Math.cos(queryLat * (Math.PI / 180)));
+        query = query
+          .gte("location_lat", queryLat - deltaLat)
+          .lte("location_lat", queryLat + deltaLat)
+          .gte("location_lng", queryLng - deltaLng)
+          .lte("location_lng", queryLng + deltaLng);
+      }
       break;
   }
 
@@ -542,7 +583,17 @@ async function handleGridFeed(req: any, res: any): Promise<void> {
     return;
   }
 
-  const candidates = (rawCandidates as MediaCandidate[]) ?? [];
+  let candidates = (rawCandidates as MediaCandidate[]) ?? [];
+
+  // ── Nearby: in-memory Haversine pass (removes bounding-box corners) ──────────
+  if (filter === "nearby" && queryLat != null && queryLng != null) {
+    candidates = candidates.filter((c) => {
+      const lat = (c as any).location_lat as number | null | undefined;
+      const lng = (c as any).location_lng as number | null | undefined;
+      if (lat == null || lng == null) return false;
+      return haversineKm(queryLat!, queryLng!, lat, lng) <= NEARBY_GRID_RADIUS_KM;
+    });
+  }
 
   // ── Eligibility filter ──────────────────────────────────────────────────────
   const { eligible, blockFetchFailed } = await filterEligibleMediaCandidates(

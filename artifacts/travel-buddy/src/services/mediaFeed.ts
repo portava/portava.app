@@ -205,6 +205,10 @@ export interface FetchGridFeedParams {
   cursor?: string;
   sessionId?: string;
   limit?: number;
+  /** Viewer latitude — passed when filter=nearby so the API can radius-filter. */
+  lat?: number;
+  /** Viewer longitude — passed when filter=nearby so the API can radius-filter. */
+  lng?: number;
 }
 
 /**
@@ -231,6 +235,8 @@ export async function fetchGridFeed(params: FetchGridFeedParams): Promise<GridFe
       limit: String(params.limit ?? 20),
     });
     if (params.cursor) qs.set('cursor', params.cursor);
+    if (params.lat != null) qs.set('lat', String(params.lat));
+    if (params.lng != null) qs.set('lng', String(params.lng));
 
     const res = await fetch(`${apiBase()}/api/media/feed?${qs.toString()}`, {
       headers: { Authorization: `Bearer ${token}` },
