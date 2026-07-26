@@ -1,13 +1,18 @@
 /**
- * GenerateHeaderSheet — slide-up sheet for AI-generated event header images.
+ * GenerateHeaderSheet — slide-up sheet for AI-generated event/place header images.
  *
- * Flow:
+ * Flow for events (no config phase):
  *   1. Mount: trigger POST /api/visuals/generate immediately.
  *   2. Poll GET /api/visuals/:id every 3 s until status is terminal
  *      (ready | failed | blocked).
  *   3. Show the preview image.
  *   4. Host taps "Use this image" → POST /api/visuals/:id/accept → onAccepted(url).
  *   5. Host taps "Regenerate" → POST /api/visuals/:id/regenerate → poll again.
+ *
+ * Flow for places (with config phase):
+ *   1. Mount: show optional style controls (style, time of day, render mode).
+ *   2. Admin taps "Generate now" (with or without choosing preferences).
+ *   3. Continue as above from step 1 of the events flow.
  *
  * Mirrors the generate + review flow used for stamp artwork.
  */
@@ -18,6 +23,7 @@ import {
   Image,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -51,10 +57,73 @@ interface Props {
 }
 
 type Phase =
+  | 'config'       // Place-only: preference controls shown before generation starts
   | 'generating'   // Requesting + waiting for the worker
   | 'ready'        // Image available for review
   | 'accepting'    // POST /accept in-flight
   | 'error';       // Unrecoverable failure
+
+type TimeOfDay = 'morning' | 'afternoon' | 'sunset' | 'evening' | 'night';
+type RenderMode = 'realistic' | 'illustrated';
+
+interface PlacePreferences {
+  style?: string;
+  timeOfDay?: TimeOfDay;
+  renderMode?: RenderMode;
+}
+
+// ── Style presets ─────────────────────────────────────────────────────────────
+
+const STYLE_PRESETS: { label: string; value: string }[] = [
+  { label: 'Cinematic', value: 'cinematic' },
+  { label: 'Watercolour', value: 'watercolor' },
+  { label: 'Minimalist', value: 'minimalist' },
+  { label: 'Vibrant', value: 'vibrant' },
+];
+
+const TIME_OPTIONS: { label: string; value: TimeOfDay }[] = [
+  { label: 'Morning', value: 'morning' },
+  { label: 'Afternoon', value: 'afternoon' },
+  { label: 'Sunset', value: 'sunset' },
+  { label: 'Evening', value: 'evening' },
+  { label: 'Night', value: 'night' },
+];
+
+const RENDER_OPTIONS: { label: string; value: RenderMode }[] = [
+  { label: 'Realistic', value: 'realistic' },
+  { label: 'Illustrated', value: 'illustrated' },
+];
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+interface ChipGroupProps<T extends string> {
+  label: string;
+  options: { label: string; value: T }[];
+  selected: T | undefined;
+  onSelect: (v: T | undefined) => void;
+}
+
+function ChipGroup<T extends string>({ label, options, selected, onSelect }: ChipGroupProps<T>) {
+  return (
+    <View style={cs.group}>
+      <Text style={cs.groupLabel}>{label}</Text>
+      <View style={cs.chips}>
+        {options.map(opt => {
+          const active = selected === opt.value;
+          return (
+            <Pressable
+              key={opt.value}
+              style={[cs.chip, active && cs.chipActive]}
+              onPress={() => onSelect(active ? undefined : opt.value)}
+            >
+              <Text style={[cs.chipText, active && cs.chipTextActive]}>{opt.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -64,6 +133,11 @@ export function GenerateHeaderSheet({ visible, entityType, entityId, onDismiss, 
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState(false);
+
+  // Place-specific preference state
+  const [prefStyle, setPrefStyle]       = useState<string | undefined>(undefined);
+  const [prefTime, setPrefTime]         = useState<TimeOfDay | undefined>(undefined);
+  const [prefRender, setPrefRender]     = useState<RenderMode | undefined>(undefined);
 
   const pollRef  = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountRef = useRef(false);
@@ -109,17 +183,23 @@ export function GenerateHeaderSheet({ visible, entityType, entityId, onDismiss, 
 
   // ── Trigger generation ────────────────────────────────────────────────────────
 
-  const triggerGenerate = useCallback(async () => {
+  const triggerGenerate = useCallback(async (prefs?: PlacePreferences) => {
     setPhase('generating');
     setImageUrl(null);
     setErrorMsg(null);
     setVisualId(null);
 
     const purpose = entityType === 'place' ? 'place_header' : 'event_header';
+    const preferences: Record<string, string> = {};
+    if (prefs?.timeOfDay) preferences.timeOfDay = prefs.timeOfDay;
+    if (prefs?.renderMode) preferences.renderMode = prefs.renderMode;
+
     const res = await generateVisual({
       entityType,
       entityId,
       purpose,
+      ...(prefs?.style ? { style: prefs.style } : {}),
+      ...(Object.keys(preferences).length > 0 ? { preferences } : {}),
     });
 
     if (!mountRef.current) return;
@@ -148,7 +228,20 @@ export function GenerateHeaderSheet({ visible, entityType, entityId, onDismiss, 
   useEffect(() => {
     if (!visible) return;
     mountRef.current = true;
-    triggerGenerate();
+
+    if (entityType === 'place') {
+      // Show preference controls before generating
+      setPhase('config');
+      setVisualId(null);
+      setImageUrl(null);
+      setErrorMsg(null);
+      setPrefStyle(undefined);
+      setPrefTime(undefined);
+      setPrefRender(undefined);
+    } else {
+      triggerGenerate();
+    }
+
     return () => {
       mountRef.current = false;
       stopPoll();
@@ -156,6 +249,10 @@ export function GenerateHeaderSheet({ visible, entityType, entityId, onDismiss, 
   }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps — only trigger when sheet opens
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
+
+  function handleGenerateNow() {
+    triggerGenerate({ style: prefStyle, timeOfDay: prefTime, renderMode: prefRender });
+  }
 
   async function handleAccept() {
     if (!visualId || !imageUrl) return;
@@ -189,9 +286,11 @@ export function GenerateHeaderSheet({ visible, entityType, entityId, onDismiss, 
       }
     }
 
-    // Fallback: trigger a fresh generation
+    // Fallback: trigger a fresh generation with same preferences
     setRegenerating(false);
-    if (mountRef.current) triggerGenerate();
+    if (mountRef.current) {
+      triggerGenerate({ style: prefStyle, timeOfDay: prefTime, renderMode: prefRender });
+    }
   }
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -223,6 +322,42 @@ export function GenerateHeaderSheet({ visible, entityType, entityId, onDismiss, 
           {/* Body */}
           <View style={s.body}>
 
+            {/* Config state — place admins choose style before generating */}
+            {phase === 'config' && (
+              <ScrollView showsVerticalScrollIndicator={false} style={s.configScroll} contentContainerStyle={s.configContent}>
+                <Text style={s.configIntro}>
+                  Optionally fine-tune the style before generating. All controls are optional — tap{' '}
+                  <Text style={s.configIntroEm}>Generate now</Text> to use defaults.
+                </Text>
+
+                <ChipGroup
+                  label="Visual style"
+                  options={STYLE_PRESETS}
+                  selected={prefStyle}
+                  onSelect={setPrefStyle}
+                />
+
+                <ChipGroup
+                  label="Time of day"
+                  options={TIME_OPTIONS}
+                  selected={prefTime}
+                  onSelect={setPrefTime}
+                />
+
+                <ChipGroup
+                  label="Render mode"
+                  options={RENDER_OPTIONS}
+                  selected={prefRender}
+                  onSelect={setPrefRender}
+                />
+
+                <Pressable style={s.generateBtn} onPress={handleGenerateNow}>
+                  <Sparkles size={15} color={color.onInk} />
+                  <Text style={s.generateBtnText}>Generate now</Text>
+                </Pressable>
+              </ScrollView>
+            )}
+
             {/* Generating state */}
             {phase === 'generating' && (
               <View style={s.loadingContainer}>
@@ -246,7 +381,7 @@ export function GenerateHeaderSheet({ visible, entityType, entityId, onDismiss, 
                   resizeMode="cover"
                 />
                 <Text style={s.previewNote}>
-                  AI-generated from your event title, category, and location.
+                  AI-generated from your {entityType === 'place' ? 'place' : 'event'} title, category, and location.
                 </Text>
 
                 <View style={s.actions}>
@@ -320,6 +455,14 @@ const s = StyleSheet.create({
   closeBtn:        { padding: 4 },
   body:            { padding: space.lg, gap: space.md },
 
+  // Config phase
+  configScroll:    { maxHeight: 420 },
+  configContent:   { gap: space.lg, paddingBottom: space.sm },
+  configIntro:     { ...t.body, color: color.mute, lineHeight: 20 },
+  configIntroEm:   { color: color.ink, fontWeight: '600' },
+  generateBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.sm, backgroundColor: color.signal, borderRadius: radius.pill, paddingVertical: space.md, marginTop: space.sm },
+  generateBtnText: { ...t.body, color: color.onInk, fontWeight: '700' },
+
   // Generating
   loadingContainer:{ alignItems: 'center', paddingVertical: space.xxl, gap: space.md },
   loadingTitle:    { ...t.title, color: color.ink, fontWeight: '700', marginTop: space.sm },
@@ -343,4 +486,16 @@ const s = StyleSheet.create({
   errorContainer:  { alignItems: 'center', paddingVertical: space.xl, gap: space.md },
   errorTitle:      { ...t.title, color: color.ink, fontWeight: '700' },
   errorMsg:        { ...t.body, color: color.mute, textAlign: 'center', lineHeight: 20 },
+});
+
+// ── Chip group styles ──────────────────────────────────────────────────────────
+
+const cs = StyleSheet.create({
+  group:         { gap: space.sm },
+  groupLabel:    { ...t.small, color: color.mute, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
+  chips:         { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  chip:          { paddingHorizontal: space.md, paddingVertical: space.xs + 2, borderRadius: radius.pill, borderWidth: 1.5, borderColor: color.haze, backgroundColor: color.paper },
+  chipActive:    { borderColor: color.signal, backgroundColor: '#FFF1EE' },
+  chipText:      { ...t.body, color: color.mute, fontWeight: '500' },
+  chipTextActive:{ color: color.signal, fontWeight: '700' },
 });
