@@ -1,30 +1,296 @@
 /**
- * GemsFeed — placeholder shell for the Gems (hidden gems) mode.
- * Real feed content is wired up in a follow-up task.
+ * GemsFeed — full-screen paging feed for the Gems (hidden gems) mode.
+ *
+ * One item per viewport, same paging list pattern as Watch.
+ * GemsItemOverlay provides the place-dominant UI layer on top of each image.
+ * GemsFilterBar (area + category chips) floats above the list.
+ *
+ * Near Me flow:
+ *   1. User taps "Near Me" chip → onRequestNearMe fires
+ *   2. expo-location permission is requested
+ *   3. On grant, coords are stored in local state and forwarded to useGemsFeed
+ *
+ * Feature flags consumed:
+ *   nearMeEnabled  — driven by MEDIA_HIDDEN_GEMS_NEARBY_ENABLED (prop)
  */
-import React from 'react';
-import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
-import { color, type as t } from '../../theme/tokens.ts';
+import React, { useCallback, useRef, useState } from 'react';
+import {
+  View,
+  FlatList,
+  Image,
+  Text,
+  ActivityIndicator,
+  StyleSheet,
+  useWindowDimensions,
+  Platform,
+} from 'react-native';
+import * as ExpoLocation from 'expo-location';
+import { color, space, type as t } from '../../theme/tokens.ts';
+import { useMediaStore, type GeoAreaMode, type GemCategory } from '../../stores/mediaStore.ts';
+import { useGemsFeed, type GemsFeedItem } from '../../hooks/useGemsFeed.ts';
+import { GemsFilterBar } from './GemsFilterBar.tsx';
+import { GemsItemOverlay } from './GemsItemOverlay.tsx';
 
-export function GemsFeed() {
+// ── Props ─────────────────────────────────────────────────────────────────────
+
+export interface GemsFeedProps {
+  /**
+   * Driven by MEDIA_HIDDEN_GEMS_NEARBY_ENABLED feature flag.
+   * When false the Near Me chip is hidden.
+   */
+  nearMeEnabled?: boolean;
+  /** Active trip ID for My Trip mode (from the user's trip store). */
+  activeTripId?: string | null;
+  /** Active city for This City mode (from resolved location). */
+  activeCity?: string | null;
+  /** Callbacks for item actions */
+  onViewPlace?: (item: GemsFeedItem) => void;
+  onAddToTrip?: (item: GemsFeedItem) => void;
+  onDirections?: (item: GemsFeedItem) => void;
+  onViewCreator?: (creatorId: string) => void;
+  onWrongPlace?: (item: GemsFeedItem) => void;
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
+export function GemsFeed({
+  nearMeEnabled = true,
+  activeTripId,
+  activeCity,
+  onViewPlace,
+  onAddToTrip,
+  onDirections,
+  onViewCreator,
+  onWrongPlace,
+}: GemsFeedProps) {
+  const { height: screenHeight, width: screenWidth } = useWindowDimensions();
+  const { getGemsModeState, setGemsModeState } = useMediaStore();
+
+  const gemsState = getGemsModeState();
+
+  // ── Filter state (synced to store) ────────────────────────────────────────
+  const [areaMode, setAreaMode] = useState<GeoAreaMode>(gemsState.areaMode);
+  const [category, setCategory] = useState<GemCategory | null>(gemsState.category);
+  const [nearMeLoading, setNearMeLoading] = useState(false);
+  const [userLat, setUserLat] = useState<number | null>(null);
+  const [userLng, setUserLng] = useState<number | null>(null);
+
+  const handleAreaModeChange = useCallback((mode: GeoAreaMode) => {
+    setAreaMode(mode);
+    setGemsModeState({ areaMode: mode });
+  }, [setGemsModeState]);
+
+  const handleCategoryChange = useCallback((cat: GemCategory | null) => {
+    setCategory(cat);
+    setGemsModeState({ category: cat });
+  }, [setGemsModeState]);
+
+  // ── Near Me permission flow ───────────────────────────────────────────────
+  const handleRequestNearMe = useCallback(async () => {
+    setNearMeLoading(true);
+    try {
+      const { status } = await ExpoLocation.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        // Permission denied — revert to "All"
+        setAreaMode('all');
+        setGemsModeState({ areaMode: 'all' });
+        return;
+      }
+      const pos = await ExpoLocation.getCurrentPositionAsync({ accuracy: ExpoLocation.Accuracy.Balanced });
+      setUserLat(pos.coords.latitude);
+      setUserLng(pos.coords.longitude);
+    } catch {
+      setAreaMode('all');
+      setGemsModeState({ areaMode: 'all' });
+    } finally {
+      setNearMeLoading(false);
+    }
+  }, [setGemsModeState]);
+
+  // ── Resolve area-specific params ──────────────────────────────────────────
+  const resolvedCity = areaMode === 'this_city' ? (activeCity ?? undefined) : undefined;
+  const resolvedTripId = areaMode === 'my_trip' ? (activeTripId ?? undefined) : undefined;
+  const resolvedLat = areaMode === 'near_me' ? userLat : null;
+  const resolvedLng = areaMode === 'near_me' ? userLng : null;
+
+  // ── Feed data ─────────────────────────────────────────────────────────────
+  const { items, loading, loadingMore, error, hasMore, refresh, loadMore } = useGemsFeed({
+    areaMode,
+    category,
+    tripId: resolvedTripId,
+    city: resolvedCity,
+    userLat: resolvedLat,
+    userLng: resolvedLng,
+  });
+
+  // ── Viewability tracking ──────────────────────────────────────────────────
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60 }).current;
+  const onViewableItemsChanged = useCallback(({ viewableItems }: any) => {
+    const first = viewableItems[0];
+    if (first) {
+      setGemsModeState({ activeItemId: first.item.id });
+    }
+  }, [setGemsModeState]);
+
+  // ── Render helpers ────────────────────────────────────────────────────────
+  const renderItem = useCallback(({ item }: { item: GemsFeedItem }) => {
+    const media = item.media[0];
+    return (
+      <View style={{ width: screenWidth, height: screenHeight }}>
+        {/* Background image */}
+        {media?.url ? (
+          <Image
+            source={{ uri: media.url }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+            accessibilityLabel={item.location?.name ?? 'Gem image'}
+          />
+        ) : (
+          <View style={[StyleSheet.absoluteFill, styles.imageFallback]} />
+        )}
+        {/* Overlay */}
+        <GemsItemOverlay
+          item={item}
+          onViewPlace={onViewPlace}
+          onAddToTrip={onAddToTrip}
+          onDirections={onDirections}
+          onFollowCreator={onViewCreator}
+          onWrongPlace={onWrongPlace}
+        />
+      </View>
+    );
+  }, [screenWidth, screenHeight, onViewPlace, onAddToTrip, onDirections, onViewCreator, onWrongPlace]);
+
+  const keyExtractor = useCallback((item: GemsFeedItem) => item.id, []);
+
+  const renderFooter = useCallback(() => {
+    if (!loadingMore) return null;
+    return (
+      <View style={[styles.footerLoader, { width: screenWidth, height: screenHeight }]}>
+        <ActivityIndicator size="large" color={color.onInk} />
+      </View>
+    );
+  }, [loadingMore, screenWidth, screenHeight]);
+
+  // ── Empty / error states ──────────────────────────────────────────────────
+  const renderEmpty = useCallback(() => {
+    if (loading) return null;
+    return (
+      <View style={[styles.emptyState, { width: screenWidth, height: screenHeight }]}>
+        {error ? (
+          <>
+            <Text style={styles.emptyTitle}>Couldn't load gems</Text>
+            <Text style={styles.emptyBody}>{error}</Text>
+          </>
+        ) : (
+          <>
+            <Text style={styles.emptyTitle}>No gems here yet</Text>
+            <Text style={styles.emptyBody}>
+              Try a different area or category.
+            </Text>
+          </>
+        )}
+      </View>
+    );
+  }, [loading, error, screenWidth, screenHeight]);
+
+  // ── Layout ────────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
-      <ActivityIndicator size="large" color={color.signal} />
-      <Text style={styles.label}>Gems — coming soon</Text>
+      {/* Full-screen paging list */}
+      {loading && items.length === 0 ? (
+        <View style={styles.initialLoader}>
+          <ActivityIndicator size="large" color={color.onInk} />
+        </View>
+      ) : (
+        <FlatList
+          data={items}
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          pagingEnabled
+          showsVerticalScrollIndicator={false}
+          snapToInterval={screenHeight}
+          snapToAlignment="start"
+          decelerationRate={Platform.OS === 'ios' ? 'fast' : 0.98}
+          getItemLayout={(_, index) => ({
+            length: screenHeight,
+            offset: screenHeight * index,
+            index,
+          })}
+          onEndReached={hasMore ? loadMore : undefined}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={renderFooter}
+          ListEmptyComponent={renderEmpty}
+          onRefresh={refresh}
+          refreshing={loading && items.length > 0}
+          viewabilityConfig={viewabilityConfig}
+          onViewableItemsChanged={onViewableItemsChanged}
+          removeClippedSubviews={Platform.OS !== 'web'}
+          initialNumToRender={2}
+          maxToRenderPerBatch={3}
+          windowSize={5}
+        />
+      )}
+
+      {/* Filter bar — floats above the list */}
+      <View style={styles.filterBarWrapper} pointerEvents="box-none">
+        <GemsFilterBar
+          areaMode={areaMode}
+          category={category}
+          onAreaModeChange={handleAreaModeChange}
+          onCategoryChange={handleCategoryChange}
+          nearMeEnabled={nearMeEnabled}
+          onRequestNearMe={handleRequestNearMe}
+          nearMeLoading={nearMeLoading}
+        />
+      </View>
     </View>
   );
 }
 
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const TOP_FILTER_OFFSET = Platform.OS === 'ios' ? 100 : 80; // below safe area + mode selector
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: color.ink,
+  },
+  initialLoader: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 12,
-    backgroundColor: color.ink, // gems shares the immersive dark surface with Watch
   },
-  label: {
-    ...t.small,
+  imageFallback: {
+    backgroundColor: '#1A1A18',
+  },
+  filterBarWrapper: {
+    position: 'absolute',
+    top: TOP_FILTER_OFFSET,
+    left: 0,
+    right: 0,
+  },
+  footerLoader: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: color.ink,
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: space.xxl,
+    gap: space.sm,
+    backgroundColor: color.ink,
+  },
+  emptyTitle: {
+    ...t.heading,
+    color: color.onInk,
+    textAlign: 'center',
+  },
+  emptyBody: {
+    ...t.body,
     color: color.onInkMute,
+    textAlign: 'center',
   },
 });
