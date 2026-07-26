@@ -168,6 +168,12 @@ export interface HydrateInput {
    * Defaults to "" (relative URL) when not supplied.
    */
   apiBaseUrl?: string;
+  /**
+   * Pre-resolved linked entity (event or trip) for this post, with privacy
+   * stripping already applied by the caller.
+   * When omitted or null, linkedEntity is null in the output.
+   */
+  linkedEntity?: MediaFeedLinkedEntity | null;
 }
 
 // ── Private entity field strippers ────────────────────────────────────────────
@@ -407,6 +413,6 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
     viewerState,
     privacy,
     moderation,
-    linkedEntity: null, // resolved by caller when trip/event context needed
+    linkedEntity: input.linkedEntity ?? null,
   };
 }

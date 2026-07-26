@@ -217,7 +217,7 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   // (two select sites); insert payload in impression logging is an array built at runtime.
   // All columns verified against live schema.
   ["src/routes/mediaFeed.ts|insert|payload not statically resolvable", 1],
-  ["src/routes/mediaFeed.ts|select|select list not statically resolvable", 2],
+  ["src/routes/mediaFeed.ts|select|select list not statically resolvable", 4],
 ]);
 
 // ── Read-path baseline ────────────────────────────────────────────────────────

@@ -76,6 +76,10 @@ interface FakeState {
   compassUserPrefs?: any[];
   featureFlags?: any[];
   mediaAssets?: any[];
+  events?: any[];
+  trips?: any[];
+  eventRsvps?: any[];
+  tripMembers?: any[];
 }
 
 function makeClient(state: FakeState) {
@@ -100,6 +104,10 @@ function makeClient(state: FakeState) {
         return Object.entries(flags).map(([flag, enabled]) => ({ flag, enabled }));
       }
       if (table === "media_assets") return state.mediaAssets ?? [];
+      if (table === "events") return state.events ?? [];
+      if (table === "trips") return state.trips ?? [];
+      if (table === "event_rsvps") return state.eventRsvps ?? [];
+      if (table === "trip_members") return state.tripMembers ?? [];
       return [];
     };
     const rows = () => src().filter((r: any) => filters.every((f) => f(r)));
@@ -1352,6 +1360,287 @@ describe("GET /api/media/feed — auth + eligibility integration", () => {
         `public post media URL must be a direct HTTPS URL, got: ${m.url}`,
       );
     }
+  });
+});
+
+// ── Linked entity privacy gating (pipeline integration) ───────────────────────
+
+const PRIVATE_EVENT_ID  = "ev-private-0000-0000-000000000001";
+const PUBLIC_EVENT_ID   = "ev-public--0000-0000-000000000002";
+const PRIVATE_TRIP_ID   = "tr-private-0000-0000-000000000001";
+const HOST_ID           = "cc000000-host-4000-a000-000000000001";
+const TRIP_OWNER_ID     = "cc000000-ownr-4000-a000-000000000002";
+
+const POST_WITH_PRIVATE_EVENT_ID = "dd000000-0000-4000-a000-000000000001";
+const POST_WITH_PUBLIC_EVENT_ID  = "dd000000-0000-4000-a000-000000000002";
+const POST_WITH_PRIVATE_TRIP_ID  = "dd000000-0000-4000-a000-000000000003";
+
+function makePostWithEvent(
+  postId: string,
+  eventId: string,
+  authorId: string = AUTHOR_ID,
+): any {
+  return {
+    id: postId,
+    author_id: authorId,
+    event_id: eventId,
+    trip_id: null,
+    visibility: "public",
+    status: "active",
+    post_status: "published",
+    publish_at: null,
+    moderation_status: "approved",
+    has_video: true,
+    created_at: "2026-07-01T10:00:00Z",
+    tags: [],
+    content: "Post linked to event",
+    location_name: null, location_city: null, location_country: null,
+    location_source: null, category: null, primary_media_type: "video",
+    save_count: 0, like_count: 0, comment_count: 0,
+    view_count: 0, qualified_view_count: 0,
+    geo_restriction: null, age_restriction_enabled: false, age_min: null, age_max: null,
+    post_media: [{
+      id: "dm1", media_type: "video",
+      public_url: "https://cdn.example.test/ev.mp4",
+      thumbnail_url: null, duration_seconds: 10,
+      width: 1080, height: 1920, sort_order: 0,
+      processing_status: "ready", moderation_status: "approved",
+      storage_path: "post-media/ev.mp4", storage_bucket: "post-media",
+    }],
+    profiles: {
+      id: authorId, username: "author", full_name: "Author Name",
+      avatar_url: null, is_private: false, is_verified: false,
+      followers_count: 10, following_count: 5, bio: null,
+      account_status: "active",
+    },
+  };
+}
+
+function makePostWithTrip(
+  postId: string,
+  tripId: string,
+  authorId: string = AUTHOR_ID,
+): any {
+  return {
+    id: postId,
+    author_id: authorId,
+    trip_id: tripId,
+    event_id: null,
+    visibility: "public",
+    status: "active",
+    post_status: "published",
+    publish_at: null,
+    moderation_status: "approved",
+    has_video: true,
+    created_at: "2026-07-01T09:00:00Z",
+    tags: [],
+    content: "Post linked to trip",
+    location_name: null, location_city: null, location_country: null,
+    location_source: null, category: null, primary_media_type: "video",
+    save_count: 0, like_count: 0, comment_count: 0,
+    view_count: 0, qualified_view_count: 0,
+    geo_restriction: null, age_restriction_enabled: false, age_min: null, age_max: null,
+    post_media: [{
+      id: "dm2", media_type: "video",
+      public_url: "https://cdn.example.test/trip.mp4",
+      thumbnail_url: null, duration_seconds: 12,
+      width: 1080, height: 1920, sort_order: 0,
+      processing_status: "ready", moderation_status: "approved",
+      storage_path: "post-media/trip.mp4", storage_bucket: "post-media",
+    }],
+    profiles: {
+      id: authorId, username: "author", full_name: "Author Name",
+      avatar_url: null, is_private: false, is_verified: false,
+      followers_count: 10, following_count: 5, bio: null,
+      account_status: "active",
+    },
+  };
+}
+
+/** State with private event, public event, and private trip linked to posts. */
+function linkedEntityState(): FakeState {
+  const base = baseState();
+  return {
+    ...base,
+    posts: [
+      // Keep the base public post so the feed has at least one item
+      ...(base.posts ?? []).filter((p: any) => p.id === POST_PUBLIC_ID),
+      makePostWithEvent(POST_WITH_PRIVATE_EVENT_ID, PRIVATE_EVENT_ID),
+      makePostWithEvent(POST_WITH_PUBLIC_EVENT_ID, PUBLIC_EVENT_ID),
+      makePostWithTrip(POST_WITH_PRIVATE_TRIP_ID, PRIVATE_TRIP_ID),
+    ],
+    profiles: [
+      ...(base.profiles ?? []),
+      { id: HOST_ID, username: "eventhost", full_name: "Event Host",
+        avatar_url: null, is_private: false, is_verified: false,
+        followers_count: 0, following_count: 0, bio: null, account_status: "active" },
+      { id: TRIP_OWNER_ID, username: "tripowner", full_name: "Trip Owner",
+        avatar_url: null, is_private: false, is_verified: false,
+        followers_count: 0, following_count: 0, bio: null, account_status: "active" },
+    ],
+    events: [
+      {
+        id: PRIVATE_EVENT_ID,
+        title: "Secret Gala",
+        visibility: "private",
+        host_id: HOST_ID,
+        cover_url: "https://cdn.example.test/secret-gala.jpg",
+        show_header_publicly: false,
+        // Sensitive fields — must never reach the client
+        location_address: "123 Private Lane",
+        location_lat: 48.8584,
+        location_lng: 2.2945,
+        starts_at: "2026-09-01T18:00:00Z",
+        ends_at: "2026-09-01T22:00:00Z",
+        attendees: ["user1", "user2"],
+        invite_code: "SECRET123",
+        profiles: { username: "eventhost", full_name: "Event Host" },
+      },
+      {
+        id: PUBLIC_EVENT_ID,
+        title: "Public Concert",
+        visibility: "public",
+        host_id: HOST_ID,
+        cover_url: "https://cdn.example.test/concert.jpg",
+        show_header_publicly: true,
+        profiles: { username: "eventhost", full_name: "Event Host" },
+      },
+    ],
+    trips: [
+      {
+        id: PRIVATE_TRIP_ID,
+        title: "Secret Europe Trip",
+        visibility: "private",
+        owner_id: TRIP_OWNER_ID,
+        cover_url: "https://cdn.example.test/trip.jpg",
+        show_header_publicly: false,
+        // Sensitive fields — must never reach the client
+        hotel_name: "Grand Hotel",
+        hotel_address: "1 Hotel Street",
+        meeting_point: "Airport Terminal 2",
+        itinerary: [{ day: 1, description: "Fly to Paris" }],
+        invite_code: "TRIP-SECRET",
+        profiles: { username: "tripowner", full_name: "Trip Owner" },
+      },
+    ],
+    // Viewer is NOT an attendee / member of the private event or trip
+    eventRsvps: [],
+    tripMembers: [],
+  };
+}
+
+describe("GET /api/media/feed — linked entity privacy gating", () => {
+  beforeEach(() => {
+    _setTestClient(makeClient(linkedEntityState()) as any, true);
+  });
+
+  it("post linked to private event returns linkedEntity with only safe fields — no address, dates, attendees, or invite code", async () => {
+    const res = await request("GET", "/api/media/feed?mode=fullscreen", { token: TOKEN });
+    assert.equal(res.status, 200, `expected 200 got ${res.status}: ${JSON.stringify(res.body)}`);
+
+    const items: any[] = res.body.items ?? [];
+    const item = items.find((i: any) => i.id === POST_WITH_PRIVATE_EVENT_ID);
+    assert.ok(item, `post ${POST_WITH_PRIVATE_EVENT_ID} should appear in feed`);
+
+    const entity = item.linkedEntity;
+    assert.ok(entity !== null && entity !== undefined, "linkedEntity must be populated for a post with event_id");
+    assert.equal(entity.type, "event");
+    assert.equal(entity.id, PRIVATE_EVENT_ID);
+    assert.equal(entity.title, "Secret Gala");
+    assert.equal(entity.isPrivate, true);
+
+    // Cover must be null (show_header_publicly=false and viewer is not host)
+    assert.equal(entity.coverImageUrl, null, "cover must be null when show_header_publicly=false for non-host");
+
+    // Sensitive fields must be completely absent from the response
+    assert.equal(entity.location_address, undefined, "location_address must not leak");
+    assert.equal(entity.location_lat, undefined, "location_lat must not leak");
+    assert.equal(entity.location_lng, undefined, "location_lng must not leak");
+    assert.equal(entity.starts_at, undefined, "starts_at must not leak");
+    assert.equal(entity.ends_at, undefined, "ends_at must not leak");
+    assert.equal(entity.attendees, undefined, "attendees must not leak");
+    assert.equal(entity.invite_code, undefined, "invite_code must not leak");
+  });
+
+  it("post linked to public event returns linkedEntity with cover and full safe header", async () => {
+    const res = await request("GET", "/api/media/feed?mode=fullscreen", { token: TOKEN });
+    assert.equal(res.status, 200);
+
+    const items: any[] = res.body.items ?? [];
+    const item = items.find((i: any) => i.id === POST_WITH_PUBLIC_EVENT_ID);
+    assert.ok(item, `post ${POST_WITH_PUBLIC_EVENT_ID} should appear in feed`);
+
+    const entity = item.linkedEntity;
+    assert.ok(entity !== null && entity !== undefined, "linkedEntity must be populated for a post with event_id");
+    assert.equal(entity.type, "event");
+    assert.equal(entity.isPrivate, false);
+    assert.ok(entity.coverImageUrl !== null, "public event cover must be included");
+  });
+
+  it("post linked to private trip returns linkedEntity with only safe fields — no hotel, itinerary, or invite code", async () => {
+    const res = await request("GET", "/api/media/feed?mode=fullscreen", { token: TOKEN });
+    assert.equal(res.status, 200);
+
+    const items: any[] = res.body.items ?? [];
+    const item = items.find((i: any) => i.id === POST_WITH_PRIVATE_TRIP_ID);
+    assert.ok(item, `post ${POST_WITH_PRIVATE_TRIP_ID} should appear in feed`);
+
+    const entity = item.linkedEntity;
+    assert.ok(entity !== null && entity !== undefined, "linkedEntity must be populated for a post with trip_id");
+    assert.equal(entity.type, "trip");
+    assert.equal(entity.id, PRIVATE_TRIP_ID);
+    assert.equal(entity.title, "Secret Europe Trip");
+    assert.equal(entity.isPrivate, true);
+
+    // Cover must be null (show_header_publicly=false and viewer is not owner)
+    assert.equal(entity.coverImageUrl, null, "cover must be null when show_header_publicly=false for non-owner");
+
+    // Sensitive fields must be absent
+    assert.equal(entity.hotel_name, undefined, "hotel_name must not leak");
+    assert.equal(entity.hotel_address, undefined, "hotel_address must not leak");
+    assert.equal(entity.meeting_point, undefined, "meeting_point must not leak");
+    assert.equal(entity.itinerary, undefined, "itinerary must not leak");
+    assert.equal(entity.invite_code, undefined, "invite_code must not leak");
+  });
+
+  it("post with no event_id or trip_id has linkedEntity === null", async () => {
+    const res = await request("GET", "/api/media/feed?mode=fullscreen", { token: TOKEN });
+    assert.equal(res.status, 200);
+
+    const items: any[] = res.body.items ?? [];
+    const item = items.find((i: any) => i.id === POST_PUBLIC_ID);
+    assert.ok(item, "base public post should appear in feed");
+    assert.equal(item.linkedEntity, null, "post without event/trip reference must have linkedEntity=null");
+  });
+
+  it("viewer with non-accepted trip_members row (status=invited) still gets private trip stripped — not treated as a member", async () => {
+    // A pending invite should never grant access to private trip header fields.
+    const state = linkedEntityState();
+    state.tripMembers = [
+      {
+        trip_id: PRIVATE_TRIP_ID,
+        user_id: VIEWER_ID,
+        role: "viewer",
+        status: "invited", // pending invite — NOT accepted
+      },
+    ];
+    _setTestClient(makeClient(state) as any, true);
+
+    const res = await request("GET", "/api/media/feed?mode=fullscreen", { token: TOKEN });
+    assert.equal(res.status, 200);
+
+    const items: any[] = res.body.items ?? [];
+    const item = items.find((i: any) => i.id === POST_WITH_PRIVATE_TRIP_ID);
+    assert.ok(item, `post ${POST_WITH_PRIVATE_TRIP_ID} should appear in feed`);
+
+    const entity = item.linkedEntity;
+    assert.ok(entity !== null && entity !== undefined, "linkedEntity must be populated");
+    assert.equal(entity.isPrivate, true, "entity must be marked private");
+    // Cover must still be null — invited-but-not-accepted is outsider
+    assert.equal(entity.coverImageUrl, null, "invited (non-accepted) member must not see cover");
+    // Sensitive fields must be absent
+    assert.equal(entity.hotel_name, undefined, "hotel_name must not leak to non-accepted invitee");
+    assert.equal(entity.invite_code, undefined, "invite_code must not leak to non-accepted invitee");
   });
 });
 

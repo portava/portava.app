@@ -28,7 +28,10 @@ import {
 } from "../lib/mediaEligibility.js";
 import {
   hydrateMediaFeedItem,
+  stripPrivateEventFields,
+  stripPrivateTripFields,
   type MediaFeedItem,
+  type MediaFeedLinkedEntity,
 } from "../lib/mediaFeedItem.js";
 import {
   encodeCursor,
@@ -78,7 +81,7 @@ function pruneViewDedup(): void {
 
 /** Columns projected from posts for media feed (never include exact GPS). */
 const FEED_POST_COLUMNS =
-  "id, author_id, trip_id, content, visibility, status, post_status, publish_at, " +
+  "id, author_id, trip_id, event_id, content, visibility, status, post_status, publish_at, " +
   "created_at, tags, category, " +
   "location_name, location_city, location_country, location_source, " +
   "save_count, like_count, comment_count, view_count, qualified_view_count, " +
@@ -94,6 +97,214 @@ const POST_MEDIA_COLUMNS =
 const PROFILE_COLUMNS =
   "id, username, full_name, avatar_url, is_private, is_verified, bio, " +
   "followers_count, following_count, account_status";
+
+// ── Linked entity resolution ──────────────────────────────────────────────────
+
+/**
+ * Columns fetched from the events table for linked-entity resolution.
+ * Sensitive fields (address, coordinates, exact dates, attendees, invite codes)
+ * are intentionally NOT included — the strip helpers operate only on these safe
+ * columns and produce the MediaFeedLinkedEntity shape.
+ */
+const EVENT_LINKED_COLUMNS =
+  "id, title, visibility, host_id, cover_url, show_header_publicly, " +
+  "profiles!host_id(username, full_name)";
+
+/**
+ * Columns fetched from the trips table for linked-entity resolution.
+ */
+const TRIP_LINKED_COLUMNS =
+  "id, title, visibility, owner_id, cover_url, show_header_publicly, " +
+  "profiles!owner_id(username, full_name)";
+
+/**
+ * Batch-resolve linked entities (events and trips) for a page of posts.
+ *
+ * For each post that has an event_id or trip_id:
+ *   1. Fetches the entity row (safe columns only).
+ *   2. Checks if the viewer is a member/attendee.
+ *   3. If private and viewer is not a member, applies the appropriate strip helper.
+ *   4. If public, returns all safe header fields directly.
+ *
+ * Returns a Map<postId, MediaFeedLinkedEntity> (absent key = no linked entity).
+ * Non-fatal: any DB error for an individual entity returns null (no entity).
+ */
+async function resolveLinkedEntities(
+  page: Array<{ id: string; event_id?: string | null; trip_id?: string | null }>,
+  viewerUserId: string,
+  sc: any,
+): Promise<Map<string, MediaFeedLinkedEntity>> {
+  const result = new Map<string, MediaFeedLinkedEntity>();
+
+  // Collect unique event_ids and trip_ids, mapping them back to post ids.
+  const eventIdToPostIds = new Map<string, string[]>();
+  const tripIdToPostIds = new Map<string, string[]>();
+  for (const post of page) {
+    if (post.event_id) {
+      const list = eventIdToPostIds.get(post.event_id) ?? [];
+      list.push(post.id);
+      eventIdToPostIds.set(post.event_id, list);
+    }
+    if (post.trip_id) {
+      const list = tripIdToPostIds.get(post.trip_id) ?? [];
+      list.push(post.id);
+      tripIdToPostIds.set(post.trip_id, list);
+    }
+  }
+
+  const eventIds = [...eventIdToPostIds.keys()];
+  const tripIds = [...tripIdToPostIds.keys()];
+
+  if (eventIds.length === 0 && tripIds.length === 0) return result;
+
+  // ── Batch fetch events, trips, and viewer membership in parallel ───────────
+  const [
+    eventRows,
+    tripRows,
+    viewerEventRsvpIds,
+    viewerTripMemberIds,
+  ] = await Promise.all([
+    // Fetch events
+    (async (): Promise<any[]> => {
+      if (eventIds.length === 0) return [];
+      try {
+        const { data } = await sc
+          .from("events")
+          .select(EVENT_LINKED_COLUMNS)
+          .in("id", eventIds);
+        return (data as any[]) ?? [];
+      } catch { return []; }
+    })(),
+    // Fetch trips
+    (async (): Promise<any[]> => {
+      if (tripIds.length === 0) return [];
+      try {
+        const { data } = await sc
+          .from("trips")
+          .select(TRIP_LINKED_COLUMNS)
+          .in("id", tripIds);
+        return (data as any[]) ?? [];
+      } catch { return []; }
+    })(),
+    // Viewer's event RSVPs (going/maybe/interested qualify as membership)
+    (async (): Promise<Set<string>> => {
+      if (eventIds.length === 0) return new Set();
+      try {
+        const { data } = await sc
+          .from("event_rsvps")
+          .select("event_id")
+          .eq("user_id", viewerUserId)
+          .in("event_id", eventIds)
+          .in("status", ["going", "maybe", "interested"]);
+        const s = new Set<string>();
+        for (const r of (data as any[]) ?? []) s.add(r.event_id as string);
+        return s;
+      } catch { return new Set(); }
+    })(),
+    // Viewer's trip memberships — role must be accepted AND status must be
+    // 'accepted' (or null for legacy rows that pre-date the status column).
+    // This mirrors the accepted-membership logic in circleAccessGuard.ts.
+    (async (): Promise<Set<string>> => {
+      if (tripIds.length === 0) return new Set();
+      try {
+        const { data } = await sc
+          .from("trip_members")
+          .select("trip_id, status")
+          .eq("user_id", viewerUserId)
+          .in("trip_id", tripIds)
+          .in("role", ["owner", "co_host", "member", "viewer"]);
+        const s = new Set<string>();
+        for (const r of (data as any[]) ?? []) {
+          // Accept null status (legacy rows) or explicitly 'accepted'.
+          // All other statuses (invited, declined, removed, left) are outsiders.
+          const status = (r as any).status as string | null | undefined;
+          if (status == null || status === "accepted") {
+            s.add((r as any).trip_id as string);
+          }
+        }
+        return s;
+      } catch { return new Set(); }
+    })(),
+  ]);
+
+  // ── Resolve events ─────────────────────────────────────────────────────────
+  for (const ev of eventRows) {
+    const postIds = eventIdToPostIds.get(ev.id as string) ?? [];
+    if (postIds.length === 0) continue;
+
+    const hostProfile = Array.isArray(ev.profiles) ? ev.profiles[0] : ev.profiles;
+    const entityBase = {
+      ...ev,
+      host_display_name: hostProfile?.full_name ?? null,
+      host_username: hostProfile?.username ?? null,
+    };
+
+    const isPublic = (ev.visibility as string) !== "private";
+    const viewerIsHost = (ev.host_id as string) === viewerUserId;
+    const viewerIsMember = viewerIsHost || viewerEventRsvpIds.has(ev.id as string);
+
+    let entity: MediaFeedLinkedEntity;
+    if (isPublic || viewerIsMember) {
+      // Expose all safe header fields
+      entity = {
+        type: "event",
+        id: ev.id as string,
+        title: ev.title as string,
+        isPrivate: !isPublic,
+        coverImageUrl: (ev.cover_url as string | null) ?? null,
+        ownerDisplayName: (entityBase.host_display_name as string | null) ?? null,
+        ownerUsername: (entityBase.host_username as string | null) ?? null,
+      };
+    } else {
+      // Private and viewer is not a member — strip sensitive fields
+      entity = stripPrivateEventFields(entityBase, {
+        viewerIsHost: false,
+        showHeaderPublicly: Boolean(ev.show_header_publicly),
+      });
+    }
+
+    for (const postId of postIds) result.set(postId, entity);
+  }
+
+  // ── Resolve trips ──────────────────────────────────────────────────────────
+  for (const trip of tripRows) {
+    const postIds = tripIdToPostIds.get(trip.id as string) ?? [];
+    if (postIds.length === 0) continue;
+
+    const ownerProfile = Array.isArray(trip.profiles) ? trip.profiles[0] : trip.profiles;
+    const entityBase = {
+      ...trip,
+      owner_display_name: ownerProfile?.full_name ?? null,
+      owner_username: ownerProfile?.username ?? null,
+    };
+
+    const isPublic = (trip.visibility as string) !== "private";
+    const viewerIsOwner = (trip.owner_id as string) === viewerUserId;
+    const viewerIsMember = viewerIsOwner || viewerTripMemberIds.has(trip.id as string);
+
+    let entity: MediaFeedLinkedEntity;
+    if (isPublic || viewerIsMember) {
+      entity = {
+        type: "trip",
+        id: trip.id as string,
+        title: trip.title as string,
+        isPrivate: !isPublic,
+        coverImageUrl: (trip.cover_url as string | null) ?? null,
+        ownerDisplayName: (entityBase.owner_display_name as string | null) ?? null,
+        ownerUsername: (entityBase.owner_username as string | null) ?? null,
+      };
+    } else {
+      entity = stripPrivateTripFields(entityBase, {
+        viewerIsOwner: false,
+        showHeaderPublicly: Boolean(trip.show_header_publicly),
+      });
+    }
+
+    for (const postId of postIds) result.set(postId, entity);
+  }
+
+  return result;
+}
 
 // ── Query schemas ─────────────────────────────────────────────────────────────
 
@@ -390,6 +601,9 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   // API base URL for relay URLs (relative when empty — works in all environments).
   const apiBaseUrl = process.env.API_BASE_URL ?? "";
 
+  // ── Linked entity resolution ───────────────────────────────────────────────
+  const linkedEntityMap = await resolveLinkedEntities(page, user.id, sc);
+
   const items: MediaFeedItem[] = page.map((c) => {
     const postMedia = Array.isArray(c.post_media) ? c.post_media : [];
     return hydrateMediaFeedItem({
@@ -405,6 +619,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
       useSignedUrls: true,
       supabaseUrl,
       apiBaseUrl,
+      linkedEntity: linkedEntityMap.get(c.id) ?? null,
     });
   });
 
@@ -549,6 +764,10 @@ router.get("/media/:id", asyncHandler(async (req, res) => {
   }
 
   const postMedia = Array.isArray((row as any).post_media) ? (row as any).post_media : [];
+
+  // Resolve linked entity (event or trip) for the single item
+  const singleLinkedEntityMap = await resolveLinkedEntities([row as any], user.id, sc);
+
   const item = hydrateMediaFeedItem({
     row: row as any,
     sourceType: "post",
@@ -562,6 +781,7 @@ router.get("/media/:id", asyncHandler(async (req, res) => {
     useSignedUrls: true,
     supabaseUrl: process.env.SUPABASE_URL ?? "",
     apiBaseUrl: process.env.API_BASE_URL ?? "",
+    linkedEntity: singleLinkedEntityMap.get((row as any).id) ?? null,
   });
 
   res.json({ item });
