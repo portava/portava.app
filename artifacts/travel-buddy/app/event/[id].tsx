@@ -25,6 +25,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
   StyleSheet, Alert, Image, Share, ActionSheetIOS, Platform, Linking,
+  Animated,
 } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -61,6 +62,8 @@ import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { useStickyBarInset } from '../../src/hooks/useBottomInset';
 import { FOCUS_REFETCH_TTL_MS } from '../../src/hooks/usePosts';
 import { PrivateEventCard, type PrivateEventPreview } from '../../src/components/privacy/PrivateEventCard';
+import { useVisualStatusChannel } from '../../src/hooks/useVisualStatusChannel.ts';
+import { AiRepresentationLabel } from '../../src/components/visuals/AiRepresentationLabel.tsx';
 
 const STATE_BADGE: Record<string, { label: string; bg: string; fg: string }> = {
   draft:     { label: 'Draft',          bg: color.haze, fg: color.mute },
@@ -149,6 +152,10 @@ export default function EventDetailScreen() {
   // is not authorized.  Renders a private-wall screen rather than an empty
   // full-detail layout with undefined fields.
   const [isLocked, setIsLocked] = useState(false);
+  // Local AI cover override — applied when a realtime generated_visuals row
+  // transitions to ready, so the hero crossfades in without a full reload.
+  const [localAiCoverUrl, setLocalAiCoverUrl] = useState<string | null>(null);
+  const aiCoverOpacity = useRef(new Animated.Value(0)).current;
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -205,6 +212,31 @@ export default function EventDetailScreen() {
   useEffect(() => {
     if (event) markFirstContent();
   }, [epoch, !!event]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Reset AI cover override when the viewer navigates to a different event ──
+  useEffect(() => {
+    setLocalAiCoverUrl(null);
+    aiCoverOpacity.setValue(0);
+  }, [event?.id, aiCoverOpacity]);
+
+  // ── Realtime AI image updates — hero crossfade ────────────────────────────
+  // EventDetail has no coverSource field; the timestamp guard (event.updatedAt)
+  // is the proxy for detecting a newer user upload that arrived mid-generation.
+  useVisualStatusChannel({
+    entityType: 'event',
+    entityId: event?.id ?? null,
+    currentSource: null,
+    currentImageUpdatedAt: event?.updatedAt ?? null,
+    onReady: useCallback((payload) => {
+      setLocalAiCoverUrl(payload.imageUrl);
+      aiCoverOpacity.setValue(0);
+      Animated.timing(aiCoverOpacity, {
+        toValue: 1,
+        duration: 250,
+        useNativeDriver: true,
+      }).start();
+    }, [aiCoverOpacity]),
+  });
 
   // ── RSVP state machine (centralised hook) ─────────────────────────────────
   const {
@@ -540,11 +572,28 @@ export default function EventDetailScreen() {
                 <Text style={styles.promoVideoText}>Promotional video</Text>
               </View>
             </>
-          ) : event.coverUrl ? (
-            <Image source={{ uri: event.coverUrl }} style={styles.cover} resizeMode="cover" />
           ) : (
-            <View style={[styles.cover, styles.coverPlaceholder]}>
-              <CalendarClock size={48} color={color.faint} />
+            <View style={styles.cover}>
+              {/* Base layer: original cover or placeholder */}
+              {event.coverUrl ? (
+                <Image source={{ uri: event.coverUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+              ) : (
+                <View style={[StyleSheet.absoluteFill, styles.coverPlaceholder]}>
+                  <CalendarClock size={48} color={color.faint} />
+                </View>
+              )}
+              {/* AI cover crossfade layer — fades in when generated_visuals row transitions to ready */}
+              {localAiCoverUrl && (
+                <Animated.Image
+                  source={{ uri: localAiCoverUrl }}
+                  style={[StyleSheet.absoluteFill, { opacity: aiCoverOpacity }]}
+                  resizeMode="cover"
+                />
+              )}
+              {/* AI-generated representation disclosure */}
+              {localAiCoverUrl && (
+                <AiRepresentationLabel style={styles.aiCoverLabel} testID="event-detail-ai-label" />
+              )}
             </View>
           )}
 
@@ -1066,6 +1115,7 @@ const styles = StyleSheet.create({
   retryText:          { ...t.small, color: color.onInk, fontWeight: '700' },
   cover:              { width: '100%', height: 220 },
   coverPlaceholder:   { backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
+  aiCoverLabel:       { position: 'absolute', bottom: 8, left: 8 },
   promoVideoBadge:    { backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: space.md, paddingVertical: 4, alignSelf: 'flex-start', marginLeft: space.lg, marginTop: -28, borderRadius: radius.pill, zIndex: 1 },
   promoVideoText:     { color: '#fff', fontSize: 11, fontWeight: '700' },
   body:               { padding: space.lg, gap: space.md },
