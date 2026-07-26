@@ -1066,7 +1066,7 @@ async function summariseFallback(
     "compass/ask: empty final turn — re-prompting with summarise instruction",
   );
   const opts = {
-    model:                 "gpt-4o-mini",
+    model:                 "gpt-5.4-mini",
     max_completion_tokens: 800,
     messages: [
       ...convo,
@@ -1183,7 +1183,7 @@ async function runToolCallingLoop(
     if (signal?.aborted) throw new ClientDisconnectedError();
     const forceFinal = round === MAX_TOOL_ROUNDS;
     const requestOpts = {
-      model: "gpt-4o-mini",
+      model: "gpt-5.4-mini",
       max_completion_tokens: 1200,
       messages: convo,
       ...(forceFinal
