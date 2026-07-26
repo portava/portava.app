@@ -66,10 +66,22 @@ export interface GemsItemOverlayProps {
   onDirections?: (item: GemsFeedItem) => void;
   onFollowCreator?: (creatorId: string) => void;
   onLike?: (item: GemsFeedItem) => void;
+  /** Omit to disable comment action for non-post-backed items (e.g. gems). */
   onComment?: (item: GemsFeedItem) => void;
   onSave?: (item: GemsFeedItem) => void;
   onShare?: (item: GemsFeedItem) => void;
   onWrongPlace?: (item: GemsFeedItem) => void;
+  /**
+   * When provided, tapping ⋯ calls this instead of opening the legacy inline mini-menu.
+   * Use this to delegate to a unified MediaMoreMenu (recommended for all new surfaces).
+   */
+  onMore?: (item: GemsFeedItem) => void;
+  /** Optimistic liked state from useMediaLike — overrides item.viewerState.hasLiked when provided. */
+  isLiked?: boolean;
+  /** Optimistic saved state from useMediaSave — overrides item.viewerState.hasSaved when provided. */
+  isSaved?: boolean;
+  /** Optimistic like count from useMediaLike — overrides item.stats.likeCount when provided. */
+  likeCount?: number;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -85,7 +97,12 @@ export function GemsItemOverlay({
   onSave,
   onShare,
   onWrongPlace,
+  onMore,
+  isLiked,
+  isSaved,
+  likeCount,
 }: GemsItemOverlayProps) {
+  // Legacy inline mini-menu — only used when onMore is not provided.
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [captionExpanded, setCaptionExpanded] = useState(false);
 
@@ -93,7 +110,16 @@ export function GemsItemOverlay({
   const firstMedia = item.media[0] ?? null;
   const isIllustrative = firstMedia?.provenanceLabel === 'illustrative';
 
-  const handleMorePress = useCallback(() => setMoreMenuOpen((v) => !v), []);
+  // When onMore is provided (e.g. GemsFeed wires MediaMoreMenu), delegate to it.
+  // Otherwise fall back to the legacy inline mini-menu.
+  const handleMorePress = useCallback(() => {
+    if (onMore) {
+      onMore(item);
+    } else {
+      setMoreMenuOpen((v) => !v);
+    }
+  }, [item, onMore]);
+
   const handleWrongPlace = useCallback(() => {
     setMoreMenuOpen(false);
     onWrongPlace?.(item);
@@ -120,22 +146,25 @@ export function GemsItemOverlay({
       {/* ── Right action column ───────────────────────────────────────────── */}
       <View style={styles.actionColumn}>
         <ActionButton
-          label={item.viewerState.hasLiked ? '♥' : '♡'}
-          sublabel={String(item.stats.likeCount || '')}
-          active={item.viewerState.hasLiked}
+          label={(isLiked ?? item.viewerState.hasLiked) ? '♥' : '♡'}
+          sublabel={String((likeCount ?? item.stats.likeCount) || '')}
+          active={isLiked ?? item.viewerState.hasLiked}
           onPress={() => onLike?.(item)}
           accessibilityLabel="Like"
         />
+        {/* Comments are disabled for gem items (not post-backed); only shown when onComment is wired. */}
+        {onComment && (
+          <ActionButton
+            label="💬"
+            sublabel={String(item.stats.commentCount || '')}
+            onPress={() => onComment(item)}
+            accessibilityLabel="Comment"
+          />
+        )}
         <ActionButton
-          label="💬"
-          sublabel={String(item.stats.commentCount || '')}
-          onPress={() => onComment?.(item)}
-          accessibilityLabel="Comment"
-        />
-        <ActionButton
-          label={item.viewerState.hasSaved ? '🔖' : '🏷'}
+          label={(isSaved ?? item.viewerState.hasSaved) ? '🔖' : '🏷'}
           sublabel={String(item.stats.saveCount || '')}
-          active={item.viewerState.hasSaved}
+          active={isSaved ?? item.viewerState.hasSaved}
           onPress={() => onSave?.(item)}
           accessibilityLabel="Save"
         />

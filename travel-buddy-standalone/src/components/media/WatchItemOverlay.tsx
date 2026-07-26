@@ -31,6 +31,7 @@ import {
   Alert,
   Dimensions,
 } from 'react-native';
+import { recordMediaShare } from '../../services/mediaInteractions.ts';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -162,10 +163,12 @@ export function WatchItemOverlay({
   const handleShare = useCallback(async () => {
     try {
       await Share.share({ message: item.caption || 'Check this out on Travel Buddy!' });
+      // Record share event in background — never block on this
+      recordMediaShare(item.id, 'native').catch(() => {});
     } catch {
-      // User dismissed
+      // User dismissed — no share event recorded
     }
-  }, [item.caption]);
+  }, [item.id, item.caption]);
 
   const goProfile = useCallback(() => {
     // Profile route is username-based: /u/[username]
