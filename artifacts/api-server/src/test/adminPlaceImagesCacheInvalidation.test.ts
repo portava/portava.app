@@ -424,3 +424,96 @@ describe("report resolve (image_rejected) — cache invalidation", () => {
     );
   });
 });
+
+describe("replace — cache invalidation", () => {
+  it("issues a discovery_cache delete for the entity after a replace action", async () => {
+    const cacheDeletes: Array<{ filter: string; value: string }> = [];
+    setClients(makeFakeClient({
+      cacheDeletes,
+      visualRow: {
+        id:                VISUAL_ID,
+        accuracy_status:   "unverified",
+        image_source_type: "official",
+        entity_type:       "place",
+        entity_id:         ENTITY_ID,
+        canonical_place_id: null,
+      },
+    }));
+
+    const { status, body } = await req(
+      "POST",
+      `/admin/place-images/${VISUAL_ID}/replace`,
+      { imageUrl: IMAGE_URL, imageSourceType: "official" },
+    );
+    assert.equal(status, 200, `expected 200 got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.ok, true);
+
+    // Allow the fire-and-forget void promise to settle
+    await new Promise((r) => setImmediate(r));
+
+    assert.ok(
+      cacheDeletes.length > 0,
+      "expected at least one discovery_cache delete after replace",
+    );
+    const hit = cacheDeletes.some((d) => d.value.includes(ENTITY_ID));
+    assert.ok(hit, `expected delete to reference entity_id ${ENTITY_ID}, got: ${JSON.stringify(cacheDeletes)}`);
+  });
+
+  it("uses canonical_place_id over entity_id when replacing", async () => {
+    const CANONICAL_ID = "eeeeeeee-0000-0000-0000-000000000005";
+    const cacheDeletes: Array<{ filter: string; value: string }> = [];
+    setClients(makeFakeClient({
+      cacheDeletes,
+      visualRow: {
+        id:                VISUAL_ID,
+        accuracy_status:   "unverified",
+        image_source_type: "official",
+        entity_type:       "place",
+        entity_id:         ENTITY_ID,
+        canonical_place_id: CANONICAL_ID,
+      },
+    }));
+
+    const { status } = await req(
+      "POST",
+      `/admin/place-images/${VISUAL_ID}/replace`,
+      { imageUrl: IMAGE_URL, imageSourceType: "official" },
+    );
+    assert.equal(status, 200);
+
+    await new Promise((r) => setImmediate(r));
+
+    const hit = cacheDeletes.some((d) => d.value.includes(CANONICAL_ID));
+    assert.ok(hit, `expected delete to reference canonical_place_id ${CANONICAL_ID}`);
+  });
+
+  it("does NOT issue a cache delete when entity_type is not 'place'", async () => {
+    const cacheDeletes: Array<{ filter: string; value: string }> = [];
+    setClients(makeFakeClient({
+      cacheDeletes,
+      visualRow: {
+        id:                VISUAL_ID,
+        accuracy_status:   "unverified",
+        image_source_type: "official",
+        entity_type:       "event",
+        entity_id:         ENTITY_ID,
+        canonical_place_id: null,
+      },
+    }));
+
+    const { status } = await req(
+      "POST",
+      `/admin/place-images/${VISUAL_ID}/replace`,
+      { imageUrl: IMAGE_URL, imageSourceType: "official" },
+    );
+    assert.equal(status, 200);
+
+    await new Promise((r) => setImmediate(r));
+
+    assert.equal(
+      cacheDeletes.length,
+      0,
+      "expected no discovery_cache delete for non-place entity",
+    );
+  });
+});

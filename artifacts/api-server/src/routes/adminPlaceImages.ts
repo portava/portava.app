@@ -543,6 +543,14 @@ router.post("/admin/place-images/:visualId/replace", asyncHandler(async (req, re
     }
   }
 
+  // Evict L2 cache so the next discovery request re-hydrates with the new image
+  if ((visual as any).entity_type === "place") {
+    const placeId = (visual as any).canonical_place_id ?? (visual as any).entity_id;
+    if (placeId && isUuid(placeId)) {
+      void invalidateDiscoveryCacheForEntity(placeId);
+    }
+  }
+
   res.json({
     ok: true,
     archivedVisualId: visualId,
