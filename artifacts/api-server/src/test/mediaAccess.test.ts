@@ -35,6 +35,17 @@ interface FakeState {
   tripMembers?: any[];
   closeFriends?: any[];
   mediaAssets?: any[];
+  // profile-media authorization
+  profiles?: any[];
+  profilePrivacySettings?: any[];
+  userAccountStates?: any[];
+  userFriendships?: any[];
+  userFollows?: any[];
+  // generated-visual authorization
+  generatedVisuals?: any[];
+  events?: any[];
+  eventRsvps?: any[];
+  eventRoles?: any[];
 }
 
 function makeClient(state: FakeState = {}) {
@@ -52,7 +63,16 @@ function makeClient(state: FakeState = {}) {
       table === "trips" ? state.trips ?? [] :
       table === "trip_members" ? state.tripMembers ?? [] :
       table === "close_friends" ? state.closeFriends ?? [] :
-      table === "media_assets" ? state.mediaAssets ?? [] : [];
+      table === "media_assets" ? state.mediaAssets ?? [] :
+      table === "profiles" ? state.profiles ?? [] :
+      table === "profile_privacy_settings" ? state.profilePrivacySettings ?? [] :
+      table === "user_account_states" ? state.userAccountStates ?? [] :
+      table === "user_friendships" ? state.userFriendships ?? [] :
+      table === "user_follows" ? state.userFollows ?? [] :
+      table === "generated_visuals" ? state.generatedVisuals ?? [] :
+      table === "events" ? state.events ?? [] :
+      table === "event_rsvps" ? state.eventRsvps ?? [] :
+      table === "event_roles" ? state.eventRoles ?? [] : [];
     const rows = () => src().filter((r: any) => filters.every((f) => f(r)));
     const b: any = {
       select() { return b; },
@@ -113,9 +133,34 @@ describe("authorizeMediaAccess — the matrix", () => {
     assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", `${OWNER}/a.jpg`), true);
   });
 
-  it("profile-media is universally readable (product design)", async () => {
+  it("profile-media: owner always accesses own files", async () => {
     const sc = makeClient();
+    assert.equal(await authorizeMediaAccess(sc, OWNER, "profile-media", `avatars/${OWNER}/a.webp`), true);
+  });
+
+  it("profile-media: public profile readable by any authenticated viewer", async () => {
+    const sc = makeClient({
+      profiles: [{ id: OWNER, is_private: false, passport_visibility: "public", account_status: "active" }],
+      profilePrivacySettings: [{ user_id: OWNER, profile_visibility: "public" }],
+    });
     assert.equal(await authorizeMediaAccess(sc, VIEWER, "profile-media", `avatars/${OWNER}/a.webp`), true);
+  });
+
+  it("profile-media: private profile denied to a stranger (no follow/friend)", async () => {
+    const sc = makeClient({
+      profiles: [{ id: OWNER, is_private: true, passport_visibility: "private", account_status: "active" }],
+      profilePrivacySettings: [{ user_id: OWNER, profile_visibility: "private" }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "profile-media", `avatars/${OWNER}/a.webp`), false);
+  });
+
+  it("profile-media: blocked viewer denied even for a public profile", async () => {
+    const sc = makeClient({
+      profiles: [{ id: OWNER, is_private: false, passport_visibility: "public", account_status: "active" }],
+      profilePrivacySettings: [{ user_id: OWNER, profile_visibility: "public" }],
+      blocks: [{ blocker_id: OWNER, blocked_id: VIEWER }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "profile-media", `avatars/${OWNER}/a.webp`), false);
   });
 
   it("blocked viewer denied even for a public post's media", async () => {
@@ -243,25 +288,17 @@ describe("GET /api/media/file — public vs signed mode", () => {
     posts: [{ author_id: OWNER, visibility: "public", status: "active", post_status: "published", trip_id: null, media_urls: [pub(path)] }],
   };
 
-  it("flag OFF → 302 to the PUBLIC url (Stage 1, zero behavior change)", async () => {
-    setClients(makeClient({ ...publicPost, flags: { media_private_buckets_enabled: false } }));
-    const r = await req("GET", `/api/media/file/post-media/${path}`);
-    assert.equal(r.status, 302);
-    assert.equal(r.location, pub(path));
-  });
-
-  it("flag ON → 302 to a SIGNED url", async () => {
-    _clearMediaAccessCache();
-    setClients(makeClient({ ...publicPost, flags: { media_private_buckets_enabled: true } }));
+  it("authorized viewer → always 302 to a SIGNED url (buckets permanently private)", async () => {
+    setClients(makeClient(publicPost));
     const r = await req("GET", `/api/media/file/post-media/${path}`);
     assert.equal(r.status, 302);
     assert.ok(r.location?.includes("/object/sign/post-media/"), r.location);
     assert.ok(r.location?.includes("token=signed"));
   });
 
-  it("unauthorized object → 403 in EITHER mode", async () => {
+  it("unauthorized object → 403", async () => {
     _clearMediaAccessCache();
-    setClients(makeClient({ flags: { media_private_buckets_enabled: true } }));
+    setClients(makeClient());
     const r = await req("GET", `/api/media/file/post-media/${OWNER}/orphan.jpg`);
     assert.equal(r.body.error, "forbidden");
   });
@@ -274,7 +311,7 @@ describe("GET /api/media/file — public vs signed mode", () => {
 
   it("batch /media/sign: authorized url signed, foreign + unauthorized null", async () => {
     _clearMediaAccessCache();
-    setClients(makeClient({ ...publicPost, flags: { media_private_buckets_enabled: true } }));
+    setClients(makeClient(publicPost));
     const r = await req("POST", "/api/media/sign", {
       urls: [pub(path), "https://evil.example.com/x.jpg", pub(`${OWNER}/orphan2.jpg`)],
     });
@@ -282,5 +319,107 @@ describe("GET /api/media/file — public vs signed mode", () => {
     assert.ok(String(r.body.signed[pub(path)]).includes("token=signed"));
     assert.equal(r.body.signed["https://evil.example.com/x.jpg"], null);
     assert.equal(r.body.signed[pub(`${OWNER}/orphan2.jpg`)], null);
+  });
+
+  // ── show_header_publicly generic-cover fallback ─────────────────────────────
+
+  const EVENT_ID = "d1000000-0000-4000-a000-000000000001";
+  const VIS_ID   = "e1000000-0000-4000-a000-000000000001";
+  const gvPath   = `generated-visuals/event/${EVENT_ID}/${VIS_ID}/hero.webp`;
+
+  // A public event visible to any authenticated viewer but with header hidden
+  // from non-attendees.
+  function privateHeaderState(extras: Partial<FakeState> = {}): FakeState {
+    return {
+      generatedVisuals: [{
+        hero_path: gvPath,
+        entity_type: "event",
+        entity_id: EVENT_ID,
+        owner_user_id: OWNER,
+        status: "ready",
+      }],
+      events: [{
+        id: EVENT_ID,
+        host_id: OWNER,
+        visibility: "public",
+        state: "live",
+        show_header_publicly: false,
+      }],
+      ...extras,
+    };
+  }
+
+  it("outsider on event with show_header_publicly=false → generic cover redirect", async () => {
+    // VIEWER (TOKEN) is authenticated but has no RSVP/role → gets generic cover.
+    _clearMediaAccessCache();
+    setClients(makeClient(privateHeaderState()));
+    const r = await req("GET", `/api/media/file/post-media/${gvPath}`);
+    assert.equal(r.status, 302);
+    assert.ok(r.location?.includes("generic"), `expected generic cover, got: ${r.location}`);
+  });
+
+  it("host with show_header_publicly=false → real signed URL", async () => {
+    // Authenticate as the host: reuse TOKEN which maps to VIEWER; make VIEWER the host.
+    _clearMediaAccessCache();
+    setClients(makeClient({
+      generatedVisuals: [{
+        hero_path: gvPath,
+        entity_type: "event",
+        entity_id: EVENT_ID,
+        owner_user_id: VIEWER,
+        status: "ready",
+      }],
+      events: [{ id: EVENT_ID, host_id: VIEWER, visibility: "public", state: "live", show_header_publicly: false }],
+    }));
+    const r = await req("GET", `/api/media/file/post-media/${gvPath}`);
+    assert.equal(r.status, 302);
+    assert.ok(r.location?.includes("token=signed"), `expected signed URL, got: ${r.location}`);
+  });
+
+  it("RSVP holder with show_header_publicly=false → real signed URL", async () => {
+    _clearMediaAccessCache();
+    setClients(makeClient({
+      ...privateHeaderState(),
+      eventRsvps: [{ event_id: EVENT_ID, user_id: VIEWER, status: "going" }],
+    }));
+    const r = await req("GET", `/api/media/file/post-media/${gvPath}`);
+    assert.equal(r.status, 302);
+    assert.ok(r.location?.includes("token=signed"), `expected signed URL, got: ${r.location}`);
+  });
+
+  it("show_header_publicly=true → real signed URL for any authorized viewer", async () => {
+    _clearMediaAccessCache();
+    setClients(makeClient({
+      generatedVisuals: [{
+        hero_path: gvPath,
+        entity_type: "event",
+        entity_id: EVENT_ID,
+        owner_user_id: OWNER,
+        status: "ready",
+      }],
+      events: [{ id: EVENT_ID, host_id: OWNER, visibility: "public", state: "live", show_header_publicly: true }],
+    }));
+    const r = await req("GET", `/api/media/file/post-media/${gvPath}`);
+    assert.equal(r.status, 302);
+    assert.ok(r.location?.includes("token=signed"), `expected signed URL, got: ${r.location}`);
+  });
+
+  it("trip member with show_header_publicly=false → real signed URL", async () => {
+    const tripGvPath = `generated-visuals/trip/${TRIP}/${VIS_ID}/hero.webp`;
+    _clearMediaAccessCache();
+    setClients(makeClient({
+      generatedVisuals: [{
+        hero_path: tripGvPath,
+        entity_type: "trip",
+        entity_id: TRIP,
+        owner_user_id: OWNER,
+        status: "ready",
+      }],
+      trips: [{ id: TRIP, owner_id: OWNER, show_header_publicly: false }],
+      tripMembers: [{ trip_id: TRIP, user_id: VIEWER, role: "member" }],
+    }));
+    const r = await req("GET", `/api/media/file/post-media/${tripGvPath}`);
+    assert.equal(r.status, 302);
+    assert.ok(r.location?.includes("token=signed"), `expected signed URL, got: ${r.location}`);
   });
 });

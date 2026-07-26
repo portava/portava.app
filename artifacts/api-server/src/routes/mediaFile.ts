@@ -1,125 +1,222 @@
 /**
- * Media file access routes — the bucket-privacy compatibility layer.
+ * Media file access routes — private-bucket signed URL relay.
  *
- *   GET  /api/media/file/:bucket/*  — authorize, then 302 to the file:
- *         • bucket still PUBLIC (Stage 1)  → redirect to the public URL
- *           (zero behavior change; lets clients migrate ahead of the flip)
- *         • bucket PRIVATE (post-Stage-3)  → redirect to a short-lived
- *           signed URL (bytes finally match row-level privacy)
+ *   GET  /api/media/file/:bucket/*  — authorize, then 302 to a short-lived
+ *         signed URL.  Fail-closed: unauthorized or unknown objects 403/404.
  *   POST /api/media/sign            — batch variant for feed hydration:
  *         { urls: string[] } → { signed: { [url]: string | null } }
  *
- * Mode is driven by feature flag `media_private_buckets_enabled` (OFF = public
- * mode). Authorization runs in BOTH modes — turning the flag on changes only
- * what we redirect to, never who is allowed. Fail-closed: unauthorized or
- * unknown objects 403/404 regardless of mode.
+ * Both buckets (post-media, profile-media) are PRIVATE.  The feature flag
+ * `media_private_buckets_enabled` that previously gated the signed-URL path
+ * has been retired — signed URLs are always issued.  Authorization runs
+ * before signing in both routes.
+ *
+ * Generic cover fallback: when the path resolves to an AI-generated event or
+ * trip header whose `show_header_publicly` column is explicitly false, the
+ * route redirects to GENERIC_COVER_URL instead of signing the real asset.
  */
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
-import { authorizeMediaAccess, publicUrlFor } from "../lib/mediaAccess.js";
+import { authorizeMediaAccess } from "../lib/mediaAccess.js";
 
 const router = Router();
 
 const SIGNED_TTL_SECONDS = 3600;
 const ALLOWED_BUCKETS = new Set(["post-media", "profile-media"]);
 
-async function resolveRedirect(
+/**
+ * Branded generic placeholder served when a private event/trip header has
+ * show_header_publicly = false.  Can be overridden via env for white-labelling.
+ */
+const GENERIC_COVER_URL =
+  process.env.GENERIC_COVER_URL ??
+  "https://portava.app/assets/generic-event-cover.jpg";
+
+/**
+ * Returns true when the path is an AI-generated event/trip header, the owning
+ * entity has show_header_publicly explicitly set to false, AND the viewer is
+ * NOT an owner/member/RSVP-holder who should always see the real image.
+ *
+ * Fail-OPEN: any DB error → false (do not accidentally block valid media).
+ * Owners and direct members always receive the real signed URL regardless of
+ * show_header_publicly — the flag masks the cover from casual/public viewers.
+ */
+async function isHeaderPrivate(
+  sc: any,
+  path: string,
+  viewerId: string,
+): Promise<boolean> {
+  // Path convention: generated-visuals/{entity_type}/{entity_id}/...
+  const m = path.match(
+    /^generated-visuals\/(event|trip)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\//i,
+  );
+  if (!m) return false;
+  const entityType = m[1];
+  const entityId = m[2];
+  try {
+    // Static table names required for checkWritePathColumns static analysis.
+    if (entityType === "event") {
+      const { data, error } = await sc
+        .from("events")
+        .select("show_header_publicly, host_id")
+        .eq("id", entityId)
+        .maybeSingle();
+      // Treat any error (including missing column) as fail-open.
+      if (error || !data) return false;
+      if ((data as any).show_header_publicly !== false) return false;
+      // Owners / hosts always get the real image.
+      if ((data as any).host_id === viewerId) return false;
+      // RSVP-holders and role-holders (co-host, moderator) get the real image.
+      const [rsvp, role] = await Promise.all([
+        sc.from("event_rsvps").select("status").eq("event_id", entityId).eq("user_id", viewerId).maybeSingle(),
+        sc.from("event_roles").select("role").eq("event_id", entityId).eq("user_id", viewerId).maybeSingle(),
+      ]);
+      if ((rsvp as any).data || (role as any).data) return false;
+      return true; // outsider / casual viewer → generic cover
+    } else {
+      const { data, error } = await sc
+        .from("trips")
+        .select("show_header_publicly, owner_id")
+        .eq("id", entityId)
+        .maybeSingle();
+      if (error || !data) return false;
+      if ((data as any).show_header_publicly !== false) return false;
+      // Trip owner always gets the real image.
+      if ((data as any).owner_id === viewerId) return false;
+      // Trip members get the real image.
+      const { data: member } = await sc
+        .from("trip_members")
+        .select("user_id")
+        .eq("trip_id", entityId)
+        .eq("user_id", viewerId)
+        .in("role", ["owner", "member"])
+        .maybeSingle();
+      if (member) return false;
+      return true; // outsider → generic cover
+    }
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Sign a private-bucket object.  Returns null when Supabase storage rejects
+ * the request (object not found, permissions, etc.).
+ */
+async function signUrl(
   sc: any,
   bucket: string,
   path: string,
-): Promise<{ url: string; privateMode: boolean } | null> {
-  if (await isFlagEnabled(sc, "media_private_buckets_enabled")) {
-    const { data, error } = await sc.storage.from(bucket).createSignedUrl(path, SIGNED_TTL_SECONDS);
-    if (error || !data?.signedUrl) return null;
-    return { url: data.signedUrl as string, privateMode: true };
-  }
-  const url = publicUrlFor(bucket, path);
-  return url ? { url, privateMode: false } : null;
+): Promise<string | null> {
+  const { data, error } = await sc.storage
+    .from(bucket)
+    .createSignedUrl(path, SIGNED_TTL_SECONDS);
+  if (error || !data?.signedUrl) return null;
+  return data.signedUrl as string;
 }
 
 // ── GET /api/media/file/:bucket/*path ─────────────────────────────────────────
-router.get("/media/file/:bucket/*path", asyncHandler(async (req, res) => {
-  const auth = await requireUser(req, res);
-  if (!auth) return;
-  const { user } = auth;
+router.get(
+  "/media/file/:bucket/*path",
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { user } = auth;
 
-  const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured"); return; }
+    const sc = getServiceClient();
+    if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const rl = checkRateLimit("media_file", user.id, 300, 60_000);
-  if (!rl.allowed) {
-    res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
-    sendError(res, "rate_limited", "Too many media requests.");
-    return;
-  }
+    const rl = checkRateLimit("media_file", user.id, 300, 60_000);
+    if (!rl.allowed) {
+      res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+      sendError(res, "rate_limited", "Too many media requests.");
+      return;
+    }
 
-  const bucket = String(req.params.bucket ?? "");
-  // Express 5 named wildcard: *path arrives as an array of segments.
-  const rawPath = (req.params as any).path;
-  const path = (Array.isArray(rawPath) ? rawPath.join("/") : String(rawPath ?? "")).replace(/^\/+/, "");
-  if (!ALLOWED_BUCKETS.has(bucket) || !path || path.includes("..")) {
-    sendError(res, "invalid_payload", "Invalid media reference");
-    return;
-  }
+    const bucket = String(req.params.bucket ?? "");
+    // Express 5 named wildcard: *path arrives as an array of segments.
+    const rawPath = (req.params as any).path;
+    const path = (
+      Array.isArray(rawPath) ? rawPath.join("/") : String(rawPath ?? "")
+    ).replace(/^\/+/, "");
 
-  const allowed = await authorizeMediaAccess(sc, user.id, bucket, path);
-  if (!allowed) { sendError(res, "forbidden", "Not authorized for this media"); return; }
+    if (!ALLOWED_BUCKETS.has(bucket) || !path || path.includes("..")) {
+      sendError(res, "invalid_payload", "Invalid media reference");
+      return;
+    }
 
-  const resolved = await resolveRedirect(sc, bucket, path);
-  if (!resolved) { sendError(res, "not_found", "Media unavailable"); return; }
+    const allowed = await authorizeMediaAccess(sc, user.id, bucket, path);
+    if (!allowed) {
+      sendError(res, "forbidden", "Not authorized for this media");
+      return;
+    }
 
-  // In private-buckets mode the signed URL has a finite lifetime (SIGNED_TTL_SECONDS).
-  // Allowing the browser to cache this redirect for up to 300 s means the same
-  // signed URL can be reused near the end of its lifetime, recreating the
-  // mid-session expiry window the batch-sign safety buffer was added to prevent.
-  // Using no-store forces every fetch to re-hit the relay and receive a
-  // freshly-issued signed URL.
-  // In public mode the redirect target never expires, so a short private cache
-  // is harmless and reduces load.
-  res.setHeader(
-    "Cache-Control",
-    resolved.privateMode ? "no-store" : "private, max-age=300",
-  );
-  res.redirect(302, resolved.url);
-}));
+    // Generic cover fallback: private event/trip header with show_header_publicly=false.
+    // Owners and members always receive the real signed URL regardless.
+    if (await isHeaderPrivate(sc, path, user.id)) {
+      res.setHeader("Cache-Control", "private, max-age=60");
+      res.redirect(302, GENERIC_COVER_URL);
+      return;
+    }
+
+    const signed = await signUrl(sc, bucket, path);
+    if (!signed) { sendError(res, "not_found", "Media unavailable"); return; }
+
+    // no-store: the signed URL has a finite lifetime (SIGNED_TTL_SECONDS).
+    // Caching the redirect would allow the same URL to be reused near expiry.
+    res.setHeader("Cache-Control", "no-store");
+    res.redirect(302, signed);
+  }),
+);
 
 // ── POST /api/media/sign — batch for feed hydration ──────────────────────────
-router.post("/media/sign", asyncHandler(async (req, res) => {
-  const auth = await requireUser(req, res);
-  if (!auth) return;
-  const { user } = auth;
+router.post(
+  "/media/sign",
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { user } = auth;
 
-  const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured"); return; }
+    const sc = getServiceClient();
+    if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const rl = checkRateLimit("media_sign", user.id, 60, 60_000);
-  if (!rl.allowed) {
-    res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
-    sendError(res, "rate_limited", "Too many sign requests.");
-    return;
-  }
+    const rl = checkRateLimit("media_sign", user.id, 60, 60_000);
+    if (!rl.allowed) {
+      res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+      sendError(res, "rate_limited", "Too many sign requests.");
+      return;
+    }
 
-  const urls: unknown = (req.body ?? {}).urls;
-  if (!Array.isArray(urls) || urls.length === 0 || urls.length > 50) {
-    sendError(res, "invalid_payload", "urls must be an array of 1–50 app media URLs");
-    return;
-  }
+    const urls: unknown = (req.body ?? {}).urls;
+    if (!Array.isArray(urls) || urls.length === 0 || urls.length > 50) {
+      sendError(
+        res,
+        "invalid_payload",
+        "urls must be an array of 1–50 app media URLs",
+      );
+      return;
+    }
 
-  const signed: Record<string, string | null> = {};
-  for (const raw of urls) {
-    const url = typeof raw === "string" ? raw : "";
-    const ref = appStorageUrlInfo(url);
-    if (!ref) { signed[url] = null; continue; }
-    const ok = await authorizeMediaAccess(sc, user.id, ref.bucket, ref.path);
-    signed[url] = ok ? (await resolveRedirect(sc, ref.bucket, ref.path))?.url ?? null : null;
-  }
+    const signed: Record<string, string | null> = {};
+    for (const raw of urls) {
+      const url = typeof raw === "string" ? raw : "";
+      const ref = appStorageUrlInfo(url);
+      if (!ref) { signed[url] = null; continue; }
+      const ok = await authorizeMediaAccess(sc, user.id, ref.bucket, ref.path);
+      if (!ok) { signed[url] = null; continue; }
+      if (await isHeaderPrivate(sc, ref.path, user.id)) {
+        signed[url] = GENERIC_COVER_URL;
+        continue;
+      }
+      signed[url] = (await signUrl(sc, ref.bucket, ref.path)) ?? null;
+    }
 
-  res.json({ signed, ttlSeconds: SIGNED_TTL_SECONDS });
-}));
+    res.json({ signed, ttlSeconds: SIGNED_TTL_SECONDS });
+  }),
+);
 
 export default router;

@@ -11,15 +11,14 @@
  * DENY BY DEFAULT: an object nothing references (orphan/unknown) is denied.
  * The matrix is deliberately conservative — where an entity's sharing model is
  * richer than what's implemented here (circle/custom story lists, memory
- * sharing), non-owners are denied rather than guessed at; those refinements are
- * documented in the apply doc, not silently skipped.
+ * sharing), non-owners are denied rather than guessed at.
  *
- * Used by GET /api/media/file/* which serves a 302 to either the public URL
- * (bucket still public — Stage 1, zero behavior change) or a short-lived
- * signed URL (after the Stage-3 bucket flip).
+ * Used by GET /api/media/file/* which serves a 302 to a short-lived
+ * signed URL (both buckets are PRIVATE).
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchBlockedSet } from "./blocks.js";
+import { resolveProfileVisibility } from "./profileVisibility.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -38,12 +37,22 @@ export function publicUrlFor(bucket: string, path: string): string | null {
 export function ownerFromPath(path: string): string | null {
   const segs = path.split("/");
   if (UUID_RE.test(segs[0] ?? "")) return segs[0];
-  if ((segs[0] === "stories" || segs[0] === "memories" || segs[0] === "avatars" || segs[0] === "covers")
-      && UUID_RE.test(segs[1] ?? "")) return segs[1];
+  if (
+    (segs[0] === "stories" ||
+      segs[0] === "memories" ||
+      segs[0] === "avatars" ||
+      segs[0] === "covers") &&
+    UUID_RE.test(segs[1] ?? "")
+  )
+    return segs[1];
   return null;
 }
 
-async function isCloseFriend(sc: SupabaseClient, ownerId: string, viewerId: string): Promise<boolean> {
+async function isCloseFriend(
+  sc: SupabaseClient,
+  ownerId: string,
+  viewerId: string,
+): Promise<boolean> {
   try {
     const { data } = await sc
       .from("close_friends")
@@ -55,12 +64,21 @@ async function isCloseFriend(sc: SupabaseClient, ownerId: string, viewerId: stri
   } catch { return false; }
 }
 
-async function isTripMember(sc: SupabaseClient, tripId: string, viewerId: string): Promise<boolean> {
+async function isTripMember(
+  sc: SupabaseClient,
+  tripId: string,
+  viewerId: string,
+): Promise<boolean> {
   try {
     const [{ data: t }, { data: m }] = await Promise.all([
       sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle(),
-      sc.from("trip_members").select("user_id").eq("trip_id", tripId).eq("user_id", viewerId)
-        .in("role", ["owner", "member"]).maybeSingle(),
+      sc
+        .from("trip_members")
+        .select("user_id")
+        .eq("trip_id", tripId)
+        .eq("user_id", viewerId)
+        .in("role", ["owner", "member"])
+        .maybeSingle(),
     ]);
     return (t as any)?.owner_id === viewerId || Boolean(m);
   } catch { return false; }
@@ -105,8 +123,40 @@ async function decide(
   bucket: string,
   path: string,
 ): Promise<boolean> {
-  // profile-media (avatars/covers) is universally visible by product design.
-  if (bucket === "profile-media") return true;
+  // ── profile-media: avatars and cover photos ────────────────────────────────
+  // Previously universally visible; now gated by the profile's own visibility
+  // settings (private profile → followers/friends only; blocked → deny).
+  if (bucket === "profile-media") {
+    const owner = ownerFromPath(path);
+    if (!owner) return false; // can't determine owner → deny
+    if (owner === viewerId) return true; // own media always allowed
+
+    // Block check — fail-closed (null = DB error → deny).
+    const blocked = await fetchBlockedSet(sc, viewerId);
+    if (blocked === null) return false;
+    if (blocked.has(owner)) return false;
+
+    // Profile visibility — fail-closed on missing profile.
+    try {
+      const { data: profile } = await sc
+        .from("profiles")
+        .select("is_private, passport_visibility, account_status")
+        .eq("id", owner)
+        .maybeSingle();
+      if (!profile) return false;
+      const { visibility } = await resolveProfileVisibility(
+        sc,
+        viewerId,
+        owner,
+        profile as any,
+      );
+      // "full" and "followers_only" both grant access to media bytes.
+      return visibility === "full" || visibility === "followers_only";
+    } catch {
+      return false; // fail-closed
+    }
+  }
+
   if (bucket !== "post-media") return false;
 
   // 1. Owner always sees their own bytes.
@@ -145,7 +195,11 @@ async function decide(
       .eq("storage_path", path)
       .maybeSingle();
     if (pm) {
-      if ((pm as any).moderation_status === "rejected" || (pm as any).moderation_status === "flagged") return false;
+      if (
+        (pm as any).moderation_status === "rejected" ||
+        (pm as any).moderation_status === "flagged"
+      )
+        return false;
       const { data: post } = await sc
         .from("posts")
         .select("author_id, visibility, status, post_status, trip_id")
@@ -205,11 +259,17 @@ async function decide(
       .limit(1);
     const story = (stories as any[])?.[0];
     if (story) {
-      const live = (story.state === "active" || story.state === "saved") &&
-        (!story.expires_at || new Date(story.expires_at).getTime() > Date.now() || story.state === "saved");
+      const live =
+        (story.state === "active" || story.state === "saved") &&
+        (!story.expires_at ||
+          new Date(story.expires_at).getTime() > Date.now() ||
+          story.state === "saved");
       if (!live) return false;
-      const needsClose = story.close_friends_only === true || story.visibility === "close_friends";
-      if (needsClose) return isCloseFriend(sc, story.owner_id, viewerId);
+      const needsClose =
+        story.close_friends_only === true ||
+        story.visibility === "close_friends";
+      if (needsClose)
+        return isCloseFriend(sc, story.owner_id, viewerId);
       return story.visibility === "public";
     }
   } catch { /* fall through */ }
@@ -223,12 +283,13 @@ async function decide(
       .limit(1);
     const h = (hs as any[])?.[0];
     if (h) {
-      if (h.expires_at && new Date(h.expires_at).getTime() <= Date.now()) return false;
+      if (h.expires_at && new Date(h.expires_at).getTime() <= Date.now())
+        return false;
       return h.visibility === "public";
     }
   } catch { /* fall through */ }
 
-  // 3f. Trip cover — trip member (owner handled above).
+  // 3f. Trip cover (user-uploaded) — trip member (owner handled above).
   try {
     const { data: trips } = await sc
       .from("trips")
@@ -237,6 +298,68 @@ async function decide(
       .limit(1);
     const trip = (trips as any[])?.[0];
     if (trip) return isTripMember(sc, trip.id, viewerId);
+  } catch { /* fall through */ }
+
+  // 3g. AI-generated visual (hero/card/thumbnail/share) stored as a storage
+  //     path (not a public URL) — path is matched against generated_visuals
+  //     path columns.  Entity-level visibility rules apply.
+  try {
+    const { data: gvs } = await sc
+      .from("generated_visuals")
+      .select("entity_type, entity_id, owner_user_id, status")
+      .or(
+        [
+          `hero_path.eq.${path}`,
+          `card_path.eq.${path}`,
+          `thumbnail_path.eq.${path}`,
+          `share_path.eq.${path}`,
+          `storage_path.eq.${path}`,
+        ].join(","),
+      )
+      .eq("status", "ready")
+      .limit(1);
+    const gv = (gvs as any[])?.[0];
+    if (gv) {
+      if (gv.owner_user_id === viewerId) return true;
+      if (gv.entity_type === "place") {
+        // Discovery places are publicly viewable.
+        return true;
+      }
+      if (gv.entity_type === "event") {
+        const { data: ev } = await sc
+          .from("events")
+          .select("host_id, visibility, state")
+          .eq("id", gv.entity_id)
+          .maybeSingle();
+        if (!ev) return false;
+        if ((ev as any).host_id === viewerId) return true;
+        if (
+          (ev as any).visibility === "public" &&
+          !["draft", "cancelled", "archived"].includes((ev as any).state)
+        )
+          return true;
+        // Non-public event: allow if viewer has an RSVP or role.
+        const [rsvp, role] = await Promise.all([
+          sc
+            .from("event_rsvps")
+            .select("status")
+            .eq("event_id", gv.entity_id)
+            .eq("user_id", viewerId)
+            .maybeSingle(),
+          sc
+            .from("event_roles")
+            .select("role")
+            .eq("event_id", gv.entity_id)
+            .eq("user_id", viewerId)
+            .maybeSingle(),
+        ]);
+        return !!(rsvp as any).data || !!(role as any).data;
+      }
+      if (gv.entity_type === "trip") {
+        return isTripMember(sc, gv.entity_id, viewerId);
+      }
+      return false;
+    }
   } catch { /* fall through */ }
 
   // 4. Nothing references it → orphan/unknown → DENY (fail-closed).
