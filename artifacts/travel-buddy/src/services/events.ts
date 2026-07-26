@@ -90,6 +90,8 @@ export interface EventSummary {
   rsvpClosed: boolean;
   showExactLocation: boolean;
   isHost: boolean;
+  /** Whether the host has opted in to showing the cover image to non-members. */
+  showHeaderPublicly?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -522,6 +524,8 @@ export interface EventDraft {
   priceType?: 'free' | 'external';
   priceUrl?: string;
   coverUrl?: string | null;
+  /** Whether non-members can see the event's cover image. */
+  showHeaderPublicly?: boolean;
   updatedAt: string;
 }
 

@@ -163,6 +163,8 @@ export interface AuthorizedEventView {
   rsvpClosed: boolean;
   tags: string[];
   isHost: boolean;
+  /** Whether the host has opted in to showing the cover image to non-members. */
+  showHeaderPublicly: boolean;
   createdAt: string;
   updatedAt: string;
 }

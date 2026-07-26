@@ -234,6 +234,7 @@ export default function CreateEventScreen() {
     if (d.visibility) setVisibility(d.visibility);
     if (d.circleId) setCircleId(d.circleId);
     if (d.tripId) setTripId(d.tripId);
+    if (d.showHeaderPublicly != null) setShowHeaderPublicly(d.showHeaderPublicly);
     setChatEnabled(d.chatEnabled);
     setWaitlistEnabled(d.waitlistEnabled);
     if (d.priceType) setPriceType(d.priceType);

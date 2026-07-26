@@ -122,6 +122,7 @@ export function toAuthorizedEventView(
     rsvpClosed: Boolean(ev.rsvp_closed),
     tags: (ev.tags as string[]) ?? [],
     isHost,
+    showHeaderPublicly: Boolean(ev.show_header_publicly),
     createdAt: ev.created_at as string,
     updatedAt: ev.updated_at as string,
   };
