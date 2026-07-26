@@ -79,6 +79,23 @@ jest.mock('../searchNav.tsx', () => ({
   resolveRoute: (result: any) => `/place/${result.id}`,
 }));
 
+// NOTE: intentionally exhaustive — AiRepresentationLabel uses lucide icons,
+// Modal, and theme tokens; only the testID presence/absence is asserted here.
+jest.mock('../../visuals/AiRepresentationLabel.tsx', () => ({
+  AiRepresentationLabel: ({ testID }: any) => {
+    const { View } = require('react-native');
+    return <View testID={testID ?? 'ai-representation-label'} />;
+  },
+}));
+
+// NOTE: intentionally exhaustive — fallbackAssets requires bundled image
+// assets that are not available in the jest-expo environment; returning null
+// here replicates what the resolver sees at test time and keeps the emoji
+// fallback path active when imageUrl is also null.
+jest.mock('../../../lib/visuals/fallbackAssets.ts', () => ({
+  fallbackUriFor: () => null,
+}));
+
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
 function makePlaceResult(overrides: Partial<UnifiedSearchResult> = {}): UnifiedSearchResult {
@@ -143,6 +160,32 @@ describe('SearchResultCard — place card standard', () => {
 
     await waitFor(() => {
       expect(getByTestId('place-result-fallback')).toBeTruthy();
+    });
+  });
+
+  // ── AI disclosure label ───────────────────────────────────────────────────
+
+  it('shows the AI disclosure label when headerImageSource is ai_generated', async () => {
+    const result = makePlaceResult({
+      imageUrl: 'https://example.com/ai-eiffel.jpg',
+      metadata: { category: 'landmarks', rating: 4.8, isOpenNow: true, headerImageSource: 'ai_generated' },
+    });
+    const { getByTestId } = await render(<SearchResultCard result={result} />);
+
+    await waitFor(() => {
+      expect(getByTestId('ai-representation-label')).toBeTruthy();
+    });
+  });
+
+  it('does NOT show the AI disclosure label when headerImageSource is provider', async () => {
+    const result = makePlaceResult({
+      imageUrl: 'https://example.com/provider-eiffel.jpg',
+      metadata: { category: 'landmarks', rating: 4.8, isOpenNow: true, headerImageSource: 'provider' },
+    });
+    const { queryByTestId } = await render(<SearchResultCard result={result} />);
+
+    await waitFor(() => {
+      expect(queryByTestId('ai-representation-label')).toBeNull();
     });
   });
 });
