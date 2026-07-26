@@ -38,6 +38,8 @@ import type { RankCandidate, ViewerContext, ScoredCandidate } from "../lib/porta
 import { logImpression } from "../lib/rankLog";
 import { rankItems as drsRankItems } from "../services/ranking/DiscoveryRankingService.js";
 import type { RankingInput, RankingViewerContext } from "../services/ranking/DiscoveryRankingService.js";
+import { enforceCreatorCaps } from "../services/ranking/CreatorCapEnforcer.js";
+import { allocateFeedSlots } from "../services/ranking/FeedSlotAllocator.js";
 import {
   readPlacesFromDb,
   writePlacesToDb,
@@ -1191,6 +1193,19 @@ router.get("/discovery", async (req, res) => {
             return aIdx - bIdx;
           });
         }
+
+        // Assembly-phase analytics: creator-cap diversity pass + slot allocation.
+        // Both calls are fire-and-forget side effects that emit rank_events rows;
+        // they never affect feed order, response shape, or latency on error.
+        try {
+          const eligibleDrs  = drsResults.filter((r) => r.eligibilityPassed);
+          const itemTypeMap  = new Map(drsInputs.map((i) => [i.itemId, i.itemType]));
+          const creatorIdMap = new Map(drsInputs.map((i) => [i.itemId, i.creatorId]));
+          const capEnforced  = enforceCreatorCaps(
+            eligibleDrs, itemTypeMap, creatorIdMap, "discovery", callerUserId, null, drsRankSc,
+          );
+          allocateFeedSlots(capEnforced, drsInputs, "discovery", callerUserId, null, drsRankSc);
+        } catch { /* non-fatal — assembly analytics must never affect the feed response */ }
       } catch { /* non-fatal — portavaRank order preserved on DRS error */ }
     } else {
       // Unauthenticated: keep existing distance/saved-count ordering
