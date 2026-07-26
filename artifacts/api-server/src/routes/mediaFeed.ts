@@ -584,7 +584,12 @@ router.get("/media/gems-feed", asyncHandler(async (req, res) => {
   res.json({ items, nextCursor, sessionId });
 }));
 
-// ── POST /api/media/:id/report (wrong-place) ─────────────────────────────────
+// ── POST /api/media/:id/report ─────────────────────────────────────────────────
+// Routes to the appropriate report pipeline based on media kind:
+//   - hidden_gems → reportGem() (writes to hidden_gem_reports)
+//   - posts       → reports table (same pipeline as reports.ts)
+// The reason "media_does_not_match_place" is only meaningful for gems;
+// post reports use standard reason codes (spam, nudity, harassment, etc.)
 
 router.post("/media/:id/report", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
@@ -598,10 +603,10 @@ router.post("/media/:id/report", asyncHandler(async (req, res) => {
   }
 
   const { id } = req.params;
-  if (!id) { sendError(res, "invalid_payload", "Missing id"); return; }
+  if (!id || !UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid media id"); return; }
 
   const reasonSchema = z.object({
-    reason: z.string().max(100).default("media_does_not_match_place"),
+    reason: z.string().max(100).default("spam"),
     notes: z.string().max(500).optional(),
   });
   const parsed = reasonSchema.safeParse(req.body);
@@ -610,13 +615,51 @@ router.post("/media/:id/report", asyncHandler(async (req, res) => {
     return;
   }
 
-  try {
-    const result = await reportGem(sc, id, user.id, parsed.data.reason, parsed.data.notes);
-    res.json({ ok: result.ok, alreadyReported: result.alreadyReported });
-  } catch (err: any) {
-    req.log.error({ err }, "media/:id/report failed");
-    sendError(res, "db_error", err.message);
+  // Detect media kind without access-control filtering (reporter may be blocked)
+  const { data: gemRow } = await sc
+    .from("hidden_gems")
+    .select("id, status")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (gemRow) {
+    // ── Hidden gem: use existing reportGem pipeline ─────────────────────────
+    try {
+      const result = await reportGem(sc, id, user.id, parsed.data.reason, parsed.data.notes);
+      res.json({ ok: result.ok, alreadyReported: result.alreadyReported });
+    } catch (err: any) {
+      req.log.error({ err }, "media/:id/report (gem) failed");
+      sendError(res, "db_error", err.message);
+    }
+    return;
   }
+
+  // ── Post: write to reports table (same pipeline as reports.ts) ────────────
+  const { data: postRow } = await sc
+    .from("posts")
+    .select("id, status")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (!postRow) { sendError(res, "not_found", "Media item not found"); return; }
+
+  const { error } = await sc
+    .from("reports")
+    .insert({
+      reporter_id: user.id,
+      target_type: "post",
+      target_id: id,
+      reason_code: parsed.data.reason,
+      reason_detail: parsed.data.notes ?? null,
+    });
+
+  if (error) {
+    req.log.error({ err: error }, "media/:id/report (post) failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  res.json({ ok: true, alreadyReported: false });
 }));
 
 // ── GET /api/media/feed ───────────────────────────────────────────────────────
@@ -1306,6 +1349,399 @@ router.post("/media/:id/view", asyncHandler(async (req, res) => {
   }
 
   res.json({ counted });
+}));
+
+// ── UUID validation helper ─────────────────────────────────────────────────────
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resolve the media kind AND enforce access control:
+ *   - The item must be active (status = 'active').
+ *   - Neither party may have blocked the other.
+ *   - Private posts are only visible to the author or approved followers.
+ *
+ * Returns the resolved kind, or null when the item is not found / not accessible.
+ */
+async function verifyMediaAccess(
+  sc: any,
+  id: string,
+  viewerUserId: string,
+): Promise<{ kind: "post"; authorId: string } | { kind: "gem"; submittedBy: string | null } | null> {
+  // ── Try posts first (most common path) ────────────────────────────────────
+  const { data: postRow } = await sc
+    .from("posts")
+    .select("id, author_id, status, visibility")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (postRow && (postRow as any).status === "active") {
+    const authorId: string = (postRow as any).author_id;
+    const visibility: string = (postRow as any).visibility ?? "public";
+
+    // Block check (both directions) — use count to stay cardinality-safe; treat any error as blocked (fail-closed).
+    const { count: blockCount, error: blockError } = await sc
+      .from("blocks")
+      .select("blocker_id", { count: "exact", head: true })
+      .or(`and(blocker_id.eq.${viewerUserId},blocked_id.eq.${authorId}),and(blocker_id.eq.${authorId},blocked_id.eq.${viewerUserId})`);
+    if (blockError || (blockCount ?? 0) > 0) return null;
+
+    // Visibility check — private AND friends-only posts require follow or ownership
+    if ((visibility === "private" || visibility === "friends") && authorId !== viewerUserId) {
+      const { data: followRow } = await sc
+        .from("user_follows")
+        .select("follower_id")
+        .eq("follower_id", viewerUserId)
+        .eq("following_id", authorId)
+        .maybeSingle();
+      if (!followRow) return null;
+    }
+
+    return { kind: "post", authorId };
+  }
+
+  // ── Try hidden_gems ───────────────────────────────────────────────────────
+  const { data: gemRow } = await sc
+    .from("hidden_gems")
+    .select("id, submitted_by, status")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (gemRow && (gemRow as any).status === "active") {
+    const submittedBy: string | null = (gemRow as any).submitted_by as string | null;
+
+    // Block check for gems (only when submitted_by is set) — fail-closed on error.
+    if (submittedBy && submittedBy !== viewerUserId) {
+      const { count: blockCount, error: blockError } = await sc
+        .from("blocks")
+        .select("blocker_id", { count: "exact", head: true })
+        .or(`and(blocker_id.eq.${viewerUserId},blocked_id.eq.${submittedBy}),and(blocker_id.eq.${submittedBy},blocked_id.eq.${viewerUserId})`);
+      if (blockError || (blockCount ?? 0) > 0) return null;
+    }
+
+    return { kind: "gem", submittedBy };
+  }
+
+  return null;
+}
+
+// ── POST /api/media/:id/like ──────────────────────────────────────────────────
+
+router.post("/media/:id/like", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { id } = req.params;
+  if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid media id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const mediaAccess = await verifyMediaAccess(sc, id, user.id);
+  if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; }
+
+  if (mediaAccess.kind === "post") {
+    // Self-like guard
+    if (mediaAccess.authorId === user.id) {
+      sendError(res, "invalid_payload", "Cannot like your own post");
+      return;
+    }
+    // Upsert like — post_reactions uses (post_id, user_id) unique constraint.
+    // Column is `emoji` (not reaction_type). Use heart emoji for a like.
+    const { error } = await sc
+      .from("post_reactions")
+      .upsert(
+        { user_id: user.id, post_id: id, emoji: "\u2764\ufe0f" },
+        { onConflict: "post_id,user_id", ignoreDuplicates: true },
+      );
+    if (error) { req.log.error({ err: error }, "post_reactions upsert failed"); sendError(res, "db_error", error.message); return; }
+
+    // Best-effort like_count increment
+    await sc.rpc("increment_post_like_count", { post_id: id }).then(() => {}, () => {});
+  }
+  // Gems: no dedicated like table in live schema — acknowledge the action client-side only.
+
+  res.json({ liked: true, mediaId: id });
+}));
+
+// ── DELETE /api/media/:id/like ────────────────────────────────────────────────
+
+router.delete("/media/:id/like", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { id } = req.params;
+  if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid media id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const mediaAccess = await verifyMediaAccess(sc, id, user.id);
+  if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; }
+
+  if (mediaAccess.kind === "post") {
+    const { error } = await sc
+      .from("post_reactions")
+      .delete()
+      .eq("user_id", user.id)
+      .eq("post_id", id);
+    if (error) { req.log.error({ err: error }, "post_reactions delete failed"); sendError(res, "db_error", error.message); return; }
+
+    // Best-effort like_count decrement
+    await sc.rpc("decrement_post_like_count", { post_id: id }).then(() => {}, () => {});
+  }
+  // Gems: no dedicated like table in live schema — acknowledge the action client-side only.
+
+  res.json({ liked: false, mediaId: id });
+}));
+
+// ── POST /api/media/:id/save ──────────────────────────────────────────────────
+
+router.post("/media/:id/save", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { id } = req.params;
+  if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid media id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const mediaAccess = await verifyMediaAccess(sc, id, user.id);
+  if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; }
+
+  if (mediaAccess.kind === "post") {
+    const { error } = await sc
+      .from("post_saves")
+      .upsert(
+        { user_id: user.id, post_id: id },
+        { onConflict: "user_id,post_id", ignoreDuplicates: true },
+      );
+    if (error) { req.log.error({ err: error }, "post_saves upsert failed"); sendError(res, "db_error", error.message); return; }
+  } else {
+    const { error } = await sc
+      .from("hidden_gem_saves")
+      .upsert(
+        { user_id: user.id, gem_id: id },
+        { onConflict: "user_id,gem_id", ignoreDuplicates: true },
+      );
+    if (error) { req.log.error({ err: error }, "hidden_gem_saves upsert failed"); sendError(res, "db_error", error.message); return; }
+  }
+
+  res.json({ saved: true, mediaId: id });
+}));
+
+// ── DELETE /api/media/:id/save ────────────────────────────────────────────────
+
+router.delete("/media/:id/save", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { id } = req.params;
+  if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid media id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const mediaAccess = await verifyMediaAccess(sc, id, user.id);
+  if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; }
+
+  if (mediaAccess.kind === "post") {
+    const { error } = await sc
+      .from("post_saves")
+      .delete()
+      .eq("user_id", user.id)
+      .eq("post_id", id);
+    if (error) { req.log.error({ err: error }, "post_saves delete failed"); sendError(res, "db_error", error.message); return; }
+  } else {
+    const { error } = await sc
+      .from("hidden_gem_saves")
+      .delete()
+      .eq("user_id", user.id)
+      .eq("gem_id", id);
+    if (error) { req.log.error({ err: error }, "hidden_gem_saves delete failed"); sendError(res, "db_error", error.message); return; }
+  }
+
+  res.json({ saved: false, mediaId: id });
+}));
+
+// ── POST /api/media/:id/share ─────────────────────────────────────────────────
+
+router.post("/media/:id/share", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { id } = req.params;
+  if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid media id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  // Gate: MEDIA_SHARING_ENABLED
+  if (!(await isFlagEnabled(sc, "MEDIA_SHARING_ENABLED"))) {
+    sendError(res, "feature_disabled", "Media sharing is not available");
+    return;
+  }
+
+  const shareSchema = z.object({
+    target: z.enum(["native", "copy_link", "telegraph"]).default("native"),
+  });
+  const parsed = shareSchema.safeParse(req.body ?? {});
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload"); return; }
+
+  const mediaAccess = await verifyMediaAccess(sc, id, user.id);
+  if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; }
+
+  // Record share event (fire-and-forget on write failure — never block the share)
+  void recordMediaEvent("share", {
+    media_id: id,
+    post_id: id,
+    viewer_id: user.id,
+    mode: mediaAccess.kind === "post" ? "watch" : "gems",
+    surface: mediaAccess.kind === "post" ? "watch_feed" : "gems_feed",
+  }, sc);
+
+  const shareUrl = `/share/media/${id}`;
+  res.json({ ok: true, mediaId: id, shareUrl, target: parsed.data.target });
+}));
+
+// ── GET /api/media/:id/comments ───────────────────────────────────────────────
+// Delegates to the posts_comments table by re-using the post ID.
+// Only post-backed media items have comments; gems return an empty list.
+
+router.get("/media/:id/comments", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { id } = req.params;
+  if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid media id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  // Gate: MEDIA_COMMENTS_ENABLED
+  if (!(await isFlagEnabled(sc, "MEDIA_COMMENTS_ENABLED"))) {
+    sendError(res, "feature_disabled", "Comments are not available");
+    return;
+  }
+
+  const mediaAccess = await verifyMediaAccess(sc, id, user.id);
+  if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; }
+
+  // Gems don't have structured comments yet — return empty
+  if (mediaAccess.kind === "gem") {
+    res.json({ comments: [], total: 0 });
+    return;
+  }
+
+  const limit = Math.min(Number(req.query.limit ?? 20), 100);
+  const offset = Number(req.query.offset ?? 0);
+
+  const { data, error, count } = await sc
+    .from("posts_comments")
+    .select(
+      "id, post_id, user_id, body, created_at, updated_at",
+      { count: "exact" },
+    )
+    .eq("post_id", id)
+    .is("parent_comment_id", null)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) { req.log.error({ err: error }, "media comments query failed"); sendError(res, "db_error", error.message); return; }
+
+  const rows = (data as any[]) ?? [];
+  res.json({ comments: rows, total: count ?? 0 });
+}));
+
+// ── PATCH /api/media/:id (owner: change visibility) ──────────────────────────
+
+router.patch("/media/:id", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { id } = req.params;
+  if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid media id"); return; }
+
+  const bodySchema = z.object({
+    visibility: z.enum(["public", "friends", "private"]),
+  });
+  const parsed = bodySchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const { data: postRow } = await sc
+    .from("posts")
+    .select("id, author_id")
+    .eq("id", id)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (!postRow) { sendError(res, "not_found", "Media item not found"); return; }
+  if ((postRow as any).author_id !== user.id) { sendError(res, "forbidden", "Only the owner can change visibility"); return; }
+
+  const { error } = await sc
+    .from("posts")
+    .update({ visibility: parsed.data.visibility })
+    .eq("id", id);
+
+  if (error) { req.log.error({ err: error }, "media visibility patch failed"); sendError(res, "db_error", error.message); return; }
+
+  res.json({ ok: true, mediaId: id, visibility: parsed.data.visibility });
+}));
+
+// ── DELETE /api/media/:id (owner: delete) ─────────────────────────────────────
+
+router.delete("/media/:id", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { id } = req.params;
+  if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid media id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  // Try posts first
+  const { data: postRow } = await sc
+    .from("posts")
+    .select("id, author_id, status")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (postRow) {
+    if ((postRow as any).author_id !== user.id) { sendError(res, "forbidden", "Only the owner can delete this post"); return; }
+    const { error } = await sc.from("posts").update({ status: "deleted" }).eq("id", id);
+    if (error) { req.log.error({ err: error }, "post delete failed"); sendError(res, "db_error", error.message); return; }
+    res.json({ ok: true, mediaId: id, deleted: true });
+    return;
+  }
+
+  // Try hidden_gems
+  const { data: gemRow } = await sc
+    .from("hidden_gems")
+    .select("id, submitted_by")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (!gemRow) { sendError(res, "not_found", "Media item not found"); return; }
+  if ((gemRow as any).submitted_by !== user.id) { sendError(res, "forbidden", "Only the owner can delete this item"); return; }
+
+  const { error } = await sc.from("hidden_gems").update({ status: "deleted" }).eq("id", id);
+  if (error) { req.log.error({ err: error }, "hidden_gem delete failed"); sendError(res, "db_error", error.message); return; }
+
+  res.json({ ok: true, mediaId: id, deleted: true });
 }));
 
 export default router;

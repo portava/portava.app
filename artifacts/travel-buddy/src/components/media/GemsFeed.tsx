@@ -13,7 +13,7 @@
  * Feature flags consumed:
  *   nearMeEnabled  — driven by MEDIA_HIDDEN_GEMS_NEARBY_ENABLED (prop)
  */
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   FlatList,
@@ -28,8 +28,15 @@ import * as ExpoLocation from 'expo-location';
 import { color, space, type as t } from '../../theme/tokens.ts';
 import { useMediaStore, type GeoAreaMode, type GemCategory } from '../../stores/mediaStore.ts';
 import { useGemsFeed, type GemsFeedItem } from '../../hooks/useGemsFeed.ts';
+import { useMediaLike } from '../../hooks/useMediaLike.ts';
+import { useMediaSave } from '../../hooks/useMediaSave.ts';
+import { useSession } from '../../context/SessionContext.tsx';
 import { GemsFilterBar } from './GemsFilterBar.tsx';
 import { GemsItemOverlay } from './GemsItemOverlay.tsx';
+import { MediaCommentSheet } from './MediaCommentSheet.tsx';
+import { MediaMoreMenu } from './MediaMoreMenu.tsx';
+import { WhyThisSheet } from './WhyThisSheet.tsx';
+import { recordMediaShare } from '../../services/mediaInteractions.ts';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -65,6 +72,17 @@ export function GemsFeed({
 }: GemsFeedProps) {
   const { height: screenHeight, width: screenWidth } = useWindowDimensions();
   const { getGemsModeState, setGemsModeState } = useMediaStore();
+  const session = useSession();
+  const currentUserId = session?.userId ?? undefined;
+
+  // ── Interaction hooks ────────────────────────────────────────────────────
+  const likeHook = useMediaLike();
+  const saveHook = useMediaSave();
+
+  // ── Sheet state ──────────────────────────────────────────────────────────
+  const [commentItemId, setCommentItemId] = useState<string | null>(null);
+  const [moreMenuItemId, setMoreMenuItemId] = useState<string | null>(null);
+  const [whyThisItemId, setWhyThisItemId] = useState<string | null>(null);
 
   const gemsState = getGemsModeState();
 
@@ -123,6 +141,42 @@ export function GemsFeed({
     userLng: resolvedLng,
   });
 
+  // ── Seed interaction state when feed items arrive ─────────────────────────
+  useEffect(() => {
+    if (items.length === 0) return;
+    likeHook.seed(items.map((i) => ({
+      id: i.id,
+      likedByMe: i.viewerState?.hasLiked ?? false,
+      likeCount: i.stats.likeCount,
+    })));
+    saveHook.seed(items.map((i) => ({
+      id: i.id,
+      savedByMe: i.viewerState?.hasSaved ?? false,
+    })));
+  }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Interaction handlers ──────────────────────────────────────────────────
+  const handleLike = useCallback((item: GemsFeedItem) => {
+    likeHook.toggleLike(item.id);
+  }, [likeHook]);
+
+  const handleSave = useCallback((item: GemsFeedItem) => {
+    saveHook.toggleSave(item.id);
+  }, [saveHook]);
+
+  const handleComment = useCallback((item: GemsFeedItem) => {
+    setCommentItemId(item.id);
+  }, []);
+
+  const handleShare = useCallback((item: GemsFeedItem) => {
+    // Fire share record in background; native share sheet is client-only
+    recordMediaShare(item.id, 'native');
+  }, []);
+
+  const handleMore = useCallback((item: GemsFeedItem) => {
+    setMoreMenuItemId(item.id);
+  }, []);
+
   // ── Viewability tracking ──────────────────────────────────────────────────
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60 }).current;
   const onViewableItemsChanged = useCallback(({ viewableItems }: any) => {
@@ -131,6 +185,10 @@ export function GemsFeed({
       setGemsModeState({ activeItemId: first.item.id });
     }
   }, [setGemsModeState]);
+
+  // ── More-menu and Why This? resolution ───────────────────────────────────
+  const moreMenuItem = items.find((i) => i.id === moreMenuItemId) ?? null;
+  const whyThisItem = items.find((i) => i.id === whyThisItemId) ?? null;
 
   // ── Render helpers ────────────────────────────────────────────────────────
   const renderItem = useCallback(({ item }: { item: GemsFeedItem }) => {
@@ -155,11 +213,17 @@ export function GemsFeed({
           onAddToTrip={onAddToTrip}
           onDirections={onDirections}
           onFollowCreator={onViewCreator}
-          onWrongPlace={onWrongPlace}
+          onLike={handleLike}
+          onSave={handleSave}
+          isLiked={likeHook.isLiked(item.id)}
+          isSaved={saveHook.isSaved(item.id)}
+          likeCount={likeHook.getLikeCount(item.id)}
+          onShare={handleShare}
+          onMore={handleMore}
         />
       </View>
     );
-  }, [screenWidth, screenHeight, onViewPlace, onAddToTrip, onDirections, onViewCreator, onWrongPlace]);
+  }, [screenWidth, screenHeight, onViewPlace, onAddToTrip, onDirections, onViewCreator, handleLike, handleSave, handleComment, handleShare, handleMore]);
 
   const keyExtractor = useCallback((item: GemsFeedItem) => item.id, []);
 
@@ -244,6 +308,39 @@ export function GemsFeed({
           nearMeLoading={nearMeLoading}
         />
       </View>
+
+      {/* ── Comment sheet ────────────────────────────────────────────────── */}
+      <MediaCommentSheet
+        mediaId={commentItemId}
+        visible={commentItemId !== null}
+        onClose={() => setCommentItemId(null)}
+      />
+
+      {/* ── More menu (viewer + owner + wrong-place) ────────────────────── */}
+      <MediaMoreMenu
+        visible={moreMenuItemId !== null}
+        mediaId={moreMenuItemId}
+        creatorId={moreMenuItem?.creator?.id ?? null}
+        isOwner={
+          !!currentUserId &&
+          !!moreMenuItem &&
+          moreMenuItem.creator?.id === currentUserId
+        }
+        isGems={true}
+        onWhyThis={() => {
+          setMoreMenuItemId(null);
+          setWhyThisItemId(moreMenuItemId);
+        }}
+        onItemRemoved={() => setMoreMenuItemId(null)}
+        onClose={() => setMoreMenuItemId(null)}
+      />
+
+      {/* ── Why This? sheet ──────────────────────────────────────────────── */}
+      <WhyThisSheet
+        visible={whyThisItemId !== null}
+        explanation={null}
+        onClose={() => setWhyThisItemId(null)}
+      />
     </View>
   );
 }
