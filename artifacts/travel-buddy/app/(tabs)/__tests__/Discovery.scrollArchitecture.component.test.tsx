@@ -186,19 +186,19 @@ describe('DiscoveryHub screen — scroll architecture', () => {
     expect(capturedListHeaderComponent).not.toBeNull();
   });
 
-  it('listHeaderComponent contains the "Discover" title when rendered standalone', async () => {
+  it('listHeaderComponent contains the "Discovery" title when rendered standalone', async () => {
     await render(<DiscoveryHub />);
     await act(async () => {});
 
     // ForYouTab is stubbed (returns null), so discoveryHeader never appears in
     // the main DOM tree.  Render the captured prop in isolation to confirm the
-    // "Discover" title is present inside the header block.
+    // "Discovery" title is present inside the header block.
     expect(capturedListHeaderComponent).not.toBeNull();
 
     const { getByText } = await render(
       capturedListHeaderComponent as React.ReactElement,
     );
-    expect(getByText('Discover')).toBeTruthy();
+    expect(getByText('Discovery')).toBeTruthy();
   });
 
   it('root View has no non-overlay header sibling above the tab component', async () => {

@@ -498,7 +498,7 @@ export default function DiscoveryHub() {
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Compass size={22} color={color.signal} />
-          <Text style={styles.headerTitle}>Discover</Text>
+          <Text style={styles.headerTitle}>Discovery</Text>
         </View>
         <View style={styles.headerRight}>
           <DestinationBar destination={destination} onSelectPlace={handleSelectPlaceFromBar} />
