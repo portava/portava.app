@@ -477,6 +477,19 @@ router.post("/places/:id/image-report", async (req, res) => {
     return;
   }
 
+  // Verify the place exists before inserting the report.
+  // place_id is TEXT matching discovery_places.id (OSM/text keys like "db/<uuid>"),
+  // NOT a UUID foreign key to the `places` table — see migration comment.
+  const { data: placeExists } = await db
+    .from("discovery_places")
+    .select("id")
+    .eq("id", placeId)
+    .maybeSingle();
+  if (!placeExists) {
+    res.status(404).json({ error: "not_found", message: "Place not found" });
+    return;
+  }
+
   const { error } = await db.from("place_image_reports").insert({
     place_id: placeId,
     image_url: imageUrl.trim(),

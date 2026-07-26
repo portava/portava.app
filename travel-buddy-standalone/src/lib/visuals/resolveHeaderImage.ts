@@ -3,36 +3,73 @@
  * (api-server/src/lib/visuals/priority.ts). ONE resolver for every card and detail
  * screen so no component re-implements image priority or guesses which URL to show.
  *
- * Priority (highest first): user_upload → official → provider → portava_media →
- * ai_generated → category_fallback.
+ * Priority (highest first) — nine canonical source types:
+ *   1. official              — venue's own media or officially licensed photo (8)
+ *   2. trusted_provider      — major licensed photo provider (Getty, Unsplash, …) (7)
+ *   3. tourism_authority     — national/city tourism board or CVB image (6)
+ *   4. verified_owner        — venue owner-verified upload via the platform (5)
+ *   5. verified_user_photo   — community photo verified by a moderator (4)
+ *   6. reference_grounded_ai — AI generation grounded in real reference images (3)
+ *   7. generic_ai_illustration — AI generation with no real-place reference (2)
+ *   8. category_fallback     — static branded fallback keyed on category (1)
+ *   9. map_fallback          — last-resort map thumbnail / street-view capture (0)
+ *
+ * Legacy values (user_upload, provider, portava_media, ai_generated) are kept for
+ * backward compatibility and mapped to equivalent tiers.
  *
  * Pure + dependency-free so it can be unit tested and shared across screens.
  */
 
+/** All recognised source-type strings, canonical + legacy. */
 export type HeaderImageSource =
-  | 'user_upload'
+  // ── Nine canonical ImageSourceType classifications ──────────────────────────
   | 'official'
-  | 'provider'
-  | 'portava_media'
-  | 'ai_generated'
-  | 'category_fallback';
+  | 'trusted_provider'
+  | 'tourism_authority'
+  | 'verified_owner'
+  | 'verified_user_photo'
+  | 'reference_grounded_ai'
+  | 'generic_ai_illustration'
+  | 'category_fallback'
+  | 'map_fallback'
+  // ── Legacy values (kept for backward compatibility) ─────────────────────────
+  | 'user_upload'     // highest priority — manually selected by a user
+  | 'provider'        // trusted external provider → equivalent to trusted_provider
+  | 'portava_media'   // approved Portava media   → equivalent to verified_owner
+  | 'ai_generated';   // AI-generated             → equivalent to reference_grounded_ai
 
 const RANK: Record<HeaderImageSource, number> = {
-  user_upload: 6,
-  official: 5,
-  provider: 4,
-  portava_media: 3,
-  ai_generated: 2,
-  category_fallback: 1,
+  // ── Nine canonical types ────────────────────────────────────────────────────
+  official:               8,
+  trusted_provider:       7,
+  tourism_authority:      6,
+  verified_owner:         5,
+  verified_user_photo:    4,
+  reference_grounded_ai:  3,
+  generic_ai_illustration:2,
+  category_fallback:      1,
+  map_fallback:           0,
+  // ── Legacy aliases ──────────────────────────────────────────────────────────
+  user_upload:    9,  // manually-selected user image — top priority
+  provider:       7,  // equivalent to trusted_provider
+  portava_media:  5,  // equivalent to verified_owner
+  ai_generated:   3,  // equivalent to reference_grounded_ai
 };
 
-export function sourceRank(s: HeaderImageSource): number {
-  return RANK[s] ?? 0;
+export function sourceRank(s: HeaderImageSource | string): number {
+  return (RANK as Record<string, number>)[s] ?? 0;
 }
+
+/** Sources that should be labelled as AI representations rather than real photos. */
+const AI_REPRESENTATION_SOURCES = new Set<HeaderImageSource>([
+  'reference_grounded_ai',
+  'generic_ai_illustration',
+  'ai_generated',
+]);
 
 export interface HeaderCandidate {
   url: string | null | undefined;
-  source: HeaderImageSource;
+  source: HeaderImageSource | string;
   attribution?: string;
   generatedVisualId?: string;
   /** Nine-category source type from the accuracy pipeline. */
@@ -45,7 +82,7 @@ export interface HeaderCandidate {
 
 export interface ResolvedHeaderImage {
   url: string;
-  source: HeaderImageSource;
+  source: HeaderImageSource | string;
   attribution?: string;
   generatedVisualId?: string;
   /** true for AI place representations → drives the "AI-generated representation" label. */
@@ -110,14 +147,26 @@ export function resolveHeaderImage(
   if (fbUrl) usable.push({ url: fbUrl, source: 'category_fallback' });
 
   if (usable.length === 0) return null;
-  usable.sort((a, b) => sourceRank(b.source) - sourceRank(a.source));
+
+  // Sort highest-rank first; tie-break by most recently verified (when provided).
+  usable.sort((a, b) => {
+    const rankDiff = sourceRank(b.source) - sourceRank(a.source);
+    if (rankDiff !== 0) return rankDiff;
+    // Same source rank → prefer the more recently verified candidate.
+    const aAt = (a as any).verifiedAt ?? '';
+    const bAt = (b as any).verifiedAt ?? '';
+    return bAt.localeCompare(aAt);
+  });
+
   const win = usable[0];
   return {
     url: win.url as string,
     source: win.source,
     attribution: win.attribution,
     generatedVisualId: win.generatedVisualId,
-    isRepresentation: win.source === 'ai_generated' && opts.entityType === 'place',
+    isRepresentation:
+      opts.entityType === 'place' &&
+      AI_REPRESENTATION_SOURCES.has(win.source as HeaderImageSource),
     imageSourceType: win.imageSourceType ?? null,
     disclaimerRequired: win.disclaimerRequired ?? null,
     disclaimerText: win.disclaimerText ?? null,
@@ -131,7 +180,7 @@ export function candidatesFromEntity(entity: {
   providerUrl?: string | null;
   portavaMediaUrl?: string | null;
   headerImageUrl?: string | null;      // ai_generated (server-applied)
-  headerImageSource?: HeaderImageSource | null;
+  headerImageSource?: HeaderImageSource | string | null;
   headerImageGeneratedId?: string | null;
   headerImageAttribution?: string | null;
 }): HeaderCandidate[] {
@@ -140,10 +189,10 @@ export function candidatesFromEntity(entity: {
   if (entity.officialUrl) out.push({ url: entity.officialUrl, source: 'official' });
   if (entity.providerUrl) out.push({ url: entity.providerUrl, source: 'provider' });
   if (entity.portavaMediaUrl) out.push({ url: entity.portavaMediaUrl, source: 'portava_media' });
-  if (entity.headerImageUrl && entity.headerImageSource === 'ai_generated') {
+  if (entity.headerImageUrl && entity.headerImageSource) {
     out.push({
       url: entity.headerImageUrl,
-      source: 'ai_generated',
+      source: entity.headerImageSource,
       attribution: entity.headerImageAttribution ?? undefined,
       generatedVisualId: entity.headerImageGeneratedId ?? undefined,
     });

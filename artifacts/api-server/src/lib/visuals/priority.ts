@@ -115,8 +115,15 @@ export function resolveHeaderImage(
 
   if (usable.length === 0) return null;
 
-  // 3. Sort highest-rank first.
-  usable.sort((a, b) => sourceRank(b.source) - sourceRank(a.source));
+  // 3. Sort highest-rank first; tie-break by most recently verified.
+  usable.sort((a, b) => {
+    const rankDiff = sourceRank(b.source) - sourceRank(a.source);
+    if (rankDiff !== 0) return rankDiff;
+    // Same source rank → prefer the more recently verified candidate.
+    const aAt = a.verifiedAt ?? "";
+    const bAt = b.verifiedAt ?? "";
+    return bAt.localeCompare(aAt);
+  });
   const win = usable[0];
 
   const isPlace = opts.entityType === "place";

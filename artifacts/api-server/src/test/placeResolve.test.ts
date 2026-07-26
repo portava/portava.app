@@ -317,3 +317,183 @@ describe("toCanonicalPlace", () => {
     assert.equal(toCanonicalPlace(p, []).phone, "+1234567890");
   });
 });
+
+// ── Wrong-place rejection scenarios ──────────────────────────────────────────
+// Covers the four canonical wrong-place scenarios from the real-place accuracy spec:
+//   1. Different canonical_place_id → rejected by resolveHeaderImage canonical guard
+//   2. Coordinates differ beyond threshold → isSamePlace returns false
+//   3. Nearby hotel sharing the same city block → different category family → isSamePlace false
+//   4. Different chain branch → different canonical_place_id → rejected by canonical guard
+
+import {
+  isSamePlace,
+  haversineKm,
+  nameSimilarity,
+  type PlaceLike,
+} from "../lib/places/placeResolve.js";
+import { resolveHeaderImage } from "../lib/visuals/priority.js";
+
+describe("wrong-place: different canonical_place_id rejected even with similar names", () => {
+  it("resolveHeaderImage rejects an image whose canonicalPlaceId does not match the entity", () => {
+    // Two places with similar names ("Cebu Falls" vs "Kawasan Falls") but different IDs
+    const result = resolveHeaderImage(
+      [
+        {
+          url: "https://cdn.example.com/cebu-falls.jpg",
+          source: "official" as const,
+          canonicalPlaceId: "place-cebu-falls-002",  // different place
+        },
+      ],
+      { canonicalPlaceId: "place-kawasan-001" },
+    );
+    assert.equal(result, null, "Image with mismatched canonicalPlaceId must be rejected");
+  });
+
+  it("resolveHeaderImage accepts an image when canonicalPlaceId matches exactly", () => {
+    const result = resolveHeaderImage(
+      [
+        {
+          url: "https://cdn.example.com/kawasan.jpg",
+          source: "official" as const,
+          canonicalPlaceId: "place-kawasan-001",
+        },
+      ],
+      { canonicalPlaceId: "place-kawasan-001" },
+    );
+    assert.ok(result !== null);
+    assert.equal(result!.url, "https://cdn.example.com/kawasan.jpg");
+  });
+});
+
+describe("wrong-place: Cebu waterfall image rejected for a place in a different province", () => {
+  const kawasanFalls: PlaceLike = {
+    name: "Kawasan Falls",
+    latitude: 9.8697,     // Cebu province — Badian
+    longitude: 123.3966,
+    primary_category: "attraction",
+  };
+
+  const tumarionFalls: PlaceLike = {
+    name: "Kawasan Falls",   // same name, different province
+    latitude: 7.9845,        // Bukidnon — >200 km away
+    longitude: 125.1012,
+    primary_category: "attraction",
+  };
+
+  it("haversineKm reports > MERGE_DISTANCE_KM (0.075) between the two locations", () => {
+    const dist = haversineKm(
+      kawasanFalls.latitude!,
+      kawasanFalls.longitude!,
+      tumarionFalls.latitude!,
+      tumarionFalls.longitude!,
+    );
+    assert.ok(dist > 0.075, `Expected distance > 0.075 km, got ${dist}`);
+  });
+
+  it("isSamePlace returns false — coordinates differ beyond the merge threshold", () => {
+    assert.equal(
+      isSamePlace(tumarionFalls, kawasanFalls),
+      false,
+      "Two waterfalls in different provinces must not be merged",
+    );
+  });
+
+  it("nameSimilarity is high but distance check prevents merging", () => {
+    // Names are identical → similarity = 1.0
+    assert.ok(nameSimilarity(kawasanFalls.name, tumarionFalls.name) >= 0.8);
+    // But isSamePlace is still false due to coordinates
+    assert.equal(isSamePlace(tumarionFalls, kawasanFalls), false);
+  });
+});
+
+describe("wrong-place: nearby hotel image rejected for a different venue on the same city block", () => {
+  const hotelA: PlaceLike = {
+    name: "Grand Hotel Cebu",
+    latitude: 10.3157,
+    longitude: 123.8854,
+    primary_category: "hotel",
+  };
+
+  // Different venue — same block, different name, different category
+  const rooftopBarA: PlaceLike = {
+    name: "Sky Lounge",
+    latitude: 10.3157,   // same coordinates (same building)
+    longitude: 123.8854,
+    primary_category: "bar",
+  };
+
+  // Same block, slightly different position, very different name
+  const restaurantA: PlaceLike = {
+    name: "Harbor Kitchen",
+    latitude: 10.3158,
+    longitude: 123.8855,
+    primary_category: "restaurant",
+  };
+
+  it("hotel and its rooftop bar are not merged — different category families", () => {
+    assert.equal(
+      isSamePlace(rooftopBarA, hotelA),
+      false,
+      "Hotel and its rooftop bar must NOT be merged even when co-located",
+    );
+  });
+
+  it("hotel and a nearby restaurant are not merged — different names AND category families", () => {
+    assert.equal(
+      isSamePlace(restaurantA, hotelA),
+      false,
+      "Hotel and a nearby restaurant must NOT be merged",
+    );
+  });
+
+  it("two hotels with the same name at the same location ARE merged (positive control)", () => {
+    const hotelB: PlaceLike = {
+      name: "Grand Hotel Cebu",    // identical name
+      latitude: 10.31572,          // within 0.075 km
+      longitude: 123.88541,
+      primary_category: "hotel",
+    };
+    assert.equal(
+      isSamePlace(hotelB, hotelA),
+      true,
+      "Same hotel at the same location must be merged",
+    );
+  });
+});
+
+describe("wrong-place: different branch of the same chain rejected when canonical_place_id differs", () => {
+  it("resolveHeaderImage rejects branch-B image when entity is branch-A", () => {
+    // Two SM Malls — same chain, different canonical IDs
+    const result = resolveHeaderImage(
+      [
+        {
+          url: "https://cdn.example.com/sm-manila.jpg",
+          source: "official" as const,
+          canonicalPlaceId: "place-sm-mall-manila",   // branch in Manila
+        },
+      ],
+      { canonicalPlaceId: "place-sm-mall-cebu" },     // entity is in Cebu
+    );
+    assert.equal(result, null, "Branch image with different canonicalPlaceId must be rejected");
+  });
+
+  it("isSamePlace returns false for two chain branches with far-apart coordinates", () => {
+    const smCebu: PlaceLike = {
+      name: "SM City Mall",
+      latitude: 10.3115,
+      longitude: 123.9175,
+      primary_category: "mall",
+    };
+    const smManila: PlaceLike = {
+      name: "SM City Mall",
+      latitude: 14.5547,   // Manila — hundreds of km away
+      longitude: 121.0244,
+      primary_category: "mall",
+    };
+    assert.equal(
+      isSamePlace(smManila, smCebu),
+      false,
+      "Two branches of the same chain must NOT be merged — they are far apart",
+    );
+  });
+});
