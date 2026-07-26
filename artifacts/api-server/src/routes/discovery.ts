@@ -84,6 +84,16 @@ export interface DiscoveryPlace {
   attribution?: string | null;
   /** Primary cover image URL (from discovery_places.image_url). Null = no image. */
   headerImageUrl?: string | null;
+  /**
+   * How the header image was sourced. Drives the resolver priority ladder and
+   * the "AI-generated representation" disclosure label in the UI.
+   *   'ai_generated'  — image was produced by the AI visuals pipeline
+   *   'provider'      — FSQ / OSM / other third-party photo
+   *   'user_upload'   — uploaded directly by the place owner or a traveler
+   *   'official'      — official venue photography
+   *   'portava_media' — Portava curated media library
+   */
+  headerImageSource?: string | null;
 }
 
 /** Public shape returned in all API responses. */
@@ -471,7 +481,7 @@ async function queryDbPlaces(
   try {
     const { data, error } = await sc
       .from("discovery_places")
-      .select("id, city, name, place_type, category, primary_category, secondary_categories, neighborhood, blurb, image_url, rating, saved_count, lat, lng, tag, verified, created_at, source")
+      .select("id, city, name, place_type, category, primary_category, secondary_categories, neighborhood, blurb, image_url, header_image_source, rating, saved_count, lat, lng, tag, verified, created_at, source")
       .or(`city.ilike.${cityBase},city.ilike.${cityBase}%`)
       .eq("status", "active")
       .order("saved_count", { ascending: false })
@@ -522,6 +532,7 @@ async function queryDbPlaces(
           isOpenNow: null,
           savedCount: (row.saved_count as number) ?? 0,
           headerImageUrl: (row.image_url ?? null) as string | null,
+          headerImageSource: (row.header_image_source ?? null) as string | null,
           attribution: (row.source as string | null)?.startsWith("fsq")
             ? "Place data © Foursquare (CC BY 4.0)"
             : null,

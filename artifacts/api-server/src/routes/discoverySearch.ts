@@ -579,7 +579,7 @@ async function searchPlaces(
     const pat = sqlPattern(q);
     const { data, error } = await sc
       .from("discovery_places")
-      .select("id, name, city, blurb, image_url, category, primary_category, lat, lng, created_at")
+      .select("id, name, city, blurb, image_url, header_image_source, category, primary_category, lat, lng, created_at")
       .or(`name.ilike.${pat},city.ilike.${pat},blurb.ilike.${pat}`)
       .eq("status", "active")
       .order("saved_count", { ascending: false })
@@ -605,6 +605,7 @@ async function searchPlaces(
         category: p.primary_category ?? p.category,
         lat: (p.lat as number | null) ?? null,
         lng: (p.lng as number | null) ?? null,
+        headerImageSource: (p.header_image_source as string | null) ?? null,
       },
       createdAt: (p.created_at as string | null) ?? null,
       startsAt: null,
@@ -894,7 +895,7 @@ async function searchActivities(
     const pat = sqlPattern(q);
     const { data, error } = await sc
       .from("discovery_places")
-      .select("id, name, city, blurb, image_url, category, created_at")
+      .select("id, name, city, blurb, image_url, header_image_source, category, created_at")
       .or(`name.ilike.${pat},city.ilike.${pat},blurb.ilike.${pat}`)
       .in("category", ["activities", "sports", "adventure", "outdoors", "wellness"])
       .eq("status", "active")
@@ -917,7 +918,7 @@ async function searchActivities(
       privacyState: null,
       accessState: { canAccess: true },
       destinationRoute: `/place/${p.id as string}`,
-      metadata: { category: p.category },
+      metadata: { category: p.category, headerImageSource: (p.header_image_source as string | null) ?? null },
       createdAt: (p.created_at as string | null) ?? null,
       startsAt: null,
     }));
