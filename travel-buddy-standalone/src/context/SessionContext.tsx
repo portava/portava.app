@@ -11,7 +11,9 @@ import { fetchMyLikedPostIds, fetchMySavedPostIds } from '../services/postEngage
 import { clearCachedFeed } from '../services/compass.ts';
 
 // AsyncStorage keys that may hold private entity data and must be wiped on logout.
+// Using lazy require to avoid circular-dependency issues and to preserve native-only import.
 const PRIVATE_ASYNC_KEYS = [
+  // Pending checkpoint arrivals — may contain precise user coordinates.
   '@travel_buddy/pending_checkpoint_arrivals',
 ] as const;
 
@@ -168,6 +170,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       void clearCachedFeed(userId).catch(() => {});
     }
     // Wipe other AsyncStorage keys that may hold private entity data.
+    // Lazy-require keeps this from crashing on web (where AsyncStorage is
+    // unavailable) — getStorage() in compass.ts does the same.
     try {
       const AS = require('@react-native-async-storage/async-storage').default;
       await Promise.allSettled(PRIVATE_ASYNC_KEYS.map((k) => AS.removeItem(k)));
