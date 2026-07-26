@@ -87,6 +87,21 @@ const ALLOWLIST = new Set<string>([
   "events.show_header_publicly",
   "trips.show_header_publicly",
   "profiles.show_profile_picture_publicly",
+  // Place-image accuracy/provenance columns — Task 1 migration (20260809_place_image_accuracy.sql)
+  // pending live apply. Remove once the columns are present in the live DB schema.
+  "generated_visuals.accuracy_status",
+  "generated_visuals.canonical_place_id",
+  "generated_visuals.disclaimer_required",
+  "generated_visuals.disclaimer_text",
+  "generated_visuals.generated_with_ai",
+  "generated_visuals.image_source_type",
+  "generated_visuals.last_accuracy_reviewed_at",
+  "generated_visuals.provider_place_id",
+  "generated_visuals.source_url",
+  "generated_visuals.verification_status",
+  "generated_visuals.verified_at",
+  "generated_visuals.verified_by",
+  "places.header_image_generated_id",
 ]);
 
 // Tables that are not real live relations and should be skipped entirely
@@ -103,6 +118,9 @@ const SKIP_TABLES = new Set<string>([
   // Remove once the tables exist in the live DB schema.
   "content_distribution_stats",
   "ranking_debug_samples",
+  // Place image reports table — Task 1 migration (20260809_place_image_accuracy.sql)
+  // pending live apply. Remove once the table exists in the live DB schema.
+  "place_image_reports",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────
