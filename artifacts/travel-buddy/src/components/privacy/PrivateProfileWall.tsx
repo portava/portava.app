@@ -1,12 +1,10 @@
 /**
- * PrivateProfileWall — lock section rendered BELOW the passport header.
+ * PrivateProfileWall — lock section shown when the viewer cannot access a
+ * private profile.  Renders a minimal identity header (avatar initials,
+ * display name, @handle) followed by the private-account badge, lock
+ * message, and friend-request CTA.
  *
- * The passport header (PassportIdentityCard / PassportHero) is always shown
- * by the parent screen with the user's avatar, name, and @handle — the
- * header is intentionally public. This component renders ONLY the
- * private-account badge, the lock message, and the friend-request button.
- *
- * Never renders avatar, name, handle, bio, location, stats, or tabs.
+ * Never renders bio, location, stats, or tab content.
  */
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
@@ -36,8 +34,30 @@ export function PrivateProfileWall({
   isOwnProfile = false,
   onRequestSent,
 }: Props) {
+  const { handle, displayName, avatarUrl } = profile;
+
+  // Derive initials for the avatar fallback: prefer first char of display name,
+  // fall back to first char of handle.
+  const initial = displayName
+    ? displayName[0].toUpperCase()
+    : handle
+    ? handle[0].toUpperCase()
+    : '?';
+
   return (
     <View style={s.container}>
+      {/* Avatar — initials placeholder when no image URL is available */}
+      {!avatarUrl ? (
+        <View style={s.avatarPlaceholder}>
+          <Text style={s.avatarInitial}>{initial}</Text>
+        </View>
+      ) : null}
+
+      {/* Identity */}
+      {displayName ? <Text style={s.displayName}>{displayName}</Text> : null}
+      {handle ? <Text style={s.handle}>@{handle}</Text> : null}
+
+      {/* Private-account badge */}
       <View style={s.privateBadge}>
         <Lock size={11} color={color.mute} />
         <Text style={s.privateBadgeText}>Private account</Text>
@@ -68,6 +88,30 @@ const s = StyleSheet.create({
     paddingBottom: space.xxxl,
     paddingHorizontal: space.xl,
     gap: space.md,
+  },
+  avatarPlaceholder: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: color.haze,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+  },
+  avatarInitial: {
+    fontSize: 28,
+    fontWeight: '600' as const,
+    color: color.mute,
+  },
+  displayName: {
+    ...t.bodyStrong,
+    color: color.ink,
+    fontSize: 17,
+    fontWeight: '600' as const,
+  },
+  handle: {
+    ...t.small,
+    color: color.mute,
+    fontSize: 13,
   },
   privateBadge: {
     flexDirection: 'row' as const,

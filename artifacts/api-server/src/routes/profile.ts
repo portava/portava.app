@@ -1510,8 +1510,16 @@ router.patch("/me/privacy", async (req, res) => {
     return;
   }
 
-  // show_profile_picture_publicly column not yet in live DB — skip the profiles sync.
-  // Restore once the migration adding the column is applied.
+  // Sync show_profile_picture_publicly to the profiles table when the caller changed it.
+  // Fire-and-forget: a failure here is non-fatal — the caller still gets a 200.
+  if (showPicPublicly !== undefined) {
+    sc.from("profiles")
+      .update({ show_profile_picture_publicly: showPicPublicly, updated_at: now })
+      .eq("id", user.id)
+      .then(undefined, (e: any) =>
+        req.log.warn({ err: e }, "privacy/patch: failed to sync show_profile_picture_publicly to profiles"),
+      );
+  }
 
   // Keep user_privacy_settings.profile_visibility in sync
   if (parsed.data.profile_visibility !== undefined) {

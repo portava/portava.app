@@ -151,21 +151,40 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   }
 
   // ── Resolve viewer context ─────────────────────────────────────────────────
-  // For following feed, load followed creator IDs upfront
+  // Fetch followed creator IDs (for following feed) and viewer country in parallel.
   const followedCreatorIds = new Set<string>();
-  if (feedType === "following") {
-    try {
-      const { data: followRows } = await sc
-        .from("user_follows")
-        .select("following_id")
-        .eq("follower_id", user.id);
-      for (const r of (followRows as any[]) ?? []) followedCreatorIds.add(r.following_id as string);
-    } catch { /* non-fatal */ }
+  let viewerCountry: string | null = null;
 
-    if (followedCreatorIds.size === 0) {
-      res.json({ items: [], nextCursor: null, sessionId });
-      return;
-    }
+  await Promise.all([
+    // Followed creator IDs — only needed for the following feed
+    (async () => {
+      if (feedType !== "following") return;
+      try {
+        const { data: followRows } = await sc
+          .from("user_follows")
+          .select("following_id")
+          .eq("follower_id", user.id);
+        for (const r of (followRows as any[]) ?? []) followedCreatorIds.add(r.following_id as string);
+      } catch { /* non-fatal */ }
+    })(),
+    // Viewer's location country — used for SQL-level geo-restriction pre-filter.
+    // Best-effort: if unavailable the in-memory gate in filterEligibleMediaCandidates
+    // handles geo-restriction fail-closed.
+    (async () => {
+      try {
+        const { data: viewerProfile } = await sc
+          .from("profiles")
+          .select("location_country")
+          .eq("id", user.id)
+          .maybeSingle();
+        viewerCountry = (viewerProfile as any)?.location_country ?? null;
+      } catch { /* non-fatal */ }
+    })(),
+  ]);
+
+  if (feedType === "following" && followedCreatorIds.size === 0) {
+    res.json({ items: [], nextCursor: null, sessionId });
+    return;
   }
 
   // ── Fetch candidates ───────────────────────────────────────────────────────
@@ -199,6 +218,21 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     query = query.in("author_id", [...followedCreatorIds]);
   }
 
+  // SQL-level geo-restriction pre-filter: when viewer's country is known, exclude
+  // rows where geo_restriction is set but does NOT include the viewer's country.
+  // This prevents geo-restricted posts from ever leaving the DB on cache misses.
+  //
+  // Safety: ISO-3166-1 alpha-2 codes are exactly 2 chars, so ilike '%XX%' cannot
+  // produce false positives against other well-formed 2-char codes in the list.
+  // The in-memory gate in filterEligibleMediaCandidates is retained as the
+  // authoritative belt-and-suspenders fallback.
+  if (viewerCountry) {
+    // viewerCountry is reassigned inside an async closure that TypeScript's
+    // control-flow analysis cannot track; cast to string to satisfy the checker.
+    const c = (viewerCountry as string).toUpperCase();
+    query = query.or(`geo_restriction.is.null,geo_restriction.ilike.%${c}%`);
+  }
+
   // Apply cursor filter for stable pagination
   if (cursor) {
     query = applyCursorFilter(query, cursor);
@@ -216,7 +250,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   // ── Eligibility filter ─────────────────────────────────────────────────────
   const { eligible, blockFetchFailed } = await filterEligibleMediaCandidates(
     candidates,
-    { viewerUserId: user.id, feedType, followedCreatorIds },
+    { viewerUserId: user.id, feedType, followedCreatorIds, viewerCountry },
     sc,
   );
 

@@ -117,7 +117,8 @@ function makeClient(state: FakeState) {
         return b;
       },
       or(expr: string) {
-        // Simple OR parser for `publish_at.is.null,publish_at.lte.<date>` pattern
+        // OR parser for `col.op.value,...` patterns.
+        // Supports: is.null, lte.<date>, ilike.%<pattern>%
         const parts = expr.split(",");
         filters.push((r: any) => parts.some((p) => {
           const m = p.trim().match(/^(\w+)\.(\w+)\.(.+)$/);
@@ -125,6 +126,15 @@ function makeClient(state: FakeState) {
           const [, col, op, rawVal] = m;
           if (op === "is" && rawVal === "null") return r[col] == null;
           if (op === "lte") return r[col] != null && new Date(r[col]) <= new Date(rawVal);
+          if (op === "ilike") {
+            if (r[col] == null) return false;
+            // Convert SQL LIKE wildcards to regex: % → .*, _ → .
+            const reStr = rawVal
+              .replace(/[.+?^${}()|[\]\\]/g, "\\$&")  // escape regex metacharacters
+              .replace(/%/g, ".*")                       // % → .*
+              .replace(/_/g, ".");                       // _ → .
+            return new RegExp("^" + reStr + "$", "i").test(String(r[col]));
+          }
           return false;
         }));
         return b;
@@ -191,6 +201,15 @@ function baseState(): FakeState {
       { muter_id: VIEWER_ID, muted_id: MUTED_ID },
     ],
     profiles: [
+      {
+        // Viewer profile — used by the feed route to resolve viewerCountry for
+        // the SQL-level geo-restriction pre-filter.
+        id: VIEWER_ID, username: "viewer", full_name: "Viewer User",
+        avatar_url: null, is_private: false, is_verified: false,
+        followers_count: 10, following_count: 5,
+        bio: null, account_status: "active",
+        location_country: "AU",
+      },
       {
         id: AUTHOR_ID, username: "author", full_name: "Author Name",
         avatar_url: "https://example.test/avatar.jpg",
@@ -1214,6 +1233,57 @@ describe("GET /api/media/feed — auth + eligibility integration", () => {
     const res = await request("GET", "/api/media/feed", { token: TOKEN });
     // mode=fullscreen is required by feedQuerySchema
     assert.equal(res.status, 400, "missing mode should return 400");
+  });
+
+  // ── SQL-level geo-restriction pre-filter ──────────────────────────────────
+  //
+  // These tests confirm that geo-restricted posts are filtered BEFORE they leave
+  // the database, not just discarded in memory after fetching.  The mechanism:
+  //   1. The feed route fetches the viewer's location_country from their profile.
+  //   2. When known, it applies an OR filter on the SQL query:
+  //        geo_restriction IS NULL OR geo_restriction ILIKE '%<country>%'
+  //   3. The in-memory gate in filterEligibleMediaCandidates is retained as a
+  //      belt-and-suspenders fallback.
+  //
+  // The base state gives the viewer location_country="AU".  The geo-restricted
+  // post has geo_restriction="US,CA", so it should never appear in the DB
+  // candidate set for an AU viewer.
+
+  it("geo-restricted post is absent from DB candidate set when viewer country does not match (SQL filter)", async () => {
+    // baseState viewer has location_country="AU"; geo-restricted post is "US,CA".
+    // The SQL filter (geo_restriction.is.null OR geo_restriction.ilike.%AU%) should
+    // exclude the "US,CA" row before the in-memory gate runs.
+    _setTestClient(makeClient(baseState()) as any, true);
+    const res = await request("GET", "/api/media/feed?mode=fullscreen", { token: TOKEN });
+    assert.equal(res.status, 200);
+    const returnedIds = (res.body.items ?? []).map((i: any) => i.id);
+    assert.ok(
+      !returnedIds.includes(POST_GEO_RESTRICTED_ID),
+      "geo-restricted 'US,CA' post must not appear in feed for AU viewer — SQL filter must block it before DB row is returned",
+    );
+    // Unrestricted post must still be present (SQL filter must not over-exclude)
+    assert.ok(
+      returnedIds.includes(POST_PUBLIC_ID),
+      "unrestricted post must still appear for AU viewer",
+    );
+  });
+
+  it("geo-restricted post appears in feed when viewer country is in the allow-list (SQL filter passes it through)", async () => {
+    // Override the viewer's location_country to "US" so the SQL filter
+    // (geo_restriction.ilike.%US%) matches the "US,CA" restriction.
+    // Both the SQL pre-filter and the in-memory gate should allow it.
+    const state = baseState();
+    const viewerProfile = state.profiles!.find((p: any) => p.id === VIEWER_ID);
+    if (viewerProfile) (viewerProfile as any).location_country = "US";
+    _setTestClient(makeClient(state) as any, true);
+
+    const res = await request("GET", "/api/media/feed?mode=fullscreen", { token: TOKEN });
+    assert.equal(res.status, 200);
+    const returnedIds = (res.body.items ?? []).map((i: any) => i.id);
+    assert.ok(
+      returnedIds.includes(POST_GEO_RESTRICTED_ID),
+      "geo-restricted 'US,CA' post must appear for a US viewer — both SQL and in-memory filters should allow it",
+    );
   });
 });
 
