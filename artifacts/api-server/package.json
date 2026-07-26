@@ -48,6 +48,7 @@
     "test:stamp-preview": "node --import tsx/esm --test src/test/stampPreviewVisibility.test.ts",
     "test:globe-trotter-legacy": "node --import tsx/esm --test src/test/globeTrotterLegacyRetirement.test.ts",
     "test:place-resolve": "node --import tsx/esm --test src/test/placeResolve.test.ts",
+    "test:admin-visuals-verify": "node --import tsx/esm --test src/test/adminVisualsVerify.test.ts",
     "check:api-prefix": "node --import tsx/esm src/scripts/checkNoApiRoutePrefix.ts"
   },
   "dependencies": {
