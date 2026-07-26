@@ -787,4 +787,41 @@ router.delete("/circles/:circleOwnerId/members/:memberId", async (req, res) => {
   syncCircleChatMembers(circleOwnerId, sc).catch(() => {});
 });
 
+/* ===========================================================================
+ * DELETE /me/friends/:friendId  — remove a friendship (unfriend)
+ * ===========================================================================
+ * Either party may remove the friendship.  Deletes the normalized row from
+ * user_friendships.  Returns 404 if no friendship exists.
+ */
+router.delete("/me/friends/:friendId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client: sc, user } = auth;
+
+  const { friendId } = req.params;
+  if (!isUuid(friendId)) { sendError(res, "invalid_payload", "Invalid friendId"); return; }
+  if (friendId === user.id) { sendError(res, "invalid_payload", "Cannot unfriend yourself"); return; }
+
+  const [a, b] = normalizedFriendshipPair(user.id, friendId);
+
+  const { data: existing } = await sc
+    .from("user_friendships")
+    .select("user_a")
+    .eq("user_a", a)
+    .eq("user_b", b)
+    .maybeSingle();
+
+  if (!existing) { sendError(res, "not_found", "Friendship not found"); return; }
+
+  const { error } = await sc
+    .from("user_friendships")
+    .delete()
+    .eq("user_a", a)
+    .eq("user_b", b);
+
+  if (error) { sendError(res, "db_error", "Failed to remove friendship"); return; }
+
+  res.status(200).json({ status: "removed", friendId });
+});
+
 export default router;

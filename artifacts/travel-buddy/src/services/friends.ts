@@ -69,6 +69,23 @@ function isNetworkError(e: unknown): boolean {
   return e.message.includes('Network request failed') || e.message.includes('fetch');
 }
 
+async function apiDelete<T>(path: string): Promise<FriendResult<T>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  try {
+    const res = await fetch(`${apiBase()}${path}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})));
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
 async function apiPost<T>(path: string, body?: unknown): Promise<FriendResult<T>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
   const token = await freshToken();
@@ -149,6 +166,10 @@ export async function getOutgoingFriendRequests(): Promise<FriendResult<{ reques
 
 export async function getMyFriends(): Promise<FriendResult<{ friends: FriendRow[] }>> {
   return apiGet('/api/me/friends');
+}
+
+export async function removeFriend(friendId: string): Promise<FriendResult<{ status: string; friendId: string }>> {
+  return apiDelete(`/api/me/friends/${encodeURIComponent(friendId)}`);
 }
 
 export async function getTripMembers(tripId: string): Promise<FriendResult<{ members: FriendUser[]; invited?: FriendUser[] }>> {
