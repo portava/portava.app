@@ -154,11 +154,17 @@ router.get("/admin/ranking/metrics", asyncHandler(async (req, res) => {
   const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
   const cutoff30 = new Date(Date.now() - 30 * 86_400_000).toISOString();
   const cutoff7  = new Date(Date.now() - 7  * 86_400_000).toISOString();
+  // 14-day lookback for new-user detection and returning-user pre-window
+  const cutoff14 = new Date(Date.now() - 14 * 86_400_000).toISOString();
+  // Pre-window = 14 days immediately before the query window starts
+  const cutoffPreWindow = new Date(
+    new Date(cutoff).getTime() - 14 * 86_400_000,
+  ).toISOString();
 
   // ── Fetch all rank_events rows in the window ─────────────────────────────
   const { data: rows, error: rankErr } = await sc
     .from("rank_events")
-    .select("outcome, item_kind, position, surface")
+    .select("outcome, item_kind, position, surface, user_id, served_at")
     .gte("served_at", cutoff);
 
   if (rankErr) {
@@ -217,6 +223,8 @@ router.get("/admin/ranking/metrics", asyncHandler(async (req, res) => {
     jobHealthCasResult,
     jobHealthCdaResult,
     spamRiskResult,
+    newUsersResult,
+    preWindowEventsResult,
   ] = await Promise.allSettled([
     // Creator activity scores for tier bucketing + concentration
     sc.from("creator_activity_scores").select("score, spam_penalty, repetition_penalty"),
@@ -252,6 +260,20 @@ router.get("/admin/ranking/metrics", asyncHandler(async (req, res) => {
       .from("creator_activity_scores")
       .select("user_id, spam_penalty, repetition_penalty")
       .gte("updated_at", cutoff30),
+
+    // New users: profiles created in the last 14 days
+    sc
+      .from("profiles")
+      .select("id")
+      .gte("created_at", cutoff14),
+
+    // Pre-window rank_events: viewer activity in the 14 days before the window
+    // Used to identify returning users (inactive for 14+ days before the window)
+    sc
+      .from("rank_events")
+      .select("user_id")
+      .gte("served_at", cutoffPreWindow)
+      .lt("served_at", cutoff),
   ]);
 
   // ── Process creator activity scores ───────────────────────────────────────
@@ -357,12 +379,70 @@ router.get("/admin/ranking/metrics", asyncHandler(async (req, res) => {
     block_rate:  0,
   };
 
-  // ── New-user exposure & returning-user recovery ───────────────────────────
-  // Placeholder metrics (0.0) until the rank_events schema carries
-  // viewer join-date and last-active-before-return columns. These fields are
-  // part of the response contract and will be non-zero once the data is joined.
-  const new_user_exposure_rate      = 0;
-  const returning_user_recovery_rate = 0;
+  // ── New-user exposure rate ────────────────────────────────────────────────
+  // Percentage of recently-joined users (within last 14 days) who received
+  // at least one impression in the query window.
+  let new_user_exposure_rate = 0;
+  if (newUsersResult.status === "fulfilled") {
+    const newUserRows: any[] = (newUsersResult.value.data as any[]) ?? [];
+    const newUserIds = new Set(newUserRows.map((r) => r.id).filter(Boolean));
+    if (newUserIds.size > 0) {
+      // Find distinct new-user viewers who received at least one impression
+      const impressedNewUsers = new Set(
+        all
+          .filter((r) => r.outcome === "impression" && newUserIds.has(r.user_id))
+          .map((r) => r.user_id),
+      );
+      new_user_exposure_rate = safe(impressedNewUsers.size, newUserIds.size);
+    }
+  }
+
+  // ── Returning-user recovery rate ──────────────────────────────────────────
+  // Fraction of viewers who were inactive for 14+ days before returning to
+  // the app (i.e., absent from rank_events in the pre-window) and received
+  // at least one impression within 72 hours of their first in-window event.
+  let returning_user_recovery_rate = 0;
+  if (preWindowEventsResult.status === "fulfilled") {
+    const preRows: any[] = (preWindowEventsResult.value.data as any[]) ?? [];
+    const preWindowActiveIds = new Set(
+      preRows.map((r) => r.user_id).filter(Boolean),
+    );
+
+    // Viewers in the current window who were NOT active in the pre-window
+    const windowRows = all.filter((r) => r.user_id && r.served_at);
+    const windowViewerIds = new Set(windowRows.map((r) => r.user_id));
+    const returningIds = [...windowViewerIds].filter(
+      (id) => !preWindowActiveIds.has(id),
+    );
+
+    if (returningIds.length > 0) {
+      // For each returning user, find their first event timestamp in the window
+      const firstEventAt: Record<string, string> = {};
+      for (const r of windowRows) {
+        if (!returningIds.includes(r.user_id)) continue;
+        if (!firstEventAt[r.user_id] || r.served_at < firstEventAt[r.user_id]) {
+          firstEventAt[r.user_id] = r.served_at;
+        }
+      }
+
+      // Count returning users who received an impression within 72 h of return
+      const ms72h = 72 * 3_600_000;
+      let recoveredCount = 0;
+      for (const userId of returningIds) {
+        const returnTime = firstEventAt[userId];
+        if (!returnTime) continue;
+        const deadline = new Date(returnTime).getTime() + ms72h;
+        const hadImpression = windowRows.some(
+          (r) =>
+            r.user_id === userId &&
+            r.outcome === "impression" &&
+            new Date(r.served_at).getTime() <= deadline,
+        );
+        if (hadImpression) recoveredCount++;
+      }
+      returning_user_recovery_rate = safe(recoveredCount, returningIds.length);
+    }
+  }
 
   res.json({
     period_days: days,

@@ -264,11 +264,37 @@ const DEBUG_SAMPLE_ROWS: any[] = [
   { id: "s2", surface: "pulse",     content_type: "post", ranking_version: "1.0", sampled_at: "2026-07-19T00:00:00Z" },
 ];
 
+// Dynamic dates so gte/lt filters work correctly relative to "now" in the route
+const NOW_MS = Date.now();
+const daysAgo = (n: number) => new Date(NOW_MS - n * 86_400_000).toISOString();
+
+// rank_events rows: in-window (2 days ago) + one pre-window (15 days ago)
+const RANK_EVENT_ROWS: any[] = [
+  // new_viewer: recently joined, gets an impression in the window
+  { outcome: "impression", item_kind: "post",  position: 0, surface: "discovery", user_id: "new_viewer",       served_at: daysAgo(2) },
+  // old_viewer: existing user, had activity pre-window too
+  { outcome: "tap",        item_kind: "post",  position: 1, surface: "discovery", user_id: "old_viewer",       served_at: daysAgo(2) },
+  // returning_viewer: old user, no pre-window row, gets impression in window
+  { outcome: "impression", item_kind: "event", position: 6, surface: "pulse",     user_id: "returning_viewer", served_at: daysAgo(2) },
+  // old_viewer pre-window activity (15 days ago — between cutoffPreWindow and cutoff)
+  { outcome: "impression", item_kind: "post",  position: 0, surface: "discovery", user_id: "old_viewer",       served_at: daysAgo(15) },
+];
+
+// profiles rows with created_at so the new-user query works
+const PROFILE_ROWS: any[] = [
+  { id: ADMIN_ID,          role: "admin",   username: "adminuser",        display_name: "Admin User",       created_at: daysAgo(60) },
+  { id: "u1",              role: "member",  username: "user1",            display_name: "User One",         created_at: daysAgo(60), show_real_name: true  },
+  { id: "u2",              role: "member",  username: "user2",            display_name: "User Two",         created_at: daysAgo(60), show_real_name: false },
+  { id: "new_viewer",      role: "member",  username: "newviewer",        display_name: "New Viewer",       created_at: daysAgo(5)  },
+  { id: "old_viewer",      role: "member",  username: "oldviewer",        display_name: "Old Viewer",       created_at: daysAgo(60) },
+  { id: "returning_viewer",role: "member",  username: "returningviewer",  display_name: "Returning Viewer", created_at: daysAgo(60) },
+];
+
 function makeFakeClient(isAdmin = true) {
   let _configRows = [...CONFIG_ROWS];
 
   function builder(rows: any[]) {
-    let filtered = rows;
+    let filtered = [...rows];
     const b: any = {
       select: (_cols: string) => b,
       eq:   (col: string, val: any) => { filtered = filtered.filter((r) => r[col] === val); return b; },
@@ -278,7 +304,16 @@ function makeFakeClient(isAdmin = true) {
         filtered = filtered.filter((r) => String(r[col] ?? "").startsWith(prefix));
         return b;
       },
-      gte: (_c: string, _v: any) => b,
+      gte: (col: string, val: any) => {
+        // Filter rows where the column value is >= val (works for ISO date strings)
+        filtered = filtered.filter((r) => r[col] === undefined || r[col] >= val);
+        return b;
+      },
+      lt: (col: string, val: any) => {
+        // Filter rows where the column value is < val
+        filtered = filtered.filter((r) => r[col] === undefined || r[col] < val);
+        return b;
+      },
       order: (_c: string, _o?: any) => b,
       limit: (_n: number) => b,
       maybeSingle: () => Promise.resolve({ data: filtered[0] ?? null, error: null }),
@@ -290,23 +325,14 @@ function makeFakeClient(isAdmin = true) {
   const client: any = {
     from: (table: string) => {
       if (table === "profiles") {
-        return builder([
-          {
-            id:    ADMIN_ID,
-            role:  isAdmin ? "admin" : "member",
-            username: "adminuser",
-            display_name: "Admin User",
-          },
-          { id: "u1", role: "member", username: "user1", display_name: "User One" },
-          { id: "u2", role: "member", username: "user2", display_name: "User Two" },
-        ]);
+        const rows = PROFILE_ROWS.map((r) => ({
+          ...r,
+          role: r.id === ADMIN_ID ? (isAdmin ? "admin" : "member") : r.role,
+        }));
+        return builder(rows);
       }
       if (table === "rank_events") {
-        return builder([
-          { outcome: "impression", item_kind: "post", position: 0, surface: "discovery" },
-          { outcome: "tap",        item_kind: "post", position: 1, surface: "discovery" },
-          { outcome: "impression", item_kind: "event", position: 6, surface: "pulse" },
-        ]);
+        return builder(RANK_EVENT_ROWS);
       }
       if (table === "ranking_config") {
         const b: any = {
@@ -445,7 +471,11 @@ describe("GET /admin/ranking/metrics", () => {
     assert.ok(typeof body.creator_concentration.top_10pct === "number");
     assert.ok(typeof body.creator_concentration.alert === "boolean");
     assert.ok(typeof body.new_user_exposure_rate === "number");
+    assert.ok(body.new_user_exposure_rate > 0,
+      `new_user_exposure_rate should be > 0, got ${body.new_user_exposure_rate}`);
     assert.ok(typeof body.returning_user_recovery_rate === "number");
+    assert.ok(body.returning_user_recovery_rate > 0,
+      `returning_user_recovery_rate should be > 0, got ${body.returning_user_recovery_rate}`);
     assert.ok(typeof body.underexposed_content_rate === "number");
     assert.ok(body.diversity != null, "diversity missing");
     assert.ok(body.negative_feedback != null, "negative_feedback missing");
