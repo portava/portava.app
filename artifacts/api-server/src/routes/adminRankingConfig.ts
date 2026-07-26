@@ -405,6 +405,151 @@ router.get("/admin/ranking/suspicious", asyncHandler(async (req, res) => {
   res.json({ suspicious });
 }));
 
+// ── GET /admin/ranking/fatigue-summary ───────────────────────────────────────
+
+router.get("/admin/ranking/fatigue-summary", asyncHandler(async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const nowMs   = Date.now();
+  const nowIso   = new Date(nowMs).toISOString();
+  const in24hIso = new Date(nowMs + 24 * 60 * 60 * 1_000).toISOString();
+
+  // Run the three fatigue queries and the config fetch in parallel.
+  // "Active" means the suppression window is currently in effect: expires_at > now.
+  // Rows with NULL expires_at or expires_at <= now are not suppressing anyone.
+  const [totalResult, expiringResult, topPairsResult, configResult] =
+    await Promise.all([
+      // 1. Total currently-suppressed rows (expires_at > now)
+      sc
+        .from("viewer_creator_fatigue")
+        .select("*", { count: "exact", head: true })
+        .gt("expires_at", nowIso),
+
+      // 2. Suppressed rows expiring in the next 24 h
+      sc
+        .from("viewer_creator_fatigue")
+        .select("*", { count: "exact", head: true })
+        .gt("expires_at", nowIso)
+        .lte("expires_at", in24hIso),
+
+      // 3. Top 20 currently-suppressed pairs by fatigue_score
+      sc
+        .from("viewer_creator_fatigue")
+        .select(
+          "viewer_id, creator_id, fatigue_score, recent_impressions, last_impression_at, expires_at",
+        )
+        .gt("expires_at", nowIso)
+        .order("fatigue_score", { ascending: false })
+        .limit(20),
+
+      // 4. Fatigue-related ranking_config keys
+      sc
+        .from("ranking_config")
+        .select("key, value")
+        .in("key", [
+          "ranking.caps.fatigueHalfLifeHours",
+          "ranking.caps.fatigueThreshold",
+        ]),
+    ]);
+
+  if (totalResult.error) {
+    sendError(res, "db_error", totalResult.error.message);
+    return;
+  }
+  if (topPairsResult.error) {
+    sendError(res, "db_error", topPairsResult.error.message);
+    return;
+  }
+
+  const totalActiveRows: number = totalResult.count ?? 0;
+  const expiringIn24h: number   = expiringResult.count ?? 0;
+  const pairs: any[]            = (topPairsResult.data as any[]) ?? [];
+
+  // Resolve handles for all viewer + creator IDs in the top-pairs list.
+  // Display-name privacy rule: always expose @handle; real name only when
+  // show_real_name = true in profile_privacy_settings.
+  const allUserIds = [
+    ...new Set(pairs.flatMap((p) => [p.viewer_id, p.creator_id])),
+  ];
+
+  let profileMap: Record<string, { username: string | null; display_name: string | null }> = {};
+  let showRealNameMap: Record<string, boolean> = {};
+
+  if (allUserIds.length > 0) {
+    const [profilesResult, privacyResult] = await Promise.allSettled([
+      sc
+        .from("profiles")
+        .select("id, username, display_name")
+        .in("id", allUserIds),
+      sc
+        .from("profile_privacy_settings")
+        .select("user_id, show_real_name")
+        .in("user_id", allUserIds),
+    ]);
+
+    if (profilesResult.status === "fulfilled") {
+      for (const p of (profilesResult.value.data as any[]) ?? []) {
+        profileMap[p.id] = {
+          username:     p.username    ?? null,
+          display_name: p.display_name ?? null,
+        };
+      }
+    }
+    if (privacyResult.status === "fulfilled") {
+      for (const p of (privacyResult.value.data as any[]) ?? []) {
+        showRealNameMap[p.user_id] = Boolean(p.show_real_name);
+      }
+    }
+  }
+
+  function resolveHandle(userId: string): { handle: string | null; display_name: string | null } {
+    const prof = profileMap[userId];
+    const showReal = showRealNameMap[userId] ?? false;
+    return {
+      handle:       prof?.username ?? null,
+      display_name: showReal ? (prof?.display_name ?? null) : null,
+    };
+  }
+
+  const topPairs = pairs.map((p) => {
+    const viewer  = resolveHandle(p.viewer_id);
+    const creator = resolveHandle(p.creator_id);
+    return {
+      viewer_id:           p.viewer_id,
+      viewer_handle:       viewer.handle,
+      viewer_display_name: viewer.display_name,
+      creator_id:          p.creator_id,
+      creator_handle:      creator.handle,
+      creator_display_name: creator.display_name,
+      fatigue_score:       p.fatigue_score,
+      recent_impressions:  p.recent_impressions,
+      last_impression_at:  p.last_impression_at,
+      expires_at:          p.expires_at,
+    };
+  });
+
+  // Build config map from fetched rows, falling back to the same defaults
+  // used by getCreatorCaps().
+  const configRows: any[] = (configResult.data as any[]) ?? [];
+  const configByKey: Record<string, number> = {};
+  for (const row of configRows) {
+    configByKey[row.key] = Number(row.value);
+  }
+  const config = {
+    fatigueHalfLifeHours: configByKey["ranking.caps.fatigueHalfLifeHours"] ?? 48,
+    fatigueThreshold:     configByKey["ranking.caps.fatigueThreshold"]     ?? 5,
+  };
+
+  res.json({
+    total_active_rows: totalActiveRows,
+    expiring_in_24h:   expiringIn24h,
+    top_pairs:         topPairs,
+    config,
+  });
+}));
+
 // ── GET /admin/ranking/debug-samples ─────────────────────────────────────────
 
 const DEBUG_SAMPLES_MAX = 200;

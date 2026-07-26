@@ -102,6 +102,10 @@ const ALLOWLIST = new Set<string>([
   "generated_visuals.verified_at",
   "generated_visuals.verified_by",
   "places.header_image_generated_id",
+  // viewer_creator_fatigue.expires_at — added by migration
+  // 20260804_creator_fatigue_expires.sql, pending live apply.
+  // Remove once the column is present in the live DB schema.
+  "viewer_creator_fatigue.expires_at",
   // Add-a-Gem creation flow columns — migration pending live apply.
   // Remove once the columns exist in the live hidden_gems table.
   "hidden_gems.accessibility",

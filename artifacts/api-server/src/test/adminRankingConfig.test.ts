@@ -31,6 +31,10 @@
  *   27. GET /admin/ranking/debug-samples — 403 for non-admin
  *   28. GET /admin/ranking/debug-samples — 200 with samples
  *   29. GET /admin/ranking/debug-samples — respects surface filter
+ *   30. GET /admin/ranking/fatigue-summary — 403 for non-admin
+ *   31. GET /admin/ranking/fatigue-summary — 200 with expected shape
+ *   32. GET /admin/ranking/fatigue-summary — top_pairs ordered by fatigue_score descending
+ *   33. GET /admin/ranking/fatigue-summary — config contains fatigueHalfLifeHours and fatigueThreshold
  *
  * Run:
  *   node --import tsx/esm --test src/test/adminRankingConfig.test.ts
@@ -268,6 +272,42 @@ const DEBUG_SAMPLE_ROWS: any[] = [
 const NOW_MS = Date.now();
 const daysAgo = (n: number) => new Date(NOW_MS - n * 86_400_000).toISOString();
 
+const VIEWER_ID_A  = "vvvvvvvv-0000-0000-0000-000000000001";
+const CREATOR_ID_A = "cccccccc-0000-0000-0000-000000000001";
+const VIEWER_ID_B  = "vvvvvvvv-0000-0000-0000-000000000002";
+const CREATOR_ID_B = "cccccccc-0000-0000-0000-000000000002";
+
+// expires_at within 24 h from NOW_MS so the expiring-in-24h count can be tested
+const EXPIRES_SOON = new Date(NOW_MS + 12 * 60 * 60 * 1_000).toISOString();
+const EXPIRES_LATE = new Date(NOW_MS + 72 * 60 * 60 * 1_000).toISOString();
+
+// A past timestamp so the third row is already expired
+const EXPIRES_PAST = new Date(NOW_MS - 2 * 60 * 60 * 1_000).toISOString(); // 2 h ago
+
+const VIEWER_ID_C  = "vvvvvvvv-0000-0000-0000-000000000003";
+const CREATOR_ID_C = "cccccccc-0000-0000-0000-000000000003";
+
+const FATIGUE_ROWS: any[] = [
+  // highest score — suppressed most aggressively, expiring soon (active)
+  {
+    viewer_id: VIEWER_ID_A, creator_id: CREATOR_ID_A,
+    fatigue_score: 9.2, recent_impressions: 15,
+    last_impression_at: daysAgo(1), expires_at: EXPIRES_SOON,
+  },
+  // second highest — expiring far in the future (active)
+  {
+    viewer_id: VIEWER_ID_B, creator_id: CREATOR_ID_B,
+    fatigue_score: 4.1, recent_impressions: 6,
+    last_impression_at: daysAgo(2), expires_at: EXPIRES_LATE,
+  },
+  // expired row — must NOT appear in total_active_rows or top_pairs
+  {
+    viewer_id: VIEWER_ID_C, creator_id: CREATOR_ID_C,
+    fatigue_score: 7.0, recent_impressions: 20,
+    last_impression_at: daysAgo(3), expires_at: EXPIRES_PAST,
+  },
+];
+
 // rank_events rows: in-window (2 days ago) + one pre-window (15 days ago)
 const RANK_EVENT_ROWS: any[] = [
   // new_viewer: recently joined, gets an impression in the window
@@ -288,6 +328,13 @@ const PROFILE_ROWS: any[] = [
   { id: "new_viewer",      role: "member",  username: "newviewer",        display_name: "New Viewer",       created_at: daysAgo(5)  },
   { id: "old_viewer",      role: "member",  username: "oldviewer",        display_name: "Old Viewer",       created_at: daysAgo(60) },
   { id: "returning_viewer",role: "member",  username: "returningviewer",  display_name: "Returning Viewer", created_at: daysAgo(60) },
+  // fatigue-summary test identities
+  { id: VIEWER_ID_A,       role: "member",  username: "viewer_a",         display_name: "Viewer A",         created_at: daysAgo(30) },
+  { id: CREATOR_ID_A,      role: "member",  username: "creator_a",        display_name: "Creator A",        created_at: daysAgo(30) },
+  { id: VIEWER_ID_B,       role: "member",  username: "viewer_b",         display_name: "Viewer B",         created_at: daysAgo(30) },
+  { id: CREATOR_ID_B,      role: "member",  username: "creator_b",        display_name: "Creator B",        created_at: daysAgo(30) },
+  { id: VIEWER_ID_C,       role: "member",  username: "viewer_c",         display_name: "Viewer C",         created_at: daysAgo(30) },
+  { id: CREATOR_ID_C,      role: "member",  username: "creator_c",        display_name: "Creator C",        created_at: daysAgo(30) },
 ];
 
 function makeFakeClient(isAdmin = true) {
@@ -335,10 +382,19 @@ function makeFakeClient(isAdmin = true) {
         return builder(RANK_EVENT_ROWS);
       }
       if (table === "ranking_config") {
+        let _filtered = [..._configRows];
         const b: any = {
           select: (_c: string) => b,
-          like:   (_c: string, _p: string) => b,
+          like:   (col: string, pattern: string) => {
+            const prefix = pattern.replace(/%$/, "");
+            _filtered = _filtered.filter((r) => String(r[col] ?? "").startsWith(prefix));
+            return b;
+          },
           order:  (_c: string) => b,
+          in:     (col: string, vals: any[]) => {
+            _filtered = _filtered.filter((r) => vals.includes(r[col]));
+            return b;
+          },
           eq:     (col: string, val: any) => {
             const matched = _configRows.filter((r) => r[col] === val);
             return {
@@ -351,7 +407,7 @@ function makeFakeClient(isAdmin = true) {
             return Promise.resolve({ error: null });
           },
           then: (resolve: (v: any) => void) =>
-            Promise.resolve({ data: _configRows, error: null }).then(resolve),
+            Promise.resolve({ data: _filtered, error: null }).then(resolve),
         };
         return b;
       }
@@ -395,6 +451,50 @@ function makeFakeClient(isAdmin = true) {
           eq:     (col: string, val: any) => { filtered = filtered.filter((r) => r[col] === val); return b; },
           then:   (resolve: (v: any) => void) =>
             Promise.resolve({ data: filtered, error: null }).then(resolve),
+        };
+        return b;
+      }
+      if (table === "viewer_creator_fatigue") {
+        // Support select with count:"exact"+head:true (returns { count, data, error })
+        // and a regular data select with order/limit/filter chains.
+        let filtered = [...FATIGUE_ROWS];
+        let _isHead  = false;
+        let _count   = FATIGUE_ROWS.length;
+        const b: any = {
+          select: (_cols: string, opts?: any) => {
+            if (opts?.head)  _isHead = true;
+            if (opts?.count === "exact") _count = filtered.length;
+            return b;
+          },
+          gt: (col: string, val: any) => {
+            filtered = filtered.filter((r) => r[col] != null && r[col] > val);
+            _count = filtered.length;
+            return b;
+          },
+          gte: (col: string, val: any) => {
+            filtered = filtered.filter((r) => r[col] != null && r[col] >= val);
+            _count = filtered.length;
+            return b;
+          },
+          lte: (col: string, val: any) => {
+            filtered = filtered.filter((r) => r[col] <= val);
+            _count = filtered.length;
+            return b;
+          },
+          not: (_col: string, _op: string, _val: any) => {
+            // filter out rows with null expires_at
+            filtered = filtered.filter((r) => r.expires_at != null);
+            _count = filtered.length;
+            return b;
+          },
+          order: (_c: string, _o?: any) => b,
+          limit: (_n: number) => b,
+          then: (resolve: (v: any) => void) => {
+            const result = _isHead
+              ? { data: null, error: null, count: _count }
+              : { data: filtered, error: null, count: _count };
+            return Promise.resolve(result).then(resolve);
+          },
         };
         return b;
       }
@@ -651,5 +751,93 @@ describe("GET /admin/ranking/debug-samples", () => {
     for (const s of body.samples) {
       assert.equal(s.surface, "discovery");
     }
+  });
+});
+
+// ── Fatigue summary endpoint ──────────────────────────────────────────────────
+
+describe("GET /admin/ranking/fatigue-summary", () => {
+  it("returns 403 for non-admin", async () => {
+    _setTestClient(makeFakeClient(false), true);
+    const { status } = await makeReq("GET", "/admin/ranking/fatigue-summary");
+    assert.equal(status, 403);
+  });
+
+  it("returns 200 with expected shape for admin", async () => {
+    _setTestClient(makeFakeClient(true), true);
+    const { status, body } = await makeReq("GET", "/admin/ranking/fatigue-summary");
+    assert.equal(status, 200);
+
+    assert.ok(typeof body.total_active_rows === "number", "total_active_rows missing");
+    assert.ok(typeof body.expiring_in_24h   === "number", "expiring_in_24h missing");
+    assert.ok(Array.isArray(body.top_pairs),              "top_pairs should be an array");
+    assert.ok(body.config != null,                        "config missing");
+    assert.ok(typeof body.config.fatigueHalfLifeHours === "number", "fatigueHalfLifeHours missing");
+    assert.ok(typeof body.config.fatigueThreshold      === "number", "fatigueThreshold missing");
+  });
+
+  it("top_pairs are ordered by fatigue_score descending", async () => {
+    _setTestClient(makeFakeClient(true), true);
+    const { status, body } = await makeReq("GET", "/admin/ranking/fatigue-summary");
+    assert.equal(status, 200);
+
+    const pairs: any[] = body.top_pairs;
+    assert.ok(pairs.length >= 2, "Expected at least 2 pairs from fake data");
+
+    // Each pair must carry the required fields
+    const first = pairs[0];
+    assert.ok("viewer_id"          in first, "viewer_id missing from pair");
+    assert.ok("creator_id"         in first, "creator_id missing from pair");
+    assert.ok("fatigue_score"      in first, "fatigue_score missing from pair");
+    assert.ok("recent_impressions" in first, "recent_impressions missing from pair");
+    assert.ok("last_impression_at" in first, "last_impression_at missing from pair");
+
+    // Highest score must come first
+    assert.ok(
+      first.fatigue_score >= pairs[1].fatigue_score,
+      `Expected pairs sorted descending, got ${first.fatigue_score} then ${pairs[1].fatigue_score}`,
+    );
+  });
+
+  it("config falls back to defaults when ranking_config has no fatigue keys", async () => {
+    _setTestClient(makeFakeClient(true), true);
+    const { status, body } = await makeReq("GET", "/admin/ranking/fatigue-summary");
+    assert.equal(status, 200);
+    // Our fake ranking_config rows don't include fatigueHalfLifeHours/fatigueThreshold,
+    // so the endpoint should fall back to the documented defaults: 48 and 5.
+    assert.equal(body.config.fatigueHalfLifeHours, 48);
+    assert.equal(body.config.fatigueThreshold,      5);
+  });
+
+  it("excludes expired rows from total_active_rows and top_pairs", async () => {
+    _setTestClient(makeFakeClient(true), true);
+    const { status, body } = await makeReq("GET", "/admin/ranking/fatigue-summary");
+    assert.equal(status, 200);
+
+    // FATIGUE_ROWS has 3 rows: 2 active (expires_at in the future) + 1 expired.
+    // total_active_rows must reflect only the 2 active rows.
+    assert.equal(
+      body.total_active_rows, 2,
+      `Expected 2 active rows (excluding expired), got ${body.total_active_rows}`,
+    );
+
+    // top_pairs must not include the expired viewer_c / creator_c pair.
+    const expiredViewerPresent = (body.top_pairs as any[]).some(
+      (p: any) => p.viewer_id === VIEWER_ID_C,
+    );
+    assert.equal(
+      expiredViewerPresent, false,
+      "Expired pair (VIEWER_ID_C) must not appear in top_pairs",
+    );
+
+    // The expired pair had the second-highest fatigue_score (7.0) — verify it
+    // hasn't slipped into the results even though its score is high.
+    const expiredCreatorPresent = (body.top_pairs as any[]).some(
+      (p: any) => p.creator_id === CREATOR_ID_C,
+    );
+    assert.equal(
+      expiredCreatorPresent, false,
+      "Expired creator (CREATOR_ID_C) must not appear in top_pairs",
+    );
   });
 });
