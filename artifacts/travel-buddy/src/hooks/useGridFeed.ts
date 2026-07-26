@@ -84,6 +84,12 @@ export function useGridFeed(): GridFeedState {
       const s = slotRef.current;
       if (s.loading) return;
 
+      // Capture the session ID before the async gap so we can detect stale
+      // responses: if the user switches filters while this request is in
+      // flight, `setFilter` resets the slot (new sessionId), and we must
+      // discard the old response instead of overwriting the new slot.
+      const requestSessionId = s.sessionId;
+
       slotRef.current = { ...s, loading: true, error: null };
       rerender();
 
@@ -92,10 +98,13 @@ export function useGridFeed(): GridFeedState {
       const result = await fetchGridFeed({
         filter: f,
         cursor: cursor ?? undefined,
-        sessionId: slotRef.current.sessionId,
+        sessionId: requestSessionId,
         lat: coords?.lat,
         lng: coords?.lng,
       });
+
+      // Discard if a filter switch happened while this request was in flight.
+      if (slotRef.current.sessionId !== requestSessionId) return;
 
       if (result.ok && result.data) {
         const data = result.data;

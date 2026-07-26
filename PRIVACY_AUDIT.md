@@ -12,7 +12,7 @@
 |----------|-------|
 | Critical | 3     |
 | High     | 5     |
-| Medium   | 8     |
+| Medium   | 8 (1 fixed: M2) |
 | Low      | 6     |
 
 ---
@@ -145,22 +145,36 @@
 
 ---
 
-### [M2] Pulse feed block filter is best-effort / non-fatal — blocked authors' posts appear if the `blocks` query fails
+### [M2] ~~Pulse feed block filter is best-effort / non-fatal — blocked authors' posts appear if the `blocks` query fails~~ **FIXED**
 
-- **File:** `artifacts/api-server/src/routes/pulse.ts`, lines 197–209
-- **Code:**
+- **File:** `artifacts/api-server/src/routes/pulse.ts`, lines 197–225
+- **Fix:**
   ```typescript
+  let blockFetchFailed = false;
+  const blockedSet = new Set<string>();
   try {
-    // ... build blockedSet
-    if (blockedSet.size > 0) {
-      rows = rows.filter(...)
+    const [blockedRes, blockerRes] = await Promise.all([
+      sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
+      sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
+    ]);
+    if (blockedRes.error || blockerRes.error) {
+      blockFetchFailed = true;
+    } else {
+      for (const row of (blockedRes.data as any[]) ?? []) blockedSet.add(row.blocked_id as string);
+      for (const row of (blockerRes.data as any[]) ?? []) blockedSet.add(row.blocker_id as string);
     }
-  } catch { /* non-fatal */ }
+  } catch {
+    blockFetchFailed = true;
+  }
+  if (blockFetchFailed) {
+    req.log.warn({ userId: user.id }, "pulse: block-state unknown — returning empty feed (fail-closed)");
+    res.json({ posts: [], total: 0, tab });
+    return;
+  }
   ```
 - **Entity:** Profile / Feed
-- **Leak type:** Fail-open block filter
-- **Detail:** The `GET /api/pulse` route builds a `blockedSet` to filter out blocked authors, but wraps the entire block-query-and-filter block in a `try/catch` with a `/* non-fatal */` comment. If the `blocks` table query fails (network partition, DB overload, table missing), `blockedSet` stays empty and no posts are filtered. A user who blocks someone to stop seeing their content will see their posts again whenever there is a transient DB error. The `discoverySearch.ts` block filter uses a stricter fail-closed approach (returns `null` → returns empty results).
-- **Requires:** Change to fail-closed: if block query fails, return empty results for the feed rather than unfiltered results. Match the pattern used by `fetchBlockedSet` in `discoverySearch.ts`.
+- **Leak type:** Fail-open block filter (resolved)
+- **Detail:** The block-query step now uses a `blockFetchFailed` flag. Both a thrown exception and a Supabase error response set the flag, causing the handler to return `{ posts: [], total: 0 }` rather than an unfiltered feed. This matches the fail-closed pattern in `discoverySearch.ts`. Covered by section J of `src/test/pulseRanking.test.ts` (registered in the main test suite).
 
 ---
 
@@ -317,6 +331,7 @@
 | Event attendee list | Correctly participant-scoped in `formatEvent()` — outsiders receive `goingAttendees: []`. |
 | Profile DOB | Fetched server-side for `ageGateRequired` computation only; `mapProfile()` never returns it. Correct. |
 | Block filter — discovery search | Fail-closed: returns `null` → returns `[]`. Correct. |
+| Block filter — pulse feed | Fail-closed: `blockFetchFailed` flag set on error or exception → returns `{ posts: [], total: 0 }`. Correct. Tested: `pulseRanking.test.ts` §J. |
 | Profile-tab visibility | `applyVisibilityGuard` enforces `resolveProfileVisibility` and respects all privacy flags (`show_posts`, `show_stamps`, `show_past_trips`, etc.). Correct. |
 | Event exact coordinates | Gated to host or confirmed participant in `formatEvent()`. Correct. |
 | Trip crew location | All responses use blurred area labels; exact GPS never returned. Gated to trip members. Correct. |
@@ -338,7 +353,7 @@
 | H4 | `artifacts/api-server/src/routes/trips-expansion.ts:180,214,248,281` | `trips.*` |
 | H5 | `artifacts/api-server/src/services/notifications/NotificationService.ts` | `notifications.metadata` |
 | M1 | `artifacts/travel-buddy/src/components/discovery/discoveryLocalCache.ts` | — |
-| M2 | `artifacts/api-server/src/routes/pulse.ts:197` | `blocks` |
+| ~~M2~~ | ~~`artifacts/api-server/src/routes/pulse.ts:197`~~ | ~~`blocks`~~ — **FIXED** (fail-closed; test: `pulseRanking.test.ts` §J) |
 | M3 | `artifacts/api-server/src/routes/discoverySearch.ts:358` | `events.description` |
 | M4 | `artifacts/api-server/src/routes/trips-expansion.ts:331` | `trips.show_exact_dates`, `trips.show_destination_city` |
 | M5 | (new migration needed) | `profile_views` RLS SELECT policy |
