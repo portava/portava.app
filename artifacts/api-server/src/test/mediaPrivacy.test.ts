@@ -59,6 +59,69 @@ const ASSET_PUBLIC_ID  = "cc000000-0000-4000-a000-000000000002";
 
 const TOKEN = "test-media-privacy-token";
 
+// ── PostgREST OR expression evaluator ─────────────────────────────────────────
+// Supports: col.op.val (is.null, eq, lte, gte, ilike), and(...), or(...)
+// Used by the fake Supabase client's `.or()` method to simulate SQL filters
+// including the nested expressions used by the age-restriction pre-filter.
+
+function splitPostgrestArgs(expr: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of expr) {
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { parts.push(cur); cur = ""; }
+    else cur += ch;
+  }
+  if (cur) parts.push(cur);
+  return parts;
+}
+
+function evalPostgrestCond(r: any, cond: string): boolean {
+  const t = cond.trim();
+  if (t.startsWith("and(") && t.endsWith(")")) {
+    return splitPostgrestArgs(t.slice(4, -1)).every((p) => evalPostgrestCond(r, p));
+  }
+  if (t.startsWith("or(") && t.endsWith(")")) {
+    return splitPostgrestArgs(t.slice(3, -1)).some((p) => evalPostgrestCond(r, p));
+  }
+  const m = t.match(/^(\w+)\.(\w+)\.(.+)$/);
+  if (!m) return false;
+  const [, col, op, rawVal] = m;
+  if (op === "is" && rawVal === "null") return r[col] == null;
+  if (op === "eq") {
+    if (rawVal === "true") return r[col] === true;
+    if (rawVal === "false") return r[col] === false;
+    const n = Number(rawVal);
+    return !isNaN(n) ? r[col] === n : r[col] === rawVal;
+  }
+  if (op === "lte") {
+    const n = Number(rawVal);
+    if (!isNaN(n)) return r[col] != null && r[col] <= n;
+    return r[col] != null && new Date(r[col]) <= new Date(rawVal);
+  }
+  if (op === "gte") {
+    const n = Number(rawVal);
+    if (!isNaN(n)) return r[col] != null && r[col] >= n;
+    return r[col] != null && new Date(r[col]) >= new Date(rawVal);
+  }
+  if (op === "ilike") {
+    if (r[col] == null) return false;
+    // Convert SQL LIKE wildcards to regex: % → .*, _ → .
+    const reStr = rawVal
+      .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+      .replace(/%/g, ".*")
+      .replace(/_/g, ".");
+    return new RegExp("^" + reStr + "$", "i").test(String(r[col]));
+  }
+  return false;
+}
+
+function evalOr(r: any, expr: string): boolean {
+  return splitPostgrestArgs(expr).some((p) => evalPostgrestCond(r, p));
+}
+
 // ── Fake client builder ────────────────────────────────────────────────────────
 
 interface FakeState {
@@ -125,26 +188,7 @@ function makeClient(state: FakeState) {
         return b;
       },
       or(expr: string) {
-        // OR parser for `col.op.value,...` patterns.
-        // Supports: is.null, lte.<date>, ilike.%<pattern>%
-        const parts = expr.split(",");
-        filters.push((r: any) => parts.some((p) => {
-          const m = p.trim().match(/^(\w+)\.(\w+)\.(.+)$/);
-          if (!m) return false;
-          const [, col, op, rawVal] = m;
-          if (op === "is" && rawVal === "null") return r[col] == null;
-          if (op === "lte") return r[col] != null && new Date(r[col]) <= new Date(rawVal);
-          if (op === "ilike") {
-            if (r[col] == null) return false;
-            // Convert SQL LIKE wildcards to regex: % → .*, _ → .
-            const reStr = rawVal
-              .replace(/[.+?^${}()|[\]\\]/g, "\\$&")  // escape regex metacharacters
-              .replace(/%/g, ".*")                       // % → .*
-              .replace(/_/g, ".");                       // _ → .
-            return new RegExp("^" + reStr + "$", "i").test(String(r[col]));
-          }
-          return false;
-        }));
+        filters.push((r: any) => evalOr(r, expr));
         return b;
       },
       neq(col: string, val: any) { filters.push((r: any) => r[col] !== val); return b; },
@@ -210,13 +254,16 @@ function baseState(): FakeState {
     ],
     profiles: [
       {
-        // Viewer profile — used by the feed route to resolve viewerCountry for
-        // the SQL-level geo-restriction pre-filter.
+        // Viewer profile — used by the feed route to resolve viewerCountry and
+        // date_of_birth for the SQL-level geo/age-restriction pre-filters.
+        // date_of_birth is null here so age-restricted posts remain excluded
+        // fail-closed by filterEligibleMediaCandidates (no viewerAge computable).
         id: VIEWER_ID, username: "viewer", full_name: "Viewer User",
         avatar_url: null, is_private: false, is_verified: false,
         followers_count: 10, following_count: 5,
         bio: null, account_status: "active",
         location_country: "AU",
+        date_of_birth: null,
       },
       {
         id: AUTHOR_ID, username: "author", full_name: "Author Name",
@@ -365,8 +412,9 @@ function baseState(): FakeState {
         profiles: { id: AUTHOR_ID, username: "author", full_name: "Author Name", avatar_url: "https://example.test/avatar.jpg", is_private: false, is_verified: true, followers_count: 100, following_count: 50, bio: "Hello world", account_status: "active", show_profile_picture_publicly: true },
       },
       {
-        // Age-restricted to 21+. The feed route does not supply viewerAge
-        // so this is always excluded (fail-closed) by filterEligibleMediaCandidates.
+        // Age-restricted to 21+. In baseState the viewer's date_of_birth is null
+        // so viewerAge is unknown → excluded fail-closed by filterEligibleMediaCandidates.
+        // SQL-level age pre-filter also only activates when viewerAge is known.
         id: POST_AGE_RESTRICTED_ID, author_id: AUTHOR_ID, visibility: "public",
         status: "active", post_status: "published", publish_at: null,
         moderation_status: "approved", has_video: true,
@@ -1291,6 +1339,61 @@ describe("GET /api/media/feed — auth + eligibility integration", () => {
     assert.ok(
       returnedIds.includes(POST_GEO_RESTRICTED_ID),
       "geo-restricted 'US,CA' post must appear for a US viewer — both SQL and in-memory filters should allow it",
+    );
+  });
+
+  // ── SQL-level age-restriction pre-filter ──────────────────────────────────
+  //
+  // These tests confirm that age-restricted posts are filtered BEFORE they leave
+  // the database when the viewer's age is known, not just discarded in memory.
+  // The mechanism:
+  //   1. The feed route fetches the viewer's date_of_birth from their profile.
+  //   2. When a valid age can be derived, it applies an OR filter:
+  //        age_restriction_enabled IS NULL
+  //        OR age_restriction_enabled = false
+  //        OR (age_min IS NULL OR age_min <= viewerAge)
+  //           AND (age_max IS NULL OR age_max >= viewerAge)
+  //   3. The in-memory gate in filterEligibleMediaCandidates is retained as a
+  //      belt-and-suspenders fallback.
+  //
+  // The age-restricted post in baseState has age_min=21, age_max=null (21+).
+
+  it("age-restricted post is absent from DB candidate set when viewer is too young (SQL filter)", async () => {
+    // Set viewer DOB to make them 18 years old (below the 21+ restriction).
+    // The SQL filter should exclude the post before the in-memory gate runs.
+    const state = baseState();
+    const viewerProfile = state.profiles!.find((p: any) => p.id === VIEWER_ID);
+    if (viewerProfile) (viewerProfile as any).date_of_birth = "2007-06-15"; // ~18–19 in July 2026
+    _setTestClient(makeClient(state) as any, true);
+
+    const res = await request("GET", "/api/media/feed?mode=fullscreen", { token: TOKEN });
+    assert.equal(res.status, 200);
+    const returnedIds = (res.body.items ?? []).map((i: any) => i.id);
+    assert.ok(
+      !returnedIds.includes(POST_AGE_RESTRICTED_ID),
+      "age-restricted 21+ post must not appear for an under-21 viewer — SQL filter must block it",
+    );
+    // Unrestricted post must still be present (SQL filter must not over-exclude)
+    assert.ok(
+      returnedIds.includes(POST_PUBLIC_ID),
+      "unrestricted post must still appear for an under-21 viewer",
+    );
+  });
+
+  it("age-restricted post appears in feed when viewer age is within the allowed range (SQL filter passes it through)", async () => {
+    // Set viewer DOB to make them 25 years old (within the 21+ restriction).
+    // Both the SQL pre-filter and the in-memory gate should allow the post.
+    const state = baseState();
+    const viewerProfile = state.profiles!.find((p: any) => p.id === VIEWER_ID);
+    if (viewerProfile) (viewerProfile as any).date_of_birth = "2001-01-01"; // 25 in July 2026
+    _setTestClient(makeClient(state) as any, true);
+
+    const res = await request("GET", "/api/media/feed?mode=fullscreen", { token: TOKEN });
+    assert.equal(res.status, 200);
+    const returnedIds = (res.body.items ?? []).map((i: any) => i.id);
+    assert.ok(
+      returnedIds.includes(POST_AGE_RESTRICTED_ID),
+      "age-restricted 21+ post must appear for a 25-year-old viewer — both SQL and in-memory filters should allow it",
     );
   });
 

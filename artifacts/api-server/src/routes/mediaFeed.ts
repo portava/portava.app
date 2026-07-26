@@ -25,6 +25,7 @@ import {
   filterEligibleMediaCandidates,
   type MediaCandidate,
 } from "../lib/mediaEligibility.js";
+import { calculateUserAge } from "../lib/ageEligibility.js";
 import {
   hydrateMediaFeedItem,
   stripPrivateEventFields,
@@ -658,9 +659,12 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   }
 
   // ── Resolve viewer context ─────────────────────────────────────────────────
-  // Fetch followed creator IDs (for following feed) and viewer country in parallel.
+  // Fetch followed creator IDs (for following feed), viewer country, and viewer
+  // date-of-birth in parallel. Country and age are used for SQL-level pre-filters
+  // that prevent restricted posts from leaving the DB on cache misses.
   const followedCreatorIds = new Set<string>();
   let viewerCountry: string | null = null;
+  let viewerAge: number | null = null;
 
   await Promise.all([
     // Followed creator IDs — only needed for the following feed
@@ -674,17 +678,18 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
         for (const r of (followRows as any[]) ?? []) followedCreatorIds.add(r.following_id as string);
       } catch { /* non-fatal */ }
     })(),
-    // Viewer's location country — used for SQL-level geo-restriction pre-filter.
-    // Best-effort: if unavailable the in-memory gate in filterEligibleMediaCandidates
-    // handles geo-restriction fail-closed.
+    // Viewer's location country and date-of-birth — used for SQL-level
+    // geo/age-restriction pre-filters. Best-effort: if unavailable the in-memory
+    // gate in filterEligibleMediaCandidates handles both restrictions fail-closed.
     (async () => {
       try {
         const { data: viewerProfile } = await sc
           .from("profiles")
-          .select("location_country")
+          .select("location_country, date_of_birth")
           .eq("id", user.id)
           .maybeSingle();
         viewerCountry = (viewerProfile as any)?.location_country ?? null;
+        viewerAge = calculateUserAge((viewerProfile as any)?.date_of_birth ?? null);
       } catch { /* non-fatal */ }
     })(),
   ]);
@@ -740,6 +745,24 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     query = query.or(`geo_restriction.is.null,geo_restriction.ilike.%${c}%`);
   }
 
+  // SQL-level age-restriction pre-filter: when viewer's age is known, exclude
+  // rows where age_restriction_enabled=true and the viewer's age is outside
+  // [age_min, age_max]. Null bounds are treated as open (no limit in that direction).
+  // The in-memory gate in filterEligibleMediaCandidates is retained as the
+  // authoritative belt-and-suspenders fallback (handles unknown viewer age fail-closed).
+  if (viewerAge !== null) {
+    // viewerAge is reassigned inside an async closure; cast to number to satisfy TypeScript.
+    const age = viewerAge as number;
+    // Pass a post when:
+    //   • age_restriction_enabled is null/false (unrestricted), OR
+    //   • BOTH age_min is null OR age_min ≤ viewer age
+    //        AND age_max is null OR age_max ≥ viewer age
+    query = query.or(
+      `age_restriction_enabled.is.null,age_restriction_enabled.eq.false,` +
+      `and(or(age_min.is.null,age_min.lte.${age}),or(age_max.is.null,age_max.gte.${age}))`,
+    );
+  }
+
   // Apply cursor filter for stable pagination
   if (cursor) {
     query = applyCursorFilter(query, cursor);
@@ -757,7 +780,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   // ── Eligibility filter ─────────────────────────────────────────────────────
   const { eligible, blockFetchFailed } = await filterEligibleMediaCandidates(
     candidates,
-    { viewerUserId: user.id, feedType, followedCreatorIds, viewerCountry },
+    { viewerUserId: user.id, feedType, followedCreatorIds, viewerCountry, viewerAge },
     sc,
   );
 
