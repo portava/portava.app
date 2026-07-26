@@ -14,6 +14,7 @@ import React from 'react';
 import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
 import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
 import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
+import { fallbackUriFor } from '../../lib/visuals/fallbackAssets.ts';
 import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
 import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
@@ -330,7 +331,7 @@ function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onC
   const resolvedPreview = resolveHeaderImage(_previewCandidates, {
     entityType: 'place',
     category: place.category,
-    fallbackUrlFor: () => null,
+    fallbackUrlFor: fallbackUriFor,
   });
 
   return (

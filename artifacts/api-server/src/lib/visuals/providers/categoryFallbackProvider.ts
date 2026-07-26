@@ -16,10 +16,19 @@ import type {
   ProviderHealth,
 } from "../types.js";
 
-/** Base path/prefix for bundled category fallbacks. Override via env if hosted. */
+/**
+ * Base URL prefix for category fallback images.
+ *
+ * In development the API server serves them at /fallbacks/<slug>.webp via
+ * express.static (see app.ts).  In production, point this at a CDN base URL
+ * (e.g. "https://cdn.example.com/fallbacks") by setting AI_VISUAL_FALLBACK_BASE.
+ *
+ * The default "/fallbacks" works with the built-in express.static middleware
+ * and lets the mobile client convert to an absolute URL using its API base.
+ */
 const FALLBACK_BASE =
   process.env.AI_VISUAL_FALLBACK_BASE?.trim() ||
-  "/assets/fallbacks";
+  "/fallbacks";
 
 /** Canonical category → fallback slug. Unknown categories map to a generic tile. */
 const CATEGORY_MAP: Record<string, string> = {

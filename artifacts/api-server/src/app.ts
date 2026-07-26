@@ -2,12 +2,17 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import cors from "cors";
 import helmet from "helmet";
 import pinoHttp from "pino-http";
+import path from "path";
+import { fileURLToPath } from "url";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { specAliasRewrite } from "./lib/specAliasRewrite";
 import { BOOT_HRTIME } from "./lib/bootTime";
 import { callsWebhookHandler, callsWebhookRawParser } from "./routes/callsWebhook";
 import { webhookHandler as verificationWebhookHandler, webhookRawParser as verificationWebhookRawParser } from "./routes/verification.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app: Express = express();
 
@@ -117,6 +122,18 @@ app.use(express.json({ limit: "256kb" }));
 app.use(express.urlencoded({ extended: true, limit: "256kb" }));
 
 app.get("/", (_req, res) => { res.sendStatus(200); });
+
+// ── Static assets: category fallback images ───────────────────────────────────
+// Served at /fallbacks/<slug>.webp so the categoryFallbackProvider can construct
+// absolute URLs from AI_VISUAL_FALLBACK_BASE (or the default in-repo path).
+// Files live in artifacts/api-server/public/fallbacks/ at build time.
+app.use(
+  "/fallbacks",
+  express.static(path.join(__dirname, "../public/fallbacks"), {
+    maxAge: "7d",
+    immutable: false,
+  }),
+);
 
 app.use(specAliasRewrite);
 

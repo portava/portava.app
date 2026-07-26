@@ -30,6 +30,7 @@ import {
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
 import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
+import { fallbackUriFor } from '../../lib/visuals/fallbackAssets.ts';
 import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
 import { formatCompassEventChip } from '../../utils/compassFormat.ts';
 import { CompassMiniMap } from './CompassMiniMap';
@@ -246,7 +247,7 @@ function PlaceBlockCard({ place, onAddToPlan }: {
   const resolvedCompass = resolveHeaderImage(_compassCandidates, {
     entityType: 'place',
     category: place.category ?? undefined,
-    fallbackUrlFor: () => null,
+    fallbackUrlFor: fallbackUriFor,
   });
   const resolvedUrl = resolvedCompass?.url ?? null;
   const hasImage = Boolean(resolvedUrl) && !imageError;
