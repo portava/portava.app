@@ -1,7 +1,7 @@
 /**
  * usePublicPassport — loads a public passport by username.
- * Returns { profile, postcards, loading, error, isPrivate, previewProfile,
- *           isFriend, friendRequestPending, notFound, isBlocked, blockedTargetId }.
+ * Returns { profile, postcards, loading, error, isPrivate, isFriend,
+ *           friendRequestPending, notFound, isBlocked, blockedTargetId }.
  *
  * Sentinel shapes from GET /api/users/:username/passport:
  *   { unavailable: true }                → notFound: true  (deleted / deactivated / banned)
