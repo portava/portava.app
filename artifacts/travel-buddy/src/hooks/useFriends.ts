@@ -117,7 +117,29 @@ export function useIncomingFriendRequests() {
   return { data, loading, error, reload, accept, decline };
 }
 
-/** Current user's friends list. */
+/**
+ * Current user's friends list.
+ *
+ * CONTRACT: if a "remove friend" / unfriend mutation is added to this hook
+ * (or to a new hook in this file), it MUST call `bumpSocialVersion()` from
+ * `../hooks/useSocialVersion.ts` on success — the same way the follow/unfollow
+ * toggle does.  Skipping the bump leaves the passport follower count stale for
+ * any screen that is already mounted when the friendship is removed.
+ *
+ * Example pattern (add when the API endpoint exists):
+ *
+ *   import { bumpSocialVersion } from './useSocialVersion.ts';
+ *
+ *   const remove = useCallback(async (friendId: string) => {
+ *     const res = await removeFriend(friendId);          // src/services/friends.ts
+ *     if (res.ok) {
+ *       setData((prev) => prev.filter((f) => f.id !== friendId));
+ *       bumpSocialVersion();   // ← keeps passport follower counts in sync
+ *       emitFriendsChanged();  // ← refreshes other mounted friend surfaces
+ *     }
+ *     return res;
+ *   }, []);
+ */
 export function useMyFriends() {
   const [data, setData] = useState<FriendRow[]>([]);
   const [loading, setLoading] = useState(true);
