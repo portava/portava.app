@@ -6,7 +6,7 @@
  * NEVER writes to the database — the client must call the normal trip-create
  * endpoint after the user confirms the draft.
  *
- * Extraction discipline matches reservationExtract: gpt-5.4-mini, temperature 0,
+ * Extraction discipline matches reservationExtract: gpt-5-mini, temperature 0,
  * strict JSON, UGC-wrapped input treated as data (never instructions), facts
  * only — nothing invented, unknown fields omitted.
  */
@@ -86,7 +86,7 @@ router.post("/trips/draft-from-text", asyncHandler(async (req, res) => {
   let draft: z.infer<typeof DraftSchema>;
   try {
     const completion = await getOpenAI().chat.completions.create({
-      model:                 "gpt-5.4-mini",
+      model:                 "gpt-5-mini",
       temperature:           0,
       max_completion_tokens: 400,
       messages: [

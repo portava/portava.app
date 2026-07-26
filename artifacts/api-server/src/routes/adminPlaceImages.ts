@@ -18,6 +18,7 @@ import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { invalidateDiscoveryCacheForEntity } from "../lib/discoveryPersistentCache.js";
 
 const router = Router();
 
@@ -290,7 +291,7 @@ router.post("/admin/place-images/:visualId/approve", asyncHandler(async (req, re
 
   const { data: visual, error: vErr } = await sc
     .from("generated_visuals")
-    .select("id, accuracy_status, image_source_type")
+    .select("id, accuracy_status, image_source_type, entity_type, entity_id, canonical_place_id")
     .eq("id", visualId)
     .maybeSingle();
 
@@ -318,6 +319,14 @@ router.post("/admin/place-images/:visualId/approve", asyncHandler(async (req, re
     .eq("id", visualId);
 
   if (upErr) { sendError(res, "db_error", upErr.message); return; }
+
+  // Evict L2 cache so the next discovery request re-hydrates this place's image
+  if ((visual as any).entity_type === "place") {
+    const placeId = (visual as any).canonical_place_id ?? (visual as any).entity_id;
+    if (placeId && isUuid(placeId)) {
+      void invalidateDiscoveryCacheForEntity(placeId);
+    }
+  }
 
   res.json({ ok: true, visualId, accuracyStatus: newStatus, verifiedAt: now });
 }));
@@ -381,6 +390,9 @@ router.post("/admin/place-images/:visualId/reject", asyncHandler(async (req, res
         .eq("id", placeId)
         .eq("header_image_generated_id" as any, visualId)
         .then(() => { /* best-effort; column may not exist on older schema */ });
+
+      // Evict L2 cache so resolveHeaderImage re-evaluates on the next request
+      void invalidateDiscoveryCacheForEntity(placeId);
     }
   }
 
@@ -399,7 +411,7 @@ router.post("/admin/place-images/:visualId/downgrade", asyncHandler(async (req, 
 
   const { data: visual, error: vErr } = await sc
     .from("generated_visuals")
-    .select("id, image_source_type, accuracy_status")
+    .select("id, image_source_type, accuracy_status, entity_type, entity_id, canonical_place_id")
     .eq("id", visualId)
     .maybeSingle();
 
@@ -428,6 +440,14 @@ router.post("/admin/place-images/:visualId/downgrade", asyncHandler(async (req, 
     .eq("id", visualId);
 
   if (upErr) { sendError(res, "db_error", upErr.message); return; }
+
+  // Evict L2 cache so the next discovery request re-hydrates this place's image
+  if ((visual as any).entity_type === "place") {
+    const placeId = (visual as any).canonical_place_id ?? (visual as any).entity_id;
+    if (placeId && isUuid(placeId)) {
+      void invalidateDiscoveryCacheForEntity(placeId);
+    }
+  }
 
   res.json({
     ok: true,
@@ -584,7 +604,15 @@ router.post("/admin/place-images/reports/:reportId/resolve", asyncHandler(async 
     // Scope by both source_url AND the reported place's entity_id so we
     // never accidentally reject a visual that belongs to a different place
     // that happens to share the same CDN URL.
-    const reportPlaceId = (report as any).place_id;
+    //
+    // place_image_reports.place_id may arrive as a raw UUID or as a
+    // discovery-style "db/<uuid>" prefixed ID — normalise to raw UUID so
+    // the entity_id equality check and cache invalidation both work.
+    const rawReportPlaceId: string = (report as any).place_id ?? "";
+    const reportPlaceId = rawReportPlaceId.startsWith("db/")
+      ? rawReportPlaceId.slice(3)
+      : rawReportPlaceId;
+
     const { data: visualRows, error: findErr } = await sc
       .from("generated_visuals")
       .select("id, accuracy_status")
@@ -619,6 +647,11 @@ router.post("/admin/place-images/reports/:reportId/resolve", asyncHandler(async 
         .eq("id", (matchedVisual as any).id);
 
       if (rejectErr) { sendError(res, "db_error", rejectErr.message); return; }
+    }
+
+    // Evict L2 cache so resolveHeaderImage picks up the rejection on the next request
+    if (reportPlaceId && isUuid(reportPlaceId)) {
+      void invalidateDiscoveryCacheForEntity(reportPlaceId);
     }
   }
 

@@ -75,7 +75,7 @@ export class OpenAITranslationProvider implements TranslationProvider {
   async detectLanguage(text: string): Promise<DetectLanguageResult> {
     const snippet = text.slice(0, 200);
     const completion = await getOpenAI().chat.completions.create({
-      model: 'gpt-5.4-mini',
+      model: 'gpt-5-mini',
       messages: [
         {
           role: 'system',
@@ -102,7 +102,7 @@ export class OpenAITranslationProvider implements TranslationProvider {
   async translateText(text: string, source: string, target: string): Promise<TranslateTextResult> {
     const targetName = ISO_LANGUAGE_NAMES[target] ?? target;
     const completion = await getOpenAI().chat.completions.create({
-      model: 'gpt-5.4-mini',
+      model: 'gpt-5-mini',
       messages: [
         {
           role: 'system',

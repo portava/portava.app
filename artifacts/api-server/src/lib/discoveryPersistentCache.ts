@@ -159,6 +159,43 @@ export async function readGeocodeFromDb(
 }
 
 /**
+ * Invalidate all discovery_cache rows that contain a given entity.
+ *
+ * DB-backed places are stored inside the JSONB `places` array with id
+ * `"db/<entityId>"`.  When an admin approve/reject/downgrade changes the
+ * accuracy_status or image_source_type of a visual, every cache row that
+ * contains that place must be evicted so the next request re-hydrates it with
+ * the correct resolved header image.
+ *
+ * Fire-and-forget safe: errors are swallowed — a cache miss is always
+ * preferable to breaking a live admin action.
+ */
+export async function invalidateDiscoveryCacheForEntity(entityId: string): Promise<void> {
+  try {
+    const sc = getServiceClient();
+    if (!sc) return;
+
+    // PostgREST "cs" (contains) operator: places @> '[{"id":"db/<uuid>"}]'
+    const { error } = await sc
+      .from("discovery_cache")
+      .delete()
+      .filter("places", "cs", JSON.stringify([{ id: `db/${entityId}` }]));
+
+    if (error) {
+      logger.debug(
+        { err: error, entityId },
+        "discoveryPersistentCache: invalidateDiscoveryCacheForEntity error",
+      );
+    }
+  } catch (e) {
+    logger.debug(
+      { err: e, entityId },
+      "discoveryPersistentCache: invalidateDiscoveryCacheForEntity exception",
+    );
+  }
+}
+
+/**
  * Write (upsert) a geocode result into the DB cache.  Fire-and-forget safe.
  */
 export async function writeGeocodeToDb(

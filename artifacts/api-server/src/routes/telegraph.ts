@@ -167,7 +167,7 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
 
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-5.4-mini",
+      model: "gpt-5-mini",
       max_completion_tokens: 1024,
       messages: [
         { role: "system", content: systemPrompt },
