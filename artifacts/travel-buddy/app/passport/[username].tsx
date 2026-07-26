@@ -10,7 +10,6 @@ import {
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, MoreVertical } from 'lucide-react-native';
-import { getPublicProfile, getPublicPostcards, type PostcardsSentinel } from '../../src/services/profile';
 import { getPublicShowcase, type ShowcaseStamp } from '../../src/services/stampShowcase';
 import { blockUser } from '../../src/services/blocks';
 import { submitReport, type ReportReason } from '../../src/services/reports';
@@ -18,16 +17,16 @@ import { useSession } from '../../src/context/SessionContext';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 import { useFollow } from '../../src/hooks/useFollow';
 import { useHighlightRingState } from '../../src/hooks/useHighlightRingState';
+import { usePublicPassport } from '../../src/hooks/usePublicPassport';
 import { HighlightViewer } from '../../src/components/HighlightViewer';
 import { PostcardsTab } from '../../src/components/PostcardsTab';
 import { StampsTab } from '../../src/components/StampsTab';
 import { MemoriesTab } from '../../src/components/MemoriesTab';
 import { TripsTab } from '../../src/components/TripsTab';
 import { MapTab } from '../../src/components/MapTab';
-import type { PublicProfile, PassportPostcard } from '../../src/types/models';
 import { resolveTabOrder, type PassportTabKey, TAB_LABELS } from '../../src/components/passport/passportTabs';
 import { resolveDisplayName, formatHandle, truncateDisplayName } from '../../src/utils/identity';
-import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { space, radius } from '../../src/theme/tokens';
 import { PP, PP_LABEL } from '../../src/theme/passportTokens';
 import { resolveAvailabilityChip } from '../../src/lib/availabilityChip';
 
@@ -40,85 +39,13 @@ import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 
 // Tab order is resolved from the owner's saved preference at render time.
 
-interface ScreenState {
-  profile: PublicProfile | null;
-  postcards: PassportPostcard[];
-  loading: boolean;
-  error: string | null;
-  isPrivate: boolean;
-  notFound: boolean;
-  postcardSentinel: PostcardsSentinel | null;
-}
-
 export default function PassportDeepLinkScreen() {
   const { username: rawUsername } = useLocalSearchParams<{ username: string }>();
   const username = (rawUsername ?? '').replace(/^@/, '');
 
-  const [state, setState] = useState<ScreenState>({
-    profile: null, postcards: [], loading: true,
-    error: null, isPrivate: false, notFound: false, postcardSentinel: null,
-  });
-
-  useEffect(() => {
-    if (!username) return;
-    let alive = true;
-    setState({ profile: null, postcards: [], loading: true, error: null, isPrivate: false, notFound: false, postcardSentinel: null });
-
-    getPublicProfile(username).then(async (res) => {
-      if (!alive) return;
-      if (!res.ok) {
-        if (res.errorKind === 'not_found') {
-          setState((s) => ({ ...s, loading: false, notFound: true }));
-        } else {
-          setState((s) => ({ ...s, loading: false, error: res.message ?? 'Failed to load profile' }));
-        }
-        return;
-      }
-
-      const card = res.data!;
-      if (card.private || card.visibility === 'private') {
-        setState((s) => ({ ...s, loading: false, isPrivate: true }));
-        return;
-      }
-
-      const { resolveAvatarUrl } = await import('../../src/utils/identity');
-      const profile: PublicProfile = {
-        id: card.id ?? '',
-        username: card.username,
-        displayName: card.displayName,
-        bio: card.bio ?? null,
-        avatarUrl: resolveAvatarUrl(card.avatarUrl),
-        homeCity: card.homeCity ?? null,
-        homeCountry: card.homeCountry ?? null,
-        travelStyle: card.travelStyle ?? null,
-        interests: card.interests ?? [],
-        verified: card.verified ?? false,
-        verificationStatus: (card.verificationStatus ?? 'unverified') as PublicProfile['verificationStatus'],
-        verifiedAt: card.verifiedAt ?? null,
-        passportVisibility: (card.passportVisibility ?? 'public') as 'public' | 'private',
-        createdAt: card.createdAt ?? null,
-        // Availability fields — present when the API returns them; absent = chip hidden.
-        openToMeet: (card as any).openToMeet ?? undefined,
-        quickStatus: (card as any).quickStatus ?? undefined,
-      };
-      setState((s) => ({ ...s, profile, loading: false }));
-
-      const pcRes = await getPublicPostcards(username);
-      if (alive) {
-        setState((s) => ({
-          ...s,
-          postcards: pcRes.ok ? (pcRes.data ?? []) : [],
-          postcardSentinel: pcRes.ok ? (pcRes.sentinel ?? null) : null,
-        }));
-      }
-    }).catch(() => {
-      if (alive) setState((s) => ({ ...s, loading: false, error: 'Failed to load profile' }));
-    });
-
-    return () => { alive = false; };
-  }, [username]);
-
-  const { profile, postcards, loading, error, isPrivate, notFound } = state;
+  const {
+    profile, postcards, loading, error, isPrivate, notFound, isBlocked, postcardSentinel,
+  } = usePublicPassport(username);
   const { isAuthed, userId: viewerUserId } = useSession();
   const { isEnabled: isFlagEnabled } = useFeatureFlags();
   const isOwner = !!profile && !!viewerUserId && profile.id === viewerUserId;
@@ -273,6 +200,25 @@ export default function PassportDeepLinkScreen() {
     );
   }
 
+  if (isBlocked) {
+    return (
+      <View style={[vs.container, { backgroundColor: PP.paperDeep, paddingTop: insets.top }]}>
+        <View style={vs.header}>
+          <Pressable onPress={() => router.canGoBack() ? router.back() : router.replace('/(tabs)/' as any)} style={vs.backBtn} hitSlop={8}>
+            <ArrowLeft size={22} color={PP.ink} />
+          </Pressable>
+          <Text style={vs.headerTitle}>{formatHandle(username) ?? 'Passport'}</Text>
+          <View style={{ width: 38 }} />
+        </View>
+        <View style={vs.stateCenter}>
+          <Text style={vs.stateIcon}>🚫</Text>
+          <Text style={vs.stateTitle}>Passport unavailable</Text>
+          <Text style={vs.stateSub}>This profile isn't available to you.</Text>
+        </View>
+      </View>
+    );
+  }
+
   if (error || !profile) {
     return (
       <View style={[vs.container, { backgroundColor: PP.paperDeep, paddingTop: insets.top }]}>
@@ -387,7 +333,7 @@ export default function PassportDeepLinkScreen() {
               </View>
               <View style={vs.tabRule} />
               <View style={{ marginTop: space.md }}>
-                {tab === 'postcards' && <PostcardsTab postcards={postcards} isOwner={false} sentinel={state.postcardSentinel ?? undefined} />}
+                {tab === 'postcards' && <PostcardsTab postcards={postcards} isOwner={false} sentinel={postcardSentinel ?? undefined} />}
                 {tab === 'stamps'    && <StampsTab stamps={[]} viewingUsername={username} viewingUserId={profile?.id} />}
                 {tab === 'map'       && <MapTab postcards={postcards} />}
                 {tab === 'memories'  && <MemoriesTab memories={[]} onReload={() => {}} />}
