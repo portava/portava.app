@@ -12,7 +12,7 @@
  *
  * Eligibility (mediaEligibility.ts) runs before scoring. Scoring uses
  * portavaRank with CandidateKind 'post'. Creator caps via
- * enforceCreatorCapsGeneric. Pagination via opaque stable cursors
+ * MediaFeedRankingService (which handles creator caps internally). Pagination via opaque stable cursors
  * (mediaCursor.ts).
  */
 import { randomUUID } from "node:crypto";
@@ -39,10 +39,15 @@ import {
   applyCursorFilter,
 } from "../lib/mediaCursor.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { rankCandidates } from "../lib/portavaRank.js";
 import {
-  enforceCreatorCapsGeneric,
-} from "../services/ranking/CreatorCapEnforcer.js";
+  rankMediaFeed,
+  loadMediaRankingFlags,
+  loadMediaSignals,
+  loadCreatorSignals,
+  storeRankingSnapshots,
+  type MediaFeedItem as RankingMediaFeedItem,
+  type MediaSessionState,
+} from "../services/ranking/MediaFeedRankingService.js";
 import { recordMediaEvent } from "../lib/mediaAnalytics.js";
 
 const router = Router();
@@ -499,34 +504,78 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     for (const r of (seenRows as any[]) ?? []) seenIds.add(r.item_id as string);
   } catch { /* non-fatal */ }
 
-  // ── Rank candidates ────────────────────────────────────────────────────────
-  const rankInput = eligible.map((c) => ({
-    id: c.id,
-    kind: "post" as const,
-    createdAt: c.created_at,
-    authorId: c.author_id,
-    tags: Array.isArray(c.tags) ? c.tags.map((t: string) => t.toLowerCase()) : [],
-    category: (c as any).category ?? null,
-  }));
+  // ── Load media ranking flags + signals ────────────────────────────────────
+  const [mediaFlags, mediaSignalsMap, creatorSignalsMap] = await Promise.all([
+    loadMediaRankingFlags(sc),
+    loadMediaSignals(sc, eligible.map((c) => c.id)),
+    loadCreatorSignals(sc, [...new Set(eligible.map((c) => c.author_id).filter(Boolean))]),
+  ]);
 
-  const ranked = rankCandidates(rankInput, {
-    userId: user.id,
-    followedIds: followedCreatorIds,
-    interestTags,
-    seenIds,
+  // ── Build ranking candidates (merge DB signals into candidate shape) ────────
+  const rankCandidates: RankingMediaFeedItem[] = eligible.map((c) => {
+    const mediaSig   = mediaSignalsMap.get(c.id) ?? {};
+    const creatorSig = creatorSignalsMap.get(c.author_id) ?? {};
+    return {
+      id:       c.id,
+      kind:     "post" as const,
+      createdAt: c.created_at,
+      authorId: c.author_id,
+      city:     (c as any).location_city ?? null,
+      category: (c as any).category ?? null,
+      tags:     Array.isArray(c.tags) ? c.tags.map((t: string) => t.toLowerCase()) : [],
+      likeCount:  Number((c as any).like_count ?? 0),
+      joinCount:  0,
+      ...mediaSig,
+      ...creatorSig,
+    };
+  });
+
+  // ── Session creator impressions (for per-session fatigue) ─────────────────
+  // Load how many times this viewer has seen each creator already in this
+  // session so the fatigue layer can deprioritise over-represented creators.
+  // Only executed when the fatigue flag is on and a sessionId exists.
+  const creatorImpressions = new Map<string, number>();
+  if (sessionId && mediaFlags.creatorFatigueEnabled) {
+    try {
+      const { data: sessionRows } = await sc
+        .from("rank_events")
+        .select("item_id")
+        .eq("user_id", user.id)
+        .eq("session_id", sessionId)
+        .eq("surface", "watch_feed");
+      // Map item_id → author_id using the already-loaded eligible candidates.
+      const itemToAuthor = new Map<string, string>(
+        eligible.map((c) => [c.id, c.author_id]).filter(([, aid]) => Boolean(aid)) as [string, string][],
+      );
+      for (const r of (sessionRows as any[]) ?? []) {
+        const authorId = itemToAuthor.get(r.item_id as string);
+        if (authorId) {
+          creatorImpressions.set(authorId, (creatorImpressions.get(authorId) ?? 0) + 1);
+        }
+      }
+    } catch { /* non-fatal */ }
+  }
+  const mediaSession: MediaSessionState = { creatorImpressions };
+
+  // ── Rank via MediaFeedRankingService ───────────────────────────────────────
+  const rankedResults = rankMediaFeed({
+    candidates: rankCandidates,
+    viewer: {
+      userId:       user.id,
+      followedIds:  followedCreatorIds,
+      interestTags,
+      seenIds,
+    },
+    mode:         feedType === "for_you" ? "for_you" : "following",
+    sessionState: mediaSession,
+    flags:        mediaFlags,
   });
 
   // Map ranked IDs back to candidate rows
   const candidateById = new Map(eligible.map((c) => [c.id, c]));
-  const rankedCandidates = ranked
-    .map((r) => candidateById.get(r.candidate.id))
+  const capped = rankedResults
+    .map((r) => candidateById.get(r.item.id))
     .filter((c): c is MediaCandidate => c !== undefined);
-
-  // ── Creator caps ───────────────────────────────────────────────────────────
-  const capped = enforceCreatorCapsGeneric(
-    rankedCandidates,
-    (c) => c.author_id,
-  );
 
   // ── Apply limit + compute next cursor ─────────────────────────────────────
   // IMPORTANT: The cursor must advance past ALL candidates fetched in this
@@ -628,8 +677,10 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     try {
       if (items.length === 0) return;
       const servedAt = new Date(nowMs).toISOString();
+      // Build a lookup of ranking features by item id for impression logging
+      const rankedById = new Map(rankedResults.map((r) => [r.item.id, r]));
       const impressionRows = items.map((item, idx) => {
-        const rankedItem = ranked.find((r) => r.candidate.id === item.id);
+        const rankedItem = rankedById.get(item.id);
         return {
           user_id:    user.id,
           item_id:    item.id,
@@ -643,6 +694,15 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
         };
       });
       await sc.from("rank_events").insert(impressionRows);
+
+      // Store ranking snapshots for "Why This?" (fire-and-forget with warning on failure)
+      if (mediaFlags.rankingEnabled) {
+        const pageRanked = page.map((c) => rankedById.get(c.id)).filter(
+          (r): r is NonNullable<typeof r> => r !== undefined,
+        );
+        storeRankingSnapshots(sc, user.id, sessionId, "watch_feed", pageRanked)
+          .catch((e) => req.log.warn({ err: e }, "media/feed: ranking snapshot write failed"));
+      }
     } catch { /* non-fatal */ }
   })();
 

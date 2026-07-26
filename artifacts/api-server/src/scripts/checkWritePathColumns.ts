@@ -218,6 +218,11 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   // All columns verified against live schema.
   ["src/routes/mediaFeed.ts|insert|payload not statically resolvable", 1],
   ["src/routes/mediaFeed.ts|select|select list not statically resolvable", 4],
+  // MediaFeedRankingService: storeRankingSnapshots builds the upsert row array dynamically
+  // (rows array built at call time with a variable-length ranked list).
+  // Columns: viewer_id, item_id, surface, session_id, position, final_score, reason_codes, served_at.
+  // Table media_ranking_snapshots is pending migration (follow-up task #2772).
+  ["src/services/ranking/MediaFeedRankingService.ts|upsert|payload not statically resolvable", 1],
 ]);
 
 // ── Read-path baseline ────────────────────────────────────────────────────────
