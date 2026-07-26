@@ -1379,19 +1379,14 @@ const PRIVACY_DEFAULTS = {
   precise_location_visible: false,
 } as const;
 
-/** Fetch show_profile_picture_publicly from profiles, defaulting to true. */
-async function fetchShowProfilePicPublicly(sc: ReturnType<typeof getServiceClient>, userId: string): Promise<boolean> {
-  const { data } = await sc!
-    .from("profiles")
-    .select("show_profile_picture_publicly")
-    .eq("id", userId)
-    .maybeSingle()
-    .then(undefined, () => ({ data: null }));
-  // Default true when column not yet populated (migration pending) or row missing.
-  if (!data || (data as any).show_profile_picture_publicly === null || (data as any).show_profile_picture_publicly === undefined) {
-    return true;
-  }
-  return Boolean((data as any).show_profile_picture_publicly);
+/**
+ * show_profile_picture_publicly column is not yet in the live DB.
+ * Always return true (existing behaviour — pictures are public by default).
+ * Re-implement as a real DB fetch once the migration is applied.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function fetchShowProfilePicPublicly(_sc: unknown, _userId: string): Promise<boolean> {
+  return true;
 }
 
 router.get("/me/privacy", async (req, res) => {
@@ -1515,13 +1510,8 @@ router.patch("/me/privacy", async (req, res) => {
     return;
   }
 
-  // Sync show_profile_picture_publicly to profiles table so serializers can read it
-  if (showPicPublicly !== undefined) {
-    sc.from("profiles")
-      .update({ show_profile_picture_publicly: showPicPublicly, updated_at: now })
-      .eq("id", user.id)
-      .then(undefined, (e: any) => req.log.warn({ err: e }, "privacy/patch: failed to sync show_profile_picture_publicly to profiles"));
-  }
+  // show_profile_picture_publicly column not yet in live DB — skip the profiles sync.
+  // Restore once the migration adding the column is applied.
 
   // Keep user_privacy_settings.profile_visibility in sync
   if (parsed.data.profile_visibility !== undefined) {

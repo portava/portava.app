@@ -84,6 +84,7 @@ export function PassportHero({
   trustScore,
   trustLabel,
   onTrustInfo,
+  privatePendingRequest,
 }: {
   profile: OwnProfile | PublicProfile;
   isOwner: boolean;
@@ -93,6 +94,11 @@ export function PassportHero({
    * Prevents leaking any private information to outsiders.
    */
   isPrivateView?: boolean;
+  /**
+   * When true (private profile view), shows "Pending" instead of "Follow"
+   * in the non-interactive top-right status badge.
+   */
+  privatePendingRequest?: boolean;
   onMenuPress?: () => void;
   onAvatarPress?: () => void;
   isFollowing?: boolean;
@@ -151,6 +157,13 @@ export function PassportHero({
           >
             <MoreHorizontal size={20} color={color.ink} />
           </Pressable>
+        ) : isPrivateView && !isOwner ? (
+          // Non-interactive status badge — changes to "Pending" after Send Request is tapped.
+          <View style={styles.followStatusBadge}>
+            <Text style={styles.followStatusText}>
+              {privatePendingRequest ? 'Pending' : '+ Follow'}
+            </Text>
+          </View>
         ) : !isOwner && onFollowPress !== undefined ? (
           <View style={{ alignItems: 'flex-end', gap: 4 }}>
             <Pressable
@@ -327,6 +340,13 @@ const styles = StyleSheet.create({
   followText: { ...t.small, color: color.ink, fontWeight: '700' },
   followTextActive: { color: color.onInk },
   followContextLabel: { fontSize: 11, color: color.signal, fontWeight: '600' },
+  followStatusBadge: {
+    borderWidth: 1, borderColor: color.haze,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.md, paddingVertical: 5,
+    backgroundColor: color.paperRaised,
+  },
+  followStatusText: { ...t.small, color: color.mute, fontWeight: '700' as const, fontSize: 11 },
 
   identityRow: { flexDirection: 'row', gap: space.md },
 

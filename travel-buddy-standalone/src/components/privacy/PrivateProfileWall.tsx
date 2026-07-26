@@ -1,13 +1,12 @@
 /**
  * PrivateProfileWall — lock section rendered BELOW the passport header.
  *
- * The header (PassportHero with isPrivateView=true) is always shown by the
- * parent screen — the passport header is intentionally public. This component
- * renders only the private-account badge, the lock message, and the
- * relationship action button.
+ * The passport header (PassportIdentityCard / PassportHero) is always shown
+ * by the parent screen with the user's avatar, name, and @handle — the
+ * header is intentionally public. This component renders ONLY the
+ * private-account badge, the lock message, and the friend-request button.
  *
- * Deliberately does NOT render bio, home city, country, travel status, stats,
- * tabs, or any count — those must never be passed or shown.
+ * Never renders avatar, name, handle, bio, location, stats, or tabs.
  */
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
@@ -18,74 +17,43 @@ import { color, space, radius, type as t } from '../../theme/tokens.ts';
 /** Minimal safe fields from the private sentinel DTO. */
 export interface PrivateProfilePreview {
   id: string;
-  /** @handle — used for the @handle subline.  null when not yet resolved. */
   handle: string | null;
-  /** Resolved display name (or null to fall back to handle). */
   displayName: string | null;
-  /**
-   * Avatar URL — passed through for parent use; not rendered here (the
-   * PassportHero renders the avatar above this component).
-   */
   avatarUrl: string | null;
 }
 
 interface Props {
   profile: PrivateProfilePreview;
-  /** True when the viewer already sent a friend request that is still pending. */
   friendRequestPending?: boolean;
-  /** Hides the action button when the viewer is viewing their own (private) profile. */
   isOwnProfile?: boolean;
-}
-
-/** First character of the display name, falling back to handle, then '?'. */
-function resolveInitial(displayName: string | null, handle: string | null): string {
-  const primary = displayName ?? handle ?? '';
-  return primary.charAt(0).toUpperCase() || '?';
+  /** Called after a successful Send Request so the parent can update its own UI state. */
+  onRequestSent?: () => void;
 }
 
 export function PrivateProfileWall({
   profile,
   friendRequestPending = false,
   isOwnProfile = false,
+  onRequestSent,
 }: Props) {
-  const initial = resolveInitial(profile.displayName, profile.handle);
-  const primaryName = profile.displayName ?? profile.handle ?? '';
-
   return (
     <View style={s.container}>
-      {/* Avatar initials fallback — shown when no avatarUrl is available */}
-      <View style={s.avatarCircle}>
-        <Text style={s.avatarInitial}>{initial}</Text>
-      </View>
-
-      {/* Display name */}
-      {!!primaryName && (
-        <Text style={s.displayName}>{primaryName}</Text>
-      )}
-
-      {/* @handle subline */}
-      {!!profile.handle && (
-        <Text style={s.handle}>@{profile.handle}</Text>
-      )}
-
-      {/* "Private account" badge */}
       <View style={s.privateBadge}>
         <Lock size={11} color={color.mute} />
         <Text style={s.privateBadgeText}>Private account</Text>
       </View>
 
-      {/* Lock message */}
       <Text style={s.wallMessage}>
         {friendRequestPending
           ? 'Your request is pending. The owner must accept before you can view their Passport.'
           : 'Send a friend request to view this Passport.'}
       </Text>
 
-      {/* Action button — hidden for own profile */}
       {!isOwnProfile ? (
         <PrivateRequestButton
           userId={profile.id}
           initialPending={friendRequestPending}
+          onRequestSent={onRequestSent}
           style={s.cta}
         />
       ) : null}
@@ -100,31 +68,6 @@ const s = StyleSheet.create({
     paddingBottom: space.xxxl,
     paddingHorizontal: space.xl,
     gap: space.md,
-  },
-  avatarCircle: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: color.haze,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: space.xs,
-  },
-  avatarInitial: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: color.mute,
-    lineHeight: 34,
-  },
-  displayName: {
-    ...t.heading,
-    color: color.ink,
-    textAlign: 'center',
-  },
-  handle: {
-    ...t.small,
-    color: color.faint,
-    textAlign: 'center',
   },
   privateBadge: {
     flexDirection: 'row' as const,

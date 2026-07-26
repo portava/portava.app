@@ -184,6 +184,8 @@ export default function PassportDeepLinkScreen() {
     );
   }
 
+  const [requestSent, setRequestSent] = useState(false);
+
   if (isPrivate && !isFriend) {
     // The passport header (avatar, name, @handle) is always public.
     // Build a minimal PublicProfile so PassportIdentityCard can render it;
@@ -221,9 +223,6 @@ export default function PassportDeepLinkScreen() {
           <PassportIdentityCard
             profile={minProfile}
             isOwner={false}
-            isFollowing={isAuthed ? follow.isFollowing : undefined}
-            followLoading={isAuthed ? (follow.loading || follow.toggling) : undefined}
-            onFollowPress={isAuthed && !isOwner ? follow.toggle : undefined}
           />
           {/* Lock message + Add Friend CTA */}
           <PrivateProfileWall
@@ -233,8 +232,9 @@ export default function PassportDeepLinkScreen() {
               displayName: previewProfile?.displayName ?? null,
               avatarUrl: previewProfile?.avatarUrl ?? null,
             }}
-            friendRequestPending={friendRequestPending}
+            friendRequestPending={friendRequestPending || requestSent}
             isOwnProfile={isOwner}
+            onRequestSent={() => setRequestSent(true)}
           />
         </ScrollView>
       </View>

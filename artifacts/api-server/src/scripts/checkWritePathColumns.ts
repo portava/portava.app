@@ -86,7 +86,7 @@ const ALLOWLIST = new Set<string>([
   // pending live apply. Remove once the columns are present in the live DB schema.
   "events.show_header_publicly",
   "trips.show_header_publicly",
-  "profiles.show_profile_picture_publicly",
+  // "profiles.show_profile_picture_publicly", // column not yet in live DB
   // Place-image accuracy/provenance columns — Task 1 migration (20260809_place_image_accuracy.sql)
   // pending live apply. Remove once the columns are present in the live DB schema.
   "generated_visuals.accuracy_status",

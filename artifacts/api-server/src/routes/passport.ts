@@ -16,10 +16,10 @@ import {
 const router = Router();
 
 const PUBLIC_PROFILE_COLUMNS =
-  "id, username, display_name, name, bio, avatar_url, cover_photo_url, home_city, home_country, travel_style, interests, verified, verification_status, verified_at, passport_visibility, created_at, is_private, spoken_languages, travel_styles, travel_pace, looking_for, account_status, passport_tab_order, show_profile_picture_publicly";
+  "id, username, display_name, name, bio, avatar_url, cover_photo_url, home_city, home_country, travel_style, interests, verified, verification_status, verified_at, passport_visibility, created_at, is_private, spoken_languages, travel_styles, travel_pace, looking_for, account_status, passport_tab_order";
 
 const PUBLIC_PROFILE_COLUMNS_FALLBACK =
-  "id, username, name, bio, avatar_url, home_city, home_country, travel_style, interests, verified, verification_status, verified_at, passport_visibility, created_at, show_profile_picture_publicly";
+  "id, username, name, bio, avatar_url, home_city, home_country, travel_style, interests, verified, verification_status, verified_at, passport_visibility, created_at";
 
 const PUBLIC_POSTCARD_COLUMNS =
   "id, post_id, user_id, media_url, caption, location_name, location_city, location_country, location_verified, stamp_eligible, visibility, status, pinned_at, note, created_at";

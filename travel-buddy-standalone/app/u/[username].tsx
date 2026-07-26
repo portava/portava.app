@@ -598,6 +598,9 @@ function PublicPassportScreenNative() {
   const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
   const [sessionAllViewed, setSessionAllViewed] = useState(false);
   const [tab, setTab] = useState<Tab>('postcards');
+  // Tracks whether the viewer just sent a request this session so the header
+  // badge can flip to "Pending" without waiting for a full data reload.
+  const [requestSent, setRequestSent] = useState(false);
 
   // Social profile (friend/block/about data) loaded via the friends service
   const [social, setSocial] = useState<SocialProfile | null>(null);
@@ -857,15 +860,14 @@ function PublicPassportScreenNative() {
               profile={previewAsProfile}
               isOwner={false}
               isPrivateView={true}
-              isFollowing={follow.isFollowing}
-              followLoading={follow.loading || follow.toggling}
-              onFollowPress={!isOwn ? follow.toggle : undefined}
+              privatePendingRequest={friendRequestPending || requestSent}
             />
             {/* Lock message + CTA below the always-visible header */}
             <PrivateProfileWall
               profile={wallProfile}
-              friendRequestPending={friendRequestPending}
+              friendRequestPending={friendRequestPending || requestSent}
               isOwnProfile={isOwn}
+              onRequestSent={() => setRequestSent(true)}
             />
           </ScrollView>
         </View>

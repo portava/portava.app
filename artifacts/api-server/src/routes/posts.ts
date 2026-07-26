@@ -842,11 +842,41 @@ router.get("/posts", async (req, res) => {
       sendError(res, "db_error", followErr.message);
       return;
     }
-    const followingIds: string[] = (followRows ?? []).map((r: any) => r.following_id);
-    if (followingIds.length === 0) {
+    const rawFollowingIds: string[] = (followRows ?? []).map((r: any) => r.following_id);
+    if (rawFollowingIds.length === 0) {
       res.status(200).json({ posts: [], feed: "following" });
       return;
     }
+
+    // Defensive layer: strip private accounts whose follow was never accepted.
+    // user_follows rows for private accounts are only written on acceptance, but
+    // if an account turned private AFTER being followed the row can be stale.
+    // Cross-check: private followees must also have a user_friendships row.
+    let followingIds = rawFollowingIds;
+    try {
+      const { data: privateFollowees } = await sc
+        .from("profiles")
+        .select("id")
+        .in("id", rawFollowingIds)
+        .or("is_private.eq.true,passport_visibility.eq.private");
+      if (privateFollowees && privateFollowees.length > 0) {
+        const privateIdSet = new Set<string>(privateFollowees.map((p: any) => p.id));
+        const { data: friendships } = await sc
+          .from("user_friendships")
+          .select("user_a, user_b")
+          .or(`user_a.eq.${user.id},user_b.eq.${user.id}`);
+        const acceptedPrivate = new Set<string>();
+        for (const f of friendships ?? []) {
+          const other = (f as any).user_a === user.id ? (f as any).user_b : (f as any).user_a;
+          if (privateIdSet.has(other)) acceptedPrivate.add(other);
+        }
+        followingIds = rawFollowingIds.filter(id => !privateIdSet.has(id) || acceptedPrivate.has(id));
+        if (followingIds.length === 0) {
+          res.status(200).json({ posts: [], feed: "following" });
+          return;
+        }
+      }
+    } catch { /* best-effort — degrade to unfiltered if this check fails */ }
 
     // Step 1b: fetch caller's hidden post IDs before the main LIMIT query so
     // the DB returns exactly `limit` visible posts (no premature end-of-feed).
@@ -990,7 +1020,7 @@ router.get("/posts", async (req, res) => {
     const { data: privateProfiles } = await svc
       .from("profiles")
       .select("id")
-      .eq("is_private", true);
+      .or("is_private.eq.true,passport_visibility.eq.private");
     for (const p of privateProfiles ?? []) privateAuthorIds.push((p as any).id);
   } catch { /* best-effort: feed degrades gracefully if this lookup fails */ }
 

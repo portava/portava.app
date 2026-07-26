@@ -89,7 +89,7 @@ const POST_MEDIA_COLUMNS =
 
 const PROFILE_COLUMNS =
   "id, username, full_name, avatar_url, is_private, is_verified, bio, " +
-  "followers_count, following_count, account_status, show_profile_picture_publicly";
+  "followers_count, following_count, account_status";
 
 // ── Query schemas ─────────────────────────────────────────────────────────────
 
