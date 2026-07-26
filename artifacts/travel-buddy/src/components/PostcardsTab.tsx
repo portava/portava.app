@@ -1,17 +1,69 @@
 import React, { useState, useMemo } from 'react';
 import {
   View, Text, Pressable, Modal, TextInput, ActivityIndicator,
-  Alert, StyleSheet, ScrollView, useWindowDimensions,
+  Alert, StyleSheet, useWindowDimensions,
 } from 'react-native';
 import { CachedImage, withStorageParams } from './CachedImage.tsx';
 import { useHydratedMedia } from '../services/mediaUrl.ts';
 import { router } from 'expo-router';
-import { MapPin, Pin, MoreHorizontal, Plus, PlayCircle, Clock, AlertCircle, Layers, ChevronDown } from 'lucide-react-native';
+import { MapPin, Pin, MoreHorizontal, Plus, PlayCircle, Clock, AlertCircle, Layers, ChevronDown, Lock, Ban, EyeOff } from 'lucide-react-native';
 import type { PassportPostcard } from '../types/models.ts';
 import { MediaStampOverlay } from './StampOverlayBadge.tsx';
 import { PostcardEmptyState } from './PostcardEmptyState.tsx';
 import type { usePostcardActions } from '../hooks/usePostcardActions.ts';
+import type { PostcardsSentinel } from '../services/profile.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
+
+/* ────────────────────────────────────────────────────────── */
+/* Sentinel state views (private / blocked / unavailable)     */
+/* ────────────────────────────────────────────────────────── */
+const SENTINEL_COPY: Record<PostcardsSentinel, { Icon: React.ComponentType<any>; title: string; body: string }> = {
+  private: {
+    Icon: Lock,
+    title: 'Private passport',
+    body: 'This passport is private. Follow this traveler to see their postcards.',
+  },
+  blocked: {
+    Icon: Ban,
+    title: 'Content unavailable',
+    body: 'Postcard content is not available.',
+  },
+  unavailable: {
+    Icon: EyeOff,
+    title: 'Account unavailable',
+    body: 'This account is no longer available.',
+  },
+};
+
+function PostcardSentinelView({ kind }: { kind: PostcardsSentinel }) {
+  const { Icon, title, body } = SENTINEL_COPY[kind];
+  return (
+    <View style={sv.root} accessibilityRole="text" accessibilityLabel={title}>
+      <View style={sv.iconWrap}>
+        <Icon size={28} color={color.mute} strokeWidth={1.6} />
+      </View>
+      <Text style={sv.title}>{title}</Text>
+      <Text style={sv.body}>{body}</Text>
+    </View>
+  );
+}
+
+const sv = StyleSheet.create({
+  root: {
+    paddingVertical: space.xxxl,
+    paddingHorizontal: space.xl,
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  iconWrap: {
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: color.haze,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: space.xs,
+  },
+  title: { fontSize: 16, fontWeight: '700', color: color.ink, textAlign: 'center' },
+  body:  { fontSize: 14, color: color.mute, textAlign: 'center', lineHeight: 20 },
+});
 
 const INTEREST_LABEL: Record<string, string> = {
   nightlife: 'Nightlife', food: 'Food', beach: 'Beach', luxury: 'Luxury',
@@ -269,12 +321,18 @@ export function PostcardsTab({
   isOwner,
   actions,
   onAddPostcard,
+  sentinel,
 }: {
   postcards: PassportPostcard[];
   isOwner: boolean;
   actions?: Actions;
   onAddPostcard?: () => void;
+  /** Sentinel returned by the postcards endpoint — renders a graceful state instead of the grid. */
+  sentinel?: PostcardsSentinel;
 }) {
+  // Sentinel states take precedence over an empty (or populated) postcard list.
+  if (sentinel) return <PostcardSentinelView kind={sentinel} />;
+
   const { width } = useWindowDimensions();
   const [sort, setSort] = useState<SortKey>('newest');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);

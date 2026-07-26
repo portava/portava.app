@@ -590,7 +590,7 @@ function PublicPassportScreenNative() {
   const { username } = useLocalSearchParams<{ username: string }>();
   const { userId: currentUserId } = useSession();
 
-  const { profile, postcards, loading, error, isPrivate, previewProfile, isFriend, friendRequestPending, privateProfileId, notFound, isBlocked, blockedTargetId } = usePublicPassport(username ?? '');
+  const { profile, postcards, loading, error, isPrivate, previewProfile, isFriend, friendRequestPending, privateProfileId, notFound, isBlocked, blockedTargetId, postcardSentinel } = usePublicPassport(username ?? '');
   // Use privateProfileId as fallback so the Follow button works on the private-profile header.
   const follow = useFollow(profile?.id ?? privateProfileId ?? null);
   const ringState = useHighlightRingState(profile?.id ?? null);
@@ -982,7 +982,7 @@ function PublicPassportScreenNative() {
         </View>
 
         <View style={{ marginTop: space.md }}>
-          {tab === 'postcards' && <PostcardsTab postcards={postcards} isOwner={isOwn} />}
+          {tab === 'postcards' && <PostcardsTab postcards={postcards} isOwner={isOwn} sentinel={isOwn ? undefined : postcardSentinel ?? undefined} />}
           {tab === 'stamps' && (
             <StampsTab
               stamps={profile?.stamps ?? []}
