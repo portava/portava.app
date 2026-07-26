@@ -19,7 +19,6 @@ interface NearbyCoords {
   lng: number;
 }
 
-
 // ── State shape ───────────────────────────────────────────────────────────────
 
 interface GridSlot {
@@ -74,7 +73,6 @@ export function useGridFeed(): GridFeedState {
   // Nearby coordinates — stored so loadFeed / loadMore can re-use them.
   const nearbyCoords = useRef<NearbyCoords | undefined>(undefined);
 
-
   // Trigger re-render by bumping a version counter.
   const [, bumpVersion] = useState(0);
   const rerender = useCallback(() => bumpVersion((v) => v + 1), []);
@@ -107,7 +105,6 @@ export function useGridFeed(): GridFeedState {
 
       // Discard if a filter switch happened while this request was in flight.
       if (slotRef.current.sessionId !== requestSessionId) return;
-
 
       if (result.ok && result.data) {
         const data = result.data;

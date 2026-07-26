@@ -126,7 +126,6 @@ export function GridFilterBar({ selectedFilter, onFilterChange }: GridFilterBarP
             }
           };
 
-
           return (
             <Pressable
               key={chip.key}
