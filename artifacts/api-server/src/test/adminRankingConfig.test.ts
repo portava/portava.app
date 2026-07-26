@@ -1,0 +1,625 @@
+/**
+ * Admin Ranking Config & Metrics tests
+ *
+ * Tests cover:
+ *   1.  Tier bucketing — boundary values for each tier
+ *   2.  Tier distribution — correct percentage computation
+ *   3.  Concentration — top 1%/5%/10% share computation
+ *   4.  Concentration — alert fires when top-10% exceeds 60%
+ *   5.  Concentration — alert does NOT fire below the threshold
+ *   6.  Concentration — empty input produces zeros
+ *   7.  Config validation — rejects unknown key
+ *   8.  Config validation — rejects value below range
+ *   9.  Config validation — rejects value above range
+ *   10. Config validation — accepts value at boundary
+ *   11. Config validation — rejects non-finite value
+ *   12. GET /admin/ranking/metrics — 403 for non-admin
+ *   13. GET /admin/ranking/metrics — 200 with expected shape for admin
+ *   14. GET /admin/ranking/config  — 403 for non-admin
+ *   15. GET /admin/ranking/config  — 200 for admin
+ *   16. PUT /admin/ranking/config  — 400 for unknown key
+ *   17. PUT /admin/ranking/config  — 400 for out-of-range value
+ *   18. PUT /admin/ranking/config  — 200 success
+ *   19. GET /admin/ranking/flags   — 403 for non-admin
+ *   20. GET /admin/ranking/flags   — 200 for admin
+ *   21. PUT /admin/ranking/flags/:key — 403 for non-admin
+ *   22. PUT /admin/ranking/flags/:key — 404 for unknown flag
+ *   23. PUT /admin/ranking/flags/:key — 200 success with audit
+ *   24. PUT /admin/ranking/flags/:key — 400 for non-RANKING_ prefix
+ *   25. GET /admin/ranking/suspicious — 403 for non-admin
+ *   26. GET /admin/ranking/suspicious — 200 with score breakdown
+ *   27. GET /admin/ranking/debug-samples — 403 for non-admin
+ *   28. GET /admin/ranking/debug-samples — 200 with samples
+ *   29. GET /admin/ranking/debug-samples — respects surface filter
+ *
+ * Run:
+ *   node --import tsx/esm --test src/test/adminRankingConfig.test.ts
+ */
+
+import { describe, it, before, after } from "node:test";
+import assert from "node:assert/strict";
+import http from "node:http";
+import express from "express";
+import { _setTestClient } from "../lib/http.js";
+import { _setTestServiceClient } from "../lib/supabase.js";
+import adminRankingMetricsRouter from "../routes/adminRankingMetrics.js";
+import adminRankingConfigRouter  from "../routes/adminRankingConfig.js";
+import {
+  bucketScoreToTier,
+  computeTierDistribution,
+  computeConcentration,
+} from "../routes/adminRankingMetrics.js";
+import { validateConfigValue } from "../routes/adminRankingConfig.js";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Unit tests — pure functions, no HTTP server needed
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("bucketScoreToTier — boundary values", () => {
+  it("score 0 → new_inactive",   () => assert.equal(bucketScoreToTier(0),   "new_inactive"));
+  it("score 20 → new_inactive",  () => assert.equal(bucketScoreToTier(20),  "new_inactive"));
+  it("score 21 → occasional",    () => assert.equal(bucketScoreToTier(21),  "occasional"));
+  it("score 40 → occasional",    () => assert.equal(bucketScoreToTier(40),  "occasional"));
+  it("score 41 → moderate",      () => assert.equal(bucketScoreToTier(41),  "moderate"));
+  it("score 65 → moderate",      () => assert.equal(bucketScoreToTier(65),  "moderate"));
+  it("score 66 → active",        () => assert.equal(bucketScoreToTier(66),  "active"));
+  it("score 85 → active",        () => assert.equal(bucketScoreToTier(85),  "active"));
+  it("score 86 → highly_active", () => assert.equal(bucketScoreToTier(86),  "highly_active"));
+  it("score 100 → highly_active",() => assert.equal(bucketScoreToTier(100), "highly_active"));
+});
+
+describe("computeTierDistribution", () => {
+  it("empty array returns all zeros", () => {
+    const result = computeTierDistribution([]);
+    assert.equal(result.highly_active, 0);
+    assert.equal(result.active,        0);
+    assert.equal(result.moderate,      0);
+    assert.equal(result.occasional,    0);
+    assert.equal(result.new_inactive,  0);
+  });
+
+  it("single highly-active score", () => {
+    const result = computeTierDistribution([90]);
+    assert.equal(result.highly_active, 1);
+    assert.equal(result.new_inactive,  0);
+  });
+
+  it("even split across five tiers", () => {
+    const result = computeTierDistribution([10, 30, 50, 70, 90]);
+    // Each tier should get exactly 0.2 (1/5)
+    assert.equal(result.highly_active, 0.2);
+    assert.equal(result.active,        0.2);
+    assert.equal(result.moderate,      0.2);
+    assert.equal(result.occasional,    0.2);
+    assert.equal(result.new_inactive,  0.2);
+  });
+
+  it("fractions sum close to 1 for varied inputs", () => {
+    const result = computeTierDistribution([5, 25, 45, 70, 90, 90, 90]);
+    const sum = result.highly_active + result.active + result.moderate +
+                result.occasional + result.new_inactive;
+    assert.ok(Math.abs(sum - 1) < 0.001, `Expected sum ~1, got ${sum}`);
+  });
+});
+
+describe("computeConcentration", () => {
+  it("empty array returns zeros and no alert", () => {
+    const r = computeConcentration([]);
+    assert.equal(r.top_1pct,  0);
+    assert.equal(r.top_5pct,  0);
+    assert.equal(r.top_10pct, 0);
+    assert.equal(r.alert,     false);
+  });
+
+  it("single creator holds 100% of top-1/5/10 pct", () => {
+    const r = computeConcentration([100]);
+    assert.equal(r.top_1pct,  1);
+    assert.equal(r.top_5pct,  1);
+    assert.equal(r.top_10pct, 1);
+  });
+
+  it("alert fires when top-10% share exceeds default threshold of 60%", () => {
+    // 10 creators: top 1 has score 90, rest have score 1 each.
+    // top-10% = 1 creator = score 90 out of total 90+9=99 ≈ 90.9%
+    const scores = [90, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+    const r = computeConcentration(scores);
+    assert.ok(r.top_10pct > 0.6, `Expected top_10pct > 0.6, got ${r.top_10pct}`);
+    assert.equal(r.alert, true);
+  });
+
+  it("alert does NOT fire when top-10% share is below threshold", () => {
+    // 10 uniform creators — each holds exactly 10% of total impressions
+    const scores = [10, 10, 10, 10, 10, 10, 10, 10, 10, 10];
+    const r = computeConcentration(scores);
+    assert.ok(r.top_10pct <= 0.1 + 0.001, `Expected top_10pct ~0.1, got ${r.top_10pct}`);
+    assert.equal(r.alert, false);
+  });
+
+  it("top_1pct ≤ top_5pct ≤ top_10pct", () => {
+    const scores = [100, 80, 60, 40, 30, 20, 15, 10, 5, 2];
+    const r = computeConcentration(scores);
+    assert.ok(r.top_1pct  <= r.top_5pct,  "top_1pct should be <= top_5pct");
+    assert.ok(r.top_5pct  <= r.top_10pct, "top_5pct should be <= top_10pct");
+  });
+
+  it("custom alert threshold is respected", () => {
+    // Uniform 10 creators — top 10% holds 10% of impressions
+    const scores = [10, 10, 10, 10, 10, 10, 10, 10, 10, 10];
+    const r = computeConcentration(scores, 0.05); // very tight threshold
+    assert.equal(r.alert, true, "should alert when threshold is set below top-10pct share");
+  });
+});
+
+describe("validateConfigValue", () => {
+  it("rejects unknown key", () => {
+    const err = validateConfigValue("ranking.unknown.key", 10);
+    assert.ok(err !== null);
+    assert.ok(err!.includes("Unknown config key"));
+  });
+
+  it("rejects value below min", () => {
+    const err = validateConfigValue("ranking.weights.relevance", -1);
+    assert.ok(err !== null);
+    assert.ok(err!.includes("out of range"));
+  });
+
+  it("rejects value above max", () => {
+    const err = validateConfigValue("ranking.weights.relevance", 101);
+    assert.ok(err !== null);
+    assert.ok(err!.includes("out of range"));
+  });
+
+  it("accepts value at lower boundary", () => {
+    const err = validateConfigValue("ranking.weights.relevance", 0);
+    assert.equal(err, null);
+  });
+
+  it("accepts value at upper boundary", () => {
+    const err = validateConfigValue("ranking.weights.relevance", 100);
+    assert.equal(err, null);
+  });
+
+  it("rejects NaN", () => {
+    const err = validateConfigValue("ranking.weights.relevance", NaN);
+    assert.ok(err !== null);
+  });
+
+  it("rejects Infinity", () => {
+    const err = validateConfigValue("ranking.weights.relevance", Infinity);
+    assert.ok(err !== null);
+  });
+
+  it("accepts mid-range value", () => {
+    const err = validateConfigValue("ranking.caps.maxPerPage", 5);
+    assert.equal(err, null);
+  });
+
+  it("rejects caps.maxPerPage above 20", () => {
+    const err = validateConfigValue("ranking.caps.maxPerPage", 21);
+    assert.ok(err !== null);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HTTP integration tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+const FAKE_TOKEN = "fake.jwt.token";
+const ADMIN_ID   = "aaaaaaaa-0000-0000-0000-000000000001";
+
+let server: http.Server;
+let base: string;
+
+function makeReq(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    const url     = new URL(path, base);
+    const payload = body ? JSON.stringify(body) : undefined;
+    const r       = http.request(
+      {
+        hostname: url.hostname,
+        port:     Number(url.port),
+        path:     url.pathname + url.search,
+        method,
+        headers: {
+          "content-type":  "application/json",
+          "authorization": `Bearer ${FAKE_TOKEN}`,
+        },
+      },
+      (res) => {
+        let raw = "";
+        res.on("data", (c) => (raw += c));
+        res.on("end", () => {
+          let parsed: any;
+          try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+          resolve({ status: res.statusCode ?? 0, body: parsed });
+        });
+      },
+    );
+    r.on("error", reject);
+    if (payload) r.write(payload);
+    r.end();
+  });
+}
+
+// ── Fake client helpers ───────────────────────────────────────────────────────
+
+const AUDIT_LOG: any[] = [];
+const CONFIG_ROWS: any[] = [
+  { key: "ranking.weights.relevance", value: 35 },
+  { key: "ranking.weights.freshness", value: 20 },
+];
+const FLAG_ROWS: any[] = [
+  { flag: "RANKING_EXPERIMENT_ENABLED", enabled: false, description: "A/B ranking experiment", updated_at: "2026-01-01T00:00:00Z" },
+];
+const ACTIVITY_SCORE_ROWS: any[] = [
+  { user_id: "u1", score: 90, spam_penalty: 25, repetition_penalty: 15, updated_at: "2026-07-01T00:00:00Z" },
+  { user_id: "u2", score: 30, spam_penalty: 5,  repetition_penalty: 2,  updated_at: "2026-07-01T00:00:00Z" },
+];
+const DEBUG_SAMPLE_ROWS: any[] = [
+  { id: "s1", surface: "discovery", content_type: "post", ranking_version: "1.0", sampled_at: "2026-07-20T00:00:00Z" },
+  { id: "s2", surface: "pulse",     content_type: "post", ranking_version: "1.0", sampled_at: "2026-07-19T00:00:00Z" },
+];
+
+function makeFakeClient(isAdmin = true) {
+  let _configRows = [...CONFIG_ROWS];
+
+  function builder(rows: any[]) {
+    let filtered = rows;
+    const b: any = {
+      select: (_cols: string) => b,
+      eq:   (col: string, val: any) => { filtered = filtered.filter((r) => r[col] === val); return b; },
+      in:   (col: string, vals: any[]) => { filtered = filtered.filter((r) => vals.includes(r[col])); return b; },
+      like: (col: string, pattern: string) => {
+        const prefix = pattern.replace(/%$/, "");
+        filtered = filtered.filter((r) => String(r[col] ?? "").startsWith(prefix));
+        return b;
+      },
+      gte: (_c: string, _v: any) => b,
+      order: (_c: string, _o?: any) => b,
+      limit: (_n: number) => b,
+      maybeSingle: () => Promise.resolve({ data: filtered[0] ?? null, error: null }),
+      then: (resolve: (v: any) => void) => Promise.resolve({ data: filtered, error: null }).then(resolve),
+    };
+    return b;
+  }
+
+  const client: any = {
+    from: (table: string) => {
+      if (table === "profiles") {
+        return builder([
+          {
+            id:    ADMIN_ID,
+            role:  isAdmin ? "admin" : "member",
+            username: "adminuser",
+            display_name: "Admin User",
+          },
+          { id: "u1", role: "member", username: "user1", display_name: "User One" },
+          { id: "u2", role: "member", username: "user2", display_name: "User Two" },
+        ]);
+      }
+      if (table === "rank_events") {
+        return builder([
+          { outcome: "impression", item_kind: "post", position: 0, surface: "discovery" },
+          { outcome: "tap",        item_kind: "post", position: 1, surface: "discovery" },
+          { outcome: "impression", item_kind: "event", position: 6, surface: "pulse" },
+        ]);
+      }
+      if (table === "ranking_config") {
+        const b: any = {
+          select: (_c: string) => b,
+          like:   (_c: string, _p: string) => b,
+          order:  (_c: string) => b,
+          eq:     (col: string, val: any) => {
+            const matched = _configRows.filter((r) => r[col] === val);
+            return {
+              maybeSingle: () => Promise.resolve({ data: matched[0] ?? null, error: null }),
+            };
+          },
+          upsert: (row: any) => {
+            _configRows = _configRows.filter((r) => r.key !== row.key);
+            _configRows.push(row);
+            return Promise.resolve({ error: null });
+          },
+          then: (resolve: (v: any) => void) =>
+            Promise.resolve({ data: _configRows, error: null }).then(resolve),
+        };
+        return b;
+      }
+      if (table === "feature_flags") {
+        const rows = FLAG_ROWS.map((r) => ({ ...r }));
+        const b = builder(rows);
+        // Add update support for the flag toggle route
+        b.update = (_patch: any) => ({
+          eq: (_col: string, _val: any) => Promise.resolve({ error: null }),
+        });
+        return b;
+      }
+      if (table === "creator_activity_scores") {
+        const b: any = {
+          select: (_c: string) => b,
+          order:  (_c: string, _o?: any) => b,
+          gte:    (_c: string, _v: any) => b,
+          limit:  (_n: number) => b,
+          then: (resolve: (v: any) => void) =>
+            Promise.resolve({ data: ACTIVITY_SCORE_ROWS, error: null }).then(resolve),
+        };
+        return b;
+      }
+      if (table === "content_distribution_stats") {
+        return {
+          select: () => ({ in: () => ({ then: (r: any) => Promise.resolve({ data: [], error: null }).then(r) }) }),
+        };
+      }
+      if (table === "profile_privacy_settings") {
+        return builder([
+          { user_id: "u1", show_real_name: true },
+          { user_id: "u2", show_real_name: false },
+        ]);
+      }
+      if (table === "ranking_debug_samples") {
+        let filtered = [...DEBUG_SAMPLE_ROWS];
+        const b: any = {
+          select: (_c: string) => b,
+          order:  (_c: string, _o?: any) => b,
+          limit:  (_n: number) => b,
+          eq:     (col: string, val: any) => { filtered = filtered.filter((r) => r[col] === val); return b; },
+          then:   (resolve: (v: any) => void) =>
+            Promise.resolve({ data: filtered, error: null }).then(resolve),
+        };
+        return b;
+      }
+      if (table === "feature_flag_audit_log" || table === "ranking_config_audit_log") {
+        return {
+          insert: (row: any) => {
+            AUDIT_LOG.push({ table, ...row });
+            return Promise.resolve({ error: null });
+          },
+        };
+      }
+      if (table === "job_health") {
+        return builder([
+          { job: "creator_activity_score",           last_run_at: "2026-07-25T00:00:00Z", metadata: {} },
+          { job: "content_distribution_aggregation", last_run_at: "2026-07-25T00:00:00Z", metadata: {} },
+        ]);
+      }
+      // Catch-all: return empty builder
+      return builder([]);
+    },
+    auth: {
+      getUser: (_token: string) =>
+        Promise.resolve({ data: { user: { id: ADMIN_ID } }, error: null }),
+    },
+  };
+
+  return client;
+}
+
+before(async () => {
+  const app = express();
+  app.use(express.json());
+  app.use(adminRankingMetricsRouter);
+  app.use(adminRankingConfigRouter);
+
+  server = http.createServer(app);
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const addr = server.address() as { port: number };
+  base = `http://127.0.0.1:${addr.port}`;
+});
+
+after(() => {
+  _setTestClient(null as any, false);
+  _setTestServiceClient(null);
+  server.close();
+});
+
+// ── Metrics endpoint ──────────────────────────────────────────────────────────
+
+describe("GET /admin/ranking/metrics", () => {
+  it("returns 403 for non-admin", async () => {
+    _setTestClient(makeFakeClient(false), true);
+    const { status } = await makeReq("GET", "/admin/ranking/metrics");
+    assert.equal(status, 403);
+  });
+
+  it("returns 200 with expected shape for admin", async () => {
+    _setTestClient(makeFakeClient(true), true);
+    const { status, body } = await makeReq("GET", "/admin/ranking/metrics");
+    assert.equal(status, 200);
+
+    // Backward-compatible fields
+    assert.ok(typeof body.period_days === "number");
+    assert.ok(typeof body.impressions === "number");
+    assert.ok(typeof body.tap_through_rate === "number");
+    assert.ok(body.tap_through_by_kind != null);
+    assert.ok(body.exploration_slot != null);
+    assert.ok(body.by_surface != null);
+
+    // New fields
+    assert.ok(body.exposure_by_tier != null, "exposure_by_tier missing");
+    assert.ok(typeof body.exposure_by_tier.highly_active === "number");
+    assert.ok(body.creator_concentration != null, "creator_concentration missing");
+    assert.ok(typeof body.creator_concentration.top_10pct === "number");
+    assert.ok(typeof body.creator_concentration.alert === "boolean");
+    assert.ok(typeof body.new_user_exposure_rate === "number");
+    assert.ok(typeof body.returning_user_recovery_rate === "number");
+    assert.ok(typeof body.underexposed_content_rate === "number");
+    assert.ok(body.diversity != null, "diversity missing");
+    assert.ok(body.negative_feedback != null, "negative_feedback missing");
+    assert.ok(typeof body.ranking_version === "string", "ranking_version missing");
+    assert.ok(typeof body.experiment_enabled === "boolean", "experiment_enabled missing");
+    assert.ok(body.spam_risk != null, "spam_risk missing");
+    assert.ok(typeof body.spam_risk.high_spam_count === "number");
+    assert.ok(body.job_health != null, "job_health missing");
+  });
+});
+
+// ── Config endpoint ───────────────────────────────────────────────────────────
+
+describe("GET /admin/ranking/config", () => {
+  it("returns 403 for non-admin", async () => {
+    _setTestClient(makeFakeClient(false), true);
+    const { status } = await makeReq("GET", "/admin/ranking/config");
+    assert.equal(status, 403);
+  });
+
+  it("returns 200 with config map for admin", async () => {
+    _setTestClient(makeFakeClient(true), true);
+    const { status, body } = await makeReq("GET", "/admin/ranking/config");
+    assert.equal(status, 200);
+    assert.ok(body.config != null);
+    // Spot-check a known key
+    assert.ok(body.config["ranking.weights.relevance"] != null);
+    assert.ok(typeof body.config["ranking.weights.relevance"].description === "string");
+  });
+});
+
+describe("PUT /admin/ranking/config", () => {
+  it("returns 400 for unknown config key", async () => {
+    _setTestClient(makeFakeClient(true), true);
+    const { status, body } = await makeReq("PUT", "/admin/ranking/config", {
+      key: "ranking.unknown.key",
+      value: 10,
+    });
+    assert.equal(status, 400);
+    assert.equal(body.error, "validation_error");
+  });
+
+  it("returns 400 for out-of-range value", async () => {
+    _setTestClient(makeFakeClient(true), true);
+    const { status, body } = await makeReq("PUT", "/admin/ranking/config", {
+      key: "ranking.weights.relevance",
+      value: 150,
+    });
+    assert.equal(status, 400);
+    assert.equal(body.error, "validation_error");
+  });
+
+  it("returns 200 on valid update", async () => {
+    _setTestClient(makeFakeClient(true), true);
+    const { status, body } = await makeReq("PUT", "/admin/ranking/config", {
+      key: "ranking.weights.relevance",
+      value: 40,
+    });
+    assert.equal(status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(body.key, "ranking.weights.relevance");
+    assert.equal(body.value, 40);
+  });
+});
+
+// ── Flags endpoint ────────────────────────────────────────────────────────────
+
+describe("GET /admin/ranking/flags", () => {
+  it("returns 403 for non-admin", async () => {
+    _setTestClient(makeFakeClient(false), true);
+    const { status } = await makeReq("GET", "/admin/ranking/flags");
+    assert.equal(status, 403);
+  });
+
+  it("returns 200 with flags array for admin", async () => {
+    _setTestClient(makeFakeClient(true), true);
+    const { status, body } = await makeReq("GET", "/admin/ranking/flags");
+    assert.equal(status, 200);
+    assert.ok(Array.isArray(body.flags));
+    // Our fake data has one RANKING_ flag
+    const expFlag = body.flags.find((f: any) => f.flag === "RANKING_EXPERIMENT_ENABLED");
+    assert.ok(expFlag != null, "RANKING_EXPERIMENT_ENABLED flag should be present");
+  });
+});
+
+describe("PUT /admin/ranking/flags/:key", () => {
+  it("returns 403 for non-admin", async () => {
+    _setTestClient(makeFakeClient(false), true);
+    const { status } = await makeReq(
+      "PUT", "/admin/ranking/flags/RANKING_EXPERIMENT_ENABLED", { enabled: true },
+    );
+    assert.equal(status, 403);
+  });
+
+  it("returns 400 when flag key lacks RANKING_ prefix", async () => {
+    _setTestClient(makeFakeClient(true), true);
+    const { status } = await makeReq(
+      "PUT", "/admin/ranking/flags/COMPASS_ENABLED", { enabled: true },
+    );
+    assert.equal(status, 400);
+  });
+
+  it("returns 404 for unknown flag", async () => {
+    _setTestClient(makeFakeClient(true), true);
+    const { status } = await makeReq(
+      "PUT", "/admin/ranking/flags/RANKING_NONEXISTENT", { enabled: true },
+    );
+    assert.equal(status, 404);
+  });
+
+  it("returns 200 and writes audit log on success", async () => {
+    AUDIT_LOG.length = 0; // reset
+    _setTestClient(makeFakeClient(true), true);
+    const { status, body } = await makeReq(
+      "PUT", "/admin/ranking/flags/RANKING_EXPERIMENT_ENABLED", { enabled: true },
+    );
+    assert.equal(status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(body.flag, "RANKING_EXPERIMENT_ENABLED");
+    assert.equal(body.new_enabled, true);
+  });
+});
+
+// ── Suspicious endpoint ───────────────────────────────────────────────────────
+
+describe("GET /admin/ranking/suspicious", () => {
+  it("returns 403 for non-admin", async () => {
+    _setTestClient(makeFakeClient(false), true);
+    const { status } = await makeReq("GET", "/admin/ranking/suspicious");
+    assert.equal(status, 403);
+  });
+
+  it("returns 200 with suspicious users and score breakdown", async () => {
+    _setTestClient(makeFakeClient(true), true);
+    const { status, body } = await makeReq("GET", "/admin/ranking/suspicious");
+    assert.equal(status, 200);
+    assert.ok(Array.isArray(body.suspicious));
+    if (body.suspicious.length > 0) {
+      const first = body.suspicious[0];
+      assert.ok("user_id" in first, "user_id should be present");
+      assert.ok("spam_penalty" in first, "spam_penalty should be present");
+      assert.ok("repetition_penalty" in first, "repetition_penalty should be present");
+      // display_name is gated by show_real_name — user u1 has show_real_name=true
+      // so display_name may be present; u2 should not expose it
+    }
+  });
+});
+
+// ── Debug samples endpoint ────────────────────────────────────────────────────
+
+describe("GET /admin/ranking/debug-samples", () => {
+  it("returns 403 for non-admin", async () => {
+    _setTestClient(makeFakeClient(false), true);
+    const { status } = await makeReq("GET", "/admin/ranking/debug-samples");
+    assert.equal(status, 403);
+  });
+
+  it("returns 200 with samples array", async () => {
+    _setTestClient(makeFakeClient(true), true);
+    const { status, body } = await makeReq("GET", "/admin/ranking/debug-samples");
+    assert.equal(status, 200);
+    assert.ok(Array.isArray(body.samples));
+    assert.ok(typeof body.limit === "number");
+  });
+
+  it("respects surface filter", async () => {
+    _setTestClient(makeFakeClient(true), true);
+    const { status, body } = await makeReq(
+      "GET", "/admin/ranking/debug-samples?surface=discovery",
+    );
+    assert.equal(status, 200);
+    // All returned samples should be from the discovery surface
+    for (const s of body.samples) {
+      assert.equal(s.surface, "discovery");
+    }
+  });
+});

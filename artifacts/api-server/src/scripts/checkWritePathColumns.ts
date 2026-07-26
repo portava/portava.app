@@ -121,6 +121,9 @@ const SKIP_TABLES = new Set<string>([
   // Place image reports table — Task 1 migration (20260809_place_image_accuracy.sql)
   // pending live apply. Remove once the table exists in the live DB schema.
   "place_image_reports",
+  // Ranking config audit log — migration pending live apply (Task 2735).
+  // Remove once the table exists in the live DB schema.
+  "ranking_config_audit_log",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────
