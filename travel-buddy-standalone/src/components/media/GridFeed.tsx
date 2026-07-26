@@ -328,6 +328,7 @@ export function GridFeed() {
       <GridFilterBar selectedFilter={filter} onFilterChange={handleFilterChange} />
       <FlatList
         ref={flatListRef}
+        testID="grid-flatlist"
         data={items}
         numColumns={NUM_COLUMNS}
         keyExtractor={keyExtractor}
