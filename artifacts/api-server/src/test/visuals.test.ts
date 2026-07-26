@@ -19,7 +19,7 @@ import type { VisualInputSnapshot } from "../lib/visuals/types.js";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import { requestGeneration } from "../lib/visuals/service.js";
-import { runVisualGenerationCycle } from "../lib/visuals/generationWorker.js";
+import { runVisualGenerationCycle, recoverStuckVisualJobs } from "../lib/visuals/generationWorker.js";
 
 function snap(over: Partial<VisualInputSnapshot> = {}): VisualInputSnapshot {
   return {
@@ -684,6 +684,73 @@ test("runVisualGenerationCycle: job left in 'replaced' status is not re-queued",
   } finally {
     _setTestServiceClient(null as any);
   }
+});
+
+// ── recoverStuckVisualJobs ────────────────────────────────────────────────────
+
+test("recoverStuckVisualJobs resets a generating row past its locked_until to queued", async () => {
+  const stuckId = "stuck-visual-001";
+  const updatePayloads: any[] = [];
+
+  const fakeClient = {
+    from(_table: string) {
+      let isUpdateChain = false;
+      const b: any = {
+        select()        { return b; },
+        update(p: any)  { isUpdateChain = true; updatePayloads.push({ ...p }); return b; },
+        eq()            { return b; },
+        lt()            { return b; },
+        limit()         { return b; },
+        in()            { return b; },
+        then(onF: any, onR: any) {
+          if (isUpdateChain) {
+            return Promise.resolve({ data: null, error: null }).then(onF, onR);
+          }
+          // Select chain — return the one stuck row
+          return Promise.resolve({ data: [{ id: stuckId }], error: null }).then(onF, onR);
+        },
+      };
+      return b;
+    },
+  };
+
+  const count = await recoverStuckVisualJobs(fakeClient as any);
+  assert.equal(count, 1, "should return 1 recovered job");
+  assert.equal(updatePayloads.length, 1, "exactly one update should be issued");
+  const upd = updatePayloads[0];
+  assert.equal(upd.status, "queued",  "reset status must be 'queued'");
+  assert.equal(upd.locked_until, null, "locked_until must be cleared");
+  assert.equal(upd.locked_by,    null, "locked_by must be cleared");
+});
+
+test("recoverStuckVisualJobs does NOT reset a generating row whose locked_until is still in the future", async () => {
+  const updatePayloads: any[] = [];
+
+  const fakeClient = {
+    from(_table: string) {
+      let isUpdateChain = false;
+      const b: any = {
+        select()        { return b; },
+        update(p: any)  { isUpdateChain = true; updatePayloads.push({ ...p }); return b; },
+        eq()            { return b; },
+        lt()            { return b; },
+        limit()         { return b; },
+        in()            { return b; },
+        then(onF: any, onR: any) {
+          if (isUpdateChain) {
+            return Promise.resolve({ data: null, error: null }).then(onF, onR);
+          }
+          // The future-locked row does not pass lt(locked_until, now) — DB returns empty
+          return Promise.resolve({ data: [], error: null }).then(onF, onR);
+        },
+      };
+      return b;
+    },
+  };
+
+  const count = await recoverStuckVisualJobs(fakeClient as any);
+  assert.equal(count, 0, "should return 0 — no jobs recovered");
+  assert.equal(updatePayloads.length, 0, "no update should be issued for a future-locked row");
 });
 
 describe("visuals route — authorization", () => {
