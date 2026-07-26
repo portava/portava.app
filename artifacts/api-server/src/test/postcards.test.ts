@@ -1351,6 +1351,53 @@ describe('GET /users/:username/passport/postcards — visibility gating', () => 
     assert.ok(!('blocked' in body));
   });
 
+  it('blocks a friend when effective privacy is "private" via profile_privacy_settings — profile row is public [C2-settings]', async () => {
+    // Regression: profile row says is_private=false / passport_visibility="public",
+    // but profile_privacy_settings.profile_visibility="private".  resolveProfileVisibility
+    // treats the settings row as higher-precedence and returns "followers_only" for a
+    // friend, which would previously bypass the isPrivatePassport gate and serve postcards.
+    seedTargetProfile({ passport_visibility: 'public', is_private: false });
+    seedPublicPostcard();
+    seedViewerProfile();
+    withViewer();
+    // Effective privacy override: settings row says "private"
+    allPrivacySettings.push({
+      user_id: TARGET_ID,
+      profile_visibility: 'private',
+      show_real_name: false,
+      show_current_city: true,
+      show_home_country: true,
+      show_visited_places: true,
+      show_upcoming_trips: true,
+      show_past_trips: true,
+      show_posts: true,
+      show_stamps: true,
+      show_friends: true,
+      show_followers: true,
+      allow_messages_from: 'anyone',
+      allow_friend_requests: true,
+      allow_follow: true,
+      allow_tagging: true,
+      allow_profile_discovery: true,
+      delayed_posting_default: false,
+      precise_location_visible: false,
+    });
+    // Viewer IS a friend — resolveProfileVisibility returns "followers_only" (granted),
+    // but the postcard wall must still be blocked because effective privacy is "private".
+    const ua = VIEWER_ID < TARGET_ID ? VIEWER_ID : TARGET_ID;
+    const ub = VIEWER_ID < TARGET_ID ? TARGET_ID : VIEWER_ID;
+    allFriendships.push({ user_a: ua, user_b: ub });
+
+    const { status, body } = await apiReq('GET', '/users/target/passport/postcards', undefined, TOKEN_VIEWER);
+    assert.equal(status, 200);
+    assert.equal(
+      body.private, true,
+      'effective private via profile_privacy_settings must block postcard wall even for friends',
+    );
+    assert.deepEqual(body.postcards, [], 'postcards must be empty when blocked by effective privacy');
+    assert.ok(!('blocked' in body));
+  });
+
   it('returns postcards for the owner regardless of followers_only setting', async () => {
     // OWNER accessing their own followers_only profile
     allProfiles.find((p: any) => p.id === OWNER_ID).passport_visibility = 'followers_only';

@@ -347,9 +347,11 @@ router.get("/users/:username/passport/postcards", async (req, res) => {
   // resolveProfileVisibility handles account-status, block relationships, and
   // follower/friend checks — the same pattern used by the passport route.
   let visibility: string;
+  let resolvedPrivacySettings: { profile_visibility?: string } | null = null;
   try {
     const result = await resolveProfileVisibility(sc, viewerId, targetId, profile);
     visibility = result.visibility;
+    resolvedPrivacySettings = result.privacySettings;
   } catch (e: any) {
     req.log.error({ err: e }, "passport/postcards: visibility check failed");
     sendError(res, "db_error", e.message ?? "Visibility check failed");
@@ -371,7 +373,16 @@ router.get("/users/:username/passport/postcards", async (req, res) => {
   // the viewer is a friend of a private account).  The passport itself may be
   // viewable to friends, but the postcard wall is an additional surface that
   // requires explicit opt-in via passport_visibility = 'followers_only'.
-  const isPrivatePassport = profile.passport_visibility === "private" || profile.is_private === true;
+  //
+  // Use the EFFECTIVE privacy level: profile_privacy_settings.profile_visibility
+  // takes precedence over the profile row's is_private / passport_visibility
+  // fields (same precedence rule as resolveProfileVisibility itself). A user who
+  // set their effective privacy to "private" via settings while the profile row
+  // still shows is_private=false must still have their postcard wall blocked.
+  const isPrivatePassport =
+    profile.passport_visibility === "private" ||
+    profile.is_private === true ||
+    resolvedPrivacySettings?.profile_visibility === "private";
   if (!isMe && isPrivatePassport) {
     res.status(200).json({ private: true, postcards: [] });
     return;
