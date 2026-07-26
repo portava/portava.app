@@ -530,3 +530,63 @@ describe("GET /admin/place-images/queue", () => {
     }
   });
 });
+
+// ── Reports listing — schema guard + access control ───────────────────────────
+// These tests cover GET /admin/place-images/reports which was broken by
+// a merged commit that selected `privacy_show_real_name` from `profiles`
+// (that column does not exist there; it lives on profile_privacy_settings).
+// The 200 assertion itself is the regression guard: the route would return 500
+// if the select string contained the invalid column.
+
+describe("GET /admin/place-images/reports — reports endpoint", () => {
+  let app: TestApp;
+
+  before(async () => { app = await startAdminApp(makeFakeSc({ isAdmin: true })); });
+  after(async () => { await app.close(); _setTestClient(null as any, false); });
+
+  it("returns 200 with items and pagination for an admin", async () => {
+    const res = await fetch(`${app.baseUrl}/api/admin/place-images/reports`, {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as any;
+    assert.ok(Array.isArray(body.items));
+    assert.ok("pagination" in body);
+    assert.ok("page"  in body.pagination);
+    assert.ok("total" in body.pagination);
+  });
+
+  it("reporter object does not contain privacy_show_real_name (schema regression guard)", async () => {
+    // If the query selects `privacy_show_real_name` from profiles, Supabase returns
+    // a column-not-found error and the route returns 500.  The 200 above already
+    // covers that.  This test additionally verifies the reporter sub-object shape.
+    const res = await fetch(`${app.baseUrl}/api/admin/place-images/reports`, {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as any;
+    for (const item of body.items) {
+      if (item.reporter) {
+        assert.ok(
+          !("privacy_show_real_name" in item.reporter),
+          `reporter must not include privacy_show_real_name: ${JSON.stringify(item.reporter)}`,
+        );
+      }
+      assert.ok("reporterHandle" in item, "each item must have a reporterHandle field");
+    }
+  });
+
+  it("returns 403 for non-admin callers", async () => {
+    const client = makeFakeSc({ isAdmin: false });
+    const nonAdminApp = await startAdminApp(client);
+    try {
+      const res = await fetch(`${nonAdminApp.baseUrl}/api/admin/place-images/reports`, {
+        headers: { Authorization: `Bearer ${USER_TOKEN}` },
+      });
+      assert.equal(res.status, 403);
+    } finally {
+      await nonAdminApp.close();
+      _setTestClient(null as any, false);
+    }
+  });
+});

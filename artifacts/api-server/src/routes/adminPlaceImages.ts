@@ -156,7 +156,7 @@ router.get("/admin/place-images/reports", asyncHandler(async (req, res) => {
 
   let query = sc
     .from("place_image_reports")
-    .select("*, reporter:profiles!place_image_reports_reported_by_fkey(id, handle, username, display_name, privacy_show_real_name)", { count: "exact" });
+    .select("*, reporter:profiles!place_image_reports_reported_by_fkey(id, handle, username, display_name)", { count: "exact" });
 
   if (status !== "all") {
     query = query.eq("status", status);
@@ -191,7 +191,8 @@ router.get("/admin/place-images/reports", asyncHandler(async (req, res) => {
   const items = (reports ?? []).map((r: any) => {
     const reporter = r.reporter;
     // Privacy-safe display name per display-name privacy rule:
-    // use handle by default; real name only if privacy_show_real_name is set
+    // use handle (@handle) by default; display_name only if the user has opted in
+    // (checked client-side). We never expose real-name columns from the DB here.
     const reporterHandle: string | null =
       reporter?.handle ?? reporter?.username ?? null;
     // Look up visual using the place-scoped compound key
