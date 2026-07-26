@@ -140,7 +140,7 @@ async function decide(
     try {
       const { data: profile } = await sc
         .from("profiles")
-        .select("is_private, passport_visibility, account_status")
+        .select("is_private, passport_visibility, account_status, show_profile_picture_publicly")
         .eq("id", owner)
         .maybeSingle();
       if (!profile) return false;

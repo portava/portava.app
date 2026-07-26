@@ -37,13 +37,37 @@ interface Props {
   isOwnProfile?: boolean;
 }
 
+/** First character of the display name, falling back to handle, then '?'. */
+function resolveInitial(displayName: string | null, handle: string | null): string {
+  const primary = displayName ?? handle ?? '';
+  return primary.charAt(0).toUpperCase() || '?';
+}
+
 export function PrivateProfileWall({
   profile,
   friendRequestPending = false,
   isOwnProfile = false,
 }: Props) {
+  const initial = resolveInitial(profile.displayName, profile.handle);
+  const primaryName = profile.displayName ?? profile.handle ?? '';
+
   return (
     <View style={s.container}>
+      {/* Avatar initials fallback — shown when no avatarUrl is available */}
+      <View style={s.avatarCircle}>
+        <Text style={s.avatarInitial}>{initial}</Text>
+      </View>
+
+      {/* Display name */}
+      {!!primaryName && (
+        <Text style={s.displayName}>{primaryName}</Text>
+      )}
+
+      {/* @handle subline */}
+      {!!profile.handle && (
+        <Text style={s.handle}>@{profile.handle}</Text>
+      )}
+
       {/* "Private account" badge */}
       <View style={s.privateBadge}>
         <Lock size={11} color={color.mute} />
@@ -76,6 +100,31 @@ const s = StyleSheet.create({
     paddingBottom: space.xxxl,
     paddingHorizontal: space.xl,
     gap: space.md,
+  },
+  avatarCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: space.xs,
+  },
+  avatarInitial: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: color.mute,
+    lineHeight: 34,
+  },
+  displayName: {
+    ...t.heading,
+    color: color.ink,
+    textAlign: 'center',
+  },
+  handle: {
+    ...t.small,
+    color: color.faint,
+    textAlign: 'center',
   },
   privateBadge: {
     flexDirection: 'row' as const,

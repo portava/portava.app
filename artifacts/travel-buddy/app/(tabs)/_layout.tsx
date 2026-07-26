@@ -4,7 +4,7 @@ import Animated, { useAnimatedStyle, interpolate } from 'react-native-reanimated
 import { BlurView } from 'expo-blur';
 import { Tabs, router, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Activity, Compass, Plus, Plane } from 'lucide-react-native';
+import { Activity, Compass, Plus, Plane, Film } from 'lucide-react-native';
 import { PassportIcon } from '../../src/components/icons/PassportIcon';
 import { NotificationBell } from '../../src/components/NotificationBell';
 import { color, space, type as t, shadow } from '../../src/theme/tokens';
@@ -16,6 +16,7 @@ import { getPendingTripInvites } from '../../src/services/trips';
 import { getMyProfile } from '../../src/services/profile';
 import { useSession } from '../../src/context/SessionContext';
 import { navBarProgress } from '../../src/hooks/useNavBarCollapse';
+import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 
 const NAV_ITEMS = [
   { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
@@ -24,18 +25,32 @@ const NAV_ITEMS = [
   { href: '/(tabs)/passport', label: 'Passport', icon: PassportIcon, match: ['/(tabs)/passport'] },
 ] as const;
 
+const MEDIA_NAV_ITEM = {
+  href: '/(tabs)/media',
+  label: 'Media',
+  icon: Film,
+  match: ['/(tabs)/media'],
+} as const;
+
 /* ─── Desktop sidebar ──────────────────────────────────────────────────── */
 function DesktopSidebar({
   unreadNotifications,
   unreadMessages,
   pendingRequests,
+  mediaTabEnabled,
 }: {
   unreadNotifications: number;
   unreadMessages: number;
   pendingRequests: number;
+  mediaTabEnabled: boolean;
 }) {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
+
+  // Build sidebar items: insert Media between Explore and Trips when enabled.
+  const sidebarItems = mediaTabEnabled
+    ? [NAV_ITEMS[0], NAV_ITEMS[1], MEDIA_NAV_ITEM, NAV_ITEMS[2], NAV_ITEMS[3]]
+    : [...NAV_ITEMS];
 
   return (
     <View style={[ds.sidebar, { paddingTop: insets.top + space.xl, paddingBottom: insets.bottom + space.lg }]}>
@@ -45,7 +60,7 @@ function DesktopSidebar({
       </View>
 
       <View style={ds.navLinks}>
-        {NAV_ITEMS.map(({ href, label, icon: Icon, match }) => {
+        {sidebarItems.map(({ href, label, icon: Icon, match }) => {
           const active = match.some((m) => pathname === m || pathname.startsWith(m + '/'));
           return (
             <Pressable
@@ -83,9 +98,10 @@ interface FloatBarProps {
   newHighlights: number;
   pendingTripInvites: number;
   unreadNotifications: number;
+  mediaTabEnabled: boolean;
 }
 
-function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications }: FloatBarProps) {
+function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications, mediaTabEnabled }: FloatBarProps) {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
@@ -152,6 +168,48 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
 
   const TAB_HITSLOP = { top: 10, bottom: 10, left: 6, right: 6 };
 
+  // Renders a standard tab item (icon + animated label).
+  function TabItem({
+    href,
+    label,
+    icon: Icon,
+    match,
+    badge,
+  }: {
+    href: string;
+    label: string;
+    icon: React.ComponentType<{ size: number; color: string }>;
+    match: readonly string[];
+    badge?: number;
+  }) {
+    const active = isActive(match);
+    return (
+      <Pressable
+        style={fb.item}
+        onPress={() => router.push(href as any)}
+        hitSlop={TAB_HITSLOP}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+      >
+        <Animated.View style={[fb.itemInner, active && { backgroundColor: activeHighlight }, animatedItemInnerStyle]}>
+          <Animated.View style={animatedIconStyle}>
+            <View>
+              <Icon size={20} color={active ? iconActive : iconMuted} />
+              {(badge ?? 0) > 0 && (
+                <View style={fb.dot}>
+                  <Text style={fb.dotText}>{(badge ?? 0) > 9 ? '9+' : String(badge)}</Text>
+                </View>
+              )}
+            </View>
+          </Animated.View>
+          <Animated.View style={[fb.labelClip, animatedLabelStyle]}>
+            <Text style={[fb.label, active && fb.labelActive, { color: active ? iconActive : iconMuted }]}>{label}</Text>
+          </Animated.View>
+        </Animated.View>
+      </Pressable>
+    );
+  }
+
   return (
     <View
       style={[fb.wrapper, { bottom: insets.bottom + 12 }]}
@@ -166,85 +224,38 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
             style={StyleSheet.absoluteFillObject}
           />
         )}
-        {/* Left items: Pulse, Explore */}
-        {NAV_ITEMS.slice(0, 2).map(({ href, label, icon: Icon, match }) => {
-          const active = isActive(match);
-          const badge = label === 'Explore' ? newHighlights : 0;
-          return (
-            <Pressable
-              key={href}
-              style={fb.item}
-              onPress={() => router.push(href as any)}
-              hitSlop={TAB_HITSLOP}
-              accessibilityRole="button"
-              accessibilityLabel={label}
-            >
-              <Animated.View style={[fb.itemInner, active && { backgroundColor: activeHighlight }, animatedItemInnerStyle]}>
-                <Animated.View style={animatedIconStyle}>
-                  <View>
-                    <Icon size={20} color={active ? iconActive : iconMuted} />
-                    {badge > 0 && (
-                      <View style={fb.dot}>
-                        <Text style={fb.dotText}>{badge > 9 ? '9+' : String(badge)}</Text>
-                      </View>
-                    )}
-                  </View>
-                </Animated.View>
-                <Animated.View style={[fb.labelClip, animatedLabelStyle]}>
-                  <Text style={[fb.label, active && fb.labelActive, { color: active ? iconActive : iconMuted }]}>{label}</Text>
-                </Animated.View>
-              </Animated.View>
-            </Pressable>
-          );
-        })}
 
-        {/* Center: Create / + button */}
-        <Pressable
-          style={fb.plusWrap}
-          onPress={() => router.push('/create')}
-          hitSlop={TAB_HITSLOP}
-          accessibilityRole="button"
-          accessibilityLabel="Create a post"
-        >
-          <Animated.View style={[fb.plusBtn, animatedPlusStyle]}>
-            <Plus size={22} color="#fff" strokeWidth={2.5} />
-          </Animated.View>
-        </Pressable>
+        {/* Left items: Pulse, Explore */}
+        <TabItem href={NAV_ITEMS[0].href} label={NAV_ITEMS[0].label} icon={NAV_ITEMS[0].icon} match={NAV_ITEMS[0].match} badge={0} />
+        <TabItem href={NAV_ITEMS[1].href} label={NAV_ITEMS[1].label} icon={NAV_ITEMS[1].icon} match={NAV_ITEMS[1].match} badge={newHighlights} />
+
+        {/* Center: Media tab (flag on) or Plus/create button (flag off) */}
+        {mediaTabEnabled ? (
+          /* Media tab item — same visual style as other items */
+          <TabItem
+            href={MEDIA_NAV_ITEM.href}
+            label={MEDIA_NAV_ITEM.label}
+            icon={MEDIA_NAV_ITEM.icon}
+            match={MEDIA_NAV_ITEM.match}
+          />
+        ) : (
+          /* Original Plus/create button */
+          <Pressable
+            style={fb.plusWrap}
+            onPress={() => router.push('/create')}
+            hitSlop={TAB_HITSLOP}
+            accessibilityRole="button"
+            accessibilityLabel="Create a post"
+          >
+            <Animated.View style={[fb.plusBtn, animatedPlusStyle]}>
+              <Plus size={22} color="#fff" strokeWidth={2.5} />
+            </Animated.View>
+          </Pressable>
+        )}
 
         {/* Right items: Trips, Passport */}
-        {NAV_ITEMS.slice(2).map(({ href, label, icon: Icon, match }) => {
-          const active = isActive(match);
-          const badge =
-            label === 'Trips' ? pendingTripInvites
-            : label === 'Passport' ? unreadNotifications
-            : 0;
-          return (
-            <Pressable
-              key={href}
-              style={fb.item}
-              onPress={() => router.push(href as any)}
-              hitSlop={TAB_HITSLOP}
-              accessibilityRole="button"
-              accessibilityLabel={label}
-            >
-              <Animated.View style={[fb.itemInner, active && { backgroundColor: activeHighlight }, animatedItemInnerStyle]}>
-                <Animated.View style={animatedIconStyle}>
-                  <View>
-                    <Icon size={20} color={active ? iconActive : iconMuted} />
-                    {badge > 0 && (
-                      <View style={fb.dot}>
-                        <Text style={fb.dotText}>{badge > 9 ? '9+' : String(badge)}</Text>
-                      </View>
-                    )}
-                  </View>
-                </Animated.View>
-                <Animated.View style={[fb.labelClip, animatedLabelStyle]}>
-                  <Text style={[fb.label, active && fb.labelActive, { color: active ? iconActive : iconMuted }]}>{label}</Text>
-                </Animated.View>
-              </Animated.View>
-            </Pressable>
-          );
-        })}
+        <TabItem href={NAV_ITEMS[2].href} label={NAV_ITEMS[2].label} icon={NAV_ITEMS[2].icon} match={NAV_ITEMS[2].match} badge={pendingTripInvites} />
+        <TabItem href={NAV_ITEMS[3].href} label={NAV_ITEMS[3].label} icon={NAV_ITEMS[3].icon} match={NAV_ITEMS[3].match} badge={unreadNotifications} />
       </Animated.View>
     </View>
   );
@@ -259,6 +270,8 @@ export default function TabLayout() {
   const [pendingRequests, setPendingRequests] = useState(0);
   const [pendingTripInvites, setPendingTripInvites] = useState(0);
   const { isAuthed, loading, configured } = useSession();
+  const { isEnabled } = useFeatureFlags();
+  const mediaTabEnabled = isEnabled('MEDIA_TAB_ENABLED');
 
   useEffect(() => {
     if (configured && !loading && !isAuthed) {
@@ -321,6 +334,12 @@ export default function TabLayout() {
         options={{ title: 'Explore' }}
         listeners={{ focus: refreshUnread }}
       />
+      {/* Media tab — always registered; href:null hides it from default tab bar
+          when the feature flag is off so deep-links don't resolve to it. */}
+      <Tabs.Screen
+        name="media"
+        options={{ title: 'Media', href: mediaTabEnabled ? undefined : null }}
+      />
       <Tabs.Screen name="events" options={{ title: 'Events', href: null }} />
       <Tabs.Screen
         name="trips"
@@ -351,6 +370,7 @@ export default function TabLayout() {
           unreadNotifications={unreadNotifications}
           unreadMessages={unreadMessages}
           pendingRequests={pendingRequests}
+          mediaTabEnabled={mediaTabEnabled}
         />
         <View style={ds.desktopContent}>{tabs}</View>
       </View>
@@ -364,6 +384,7 @@ export default function TabLayout() {
         newHighlights={newHighlights}
         pendingTripInvites={pendingTripInvites}
         unreadNotifications={unreadNotifications}
+        mediaTabEnabled={mediaTabEnabled}
       />
     </View>
   );
@@ -498,13 +519,13 @@ const ds = StyleSheet.create({
   navLabelActive: { color: color.ink, fontWeight: '700' },
   notifBtn: {
     flexDirection: 'row', alignItems: 'center', gap: space.md,
-    paddingVertical: space.md, paddingHorizontal: space.md, borderRadius: 10,
+    paddingVertical: space.md,
   },
   composeBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: space.sm, backgroundColor: color.signal,
-    borderRadius: 12, paddingVertical: space.md, paddingHorizontal: space.lg,
-    ...shadow.card,
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    backgroundColor: color.signal, borderRadius: 10,
+    paddingVertical: space.md, paddingHorizontal: space.lg,
+    justifyContent: 'center',
   },
   composeBtnText: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },
 });
