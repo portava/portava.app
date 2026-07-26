@@ -161,6 +161,35 @@ export interface AuthorizedEventView {
   updatedAt: string;
 }
 
+// ── Locked previews (deep-link surfaces) ────────────────────────────────────
+
+/**
+ * Returned for private/invite-only events when an unauthorized authenticated
+ * viewer hits GET /events/:id via a deep link.
+ *
+ * The `locked` sentinel tells the mobile client to render the private-wall
+ * component instead of attempting to render a full event detail screen with
+ * missing data. No title, venue, date, or attendee information is exposed.
+ */
+export interface LockedEventPreview {
+  /** Sentinel: always true — clients test this to identify the shape. */
+  locked: true;
+  eventId: string;
+}
+
+/**
+ * Returned for private/invite-only trips when an unauthorized authenticated
+ * viewer hits GET /trips/:tripId via a deep link.
+ *
+ * The `locked` sentinel tells the mobile client to render the private-wall
+ * component. No title, destination, dates, or member information is exposed.
+ */
+export interface LockedTripPreview {
+  /** Sentinel: always true — clients test this to identify the shape. */
+  locked: true;
+  tripId: string;
+}
+
 // ── Trip ────────────────────────────────────────────────────────────────────
 
 /**

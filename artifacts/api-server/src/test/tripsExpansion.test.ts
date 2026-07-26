@@ -497,7 +497,7 @@ describe("trips-expansion routes", () => {
       assert.equal(r.body.tripNotes, undefined);
     });
 
-    it("returns 404 for buddies trip when the follow is only one-way", async () => {
+    it("returns locked sentinel (200) for buddies trip when the follow is only one-way", async () => {
       const { client } = makeFakeClient({
         trips: { rows: [
           { id: TRIP_ID, owner_id: OWNER_ID, title: "Buddies Trip", destination_city: "Lisbon",
@@ -512,10 +512,12 @@ describe("trips-expansion routes", () => {
       _setTestClient(client, true);
 
       const r = await req(port, "GET", `/trips/${TRIP_ID}`, { token: "other-token" });
-      assert.equal(r.status, 404);
+      assert.equal(r.status, 200);
+      assert.equal(r.body.locked, true, "one-way-follow buddies trip must return locked sentinel");
+      assert.equal(r.body.tripId, TRIP_ID, "locked sentinel must echo the tripId");
     });
 
-    it("returns 404 for private trip viewed by non-member", async () => {
+    it("returns locked sentinel (200) for private trip viewed by non-member", async () => {
       const { client } = makeFakeClient({
         trips: { rows: [
           { id: TRIP_ID, owner_id: OWNER_ID, title: "Private", destination_city: "Oslo",
@@ -527,7 +529,8 @@ describe("trips-expansion routes", () => {
       _setTestClient(client, true);
 
       const r = await req(port, "GET", `/trips/${TRIP_ID}`, { token: "other-token" });
-      assert.equal(r.status, 404);
+      assert.equal(r.status, 200);
+      assert.equal(r.body.locked, true, "private trip non-member must receive locked sentinel");
     });
   });
 

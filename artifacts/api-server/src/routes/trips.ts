@@ -854,7 +854,10 @@ router.post("/trips/:tripId/invite", async (req, res) => {
         : ((inviterRow as any)?.handle ? `@${(inviterRow as any).handle}` : "Someone"));
       await sendPushWithRetry(sc2, { userId, tokens: [(inviteeRow as any)?.expo_push_token] }, {
         title: "Trip invitation",
-        body:  `${inviterName} invited you to join ${tripTitle}`,
+        // Privacy: do not include the trip name or destination in the push body —
+        // the invitee has not accepted yet and the content may be private.
+        // Full details are available after the user opens the app.
+        body:  "You received a trip invitation.",
         data:  { type: "trip_invite_received", tripId },
       });
     } catch { /* best-effort */ }

@@ -590,7 +590,10 @@ describe("NotificationTemplateService", () => {
     const rendered = renderTemplate("trip.invite_received", { actor: "Alice", tripTitle: "Thailand Adventure", destination: "Bangkok" });
     assert.ok(rendered, "should render");
     assert.ok(rendered!.title.includes("Alice"), "title should include actor");
-    assert.ok(rendered!.body.includes("Thailand Adventure"), "body should include trip title");
+    // Body must be privacy-safe (generic) — no trip title or destination on the lock screen.
+    assert.ok(!rendered!.body.includes("Thailand Adventure"), "body must NOT include trip title (privacy)");
+    assert.ok(!rendered!.body.includes("Bangkok"), "body must NOT include destination (privacy)");
+    assert.ok(rendered!.body.length > 0, "body must not be empty");
     assert.equal(rendered!.category, "trips");
     assert.equal(rendered!.priority, "important");
   });

@@ -2630,17 +2630,20 @@ describe("RLS-equivalent access-control — host/cohost/outsider/blocked", () =>
     assert.equal(status, 403);
   });
 
-  it("outsider cannot see invite_only event detail", async () => {
+  it("outsider cannot see invite_only event detail — receives locked sentinel", async () => {
     _setTestClient(makeFakeClient({
       events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, visibility: "invite_only" }) ] },
       event_roles: { rows: [{ event_id: ID.ev1, user_id: ID.host1, role: "host" }] },
       event_rsvps: { rows: [] },
     }), true);
     ({ port, close } = await startServer());
-    const { status } = await req(port, "GET", `/api/events/${ID.ev1}`, null, ID.user1);
-    // Outsider hitting an invite_only event must be forbidden (not 200)
-    assert.notEqual(status, 200, "Outsider must not see invite_only event detail");
-    assert.ok([403, 404].includes(status), `Expected 403/404 for outsider on invite_only, got ${status}`);
+    const { status, body } = await req(port, "GET", `/api/events/${ID.ev1}`, null, ID.user1);
+    // Outsider hitting a non-public event receives the locked sentinel (200 + locked:true)
+    // so deep-link handlers can render a private-wall screen instead of a 404.
+    // The response must NOT contain any event fields (title, host, etc.).
+    assert.equal(status, 200, `Expected 200 locked sentinel, got ${status}`);
+    assert.equal(body.locked, true, "Outsider must receive locked:true sentinel for invite_only event");
+    assert.equal(body.title, undefined, "Locked sentinel must not expose event title");
   });
 
   it("blocked user cannot join an event", async () => {
@@ -2870,7 +2873,7 @@ describe("circle/trip visibility enforcement — join + rsvp gated on membership
     assert.equal(status, 403, `Non-circle-member must get 403 on RSVP, got ${status}`);
   });
 
-  it("circle event: non-member cannot view event detail (canViewEvent → 404)", async () => {
+  it("circle event: non-member cannot view event detail — receives locked sentinel", async () => {
     const circleId = "cccccccc-1111-0000-0000-000000000001";
     _setTestClient(makeFakeClient({
       events: { rows: [ makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "circle" as any, circle_id: circleId }) ] },
@@ -2879,8 +2882,11 @@ describe("circle/trip visibility enforcement — join + rsvp gated on membership
       circle_memberships: { rows: [] },
     }), true);
     ({ port, close } = await startServer());
-    const { status } = await req(port, "GET", `/api/events/${ID.ev1}`, null, ID.user1);
-    assert.ok([403, 404].includes(status), `Non-circle-member must get 403/404 on event detail, got ${status}`);
+    const { status, body } = await req(port, "GET", `/api/events/${ID.ev1}`, null, ID.user1);
+    // Non-public event: locked sentinel (200 + locked:true) so deep-link handlers
+    // can render a private wall instead of a generic not-found screen.
+    assert.equal(status, 200, `Non-circle-member must receive 200 locked sentinel, got ${status}`);
+    assert.equal(body.locked, true, "Non-circle-member must receive locked:true sentinel for circle event");
   });
 });
 

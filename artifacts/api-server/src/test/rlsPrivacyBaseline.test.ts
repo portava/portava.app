@@ -247,18 +247,20 @@ describe("RLS baseline — trips SELECT policy [C3]", () => {
   beforeEach(async () => { ({ server, port } = await startServer()); });
   afterEach(() => { server?.close(); });
 
-  it("outsider cannot read a private trip — returns 404", async () => {
+  it("outsider cannot read a private trip — returns locked sentinel (200)", async () => {
     _setTestClient(makeFakeClient({
       trips:        { rows: [baseTrip({ visibility: "private" })] },
       trip_members: { rows: [] },
       blocks:       { rows: [] },
     }), true);
 
-    const { status } = await apiReq(port, "GET", `/trips/${TRIP_ID}`, "tok-outsider");
-    assert.equal(status, 404, "outsider must receive 404 for a private trip");
+    const { status, body } = await apiReq(port, "GET", `/trips/${TRIP_ID}`, "tok-outsider");
+    assert.equal(status, 200, "outsider must receive 200 locked sentinel for a private trip");
+    assert.equal(body.locked, true, "response must carry locked:true sentinel");
+    assert.equal(body.tripId, TRIP_ID, "locked sentinel must echo back the tripId");
   });
 
-  it("outsider cannot read a buddies-only trip without mutual follow — returns 404", async () => {
+  it("outsider cannot read a buddies-only trip without mutual follow — returns locked sentinel (200)", async () => {
     _setTestClient(makeFakeClient({
       trips:        { rows: [baseTrip({ visibility: "buddies" })] },
       trip_members: { rows: [] },
@@ -266,19 +268,21 @@ describe("RLS baseline — trips SELECT policy [C3]", () => {
       blocks:       { rows: [] },
     }), true);
 
-    const { status } = await apiReq(port, "GET", `/trips/${TRIP_ID}`, "tok-outsider");
-    assert.equal(status, 404, "non-follower outsider must receive 404 for a buddies trip");
+    const { status, body } = await apiReq(port, "GET", `/trips/${TRIP_ID}`, "tok-outsider");
+    assert.equal(status, 200, "non-follower outsider must receive 200 locked sentinel for a buddies trip");
+    assert.equal(body.locked, true, "response must carry locked:true sentinel");
   });
 
-  it("outsider cannot read an invite-only trip — returns 404", async () => {
+  it("outsider cannot read an invite-only trip — returns locked sentinel (200)", async () => {
     _setTestClient(makeFakeClient({
       trips:        { rows: [baseTrip({ visibility: "invite" })] },
       trip_members: { rows: [] },
       blocks:       { rows: [] },
     }), true);
 
-    const { status } = await apiReq(port, "GET", `/trips/${TRIP_ID}`, "tok-outsider");
-    assert.equal(status, 404, "outsider must receive 404 for an invite-only trip");
+    const { status, body } = await apiReq(port, "GET", `/trips/${TRIP_ID}`, "tok-outsider");
+    assert.equal(status, 200, "outsider must receive 200 locked sentinel for an invite-only trip");
+    assert.equal(body.locked, true, "response must carry locked:true sentinel");
   });
 
   it("owner can read their own private trip — returns 200", async () => {

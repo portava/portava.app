@@ -777,7 +777,9 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
       ]);
       await sendPushWithRetry(sc2, { userId: requestedUserId, tokens: [(requesterRow as any)?.expo_push_token] }, {
         title: "Join request approved!",
-        body:  `You've been added to ${(tripRow as any)?.title ?? "the trip"}`,
+        // Privacy: do not expose the trip name on the lock screen.
+        // Full details load after the user opens the app with their session.
+        body:  "Your trip access request was approved.",
         data:  { type: "trip_join_approved", tripId },
       });
     } catch { /* best-effort */ }
@@ -842,7 +844,8 @@ router.post("/trips/:tripId/join-requests/:requestId/decline", async (req, res) 
       ]);
       await sendPushWithRetry(sc2, { userId: declinedUserId, tokens: [(requesterRow as any)?.expo_push_token] }, {
         title: "Join request update",
-        body:  `Your request to join ${(tripRow as any)?.title ?? "the trip"} was not approved`,
+        // Privacy: do not expose the trip name on the lock screen.
+        body:  "Your trip access request was not approved.",
         data:  { type: "trip_join_declined", tripId },
       });
     } catch { /* best-effort */ }
@@ -2643,8 +2646,11 @@ router.get("/trips/:tripId", async (req, res) => {
     }
   }
 
-  // All other cases (invite/private, not a member, not a mutual buddy): 404
-  sendError(res, "not_found", "Trip not found");
+  // All other cases (invite/private, not a member, not a mutual buddy):
+  // return a LockedTripPreview sentinel so deep-link handlers can render a
+  // private-wall screen rather than a generic "not found" error.
+  // No title, destination, dates, or member information is included.
+  res.status(200).json({ locked: true, tripId });
 });
 
 export default router;

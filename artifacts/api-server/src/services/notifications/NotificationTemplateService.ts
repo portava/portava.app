@@ -105,7 +105,11 @@ export const TEMPLATES: NotificationTemplate[] = [
     defaultPriority: 'important',
     defaultChannels: ['in_app', 'push'],
     title: ({ actor }) => `${actor} invited you to a trip`,
-    body: ({ tripTitle, destination }) => `Join${tripTitle ? ` "${tripTitle}"` : ''}${destination ? ` — ${destination}` : ''}`,
+    // Privacy: push notifications for trip invitations must not expose the trip
+    // name or destination on the lock screen — the invitee has not yet accepted.
+    // Full detail is available only after the user opens the app and the mobile
+    // client re-fetches from the API with their authenticated session.
+    body: () => "You received a trip invitation.",
     actionUrl: ({ tripId }) => `/trip/${tripId}`,
   }),
   tpl({

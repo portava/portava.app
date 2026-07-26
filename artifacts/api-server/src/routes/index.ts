@@ -103,6 +103,7 @@ import mapSearchRouter from "./mapSearch";
 import mediaFileRouter from "./mediaFile";
 import placesCanonicalRouter from "./placesCanonical";
 import fsqPlacesRouter from "./fsqPlaces";
+import ogRouter from "./og";
 
 const router: IRouter = Router();
 
@@ -215,5 +216,6 @@ router.use(fsqPlacesRouter);
 router.use(mapSearchRouter);
 router.use(mediaFileRouter);
 router.use(placesCanonicalRouter);
+router.use(ogRouter);
 
 export default router;

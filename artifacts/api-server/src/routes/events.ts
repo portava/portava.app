@@ -1907,11 +1907,21 @@ router.get("/events/:id", async (req, res) => {
   }
 
   // Visibility check — non-discoverable events (invite_only, friends_only,
-  // circle, trip) return 404 for unauthorized viewers so they cannot probe
-  // event existence. Only the PrivateEventPreview path is for future use on
-  // explicitly-discoverable surfaces (share links, etc.).
+  // circle, trip) are not visible to unauthorized viewers.
+  // Rather than returning 404 (which leaks no info but breaks deep links),
+  // return a LockedEventPreview sentinel so the mobile client can render a
+  // private-wall screen instead of a generic "not found" error.
+  // Public events that the viewer still cannot access (e.g. eligibility gate)
+  // remain a 404 to avoid probing event existence.
   if (!await canViewEvent(sc, ev as any, user.id)) {
-    sendError(res, "not_found", "Event not found or access denied"); return;
+    const evVis = (ev as any).visibility as string | null ?? "public";
+    if (evVis !== "public") {
+      // Non-public event: return locked sentinel — no title/venue/dates exposed.
+      res.status(200).json({ locked: true, eventId: id });
+    } else {
+      sendError(res, "not_found", "Event not found or access denied");
+    }
+    return;
   }
 
   // Viewer eligibility gates (age / trust / verified) — same rules as RSVP.
@@ -4597,7 +4607,10 @@ router.post("/events/:id/invite", async (req, res) => {
       if ((inviteeProfile as any).data?.expo_push_token) {
         await sendPushWithRetry(sc, { userId: inviteeId, tokens: [(inviteeProfile as any).data.expo_push_token] }, {
           title: "You're invited!",
-          body: `You've been invited to "${(evData as any).data?.title ?? "an event"}"`,
+          // Privacy: do not expose the event name on the lock screen — the
+          // invitee has not yet accepted and the event may be invite-only.
+          // Full detail loads after the user opens the app and re-fetches.
+          body: "You received an event invitation.",
           data: { eventId: id, type: "event_invite", inviteId: (invite as any).id },
         });
       }
