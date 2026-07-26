@@ -11,8 +11,27 @@
  * at least one verified reference image URL. When references are present, the prompt
  * is reference-grounded and follows strict truthfulness rules.
  */
-import type { VisualInputSnapshot } from "./types.js";
+import type { PlacePromptResult, VisualInputSnapshot } from "./types.js";
 import { styleInstruction, styleIsIllustrated } from "./styles.js";
+
+// ── Opaque constructor ────────────────────────────────────────────────────────
+// Only this module may call asPlacePromptResult. All external code that needs a
+// PlacePromptResult must go through buildPrompt / buildPlacePrompt /
+// buildEventPrompt / buildGenericPrompt — which return null when generation is
+// blocked — or through reconstitutePlacePromptResult for the DB round-trip.
+function asPlacePromptResult(s: string): PlacePromptResult {
+  return s as PlacePromptResult;
+}
+
+/**
+ * Re-wrap a prompt string that was previously validated and stored by
+ * requestGeneration. Only call this from processJob — where the string came
+ * from the `final_prompt` DB column and is therefore known to have passed the
+ * buildPrompt gate before it was persisted.
+ */
+export function reconstitutePlacePromptResult(storedPrompt: string): PlacePromptResult {
+  return storedPrompt as PlacePromptResult;
+}
 
 export const EVENT_PROMPT_VERSION = "event-header-v1";
 export const PLACE_PROMPT_VERSION = "place-header-v1";
@@ -51,7 +70,7 @@ function lines(pairs: Array<[string, string | null | undefined]>): string {
     .join("\n");
 }
 
-export function buildEventPrompt(s: VisualInputSnapshot): string {
+export function buildEventPrompt(s: VisualInputSnapshot): PlacePromptResult {
   const style = styleInstruction(s.style);
   const body = lines([
     ["Event type", [s.category, s.subcategory].filter(Boolean).join(" / ") || null],
@@ -61,16 +80,18 @@ export function buildEventPrompt(s: VisualInputSnapshot): string {
     ["Setting", s.setting],
     ["Activity", s.description],
   ]);
-  return [
-    `Create a premium, ${styleIsIllustrated(s.style) ? "illustrated" : "realistic"} editorial travel-lifestyle header image for a social event.`,
-    body,
-    `Visual style: ${style}.`,
-    peopleClause(s),
-    COMPOSITION,
-    "Do not render the event title as text inside the image.",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  return asPlacePromptResult(
+    [
+      `Create a premium, ${styleIsIllustrated(s.style) ? "illustrated" : "realistic"} editorial travel-lifestyle header image for a social event.`,
+      body,
+      `Visual style: ${style}.`,
+      peopleClause(s),
+      COMPOSITION,
+      "Do not render the event title as text inside the image.",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
 }
 
 /**
@@ -83,7 +104,7 @@ export function buildEventPrompt(s: VisualInputSnapshot): string {
  * When reference images are present for a specific real place, returns a strict
  * reference-grounded prompt that follows all spec truthfulness rules.
  */
-export function buildPlacePrompt(s: VisualInputSnapshot): string | null {
+export function buildPlacePrompt(s: VisualInputSnapshot): PlacePromptResult | null {
   const refUrls = s.referenceImageUrls ?? [];
 
   // ── Specific real-place policy ────────────────────────────────────────────
@@ -107,19 +128,21 @@ export function buildPlacePrompt(s: VisualInputSnapshot): string | null {
     ["Amenities", s.amenities && s.amenities.length ? s.amenities.join(", ") : null],
     ["Price level", s.priceLevel],
   ]);
-  return [
-    `Create a premium ${styleIsIllustrated(s.style) ? "illustrated" : "editorial"} representation of a ${descriptor || "place"}${
-      s.city ? ` in ${s.city}${s.country ? `, ${s.country}` : ""}` : ""
-    }.`,
-    body,
-    `Visual style: ${style}.`,
-    peopleClause(s),
-    "This is a category-based visual representation, not a documentary image of the actual venue.",
-    COMPOSITION,
-    "No claim that the scene is the real location; no real signage or business logo.",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  return asPlacePromptResult(
+    [
+      `Create a premium ${styleIsIllustrated(s.style) ? "illustrated" : "editorial"} representation of a ${descriptor || "place"}${
+        s.city ? ` in ${s.city}${s.country ? `, ${s.country}` : ""}` : ""
+      }.`,
+      body,
+      `Visual style: ${style}.`,
+      peopleClause(s),
+      "This is a category-based visual representation, not a documentary image of the actual venue.",
+      COMPOSITION,
+      "No claim that the scene is the real location; no real signage or business logo.",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
 }
 
 /**
@@ -136,7 +159,7 @@ export function buildPlacePrompt(s: VisualInputSnapshot): string | null {
 function buildReferenceGroundedPlacePrompt(
   s: VisualInputSnapshot,
   referenceImageUrls: string[],
-): string {
+): PlacePromptResult {
   const style = styleInstruction(s.style);
   const placeName = s.title ?? s.venue ?? "this place";
   const locationStr = [s.city, s.country].filter(Boolean).join(", ");
@@ -150,42 +173,46 @@ function buildReferenceGroundedPlacePrompt(
     ["Notable traits", s.traits && s.traits.length ? s.traits.join(", ") : null],
   ]);
 
-  return [
-    `Create a premium editorial header image of ${placeName}${locationStr ? ` in ${locationStr}` : ""}.`,
-    `This image MUST be grounded in the ${refCount} verified reference image${refCount !== 1 ? "s" : ""} provided.`,
-    body,
-    "STRICT TRUTHFULNESS RULES:",
-    "- Preserve the exact defining visual characteristics shown in the reference images.",
-    "- Do NOT invent structures, landmarks, or features that are not present in the references.",
-    "- Do NOT alter the location, geographical setting, or orientation of the place.",
-    "- Do NOT replace, remove, or add major architectural or natural features.",
-    "- Maintain photographic truthfulness: this must look like the actual place.",
-    "- The output will be labelled as an AI-enhanced representation; ensure it is faithful.",
-    `Visual style: ${style}.`,
-    peopleClause(s),
-    COMPOSITION,
-    "No readable text or logos. Do not add signage that is not in the reference images.",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  return asPlacePromptResult(
+    [
+      `Create a premium editorial header image of ${placeName}${locationStr ? ` in ${locationStr}` : ""}.`,
+      `This image MUST be grounded in the ${refCount} verified reference image${refCount !== 1 ? "s" : ""} provided.`,
+      body,
+      "STRICT TRUTHFULNESS RULES:",
+      "- Preserve the exact defining visual characteristics shown in the reference images.",
+      "- Do NOT invent structures, landmarks, or features that are not present in the references.",
+      "- Do NOT alter the location, geographical setting, or orientation of the place.",
+      "- Do NOT replace, remove, or add major architectural or natural features.",
+      "- Maintain photographic truthfulness: this must look like the actual place.",
+      "- The output will be labelled as an AI-enhanced representation; ensure it is faithful.",
+      `Visual style: ${style}.`,
+      peopleClause(s),
+      COMPOSITION,
+      "No readable text or logos. Do not add signage that is not in the reference images.",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
 }
 
-export function buildGenericPrompt(s: VisualInputSnapshot): string {
+export function buildGenericPrompt(s: VisualInputSnapshot): PlacePromptResult {
   const style = styleInstruction(s.style);
   const body = lines([
     ["Subject", s.title],
     ["Category", s.category],
     ["Location context", [s.city, s.country].filter(Boolean).join(", ") || null],
   ]);
-  return [
-    `Create a premium editorial travel header image.`,
-    body,
-    `Visual style: ${style}.`,
-    peopleClause(s),
-    COMPOSITION,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  return asPlacePromptResult(
+    [
+      `Create a premium editorial travel header image.`,
+      body,
+      `Visual style: ${style}.`,
+      peopleClause(s),
+      COMPOSITION,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
 }
 
 /**
@@ -194,7 +221,7 @@ export function buildGenericPrompt(s: VisualInputSnapshot): string {
  * Returns `null` when generation is blocked — callers must handle null and
  * route to a category_fallback or map_fallback instead of calling the provider.
  */
-export function buildPrompt(s: VisualInputSnapshot): string | null {
+export function buildPrompt(s: VisualInputSnapshot): PlacePromptResult | null {
   switch (s.purpose) {
     case "event_header":
       return buildEventPrompt(s);

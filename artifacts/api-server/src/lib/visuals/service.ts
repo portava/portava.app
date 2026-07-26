@@ -16,6 +16,7 @@ import { isFlagEnabled } from "../featureFlags.js";
 import {
   buildPrompt,
   promptVersionFor,
+  reconstitutePlacePromptResult,
 } from "./promptBuilder.js";
 import { NEGATIVE_PROMPT } from "./promptBuilder.js";
 import { verifyPlaceImage } from "./realPlaceVerification.js";
@@ -370,7 +371,7 @@ export async function processJob(visualId: string): Promise<void> {
   const input: ImageGenerationInput = {
     purpose: job.purpose,
     snapshot: job.input_snapshot,
-    finalPrompt: job.final_prompt,
+    finalPrompt: reconstitutePlacePromptResult(job.final_prompt),
     negativePrompt: job.negative_prompt,
     style: job.style,
     aspectRatio: job.aspect_ratio,

@@ -233,10 +233,26 @@ export interface VisualInputSnapshot {
   providerPlaceId?: string | null;
 }
 
+/**
+ * Opaque prompt token produced exclusively by buildPrompt / buildPlacePrompt /
+ * buildEventPrompt / buildGenericPrompt. The brand makes raw `string` unassignable
+ * to this type at call sites, so ImageGenerationInput.finalPrompt cannot be set
+ * without going through the prompt-builder gate.
+ *
+ * Because PlacePromptResult extends string, providers can use it directly wherever
+ * a string is expected — no accessor needed.
+ *
+ * The only way to construct a value of this type from a plain string is via
+ * reconstitutePlacePromptResult (reserved for the DB round-trip in processJob,
+ * where the prompt was already validated before being stored).
+ */
+export type PlacePromptResult = string & { readonly __placePromptBrand: true };
+
 export interface ImageGenerationInput {
   purpose: VisualPurpose;
   snapshot: VisualInputSnapshot;
-  finalPrompt: string;
+  /** A validated, builder-issued prompt token. Cannot be a raw string — must come from buildPrompt. */
+  finalPrompt: PlacePromptResult;
   negativePrompt: string;
   style: VisualStyle;
   aspectRatio: string;
