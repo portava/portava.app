@@ -25,6 +25,9 @@ import { DisplayMediaImage, MediaFallback } from '../ui/DisplayMediaImage.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import type { CanonicalPlace, PlaceStatus, NormalizedOpeningHours, PriceLevel } from '../../types/canonicalPlace.ts';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
+import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
+import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
+import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
 
 // ── Price level labels ────────────────────────────────────────────────────────
 
@@ -105,25 +108,48 @@ export function PlaceCard({ place }: PlaceCardProps) {
   const fallbackDesc = getPlaceCategoryFallback(place.category);
   const displayAddress = place.formattedAddress ?? place.address;
 
+  // Build candidates with real source metadata so isRepresentation is correct.
+  const _canonicalCandidates: HeaderCandidate[] = [];
+  if (place.headerImageUrl) {
+    _canonicalCandidates.push({
+      url: place.headerImageUrl,
+      source: (place.headerImageSource as HeaderCandidate['source']) ?? 'provider',
+    });
+  }
+  // Legacy imageUrl treated as provider (always a real photo, never AI).
+  if (place.imageUrl && place.imageUrl !== place.headerImageUrl) {
+    _canonicalCandidates.push({ url: place.imageUrl, source: 'provider' });
+  }
+  const resolvedCanonical = resolveHeaderImage(_canonicalCandidates, {
+    entityType: 'place',
+    category: place.category,
+    fallbackUrlFor: () => null,
+  });
+
   return (
     <View style={pc.container}>
       {/* Header image — category fallback when no real image available */}
-      <DisplayMediaImage
-        uri={place.headerImageUrl ?? place.imageUrl ?? null}
-        width={0}
-        height={220}
-        style={pc.headerImage}
-        resizeMode="cover"
-        alt={place.name}
-        fallback={
-          <MediaFallback
-            icon={<Text style={pc.fallbackEmoji}>{fallbackDesc.emoji}</Text>}
-            label={fallbackDesc.label}
-            bg={fallbackDesc.color + '33'}
-            style={pc.headerImageFallback}
-          />
-        }
-      />
+      <View style={pc.headerImageWrap}>
+        <DisplayMediaImage
+          uri={resolvedCanonical?.url ?? null}
+          width={0}
+          height={220}
+          style={pc.headerImage}
+          resizeMode="cover"
+          alt={place.name}
+          fallback={
+            <MediaFallback
+              icon={<Text style={pc.fallbackEmoji}>{fallbackDesc.emoji}</Text>}
+              label={fallbackDesc.label}
+              bg={fallbackDesc.color + '33'}
+              style={pc.headerImageFallback}
+            />
+          }
+        />
+        {resolvedCanonical?.isRepresentation && (
+          <AiRepresentationLabel style={pc.aiLabel} testID="canonical-place-ai-label" />
+        )}
+      </View>
 
       {/* Content */}
       <View style={pc.content}>
@@ -320,6 +346,15 @@ const pc = StyleSheet.create({
     borderRadius: radius.lg,
     overflow: 'hidden',
     marginBottom: space.md,
+  },
+  headerImageWrap: {
+    width: '100%',
+    position: 'relative',
+  },
+  aiLabel: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
   },
   headerImage: {
     width: '100%' as any,

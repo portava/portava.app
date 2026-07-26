@@ -48,6 +48,16 @@ export interface DiscoveryPlace {
    * UI falls back to category artwork via PlaceCategoryFallback.
    */
   headerImageUrl?: string | null;
+  /**
+   * How the header image was sourced. Drives the resolver priority ladder and
+   * the "AI-generated representation" disclosure label in the UI.
+   *   'ai_generated'  — image was produced by the AI visuals pipeline
+   *   'provider'      — FSQ / OSM / other third-party photo
+   *   'user_upload'   — uploaded directly by the place owner or a traveler
+   *   'official'      — official venue photography
+   *   'portava_media' — Portava curated media library
+   */
+  headerImageSource?: 'ai_generated' | 'provider' | 'user_upload' | 'official' | 'portava_media' | null;
   /** Data-source attribution text for the venue detail view. When present,
    *  replaces the default OSM attribution footer. */
   attribution?: string | null;

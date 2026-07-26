@@ -28,6 +28,9 @@ import {
   type CompassComparisonRow, type CompassAskPayload, type CompassUiConfidence,
 } from '../../services/compass.ts';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
+import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
+import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
+import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
 import { formatCompassEventChip } from '../../utils/compassFormat.ts';
 import { CompassMiniMap } from './CompassMiniMap';
 import { CompassWhySheet } from './CompassWhySheet.tsx';
@@ -231,7 +234,23 @@ function PlaceBlockCard({ place, onAddToPlan }: {
   // Track hero image load errors so we can fall back to the accent strip
   const [imageError, setImageError] = useState(false);
   const placeFallback = getPlaceCategoryFallback(place.category ?? '');
-  const hasImage = Boolean(place.headerImageUrl) && !imageError;
+
+  // Build candidates with real source metadata so isRepresentation is correct.
+  const _compassCandidates: HeaderCandidate[] = [];
+  if (place.headerImageUrl) {
+    _compassCandidates.push({
+      url: place.headerImageUrl,
+      source: ((place.headerImageSource as HeaderCandidate['source']) ?? 'provider'),
+    });
+  }
+  const resolvedCompass = resolveHeaderImage(_compassCandidates, {
+    entityType: 'place',
+    category: place.category ?? undefined,
+    fallbackUrlFor: () => null,
+  });
+  const resolvedUrl = resolvedCompass?.url ?? null;
+  const hasImage = Boolean(resolvedUrl) && !imageError;
+
   return (
     <>
       <Pressable
@@ -249,10 +268,10 @@ function PlaceBlockCard({ place, onAddToPlan }: {
           />
         ) : null}
         <View style={s.cardBody}>
-          {/* Hero image — rendered when the server sends headerImageUrl */}
+          {/* Hero image — rendered when the resolver returns a URL */}
           {hasImage ? (
             <Image
-              source={{ uri: place.headerImageUrl! }}
+              source={{ uri: resolvedUrl! }}
               style={s.placeHeroImage}
               resizeMode="cover"
               accessibilityLabel={place.name}
@@ -260,6 +279,13 @@ function PlaceBlockCard({ place, onAddToPlan }: {
               onError={() => setImageError(true)}
             />
           ) : null}
+          {/* AI-generated representation disclosure — shown below hero when source=ai_generated */}
+          {resolvedCompass?.isRepresentation && !imageError && hasImage && (
+            <AiRepresentationLabel
+              style={s.aiLabel}
+              testID={`compass-block-place-ai-label-${place.id}`}
+            />
+          )}
           <View style={s.titleRow}>
             <Text style={s.cardTitle} numberOfLines={1}>{place.name}</Text>
             <ChevronRight size={14} color={color.faint} />
@@ -644,6 +670,7 @@ const s = StyleSheet.create({
   strip:      { width: 3 },
   cardBody:   { flex: 1, padding: space.md, gap: 4 },
   placeHeroImage: { width: '100%' as const, height: 100, borderRadius: radius.sm, marginBottom: 2 },
+  aiLabel: { marginBottom: 2 },
   titleRow:   { flexDirection: 'row', alignItems: 'center', gap: space.xs },
   cardTitle:  { ...t.bodyStrong, color: color.ink, flex: 1, fontSize: 13 },
   metaRow:    { flexDirection: 'row', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' },

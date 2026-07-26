@@ -4,6 +4,9 @@ import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation, Route, ListPlu
 import type { DiscoveryPlace, PlaceLiveStatus } from '../../services/discovery.ts';
 import { getPlaceLiveStatusCached } from '../../services/discovery.ts';
 import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
+import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
+import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
+import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
 import { checkSaved, saveItem, unsaveItem } from '../../services/collections.ts';
 import { getSavedListIds } from '../../services/discoveryBookmarks.ts';
 import { usePlanPicker } from '../PlanPickerController.tsx';
@@ -35,7 +38,32 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
   const alreadyAdded = isAdded(place.id);
   const savedCountTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [liveStatus, setLiveStatus] = useState<PlaceLiveStatus | null>(null);
-  const photoUrl = useFsqPhoto(place.name, place.lat, place.lng, place.headerImageUrl);
+  // When the server marks the image as AI-generated we still want to try FSQ —
+  // a real provider photo (higher priority) will override the AI candidate.
+  // For all other sources the existing URL is already the best photo available.
+  const isAiHeader = place.headerImageSource === 'ai_generated';
+  const fsqPassthrough = isAiHeader ? undefined : (place.headerImageUrl ?? undefined);
+  const photoUrl = useFsqPhoto(place.name, place.lat, place.lng, fsqPassthrough);
+
+  // Build candidates with correct source metadata so the resolver can set
+  // isRepresentation correctly for the AI disclosure label.
+  const _resolverCandidates: HeaderCandidate[] = [];
+  if (place.headerImageUrl) {
+    _resolverCandidates.push({
+      url: place.headerImageUrl,
+      source: (place.headerImageSource as HeaderCandidate['source']) ?? 'provider',
+      attribution: typeof place.attribution === 'string' ? place.attribution : undefined,
+    });
+  }
+  // FSQ is a separate provider candidate — the resolver picks the highest-ranked.
+  if (photoUrl && photoUrl !== place.headerImageUrl) {
+    _resolverCandidates.push({ url: photoUrl, source: 'provider' });
+  }
+  const resolved = resolveHeaderImage(_resolverCandidates, {
+    entityType: 'place',
+    category: place.category,
+    fallbackUrlFor: () => null,
+  });
 
   // Live open-now pill — viewport-gated: FlatList only mounts near-viewport
   // rows, and the 600 ms delay skips cards flung past while scrolling. The
@@ -104,7 +132,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
       {/* Header image — category fallback when no real image available */}
       <View style={styles.imageHeader} testID={`place-card-image-${place.id}`}>
         <DisplayMediaImage
-          uri={photoUrl}
+          uri={resolved?.url ?? null}
           width={0}
           height={HEADER_HEIGHT}
           style={styles.headerImage}
@@ -120,6 +148,13 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
           }
           testID={`place-card-img-${place.id}`}
         />
+        {/* AI-generated representation disclosure — only for ai_generated images */}
+        {resolved?.isRepresentation && (
+          <AiRepresentationLabel
+            style={styles.aiLabel}
+            testID={`ai-representation-${place.id}`}
+          />
+        )}
         {/* Open/closed overlay pill on the image */}
         {liveOpenNow != null && (
           <View
@@ -381,6 +416,11 @@ const styles = StyleSheet.create({
   liveOverlayText: {
     fontSize: 10,
     fontWeight: '700',
+  },
+  aiLabel: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
   },
   ratingOverlay: {
     position: 'absolute',

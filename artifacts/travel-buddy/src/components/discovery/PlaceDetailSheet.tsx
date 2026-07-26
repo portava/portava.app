@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
+import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
+import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
+import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
 import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Linking,
 } from 'react-native';
@@ -37,7 +40,27 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
 
   // User location — used to compute distance when place.distanceKm is absent.
   const { resolvedLocation } = useLocationContext();
-  const photoUrl = useFsqPhoto(place?.name ?? '', place?.lat, place?.lng, place?.headerImageUrl);
+  const isAiHeader = place?.headerImageSource === 'ai_generated';
+  const fsqPassthrough = isAiHeader ? undefined : (place?.headerImageUrl ?? undefined);
+  const photoUrl = useFsqPhoto(place?.name ?? '', place?.lat, place?.lng, fsqPassthrough);
+
+  // Build candidates with real source metadata so the resolver can set
+  // isRepresentation correctly for the AI disclosure label.
+  const _sheetCandidates: HeaderCandidate[] = [];
+  if (place?.headerImageUrl) {
+    _sheetCandidates.push({
+      url: place.headerImageUrl,
+      source: (place.headerImageSource as HeaderCandidate['source']) ?? 'provider',
+    });
+  }
+  if (photoUrl && photoUrl !== place?.headerImageUrl) {
+    _sheetCandidates.push({ url: photoUrl, source: 'provider' });
+  }
+  const resolvedSheet = place ? resolveHeaderImage(_sheetCandidates, {
+    entityType: 'place',
+    category: place.category,
+    fallbackUrlFor: () => null,
+  }) : null;
 
   useEffect(() => {
     if (place) {
@@ -123,7 +146,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
         {/* Image header — category fallback when no real image available */}
         <View style={styles.imageWrap}>
           <DisplayMediaImage
-            uri={photoUrl}
+            uri={resolvedSheet?.url ?? null}
             width={0}
             height={SHEET_IMAGE_HEIGHT}
             style={styles.sheetImage}
@@ -139,6 +162,10 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
             }
             testID="place-sheet-image"
           />
+          {/* AI-generated representation disclosure */}
+          {resolvedSheet?.isRepresentation && (
+            <AiRepresentationLabel style={styles.aiLabel} testID="place-sheet-ai-label" />
+          )}
           {/* Open/closed overlay on image */}
           {liveOpenNow != null && (
             <View
@@ -373,6 +400,11 @@ const styles = StyleSheet.create({
     height: SHEET_IMAGE_HEIGHT,
     overflow: 'hidden',
     position: 'relative',
+  },
+  aiLabel: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
   },
   sheetImage: {
     width: '100%' as any,
