@@ -35,6 +35,12 @@ export interface HeaderCandidate {
   source: HeaderImageSource;
   attribution?: string;
   generatedVisualId?: string;
+  /** Nine-category source type from the accuracy pipeline. */
+  imageSourceType?: string | null;
+  /** When true the UI must show a disclaimer. */
+  disclaimerRequired?: boolean | null;
+  /** Disclaimer copy to display. */
+  disclaimerText?: string | null;
 }
 
 export interface ResolvedHeaderImage {
@@ -44,6 +50,12 @@ export interface ResolvedHeaderImage {
   generatedVisualId?: string;
   /** true for AI place representations → drives the "AI-generated representation" label. */
   isRepresentation: boolean;
+  /** Nine-category source classification from the accuracy pipeline (passed through from candidate). */
+  imageSourceType?: string | null;
+  /** When true the UI must show a disclaimer alongside this image. */
+  disclaimerRequired?: boolean | null;
+  /** Disclaimer copy to display (passed through from candidate). */
+  disclaimerText?: string | null;
 }
 
 /** Category → static fallback slug (keep in sync with the server fallback map). */
@@ -106,6 +118,9 @@ export function resolveHeaderImage(
     attribution: win.attribution,
     generatedVisualId: win.generatedVisualId,
     isRepresentation: win.source === 'ai_generated' && opts.entityType === 'place',
+    imageSourceType: win.imageSourceType ?? null,
+    disclaimerRequired: win.disclaimerRequired ?? null,
+    disclaimerText: win.disclaimerText ?? null,
   };
 }
 

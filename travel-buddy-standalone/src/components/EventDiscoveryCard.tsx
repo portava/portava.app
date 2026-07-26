@@ -17,6 +17,8 @@ import {
 } from 'lucide-react-native';
 import { Avatar } from './ui.tsx';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { ImageSourceBadge } from './visuals/ImageSourceBadge.tsx';
+import { usePlaceImage } from '../hooks/usePlaceImage.ts';
 import type { EventListItem, EventRsvpStatus } from '../services/events.ts';
 import { primaryIdentityText } from '../lib/displayIdentity.ts';
 import { openInMaps } from '../lib/openInMaps.ts';
@@ -82,6 +84,15 @@ export function EventDiscoveryCard({ event, onPress, onHostPress, onRsvp, isSave
   const isFull = event.state === 'full';
   const isWaitlist = event.state === 'waitlist';
 
+  // Centralised cover image provenance — consistent label, disclaimer, and accessibility text.
+  const coverPlaceImage = usePlaceImage({
+    url: hydratedCoverUrl ?? null,
+    imageSourceType: event.coverImageSourceType ?? null,
+    disclaimerRequired: event.coverDisclaimerRequired ?? null,
+    disclaimerText: event.coverDisclaimerText ?? null,
+    altText: event.title,
+  });
+
   // CTA label
   let ctaLabel = '';
   if (isOpen && !event.myRsvp) ctaLabel = 'RSVP';
@@ -100,7 +111,18 @@ export function EventDiscoveryCard({ event, onPress, onHostPress, onRsvp, isSave
           onPress={onPress}
         />
       ) : hydratedCoverUrl && !imgFailed ? (
-        <CachedImage source={{ uri: withStorageParams(hydratedCoverUrl, 'width=600&quality=80') }} style={styles.thumb} resizeMode="cover" onError={() => setImgFailed(true)} />
+        <View
+          style={{ position: 'relative' }}
+          accessibilityLabel={coverPlaceImage.accessibilityLabel ?? undefined}
+        >
+          <CachedImage source={{ uri: withStorageParams(hydratedCoverUrl, 'width=600&quality=80') }} style={styles.thumb} resizeMode="cover" onError={() => setImgFailed(true)} />
+          <ImageSourceBadge
+            sourceLabel={coverPlaceImage.sourceLabel}
+            disclaimerRequired={coverPlaceImage.disclaimerRequired}
+            disclaimerText={coverPlaceImage.disclaimerText}
+            style={{ position: 'absolute', bottom: 2, left: 2, transform: [{ scale: 0.8 }] }}
+          />
+        </View>
       ) : (
         <View style={[styles.thumb, styles.thumbPlaceholder, { backgroundColor: catColor + '22' }]}>
           <CalendarClock size={20} color={catColor} />

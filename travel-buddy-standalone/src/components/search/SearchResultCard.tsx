@@ -12,6 +12,8 @@ import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
 import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
 import { fallbackUriFor } from '../../lib/visuals/fallbackAssets.ts';
 import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
+import { ImageSourceBadge } from '../visuals/ImageSourceBadge.tsx';
+import { usePlaceImage } from '../../hooks/usePlaceImage.ts';
 import { UserAvatarButton } from '../interaction/UserAvatarButton.tsx';
 import { followUser, unfollowUser } from '../../services/follows.ts';
 import { rsvpEvent } from '../../services/events.ts';
@@ -75,11 +77,15 @@ const TYPE_BADGE_TEXT: Record<string, string> = {
 
 // ── Place image with category emoji fallback ──────────────────────────────────
 
-function PlaceImageThumbnail({ imageUrl, imageSource, category, size }: {
+function PlaceImageThumbnail({ imageUrl, imageSource, imageSourceType, disclaimerRequired, disclaimerText, category, size, placeId }: {
   imageUrl: string | null;
   imageSource?: string | null;
+  imageSourceType?: string | null;
+  disclaimerRequired?: boolean | null;
+  disclaimerText?: string | null;
   category: string;
   size: number;
+  placeId?: string;
 }) {
   const fallback = getPlaceCategoryFallback(category);
   const [imgFailed, setImgFailed] = React.useState(false);
@@ -87,7 +93,13 @@ function PlaceImageThumbnail({ imageUrl, imageSource, category, size }: {
   // Route through resolver with the correct source so isRepresentation is set
   // accurately for AI-generated discovery place images.
   const _searchCandidates: HeaderCandidate[] = imageUrl
-    ? [{ url: imageUrl, source: (imageSource as HeaderCandidate['source']) ?? 'provider' }]
+    ? [{
+        url: imageUrl,
+        source: (imageSource as HeaderCandidate['source']) ?? 'provider',
+        imageSourceType: imageSourceType ?? null,
+        disclaimerRequired: disclaimerRequired ?? null,
+        disclaimerText: disclaimerText ?? null,
+      }]
     : [];
   const resolved = resolveHeaderImage(_searchCandidates, {
     entityType: 'place',
@@ -96,6 +108,15 @@ function PlaceImageThumbnail({ imageUrl, imageSource, category, size }: {
   });
   const resolvedUrl = resolved?.url ?? null;
 
+  const placeImage = usePlaceImage({
+    url: resolvedUrl,
+    imageSourceType: resolved?.imageSourceType ?? imageSourceType,
+    disclaimerRequired: resolved?.disclaimerRequired ?? disclaimerRequired,
+    disclaimerText: resolved?.disclaimerText ?? disclaimerText,
+    isRepresentation: resolved?.isRepresentation,
+    altText: category,
+  });
+
   if (resolvedUrl && !imgFailed) {
     return (
       <View style={[thumbStyles.wrap, { width: size, height: size }]} testID="place-result-image">
@@ -103,11 +124,21 @@ function PlaceImageThumbnail({ imageUrl, imageSource, category, size }: {
           source={{ uri: resolvedUrl }}
           style={{ width: size, height: size }}
           resizeMode="cover"
+          accessibilityLabel={placeImage.accessibilityLabel ?? undefined}
           onError={() => setImgFailed(true)}
         />
-        {resolved?.isRepresentation && (
+        {placeImage.sourceLabel !== null ? (
+          <ImageSourceBadge
+            sourceLabel={placeImage.sourceLabel}
+            disclaimerRequired={placeImage.disclaimerRequired}
+            disclaimerText={placeImage.disclaimerText}
+            placeId={placeId}
+            imageUrl={resolvedUrl}
+            style={{ position: 'absolute', bottom: 2, left: 2, transform: [{ scale: 0.75 }] }}
+          />
+        ) : placeImage.isRepresentation ? (
           <AiRepresentationLabel style={{ position: 'absolute', bottom: 2, left: 2, transform: [{ scale: 0.75 }] }} />
-        )}
+        ) : null}
       </View>
     );
   }
@@ -319,8 +350,12 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
         <PlaceImageThumbnail
           imageUrl={result.imageUrl}
           imageSource={(result.metadata?.headerImageSource as string | null | undefined) ?? null}
+          imageSourceType={(result.metadata?.imageSourceType as string | null | undefined) ?? null}
+          disclaimerRequired={(result.metadata?.disclaimerRequired as boolean | null | undefined) ?? null}
+          disclaimerText={(result.metadata?.disclaimerText as string | null | undefined) ?? null}
           category={placeCategory}
           size={AVATAR_SIZE}
+          placeId={result.id}
         />
       ) : (
         <View style={styles.avatarSquare}>

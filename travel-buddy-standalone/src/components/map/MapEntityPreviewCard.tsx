@@ -16,6 +16,8 @@ import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
 import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
 import { fallbackUriFor } from '../../lib/visuals/fallbackAssets.ts';
 import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
+import { ImageSourceBadge } from '../visuals/ImageSourceBadge.tsx';
+import { usePlaceImage } from '../../hooks/usePlaceImage.ts';
 import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
 import {
@@ -323,6 +325,9 @@ function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onC
     _previewCandidates.push({
       url: (place as any).headerImageUrl as string,
       source: (_headerSource as HeaderCandidate['source']) ?? 'provider',
+      imageSourceType: place.imageSourceType ?? null,
+      disclaimerRequired: place.disclaimerRequired ?? null,
+      disclaimerText: place.disclaimerText ?? null,
     });
   }
   if (photoUrl && photoUrl !== (place as any).headerImageUrl) {
@@ -332,6 +337,16 @@ function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onC
     entityType: 'place',
     category: place.category,
     fallbackUrlFor: fallbackUriFor,
+  });
+
+  const placeImage = usePlaceImage({
+    url: resolvedPreview?.url ?? null,
+    imageSourceType: resolvedPreview?.imageSourceType ?? place.imageSourceType,
+    accuracyStatus: place.accuracyStatus,
+    disclaimerRequired: resolvedPreview?.disclaimerRequired ?? place.disclaimerRequired,
+    disclaimerText: resolvedPreview?.disclaimerText ?? place.disclaimerText,
+    isRepresentation: resolvedPreview?.isRepresentation,
+    altText: place.name,
   });
 
   return (
@@ -345,7 +360,7 @@ function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onC
             height={46}
             style={s.iconImg}
             resizeMode="cover"
-            alt={place.name}
+            alt={placeImage.accessibilityLabel ?? place.name}
             fallback={
               <View
                 testID="map-preview-fallback"
@@ -389,10 +404,19 @@ function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onC
           ))}
         </View>
       )}
-      {/* AI-generated representation disclosure */}
-      {resolvedPreview?.isRepresentation && (
+      {/* Image source badge — accuracy pipeline labels; falls back to legacy AI representation */}
+      {placeImage.sourceLabel !== null ? (
+        <ImageSourceBadge
+          sourceLabel={placeImage.sourceLabel}
+          disclaimerRequired={placeImage.disclaimerRequired}
+          disclaimerText={placeImage.disclaimerText}
+          placeId={place.id}
+          imageUrl={resolvedPreview?.url ?? undefined}
+          testID={`map-preview-image-source-badge-${place.id}`}
+        />
+      ) : resolvedPreview?.isRepresentation ? (
         <AiRepresentationLabel testID={`map-preview-ai-label-${place.id}`} />
-      )}
+      ) : null}
       <Pressable
         style={[s.cta, { backgroundColor: cfg.color }]}
         onPress={() => { onClose(); router.push(detailRoute as any); }}
