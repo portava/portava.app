@@ -53,7 +53,10 @@ CREATE POLICY trips_select ON trips
       FROM   trip_members tm
       WHERE  tm.trip_id = trips.id
         AND  tm.user_id = auth.uid()
-        AND  tm.status  = 'accepted'
+        AND  tm.role = ANY (
+          ARRAY['owner'::member_role, 'member'::member_role,
+                'co_host'::member_role, 'viewer'::member_role]
+        )
     )
   );
 
@@ -72,7 +75,10 @@ CREATE POLICY trip_activity_log_select ON trip_activity_log
       FROM   trip_members tm
       WHERE  tm.trip_id = trip_activity_log.trip_id
         AND  tm.user_id = auth.uid()
-        AND  tm.status  = 'accepted'
+        AND  tm.role = ANY (
+          ARRAY['owner'::member_role, 'member'::member_role,
+                'co_host'::member_role, 'viewer'::member_role]
+        )
     )
   );
 
