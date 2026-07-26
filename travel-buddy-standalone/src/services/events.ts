@@ -268,6 +268,10 @@ export interface UpdateEventInput {
   endsAt?: string | null;
   coverUrl?: string | null;
   coverMediaType?: 'image' | 'video' | null;
+  /** Pixel width of the cover image (stored for OG preview tags). */
+  coverImageWidth?: number | null;
+  /** Pixel height of the cover image (stored for OG preview tags). */
+  coverImageHeight?: number | null;
   maxAttendees?: number | null;
   ageMin?: number | null;
   ageMax?: number | null;

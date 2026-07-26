@@ -45,6 +45,7 @@ export default function EditTrip() {
   const [tripNotes, setTripNotes] = useState('');
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [coverMediaType, setCoverMediaType] = useState<'image' | 'video' | null>(null);
+  const [coverImageDims, setCoverImageDims] = useState<{ width: number | null; height: number | null } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -146,6 +147,7 @@ export default function EditTrip() {
       }
       setCoverUrl(upload.url);
       setCoverMediaType(isVideo ? 'video' : 'image');
+      setCoverImageDims({ width: upload.width ?? null, height: upload.height ?? null });
     } catch {
       Alert.alert('Upload failed', 'Could not upload cover. Please try again.');
     } finally {
@@ -156,6 +158,7 @@ export default function EditTrip() {
   const removeCover = useCallback(() => {
     setCoverUrl(null);
     setCoverMediaType(null);
+    setCoverImageDims(null);
   }, []);
 
   const save = useCallback(async () => {
@@ -184,6 +187,8 @@ export default function EditTrip() {
         // Coercing to undefined would silently omit the field and leave the old cover.
         coverUrl: coverUrl,
         coverMediaType: coverMediaType,
+        coverImageWidth:  coverImageDims?.width  ?? null,
+        coverImageHeight: coverImageDims?.height ?? null,
         // Public trips always show header; private/buddies respect the toggle.
         showHeaderPublicly: visibility === 'public' ? true : showHeaderPublicly,
       });
