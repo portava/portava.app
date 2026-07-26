@@ -1,13 +1,14 @@
 /**
- * OwnerActionMenu — "About Me" navigates to /profile/edit/about
+ * OwnerActionMenu (PassportOwnerMenuSheet) — "Edit Bio" navigates to /profile/edit/about
  *
- * Pins that tapping the "About Me" action calls router.push with
- * '/profile/edit/about', not the old dead route '/profile/about'.
+ * Previously the sheet had an "About Me" item — now the equivalent is
+ * "Edit Bio" in the Profile section, which still routes to /profile/edit/about.
+ * This test pins that the correct route is used and not a stale dead route.
  *
  * ## Mock strategy
- * OwnerActionMenu uses react-native Modal.  The Modal Proxy mock is required
- * to avoid overlapping act() scopes — see .agents/memory/modal-proxy-mock.md.
- * Share is stubbed to avoid native Share.share calls.
+ * OwnerActionMenu renders PassportOwnerMenuSheet which uses react-native Modal.
+ * The Modal Proxy mock is required to avoid overlapping act() scopes — see
+ * .agents/memory/modal-proxy-mock.md.
  */
 
 import React from 'react';
@@ -50,16 +51,16 @@ const defaultProps = {
   onViewAsPublic: jest.fn(),
 };
 
-describe('OwnerActionMenu — About Me button', () => {
+describe('OwnerActionMenu — Edit Bio button', () => {
   beforeEach(() => {
     mockPush.mockClear();
     defaultProps.onClose.mockClear();
   });
 
-  it('navigates to /profile/edit/about when About Me is tapped', async () => {
+  it('navigates to /profile/edit/about when Edit Bio is tapped', async () => {
     await render(<OwnerActionMenu {...defaultProps} />);
 
-    fireEvent.press(screen.getByRole('button', { name: 'About Me' }));
+    fireEvent.press(screen.getByRole('button', { name: 'Edit Bio' }));
 
     expect(mockPush).toHaveBeenCalledWith('/profile/edit/about');
   });
@@ -67,7 +68,7 @@ describe('OwnerActionMenu — About Me button', () => {
   it('does NOT navigate to the old dead route /profile/about', async () => {
     await render(<OwnerActionMenu {...defaultProps} />);
 
-    fireEvent.press(screen.getByRole('button', { name: 'About Me' }));
+    fireEvent.press(screen.getByRole('button', { name: 'Edit Bio' }));
 
     const calledWith = mockPush.mock.calls.map((c) => c[0]);
     expect(calledWith).not.toContain('/profile/about');
