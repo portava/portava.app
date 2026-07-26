@@ -11,6 +11,7 @@
  *  G. Auth guard — 401 when unauthenticated
  *  H. Prompts field — response always includes a prompts array
  *  I. Moderation guard — posts whose media is entirely rejected/failed are excluded
+ *  J. Block-query fail-closed — feed returns empty when the blocks DB query errors
  *
  * Runtime: node:test + node:assert/strict (no vitest / no supertest).
  * Fake Supabase client injected via _setTestClient.
@@ -621,5 +622,63 @@ describe("GET /api/pulse — moderation guard", async () => {
     // BOB's good post and DAVE's text-only post must appear
     assert.ok(authorIds.includes(BOB_ID),  "post with ready media must be included");
     assert.ok(authorIds.includes(DAVE_ID), "text-only post must be included");
+  });
+});
+
+// ── J: Block-query fail-closed ─────────────────────────────────────────────────
+
+describe("GET /api/pulse — block-query failure returns empty feed (fail-closed)", async () => {
+  let url: string;
+  let close: () => Promise<void>;
+
+  before(async () => {
+    invalidateFlagsCache();
+    const app = makeApp();
+    // Stub req.log so the fail-closed warn() doesn't crash the handler.
+    app.use((req: any, _res: any, next: any) => {
+      req.log = { warn: () => {}, error: () => {}, info: () => {}, debug: () => {} };
+      next();
+    });
+    const { default: pulseRouter } = await import("../routes/pulse.js");
+    app.use("/api", pulseRouter);
+    ({ url, close } = await startServer(app));
+
+    // A post exists so there IS content to return if the filter fails open.
+    const post = makePost({ author_id: BOB_ID, body: "Should not appear" });
+
+    // Build a client where the blocks table always returns a DB error.
+    const baseClient = makeClient({ posts: [post] });
+    const faultyClient = {
+      ...baseClient,
+      from: (table: string) => {
+        if (table === "blocks") {
+          const b: any = {
+            select: () => b,
+            eq:     () => b,
+            then:   (resolve: any) =>
+              resolve({ data: null, error: { message: "simulated blocks DB error" } }),
+          };
+          return b;
+        }
+        return baseClient.from(table);
+      },
+    };
+
+    _setTestClient(faultyClient, true);
+  });
+
+  after(async () => {
+    await close();
+    _setTestClient(null as any, false);
+  });
+
+  it("returns empty posts array when the blocks query errors — not unfiltered posts", async () => {
+    const r = await fetch(`${url}/api/pulse`, {
+      headers: { Authorization: "Bearer alice-token" },
+    });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.deepEqual(body.posts, [], "feed must be empty when block state cannot be determined");
+    assert.equal(body.total, 0, "total must be 0 when block state cannot be determined");
   });
 });
