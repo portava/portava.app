@@ -58,6 +58,7 @@ function CardSkeleton() {
 }
 
 function resolveCompassFallbackCategory(item: CompassFeedItem): string {
+
   const cat  = (item.category ?? '').trim();
   if (cat) return cat;
   const type = item.type ?? '';
