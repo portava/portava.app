@@ -105,12 +105,45 @@ export const TEMPLATES: NotificationTemplate[] = [
     defaultPriority: 'important',
     defaultChannels: ['in_app', 'push'],
     title: ({ actor }) => `${actor} invited you to a trip`,
-    // Privacy: push notifications for trip invitations must not expose the trip
-    // name or destination on the lock screen — the invitee has not yet accepted.
-    // Full detail is available only after the user opens the app and the mobile
-    // client re-fetches from the API with their authenticated session.
+    // Privacy: do not include the trip name or destination — the invitee has
+    // not accepted yet and the content may be private.  Full detail is available
+    // only after the user opens the app and the mobile client re-fetches from
+    // the API with their authenticated session.
     body: () => "You received a trip invitation.",
     actionUrl: ({ tripId }) => `/trip/${tripId}`,
+  }),
+  tpl({
+    eventType: 'event.invite_received',
+    category: 'trip_crew',
+    defaultPriority: 'important',
+    defaultChannels: ['in_app', 'push'],
+    title: ({ actor }) => actor ? `${actor} invited you to an event` : "You're invited to an event",
+    // Privacy: do not include the event name on the lock screen or in the stored
+    // notification row — the invitee has not yet accepted and the event may be
+    // invite-only.  Full detail loads after the user opens the app.
+    body: () => "You received an event invitation.",
+    actionUrl: ({ eventId }) => eventId ? `/event/${eventId}` : '/notifications',
+  }),
+  tpl({
+    eventType: 'trip.join_approved',
+    category: 'trips',
+    defaultPriority: 'important',
+    defaultChannels: ['in_app', 'push'],
+    title: () => 'Join request approved!',
+    // Privacy: do not expose the trip name in the stored notification row.
+    // Full details load after the user opens the app with their session.
+    body: () => "Your trip access request was approved.",
+    actionUrl: ({ tripId }) => tripId ? `/trip/${tripId}` : '/notifications',
+  }),
+  tpl({
+    eventType: 'trip.join_declined',
+    category: 'trips',
+    defaultPriority: 'normal',
+    defaultChannels: ['in_app'],
+    title: () => 'Join request update',
+    // Privacy: do not expose the trip name in the stored notification row.
+    body: () => "Your trip access request was not approved.",
+    actionUrl: ({ tripId }) => tripId ? `/trip/${tripId}` : '/notifications',
   }),
   tpl({
     eventType: 'trip.invite_accepted',

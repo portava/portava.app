@@ -860,6 +860,20 @@ router.post("/trips/:tripId/invite", async (req, res) => {
         body:  "You received a trip invitation.",
         data:  { type: "trip_invite_received", tripId },
       });
+      // In-app notification: store with generic text — no trip name in params.
+      // notifRouter.route() is intentionally NOT called here; push was already
+      // sent above via sendPushWithRetry to avoid double-delivery.
+      const { NotificationService } = await import("../services/notifications/NotificationService.js");
+      const notifSvc = new NotificationService(sc2);
+      await notifSvc.create({
+        userId,
+        eventType:  "trip.invite_received",
+        sourceType: "trips",
+        sourceId:   tripId,
+        actorId:    user.id,
+        // Privacy: params deliberately contain NO trip title or destination.
+        params: { actor: inviterName, tripId },
+      });
     } catch { /* best-effort */ }
   })();
 

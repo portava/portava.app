@@ -4600,9 +4600,10 @@ router.post("/events/:id/invite", async (req, res) => {
 
   void (async () => {
     try {
-      const [evData, inviteeProfile] = await Promise.all([
+      const [evData, inviteeProfile, inviterProfile] = await Promise.all([
         sc.from("events").select("title").eq("id", id).maybeSingle(),
         sc.from("profiles").select("expo_push_token").eq("id", inviteeId).maybeSingle(),
+        sc.from("profiles").select("handle").eq("id", user.id).maybeSingle(),
       ]);
       if ((inviteeProfile as any).data?.expo_push_token) {
         await sendPushWithRetry(sc, { userId: inviteeId, tokens: [(inviteeProfile as any).data.expo_push_token] }, {
@@ -4614,6 +4615,22 @@ router.post("/events/:id/invite", async (req, res) => {
           data: { eventId: id, type: "event_invite", inviteId: (invite as any).id },
         });
       }
+      // In-app notification: store with generic text — no event name in params.
+      // notifRouter.route() is intentionally NOT called here; push was already
+      // sent above via sendPushWithRetry to avoid double-delivery.
+      const { NotificationService } = await import("../services/notifications/NotificationService.js");
+      const notifSvc = new NotificationService(sc);
+      const inviterHandle = (inviterProfile as any).data?.handle;
+      const actorName = inviterHandle ? `@${inviterHandle}` : "Someone";
+      await notifSvc.create({
+        userId:     inviteeId,
+        eventType:  "event.invite_received",
+        sourceType: "events",
+        sourceId:   id,
+        actorId:    user.id,
+        // Privacy: params deliberately contain NO event title.
+        params: { actor: actorName, eventId: id },
+      });
     } catch {}
   })();
 

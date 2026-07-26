@@ -782,6 +782,19 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
         body:  "Your trip access request was approved.",
         data:  { type: "trip_join_approved", tripId },
       });
+      // In-app notification: store with generic text — no trip name in params.
+      // notifRouter.route() is intentionally NOT called here; push was already
+      // sent above via sendPushWithRetry to avoid double-delivery.
+      const { NotificationService } = await import("../services/notifications/NotificationService.js");
+      const notifSvc = new NotificationService(sc2);
+      await notifSvc.create({
+        userId:     requestedUserId,
+        eventType:  "trip.join_approved",
+        sourceType: "trips",
+        sourceId:   tripId,
+        // Privacy: params deliberately contain NO trip title.
+        params: { tripId },
+      });
     } catch { /* best-effort */ }
   })();
 
@@ -847,6 +860,19 @@ router.post("/trips/:tripId/join-requests/:requestId/decline", async (req, res) 
         // Privacy: do not expose the trip name on the lock screen.
         body:  "Your trip access request was not approved.",
         data:  { type: "trip_join_declined", tripId },
+      });
+      // In-app notification: store with generic text — no trip name in params.
+      // notifRouter.route() is intentionally NOT called here; push was already
+      // sent above via sendPushWithRetry to avoid double-delivery.
+      const { NotificationService } = await import("../services/notifications/NotificationService.js");
+      const notifSvc = new NotificationService(sc2);
+      await notifSvc.create({
+        userId:     declinedUserId,
+        eventType:  "trip.join_declined",
+        sourceType: "trips",
+        sourceId:   tripId,
+        // Privacy: params deliberately contain NO trip title.
+        params: { tripId },
       });
     } catch { /* best-effort */ }
   })();
