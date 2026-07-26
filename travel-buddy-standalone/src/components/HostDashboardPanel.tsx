@@ -13,7 +13,7 @@ import {
   ActivityIndicator, Alert, TextInput,
 } from 'react-native';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
-import { X, Check, X as XIcon, UserX, Crown, Shield, Clock } from 'lucide-react-native';
+import { X, Check, X as XIcon, UserX, Crown, Shield, Clock, Sparkles } from 'lucide-react-native';
 import {
   getJoinRequests, reviewJoinRequest, assignEventRole, removeEventRole,
   postEventUpdate, updateEvent, getEventWaitlist,
@@ -23,6 +23,8 @@ import {
 import { searchUsers, type TravelerSearchResult } from '../services/follows.ts';
 import { Avatar } from './ui.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { useFeatureFlags } from '../context/FeatureFlagsContext.tsx';
+import { GenerateHeaderSheet } from './events/GenerateHeaderSheet.tsx';
 
 interface Props {
   event: EventDetail;
@@ -46,6 +48,10 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
   const [inviteSearching, setInviteSearching] = useState(false);
   const [inviteSending, setInviteSending]   = useState<string | null>(null);
   const [invitedIds, setInvitedIds]         = useState<Set<string>>(new Set());
+  // AI header image generation
+  const { isEnabled } = useFeatureFlags();
+  const aiHeadersEnabled = isEnabled('ai_event_headers_enabled');
+  const [generateSheetVisible, setGenerateSheetVisible] = useState(false);
 
   useEffect(() => {
     loadRequests();
@@ -405,6 +411,29 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
                   </>
                 )}
 
+                {/* ── AI header image ── */}
+                {aiHeadersEnabled && (
+                  <>
+                    <Text style={[s.controlsLabel, { marginTop: space.lg }]}>Header image</Text>
+                    <Pressable
+                      style={[s.stateBtn, s.stateBtnAi]}
+                      onPress={() => setGenerateSheetVisible(true)}
+                    >
+                      <Sparkles size={15} color={color.signal} />
+                      <Text style={[s.stateBtnText, { color: color.signal }]}>Generate header image with AI</Text>
+                    </Pressable>
+                    {event.coverUrl ? (
+                      <Text style={s.aiNote}>
+                        Your event already has a header image. Accepting a new AI image will replace it.
+                      </Text>
+                    ) : (
+                      <Text style={s.aiNote}>
+                        AI will create a header image based on your event title, category, and location.
+                      </Text>
+                    )}
+                  </>
+                )}
+
                 <Text style={[s.controlsLabel, { marginTop: space.lg }]}>Post update</Text>
                 <TextInput
                   style={s.updateInput}
@@ -429,6 +458,15 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
           </ScrollView>
         </View>
       </View>
+      <GenerateHeaderSheet
+        visible={generateSheetVisible}
+        eventId={event.id}
+        onDismiss={() => setGenerateSheetVisible(false)}
+        onAccepted={() => {
+          setGenerateSheetVisible(false);
+          onRefresh();
+        }}
+      />
     </KeyboardSafeScrollView>
   );
 }
@@ -479,4 +517,6 @@ const s = StyleSheet.create({
   inviteBtn:      { backgroundColor: color.signal, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.sm },
   inviteBtnSent:  { backgroundColor: '#16A34A' },
   inviteBtnText:  { ...t.small, color: color.onInk, fontWeight: '700' },
+  stateBtnAi:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.xs, backgroundColor: '#F0F7FF', borderColor: '#BAE0FF' },
+  aiNote:         { ...t.small, color: color.faint, textAlign: 'center' },
 });

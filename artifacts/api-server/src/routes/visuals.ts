@@ -101,6 +101,7 @@ router.post(
     if (!outcome.ok) {
       if (outcome.status === "rate_limited") return sendError(res, "rate_limited", outcome.error);
       if (outcome.status === "disabled") return sendError(res, "feature_disabled", outcome.error);
+      if (outcome.status === "blocked") return sendError(res, "forbidden", outcome.error ?? "Visual blocked by content policy");
       return sendError(res, "db_error", outcome.error);
     }
 
@@ -195,6 +196,7 @@ router.post(
     });
     if (!outcome.ok) {
       if (outcome.status === "rate_limited") return sendError(res, "rate_limited", outcome.error);
+      if (outcome.status === "blocked") return sendError(res, "forbidden", outcome.error ?? "Visual blocked by content policy");
       return sendError(res, "db_error", outcome.error);
     }
     // The VisualGenerationWorker picks up the queued row asynchronously.

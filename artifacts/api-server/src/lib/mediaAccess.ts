@@ -338,19 +338,21 @@ async function decide(
           !["draft", "cancelled", "archived"].includes((ev as any).state)
         )
           return true;
-        // Non-public event: allow if viewer has an RSVP or role.
+        // Non-public event: allow only eligible RSVP statuses and non-banned roles.
         const [rsvp, role] = await Promise.all([
           sc
             .from("event_rsvps")
             .select("status")
             .eq("event_id", gv.entity_id)
             .eq("user_id", viewerId)
+            .in("status", ["going", "maybe"])
             .maybeSingle(),
           sc
             .from("event_roles")
             .select("role")
             .eq("event_id", gv.entity_id)
             .eq("user_id", viewerId)
+            .in("role", ["host", "co_host", "moderator"])
             .maybeSingle(),
         ]);
         return !!(rsvp as any).data || !!(role as any).data;

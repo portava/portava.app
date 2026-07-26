@@ -70,10 +70,10 @@ async function isHeaderPrivate(
       if ((data as any).show_header_publicly !== false) return false;
       // Owners / hosts always get the real image.
       if ((data as any).host_id === viewerId) return false;
-      // RSVP-holders and role-holders (co-host, moderator) get the real image.
+      // Eligible RSVP-holders and non-banned role-holders get the real image.
       const [rsvp, role] = await Promise.all([
-        sc.from("event_rsvps").select("status").eq("event_id", entityId).eq("user_id", viewerId).maybeSingle(),
-        sc.from("event_roles").select("role").eq("event_id", entityId).eq("user_id", viewerId).maybeSingle(),
+        sc.from("event_rsvps").select("status").eq("event_id", entityId).eq("user_id", viewerId).in("status", ["going", "maybe"]).maybeSingle(),
+        sc.from("event_roles").select("role").eq("event_id", entityId).eq("user_id", viewerId).in("role", ["host", "co_host", "moderator"]).maybeSingle(),
       ]);
       if ((rsvp as any).data || (role as any).data) return false;
       return true; // outsider / casual viewer → generic cover
