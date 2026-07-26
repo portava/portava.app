@@ -11,6 +11,7 @@ import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
 import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
 import { fallbackUriFor } from '../../lib/visuals/fallbackAssets.ts';
+import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
 import { UserAvatarButton } from '../interaction/UserAvatarButton.tsx';
 import { followUser, unfollowUser } from '../../services/follows.ts';
 import { rsvpEvent } from '../../services/events.ts';
@@ -74,17 +75,19 @@ const TYPE_BADGE_TEXT: Record<string, string> = {
 
 // ── Place image with category emoji fallback ──────────────────────────────────
 
-function PlaceImageThumbnail({ imageUrl, category, size }: {
+function PlaceImageThumbnail({ imageUrl, imageSource, category, size }: {
   imageUrl: string | null;
+  imageSource?: string | null;
   category: string;
   size: number;
 }) {
   const fallback = getPlaceCategoryFallback(category);
   const [imgFailed, setImgFailed] = React.useState(false);
 
-  // Route through resolver for consistent priority logic.
+  // Route through resolver with the correct source so isRepresentation is set
+  // accurately for AI-generated discovery place images.
   const _searchCandidates: HeaderCandidate[] = imageUrl
-    ? [{ url: imageUrl, source: 'provider' }]
+    ? [{ url: imageUrl, source: (imageSource as HeaderCandidate['source']) ?? 'provider' }]
     : [];
   const resolved = resolveHeaderImage(_searchCandidates, {
     entityType: 'place',
@@ -102,6 +105,9 @@ function PlaceImageThumbnail({ imageUrl, category, size }: {
           resizeMode="cover"
           onError={() => setImgFailed(true)}
         />
+        {resolved?.isRepresentation && (
+          <AiRepresentationLabel style={{ position: 'absolute', bottom: 2, left: 2, transform: [{ scale: 0.75 }] }} />
+        )}
       </View>
     );
   }
@@ -312,6 +318,7 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
       ) : isPlace ? (
         <PlaceImageThumbnail
           imageUrl={result.imageUrl}
+          imageSource={(result.metadata?.headerImageSource as string | null | undefined) ?? null}
           category={placeCategory}
           size={AVATAR_SIZE}
         />
