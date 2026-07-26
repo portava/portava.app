@@ -54,6 +54,35 @@ import {
 
 type Tab = 'queue' | 'reports';
 
+// ── Filter chips ──────────────────────────────────────────────────────────────
+
+type FilterChipId = 'all' | 'needs_review' | 'has_reports' | 'ai_grounded' | 'unverified';
+
+interface FilterChipDef {
+  id: FilterChipId;
+  label: string;
+  /** Query params forwarded to GET /admin/place-images/queue */
+  serverFilters: { accuracy_status?: string; image_source_type?: string; has_reports?: boolean };
+  /**
+   * Optional post-fetch predicate applied client-side when the backend has no
+   * direct param for this concept (e.g. the compound needsReview flag).
+   */
+  clientFilter?: (item: PlaceImageQueueItem) => boolean;
+}
+
+const FILTER_CHIPS: FilterChipDef[] = [
+  { id: 'all',          label: 'All',         serverFilters: {} },
+  {
+    id: 'needs_review', label: 'Needs Review', serverFilters: {},
+    // Mirrors isHighImportance() on the server: reference_grounded_ai images
+    // whose accuracy has not been finalised (verified_real / reference_grounded).
+    clientFilter: (item) => item.needsReview,
+  },
+  { id: 'has_reports',  label: 'Has Reports',  serverFilters: { has_reports: true } },
+  { id: 'ai_grounded',  label: 'AI-Grounded',  serverFilters: { image_source_type: 'reference_grounded_ai' } },
+  { id: 'unverified',   label: 'Unverified',   serverFilters: { accuracy_status: 'unverified' } },
+];
+
 // ── Source badge colours ──────────────────────────────────────────────────────
 
 function sourceBadgeColor(src: string | null): string {
@@ -607,22 +636,36 @@ export default function PlaceImagesAdminScreen() {
   const [queueRefreshing, setQueueRefreshing] = useState(false);
   const [queueTotal, setQueueTotal] = useState(0);
 
+  // Filter chip state
+  const [activeChip, setActiveChip] = useState<FilterChipId>('all');
+
   // Sheet state
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
   const loadQueue = useCallback(async (isRefresh = false) => {
     if (!isRefresh) setQueueLoading(true);
-    const res = await getPlaceImageQueue({ limit: 50 });
+    const chipDef = FILTER_CHIPS.find((c) => c.id === activeChip) ?? FILTER_CHIPS[0];
+    const res = await getPlaceImageQueue({ limit: 50, page: 1, ...chipDef.serverFilters });
     if (res.ok) {
-      setQueueItems(res.data.items);
-      setQueueTotal(res.data.pagination.total);
+      const items = chipDef.clientFilter
+        ? res.data.items.filter(chipDef.clientFilter)
+        : res.data.items;
+      setQueueItems(items);
+      setQueueTotal(chipDef.clientFilter ? items.length : res.data.pagination.total);
     }
     setQueueLoading(false);
     setQueueRefreshing(false);
-  }, []);
+  }, [activeChip]);
 
   useEffect(() => { loadQueue(); }, [loadQueue]);
+
+  function handleChipPress(chipId: FilterChipId) {
+    if (chipId === activeChip) return;
+    // Setting state causes loadQueue's identity to change (activeChip dep),
+    // which triggers the useEffect — no direct loadQueue call needed.
+    setActiveChip(chipId);
+  }
 
   function openSheet(id: string) {
     setSelectedId(id);
@@ -670,32 +713,55 @@ export default function PlaceImagesAdminScreen() {
 
       {/* Content */}
       {tab === 'queue' ? (
-        queueLoading ? (
-          <ActivityIndicator color={color.ink} style={{ marginTop: 40 }} />
-        ) : queueItems.length === 0 ? (
-          <View style={sc.emptyState}>
-            <CheckCircle size={32} color={color.mute} />
-            <Text style={sc.emptyText}>No images pending review</Text>
+        <>
+          {/* Filter chip bar */}
+          <View style={sc.filterBar}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={sc.filterBarContent}
+            >
+              {FILTER_CHIPS.map((chip) => (
+                <Pressable
+                  key={chip.id}
+                  style={[sc.filterChip, activeChip === chip.id && sc.filterChipActive]}
+                  onPress={() => handleChipPress(chip.id)}
+                >
+                  <Text style={[sc.filterChipText, activeChip === chip.id && sc.filterChipTextActive]}>
+                    {chip.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
           </View>
-        ) : (
-          <FlatList
-            data={queueItems}
-            keyExtractor={(item) => item.id}
-            refreshControl={
-              <RefreshControl
-                refreshing={queueRefreshing}
-                onRefresh={() => { setQueueRefreshing(true); loadQueue(true); }}
-              />
-            }
-            contentContainerStyle={{ padding: space.md, gap: space.sm }}
-            renderItem={({ item }) => (
-              <PlaceImageReviewCard
-                item={item}
-                onPress={() => openSheet(item.id)}
-              />
-            )}
-          />
-        )
+
+          {queueLoading ? (
+            <ActivityIndicator color={color.ink} style={{ marginTop: 40 }} />
+          ) : queueItems.length === 0 ? (
+            <View style={sc.emptyState}>
+              <CheckCircle size={32} color={color.mute} />
+              <Text style={sc.emptyText}>No images pending review</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={queueItems}
+              keyExtractor={(item) => item.id}
+              refreshControl={
+                <RefreshControl
+                  refreshing={queueRefreshing}
+                  onRefresh={() => { setQueueRefreshing(true); loadQueue(true); }}
+                />
+              }
+              contentContainerStyle={{ padding: space.md, gap: space.sm }}
+              renderItem={({ item }) => (
+                <PlaceImageReviewCard
+                  item={item}
+                  onPress={() => openSheet(item.id)}
+                />
+              )}
+            />
+          )}
+        </>
       ) : (
         <ReportsTab />
       )}
@@ -763,6 +829,24 @@ const sc = StyleSheet.create({
 
   reportCountBadge: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   reportCountText:  { fontSize: 11, color: '#DC2626', fontWeight: '600' },
+
+  // Filter chip bar
+  filterBar: {
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.haze,
+    backgroundColor: color.paper,
+  },
+  filterBarContent: {
+    paddingHorizontal: space.md, paddingVertical: space.xs, gap: space.xs,
+    flexDirection: 'row',
+  },
+  filterChip: {
+    paddingHorizontal: space.md, paddingVertical: 6,
+    borderRadius: radius.pill, backgroundColor: color.paperRaised,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: color.haze,
+  },
+  filterChipActive:     { backgroundColor: color.ink, borderColor: color.ink },
+  filterChipText:       { ...t.small, color: color.mute, fontWeight: '600', fontSize: 12 },
+  filterChipTextActive: { color: '#fff' },
 
   emptyState: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: space.sm },
   emptyText:  { ...t.body, color: color.mute },
