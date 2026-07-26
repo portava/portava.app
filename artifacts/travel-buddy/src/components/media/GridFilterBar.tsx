@@ -7,6 +7,9 @@
  *   - Tapping a chip calls onFilterChange and resets the feed cursor.
  *   - The Nearby chip is hidden when location permission has not been granted
  *     (checked via expo-location on mount).
+ *   - If the position fetch fails after the chip is tapped (e.g. permission
+ *     revoked mid-session), a brief inline message is shown below the chip row
+ *     and the Nearby chip stays active so the user can retry.
  *   - The whole bar is hidden when MEDIA_VIEW_MODE_GRID_ENABLED is false
  *     (the parent GridFeed handles that gate, but the chip is still listed here
  *     in case a tighter per-chip gate is needed later).
@@ -52,9 +55,9 @@ export interface GridFilterBarProps {
   /**
    * Called when the user selects a chip.
    * For filter=nearby the caller also receives the viewer's current coordinates
-   * so it can forward them to the API. Coordinates are omitted for all other
-   * filters and when the position fetch fails (callers should fall back to
-   * showing all public posts).
+   * so it can forward them to the API for radius filtering. Coordinates are
+   * omitted for all other filters and when the position fetch fails (the bar
+   * shows an inline error message in that case so the caller does not need to).
    */
   onFilterChange: (filter: GridFilter, coords?: { lat: number; lng: number }) => void;
 }
@@ -91,6 +94,12 @@ function useLocationPermissionGranted(): boolean {
 export function GridFilterBar({ selectedFilter, onFilterChange }: GridFilterBarProps) {
   const locationGranted = useLocationPermissionGranted();
 
+  /**
+   * True when the most recent Nearby tap failed to obtain a position.
+   * Cleared as soon as the user taps any other chip or Nearby succeeds.
+   */
+  const [locationError, setLocationError] = useState(false);
+
   const visibleChips = ALL_CHIPS.filter(
     (c) => !c.requiresLocationPermission || locationGranted,
   );
@@ -113,15 +122,20 @@ export function GridFilterBar({ selectedFilter, onFilterChange }: GridFilterBarP
                 const pos = await Location.getCurrentPositionAsync({
                   accuracy: Location.Accuracy.Balanced,
                 });
+                setLocationError(false);
                 onFilterChange('nearby', {
                   lat: pos.coords.latitude,
                   lng: pos.coords.longitude,
                 });
               } catch {
-                // Position unavailable — fall back to server-side all-public behaviour.
+                // Position unavailable — activate the chip so the user can
+                // retry, show the inline error banner, and let the server fall
+                // back to all-public posts so the feed isn't left empty.
+                setLocationError(true);
                 onFilterChange('nearby');
               }
             } else {
+              setLocationError(false);
               onFilterChange(chip.key);
             }
           };
@@ -149,6 +163,18 @@ export function GridFilterBar({ selectedFilter, onFilterChange }: GridFilterBarP
           );
         })}
       </ScrollView>
+
+      {locationError && (
+        <View
+          style={styles.locationErrorBanner}
+          accessibilityLiveRegion="polite"
+          accessibilityLabel="Location unavailable — showing all posts"
+        >
+          <Text style={styles.locationErrorText}>
+            Location unavailable — showing all posts
+          </Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -190,5 +216,13 @@ const styles = StyleSheet.create({
   },
   chipTextActive: {
     color: color.onInk,
+  },
+  locationErrorBanner: {
+    paddingHorizontal: space.md,
+    paddingBottom: space.sm,
+  },
+  locationErrorText: {
+    ...t.small,
+    color: color.mute,
   },
 });
