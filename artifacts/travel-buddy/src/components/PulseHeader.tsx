@@ -3,7 +3,7 @@ import { View, Text, Pressable, Image, StyleSheet } from 'react-native';
 import Animated, { useAnimatedStyle, interpolate } from 'react-native-reanimated';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Search, SlidersHorizontal, MapPin, Pencil, MessageCircle, CircleUserRound } from 'lucide-react-native';
+import { Search, SlidersHorizontal, MapPin, Pencil, MessageCircle, CircleUserRound, Plus } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { pv } from '../theme/pulseTheme.ts';
 import { useUnreadCounts } from '../hooks/useMessaging.ts';
@@ -11,6 +11,7 @@ import { NotificationBell } from './NotificationBell.tsx';
 import { navBarProgress } from '../hooks/useNavBarCollapse.ts';
 import { getMyProfile } from '../services/profile.ts';
 import { PulseLiveCarousel } from './PulseLiveCarousel.tsx';
+import { CreateHubSheet } from './create/CreateHubSheet.tsx';
 import type { CityEvent } from '../types/models.ts';
 
 /**
@@ -62,6 +63,7 @@ export function PulseHeader({
   const insets = useSafeAreaInsets();
   const { messages: unreadMessages } = useUnreadCounts();
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [createHubOpen, setCreateHubOpen] = useState(false);
 
   // Best-effort avatar load — the fallback glyph renders until it arrives.
   useEffect(() => {
@@ -109,6 +111,17 @@ export function PulseHeader({
         </View>
 
         <View style={{ flex: 1 }} />
+
+        {/* Create hub button */}
+        <Pressable
+          style={styles.iconBtn}
+          onPress={() => setCreateHubOpen(true)}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Create"
+        >
+          <Plus size={17} color={color.ink} />
+        </Pressable>
 
         <Pressable
           style={styles.iconBtn}
@@ -184,6 +197,12 @@ export function PulseHeader({
           </Pressable>
         </View>
       </Animated.View>
+
+      {/* Create hub sheet — opened by the Plus button in the top bar */}
+      <CreateHubSheet
+        visible={createHubOpen}
+        onClose={() => setCreateHubOpen(false)}
+      />
     </Animated.View>
   );
 }

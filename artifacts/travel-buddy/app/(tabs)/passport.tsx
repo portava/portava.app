@@ -24,6 +24,7 @@ import type { PassportMemory, PassportStats } from '../../src/services/passportS
 import { useSession } from '../../src/context/SessionContext';
 import { listMyTrips } from '../../src/services/trips';
 import { OwnerActionMenu } from '../../src/components/OwnerActionMenu';
+import { CreateHubSheet } from '../../src/components/create/CreateHubSheet';
 import { ProfileCompletionCard } from '../../src/components/ProfileCompletionCard';
 import { PassportShareCard } from '../../src/components/PassportShareCard';
 import { PostcardsTab } from '../../src/components/PostcardsTab';
@@ -411,6 +412,7 @@ function PassportContent({
   // Owner passport stats reported up from PassportStatsRow (single fetch) —
   // powers the World Traveler stamp on the identity card.
   const [passportStats, setPassportStats] = useState<PassportStats | null>(null);
+  const [createHubOpen, setCreateHubOpen] = useState(false);
 
   // Availability chip — read from the store; refresh on focus so it stays in sync
   // with the backend after the user saves changes on the availability screen.
@@ -786,6 +788,13 @@ function PassportContent({
         onViewAsPublic={handleViewAsPublic}
         onArrangeSections={onArrangeSections}
         onArrangeTabs={onArrangeTabs}
+        onCreatePress={() => setCreateHubOpen(true)}
+      />
+
+      {/* Create hub sheet — opened from the owner action menu's Create entry */}
+      <CreateHubSheet
+        visible={createHubOpen}
+        onClose={() => setCreateHubOpen(false)}
       />
     </View>
   );
