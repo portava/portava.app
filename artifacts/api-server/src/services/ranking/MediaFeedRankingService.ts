@@ -789,20 +789,57 @@ export async function loadMediaRankingFlags(
  * Returns a map of postId → partial MediaFeedItem signals.
  * Non-fatal: missing data defaults to null.
  *
- * NOTE: watch_completion_rate and rewatch_rate are aggregated from rank_events
+ * Aggregates per-item watch_completion_rate and rewatch_rate from rank_events
  * (event_type IN ('watch_completion','watch_rewatch','watch_qualified_view')).
- * That aggregation is a follow-up task; for now these fields are left null so
- * the ranking service falls back to neutral multipliers (1.0×).
- * The columns view_count and qualified_view_count are not yet in the live posts
- * schema — omit them until the migration lands.
+ * Rates are expressed as fractions of qualified views:
+ *   watchCompletionRate = completions / qualifiedViews
+ *   rewatchRate         = rewatches  / qualifiedViews
+ * When an item has no qualified-view rows the rates remain null so the ranking
+ * service falls back to neutral multipliers (1.0×).
  */
 export async function loadMediaSignals(
-  _db: SupabaseClient | null,
-  _postIds: string[],
+  db: SupabaseClient | null,
+  postIds: string[],
 ): Promise<Map<string, Partial<MediaFeedItem>>> {
-  // Stub: returns empty map until live schema has view/completion columns.
-  // The ranking service handles all-null media signals gracefully via defaults.
-  return new Map<string, Partial<MediaFeedItem>>();
+  const result = new Map<string, Partial<MediaFeedItem>>();
+  if (!db || postIds.length === 0) return result;
+
+  try {
+    const { data, error } = await db
+      .from("rank_events")
+      .select("item_id, event_type")
+      .in("item_id", postIds)
+      .in("event_type", ["watch_completion", "watch_rewatch", "watch_qualified_view"]);
+
+    if (error || !data) return result;
+
+    // Aggregate counts per item_id
+    const counts = new Map<string, { completions: number; rewatches: number; qualifiedViews: number }>();
+    for (const row of (data as { item_id: string; event_type: string }[])) {
+      if (!counts.has(row.item_id)) {
+        counts.set(row.item_id, { completions: 0, rewatches: 0, qualifiedViews: 0 });
+      }
+      const c = counts.get(row.item_id)!;
+      if (row.event_type === "watch_completion")      c.completions++;
+      else if (row.event_type === "watch_rewatch")    c.rewatches++;
+      else if (row.event_type === "watch_qualified_view") c.qualifiedViews++;
+    }
+
+    // Derive rates: only set when there is at least one qualified-view event
+    for (const [itemId, c] of counts) {
+      if (c.qualifiedViews > 0) {
+        result.set(itemId, {
+          watchCompletionRate: c.completions / c.qualifiedViews,
+          rewatchRate:         c.rewatches  / c.qualifiedViews,
+        });
+      } else {
+        // Has completion/rewatch rows but no qualified-view anchor — leave null
+        result.set(itemId, { watchCompletionRate: null, rewatchRate: null });
+      }
+    }
+  } catch { /* non-fatal: returns empty map; ranking falls back to 1.0× multipliers */ }
+
+  return result;
 }
 
 /**
