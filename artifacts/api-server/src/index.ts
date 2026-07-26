@@ -27,6 +27,7 @@ import { startFxRefreshLoop } from "./lib/fxRefreshScheduler";
 import { startXXCatalogSweeper } from "./lib/stamps/xxCatalogRepair";
 import { startCorrectionSweep } from "./lib/stamps/countryGeocoder";
 import { runSchemaDriftCheck } from "./lib/schemaDriftCheck";
+import { startCreatorActivityScoreScheduler } from "./lib/creatorActivityScoreScheduler";
 
 assertRequiredEnv(logger);
 
@@ -111,6 +112,11 @@ app.listen(port, (err) => {
   // corrections propagate to instances that haven't seen a recent request for
   // the affected city — without waiting for the full 30-day TTL.
   startCorrectionSweep();
+
+  // Creator Activity Score recalculation job — processes stale scores every
+  // 4 hours in batches of 500, stale-first. Pure background work; never on
+  // the hot path of a live feed request.
+  startCreatorActivityScoreScheduler();
 
   // Startup stamp-worker health summary — log pending queue depth and any
   // jobs stuck in `generating` past their lock (a crashed worker never

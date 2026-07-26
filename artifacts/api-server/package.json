@@ -49,7 +49,8 @@
     "test:globe-trotter-legacy": "node --import tsx/esm --test src/test/globeTrotterLegacyRetirement.test.ts",
     "test:place-resolve": "node --import tsx/esm --test src/test/placeResolve.test.ts",
     "test:admin-visuals-verify": "node --import tsx/esm --test src/test/adminVisualsVerify.test.ts",
-    "check:api-prefix": "node --import tsx/esm src/scripts/checkNoApiRoutePrefix.ts"
+    "check:api-prefix": "node --import tsx/esm src/scripts/checkNoApiRoutePrefix.ts",
+    "test:creator-activity-score": "node --import tsx/esm --test src/test/creatorActivityScore.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
