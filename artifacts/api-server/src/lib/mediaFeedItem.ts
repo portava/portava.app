@@ -404,6 +404,115 @@ export function hydrateGemFeedItem(input: HydrateGemInput): MediaFeedItem {
  *     media bytes are never world-readable via guessable public URLs.
  *   - Location → only name/city/country. No coordinates in any code path.
  */
+// ── MediaGridItem — lightweight grid-mode tile ────────────────────────────────
+
+/**
+ * Lightweight tile shape returned by GET /api/media/feed?mode=grid.
+ *
+ * Deliberately minimal: no captions, comments, full profiles, event/trip
+ * objects, or raw coordinates. Only what is needed to render a static poster
+ * tile and navigate to the Watch fullscreen viewer on tap.
+ */
+export interface MediaGridItem {
+  id: string;
+  mediaType: "image" | "video";
+  thumbnailUrl: string | null;
+  /** Static poster URL shown in the tile. */
+  posterUrl: string | null;
+  width: number | null;
+  height: number | null;
+  /** Duration in milliseconds, or null for images / when metadata is absent. */
+  durationMs: number | null;
+  /** Post category / content type tag. */
+  contentType: string | null;
+  /** Creator user ID. Full profile is never included here. */
+  creatorId: string;
+  /** Human-readable place label. Raw coordinates are never included. */
+  locationLabel: string | null;
+  /** Structured place ID, when available. */
+  placeId: string | null;
+  /** Total view count. */
+  viewCount: number;
+  /** Qualified (≥3 s) view count. */
+  qualifiedViewCount: number;
+  /**
+   * Processing status of the primary media asset.
+   * Null when the asset is ready. Non-null only for in-progress uploads,
+   * so the owner's client can show a processing overlay.
+   */
+  processingStatus: string | null;
+}
+
+/**
+ * Map a raw DB row + its post_media array to a lightweight MediaGridItem.
+ *
+ * Privacy contract:
+ *   - No captions, tags, comment counts, like counts, or viewer-state fields.
+ *   - No raw coordinates — only the human-readable location label.
+ *   - No full profile object — only the author_id (creatorId).
+ *   - processingStatus is returned for all items so the owner's client can
+ *     render a progress overlay; it is a status enum, not sensitive content.
+ */
+export function hydrateMediaGridItem(row: any, postMedia: any[]): MediaGridItem {
+  const sorted = [...postMedia].sort(
+    (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
+  );
+
+  const primaryVideo = sorted.find((m) => m.media_type === "video") ?? null;
+  const primaryImage = sorted.find((m) => m.media_type === "image") ?? null;
+  const primary = primaryVideo ?? primaryImage ?? sorted[0] ?? null;
+
+  const mediaType: "image" | "video" = primaryVideo ? "video" : "image";
+
+  // Thumbnail: prefer the explicit thumbnail_url; fall back to the poster itself.
+  const thumbnailUrl: string | null = primary?.thumbnail_url ?? null;
+
+  // Poster: video thumbnail → first image public_url → first asset public_url.
+  const posterUrl: string | null =
+    primaryVideo?.thumbnail_url ??
+    primaryImage?.public_url ??
+    primary?.public_url ??
+    null;
+
+  const width: number | null = primary?.width ?? null;
+  const height: number | null = primary?.height ?? null;
+  const durationMs: number | null =
+    primary?.duration_seconds != null
+      ? Math.round((primary.duration_seconds as number) * 1000)
+      : null;
+
+  // Location label: no coordinates, just the human-readable label.
+  const locationLabel: string | null =
+    (row.location_name as string | null | undefined) ??
+    (row.location_city as string | null | undefined) ??
+    (row.location_country as string | null | undefined) ??
+    null;
+
+  // Only expose a non-ready processing_status — null means "ready, no overlay needed".
+  const rawStatus: string | null | undefined = primary?.processing_status;
+  const processingStatus: string | null =
+    rawStatus && rawStatus !== "ready" ? rawStatus : null;
+
+  return {
+    id: row.id as string,
+    mediaType,
+    thumbnailUrl,
+    posterUrl,
+    width,
+    height,
+    durationMs,
+    contentType: (row.category as string | null | undefined) ?? null,
+    creatorId: row.author_id as string,
+    locationLabel,
+    placeId: null, // posts table has no structured place_id column
+    viewCount: (row.view_count as number | null | undefined) ?? 0,
+    qualifiedViewCount: (row.qualified_view_count as number | null | undefined) ?? 0,
+    processingStatus,
+  };
+}
+
+// ── Watch-mode hydrator ───────────────────────────────────────────────────────
+
 export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
   const { row, sourceType, viewerUserId, allowedRealNameIds, savedPostIds,
     likedPostIds, followedCreatorIds, pendingFollowRequestIds,

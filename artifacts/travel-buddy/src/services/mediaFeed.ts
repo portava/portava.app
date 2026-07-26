@@ -15,6 +15,9 @@ import type {
   WatchFeedType,
   MediaFeedPlace,
   MediaFeedLinkedEntity,
+  MediaGridItem,
+  GridFeedPage,
+  GridFilter,
 } from '../types/media.ts';
 
 // ── API base URL ──────────────────────────────────────────────────────────────
@@ -186,6 +189,87 @@ export interface FeedServiceResult {
   data: WatchFeedPage | null;
   errorKind?: 'network' | 'auth' | 'server' | 'unknown';
   message?: string;
+}
+
+// ── Grid feed service ─────────────────────────────────────────────────────────
+
+export interface GridFeedServiceResult {
+  ok: boolean;
+  data: GridFeedPage | null;
+  errorKind?: 'network' | 'auth' | 'server' | 'unknown';
+  message?: string;
+}
+
+export interface FetchGridFeedParams {
+  filter?: GridFilter;
+  cursor?: string;
+  sessionId?: string;
+  limit?: number;
+}
+
+/**
+ * Fetch one page of the Grid feed.
+ *
+ * The server returns lightweight MediaGridItem objects — no captions, full
+ * profiles, event/trip objects, or raw coordinates. This service passes them
+ * through as-is since no adaptation is required (they already match the
+ * UI type shape).
+ *
+ * Returns a typed result; never throws.
+ */
+export async function fetchGridFeed(params: FetchGridFeedParams): Promise<GridFeedServiceResult> {
+  const token = await freshToken();
+  if (!token) {
+    return { ok: false, data: null, errorKind: 'auth', message: 'Not authenticated' };
+  }
+
+  try {
+    const qs = new URLSearchParams({
+      mode: 'grid',
+      filter: params.filter ?? 'all',
+      sessionId: params.sessionId ?? '',
+      limit: String(params.limit ?? 20),
+    });
+    if (params.cursor) qs.set('cursor', params.cursor);
+
+    const res = await fetch(`${apiBase()}/api/media/feed?${qs.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, data: null, errorKind: 'auth', message: 'Unauthorized' };
+    }
+
+    if (!res.ok) {
+      return {
+        ok: false,
+        data: null,
+        errorKind: 'server',
+        message: `HTTP ${res.status}`,
+      };
+    }
+
+    const body: { items: MediaGridItem[]; nextCursor: string | null; sessionId: string } =
+      await res.json();
+
+    const page: GridFeedPage = {
+      items: body.items,
+      nextCursor: body.nextCursor,
+      sessionId: body.sessionId,
+    };
+
+    return { ok: true, data: page };
+  } catch (err) {
+    if (isNetworkError(err)) {
+      return { ok: false, data: null, errorKind: 'network', message: 'Network error' };
+    }
+    return {
+      ok: false,
+      data: null,
+      errorKind: 'unknown',
+      message: err instanceof Error ? err.message : 'Unknown error',
+    };
+  }
 }
 
 export interface FetchFeedParams {

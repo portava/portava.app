@@ -28,11 +28,13 @@ import {
 import { calculateUserAge } from "../lib/ageEligibility.js";
 import {
   hydrateMediaFeedItem,
+  hydrateMediaGridItem,
   stripPrivateEventFields,
   stripPrivateTripFields,
   hydrateGemFeedItem,
   type MediaFeedItem,
   type MediaFeedLinkedEntity,
+  type MediaGridItem,
 } from "../lib/mediaFeedItem.js";
 import {
   findNearbyGems,
@@ -91,6 +93,29 @@ function pruneViewDedup(): void {
     if (oldest) viewDedupMap.delete(oldest);
   }
 }
+
+/**
+ * Grid-mode post columns — strictly lightweight.
+ * No captions (content), no reaction counts, no linked event/trip fields.
+ * Includes only the fields needed to render a static poster tile.
+ * Eligibility fields (geo_restriction / age_restriction_*) are still present
+ * because filterEligibleMediaCandidates requires them to be fail-closed.
+ */
+const GRID_POST_COLUMNS =
+  "id, author_id, has_video, primary_media_type, " +
+  "view_count, qualified_view_count, " +
+  "location_name, location_city, location_country, " +
+  "created_at, category, " +
+  "status, post_status, visibility, moderation_status, publish_at, " +
+  "geo_restriction, age_restriction_enabled, age_min, age_max, tags";
+
+/**
+ * Grid-mode post_media columns — minimal set for static tile rendering.
+ * No storage_path / storage_bucket (private-relay not needed for grid tiles).
+ */
+const GRID_MEDIA_COLUMNS =
+  "id, media_type, public_url, thumbnail_url, " +
+  "duration_seconds, width, height, sort_order, processing_status, moderation_status";
 
 /** Columns projected from posts for media feed (never include exact GPS). */
 const FEED_POST_COLUMNS =
@@ -329,6 +354,16 @@ const feedQuerySchema = z.object({
   sessionId: z.string().optional(),
 });
 
+export type GridFilter = "all" | "videos" | "photos" | "following" | "saved" | "nearby";
+
+const gridQuerySchema = z.object({
+  mode: z.literal("grid"),
+  filter: z.enum(["all", "videos", "photos", "following", "saved", "nearby"]).optional().default("all"),
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(MAX_LIMIT).optional().default(DEFAULT_LIMIT),
+  sessionId: z.string().optional(),
+});
+
 const gemsQuerySchema = z.object({
   mode: z.literal("hidden_gems"),
   areaMode: z.enum(["near_me", "this_city", "my_trip", "all"]).optional().default("all"),
@@ -360,12 +395,196 @@ const GEM_FEED_COLUMNS = "id, name, category, city, country, neighborhood, descr
 
 /** km radius used for near_me bounding-box pre-filter. */
 const NEAR_ME_RADIUS_KM = 25;
-
 const viewBodySchema = z.object({
   type: z.enum(["impression", "qualified_view", "completion", "rewatch"]),
   watchedMs: z.number().int().min(0).optional(),
   sessionId: z.string().optional(),
 });
+
+// ── GET /api/media/feed?mode=grid ─────────────────────────────────────────────
+
+/**
+ * Grid mode feed handler.
+ *
+ * Returns lightweight MediaGridItem objects — no captions, comments, full
+ * profiles, event/trip objects, or raw coordinates.
+ *
+ * Supported filter values:
+ *   all       — all eligible public posts (images + videos)
+ *   videos    — video posts only (has_video = true)
+ *   photos    — image-only posts (has_video = false)
+ *   following — posts from creators the viewer follows
+ *   saved     — viewer's saved posts
+ *   nearby    — all eligible posts (client gates the chip on location permission)
+ *
+ * No ranking is applied — items are returned in reverse-chronological order.
+ * Cursor pagination is stable (same contract as Watch mode).
+ */
+async function handleGridFeed(req: any, res: any): Promise<void> {
+  const nowMs = Date.now();
+
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not available");
+    return;
+  }
+
+  // Feature flag gate
+  if (!(await isFlagEnabled(sc, "MEDIA_VIEW_MODE_GRID_ENABLED"))) {
+    sendError(res, "feature_disabled", "Grid feed is not available");
+    return;
+  }
+
+  const parsed = gridQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid query");
+    return;
+  }
+  const { filter, limit, sessionId: clientSessionId } = parsed.data;
+  const cursorToken = parsed.data.cursor;
+  const sessionId = clientSessionId ?? randomUUID();
+
+  // Decode cursor
+  const cursor = cursorToken ? decodeCursor(cursorToken) : null;
+  if (cursorToken && !cursor) {
+    sendError(res, "invalid_payload", "Invalid cursor");
+    return;
+  }
+
+  // ── Pre-fetch viewer context for filter-specific queries ────────────────────
+  const followedCreatorIds = new Set<string>();
+  const savedPostIds = new Set<string>();
+
+  await Promise.all([
+    (async () => {
+      if (filter === "following") {
+        try {
+          const { data } = await sc
+            .from("user_follows")
+            .select("following_id")
+            .eq("follower_id", user.id);
+          for (const r of (data as any[]) ?? []) followedCreatorIds.add(r.following_id as string);
+        } catch { /* non-fatal */ }
+      }
+    })(),
+    (async () => {
+      if (filter === "saved") {
+        try {
+          const { data } = await sc
+            .from("post_saves")
+            .select("post_id")
+            .eq("user_id", user.id);
+          for (const r of (data as any[]) ?? []) savedPostIds.add(r.post_id as string);
+        } catch { /* non-fatal */ }
+      }
+    })(),
+  ]);
+
+  // Following filter with zero followed creators → empty result
+  if (filter === "following" && followedCreatorIds.size === 0) {
+    res.json({ items: [], nextCursor: null, sessionId });
+    return;
+  }
+
+  // Saved filter with no saved posts → empty result
+  if (filter === "saved" && savedPostIds.size === 0) {
+    res.json({ items: [], nextCursor: null, sessionId });
+    return;
+  }
+
+  // ── Build candidate query ───────────────────────────────────────────────────
+  const candidateLimit = Math.min(limit * 5, 200);
+  const gridSelect = `${GRID_POST_COLUMNS}, post_media(${GRID_MEDIA_COLUMNS})`;
+
+  let query = sc
+    .from("posts")
+    .select(gridSelect)
+    .eq("status", "active")
+    .or("publish_at.is.null,publish_at.lte." + new Date(nowMs).toISOString())
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(candidateLimit);
+
+  // Apply filter-specific constraints
+  switch (filter) {
+    case "videos":
+      query = query.eq("visibility", "public").eq("has_video", true);
+      break;
+    case "photos":
+      query = query.eq("visibility", "public").eq("has_video", false);
+      break;
+    case "following":
+      // Include private posts from followed creators
+      query = query.in("author_id", [...followedCreatorIds]);
+      break;
+    case "saved":
+      query = query.in("id", [...savedPostIds]);
+      break;
+    case "all":
+    case "nearby":
+    default:
+      query = query.eq("visibility", "public");
+      break;
+  }
+
+  if (cursor) {
+    query = applyCursorFilter(query, cursor);
+  }
+
+  const { data: rawCandidates, error: fetchError } = await query;
+  if (fetchError) {
+    req.log.error({ err: fetchError }, "media/feed?mode=grid candidates query failed");
+    sendError(res, "db_error", fetchError.message);
+    return;
+  }
+
+  const candidates = (rawCandidates as MediaCandidate[]) ?? [];
+
+  // ── Eligibility filter ──────────────────────────────────────────────────────
+  const { eligible, blockFetchFailed } = await filterEligibleMediaCandidates(
+    candidates,
+    {
+      viewerUserId: user.id,
+      feedType: filter === "following" ? "following" : "for_you",
+      followedCreatorIds,
+    },
+    sc,
+  );
+
+  if (blockFetchFailed) {
+    req.log.warn({ userId: user.id }, "media/feed?mode=grid: block-state unknown — returning empty feed");
+    res.json({ items: [], nextCursor: null, sessionId });
+    return;
+  }
+
+  // ── Apply limit + compute next cursor (no ranking — chronological order) ────
+  const page = eligible.slice(0, limit);
+  const lastFetched = candidates[candidates.length - 1];
+  const nextCursor = lastFetched && candidates.length >= candidateLimit
+    ? encodeCursor({ created_at: lastFetched.created_at, id: lastFetched.id })
+    : null;
+
+  // ── Hydrate into lightweight grid items ─────────────────────────────────────
+  const items: MediaGridItem[] = page.map((c) => {
+    const postMedia = Array.isArray(c.post_media) ? c.post_media : [];
+    return hydrateMediaGridItem(c, postMedia);
+  });
+
+  // ── Analytics (fire-and-forget) ─────────────────────────────────────────────
+  recordMediaEvent("impression", {
+    viewer_id:  user.id,
+    filter,
+    mode:       "grid",
+    surface:    "grid_feed",
+    session_id: sessionId,
+  }, sc);
+
+  res.json({ items, nextCursor, sessionId });
+}
 
 // ── GET /api/media/feed?mode=hidden_gems ─────────────────────────────────────
 
@@ -540,7 +759,7 @@ router.get("/media/gems-feed", asyncHandler(async (req, res) => {
 
   // Batch: saved gems, follows, display-name privacy
   const gemIds: string[] = page.map((g: any) => g.id as string);
-  const [savedSet, followedCreatorIds, allowedRealNameIds] = await Promise.all([
+  const [savedSet, followedCreatorIdsGems, allowedRealNameIds] = await Promise.all([
     (async () => {
       const s = new Set<string>();
       if (gemIds.length === 0) return s;
@@ -576,7 +795,7 @@ router.get("/media/gems-feed", asyncHandler(async (req, res) => {
       viewerUserId: user.id,
       allowedRealNameIds,
       savedGemIds: savedSet,
-      followedCreatorIds,
+      followedCreatorIds: followedCreatorIdsGems,
       submitterProfile: profileMap.get(gem.submitted_by) ?? null,
     }),
   );
@@ -665,6 +884,11 @@ router.post("/media/:id/report", asyncHandler(async (req, res) => {
 // ── GET /api/media/feed ───────────────────────────────────────────────────────
 
 router.get("/media/feed", asyncHandler(async (req, res) => {
+  // Route to the grid handler when mode=grid
+  if (req.query.mode === "grid") {
+    return handleGridFeed(req, res);
+  }
+
   // Single clock read — all timestamp derivations in this handler use nowMs.
   const nowMs = Date.now();
 

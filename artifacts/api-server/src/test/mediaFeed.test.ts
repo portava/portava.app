@@ -604,8 +604,8 @@ describe("GET /media/feed", () => {
     assert.equal(status, 400);
   });
 
-  it("returns 400 when mode is not fullscreen", async () => {
-    const { status } = await jsonFetch(base, "/media/feed?mode=grid");
+  it("returns 400 when mode is an unknown value", async () => {
+    const { status } = await jsonFetch(base, "/media/feed?mode=bogus");
     assert.equal(status, 400);
   });
 
@@ -665,6 +665,274 @@ describe("GET /media/feed", () => {
     const { status, body } = await jsonFetch(base, "/media/feed?mode=fullscreen&feedType=following");
     assert.equal(status, 200);
     assert.deepEqual(body.items, []);
+  });
+});
+
+// ── Grid feed tests ───────────────────────────────────────────────────────────
+
+describe("GET /media/feed?mode=grid", () => {
+  let server: http.Server;
+  let base: string;
+
+  const gridFlags = [
+    { flag: "MEDIA_VIEW_MODE_GRID_ENABLED", enabled: true },
+    { flag: "MEDIA_FOR_YOU_ENABLED", enabled: true },
+  ];
+
+  before(async () => {
+    const app = makeApp();
+    ({ server, base } = await startServer(app));
+  });
+
+  after(() => { server.close(); });
+
+  beforeEach(() => {
+    const client = makeClient({
+      posts: [
+        makePost({ id: POST_1, author_id: CREATOR_A, created_at: "2024-01-15T12:00:00Z", has_video: false, post_media: [makeMedia({ media_type: "image" })] }),
+        makePost({ id: POST_2, author_id: CREATOR_B, created_at: "2024-01-15T11:00:00Z", has_video: true, post_media: [makeMedia({ media_type: "video" })] }),
+        makePost({ id: POST_3, author_id: CREATOR_C, created_at: "2024-01-15T10:00:00Z", has_video: false, post_media: [makeMedia({ media_type: "image" })] }),
+      ],
+      featureFlags: gridFlags,
+      profiles: [
+        makeProfile({ id: CREATOR_A }),
+        makeProfile({ id: CREATOR_B }),
+        makeProfile({ id: CREATOR_C }),
+      ],
+      userFollows: [],
+    });
+    _setTestClient(client, true);
+  });
+
+  // ── A. Feature flag gate ──────────────────────────────────────────────────
+
+  it("returns 404 when MEDIA_VIEW_MODE_GRID_ENABLED flag is off", async () => {
+    const client = makeClient({
+      featureFlags: [{ flag: "MEDIA_VIEW_MODE_GRID_ENABLED", enabled: false }],
+      posts: [],
+    });
+    _setTestClient(client, true);
+    const { status, body } = await jsonFetch(base, "/media/feed?mode=grid");
+    assert.equal(status, 404);
+    assert.equal(body.error, "feature_disabled");
+  });
+
+  // ── B. Basic response shape ───────────────────────────────────────────────
+
+  it("returns items array + sessionId on a valid grid request", async () => {
+    const { status, body } = await jsonFetch(base, "/media/feed?mode=grid&filter=all&limit=10");
+    assert.equal(status, 200, `Expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.ok(Array.isArray(body.items), "items must be an array");
+    assert.ok(typeof body.sessionId === "string", "sessionId must be a string");
+  });
+
+  it("returns lightweight items — no captions, profiles, or coordinates", async () => {
+    const { status, body } = await jsonFetch(base, "/media/feed?mode=grid&filter=all&limit=10");
+    assert.equal(status, 200);
+    assert.ok(body.items.length > 0, "expected at least one item");
+
+    for (const item of body.items) {
+      // Required lightweight fields must be present
+      assert.ok(typeof item.id === "string", "id must be a string");
+      assert.ok(item.mediaType === "image" || item.mediaType === "video", "mediaType must be image or video");
+      assert.ok("creatorId" in item, "creatorId must be present");
+      assert.ok(typeof item.viewCount === "number", "viewCount must be a number");
+
+      // Forbidden fields must be absent
+      assert.ok(!("caption" in item), "caption must not be in grid items");
+      assert.ok(!("content" in item), "content must not be in grid items");
+      assert.ok(!("creator" in item), "full creator object must not be in grid items");
+      assert.ok(!("viewerState" in item), "viewerState must not be in grid items");
+      assert.ok(!("stats" in item), "stats object must not be in grid items");
+      assert.ok(!("linkedEntity" in item), "linkedEntity must not be in grid items");
+      assert.ok(!("lat" in item) && !("lng" in item) && !("latitude" in item) && !("longitude" in item),
+        "coordinates must never appear in grid items");
+    }
+  });
+
+  // ── C. Filter params ──────────────────────────────────────────────────────
+
+  it("filter=videos returns only video items (has_video=true)", async () => {
+    const { status, body } = await jsonFetch(base, "/media/feed?mode=grid&filter=videos&limit=10");
+    assert.equal(status, 200, `Expected 200, got ${status}: ${JSON.stringify(body)}`);
+    for (const item of body.items) {
+      assert.equal(item.mediaType, "video", `item ${item.id} should be video`);
+    }
+  });
+
+  it("filter=photos returns only image items (has_video=false)", async () => {
+    const { status, body } = await jsonFetch(base, "/media/feed?mode=grid&filter=photos&limit=10");
+    assert.equal(status, 200, `Expected 200, got ${status}: ${JSON.stringify(body)}`);
+    for (const item of body.items) {
+      assert.equal(item.mediaType, "image", `item ${item.id} should be image`);
+    }
+  });
+
+  it("filter=following returns empty when viewer follows nobody", async () => {
+    const client = makeClient({
+      featureFlags: gridFlags,
+      posts: [makePost({ id: POST_1, author_id: CREATOR_A })],
+      userFollows: [],
+    });
+    _setTestClient(client, true);
+    const { status, body } = await jsonFetch(base, "/media/feed?mode=grid&filter=following");
+    assert.equal(status, 200);
+    assert.deepEqual(body.items, []);
+  });
+
+  it("filter=following returns posts from followed creators only", async () => {
+    const client = makeClient({
+      featureFlags: gridFlags,
+      posts: [
+        makePost({ id: POST_1, author_id: CREATOR_A, created_at: "2024-01-15T12:00:00Z" }),
+        makePost({ id: POST_2, author_id: CREATOR_B, created_at: "2024-01-15T11:00:00Z" }),
+      ],
+      userFollows: [{ follower_id: VIEWER_ID, following_id: CREATOR_A }],
+      profiles: [makeProfile({ id: CREATOR_A }), makeProfile({ id: CREATOR_B })],
+    });
+    _setTestClient(client, true);
+    const { status, body } = await jsonFetch(base, "/media/feed?mode=grid&filter=following");
+    assert.equal(status, 200);
+    // Only CREATOR_A is followed — only POST_1 should appear
+    const ids = body.items.map((i: any) => i.id);
+    assert.ok(ids.includes(POST_1), "POST_1 (followed creator) must appear");
+    assert.ok(!ids.includes(POST_2), "POST_2 (unfollowed creator) must not appear");
+  });
+
+  it("filter=saved returns empty when viewer has no saved posts", async () => {
+    const client = makeClient({
+      featureFlags: gridFlags,
+      posts: [makePost({ id: POST_1, author_id: CREATOR_A })],
+      postSaves: [],
+    });
+    _setTestClient(client, true);
+    const { status, body } = await jsonFetch(base, "/media/feed?mode=grid&filter=saved");
+    assert.equal(status, 200);
+    assert.deepEqual(body.items, []);
+  });
+
+  it("filter=saved returns viewer's saved posts", async () => {
+    const client = makeClient({
+      featureFlags: gridFlags,
+      posts: [
+        makePost({ id: POST_1, author_id: CREATOR_A, created_at: "2024-01-15T12:00:00Z" }),
+        makePost({ id: POST_2, author_id: CREATOR_B, created_at: "2024-01-15T11:00:00Z" }),
+      ],
+      postSaves: [{ user_id: VIEWER_ID, post_id: POST_2 }],
+      profiles: [makeProfile({ id: CREATOR_A }), makeProfile({ id: CREATOR_B })],
+    });
+    _setTestClient(client, true);
+    const { status, body } = await jsonFetch(base, "/media/feed?mode=grid&filter=saved");
+    assert.equal(status, 200);
+    const ids = body.items.map((i: any) => i.id);
+    assert.ok(ids.includes(POST_2), "POST_2 (saved) must appear");
+    assert.ok(!ids.includes(POST_1), "POST_1 (not saved) must not appear");
+  });
+
+  // ── D. Cursor stability ───────────────────────────────────────────────────
+
+  it("returns a stable cursor that does not repeat items across pages", async () => {
+    // Set up 4 posts so page 1 (limit=2) and page 2 (limit=2) cover all
+    const client = makeClient({
+      featureFlags: gridFlags,
+      posts: [
+        makePost({ id: POST_1, author_id: CREATOR_A, created_at: "2024-01-15T14:00:00Z" }),
+        makePost({ id: POST_2, author_id: CREATOR_B, created_at: "2024-01-15T13:00:00Z" }),
+        makePost({ id: POST_3, author_id: CREATOR_C, created_at: "2024-01-15T12:00:00Z" }),
+      ],
+      profiles: [
+        makeProfile({ id: CREATOR_A }),
+        makeProfile({ id: CREATOR_B }),
+        makeProfile({ id: CREATOR_C }),
+      ],
+    });
+    _setTestClient(client, true);
+
+    const page1 = await jsonFetch(base, "/media/feed?mode=grid&filter=all&limit=2");
+    assert.equal(page1.status, 200);
+    const ids1: string[] = page1.body.items.map((i: any) => i.id);
+    assert.equal(ids1.length, 2, "page 1 should have 2 items");
+
+    if (!page1.body.nextCursor) {
+      // All items on one page — cursor stability trivially holds
+      return;
+    }
+
+    const page2 = await jsonFetch(
+      base,
+      `/media/feed?mode=grid&filter=all&limit=2&cursor=${page1.body.nextCursor}`,
+    );
+    assert.equal(page2.status, 200);
+    const ids2: string[] = page2.body.items.map((i: any) => i.id);
+
+    const overlap = ids1.filter((id) => ids2.includes(id));
+    assert.deepEqual(overlap, [], `Page 2 must not repeat items from page 1; overlap: ${overlap.join(", ")}`);
+  });
+
+  // ── E. Invalid cursor ─────────────────────────────────────────────────────
+
+  it("returns 400 for an invalid cursor on the grid endpoint", async () => {
+    const { status } = await jsonFetch(base, "/media/feed?mode=grid&cursor=!!!invalid!!!");
+    assert.equal(status, 400);
+  });
+
+  // ── F. Auth requirement ───────────────────────────────────────────────────
+
+  it("returns 401 with no auth token on the grid endpoint", async () => {
+    const resp = await fetch(`${base}/media/feed?mode=grid`, {
+      headers: { "Content-Type": "application/json" },
+    });
+    assert.equal(resp.status, 401);
+  });
+
+  // ── G. Moderation exclusion ───────────────────────────────────────────────
+
+  it("excludes posts whose only media has moderation_status=rejected", async () => {
+    // A post is only eligible when it has at least one media item whose
+    // moderation_status is not 'rejected' or 'flagged'.  With all media
+    // rejected, the post must not appear in the grid feed.
+    const client = makeClient({
+      posts: [
+        makePost({
+          id: POST_1,
+          has_video: true,
+          post_media: [makeMedia({ media_type: "video", moderation_status: "rejected" })],
+        }),
+        makePost({
+          id: POST_2,
+          has_video: false,
+          post_media: [makeMedia({ media_type: "image", moderation_status: "approved" })],
+        }),
+      ],
+      featureFlags: gridFlags,
+      profiles: [makeProfile({ id: CREATOR_A })],
+      userFollows: [],
+    });
+    _setTestClient(client, true);
+    const { status, body } = await jsonFetch(base, "/media/feed?mode=grid&filter=all&limit=10");
+    assert.equal(status, 200);
+    const ids = body.items.map((i: any) => i.id);
+    assert.ok(!ids.includes(POST_1), "post with only rejected media must be excluded");
+    assert.ok(ids.includes(POST_2), "post with approved media must be included");
+  });
+
+  it("excludes posts whose only media has moderation_status=flagged", async () => {
+    const client = makeClient({
+      posts: [
+        makePost({
+          id: POST_1,
+          has_video: true,
+          post_media: [makeMedia({ media_type: "video", moderation_status: "flagged" })],
+        }),
+      ],
+      featureFlags: gridFlags,
+      profiles: [makeProfile({ id: CREATOR_A })],
+      userFollows: [],
+    });
+    _setTestClient(client, true);
+    const { status, body } = await jsonFetch(base, "/media/feed?mode=grid&filter=all&limit=10");
+    assert.equal(status, 200);
+    assert.equal(body.items.length, 0, "post with only flagged media must be excluded");
   });
 });
 

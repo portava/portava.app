@@ -1518,6 +1518,7 @@ router.patch("/me/privacy", async (req, res) => {
   }
 
   // Sync show_profile_picture_publicly to the profiles table when the caller changed it.
+  // Column added by migration 20260808_header_image_privacy.sql.
   // Fire-and-forget: a failure here is non-fatal — the caller still gets a 200.
   if (showPicPublicly !== undefined) {
     sc.from("profiles")
