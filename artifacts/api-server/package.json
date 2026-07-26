@@ -64,7 +64,8 @@
     "test:prompt-builder": "node --import tsx/esm --test src/lib/visuals/promptBuilder.test.ts",
     "test:visual-service": "node --import tsx/esm --test src/lib/visuals/service.test.ts",
     "test:place-image-report": "node --import tsx/esm --test src/test/placeImageReport.test.ts",
-    "test:admin-place-images": "node --import tsx/esm --test src/test/adminPlaceImages.test.ts"
+    "test:admin-place-images": "node --import tsx/esm --test src/test/adminPlaceImages.test.ts",
+    "test:admin-place-images-l1-eviction": "node --import tsx/esm --test src/test/adminPlaceImagesL1Eviction.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

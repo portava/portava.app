@@ -494,6 +494,23 @@ export function _clearTestCacheEntry(key: string): void {
   cache.delete(key);
 }
 
+/**
+ * Evict all L1 in-memory cache entries that contain a DB place with the given
+ * entityId (stored as id "db/<entityId>").  Called by admin moderation actions
+ * (approve/reject/downgrade/replace/report-resolve) so that a request served
+ * within the L1 TTL after the action gets fresh data rather than a stale image.
+ *
+ * Mirrors the L2 invalidation in discoveryPersistentCache.ts.
+ */
+export function evictCacheEntriesForEntity(entityId: string): void {
+  const targetId = `db/${entityId}`;
+  for (const [key, entry] of cache) {
+    if (entry.places.some((p) => p.id === targetId)) {
+      cache.delete(key);
+    }
+  }
+}
+
 async function queryDbPlaces(
   destination: string,
   category: string,

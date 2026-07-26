@@ -19,6 +19,7 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { invalidateDiscoveryCacheForEntity } from "../lib/discoveryPersistentCache.js";
+import { evictCacheEntriesForEntity } from "./discovery.js";
 
 const router = Router();
 
@@ -320,10 +321,11 @@ router.post("/admin/place-images/:visualId/approve", asyncHandler(async (req, re
 
   if (upErr) { sendError(res, "db_error", upErr.message); return; }
 
-  // Evict L2 cache so the next discovery request re-hydrates this place's image
+  // Evict L1 + L2 cache so the next discovery request re-hydrates this place's image
   if ((visual as any).entity_type === "place") {
     const placeId = (visual as any).canonical_place_id ?? (visual as any).entity_id;
     if (placeId && isUuid(placeId)) {
+      evictCacheEntriesForEntity(placeId);
       void invalidateDiscoveryCacheForEntity(placeId);
     }
   }
@@ -391,7 +393,8 @@ router.post("/admin/place-images/:visualId/reject", asyncHandler(async (req, res
         .eq("header_image_generated_id" as any, visualId)
         .then(() => { /* best-effort; column may not exist on older schema */ });
 
-      // Evict L2 cache so resolveHeaderImage re-evaluates on the next request
+      // Evict L1 + L2 cache so resolveHeaderImage re-evaluates on the next request
+      evictCacheEntriesForEntity(placeId);
       void invalidateDiscoveryCacheForEntity(placeId);
     }
   }
@@ -441,10 +444,11 @@ router.post("/admin/place-images/:visualId/downgrade", asyncHandler(async (req, 
 
   if (upErr) { sendError(res, "db_error", upErr.message); return; }
 
-  // Evict L2 cache so the next discovery request re-hydrates this place's image
+  // Evict L1 + L2 cache so the next discovery request re-hydrates this place's image
   if ((visual as any).entity_type === "place") {
     const placeId = (visual as any).canonical_place_id ?? (visual as any).entity_id;
     if (placeId && isUuid(placeId)) {
+      evictCacheEntriesForEntity(placeId);
       void invalidateDiscoveryCacheForEntity(placeId);
     }
   }
@@ -531,15 +535,20 @@ router.post("/admin/place-images/:visualId/replace", asyncHandler(async (req, re
 
   if (insertErr) { sendError(res, "db_error", insertErr.message); return; }
 
-  // Best-effort: update place's primary pointer to the new visual
+  // Best-effort: update place's primary pointer to the new visual + evict caches
   if ((visual as any).entity_type === "place") {
     const placeId = (visual as any).canonical_place_id ?? (visual as any).entity_id;
-    if (placeId && isUuid(placeId) && newVisual?.id) {
-      await sc
-        .from("places")
-        .update({ header_image_generated_id: newVisual.id } as any)
-        .eq("id", placeId)
-        .then(() => { /* best-effort */ });
+    if (placeId && isUuid(placeId)) {
+      if (newVisual?.id) {
+        await sc
+          .from("places")
+          .update({ header_image_generated_id: newVisual.id } as any)
+          .eq("id", placeId)
+          .then(() => { /* best-effort */ });
+      }
+      // Evict L1 + L2 cache so the next discovery request re-hydrates this place's image
+      evictCacheEntriesForEntity(placeId);
+      void invalidateDiscoveryCacheForEntity(placeId);
     }
   }
 
@@ -657,8 +666,9 @@ router.post("/admin/place-images/reports/:reportId/resolve", asyncHandler(async 
       if (rejectErr) { sendError(res, "db_error", rejectErr.message); return; }
     }
 
-    // Evict L2 cache so resolveHeaderImage picks up the rejection on the next request
+    // Evict L1 + L2 cache so resolveHeaderImage picks up the rejection on the next request
     if (reportPlaceId && isUuid(reportPlaceId)) {
+      evictCacheEntriesForEntity(reportPlaceId);
       void invalidateDiscoveryCacheForEntity(reportPlaceId);
     }
   }
