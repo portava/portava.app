@@ -460,7 +460,8 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
       </View>
       <GenerateHeaderSheet
         visible={generateSheetVisible}
-        eventId={event.id}
+        entityType="event"
+        entityId={event.id}
         onDismiss={() => setGenerateSheetVisible(false)}
         onAccepted={() => {
           setGenerateSheetVisible(false);

@@ -41,7 +41,10 @@ const TERMINAL_STATUSES: VisualStatus[] = ['ready', 'failed', 'blocked', 'replac
 
 interface Props {
   visible: boolean;
-  eventId: string;
+  /** Entity kind — determines the purpose sent to the API. */
+  entityType: 'event' | 'place';
+  /** ID of the event or place to generate a header for. */
+  entityId: string;
   onDismiss: () => void;
   /** Called with the accepted hero image URL so the parent can update its state. */
   onAccepted: (imageUrl: string) => void;
@@ -55,7 +58,7 @@ type Phase =
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function GenerateHeaderSheet({ visible, eventId, onDismiss, onAccepted }: Props) {
+export function GenerateHeaderSheet({ visible, entityType, entityId, onDismiss, onAccepted }: Props) {
   const [phase, setPhase]       = useState<Phase>('generating');
   const [visualId, setVisualId] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -112,10 +115,11 @@ export function GenerateHeaderSheet({ visible, eventId, onDismiss, onAccepted }:
     setErrorMsg(null);
     setVisualId(null);
 
+    const purpose = entityType === 'place' ? 'place_header' : 'event_header';
     const res = await generateVisual({
-      entityType: 'event',
-      entityId: eventId,
-      purpose: 'event_header',
+      entityType,
+      entityId,
+      purpose,
     });
 
     if (!mountRef.current) return;
@@ -137,7 +141,7 @@ export function GenerateHeaderSheet({ visible, eventId, onDismiss, onAccepted }:
     }
 
     startPoll(vid);
-  }, [eventId, startPoll]);
+  }, [entityType, entityId, startPoll]);
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
@@ -225,7 +229,8 @@ export function GenerateHeaderSheet({ visible, eventId, onDismiss, onAccepted }:
                 <ActivityIndicator size="large" color={color.signal} />
                 <Text style={s.loadingTitle}>Creating your image…</Text>
                 <Text style={s.loadingSubtitle}>
-                  AI is generating a header image based on your event details.{'\n'}
+                  AI is generating a header image based on the{' '}
+                  {entityType === 'place' ? 'place' : 'event'} details.{'\n'}
                   This usually takes 15–30 seconds.
                 </Text>
               </View>
