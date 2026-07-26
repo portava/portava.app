@@ -61,3 +61,39 @@ export interface WatchFeedPage {
   nextCursor: string | null;
   sessionId: string;
 }
+
+// ── Grid mode ─────────────────────────────────────────────────────────────────
+
+/** Filter chip values for the grid feed. */
+export type GridFilter = 'all' | 'videos' | 'photos' | 'following' | 'saved' | 'nearby';
+
+/**
+ * Lightweight tile item returned by GET /api/media/feed?mode=grid.
+ *
+ * Deliberately minimal — no captions, full profiles, event/trip objects,
+ * or raw coordinates. Mirrors the server-side MediaGridItem shape.
+ */
+export interface MediaGridItem {
+  id: string;
+  mediaType: 'image' | 'video';
+  thumbnailUrl: string | null;
+  posterUrl: string | null;
+  width: number | null;
+  height: number | null;
+  /** Duration in milliseconds. Null for images or missing metadata. */
+  durationMs: number | null;
+  contentType: string | null;
+  creatorId: string;
+  locationLabel: string | null;
+  placeId: string | null;
+  viewCount: number;
+  qualifiedViewCount: number;
+  /** Non-null only for in-progress uploads (processing overlay). */
+  processingStatus: string | null;
+}
+
+export interface GridFeedPage {
+  items: MediaGridItem[];
+  nextCursor: string | null;
+  sessionId: string;
+}
