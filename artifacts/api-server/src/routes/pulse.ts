@@ -3,11 +3,15 @@ import { enrichSpans } from '../lib/enrichSpans';
 import { rankCandidates } from '../lib/portavaRank';
 import { logImpression } from '../lib/rankLog';
 import { isFlagEnabled } from '../lib/featureFlags';
+import {
+  enforceCreatorCapsGeneric,
+  emitCreatorCapAnalytics,
+} from '../services/ranking/CreatorCapEnforcer.js';
+import { getCreatorCaps } from '../services/ranking/rankingConfig.js';
 import { getCompassProfile } from "../compass/CompassProfileService";
 import { rankItems as drsRankItems } from '../services/ranking/DiscoveryRankingService.js';
 import type { RankingInput, RankingViewerContext } from '../services/ranking/DiscoveryRankingService.js';
-import { enforceCreatorCaps } from '../services/ranking/CreatorCapEnforcer.js';
-import { allocateFeedSlots } from '../services/ranking/FeedSlotAllocator.js';
+import { emitFeedSlotAnalytics } from '../services/ranking/FeedSlotAllocator.js';
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime";
@@ -95,9 +99,9 @@ function filterPublicMedia(raw: any): Array<Record<string, unknown>> {
     }));
 }
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * GET /api/pulse
- * =========================================================================*/
+ * -------------------------------------------------------------------------*/
 router.get("/pulse", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -567,7 +571,7 @@ router.get("/pulse", async (req, res) => {
         ...buddyCandidates,
       ];
 
-      const ranked = rankCandidates(
+      let ranked = rankCandidates(
         allCandidates,
         {
           userId: user.id,
@@ -651,18 +655,31 @@ router.get("/pulse", async (req, res) => {
           });
         }
 
-        // Assembly-phase analytics: creator-cap diversity pass + slot allocation.
-        // Both calls are fire-and-forget side effects that emit rank_events rows;
-        // they never affect feed order, response shape, or latency on error.
+        // ── Assembly-phase analytics (fire-and-forget) ───────────────────────
+        // Emits rank_events rows for diversity analytics; never affects feed order.
         try {
           const eligibleDrs  = drsResults.filter((r) => r.eligibilityPassed);
           const itemTypeMap  = new Map(drsInputs.map((i) => [i.itemId, i.itemType]));
           const creatorIdMap = new Map(drsInputs.map((i) => [i.itemId, i.creatorId]));
-          const capEnforced  = enforceCreatorCaps(
+          const capEnforced  = emitCreatorCapAnalytics(
             eligibleDrs, itemTypeMap, creatorIdMap, "pulse", user.id, sessionId, sc,
           );
-          allocateFeedSlots(capEnforced, drsInputs, "pulse", user.id, sessionId, sc);
-        } catch { /* non-fatal — assembly analytics must never affect the feed response */ }
+          emitFeedSlotAnalytics(capEnforced, drsInputs, "pulse", user.id, sessionId, sc);
+        } catch { /* non-fatal — analytics must never affect the feed response */ }
+
+        // ── Creator-frequency caps (DISCOVERY_DIVERSITY_ENABLED) ─────────────
+        // Applied after DRS reordering so no single followed creator can flood
+        // the top of the feed. For the crew (following) tab this is the ONLY
+        // diversity control applied — no slot allocation.
+        const diversityOn = await isFlagEnabled(sc, "DISCOVERY_DIVERSITY_ENABLED").catch(() => false);
+        if (diversityOn && ranked.length > 0) {
+          const caps = await getCreatorCaps(sc).catch(() => ({ maxPerPage: 3, maxConsecutive: 2 }));
+          ranked = enforceCreatorCapsGeneric(
+            ranked,
+            (x) => ((x.candidate as any).authorId as string | null | undefined) ?? null,
+            caps,
+          );
+        }
       } catch { /* non-fatal — portavaRank order is preserved on any DRS error */ }
 
       // ── Extract results preserving backward compatibility ──────────────
@@ -778,7 +795,7 @@ router.get("/pulse", async (req, res) => {
   res.json({ posts: orderedPosts, total: orderedPosts.length, tab, prompts, placeCards, sessionId });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * GET /api/pulse/live
  *
  * Aggregates real-time items from Safe Return, Events, Trips, Circles,
@@ -814,7 +831,7 @@ router.get("/pulse", async (req, res) => {
  *   tripId      — required when context='specificTrip'
  *
  * Response: { items: LivePulseItem[], fallbackContext?: string }
- * =========================================================================*/
+ * -------------------------------------------------------------------------*/
 
 export type LivePulseItemType =
   | 'event'

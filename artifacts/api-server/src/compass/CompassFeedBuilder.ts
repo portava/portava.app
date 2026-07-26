@@ -37,6 +37,13 @@ import {
   computeItemVisibilityBoost,
   type ActiveUserScoreResult,
 } from "./CompassActiveUserRewardEngine.js";
+import {
+  allocateFeedSlots,
+  loadUnderexposedItemIds,
+} from "../services/ranking/FeedSlotAllocator.js";
+import { enforceCreatorCaps } from "../services/ranking/CreatorCapEnforcer.js";
+import { getFeedShares, getCreatorCaps } from "../services/ranking/rankingConfig.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -452,17 +459,52 @@ async function runFeedPipeline(
     }
   }
 
+  // ── DISCOVERY_DIVERSITY_ENABLED: slot allocation + category/city caps ────────
+  // When the flag is on, apply the FeedSlotAllocator on the scored pool before
+  // section assignment so each section's candidate pool is already diversity-
+  // balanced. Creator caps are applied per-section after the diversity pass.
+  let diversityEnabled = false;
+  let creatorCapConfig = { maxPerPage: 3, maxConsecutive: 2 };
+
+  if (db) {
+    try {
+      [diversityEnabled, creatorCapConfig] = await Promise.all([
+        isFlagEnabled(db, "DISCOVERY_DIVERSITY_ENABLED"),
+        getCreatorCaps(db),
+      ]);
+    } catch { /* non-fatal — preserve existing behaviour */ }
+  }
+
+  let allocatedPool = finalPool;
+  if (diversityEnabled && finalPool.length > 0 && db) {
+    try {
+      const shares = await getFeedShares(db);
+      const itemIds = finalPool.map((r) => r.item.id);
+      const underexposedItemIds = await loadUnderexposedItemIds(db, itemIds);
+      allocatedPool = allocateFeedSlots(finalPool, shares, {
+        surface: "compass",
+        underexposedItemIds,
+      });
+    } catch { /* non-fatal — use original pool */ }
+  }
+
   // ── Section assignment (raw — no diversity yet) ────────────────────────────
-  const rawSectionMap = assignSections(finalPool, profile, context);
+  const rawSectionMap = assignSections(allocatedPool, profile, context);
 
   // ── Per-section diversity ──────────────────────────────────────────────────
-  // Diversity — including the 25% nightlife/paid cap and exploration cards —
-  // is applied independently to each section. This ensures the consecutive-
-  // type constraint and nightlife cap are respected WITHIN every section, not
-  // just globally.
+  // Diversity — including the 25% nightlife/paid cap, exploration cards, and
+  // (when enabled) category + city window caps — is applied independently to
+  // each section. Creator frequency caps are enforced after diversity.
   const sectionMap = new Map<SectionName, PipelineResult[]>();
   for (const [name, sectionItems] of rawSectionMap) {
-    sectionMap.set(name, diversifySection(sectionItems, profile, { sectionName: name }));
+    const diversified = diversifySection(sectionItems, profile, {
+      sectionName:         name,
+      applyWindowCaps:     diversityEnabled,
+    });
+    const capped = diversityEnabled
+      ? enforceCreatorCaps(diversified, creatorCapConfig)
+      : diversified;
+    sectionMap.set(name, capped);
   }
 
   return {
@@ -522,6 +564,30 @@ export async function rankItemsForDiscovery(
       const fairIds = new Set(fairInserts.map((r) => r.item.id));
       finalPool = [...fairInserts, ...boosted.filter((r) => !fairIds.has(r.item.id))];
     }
+  }
+
+  // ── DISCOVERY_DIVERSITY_ENABLED: slot allocation + creator caps ───────────
+  // Applied here so the Discovery route (which calls this function) benefits
+  // from the same diversity controls as the Compass feed builder.
+  let discoveryDiversityEnabled = false;
+  let discoveryCreatorCaps = { maxPerPage: 3, maxConsecutive: 2 };
+  if (db) {
+    try {
+      [discoveryDiversityEnabled, discoveryCreatorCaps] = await Promise.all([
+        isFlagEnabled(db, "DISCOVERY_DIVERSITY_ENABLED"),
+        getCreatorCaps(db),
+      ]);
+    } catch { /* non-fatal */ }
+  }
+  if (discoveryDiversityEnabled && finalPool.length > 0 && db) {
+    try {
+      const shares = await getFeedShares(db);
+      const underexposedItemIds = await loadUnderexposedItemIds(db, finalPool.map((r) => r.item.id));
+      finalPool = allocateFeedSlots(finalPool, shares, { surface: "discovery", underexposedItemIds });
+    } catch { /* non-fatal */ }
+  }
+  if (discoveryDiversityEnabled && finalPool.length > 0) {
+    finalPool = enforceCreatorCaps(finalPool, discoveryCreatorCaps);
   }
 
   return finalPool;

@@ -16,6 +16,50 @@ import { randomUUID } from "node:crypto";
 import { getServiceClient } from "./supabase";
 import type { ScoredCandidate, RankCandidate } from "./portavaRank";
 
+// ── Fatigue tracking ──────────────────────────────────────────────────────────
+// Fire-and-forget upsert into viewer_creator_fatigue for impression batches.
+// Gated by the CREATOR_FATIGUE_ENABLED feature flag (fail-open: skipped when flag
+// is unreachable). Deduplicates creator IDs within each batch (batch-at-most-once
+// per session per creator) to avoid write amplification.
+
+let _fatigueFlagCachedAt   = 0;
+let _fatigueFlagEnabled    = false;
+const FATIGUE_FLAG_TTL_MS  = 60_000; // 60 s TTL matching rankingConfig cache
+
+async function isFatigueEnabled(sc: any): Promise<boolean> {
+  if (Date.now() - _fatigueFlagCachedAt < FATIGUE_FLAG_TTL_MS) return _fatigueFlagEnabled;
+  try {
+    const { data } = await sc
+      .from("feature_flags")
+      .select("enabled")
+      .eq("flag", "CREATOR_FATIGUE_ENABLED")
+      .maybeSingle();
+    _fatigueFlagEnabled  = Boolean((data as any)?.enabled);
+    _fatigueFlagCachedAt = Date.now();
+  } catch { /* fail-open: keep previous value */ }
+  return _fatigueFlagEnabled;
+}
+
+function upsertCreatorFatigueAsync(
+  sc:         any,
+  viewerId:   string,
+  creatorIds: string[],
+): void {
+  const unique = [...new Set(creatorIds.filter(Boolean))];
+  if (unique.length === 0) return;
+  // Validate UUIDs — the RPC parameter is UUID[]; non-UUID OSM IDs must be filtered.
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const uuidIds = unique.filter((id) => UUID_RE.test(id));
+  if (uuidIds.length === 0) return;
+
+  void sc
+    .rpc("increment_creator_fatigue_batch", {
+      p_viewer_id:  viewerId,
+      p_creator_ids: uuidIds,
+    })
+    .then(() => {}, () => {});
+}
+
 /** Feature keys that carry or could carry raw GPS coordinates — strip on log. */
 const COORDINATE_KEYS = new Set(["lat", "lng", "latitude", "longitude", "distanceKm"]);
 
@@ -77,6 +121,15 @@ export async function logImpression(
     });
 
     await sc.from("rank_events").insert(rows);
+
+    // Fatigue tracking — fire-and-forget, gated by feature flag
+    const fatigueEnabled = await isFatigueEnabled(sc).catch(() => false);
+    if (fatigueEnabled) {
+      const creatorIds = scored
+        .map((s) => s.candidate.authorId as string | null | undefined)
+        .filter((id): id is string => typeof id === "string" && id.length > 0);
+      upsertCreatorFatigueAsync(sc, userId, creatorIds);
+    }
   } catch {
     // Silent swallow — logging must never break the feed
   }

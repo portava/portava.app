@@ -20,7 +20,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  enforceCreatorCaps,
+  emitCreatorCapAnalytics as enforceCreatorCaps,
   DEFAULT_MAX_PER_CREATOR,
 } from "../services/ranking/CreatorCapEnforcer.js";
 import { RankingEvent } from "../services/ranking/rankingAnalytics.js";

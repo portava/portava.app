@@ -28,6 +28,7 @@ import { startXXCatalogSweeper } from "./lib/stamps/xxCatalogRepair";
 import { startCorrectionSweep } from "./lib/stamps/countryGeocoder";
 import { runSchemaDriftCheck } from "./lib/schemaDriftCheck";
 import { startCreatorActivityScoreScheduler } from "./lib/creatorActivityScoreScheduler";
+import { startRankingFatigueSweeper } from "./lib/rankingFatigueSweeper";
 
 assertRequiredEnv(logger);
 
@@ -117,6 +118,10 @@ app.listen(port, (err) => {
   // 4 hours in batches of 500, stale-first. Pure background work; never on
   // the hot path of a live feed request.
   startCreatorActivityScoreScheduler();
+
+  // Viewer-creator fatigue row cleanup — deletes rows older than 30 days so
+  // the viewer_creator_fatigue table doesn't grow unbounded.
+  startRankingFatigueSweeper();
 
   // Startup stamp-worker health summary — log pending queue depth and any
   // jobs stuck in `generating` past their lock (a crashed worker never

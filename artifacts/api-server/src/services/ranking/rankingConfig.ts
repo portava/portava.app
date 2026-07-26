@@ -147,3 +147,27 @@ export async function getActivityParams(
     capScore: c["ranking.activity.capScore"] ?? 100,
   };
 }
+
+export interface CreatorCapParams {
+  /** Max items from one creator per feed page / assembled list. */
+  maxPerPage: number;
+  /** Max consecutive items from one creator in a row. */
+  maxConsecutive: number;
+  /** Half-life in hours for the fatigue score exponential decay. */
+  fatigueHalfLifeHours: number;
+  /** Recent-impression count that triggers a fatigue expires_at window. */
+  fatigueThreshold: number;
+}
+
+/** Creator-frequency cap parameters used by CreatorCapEnforcer and fatigue tracking. */
+export async function getCreatorCaps(
+  db: SupabaseClient,
+): Promise<CreatorCapParams> {
+  const c = await getRankingConfig(db);
+  return {
+    maxPerPage:           c["ranking.caps.maxPerPage"]           ?? 3,
+    maxConsecutive:       c["ranking.caps.maxConsecutive"]       ?? 2,
+    fatigueHalfLifeHours: c["ranking.caps.fatigueHalfLifeHours"] ?? 48,
+    fatigueThreshold:     c["ranking.caps.fatigueThreshold"]     ?? 5,
+  };
+}

@@ -24,16 +24,86 @@ const NIGHTLIFE_TAGS = new Set([
   "cocktails", "drinks", "party", "rave",
 ]);
 
-const MAX_CONSECUTIVE     = 2;
-const MAX_SAME_AUTHOR_RUN = 3;  // max consecutive items from the same author
+const MAX_CONSECUTIVE          = 2;
+const MAX_SAME_AUTHOR_RUN      = 3;  // max consecutive items from the same author
 const PAID_NIGHTLIFE_CAP_RATIO = 0.25;
-const EXPLORATION_WINDOW = 10;
-const MAX_EXPLORATION_INSERTS = 3;
+const EXPLORATION_WINDOW       = 10;
+const MAX_EXPLORATION_INSERTS  = 3;
+
+// Category & city diversity caps (per EXPLORATION_WINDOW items)
+const DEFAULT_MAX_CATEGORY_PER_WINDOW = 3;
+const DEFAULT_MAX_CITY_PER_WINDOW     = 4;
 
 export interface DiversityResult {
   items:            PipelineResult[];
   explorationCount: number;
   reorderedCount:   number;
+}
+
+// ── Category & city window caps ───────────────────────────────────────────────
+
+/**
+ * Apply windowed category and city caps on the OUTPUT sequence.
+ *
+ * Every consecutive group of EXPLORATION_WINDOW items in the result will have
+ * at most `maxPerCategory` items from any single content type and at most
+ * `maxPerCity` items from any single city.
+ *
+ * Algorithm: greedy position-by-position selection.
+ *   For each output slot, scan the remaining candidate pool (in original order)
+ *   and pick the first item that fits the current window's caps. If no candidate
+ *   fits (all caps exhausted — impossible to satisfy), take the first remaining
+ *   item anyway so the feed never has gaps and no items are ever dropped.
+ *
+ * Complexity: O(n²) — acceptable for typical feed sizes (20–200 items).
+ * Pure function — does not mutate the input array.
+ */
+function applyWindowedCaps(
+  items:          PipelineResult[],
+  maxPerCategory: number,
+  maxPerCity:     number,
+): PipelineResult[] {
+  if (items.length === 0) return items;
+
+  const pool   = [...items]; // mutable candidate pool (original order preserved)
+  const result: PipelineResult[] = [];
+
+  let windowCatCount  = new Map<string, number>();
+  let windowCityCount = new Map<string, number>();
+  let posInWindow     = 0;
+
+  while (pool.length > 0) {
+    // Reset counts at the start of each new window
+    if (posInWindow >= EXPLORATION_WINDOW) {
+      windowCatCount  = new Map();
+      windowCityCount = new Map();
+      posInWindow     = 0;
+    }
+
+    // Find first pool item that satisfies both caps in this window
+    const idx = pool.findIndex((item) => {
+      const cat  = item.item.type  ?? "__none__";
+      const city = (item.item.city ?? "__none__").toLowerCase();
+      return (
+        (windowCatCount.get(cat)   ?? 0) < maxPerCategory &&
+        (windowCityCount.get(city) ?? 0) < maxPerCity
+      );
+    });
+
+    // If nothing fits (caps fully exhausted), take first item as best-effort
+    // so the window always advances and no items are dropped.
+    const takeIdx = idx >= 0 ? idx : 0;
+    const [item]  = pool.splice(takeIdx, 1) as [PipelineResult];
+
+    result.push(item);
+    const cat  = item.item.type  ?? "__none__";
+    const city = (item.item.city ?? "__none__").toLowerCase();
+    windowCatCount.set(cat,  (windowCatCount.get(cat)  ?? 0) + 1);
+    windowCityCount.set(city, (windowCityCount.get(city) ?? 0) + 1);
+    posInWindow++;
+  }
+
+  return result;
 }
 
 function isNightlifeOrPaid(r: PipelineResult): boolean {
@@ -306,12 +376,18 @@ function insertExplorationCards(
  *
  * @param items    Sorted PipelineResults (scored, sanitized)
  * @param profile  The viewer's Compass profile (for future personalised exploration)
+ * @param opts     Optional: skip nightlife cap, category/city window caps
  * @returns        DiversityResult — reordered items + metadata
  */
 export function applyDiversity(
   items: PipelineResult[],
   profile: CompassProfile,
-  opts: { skipNightlifeCap?: boolean } = {},
+  opts: {
+    skipNightlifeCap?:  boolean;
+    maxCategoryPerWindow?: number;
+    maxCityPerWindow?: number;
+    applyWindowCaps?: boolean;
+  } = {},
 ): DiversityResult {
   if (items.length === 0) {
     return { items: [], explorationCount: 0, reorderedCount: 0 };
@@ -326,8 +402,17 @@ export function applyDiversity(
   // Step 3: Break consecutive same-author runs (≤ MAX_SAME_AUTHOR_RUN in a row)
   const { out: authorBroken, reorderedCount: authorReorder } = breakAuthorRuns(broken);
 
-  // Step 4: Insert exploration cards
-  const { out: diversified, explorationCount } = insertExplorationCards(authorBroken, profile);
+  // Step 4: Apply category & city window caps when diversity is enabled
+  const windowCapped = opts.applyWindowCaps
+    ? applyWindowedCaps(
+        authorBroken,
+        opts.maxCategoryPerWindow ?? DEFAULT_MAX_CATEGORY_PER_WINDOW,
+        opts.maxCityPerWindow     ?? DEFAULT_MAX_CITY_PER_WINDOW,
+      )
+    : authorBroken;
+
+  // Step 5: Insert exploration cards
+  const { out: diversified, explorationCount } = insertExplorationCards(windowCapped, profile);
 
   return { items: diversified, explorationCount, reorderedCount: typeReorder + authorReorder };
 }
@@ -338,12 +423,25 @@ export function applyDiversity(
  *
  * Sections with a nightlife/entertainment focus (e.g. `tonight`) skip the
  * 25% nightlife/paid cap so their thematic utility is not collapsed.
+ *
+ * @param opts.applyWindowCaps   When true, apply category & city window caps
+ *                               (enabled by the DISCOVERY_DIVERSITY_ENABLED flag).
  */
 export function diversifySection(
   sectionItems: PipelineResult[],
   profile: CompassProfile,
-  opts: { sectionName?: string } = {},
+  opts: {
+    sectionName?:       string;
+    applyWindowCaps?:   boolean;
+    maxCategoryPerWindow?: number;
+    maxCityPerWindow?:     number;
+  } = {},
 ): PipelineResult[] {
   const skipNightlifeCap = opts.sectionName === "tonight";
-  return applyDiversity(sectionItems, profile, { skipNightlifeCap }).items;
+  return applyDiversity(sectionItems, profile, {
+    skipNightlifeCap,
+    applyWindowCaps:      opts.applyWindowCaps      ?? false,
+    maxCategoryPerWindow: opts.maxCategoryPerWindow,
+    maxCityPerWindow:     opts.maxCityPerWindow,
+  }).items;
 }

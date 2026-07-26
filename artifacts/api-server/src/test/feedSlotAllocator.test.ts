@@ -21,7 +21,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  allocateFeedSlots,
+  emitFeedSlotAnalytics as allocateFeedSlots,
   EXPLORATION_INTERVAL,
   type AllocatedFeedItem,
 } from "../services/ranking/FeedSlotAllocator.js";
