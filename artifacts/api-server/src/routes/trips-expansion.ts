@@ -20,6 +20,10 @@ import {
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity.js";
 import { truncateDisplayName } from "../lib/displayName.js";
+import {
+  toPrivateTripPreview,
+  toAuthorizedTripView,
+} from "../lib/privacy/tripSerializers.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -58,77 +62,9 @@ function computeStatus(
   return "planning";
 }
 
-/** Strip private fields for a public (non-member) viewer. */
-function toPublicTrip(t: any): any {
-  const out: any = {
-    id:               t.id,
-    title:            t.title,
-    destinationCity:  t.show_destination_city !== false ? t.destination_city : null,
-    destinationCountry: t.destination_country ?? null,
-    status:           t.status,
-    visibility:       t.visibility,
-    coverUrl:         t.cover_url ?? null,
-    tripType:         t.trip_type ?? "leisure",
-    openToMeet:       t.open_to_meet ?? false,
-    createdAt:        t.created_at,
-    updatedAt:        t.updated_at,
-  };
-
-  if (t.show_exact_dates !== false) {
-    out.startDate = t.start_date ?? null;
-    out.endDate   = t.end_date   ?? null;
-  } else {
-    out.startDate = null;
-    out.endDate   = null;
-  }
-
-  if (t.precise_location_visible === true) {
-    out.destinationLat = t.destination_lat ?? null;
-    out.destinationLng = t.destination_lng ?? null;
-  }
-
-  // Never expose: trip_notes, budget, documents, destination_lat/lng (unless above).
-  return out;
-}
-
-/** Full trip shape for members / owner. */
-function toMemberTrip(t: any): any {
-  return {
-    id:                     t.id,
-    title:                  t.title,
-    destinationCity:        t.destination_city,
-    destinationCountry:     t.destination_country ?? null,
-    destinationLat:         t.destination_lat ?? null,
-    destinationLng:         t.destination_lng ?? null,
-    destinationPlaceId:     t.destination_place_id ?? null,
-    neighborhoods:          t.neighborhoods ?? [],
-    startDate:              t.start_date ?? null,
-    endDate:                t.end_date ?? null,
-    status:                 t.status,
-    visibility:             t.visibility,
-    tripType:               t.trip_type ?? "leisure",
-    timezone:               t.timezone ?? null,
-    travelStyle:            t.travel_style ?? null,
-    openToMeet:             t.open_to_meet ?? false,
-    coverUrl:               t.cover_url ?? null,
-    progress:               t.progress ?? 0,
-    planEditPermission:     t.plan_edit_permission ?? "all_members",
-    tripNotes:              t.trip_notes ?? null,
-    // Privacy settings
-    showOnProfile:          t.show_on_profile ?? true,
-    showInDiscovery:        t.show_in_discovery ?? false,
-    allowFriendSuggestions: t.allow_friend_suggestions ?? true,
-    allowTripCrewInvites:   t.allow_trip_crew_invites ?? true,
-    allowJoinRequests:      t.allow_join_requests ?? false,
-    showExactDates:         t.show_exact_dates ?? true,
-    showDestinationCity:    t.show_destination_city ?? true,
-    delayedPostingDefault:  t.delayed_posting_default ?? false,
-    preciseLocationVisible: t.precise_location_visible ?? false,
-    ownerId:                t.owner_id,
-    createdAt:              t.created_at,
-    updatedAt:              t.updated_at,
-  };
-}
+// toPublicTrip and toMemberTrip have been replaced by the explicit DTO
+// serializers imported above. Legacy references are gone; all call sites
+// now use toPrivateTripPreview / toAuthorizedTripView directly.
 
 async function isBlocked(client: any, userA: string, userB: string): Promise<boolean> {
   const { data } = await client
@@ -184,7 +120,7 @@ router.get("/trips/me", async (req, res) => {
 
   if (tripsErr) { sendError(res, "db_error", tripsErr.message); return; }
 
-  res.json({ trips: (trips ?? []).map(toMemberTrip) });
+  res.json({ trips: (trips ?? []).map(toAuthorizedTripView) });
 });
 
 // ---------------------------------------------------------------------------
@@ -218,7 +154,7 @@ router.get("/trips/upcoming", async (req, res) => {
     .order("start_date", { ascending: true });
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ trips: (trips ?? []).map(toMemberTrip) });
+  res.json({ trips: (trips ?? []).map(toAuthorizedTripView) });
 });
 
 // ---------------------------------------------------------------------------
@@ -253,7 +189,7 @@ router.get("/trips/active", async (req, res) => {
     .order("start_date", { ascending: true });
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ trips: (trips ?? []).map(toMemberTrip) });
+  res.json({ trips: (trips ?? []).map(toAuthorizedTripView) });
 });
 
 // ---------------------------------------------------------------------------
@@ -284,7 +220,7 @@ router.get("/trips/past", async (req, res) => {
     .order("end_date", { ascending: false });
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ trips: (trips ?? []).map(toMemberTrip) });
+  res.json({ trips: (trips ?? []).map(toAuthorizedTripView) });
 });
 
 // ---------------------------------------------------------------------------
@@ -525,7 +461,7 @@ router.patch("/trips/:tripId/settings", async (req, res) => {
 
   await logActivity(sc, tripId, user.id, "trip_updated", { fields: Object.keys(patch) });
 
-  res.json(toMemberTrip(updated as any));
+  res.json(toAuthorizedTripView(updated as any));
 });
 
 // ===========================================================================
@@ -2652,47 +2588,62 @@ router.get("/trips/:tripId", async (req, res) => {
 
   const t = trip as any;
 
+  // Block check FIRST — blocking overrides all other relationships, including
+  // membership. A blocked user must not access even the minimal preview.
+  if (user) {
+    const blocked = await isBlocked(sc, user.id, t.owner_id);
+    if (blocked) { sendError(res, "not_found", "Trip not found"); return; }
+  }
+
   // Unauthenticated callers cannot be members or owners.
   const isMember = user ? await requireTripMember(sc, tripId, user.id) : null;
   const isOwner  = user ? t.owner_id === user.id : false;
 
-  // Members / owner always get full shape regardless of visibility.
+  // Members / owner always get the full authorized view regardless of visibility.
   if (isMember || isOwner) {
-    res.json(toMemberTrip(t));
+    res.json(toAuthorizedTripView(t));
     return;
-  }
-
-  // Non-member / unauthenticated: blocked users (known) never see the trip.
-  if (user) {
-    const blocked = await isBlocked(sc, user.id, t.owner_id);
-    if (blocked) { sendError(res, "forbidden", "Blocked"); return; }
   }
 
   // Enforce visibility for non-members / unauthenticated:
   //   "public"  — anyone (including unauthenticated) may see the stripped shape
   //   "buddies" — only authenticated mutual followers may see the stripped shape
-  //   "invite"  — only explicitly accepted members (already handled above); others → 404
-  //   "private" — members only (already handled above); others → 404
+  //   "invite"  — only explicitly accepted members (handled above); others → 404
+  //   "private" — members only (handled above); others → 404
   const vis = (t.visibility ?? "private") as string;
 
+  // Helper: fetch the viewer's pending join-request status (fail-open).
+  const getJoinRequestStatus = async (): Promise<string | null> => {
+    if (!user) return null;
+    try {
+      const { data: jr } = await sc
+        .from("trip_join_requests")
+        .select("status")
+        .eq("trip_id", tripId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      return (jr as any)?.status ?? null;
+    } catch { return null; }
+  };
+
   if (vis === "public") {
-    res.json(toPublicTrip(t));
+    res.json(toPrivateTripPreview(t, await getJoinRequestStatus()));
     return;
   }
 
   if (vis === "buddies" && user) {
-    // Mutual-follow check: viewer follows owner AND owner follows viewer
+    // Mutual-follow check: viewer follows owner AND owner follows viewer.
     const [{ data: viewerFollowsOwner }, { data: ownerFollowsViewer }] = await Promise.all([
       sc.from("user_follows").select("follower_id").eq("follower_id", user.id).eq("following_id", t.owner_id).maybeSingle(),
       sc.from("user_follows").select("follower_id").eq("follower_id", t.owner_id).eq("following_id", user.id).maybeSingle(),
     ]);
     if (viewerFollowsOwner && ownerFollowsViewer) {
-      res.json(toPublicTrip(t));
+      res.json(toPrivateTripPreview(t, await getJoinRequestStatus()));
       return;
     }
   }
 
-  // All other cases (not public, not a mutual friend, not a member): 404
+  // All other cases (invite/private, not a member, not a mutual buddy): 404
   sendError(res, "not_found", "Trip not found");
 });
 

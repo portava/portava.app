@@ -7,6 +7,11 @@ import { resolveInteractionPermissions } from "../services/interactionPermission
 import { resolveProfileVisibility, extractBearerToken } from "../lib/profileVisibility";
 import { nameVisibleFor } from "../lib/publicIdentity";
 import type { StampPalette } from "../lib/stamps/composition/identities";
+import {
+  toPrivateProfilePreview,
+  toPublicProfilePreview,
+  toFullProfileView,
+} from "../lib/privacy/profileSerializers.js";
 
 const router = Router();
 
@@ -22,32 +27,6 @@ const PUBLIC_POSTCARD_COLUMNS =
 /** Fallback: select everything; mapPostcard handles missing fields with ?? null. */
 const PUBLIC_POSTCARD_COLUMNS_FALLBACK = "*";
 
-function mapPublicProfile(r: any, allowRealName = false) {
-  return {
-    id: r.id,
-    username: r.username ?? null,
-    // Universal display-name rule: real name only when the subject opted in
-    // (or the viewer is the subject — callers pass allowRealName=true then).
-    displayName: allowRealName ? (r.display_name ?? r.name ?? null) : null,
-    bio: r.bio ?? null,
-    avatarUrl: r.avatar_url ?? null,
-    coverPhotoUrl: r.cover_photo_url ?? null,
-    homeCity: r.home_city ?? null,
-    homeCountry: r.home_country ?? null,
-    travelStyle: r.travel_style ?? null,
-    interests: r.interests ?? [],
-    verified: r.verified ?? false,
-    verificationStatus: r.verification_status ?? "unverified",
-    verifiedAt: r.verified_at ?? null,
-    passportVisibility: r.passport_visibility ?? "public",
-    createdAt: r.created_at ?? null,
-    spokenLanguages: r.spoken_languages ?? [],
-    travelStyles: r.travel_styles ?? [],
-    travelPace: r.travel_pace ?? null,
-    lookingFor: r.looking_for ?? [],
-    passportTabOrder: r.passport_tab_order ?? null,
-  };
-}
 
 function mapPostcard(r: any, includePrivate = false) {
   const base: Record<string, unknown> = {
@@ -218,34 +197,26 @@ router.get("/users/:username/passport", async (req, res) => {
     // Compute minimal viewer relationship state so the client can show
     // "Send Request" vs "Request sent" vs (future) "View profile" without
     // a second round-trip.  Fail-open: both flags stay false on any error.
-    let isFriend = false;
-    let friendRequestPending = false;
+    // NOTE: pending requests grant NO additional content access.
+    let relationshipStatus: "none" | "friend" | "outgoing_request" = "none";
     if (viewerId) {
       try {
         const perms = await resolveInteractionPermissions(sc, viewerId, targetId);
         const label = perms.relationshipLabel;
-        isFriend = label === "friend";
-        friendRequestPending = label === "outgoing_request";
+        if (label === "friend") relationshipStatus = "friend";
+        else if (label === "outgoing_request") relationshipStatus = "outgoing_request";
       } catch {
-        // non-fatal — leave false
+        // non-fatal — leave "none"
       }
     }
-    res.status(200).json({
-      id: data.id,
-      username: data.username ?? null,
-      // Universal display-name rule: a private profile's preview must never
-      // reveal the real name unless that user opted in.
-      displayName: privacySettings?.show_real_name === true
-        ? ((data.display_name ?? data.name) ?? null)
-        : null,
-      // Avatar is withheld in limited_preview — private profiles should not
-      // leak any personal imagery to unauthenticated or non-follower viewers.
-      avatarUrl: null,
-      accountStatus: (data as any).account_status ?? "active",
-      visibility: "private",
-      is_friend: isFriend,
-      friend_request_pending: friendRequestPending,
-    });
+    // toPrivateProfilePreview enforces the exact PrivateProfilePreview shape —
+    // no extra fields leak through, regardless of what the DB row contains.
+    res.status(200).json(
+      toPrivateProfilePreview(data, {
+        relationshipStatus,
+        showRealName: privacySettings?.show_real_name === true,
+      }),
+    );
     return;
   }
 
@@ -323,8 +294,17 @@ router.get("/users/:username/passport", async (req, res) => {
     /* fail-open: buddyProvider stays null */
   }
 
+  // Select the correct serializer based on the resolved visibility tier:
+  //   isMe or followers_only (approved follower/friend) → FullProfileView
+  //   full (public profile, non-owner)                 → PublicProfilePreview
+  const showRealName = isMe || privacySettings?.show_real_name === true;
+  const profilePayload =
+    isMe || visibility === "followers_only"
+      ? toFullProfileView(data, { showRealName })
+      : toPublicProfilePreview(data, { showRealName });
+
   res.status(200).json({
-    ...mapPublicProfile(data, isMe || privacySettings?.show_real_name === true),
+    ...profilePayload,
     viewer,
     buddyProvider,
   });

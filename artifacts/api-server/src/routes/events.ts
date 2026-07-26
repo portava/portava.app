@@ -190,6 +190,10 @@ import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import { rankCandidates } from "../lib/portavaRank.js";
 import type { RankCandidate, ViewerContext } from "../lib/portavaRank.js";
 import { logImpression } from "../lib/rankLog.js";
+import {
+  toPrivateEventPreview,
+  toAuthorizedEventView,
+} from "../lib/privacy/eventSerializers.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -1896,17 +1900,21 @@ router.get("/events/:id", async (req, res) => {
   const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
-  // Visibility check
-  if (!await canViewEvent(sc, ev as any, user.id)) {
-    sendError(res, "not_found", "Event not found or access denied"); return;
-  }
-
-  // Block check
+  // Block check FIRST — blocking overrides all other relationships.
+  // A blocked user must never access even the minimal preview.
   if (await isBlocked(sc, user.id, (ev as any).host_id)) {
     sendError(res, "not_found", "Event not found or access denied"); return;
   }
 
-  // Viewer eligibility gates (age / trust / verified) — same rules as RSVP
+  // Visibility check — non-discoverable events (invite_only, friends_only,
+  // circle, trip) return 404 for unauthorized viewers so they cannot probe
+  // event existence. Only the PrivateEventPreview path is for future use on
+  // explicitly-discoverable surfaces (share links, etc.).
+  if (!await canViewEvent(sc, ev as any, user.id)) {
+    sendError(res, "not_found", "Event not found or access denied"); return;
+  }
+
+  // Viewer eligibility gates (age / trust / verified) — same rules as RSVP.
   const readElig = await checkEventEligibility(sc, ev as any, user.id);
   if (!readElig.ok) {
     sendError(res, "not_found", "Event not found or access denied"); return;
@@ -1973,8 +1981,10 @@ router.get("/events/:id", async (req, res) => {
 
   const myRole = (ev as any).host_id === user.id ? "host" : ((roleResult as any).data?.role ?? null);
 
+  // Use the explicit AuthorizedEventView serializer — field gates for coords,
+  // priceUrl, and safetyNotes are applied server-side, not client-side.
   res.json({
-    ...formatEvent(ev as any, user.id, { goingRsvp: isParticipant }),
+    ...toAuthorizedEventView(ev as any, user.id, { goingRsvp: isParticipant }),
     host,
     counts,
     waitlistCount,
@@ -1984,6 +1994,8 @@ router.get("/events/:id", async (req, res) => {
     myWaitlistOfferExpiresAt: (waitlistResult as any).data?.offer_expires_at ?? null,
     myRole,
     myAttendanceState: (attendeeResult as any).data ?? null,
+    // goingAttendees: participant-scoped (empty for non-participants, already
+    // controlled by the isParticipant gate above).
     goingAttendees: goingProfiles.map((p: any) => ({
       id: p.id, handle: p.handle ?? null, displayName: p.name ?? null, avatarUrl: p.avatar_url ?? null,
     })),
