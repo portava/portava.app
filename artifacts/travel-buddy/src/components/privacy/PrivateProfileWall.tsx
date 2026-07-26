@@ -1,16 +1,16 @@
 /**
- * PrivateProfileWall — shared component for private-profile minimal views.
+ * PrivateProfileWall — lock section rendered BELOW the passport header.
  *
- * Used whenever the API returns a private sentinel for a user whose passport
- * is not visible to the current viewer. Renders ONLY the safe minimum:
- * avatar (if present), display name, @handle, "Private account" badge, and
- * the relationship action button (Send Request / Request Sent).
+ * The header (PassportHero with isPrivateView=true) is always shown by the
+ * parent screen — the passport header is intentionally public. This component
+ * renders only the private-account badge, the lock message, and the
+ * relationship action button.
  *
  * Deliberately does NOT render bio, home city, country, travel status, stats,
- * tabs, or any count — none of those fields are passed in the prop shape.
+ * tabs, or any count — those must never be passed or shown.
  */
 import React from 'react';
-import { View, Text, Image, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Lock } from 'lucide-react-native';
 import { PrivateRequestButton } from '../ui/PrivateRequestButton.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
@@ -23,9 +23,8 @@ export interface PrivateProfilePreview {
   /** Resolved display name (or null to fall back to handle). */
   displayName: string | null;
   /**
-   * Avatar URL — rendered when non-null.  When null the component renders an
-   * initials placeholder so the bio / location / other private fields are
-   * never needed to produce a visually complete wall.
+   * Avatar URL — passed through for parent use; not rendered here (the
+   * PassportHero renders the avatar above this component).
    */
   avatarUrl: string | null;
 }
@@ -43,44 +42,15 @@ export function PrivateProfileWall({
   friendRequestPending = false,
   isOwnProfile = false,
 }: Props) {
-  const primary = profile.displayName ?? profile.handle ?? 'User';
-  const handleLine = profile.handle ? `@${profile.handle}` : null;
-  const initial = primary[0]?.toUpperCase() ?? '?';
-
   return (
     <View style={s.container}>
-      {/* Avatar — only rendered when avatarUrl is non-null; no private fallback data */}
-      <View style={s.avatarWrap}>
-        {profile.avatarUrl != null ? (
-          <Image
-            source={{ uri: profile.avatarUrl }}
-            style={s.avatar}
-            accessibilityLabel={`${primary} profile photo`}
-          />
-        ) : (
-          <View style={[s.avatar, s.avatarFallback]}>
-            <Text style={s.avatarInitials}>{initial}</Text>
-          </View>
-        )}
-        {/* Lock overlay badge */}
-        <View style={s.lockBadge} accessibilityLabel="Private account">
-          <Lock size={11} color="#fff" />
-        </View>
-      </View>
-
-      {/* Display name — no bio, no location, no counts */}
-      <Text style={s.displayName} numberOfLines={1}>{primary}</Text>
-      {handleLine ? (
-        <Text style={s.handle} numberOfLines={1}>{handleLine}</Text>
-      ) : null}
-
-      {/* "Private account" indicator */}
+      {/* "Private account" badge */}
       <View style={s.privateBadge}>
         <Lock size={11} color={color.mute} />
         <Text style={s.privateBadgeText}>Private account</Text>
       </View>
 
-      {/* Wall message */}
+      {/* Lock message */}
       <Text style={s.wallMessage}>
         {friendRequestPending
           ? 'Your request is pending. The owner must accept before you can view their Passport.'
@@ -99,59 +69,13 @@ export function PrivateProfileWall({
   );
 }
 
-const AVATAR_SIZE = 88;
-
 const s = StyleSheet.create({
   container: {
     alignItems: 'center',
-    paddingVertical: space.xxxl,
+    paddingTop: space.lg,
+    paddingBottom: space.xxxl,
     paddingHorizontal: space.xl,
     gap: space.md,
-  },
-  avatarWrap: {
-    position: 'relative',
-    marginBottom: space.sm,
-  },
-  avatar: {
-    width: AVATAR_SIZE,
-    height: AVATAR_SIZE,
-    borderRadius: AVATAR_SIZE / 2,
-  },
-  avatarFallback: {
-    backgroundColor: color.deep,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitials: {
-    color: '#fff',
-    fontSize: 32,
-    fontWeight: '700' as const,
-  },
-  lockBadge: {
-    position: 'absolute',
-    bottom: 2,
-    right: 2,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: color.ink,
-    borderWidth: 2,
-    borderColor: color.paper,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  displayName: {
-    ...t.heading,
-    color: color.ink,
-    fontSize: 20,
-    textAlign: 'center',
-  },
-  handle: {
-    ...t.small,
-    color: color.mute,
-    fontFamily: 'Courier',
-    fontSize: 13,
-    textAlign: 'center',
   },
   privateBadge: {
     flexDirection: 'row' as const,

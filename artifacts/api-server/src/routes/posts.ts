@@ -970,8 +970,8 @@ router.get("/posts", async (req, res) => {
   const svc = getServiceClient();
   if (!svc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // Fetch hidden IDs before the LIMIT query so the DB returns exactly `limit`
-  // visible posts; avoids premature hasMore=false when hidden posts exist.
+  // Pre-fetch IDs to exclude before the LIMIT query so the DB returns exactly
+  // `limit` visible posts without premature end-of-feed.
   const globalHiddenIds: string[] = [];
   try {
     const { data: hiddenRows } = await svc
@@ -980,6 +980,19 @@ router.get("/posts", async (req, res) => {
       .eq("user_id", user.id);
     for (const r of hiddenRows ?? []) globalHiddenIds.push((r as any).post_id);
   } catch { /* best-effort */ }
+
+  // Exclude posts from private-profile authors. The global feed is shown to all
+  // authenticated users; private accounts' content must not surface to non-followers.
+  // (The following feed is separate and may show private-account posts to approved
+  // followers since those users explicitly chose to follow them.)
+  const privateAuthorIds: string[] = [];
+  try {
+    const { data: privateProfiles } = await svc
+      .from("profiles")
+      .select("id")
+      .eq("is_private", true);
+    for (const p of privateProfiles ?? []) privateAuthorIds.push((p as any).id);
+  } catch { /* best-effort: feed degrades gracefully if this lookup fails */ }
 
   let q = svc
     .from("posts")
@@ -992,6 +1005,7 @@ router.get("/posts", async (req, res) => {
     .limit(limit);
   if (before) q = q.lt("created_at", before);
   if (globalHiddenIds.length > 0) q = q.not("id", "in", `(${globalHiddenIds.join(",")})`);
+  if (privateAuthorIds.length > 0) q = q.not("author_id", "in", `(${privateAuthorIds.join(",")})`);
 
   const { data, error } = await q;
   if (error) {

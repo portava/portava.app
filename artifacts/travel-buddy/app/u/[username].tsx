@@ -822,20 +822,46 @@ function PublicPassportScreenNative() {
     }
 
     if (isPrivate && !isFriend) {
-      // Build the minimal safe preview from the private sentinel fields.
-      // bio, homeCity, homeCountry, interests, stats and tabs are intentionally
-      // absent — they are not part of PrivateProfilePreview and must not appear
-      // in the DOM even as null props on PassportHero.
       const wallProfile: PrivateProfilePreview = {
         id: previewProfile?.id ?? privateProfileId ?? social?.id ?? '',
         handle: previewProfile?.handle ?? username ?? null,
         displayName: previewProfile?.displayName ?? null,
         avatarUrl: previewProfile?.avatarUrl ?? null,
       };
+      // The passport header (avatar, name, @handle) is always public — users
+      // cannot hide it. Build a minimal PublicProfile shape so PassportHero
+      // renders the header normally; isPrivateView=true suppresses only the
+      // private content (bio, location, interests, MRZ, badges).
+      const previewAsProfile: PublicProfile = {
+        id: wallProfile.id,
+        username: wallProfile.handle,
+        displayName: wallProfile.displayName,
+        bio: null,
+        avatarUrl: wallProfile.avatarUrl,
+        homeCity: null,
+        homeCountry: null,
+        travelStyle: null,
+        interests: [],
+        verified: false,
+        verificationStatus: 'unverified',
+        verifiedAt: null,
+        passportVisibility: 'private',
+        createdAt: null,
+      };
       return (
         <View style={{ flex: 1 }}>
           {navHeader}
           <ScrollView showsVerticalScrollIndicator={false}>
+            {/* Header is always visible — private only gates the content below */}
+            <PassportHero
+              profile={previewAsProfile}
+              isOwner={false}
+              isPrivateView={true}
+              isFollowing={follow.isFollowing}
+              followLoading={follow.loading || follow.toggling}
+              onFollowPress={!isOwn ? follow.toggle : undefined}
+            />
+            {/* Lock message + CTA below the always-visible header */}
             <PrivateProfileWall
               profile={wallProfile}
               friendRequestPending={friendRequestPending}

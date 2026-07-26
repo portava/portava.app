@@ -18,6 +18,7 @@ import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 import { useFollow } from '../../src/hooks/useFollow';
 import { useHighlightRingState } from '../../src/hooks/useHighlightRingState';
 import { usePublicPassport } from '../../src/hooks/usePublicPassport';
+import { PrivateProfileWall } from '../../src/components/privacy/PrivateProfileWall';
 import { HighlightViewer } from '../../src/components/HighlightViewer';
 import { PostcardsTab } from '../../src/components/PostcardsTab';
 import { StampsTab } from '../../src/components/StampsTab';
@@ -29,6 +30,7 @@ import { resolveDisplayName, formatHandle, truncateDisplayName } from '../../src
 import { space, radius } from '../../src/theme/tokens';
 import { PP, PP_LABEL } from '../../src/theme/passportTokens';
 import { resolveAvailabilityChip } from '../../src/lib/availabilityChip';
+import type { PublicProfile } from '../../src/types/models';
 
 // New passport design components
 import { PublicStampShowcaseSection } from '../../src/components/stamps/PublicStampShowcaseSection';
@@ -44,12 +46,13 @@ export default function PassportDeepLinkScreen() {
   const username = (rawUsername ?? '').replace(/^@/, '');
 
   const {
-    profile, postcards, loading, error, isPrivate, notFound, isBlocked, postcardSentinel,
+    profile, postcards, loading, error, isPrivate, isFriend, friendRequestPending,
+    previewProfile, privateProfileId, notFound, isBlocked, postcardSentinel,
   } = usePublicPassport(username);
   const { isAuthed, userId: viewerUserId } = useSession();
   const { isEnabled: isFlagEnabled } = useFeatureFlags();
   const isOwner = !!profile && !!viewerUserId && profile.id === viewerUserId;
-  const follow = useFollow(profile?.id ?? null);
+  const follow = useFollow(profile?.id ?? privateProfileId ?? null);
   const ringState = useHighlightRingState(profile?.id ?? null);
   const [showcaseItems, setShowcaseItems] = useState<ShowcaseStamp[] | null>(null);
   const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
@@ -181,7 +184,28 @@ export default function PassportDeepLinkScreen() {
     );
   }
 
-  if (isPrivate) {
+  if (isPrivate && !isFriend) {
+    // The passport header (avatar, name, @handle) is always public.
+    // Build a minimal PublicProfile so PassportIdentityCard can render it;
+    // null bio/location/interests simply won't render in the card.
+    const wallPreviewId = previewProfile?.id ?? privateProfileId ?? '';
+    const wallPreviewHandle = previewProfile?.handle ?? username ?? null;
+    const minProfile: PublicProfile = {
+      id: wallPreviewId,
+      username: wallPreviewHandle,
+      displayName: previewProfile?.displayName ?? null,
+      bio: null,
+      avatarUrl: previewProfile?.avatarUrl ?? null,
+      homeCity: null,
+      homeCountry: null,
+      travelStyle: null,
+      interests: [],
+      verified: false,
+      verificationStatus: 'unverified',
+      verifiedAt: null,
+      passportVisibility: 'private',
+      createdAt: null,
+    };
     return (
       <View style={[vs.container, { backgroundColor: PP.paperDeep, paddingTop: insets.top }]}>
         <View style={vs.header}>
@@ -191,11 +215,28 @@ export default function PassportDeepLinkScreen() {
           <Text style={vs.headerTitle}>{formatHandle(username) ?? 'Passport'}</Text>
           <View style={{ width: 38 }} />
         </View>
-        <View style={vs.stateCenter}>
-          <Text style={vs.stateIcon}>🔒</Text>
-          <Text style={vs.stateTitle}>This Passport is private</Text>
-          <Text style={vs.stateSub}>@{username} hasn't made their Passport public yet.</Text>
-        </View>
+        <View style={vs.headerRule} />
+        <ScrollView showsVerticalScrollIndicator={false}>
+          {/* Header always visible — private only gates the content below */}
+          <PassportIdentityCard
+            profile={minProfile}
+            isOwner={false}
+            isFollowing={isAuthed ? follow.isFollowing : undefined}
+            followLoading={isAuthed ? (follow.loading || follow.toggling) : undefined}
+            onFollowPress={isAuthed && !isOwner ? follow.toggle : undefined}
+          />
+          {/* Lock message + Add Friend CTA */}
+          <PrivateProfileWall
+            profile={{
+              id: wallPreviewId,
+              handle: wallPreviewHandle,
+              displayName: previewProfile?.displayName ?? null,
+              avatarUrl: previewProfile?.avatarUrl ?? null,
+            }}
+            friendRequestPending={friendRequestPending}
+            isOwnProfile={isOwner}
+          />
+        </ScrollView>
       </View>
     );
   }
