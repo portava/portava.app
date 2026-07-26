@@ -253,6 +253,7 @@ export default function PrivacyVisibilityScreen() {
   ];
 
   const visibilityToggles: Array<{ key: keyof PrivacySettings; label: string; sub: string }> = [
+    { key: 'show_profile_picture_publicly', label: 'Show profile photo to everyone', sub: 'When off, only followers and friends can see your profile photo' },
     { key: 'show_real_name', label: 'Show my real name', sub: 'Show your name to other travelers instead of just your @handle' },
     { key: 'show_stamps', label: 'Show stamps', sub: 'Others can see your collected stamps' },
     { key: 'show_current_city', label: 'Show current city', sub: 'Display your current city on your profile' },

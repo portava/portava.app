@@ -239,7 +239,7 @@ router.post("/trips", async (req, res) => {
     return;
   }
 
-  const { title, destinationCity, destinationCountry, startDate, endDate, visibility, coverUrl, coverMediaType, tripNotes } = req.body;
+  const { title, destinationCity, destinationCountry, startDate, endDate, visibility, coverUrl, coverMediaType, tripNotes, showHeaderPublicly } = req.body;
 
   // Date conflict check — applies even when title/city are absent (draft support)
   if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
@@ -265,6 +265,10 @@ router.post("/trips", async (req, res) => {
       cover_url: coverUrl ?? null,
       cover_media_type: coverMediaType ?? null,
       trip_notes: tripNotes ?? null,
+      // Public trips always show header publicly; respect client preference for private/buddies.
+      show_header_publicly: typeof showHeaderPublicly === "boolean"
+        ? showHeaderPublicly
+        : (visibility ?? "private") === "public",
     })
     .select(TRIP_COLUMNS)
     .single();
@@ -613,6 +617,7 @@ const PatchTripSchema = z.object({
   delayedPostingDefault:   z.boolean().optional(),
   preciseLocationVisible:  z.boolean().optional(),
   progress:                z.number().int().min(0).max(100).optional(),
+  showHeaderPublicly:      z.boolean().optional(),
 });
 
 router.patch("/trips/:tripId", async (req, res) => {
@@ -672,6 +677,7 @@ router.patch("/trips/:tripId", async (req, res) => {
   if (b.preciseLocationVisible !== undefined) patch.precise_location_visible = b.preciseLocationVisible;
   if (b.planEditPermission     !== undefined) patch.plan_edit_permission     = b.planEditPermission;
   if (b.progress               !== undefined) patch.progress                 = b.progress;
+  if (b.showHeaderPublicly     !== undefined) patch.show_header_publicly     = b.showHeaderPublicly;
 
   // Compute server-authoritative status from effective field values
   const effectiveTitle = (b.title ?? t.title) as string | null;

@@ -52,11 +52,17 @@ export function toPrivateProfilePreview(
  * Public-safe profile card returned to authenticated viewers of a
  * public profile (non-owner, not a pending or approved follower of a
  * private profile).
+ *
+ * When the subject has set show_profile_picture_publicly = false, the
+ * avatarUrl is replaced with null so unauthorized viewers cannot access
+ * the profile photo.
  */
 export function toPublicProfilePreview(
   r: any,
   opts: { showRealName?: boolean } = {},
 ): PublicProfilePreview {
+  // Respect show_profile_picture_publicly: default is true (existing behaviour).
+  const showProfilePicPublicly = r.show_profile_picture_publicly !== false;
   return {
     id: r.id as string,
     username: (r.username as string | null) ?? null,
@@ -64,7 +70,9 @@ export function toPublicProfilePreview(
       ? ((r.display_name ?? r.name) as string | null) ?? null
       : null,
     bio: (r.bio as string | null) ?? null,
-    avatarUrl: (r.avatar_url as string | null) ?? null,
+    avatarUrl: showProfilePicPublicly
+      ? ((r.avatar_url as string | null) ?? null)
+      : null,
     coverPhotoUrl: (r.cover_photo_url as string | null) ?? null,
     homeCity: (r.home_city as string | null) ?? null,
     homeCountry: (r.home_country as string | null) ?? null,
@@ -94,6 +102,9 @@ export function toFullProfileView(
 ): FullProfileView {
   return {
     ...toPublicProfilePreview(r, opts),
+    // Full-view recipients (owner / approved follower / friend) always receive the
+    // avatar URL — show_profile_picture_publicly only gates public/unauthorized viewers.
+    avatarUrl: (r.avatar_url as string | null) ?? null,
     handle: (r.handle as string | null) ?? null,
     name: (r.name as string | null) ?? null,
     currentCity: (r.current_city as string | null) ?? null,

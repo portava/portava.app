@@ -82,6 +82,11 @@ const ALLOWLIST = new Set<string>([
   // Remove once the columns are present in the live DB schema.
   "message_threads.is_e2ee",
   "messages.ciphertext",
+  // Header-image privacy columns — migration 20260806_header_image_privacy.sql
+  // pending live apply. Remove once the columns are present in the live DB schema.
+  "events.show_header_publicly",
+  "trips.show_header_publicly",
+  "profiles.show_profile_picture_publicly",
 ]);
 
 // Tables that are not real live relations and should be skipped entirely

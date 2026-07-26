@@ -7,6 +7,18 @@ import { supabase, isSupabaseConfigured, authedClient } from '../lib/supabase.ts
 import type { TripStatus, TripVisibility } from '../types/models.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
+const API_BASE = (() => {
+  const d = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  return d.endsWith('/') ? d.slice(0, -1) : d;
+})();
+
+/** Converts server-relative /api/... cover URLs to absolute so React Native image loaders work. */
+function resolveApiUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  if (url.startsWith('/')) return `${API_BASE}${url}`;
+  return url;
+}
+
 /* ---------- Profiles ---------- */
 export interface ProfileRow {
   id: string;
@@ -80,6 +92,8 @@ export interface TripRow {
   delayedPostingDefault: boolean;
   preciseLocationVisible: boolean;
   planEditPermission: string | null;
+  /** Whether non-members can see the trip's cover image. Default false for private trips. */
+  showHeaderPublicly: boolean;
 }
 
 function mapTrip(r: any): TripRow {
@@ -87,7 +101,7 @@ function mapTrip(r: any): TripRow {
     id: r.id, ownerId: r.owner_id, title: r.title, destinationCity: r.destination_city,
     destinationCountry: r.destination_country, neighborhoods: r.neighborhoods ?? [],
     startDate: r.start_date, endDate: r.end_date, status: r.status, visibility: r.visibility,
-    travelStyle: r.travel_style, openToMeet: r.open_to_meet, coverUrl: r.cover_url,
+    travelStyle: r.travel_style, openToMeet: r.open_to_meet, coverUrl: resolveApiUrl(r.cover_url),
     coverMediaType: (r.cover_media_type as 'image' | 'video' | null) ?? null,
     progress: r.progress ?? 0,
     tripType: r.trip_type ?? null,
@@ -106,6 +120,7 @@ function mapTrip(r: any): TripRow {
     delayedPostingDefault: r.delayed_posting_default ?? false,
     preciseLocationVisible: r.precise_location_visible ?? false,
     planEditPermission: r.plan_edit_permission ?? null,
+    showHeaderPublicly: r.show_header_publicly ?? false,
   };
 }
 
@@ -154,6 +169,8 @@ export interface CreateTripInput {
   coverUrl?: string | null;
   coverMediaType?: 'image' | 'video' | null;
   tripNotes?: string | null;
+  /** Whether non-members can see the trip's cover image. */
+  showHeaderPublicly?: boolean;
 }
 
 export async function createTrip(input: CreateTripInput): Promise<TripRow | null> {
@@ -188,6 +205,7 @@ export async function createTrip(input: CreateTripInput): Promise<TripRow | null
       coverUrl: input.coverUrl,
       coverMediaType: input.coverMediaType ?? null,
       tripNotes: input.tripNotes ?? null,
+      showHeaderPublicly: input.showHeaderPublicly ?? false,
     }),
   });
 
@@ -216,6 +234,7 @@ export async function updateTrip(id: string, patch: Partial<CreateTripInput & { 
   if (patch.coverMediaType !== undefined) body.coverMediaType = patch.coverMediaType;
   if (patch.tripNotes !== undefined) body.tripNotes = patch.tripNotes;
   if (patch.progress !== undefined) body.progress = patch.progress;
+  if (patch.showHeaderPublicly !== undefined) body.showHeaderPublicly = patch.showHeaderPublicly;
   const res = await fetch(`${apiBase}/api/trips/${id}`, {
     method: 'PATCH',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },

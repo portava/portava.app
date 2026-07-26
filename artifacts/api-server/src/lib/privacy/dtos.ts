@@ -101,6 +101,10 @@ export interface FullProfileView extends PublicProfilePreview {
 export interface PrivateEventPreview {
   id: string;
   title: string;
+  /**
+   * The cover image URL, or the generic private-event placeholder URL when
+   * show_header_publicly is false for a private event.
+   */
   coverUrl: string | null;
   coverMediaType: string | null;
   /** Always true — signals to the client that this is a restricted preview. */
@@ -113,6 +117,8 @@ export interface PrivateEventPreview {
   country: string | null;
   /** Pending join-request status for the viewer, if any. */
   myJoinRequestStatus: string | null;
+  /** Whether the host has opted in to showing the cover to non-members. */
+  showHeaderPublicly: boolean;
 }
 
 /**
@@ -204,6 +210,10 @@ export interface PrivateTripPreview {
   destinationCountry: string | null;
   status: string;
   visibility: string;
+  /**
+   * The cover image URL, or the generic private-trip placeholder URL when
+   * show_header_publicly is false for a private trip.
+   */
   coverUrl: string | null;
   tripType: string;
   openToMeet: boolean;
@@ -218,6 +228,8 @@ export interface PrivateTripPreview {
   destinationLng?: number | null;
   /** Pending join-request status for the viewer, if any. */
   myJoinRequestStatus: string | null;
+  /** Whether the host has opted in to showing the cover to non-members. */
+  showHeaderPublicly: boolean;
 }
 
 /**
@@ -254,6 +266,8 @@ export interface AuthorizedTripView {
   showDestinationCity: boolean;
   delayedPostingDefault: boolean;
   preciseLocationVisible: boolean;
+  /** Whether the owner has opted in to showing the cover image to non-members. */
+  showHeaderPublicly: boolean;
   createdAt: string;
   updatedAt: string;
 }

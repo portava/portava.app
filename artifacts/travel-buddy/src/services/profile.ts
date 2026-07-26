@@ -442,6 +442,7 @@ export async function removePostcard(id: string): Promise<ProfileResult<null>> {
 
 export interface PrivacySettings {
   profile_visibility: 'public' | 'followers_only' | 'private';
+  show_profile_picture_publicly: boolean;
   show_current_city: boolean;
   show_home_country: boolean;
   show_visited_places: boolean;

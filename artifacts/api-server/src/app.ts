@@ -137,6 +137,18 @@ app.use(
 
 app.use(specAliasRewrite);
 
+// ── Static assets (generic cover placeholders, etc.) ─────────────────────────
+// Served at /api/static/* — registered before the API router so the router
+// never sees these paths.  Content-Type is inferred from file extension.
+//
+// Path resolution: in development __dirname = src/; in production __dirname =
+// dist/.  The static/ directory lives at the project root (api-server/static/)
+// alongside both src/ and dist/, so we go one level up from __dirname.
+app.use("/api/static", express.static(path.join(__dirname, "../static"), {
+  maxAge: "7d",
+  immutable: false,
+}));
+
 app.use("/api", router);
 
 // ── Global error handler ─────────────────────────────────────────────────────

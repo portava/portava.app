@@ -1371,6 +1371,21 @@ const PRIVACY_DEFAULTS = {
   precise_location_visible: false,
 } as const;
 
+/** Fetch show_profile_picture_publicly from profiles, defaulting to true. */
+async function fetchShowProfilePicPublicly(sc: ReturnType<typeof getServiceClient>, userId: string): Promise<boolean> {
+  const { data } = await sc!
+    .from("profiles")
+    .select("show_profile_picture_publicly")
+    .eq("id", userId)
+    .maybeSingle()
+    .then(undefined, () => ({ data: null }));
+  // Default true when column not yet populated (migration pending) or row missing.
+  if (!data || (data as any).show_profile_picture_publicly === null || (data as any).show_profile_picture_publicly === undefined) {
+    return true;
+  }
+  return Boolean((data as any).show_profile_picture_publicly);
+}
+
 router.get("/me/privacy", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -1387,7 +1402,8 @@ router.get("/me/privacy", async (req, res) => {
 
   if (error) {
     if ((error as any).code === "42P01" || (error as any).code === "PGRST205") {
-      res.status(200).json({ ...PRIVACY_DEFAULTS, user_id: user.id });
+      const showPicPublicly = await fetchShowProfilePicPublicly(sc, user.id);
+      res.status(200).json({ ...PRIVACY_DEFAULTS, user_id: user.id, show_profile_picture_publicly: showPicPublicly });
       return;
     }
     req.log.error({ err: error }, "privacy/get: query failed");
@@ -1395,17 +1411,19 @@ router.get("/me/privacy", async (req, res) => {
     return;
   }
 
+  const showPicPublicly = await fetchShowProfilePicPublicly(sc, user.id);
+
   if (!data) {
     // First access: persist defaults so PATCH can merge against a real row
     const defaults = { ...PRIVACY_DEFAULTS, user_id: user.id };
     sc.from("profile_privacy_settings")
       .upsert(defaults, { onConflict: "user_id" })
       .then(undefined, (e: any) => req.log.warn({ err: e }, "privacy/get: failed to seed defaults"));
-    res.status(200).json(defaults);
+    res.status(200).json({ ...defaults, show_profile_picture_publicly: showPicPublicly });
     return;
   }
 
-  res.status(200).json(data);
+  res.status(200).json({ ...data, show_profile_picture_publicly: showPicPublicly });
 });
 
 /* ===========================================================================
@@ -1433,6 +1451,7 @@ const patchPrivacySchema = z.object({
   allow_profile_discovery: z.boolean().optional(),
   delayed_posting_default: z.boolean().optional(),
   precise_location_visible: z.boolean().optional(),
+  show_profile_picture_publicly: z.boolean().optional(),
 });
 
 router.patch("/me/privacy", async (req, res) => {
@@ -1464,10 +1483,14 @@ router.patch("/me/privacy", async (req, res) => {
     .then(undefined, () => ({ data: null }));
   const existing = existingRes.data;
 
+  // show_profile_picture_publicly lives on `profiles`, not `profile_privacy_settings`.
+  // Extract it before building the upsert row so it never reaches the wrong table.
+  const { show_profile_picture_publicly: showPicPublicly, ...privacyFields } = parsed.data;
+
   const mergedRow = {
     ...PRIVACY_DEFAULTS,
     ...(existing ?? {}),
-    ...parsed.data,
+    ...privacyFields,
     user_id: user.id,
     updated_at: now,
   };
@@ -1482,6 +1505,14 @@ router.patch("/me/privacy", async (req, res) => {
     req.log.error({ err: error }, "privacy/patch: update failed");
     sendError(res, "db_error", error.message);
     return;
+  }
+
+  // Sync show_profile_picture_publicly to profiles table so serializers can read it
+  if (showPicPublicly !== undefined) {
+    sc.from("profiles")
+      .update({ show_profile_picture_publicly: showPicPublicly, updated_at: now })
+      .eq("id", user.id)
+      .then(undefined, (e: any) => req.log.warn({ err: e }, "privacy/patch: failed to sync show_profile_picture_publicly to profiles"));
   }
 
   // Keep user_privacy_settings.profile_visibility in sync
@@ -1502,7 +1533,13 @@ router.patch("/me/privacy", async (req, res) => {
 
   invalidateCompassHomeCache(user.id);
 
-  res.status(200).json(data);
+  // Determine the effective show_profile_picture_publicly value for the response.
+  // If the caller just changed it, use that value directly; otherwise fetch from profiles.
+  const effectiveShowPicPublicly = showPicPublicly !== undefined
+    ? showPicPublicly
+    : await fetchShowProfilePicPublicly(sc, user.id);
+
+  res.status(200).json({ ...data, show_profile_picture_publicly: effectiveShowPicPublicly });
 });
 
 export default router;

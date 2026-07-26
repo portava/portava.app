@@ -11,10 +11,18 @@
  */
 
 import type { PrivateTripPreview, AuthorizedTripView } from "./dtos.js";
+import {
+  PRIVATE_TRIP_COVER_PLACEHOLDER,
+} from "./coverPlaceholders.js";
 
 /**
  * Stripped trip shape for non-member viewers.
  * Pending join requests grant NO additional access.
+ *
+ * When the owner has set show_header_publicly = false on a private trip the
+ * cover URL is replaced with the generic branded placeholder so sensitive
+ * images (tickets, hotel details, exact meeting points) are not leaked to
+ * non-members.
  *
  * @param t                   Raw trips DB row
  * @param myJoinRequestStatus Viewer's pending join-request status, or null
@@ -23,6 +31,8 @@ export function toPrivateTripPreview(
   t: any,
   myJoinRequestStatus: string | null = null,
 ): PrivateTripPreview {
+  const showHeaderPublicly = Boolean(t.show_header_publicly);
+
   const preview: PrivateTripPreview = {
     id: t.id as string,
     title: t.title as string,
@@ -34,7 +44,11 @@ export function toPrivateTripPreview(
     destinationCountry: (t.destination_country as string | null) ?? null,
     status: t.status as string,
     visibility: t.visibility as string,
-    coverUrl: (t.cover_url as string | null) ?? null,
+    // Respect show_header_publicly: replace the cover with a generic placeholder
+    // when the owner has opted out of showing it to non-members.
+    coverUrl: showHeaderPublicly
+      ? ((t.cover_url as string | null) ?? null)
+      : PRIVATE_TRIP_COVER_PLACEHOLDER,
     tripType: (t.trip_type as string) ?? "leisure",
     openToMeet: Boolean(t.open_to_meet),
     isPrivate: true,
@@ -50,6 +64,7 @@ export function toPrivateTripPreview(
         ? ((t.end_date as string | null) ?? null)
         : null,
     myJoinRequestStatus,
+    showHeaderPublicly,
   };
 
   // Coordinates only when the host has opted-in to sharing the precise location.
@@ -99,6 +114,7 @@ export function toAuthorizedTripView(t: any): AuthorizedTripView {
     showDestinationCity: t.show_destination_city !== false,
     delayedPostingDefault: Boolean(t.delayed_posting_default),
     preciseLocationVisible: Boolean(t.precise_location_visible),
+    showHeaderPublicly: Boolean(t.show_header_publicly),
     createdAt: t.created_at as string,
     updatedAt: t.updated_at as string,
   };

@@ -159,6 +159,9 @@ export default function CreateEventScreen() {
   const [trips, setTrips] = useState<TripRow[]>([]);
   const [circlesLoading, setCirclesLoading] = useState(false);
   const [tripsLoading, setTripsLoading] = useState(false);
+  // Show cover to non-members — only relevant for non-public events.
+  // Auto-set to true when visibility is public; user controls it for private.
+  const [showHeaderPublicly, setShowHeaderPublicly] = useState(false);
 
   // ── Step 7: Tickets ─────────────────────────────────────────────────────────
   const [priceType, setPriceType] = useState<'free' | 'external'>('free');
@@ -338,6 +341,9 @@ export default function CreateEventScreen() {
     if (v !== 'circle') setCircleId(undefined);
     if (v !== 'trip')   setTripId(undefined);
     setVisibility(v);
+    // Public events always show header publicly; private ones default to hidden.
+    if (v === 'public') setShowHeaderPublicly(true);
+    else setShowHeaderPublicly(false);
     scheduleSave();
   }
 
@@ -408,6 +414,7 @@ export default function CreateEventScreen() {
       priceType,
       priceUrl: priceType === 'external' && priceUrl.trim() ? priceUrl.trim() : undefined,
       coverUrl: coverUrl || undefined,
+      showHeaderPublicly: visibility === 'public' ? true : showHeaderPublicly,
     };
   }
 
@@ -1100,6 +1107,25 @@ export default function CreateEventScreen() {
                     ))
                   )}
                 </>
+              )}
+
+              {/* Cover image privacy — only relevant for non-public events */}
+              {visibility !== 'public' && (
+                <View style={styles.toggleRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.toggleLabel}>Show cover image to non-members</Text>
+                    <Text style={styles.toggleSub}>
+                      When off, non-members see a generic placeholder instead of your cover photo
+                    </Text>
+                  </View>
+                  <Switch
+                    value={showHeaderPublicly}
+                    onValueChange={(v) => { setShowHeaderPublicly(v); scheduleSave(); }}
+                    trackColor={{ true: color.signal, false: color.haze }}
+                    thumbColor={color.paperRaised}
+                    accessibilityLabel="Show cover image to non-members"
+                  />
+                </View>
               )}
 
               {/* Trip picker — shown when 'trip' visibility is selected */}

@@ -9,6 +9,21 @@ const BASE = (() => {
   return domain.endsWith('/') ? domain.slice(0, -1) : domain;
 })();
 
+/** Converts server-relative /api/... cover URLs to absolute so React Native image loaders work. */
+function resolveApiUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  if (url.startsWith('/')) return `${BASE}${url}`;
+  return url;
+}
+
+function normalizeEventSummary(e: EventSummary): EventSummary {
+  return e.coverUrl != null ? { ...e, coverUrl: resolveApiUrl(e.coverUrl) } : e;
+}
+
+function normalizeEventDetail(e: EventDetail): EventDetail {
+  return e.coverUrl != null ? { ...e, coverUrl: resolveApiUrl(e.coverUrl) } : e;
+}
+
 export type EventState =
   | 'draft' | 'open' | 'full' | 'waitlist' | 'started' | 'completed' | 'cancelled' | 'archived';
 
@@ -174,13 +189,13 @@ export interface CreateEventInput {
   city?: string;
   country?: string;
   publishNow?: boolean;
+  /** Whether non-members can see the event's cover image. */
+  showHeaderPublicly?: boolean;
 }
 
 export async function createEvent(input: CreateEventInput): Promise<ApiResult<EventSummary>> {
-  return apiCall<EventSummary>('/api/events', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
+  const r = await apiCall<EventSummary>('/api/events', { method: 'POST', body: JSON.stringify(input) });
+  return r.ok ? { ok: true, data: normalizeEventSummary(r.data!) } : r;
 }
 
 // ── List events ───────────────────────────────────────────────────────────────
@@ -233,7 +248,8 @@ export async function listMyEvents(
 // ── Get event detail ──────────────────────────────────────────────────────────
 
 export async function getEvent(eventId: string): Promise<ApiResult<EventDetail>> {
-  return apiCall<EventDetail>(`/api/events/${eventId}`);
+  const r = await apiCall<EventDetail>(`/api/events/${eventId}`);
+  return r.ok ? { ok: true, data: normalizeEventDetail(r.data!) } : r;
 }
 
 // ── Update event ──────────────────────────────────────────────────────────────
@@ -263,13 +279,13 @@ export interface UpdateEventInput {
   category?: string | null;
   city?: string | null;
   country?: string | null;
+  /** Whether non-members can see the event's cover image. */
+  showHeaderPublicly?: boolean;
 }
 
 export async function updateEvent(eventId: string, input: UpdateEventInput): Promise<ApiResult<EventSummary>> {
-  return apiCall<EventSummary>(`/api/events/${eventId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(input),
-  });
+  const r = await apiCall<EventSummary>(`/api/events/${eventId}`, { method: 'PATCH', body: JSON.stringify(input) });
+  return r.ok ? { ok: true, data: normalizeEventSummary(r.data!) } : r;
 }
 
 // ── Cancel event ──────────────────────────────────────────────────────────────

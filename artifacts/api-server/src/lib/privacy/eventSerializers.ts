@@ -12,10 +12,17 @@
  */
 
 import type { PrivateEventPreview, AuthorizedEventView } from "./dtos.js";
+import {
+  PRIVATE_EVENT_COVER_PLACEHOLDER,
+} from "./coverPlaceholders.js";
 
 /**
  * Minimal event card for unauthorized viewers.
  * Pending join requests grant NO additional access.
+ *
+ * When the host has set show_header_publicly = false on a private event the
+ * cover URL is replaced with the generic branded placeholder so sensitive
+ * ticket art, addresses, or personal photos are not leaked to non-members.
  *
  * @param ev                  Raw events DB row
  * @param myJoinRequestStatus Viewer's pending join-request status, or null
@@ -24,12 +31,18 @@ export function toPrivateEventPreview(
   ev: any,
   myJoinRequestStatus: string | null = null,
 ): PrivateEventPreview {
+  const showHeaderPublicly = Boolean(ev.show_header_publicly);
   return {
     id: ev.id as string,
     title: ev.title as string,
-    // Cover image is considered safe public header info (no GPS, no PII).
-    coverUrl: (ev.cover_url as string | null) ?? null,
-    coverMediaType: (ev.cover_media_type as string | null) ?? null,
+    // Respect show_header_publicly: replace the cover with a generic placeholder
+    // when the host has opted out of showing it to non-members.
+    coverUrl: showHeaderPublicly
+      ? ((ev.cover_url as string | null) ?? null)
+      : PRIVATE_EVENT_COVER_PLACEHOLDER,
+    coverMediaType: showHeaderPublicly
+      ? ((ev.cover_media_type as string | null) ?? null)
+      : "image",
     isPrivate: true,
     visibility: ev.visibility as string,
     state: ev.state as string,
@@ -38,6 +51,7 @@ export function toPrivateEventPreview(
     city: (ev.city as string | null) ?? null,
     country: (ev.country as string | null) ?? null,
     myJoinRequestStatus,
+    showHeaderPublicly,
   };
 }
 

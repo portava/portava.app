@@ -57,22 +57,6 @@ function CardSkeleton() {
   );
 }
 
-/**
- * Map a Compass item to a category string that getPlaceCategoryFallback can
- * use for the emoji + color header. Falls back on item.type when no category
- * is present so every card gets a meaningful visual.
- */
-function resolveCompassFallbackCategory(item: CompassFeedItem): string {
-  const cat  = (item.category ?? '').trim();
-  if (cat) return cat;
-  const type = item.type ?? '';
-  if (type === 'event')                                        return 'events';
-  if (type === 'traveler' || type === 'user' || type === 'buddy') return 'for_you';
-  if (type === 'hidden_gem')                                   return 'places';
-  if (type === 'trip')                                         return 'outdoors';
-  return 'places';
-}
-
 // ── Generic hero fallback (non-place types, no image or broken image) ─────────
 
 const GENERIC_FALLBACK_ICONS: Record<string, React.ComponentType<{ size: number; color: string }>> = {
@@ -95,6 +79,17 @@ function GenericHeroFallback({ type, itemId }: GenericFallbackProps) {
       <Icon size={28} color={color.mute} />
     </View>
   );
+}
+
+function resolveCompassFallbackCategory(item: CompassFeedItem): string {
+  const cat  = (item.category ?? '').trim();
+  if (cat) return cat;
+  const type = item.type ?? '';
+  if (type === 'event')                                        return 'events';
+  if (type === 'traveler' || type === 'user' || type === 'buddy') return 'for_you';
+  if (type === 'hidden_gem')                                   return 'places';
+  if (type === 'trip')                                         return 'outdoors';
+  return 'places';
 }
 
 // ── Individual compass pick card ──────────────────────────────────────────────
@@ -463,13 +458,11 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  emojiText: {
-    fontSize: 34,
-  },
-  // Generic icon fallback — shown for non-place cards (event/traveler/trip/buddy)
-  // when imageUrl is absent or fires onError; neutral tint keeps the card tidy.
   genericFallback: {
     backgroundColor: color.haze,
+  },
+  emojiText: {
+    fontSize: 34,
   },
   // Card
   card: {

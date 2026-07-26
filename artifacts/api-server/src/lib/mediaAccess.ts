@@ -140,7 +140,7 @@ async function decide(
     try {
       const { data: profile } = await sc
         .from("profiles")
-        .select("is_private, passport_visibility, account_status")
+        .select("is_private, passport_visibility, account_status, show_profile_picture_publicly")
         .eq("id", owner)
         .maybeSingle();
       if (!profile) return false;
@@ -150,8 +150,38 @@ async function decide(
         owner,
         profile as any,
       );
-      // "full" and "followers_only" both grant access to media bytes.
-      return visibility === "full" || visibility === "followers_only";
+      // "full" and "followers_only" both grant access to media bytes by default.
+      if (!(visibility === "full" || visibility === "followers_only")) return false;
+
+      // Additional gate for avatar paths when the owner has opted out of public
+      // photo display. Only public-profile strangers are blocked — viewers who
+      // reached this point via an authorized private-profile relationship (follower
+      // or friend) are always allowed.
+      if (
+        path.startsWith("avatars/") &&
+        (profile as any).show_profile_picture_publicly === false
+      ) {
+        // Private-profile viewers: resolveProfileVisibility already proved a direct
+        // follow/friend relationship → allow the avatar.
+        if ((profile as any).is_private) return true;
+
+        // Public-profile viewers: "full" visibility can be granted to strangers;
+        // check for an explicit follow or friendship instead.
+        const [followRes, friendResA, friendResB] = await Promise.all([
+          sc.from("user_follows").select("id")
+            .eq("follower_id", viewerId).eq("following_id", owner)
+            .maybeSingle().then(undefined, () => ({ data: null })),
+          sc.from("user_friendships").select("user_a")
+            .eq("user_a", viewerId).eq("user_b", owner)
+            .maybeSingle().then(undefined, () => ({ data: null })),
+          sc.from("user_friendships").select("user_a")
+            .eq("user_a", owner).eq("user_b", viewerId)
+            .maybeSingle().then(undefined, () => ({ data: null })),
+        ]);
+        return followRes.data !== null || friendResA.data !== null || friendResB.data !== null;
+      }
+
+      return true;
     } catch {
       return false; // fail-closed
     }

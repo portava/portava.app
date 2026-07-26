@@ -7,6 +7,18 @@ import { supabase, isSupabaseConfigured, authedClient } from '../lib/supabase.ts
 import type { TripStatus, TripVisibility } from '../types/models.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
+const API_BASE = (() => {
+  const d = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  return d.endsWith('/') ? d.slice(0, -1) : d;
+})();
+
+/** Converts server-relative /api/... cover URLs to absolute so React Native image loaders work. */
+function resolveApiUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  if (url.startsWith('/')) return `${API_BASE}${url}`;
+  return url;
+}
+
 /* ---------- Profiles ---------- */
 export interface ProfileRow {
   id: string;
@@ -87,7 +99,7 @@ function mapTrip(r: any): TripRow {
     id: r.id, ownerId: r.owner_id, title: r.title, destinationCity: r.destination_city,
     destinationCountry: r.destination_country, neighborhoods: r.neighborhoods ?? [],
     startDate: r.start_date, endDate: r.end_date, status: r.status, visibility: r.visibility,
-    travelStyle: r.travel_style, openToMeet: r.open_to_meet, coverUrl: r.cover_url,
+    travelStyle: r.travel_style, openToMeet: r.open_to_meet, coverUrl: resolveApiUrl(r.cover_url),
     coverMediaType: (r.cover_media_type as 'image' | 'video' | null) ?? null,
     progress: r.progress ?? 0,
     tripType: r.trip_type ?? null,

@@ -466,10 +466,11 @@ const CreateEventSchema = z.object({
   priceType:       z.enum(["free", "external"]).optional(),
   priceUrl:        z.string().url().optional().nullable(),
   rsvpOptions:     z.array(z.enum(["going", "maybe", "interested", "cant_go"])).optional(),
-  category:        z.string().max(60).optional(),
-  city:            z.string().max(100).optional(),
-  country:         z.string().max(100).optional(),
-  publishNow:      z.boolean().optional(),
+  category:           z.string().max(60).optional(),
+  city:               z.string().max(100).optional(),
+  country:            z.string().max(100).optional(),
+  publishNow:         z.boolean().optional(),
+  showHeaderPublicly: z.boolean().optional(),
 });
 
 const UpdateEventSchema = z.object({
@@ -496,9 +497,10 @@ const UpdateEventSchema = z.object({
   attendeeCommentsEnabled: z.boolean().optional(),
   priceType:       z.enum(["free", "external"]).nullable().optional(),
   priceUrl:        z.string().url().nullable().optional(),
-  category:        z.string().max(60).nullable().optional(),
-  city:            z.string().max(100).nullable().optional(),
-  country:         z.string().max(100).nullable().optional(),
+  category:           z.string().max(60).nullable().optional(),
+  city:               z.string().max(100).nullable().optional(),
+  country:            z.string().max(100).nullable().optional(),
+  showHeaderPublicly: z.boolean().optional(),
 });
 
 const RsvpSchema = z.object({
@@ -580,9 +582,11 @@ router.post("/events", async (req, res) => {
       price_type:       b.priceType ?? null,
       price_url:        b.priceUrl ?? null,
       rsvp_options:     b.rsvpOptions ?? ["going", "maybe", "interested", "cant_go"],
-      category:         b.category ?? null,
-      city:             b.city ?? null,
-      country:          b.country ?? null,
+      category:             b.category ?? null,
+      city:                 b.city ?? null,
+      country:              b.country ?? null,
+      // Public events always show header publicly; respect client preference for non-public.
+      show_header_publicly: b.showHeaderPublicly ?? (b.visibility === "public"),
     })
     .select("*")
     .single();
@@ -2072,8 +2076,9 @@ router.patch("/events/:id", async (req, res) => {
   if (b.priceType       !== undefined) patch.price_type       = b.priceType;
   if (b.priceUrl        !== undefined) patch.price_url        = b.priceUrl;
   if (b.category        !== undefined) patch.category         = b.category;
-  if (b.city            !== undefined) patch.city             = b.city;
-  if (b.country         !== undefined) patch.country          = b.country;
+  if (b.city               !== undefined) patch.city                = b.city;
+  if (b.country            !== undefined) patch.country             = b.country;
+  if (b.showHeaderPublicly !== undefined) patch.show_header_publicly = b.showHeaderPublicly;
 
   const { data: updated, error } = await sc
     .from("events").update(patch).eq("id", id).select("*").single();
