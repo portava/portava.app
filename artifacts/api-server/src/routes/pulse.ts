@@ -189,24 +189,36 @@ router.get("/pulse", async (req, res) => {
   // Both guards run on raw rows (before camelCase shaping) so they can access
   // the snake_case DB column names (author_id, location_source).
   //
-  // This block is a best-effort load; if the blocks query fails the feed is
-  // served without the filter (non-fatal — Compass ranking will degrade too).
-  //
-  // blockedSet is hoisted to outer scope so the expanded candidate pool
-  // (events, plans, buddies fetched later) can apply the same filter.
+  // Fail-closed: if block state cannot be determined, return an empty feed
+  // rather than risk surfacing content from blocked users. blockedSet is hoisted
+  // to outer scope so the expanded candidate pool (events, plans, buddies fetched
+  // later) can apply the same filter.
+  let blockFetchFailed = false;
   const blockedSet = new Set<string>();
   try {
     const [blockedRes, blockerRes] = await Promise.all([
       sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
       sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
     ]);
-    for (const row of (blockedRes.data as any[]) ?? []) blockedSet.add(row.blocked_id as string);
-    for (const row of (blockerRes.data as any[]) ?? []) blockedSet.add(row.blocker_id as string);
-
-    if (blockedSet.size > 0) {
-      rows = rows.filter((row) => !blockedSet.has(row.author_id as string));
+    if (blockedRes.error || blockerRes.error) {
+      blockFetchFailed = true;
+    } else {
+      for (const row of (blockedRes.data as any[]) ?? []) blockedSet.add(row.blocked_id as string);
+      for (const row of (blockerRes.data as any[]) ?? []) blockedSet.add(row.blocker_id as string);
     }
-  } catch { /* non-fatal */ }
+  } catch {
+    blockFetchFailed = true;
+  }
+
+  if (blockFetchFailed) {
+    req.log.warn({ userId: user.id }, "pulse: block-state unknown — returning empty feed (fail-closed)");
+    res.json({ posts: [], total: 0, tab });
+    return;
+  }
+
+  if (blockedSet.size > 0) {
+    rows = rows.filter((row) => !blockedSet.has(row.author_id as string));
+  }
 
   // Delayed-posting location guard: posts whose location has not yet been
   // cleared by the delayed-publish job must have location fields scrubbed
@@ -386,6 +398,8 @@ router.get("/pulse", async (req, res) => {
       if (viewerCity) evQ = evQ.ilike("city", `%${viewerCity}%`);
 
       // Plans: trips with open join slots starting today or tomorrow.
+      // show_in_discovery must be true — owners who opted out of discovery
+      // should not surface in this ranking pool for other users.
       const tomorrowEnd = new Date(nowMs + 48 * 60 * 60 * 1_000).toISOString().slice(0, 10);
       const todayStart = nowIso.slice(0, 10);
       let planQ = sc
@@ -395,6 +409,7 @@ router.get("/pulse", async (req, res) => {
         .gte("start_date", todayStart)
         .lte("start_date", tomorrowEnd)
         .eq("visibility", "public")
+        .eq("show_in_discovery", true)
         .limit(20);
       if (viewerCity) planQ = planQ.ilike("destination_city", `%${viewerCity}%`);
 

@@ -239,9 +239,25 @@ export async function runVisualGenerationCycle(): Promise<{
     return { processed: true, visualId };
   }
 
+  // ── Terminal states — do not retry ───────────────────────────────────────
+  // `replaced` means a newer regenerate/delete request has already superseded
+  // this job. Any other unexpected non-failure status (e.g. `cancelled`) is
+  // also treated as terminal so a stale worker cannot resurrect retired rows.
+  if (finalStatus !== "failed") {
+    logger.info({
+      event:         "visual_worker.job_terminal_no_retry",
+      visual_id:     visualId,
+      entity_type,
+      entity_id,
+      final_status:  finalStatus,
+      attempt_count: finalAttemptCount,
+    });
+    return { processed: true, visualId };
+  }
+
   // ── Failed — decide whether to retry ─────────────────────────────────────
-  // `provider_rejected` failureCode indicates processJob set status='blocked'
-  // above. Any remaining 'failed' rows are retryable in principle.
+  // Only `failed` rows are retryable. `blocked` is handled above; `replaced`
+  // and other terminal states exit before reaching this branch.
   if (finalAttemptCount < MAX_RETRIES) {
     const backoffMs   = backoffForAttempt(finalAttemptCount);
     const retryNowMs  = Date.now();

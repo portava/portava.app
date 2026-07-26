@@ -17,7 +17,9 @@ import { resolveHeaderImage, sourceRank, mayApplyGenerated } from "../lib/visual
 import { fallbackSlug } from "../lib/visuals/providers/categoryFallbackProvider.js";
 import type { VisualInputSnapshot } from "../lib/visuals/types.js";
 import { _setTestClient } from "../lib/http.js";
+import { _setTestServiceClient } from "../lib/supabase.js";
 import { requestGeneration } from "../lib/visuals/service.js";
+import { runVisualGenerationCycle } from "../lib/visuals/generationWorker.js";
 
 function snap(over: Partial<VisualInputSnapshot> = {}): VisualInputSnapshot {
   return {
@@ -498,6 +500,99 @@ async function listenRandom(app: any): Promise<{ url: string; close: () => Promi
     });
   });
 }
+
+// ── runVisualGenerationCycle: replaced is terminal, never re-queued ───────────
+test("runVisualGenerationCycle: job left in 'replaced' status is not re-queued", async () => {
+  const REPLACED_VIS_ID = "vis-replaced-0001-4000-a000-000000000099";
+  const updatesIssued: any[] = [];
+
+  // Fake service client: distinct behaviour per operation so the worker can
+  // complete a cycle while processJob sees the row as already superseded.
+  const fakeServiceClient: any = {
+    from(table: string) {
+      let filters: Array<(r: any) => boolean> = [];
+      let _updatePayload: any = null;
+
+      const b: any = {
+        select()                          { return b; },
+        update(payload: any)              { _updatePayload = payload; return b; },
+        delete()                          { return b; },
+        insert()                          { return b; },
+        eq(col: string, val: any)         { filters.push((r: any) => r[col] === val); return b; },
+        neq(col: string, val: any)        { filters.push((r: any) => r[col] !== val); return b; },
+        in(col: string, vals: any[])      { filters.push((r: any) => vals.includes(r[col])); return b; },
+        or()                              { return b; },
+        gte()                             { return b; },
+        lte()                             { return b; },
+        lt()                              { return b; },
+        order()                           { return b; },
+        limit()                           { return b; },
+        is()                              { return b; },
+        not()                             { return b; },
+        maybeSingle() {
+          if (table !== "generated_visuals") return Promise.resolve({ data: null, error: null });
+
+          // Determine whether this is the claim query (has eq("status","queued"))
+          // by probing whether a "queued" row passes but a non-queued row does not.
+          const probe = {
+            id: REPLACED_VIS_ID, status: "queued", entity_type: "event",
+            entity_id: "evt-001", purpose: "event_header",
+            style: "portava_editorial", attempt_count: 0,
+            provider: null, retry_after: null, locked_until: null,
+          };
+          const isClaimQuery =
+            filters.every((f) => f(probe)) &&
+            !filters.every((f) => f({ ...probe, status: "not_queued" }));
+
+          if (isClaimQuery) {
+            // Return the queued job so the worker claims it.
+            return Promise.resolve({ data: probe, error: null });
+          }
+
+          // All other maybeSingle reads (processJob's row-fetch + final read-back)
+          // return the row as already `replaced` — simulating a concurrent retire.
+          return Promise.resolve({
+            data: { status: "replaced", failure_code: null, attempt_count: 1 },
+            error: null,
+          });
+        },
+        then(onF: any, onR: any) {
+          if (table !== "generated_visuals") {
+            return Promise.resolve({ data: [], error: null }).then(onF, onR);
+          }
+          if (_updatePayload) {
+            updatesIssued.push({ ..._updatePayload });
+            // Lock acquisition (status→generating): return locked row so worker proceeds.
+            const locked = _updatePayload.status === "generating"
+              ? [{ id: REPLACED_VIS_ID }]
+              : [];
+            return Promise.resolve({ data: locked, error: null }).then(onF, onR);
+          }
+          // Stuck-job recovery select, etc. — return empty so recovery is a no-op.
+          return Promise.resolve({ data: [], error: null }).then(onF, onR);
+        },
+      };
+      return b;
+    },
+  };
+
+  _setTestServiceClient(fakeServiceClient as any);
+  try {
+    const result = await runVisualGenerationCycle();
+    assert.equal(result.processed, true,          "cycle must report processed=true");
+    assert.equal(result.visualId, REPLACED_VIS_ID, "visualId must be returned");
+
+    // Core invariant: a replaced job must never be put back into the queue.
+    const requeueUpdates = updatesIssued.filter((u: any) => u.status === "queued");
+    assert.equal(
+      requeueUpdates.length,
+      0,
+      `replaced job must NOT be re-queued; got ${JSON.stringify(requeueUpdates)}`,
+    );
+  } finally {
+    _setTestServiceClient(null as any);
+  }
+});
 
 describe("visuals route — authorization", () => {
   let url: string;

@@ -636,8 +636,8 @@ describe("GET /api/discovery/search — plans: trip visibility enforcement", () 
       profile_privacy_settings: [],
       user_follows: [],
       trips: [
-        { id: TRIP_PUB, visibility: "public",  owner_id: ALICE, status: "planning" },
-        { id: TRIP_PRI, visibility: "private", owner_id: ALICE, status: "planning" },
+        { id: TRIP_PUB, visibility: "public",  owner_id: ALICE, status: "planning", show_in_discovery: true },
+        { id: TRIP_PRI, visibility: "private", owner_id: ALICE, status: "planning", show_in_discovery: false },
       ],
       trip_plan_items: [
         { id: PLAN_PUB, title: "Visit Tokyo Tower", notes: "Amazing", trip_id: TRIP_PUB, creator_id: ALICE, removed_at: null, created_at: "2026-01-01T00:00:00Z" },
@@ -689,7 +689,7 @@ describe("GET /api/discovery/search — cursor pagination", () => {
       title: `Tokyo Trip ${i}`, destination_city: "Tokyo",
       destination_country: "Japan", owner_id: ALICE,
       cover_url: null, start_date: "2026-09-01",
-      status: "planning", visibility: "public",
+      status: "planning", visibility: "public", show_in_discovery: true,
       created_at: "2026-01-01T00:00:00Z",
     }));
     setup({
@@ -714,7 +714,7 @@ describe("GET /api/discovery/search — cursor pagination", () => {
       title: `Tokyo Trip ${i}`, destination_city: "Tokyo",
       destination_country: "Japan", owner_id: ALICE,
       cover_url: null, start_date: "2026-09-01",
-      status: "planning", visibility: "public",
+      status: "planning", visibility: "public", show_in_discovery: true,
       created_at: "2026-01-01T00:00:00Z",
     }));
     setup({
@@ -738,7 +738,7 @@ describe("GET /api/discovery/search — cursor pagination", () => {
       title: "Tokyo Adventure", destination_city: "Tokyo",
       destination_country: "Japan", owner_id: SUSPENDED,
       cover_url: null, start_date: "2026-09-01",
-      status: "planning", visibility: "public",
+      status: "planning", visibility: "public", show_in_discovery: true,
       created_at: "2026-01-01T00:00:00Z",
     }];
     setup({
@@ -1067,8 +1067,8 @@ describe("GET /api/discovery/search — plans: deleted/cancelled/banned trip exc
       profile_privacy_settings: [],
       user_follows: [],
       trips: [
-        { id: TRIP_LIVE, visibility: "public", owner_id: ALICE, status: "planning" },
-        { id: TRIP_DEL,  visibility: "public", owner_id: ALICE, status: "deleted"  },
+        { id: TRIP_LIVE, visibility: "public", owner_id: ALICE, status: "planning", show_in_discovery: true },
+        { id: TRIP_DEL,  visibility: "public", owner_id: ALICE, status: "deleted",  show_in_discovery: true },
       ],
       trip_plan_items: [
         { id: PLAN_LIVE, title: "Visit Museum",  notes: null, trip_id: TRIP_LIVE, creator_id: ALICE, removed_at: null, created_at: "2026-01-01T00:00:00Z" },

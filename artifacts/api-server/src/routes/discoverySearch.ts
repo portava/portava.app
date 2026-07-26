@@ -355,8 +355,8 @@ async function searchEvents(
     const pat = sqlPattern(q);
     let evQ: any = sc
       .from("events")
-      .select("id, title, description, host_id, cover_url, city, country, starts_at, visibility, state, created_at")
-      .or(`title.ilike.${pat},description.ilike.${pat},city.ilike.${pat}`)
+      .select("id, title, host_id, cover_url, city, country, starts_at, visibility, state, created_at")
+      .or(`title.ilike.${pat},city.ilike.${pat}`)
       .eq("visibility", "public")
       .neq("state", "cancelled")
       .neq("state", "deleted")
@@ -439,6 +439,7 @@ async function searchTrips(
       .select("id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at")
       .or(`title.ilike.${pat},destination_city.ilike.${pat},destination_country.ilike.${pat}`)
       .eq("visibility", "public")
+      .eq("show_in_discovery", true)
       .neq("status", "cancelled")
       .neq("status", "deleted")
       .neq("status", "banned")
@@ -498,8 +499,8 @@ async function searchPlans(
     const pat = sqlPattern(q);
     const { data, error } = await sc
       .from("trip_plan_items")
-      .select("id, title, notes, trip_id, creator_id, created_at")
-      .or(`title.ilike.${pat},notes.ilike.${pat}`)
+      .select("id, title, trip_id, creator_id, created_at")
+      .ilike("title", pat)
       .is("removed_at", null)
       .order("created_at", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
@@ -514,7 +515,7 @@ async function searchPlans(
     const tripIds = [...new Set(items.map((p: any) => p.trip_id as string))];
     const { data: trips } = await sc
       .from("trips")
-      .select("id, visibility, owner_id, status, start_date")
+      .select("id, visibility, show_in_discovery, owner_id, status, start_date")
       .in("id", tripIds)
       .neq("status", "deleted")
       .neq("status", "cancelled")
@@ -522,7 +523,10 @@ async function searchPlans(
 
     const allowedTrips = (trips ?? []).filter(
       (t: any) =>
-        ((t.visibility as string) === "public" || (t.owner_id as string) === userId) &&
+        // Public trips: also require show_in_discovery so owners who opted out are excluded.
+        // Caller-owned trips are always visible regardless of the flag.
+        (((t.visibility as string) === "public" && t.show_in_discovery === true) ||
+          (t.owner_id as string) === userId) &&
         !blockedSet.has(t.owner_id as string) &&
         !ageRestrictedSet.has(t.owner_id as string) &&
         // Time-intent: filter by parent trip's start_date when bounds are present
@@ -643,8 +647,8 @@ async function searchHiddenGems(
     const pat = sqlPattern(q);
     const { data, error } = await sc
       .from("hidden_gems")
-      .select("id, name, description, city, country, submitted_by, category, status, created_at")
-      .or(`name.ilike.${pat},description.ilike.${pat},city.ilike.${pat}`)
+      .select("id, name, city, country, submitted_by, category, status, created_at")
+      .or(`name.ilike.${pat},city.ilike.${pat}`)
       .in("status", ["approved", "active"])
       .order("created_at", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
@@ -799,7 +803,7 @@ async function searchCircles(
     const { data, error } = await sc
       .from("circles")
       .select("id, name, description, owner_id, cover_image_url, city, visibility, created_at")
-      .or(`name.ilike.${pat},description.ilike.${pat},city.ilike.${pat}`)
+      .or(`name.ilike.${pat},city.ilike.${pat}`)
       .eq("visibility", "public")
       .order("created_at", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
