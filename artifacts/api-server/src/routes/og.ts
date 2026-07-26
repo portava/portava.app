@@ -87,8 +87,14 @@ async function blocked(sc: any, userA: string, userB: string): Promise<boolean> 
 /**
  * Image layout hint.
  *
- * "square"  → avatar-style (400×400); twitter:card = "summary"
- * "banner"  → landscape cover photo (1200×630); twitter:card = "summary_large_image"
+ * "square"  → avatar-style; twitter:card = "summary"
+ * "banner"  → landscape cover photo; twitter:card = "summary_large_image"
+ *
+ * No default dimensions are assumed — callers must supply imageWidth /
+ * imageHeight when the actual pixel size is known.  Scrapers degrade
+ * gracefully when the tags are absent, but emit wrong values if the
+ * hardcoded guess doesn't match the stored image (iMessage crops the
+ * preview in that case).
  */
 type ImageLayout = "square" | "banner";
 
@@ -98,6 +104,10 @@ function buildOgHtml(opts: {
   url: string;
   imageUrl?: string | null;
   imageLayout?: ImageLayout;
+  /** Actual stored pixel width of the image. Omit when unknown. */
+  imageWidth?: number | null;
+  /** Actual stored pixel height of the image. Omit when unknown. */
+  imageHeight?: number | null;
   noindex: boolean;
   siteName?: string;
 }): string {
@@ -107,6 +117,8 @@ function buildOgHtml(opts: {
     url,
     imageUrl,
     imageLayout = "banner",
+    imageWidth,
+    imageHeight,
     noindex,
     siteName = "Portava",
   } = opts;
@@ -118,20 +130,27 @@ function buildOgHtml(opts: {
   // "summary" is used for square avatars and the no-image fallback.
   const twitterCard = imageUrl && imageLayout === "banner" ? "summary_large_image" : "summary";
 
-  // Standard expected pixel dimensions for each layout.
-  const [imgW, imgH]: [number, number] =
-    imageLayout === "square" ? [400, 400] : [1200, 630];
-
   let imgMeta = "";
   if (imageUrl) {
     const isHttps = imageUrl.startsWith("https://");
+    // Only emit dimension tags when the caller has supplied real values.
+    // Emitting hardcoded guesses causes iMessage / WhatsApp to crop or
+    // letterbox images whose actual pixel size differs from the hint.
+    const widthTag =
+      imageWidth != null
+        ? `<meta property="og:image:width" content="${imageWidth}" />`
+        : "";
+    const heightTag =
+      imageHeight != null
+        ? `<meta property="og:image:height" content="${imageHeight}" />`
+        : "";
     imgMeta = [
       `<meta property="og:image" content="${escXml(imageUrl)}" />`,
       isHttps
         ? `<meta property="og:image:secure_url" content="${escXml(imageUrl)}" />`
         : "",
-      `<meta property="og:image:width" content="${imgW}" />`,
-      `<meta property="og:image:height" content="${imgH}" />`,
+      widthTag,
+      heightTag,
       `<meta name="twitter:image" content="${escXml(imageUrl)}" />`,
     ]
       .filter(Boolean)
