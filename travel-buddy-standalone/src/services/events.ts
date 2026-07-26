@@ -69,6 +69,8 @@ export interface EventSummary {
   endsAt: string | null;
   coverUrl: string | null;
   coverMediaType: 'image' | 'video' | null;
+  /** Who last set the cover image — used by the priority guard to prevent AI images from overwriting user uploads. */
+  coverSource?: string | null;
   maxAttendees: number | null;
   ageMin: number | null;
   ageMax: number | null;

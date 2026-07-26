@@ -834,7 +834,7 @@ describe("Events — listing excludes internal-only columns", () => {
   const EVENT_SUMMARY_KEYS = new Set([
     "id", "hostId", "hostName", "hostAvatarUrl", "title", "description",
     "locationName", "locationLat", "locationLng", "startsAt", "endsAt",
-    "coverUrl", "coverMediaType", "maxAttendees", "ageMin", "ageMax",
+    "coverUrl", "coverMediaType", "coverSource", "maxAttendees", "ageMin", "ageMax",
     "trustScoreMin", "verifiedOnly", "visibility", "state", "chatEnabled",
     "chatThreadId", "waitlistEnabled", "priceType", "priceUrl", "safetyNotes",
     "rsvpOptions", "goingCount", "waitlistCount", "category", "city",

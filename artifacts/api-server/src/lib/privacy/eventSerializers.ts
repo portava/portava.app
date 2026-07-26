@@ -92,6 +92,7 @@ export function toAuthorizedEventView(
     endsAt: (ev.ends_at as string | null) ?? null,
     coverUrl: (ev.cover_url as string | null) ?? null,
     coverMediaType: (ev.cover_media_type as string | null) ?? null,
+    coverSource: (ev.cover_source as string | null) ?? null,
     maxAttendees: (ev.max_attendees as number | null) ?? null,
     ageMin: (ev.age_min as number | null) ?? null,
     ageMax: (ev.age_max as number | null) ?? null,

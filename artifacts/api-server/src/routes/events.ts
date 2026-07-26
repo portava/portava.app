@@ -3532,6 +3532,7 @@ function formatEvent(ev: any, viewerId: string, opts?: { goingRsvp?: boolean; ho
     endsAt:              ev.ends_at ?? null,
     coverUrl:            ev.cover_url ?? null,
     coverMediaType:      ev.cover_media_type ?? null,
+    coverSource:         ev.cover_source ?? null,
     maxAttendees:        ev.max_attendees ?? null,
     ageMin:              ev.age_min ?? null,
     ageMax:              ev.age_max ?? null,

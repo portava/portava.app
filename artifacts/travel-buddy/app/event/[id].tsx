@@ -220,12 +220,13 @@ export default function EventDetailScreen() {
   }, [event?.id, aiCoverOpacity]);
 
   // ── Realtime AI image updates — hero crossfade ────────────────────────────
-  // EventDetail has no coverSource field; the timestamp guard (event.updatedAt)
-  // is the proxy for detecting a newer user upload that arrived mid-generation.
+  // coverSource ('user_upload' | 'ai_generated' | null) lets the priority guard
+  // block AI images from overwriting a user-uploaded cover even when the AI job
+  // finishes before updatedAt is updated.
   useVisualStatusChannel({
     entityType: 'event',
     entityId: event?.id ?? null,
-    currentSource: null,
+    currentSource: event?.coverSource ?? null,
     currentImageUpdatedAt: event?.updatedAt ?? null,
     onReady: useCallback((payload) => {
       setLocalAiCoverUrl(payload.imageUrl);
