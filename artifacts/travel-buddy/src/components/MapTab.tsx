@@ -17,7 +17,9 @@ import { Map as MapView, Camera, Marker } from '@maplibre/maplibre-react-native'
 import type { CameraRef, LngLatBounds } from '@maplibre/maplibre-react-native';
 import type { PassportPostcard } from '../types/models.ts';
 import type { PassportMapPayload } from '../services/passportStamps.ts';
+import type { PostcardsSentinel } from '../services/profile.ts';
 import { getPassportMap } from '../services/passportStamps.ts';
+import { Lock, Ban, EyeOff } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
@@ -113,14 +115,49 @@ function verificationDot(level: string): string {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+// ── Sentinel copy (mirrors PostcardsTab for consistency) ─────────────────────
+
+const MAP_SENTINEL_COPY: Record<PostcardsSentinel, { Icon: React.ComponentType<any>; title: string; body: string }> = {
+  private: {
+    Icon: Lock,
+    title: 'Private passport',
+    body: 'This passport is private. Follow this traveler to see their travel map.',
+  },
+  blocked: {
+    Icon: Ban,
+    title: 'Map unavailable',
+    body: 'Travel map content is not available.',
+  },
+  unavailable: {
+    Icon: EyeOff,
+    title: 'Account unavailable',
+    body: 'This account is no longer available.',
+  },
+};
+
+function MapSentinelView({ kind }: { kind: PostcardsSentinel }) {
+  const { Icon, title, body } = MAP_SENTINEL_COPY[kind];
+  return (
+    <View style={sv.root} accessibilityRole="text" accessibilityLabel={title}>
+      <View style={sv.iconWrap}>
+        <Icon size={28} color={color.mute} strokeWidth={1.6} />
+      </View>
+      <Text style={sv.title}>{title}</Text>
+      <Text style={sv.body}>{body}</Text>
+    </View>
+  );
+}
+
 interface MapTabProps {
   postcards: PassportPostcard[];
   currentCity?: string | null;
   currentUserId?: string | null;
+  /** Sentinel returned by the postcards endpoint — renders a graceful state instead of the map. */
+  sentinel?: PostcardsSentinel;
 }
 
 /** Passport travel map — country-level markers, nearby travellers, stamp city list. */
-export function MapTab({ postcards, currentCity, currentUserId }: MapTabProps) {
+export function MapTab({ postcards, currentCity, currentUserId, sentinel }: MapTabProps) {
   const cameraRef = useRef<CameraRef>(null);
   const [mapPayload, setMapPayload] = useState<PassportMapPayload | null>(null);
   const [mapLoading, setMapLoading] = useState(true);
@@ -196,6 +233,9 @@ export function MapTab({ postcards, currentCity, currentUserId }: MapTabProps) {
   const selectedPin = countryPins.find((p) => p.country === selectedCountry) ?? null;
   const showNearby = loadingNearby || nearbyUsers.length > 0;
   const hasMarkers = countryPins.length > 0;
+
+  // Sentinel takes precedence — show a graceful state instead of the map.
+  if (sentinel) return <MapSentinelView kind={sentinel} />;
 
   return (
     <View style={mp.wrap}>
@@ -346,6 +386,24 @@ export function MapTab({ postcards, currentCity, currentUserId }: MapTabProps) {
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
+
+const sv = StyleSheet.create({
+  root: {
+    paddingVertical: space.xxxl,
+    paddingHorizontal: space.xl,
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  iconWrap: {
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: space.xs,
+  },
+  title: { ...t.bodyStrong, color: color.ink, textAlign: 'center' },
+  body: { ...t.small, color: color.mute, textAlign: 'center', maxWidth: 260 },
+});
 
 const pin = StyleSheet.create({
   wrap: {
