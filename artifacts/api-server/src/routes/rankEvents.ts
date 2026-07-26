@@ -16,6 +16,7 @@ import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { asyncHandler } from "../lib/asyncHandler";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
+import { upsertDistributionStats } from "../services/ranking/DiscoveryRankingService.js";
 
 const router = Router();
 
@@ -97,6 +98,12 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
     outcome === "save" ? "saved"  :
     "went"; // join / rsvp / attended
   void linkOutcomeSignal(sc, user.id, item_id, stage, `route:rank_event_${outcome}`);
+
+  // Update content_distribution_stats for this item — fire-and-forget.
+  // An outcome confirms the impression was real: increment eligible_impressions
+  // and unique_viewers, then let the service determine underexposure_status.
+  // negativeSignal=false: tap/save/join/rsvp/attended are all positive outcomes
+  void upsertDistributionStats(sc, item_id, user.id, false);
 
   res.json({ ok: true });
 }));

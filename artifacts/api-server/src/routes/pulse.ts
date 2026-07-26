@@ -4,6 +4,8 @@ import { rankCandidates } from '../lib/portavaRank';
 import { logImpression } from '../lib/rankLog';
 import { isFlagEnabled } from '../lib/featureFlags';
 import { getCompassProfile } from "../compass/CompassProfileService";
+import { rankItems as drsRankItems } from '../services/ranking/DiscoveryRankingService.js';
+import type { RankingInput, RankingViewerContext } from '../services/ranking/DiscoveryRankingService.js';
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime";
@@ -573,6 +575,80 @@ router.get("/pulse", async (req, res) => {
         },
       );
       void logImpression(ranked, user.id, "pulse", sessionId);
+
+      // ── DiscoveryRankingService re-ranking pass ────────────────────────────
+      // Wraps (does not replace) portavaRank: applies activity boosts, new-
+      // contributor boost, fatigue penalties, and underexposure signals on top
+      // of the existing score.  In shadow mode (ACTIVITY_DISCOVERY_BOOST_ENABLED
+      // = false), DRS computes scores for offline evaluation but preserves the
+      // existing portavaRank order so no user-visible change occurs.
+      try {
+        const drsInputs: RankingInput[] = ranked.map((sc) => {
+          const c = sc.candidate as any;
+          return {
+            itemId:          (c.id ?? "") as string,
+            itemType:        (c.kind ?? "post") as string,
+            creatorId:       (c.authorId ?? null) as string | null,
+            createdAt:       (c.createdAt ?? null) as string | null,
+            city:            (c.city ?? null) as string | null,
+            country:         null,
+            tags:            Array.isArray(c.tags) ? (c.tags as string[]) : [],
+            category:        (c.category ?? null) as string | null,
+            languageCode:    null,
+            hasMedia:        c.kind === "post",
+            completeness:    0.7,
+            positiveReviewRate: null,
+            flagCount:       0,
+            saveCount:       0,
+            shareCount:      0,
+            commentCount:    0,
+            impressionCount: 1,
+            uniqueViewerCount: 1,
+            lat: null, lng: null,
+            distanceKm:      (c.distanceKm ?? null) as number | null,
+            isFollowedByViewer: followedIds.has((c.authorId ?? "") as string),
+            isDeleted: false, isExpired: false, isSuspended: false,
+            isModerated: false, isPrivate: false,
+            isAgeRestricted: false, minAgeRequired: null,
+            isGeoRestricted: false, geoRestrictionCountries: null,
+            authorIsBlockedByViewer: blockedSet.has((c.authorId ?? "") as string),
+            authorBlocksViewer: false,
+            authorIsMutedByViewer: false,
+            viewerHasReportedItem: false,
+            viewerHasHiddenItem: false,
+            viewerHasHiddenCreator: false,
+            repeatCount: null, expiresAt: null, accountAgeDays: null,
+            isUnfamiliarCategory: false, isFirstImpression: false,
+          };
+        });
+        const drsViewer: RankingViewerContext = {
+          viewerId:          user.id,
+          travelStyles:      [...interestTags],
+          preferredLanguages: [],
+          preferredCities:   viewerCity ? [viewerCity] : [],
+          currentCity:       viewerCity || null,
+          currentCountry:    null,
+          lat: null, lng: null, viewerAge: null,
+          followedCreatorIds: followedIds,
+          mutedCreatorIds:   new Set(),
+          blockedCreatorIds: blockedSet,
+          seenItemIds:       new Set(),
+          sessionId,
+          lastActiveAt:      null,
+        };
+        const drsResults = await drsRankItems(drsInputs, "pulse", drsViewer, sc);
+        // Re-order `ranked` according to DRS output position.
+        // Shadow mode: DRS preserves input order → no change.
+        // Active mode: DRS sorts by finalScore → new ordering applied.
+        if (drsResults.length > 0) {
+          const drsOrder = new Map(drsResults.map((r, idx) => [r.itemId, idx]));
+          ranked.sort((a, b) => {
+            const aIdx = drsOrder.get((a.candidate as any).id as string) ?? ranked.length;
+            const bIdx = drsOrder.get((b.candidate as any).id as string) ?? ranked.length;
+            return aIdx - bIdx;
+          });
+        }
+      } catch { /* non-fatal — portavaRank order is preserved on any DRS error */ }
 
       // ── Extract results preserving backward compatibility ──────────────
       // `posts` stays post-only so existing mobile pagination/cursors work.

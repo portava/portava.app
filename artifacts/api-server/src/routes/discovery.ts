@@ -36,6 +36,8 @@ import { isEnabled } from "../compass/flags";
 import { rankCandidates } from "../lib/portavaRank";
 import type { RankCandidate, ViewerContext, ScoredCandidate } from "../lib/portavaRank";
 import { logImpression } from "../lib/rankLog";
+import { rankItems as drsRankItems } from "../services/ranking/DiscoveryRankingService.js";
+import type { RankingInput, RankingViewerContext } from "../services/ranking/DiscoveryRankingService.js";
 import {
   readPlacesFromDb,
   writePlacesToDb,
@@ -1125,6 +1127,71 @@ router.get("/discovery", async (req, res) => {
       // Map place id → ScoredCandidate for per-page impression logging below.
       scoredByPlaceId = new Map(scored.map((s) => [(s.candidate as PlaceCandidate).__place.id, s]));
       ranked = scored.map((s) => (s.candidate as PlaceCandidate).__place);
+
+      // ── DiscoveryRankingService re-ranking pass ──────────────────────────
+      // Applies activity boost, underexposure boost, and fatigue penalties on
+      // top of the existing portavaRank score.  Non-fatal; shadow mode preserves
+      // the portavaRank order automatically (DRS returns items in input order).
+      try {
+        const drsRankSc = rankSc;
+        const drsInputs: RankingInput[] = ranked.map((p) => ({
+          itemId:             p.id,
+          itemType:           p.id.startsWith("db/") ? "place" : "place",
+          creatorId:          null,
+          createdAt:          null,
+          city:               p.id.startsWith("db/") ? destination.split(",")[0]?.trim().toLowerCase() ?? null : null,
+          country:            null,
+          tags:               (p.tags ?? []).map((t) => t.toLowerCase()),
+          category:           p.category ?? null,
+          languageCode:       null,
+          hasMedia:           !!(p.headerImageUrl),
+          completeness:       p.headerImageUrl && p.description ? 0.9 : 0.5,
+          positiveReviewRate: p.rating != null ? Math.min(1, (p.rating - 1) / 4) : null,
+          flagCount:          0,
+          saveCount:          p.savedCount ?? 0,
+          shareCount:         0,
+          commentCount:       0,
+          impressionCount:    Math.max(1, p.savedCount ?? 1),
+          uniqueViewerCount:  p.savedCount ?? 0,
+          lat:                p.lat, lng: p.lng,
+          distanceKm:         p.distanceKm ?? null,
+          isFollowedByViewer: false,
+          isDeleted: false, isExpired: false, isSuspended: false,
+          isModerated: false, isPrivate: false,
+          isAgeRestricted: false, minAgeRequired: null,
+          isGeoRestricted: false, geoRestrictionCountries: null,
+          authorIsBlockedByViewer: false, authorBlocksViewer: false,
+          authorIsMutedByViewer: false,
+          viewerHasReportedItem: false, viewerHasHiddenItem: false,
+          viewerHasHiddenCreator: false,
+          repeatCount: null, expiresAt: null, accountAgeDays: null,
+          isUnfamiliarCategory: false, isFirstImpression: false,
+        }));
+        const drsViewer: RankingViewerContext = {
+          viewerId:           callerUserId,
+          travelStyles:       [...interestTags],
+          preferredLanguages: [],
+          preferredCities:    [destination.split(",")[0]?.trim().toLowerCase() ?? ""],
+          currentCity:        destination.split(",")[0]?.trim().toLowerCase() ?? null,
+          currentCountry:     null,
+          lat: null, lng: null, viewerAge: null,
+          followedCreatorIds: followedIds,
+          mutedCreatorIds:    new Set(),
+          blockedCreatorIds:  new Set(),
+          seenItemIds:        new Set(),
+          sessionId:          null,
+          lastActiveAt:       null,
+        };
+        const drsResults = await drsRankItems(drsInputs, "discovery", drsViewer, drsRankSc);
+        if (drsResults.length > 0) {
+          const drsOrder = new Map(drsResults.map((r, idx) => [r.itemId, idx]));
+          ranked.sort((a, b) => {
+            const aIdx = drsOrder.get(a.id) ?? ranked.length;
+            const bIdx = drsOrder.get(b.id) ?? ranked.length;
+            return aIdx - bIdx;
+          });
+        }
+      } catch { /* non-fatal — portavaRank order preserved on DRS error */ }
     } else {
       // Unauthenticated: keep existing distance/saved-count ordering
       ranked = discoveryCtx ? scoreWithContext(places, discoveryCtx) : places;

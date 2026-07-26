@@ -33,12 +33,16 @@ interface UpdateCapture {
   filterVal: any;
 }
 
+interface RpcCapture { name: string; params: Record<string, any> }
+
 function makeClient(opts: {
   rankEventsRows?: Array<Record<string, any>>;
   updateCaptures?: UpdateCapture[];
+  rpcCaptures?: RpcCapture[];
 } = {}) {
   const rankEventsRows = opts.rankEventsRows ?? [];
   const updateCaptures = opts.updateCaptures ?? [];
+  const rpcCaptures    = opts.rpcCaptures    ?? [];
 
   const db: Record<string, any[]> = {
     profiles:    [{ id: ALICE_ID, account_status: "active" }],
@@ -110,8 +114,10 @@ function makeClient(opts: {
           Promise.resolve({ data: null, error: null }),
       };
     },
-    rpc: (_name: string, _params?: any) =>
-      Promise.resolve({ data: null, error: null }),
+    rpc: (name: string, params?: any) => {
+      rpcCaptures.push({ name, params: params ?? {} });
+      return Promise.resolve({ data: null, error: null });
+    },
   };
 }
 
@@ -210,6 +216,106 @@ describe("POST /api/rank-events/outcome — A: existing impression row", async (
     );
     assert.equal(cap.filterCol, "id",          "update must be filtered by id");
     assert.equal(cap.filterVal, ROW_ID,        "must update the correct row");
+  });
+});
+
+// ── C: Repeated outcomes on the same item — counters must only increase ────────
+//
+// Regression test for the counter-reset bug where a hardcoded-value upsert
+// (eligible_impressions: 1) reset accumulated counts back to 1 on every call.
+// The correct path uses only the RPC, which increments atomically.
+
+describe("POST /api/rank-events/outcome — C: repeated outcomes never reset distribution counters", async () => {
+  let url: string;
+  let close: () => Promise<void>;
+  let rpcCaptures: RpcCapture[];
+
+  before(async () => {
+    const app = await makeApp();
+    ({ url, close } = await startServer(app));
+
+    rpcCaptures = [];
+    _setTestClient(
+      makeClient({
+        rankEventsRows: [
+          {
+            id:         ROW_ID,
+            user_id:    ALICE_ID,
+            item_id:    ITEM_ID,
+            item_kind:  "post",
+            surface:    "pulse",
+            outcome:    "impression",
+            position:   0,
+            features:   {},
+            served_at:  new Date().toISOString(),
+            session_id: SESSION_ID,
+            outcome_at: null,
+          },
+          // Second impression row so the second request also finds a row
+          {
+            id:         "row00000-0000-0000-0000-000000000002",
+            user_id:    ALICE_ID,
+            item_id:    ITEM_ID,
+            item_kind:  "post",
+            surface:    "pulse",
+            outcome:    "impression",
+            position:   1,
+            features:   {},
+            served_at:  new Date().toISOString(),
+            session_id: SESSION_ID,
+            outcome_at: null,
+          },
+        ],
+        rpcCaptures,
+      }),
+      true,
+    );
+  });
+
+  after(async () => {
+    await close();
+    _setTestClient(null as any, false);
+  });
+
+  it("calls increment_distribution_stats RPC for each outcome — never a destructive upsert with hardcoded 1 values", async () => {
+    const postOutcome = () =>
+      fetch(`${url}/api/rank-events/outcome`, {
+        method:  "POST",
+        headers: {
+          Authorization:  "Bearer alice-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          item_id:    ITEM_ID,
+          surface:    "pulse",
+          outcome:    "tap",
+          session_id: SESSION_ID,
+        }),
+      });
+
+    // Fire two outcomes for the same item
+    const [r1, r2] = await Promise.all([postOutcome(), postOutcome()]);
+    assert.equal(r1.status, 200, "first outcome must return 200");
+    assert.equal(r2.status, 200, "second outcome must return 200");
+
+    // Both should have triggered the RPC
+    const statsRpcs = rpcCaptures.filter(
+      (c) => c.name === "increment_distribution_stats",
+    );
+    assert.equal(
+      statsRpcs.length,
+      2,
+      "increment_distribution_stats RPC must be called once per outcome",
+    );
+
+    // Neither call should carry a hardcoded eligible_impressions=1 that would
+    // reset accumulated counters — the RPC owns all increments.
+    for (const rpc of statsRpcs) {
+      assert.ok(
+        !("eligible_impressions" in rpc.params),
+        "RPC params must NOT contain eligible_impressions — counter resets are forbidden",
+      );
+    }
   });
 });
 

@@ -27,6 +27,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile, CompassContext } from "./types.js";
 import type { PipelineResult, PipelineTestOverrides } from "./CompassPipeline.js";
+import { rankItems as drsRankItems } from "../services/ranking/DiscoveryRankingService.js";
+import type { RankingInput, RankingViewerContext } from "../services/ranking/DiscoveryRankingService.js";
 import { runPipeline } from "./CompassPipeline.js";
 import { diversifySection } from "./CompassDiversityEngine.js";
 import { applyFairExposure } from "./CompassFairExposureEngine.js";
@@ -337,6 +339,89 @@ async function runFeedPipeline(
     };
   });
   boosted.sort((a, b) => b.finalScore - a.finalScore);
+
+  // ── DiscoveryRankingService additional boost pass ─────────────────────────
+  // Applies activity boost, new-contributor boost, underexposure boost, and
+  // fatigue penalties sourced from the centralized ranking service on top of
+  // the Compass pipeline score.  Non-fatal; shadow mode preserves sort order.
+  if (db) {
+    try {
+      const drsInputs: RankingInput[] = boosted.map((r): RankingInput => ({
+        itemId:             r.item.id,
+        itemType:           r.item.type,
+        creatorId:          r.item.authorId ?? null,
+        createdAt:          r.item.createdAt ?? null,
+        city:               r.item.city ?? null,
+        country:            (r.item as any).country ?? null,
+        tags:               Array.isArray(r.item.interestTags) ? r.item.interestTags : [],
+        category:           (r.item as any).category ?? null,
+        languageCode:       r.item.languageCode ?? null,
+        hasMedia:           !!(r.item as any).hasMedia,
+        completeness:       typeof (r.item as any).completeness === "number" ? (r.item as any).completeness : 0.7,
+        positiveReviewRate: null,
+        flagCount:          r.item.reportCount ?? 0,
+        saveCount:          0,
+        shareCount:         0,
+        commentCount:       0,
+        impressionCount:    1,
+        uniqueViewerCount:  1,
+        lat: null, lng: null,
+        distanceKm:         null,
+        isFollowedByViewer: false,
+        isDeleted:          false,
+        isExpired:          false,
+        isSuspended:        !!(r.item.isSuspended),
+        isModerated:        false,
+        isPrivate:          r.item.visibilityScope === "private",
+        isAgeRestricted:    !!(r.item.minAgeRequired && r.item.minAgeRequired > 0),
+        minAgeRequired:     r.item.minAgeRequired ?? null,
+        isGeoRestricted:    false,
+        geoRestrictionCountries: null,
+        authorIsBlockedByViewer: profile.blockedUserIds.includes(r.item.authorId ?? ""),
+        authorBlocksViewer:      profile.blockerUserIds.includes(r.item.authorId ?? ""),
+        authorIsMutedByViewer:   profile.mutedUserIds.includes(r.item.authorId ?? ""),
+        viewerHasReportedItem:   !!(r.item.isReportedByViewer),
+        viewerHasHiddenItem:     false,
+        viewerHasHiddenCreator:  false,
+        repeatCount:        r.item.repeatCount ?? null,
+        expiresAt:          (r.item as any).expiresAt ?? null,
+        accountAgeDays:     r.item.authorJoinedAt
+          ? Math.floor((Date.now() - new Date(r.item.authorJoinedAt as string).getTime()) / 86_400_000)
+          : null,
+        isUnfamiliarCategory: false,
+        isFirstImpression:  false,
+      }));
+
+      const drsViewer: RankingViewerContext = {
+        viewerId:           profile.userId,
+        travelStyles:       profile.travelStyles ?? [],
+        preferredLanguages: profile.preferredLanguages ?? [],
+        preferredCities:    profile.preferredCities ?? [],
+        currentCity:        profile.currentCity ?? null,
+        currentCountry:     profile.currentCountry ?? null,
+        lat: null, lng: null,
+        viewerAge:          profile.viewerAge ?? null,
+        followedCreatorIds: new Set<string>(),
+        mutedCreatorIds:    new Set(profile.mutedUserIds ?? []),
+        blockedCreatorIds:  new Set(profile.blockedUserIds ?? []),
+        seenItemIds:        new Set(profile.ignoredItemIds ?? []),
+        sessionId:          null,
+        lastActiveAt:       null,
+      };
+
+      const drsResults = await drsRankItems(drsInputs, "compass", drsViewer, db);
+      // Re-order boosted according to DRS output position.
+      // Shadow mode preserves current order; active mode applies DRS finalScore ordering.
+      if (drsResults.length > 0) {
+        const drsOrder = new Map(drsResults.map((r, idx) => [r.itemId, idx]));
+        boosted.sort((a, b) => {
+          const aIdx = drsOrder.get(a.item.id) ?? boosted.length;
+          const bIdx = drsOrder.get(b.item.id) ?? boosted.length;
+          return aIdx - bIdx;
+        });
+      }
+    } catch { /* non-fatal — Compass pipeline order preserved on DRS error */ }
+  }
 
   // ── Fair exposure — global cap (≤2 per feed build) ────────────────────────
   // Applied on the scored+boosted pool BEFORE section assignment so fair-

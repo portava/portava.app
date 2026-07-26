@@ -99,6 +99,10 @@ const SKIP_TABLES = new Set<string>([
   // Admin access audit log — migration 2035 pending live apply.
   // Remove once migration 2035_admin_access_log.sql is applied to the live DB.
   "admin_access_log",
+  // DiscoveryRankingService tables — migrations pending live apply (Task 2653).
+  // Remove once the tables exist in the live DB schema.
+  "content_distribution_stats",
+  "ranking_debug_samples",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────
