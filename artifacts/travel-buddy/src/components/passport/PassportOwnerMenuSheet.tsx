@@ -21,7 +21,7 @@ import {
   ShieldCheck, Shield, LayoutGrid, Film, BookOpen,
   Briefcase, Bookmark, Users, UserPlus, UserCheck, UserX,
   VolumeX, Settings, Lock, Bell, HelpCircle, LogOut,
-  ChevronRight, X, MoreHorizontal, Edit2,
+  ChevronRight, X, MoreHorizontal, Edit2, Compass,
 } from 'lucide-react-native';
 import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
 import { space, radius } from '../../theme/tokens.ts';
@@ -342,6 +342,14 @@ const SECTIONS: Section[] = [
         iconColor: '#27AE71',
         live: false,
         action: (_p) => {},
+      },
+      {
+        key: 'explore-portava',
+        label: 'Explore Portava',
+        Icon: Compass,
+        iconColor: '#3B7DED',
+        live: true,
+        action: (p) => { close(p); router.push('/explore-portava' as any); },
       },
       {
         key: 'sign-out',

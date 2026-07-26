@@ -6,7 +6,7 @@ import React from 'react';
 import { router } from 'expo-router';
 import {
   User, Camera, LayoutGrid, Heart, Compass, Eye, Shield,
-  Bell, MapPin, Link2, KeyRound, Phone, BookMarked,
+  Bell, MapPin, Link2, KeyRound, Phone, BookMarked, Map,
 } from 'lucide-react-native';
 import {
   SettingsScreen, SettingsSection, SettingsRow, SettingsDivider,
@@ -84,6 +84,15 @@ export default function EditSettingsHub() {
           title="Location & Availability"
           subtitle="Location sharing, Find Your Circle"
           onPress={go('/profile/edit/location')}
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Help &amp; Navigation">
+        <SettingsRow
+          icon={<Map size={ICON} color={PP.ink} />}
+          title="Explore Portava"
+          subtitle="Browse all features and screens in one place"
+          onPress={go('/explore-portava')}
         />
       </SettingsSection>
 
