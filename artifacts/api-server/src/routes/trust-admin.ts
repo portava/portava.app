@@ -16,6 +16,7 @@
  * PUT    /admin/trust/settings/:key                — update one trust setting + async recalc
  */
 import { Router } from "express";
+import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
@@ -101,6 +102,7 @@ router.get("/admin/trust/reviews", async (req, res) => {
 
   const { data, error, count } = await query;
   if (error) { sendError(res, "db_error", error.message); return; }
+  void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
   res.json({ reviews: data ?? [], total: count ?? 0, page });
 });
 
@@ -137,6 +139,7 @@ router.get("/admin/trust/users/:userId", async (req, res) => {
       .limit(20),
   ]);
 
+  void logAdminAccess(sc, admin.userId, "profile", userId, "expand", accessReason(req));
   res.json({
     userId,
     profile:      profile ?? null,
@@ -311,6 +314,7 @@ router.get("/admin/trust/gaming-flags", async (req, res) => {
     .limit(limit);
 
   if (error) { sendError(res, "db_error", error.message); return; }
+  void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
   res.json({ flags: data ?? [], total: (data ?? []).length });
 });
 

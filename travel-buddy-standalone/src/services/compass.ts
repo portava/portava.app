@@ -1617,6 +1617,17 @@ export async function setCachedFeed(userId: string, feed: CompassFeedResponse): 
   }
 }
 
+/** Remove the cached Compass feed for a user from local storage (e.g. on logout). */
+export async function clearCachedFeed(userId: string): Promise<void> {
+  const store = getStorage();
+  if (!store) return;
+  try {
+    await store.removeItem(`${FEED_CACHE_PREFIX}${userId}`);
+  } catch {
+    // best-effort
+  }
+}
+
 // ── Phase 6: Compass Remembers — layered memory ───────────────────────────────
 
 export type CompassMemoryScope = 'session' | 'trip' | 'long_term' | 'circle';

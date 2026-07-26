@@ -35,6 +35,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
+import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { clearL1Cache, invalidate } from "../compass/CompassCacheEngine.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
@@ -388,6 +389,7 @@ router.get("/admin/compass/dashboard", async (req, res) => {
     const clickRatePct = feedbackTotal > 0
       ? Math.round((positiveEngagementCount / feedbackTotal) * 1_000) / 10 : 0;
 
+    void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
     res.json({
       generatedAt:    new Date(nowMs).toISOString(),
       windowDays:     30,

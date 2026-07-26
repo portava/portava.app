@@ -332,7 +332,14 @@ async function decide(
           .eq("id", gv.entity_id)
           .maybeSingle();
         if (!ev) return false;
-        if ((ev as any).host_id === viewerId) return true;
+        const hostId = (ev as any).host_id as string;
+        if (hostId === viewerId) return true;
+        // Block check against host — fail-closed.
+        // ownerFromPath() returns null for generated-visual paths, so the global
+        // block gate above was skipped; we must enforce it here explicitly.
+        const evBlocked = await fetchBlockedSet(sc, viewerId);
+        if (evBlocked === null) return false;
+        if (evBlocked.has(hostId)) return false;
         if (
           (ev as any).visibility === "public" &&
           !["draft", "cancelled", "archived"].includes((ev as any).state)
@@ -358,6 +365,19 @@ async function decide(
         return !!(rsvp as any).data || !!(role as any).data;
       }
       if (gv.entity_type === "trip") {
+        // Fetch owner for block check — ownerFromPath() returns null for
+        // generated-visual paths so the global gate above was skipped.
+        const { data: tr } = await sc
+          .from("trips")
+          .select("owner_id")
+          .eq("id", gv.entity_id)
+          .maybeSingle();
+        if (!tr) return false;
+        const tripOwnerId = (tr as any).owner_id as string;
+        if (tripOwnerId === viewerId) return true;
+        const trBlocked = await fetchBlockedSet(sc, viewerId);
+        if (trBlocked === null) return false;
+        if (trBlocked.has(tripOwnerId)) return false;
         return isTripMember(sc, gv.entity_id, viewerId);
       }
       return false;

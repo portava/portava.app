@@ -30,7 +30,7 @@ function networkMessage(e: unknown): string {
 
 export async function signUp(email: string, password: string, meta?: { name?: string; handle?: string }): Promise<AuthResult> {
   if (!isSupabaseConfigured) return { userId: null, error: 'Supabase not configured' };
-  if (__DEV__) console.log('[Auth] signUp →', email);
+  if (__DEV__) console.log('[Auth] signUp');
   let data: any, error: any;
   try {
     ({ data, error } = await supabase.auth.signUp({ email, password, options: { data: meta } }));
@@ -100,7 +100,7 @@ export async function ensureProfile(userId: string, email: string, meta?: { name
 
 export async function signIn(email: string, password: string): Promise<AuthResult> {
   if (!isSupabaseConfigured) return { userId: null, error: 'Supabase not configured' };
-  if (__DEV__) console.log('[Auth] signIn →', email);
+  if (__DEV__) console.log('[Auth] signIn');
   let data: any, error: any;
   try {
     ({ data, error } = await supabase.auth.signInWithPassword({ email, password }));

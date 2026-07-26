@@ -18,6 +18,7 @@
  */
 
 import { Router } from "express";
+import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
@@ -346,6 +347,7 @@ router.get("/admin/stamps/audit", async (req, res) => {
 
   const { data, error, count } = await query;
   if (error) { sendError(res, "db_error", error.message); return; }
+  void logAdminAccess(sc, admin.userId, "profile", userId ?? "list", "view", accessReason(req));
   res.json({ events: data ?? [], total: count ?? 0, page });
 });
 

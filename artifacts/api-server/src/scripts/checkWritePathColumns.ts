@@ -91,6 +91,9 @@ const SKIP_TABLES = new Set<string>([
   // Remove these entries once the migration is applied to the live DB.
   "devices",
   "key_packages",
+  // Admin access audit log — migration 2035 pending live apply.
+  // Remove once migration 2035_admin_access_log.sql is applied to the live DB.
+  "admin_access_log",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────

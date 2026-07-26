@@ -8,6 +8,12 @@ import { pauseOnSessionEnd } from '../services/circle.ts';
 import { clearForUser as clearLikedForUser, primeLikes } from '../services/likedPostsCache.ts';
 import { clearForUser as clearSavedForUser, primeSaved } from '../services/savedPostsCache.ts';
 import { fetchMyLikedPostIds, fetchMySavedPostIds } from '../services/postEngagement.ts';
+import { clearCachedFeed } from '../services/compass.ts';
+
+// AsyncStorage keys that may hold private entity data and must be wiped on logout.
+const PRIVATE_ASYNC_KEYS = [
+  '@travel_buddy/pending_checkpoint_arrivals',
+] as const;
 
 /**
  * Session context — single source of auth truth for the app. Wraps the auth
@@ -157,6 +163,16 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (userId) {
       clearLikedForUser(userId);
       clearSavedForUser(userId);
+      // Remove the personalised Compass feed cache so it doesn't persist
+      // private recommendation data (event addresses, place details) to disk.
+      void clearCachedFeed(userId).catch(() => {});
+    }
+    // Wipe other AsyncStorage keys that may hold private entity data.
+    try {
+      const AS = require('@react-native-async-storage/async-storage').default;
+      await Promise.allSettled(PRIVATE_ASYNC_KEYS.map((k) => AS.removeItem(k)));
+    } catch {
+      // Non-fatal — native module absent (e.g. web / test environment).
     }
     await svcSignOut();
     setUserId(null);

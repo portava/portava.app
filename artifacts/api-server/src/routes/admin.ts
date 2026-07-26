@@ -29,6 +29,7 @@ import {
   runSchemaDriftCheck,
   getCachedSchemaDriftResult,
 } from "../lib/schemaDriftCheck";
+import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 
 const router = Router();
 
@@ -252,6 +253,7 @@ router.get("/admin/suspicious-gps", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
   const events = (data ?? []).map(({ lat: _lat, lng: _lng, ...rest }: Record<string, unknown>) => rest);
+  void logAdminAccess(sc, admin.userId, "gps_event", "list", "view", accessReason(req));
   res.json({ events, total: events.length });
 });
 
@@ -310,6 +312,7 @@ router.get("/admin/venues/pending", async (req, res) => {
     .limit(limit);
 
   if (error) { sendError(res, "db_error", error.message); return; }
+  void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
   res.json({ venues: data ?? [], total: (data ?? []).length });
 });
 
@@ -395,6 +398,7 @@ router.get("/admin/venues/reported", async (req, res) => {
     .filter((v: any) => v.reportCount > 0)
     .sort((a: any, b: any) => b.reportCount - a.reportCount);
 
+  void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
   res.json({ venues, total: venues.length });
 });
 
@@ -544,6 +548,7 @@ router.get("/admin/geofence/:tripId/suspicious-checkins", async (req, res) => {
     .limit(100);
 
   if (error) { sendError(res, "db_error", error.message); return; }
+  void logAdminAccess(sc, admin.userId, "check_in", tripId, "view", accessReason(req));
   res.json({ events: data ?? [], total: (data ?? []).length });
 });
 
@@ -1004,6 +1009,8 @@ async function logModerationAction(
   return { ok: true };
 }
 
+// logAdminAccess and accessReason are imported from ../lib/adminAudit.js
+
 // ── Admin user search by email or handle ─────────────────────────────────────
 //
 // GET /admin/users?email=<email>   — look up a user by email address
@@ -1085,6 +1092,7 @@ router.get("/admin/users", async (req, res) => {
 
   const onboardingRow: any = onboardingRes.data ?? null;
 
+  void logAdminAccess(sc, admin.userId, "profile", userId, "view", accessReason(req));
   res.json({
     profile:         profileData,
     accountStates:   accountStateRes.data ?? [],
@@ -1155,6 +1163,7 @@ router.get("/admin/users/:userId/summary", async (req, res) => {
 
   if (!profileRes.data) { sendError(res, "not_found", "User not found"); return; }
 
+  void logAdminAccess(sc, admin.userId, "profile", userId, "expand", accessReason(req));
   res.json({
     profile:           profileRes.data,
     accountStates:     accountStateRes.data    ?? [],
@@ -1560,6 +1569,7 @@ router.get("/admin/moderation/reports", async (req, res) => {
     };
   });
 
+  void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
   res.json({ reports: enriched, total: count ?? 0, page });
 });
 
@@ -1591,6 +1601,7 @@ router.get("/admin/reports", async (req, res) => {
 
   const { data, error, count } = await query;
   if (error) { sendError(res, "db_error", error.message); return; }
+  void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
   res.json({ reports: data ?? [], total: count ?? 0, page });
 });
 
@@ -1780,6 +1791,7 @@ router.get("/admin/deletion-requests", async (req, res) => {
   // Table is keyed by user_id (no surrogate id column); expose it as `id`
   // so existing admin clients keep working.
   const rows = (data ?? []).map((r: any) => ({ id: r.user_id, ...r }));
+  void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
   res.json({ requests: rows, total: rows.length });
 });
 
@@ -1957,6 +1969,7 @@ router.get("/admin/trips", async (req, res) => {
       };
     });
 
+  void logAdminAccess(sc, admin.userId, "trip", "list", "view", accessReason(req));
   res.json({ trips: result });
 });
 
@@ -2134,6 +2147,7 @@ router.get("/admin/events", async (req, res) => {
       reportMap[r.target_id].push(r);
     }
 
+    void logAdminAccess(sc, admin.userId, "event", "list", "view", accessReason(req));
     res.json({
       events: eventIds
         .filter((id) => !!(events as any[]).find((e: any) => e.id === id))
@@ -2156,6 +2170,7 @@ router.get("/admin/events", async (req, res) => {
   const { data: events, error } = await q;
   if (error) { sendError(res, "db_error", error.message); return; }
 
+  void logAdminAccess(sc, admin.userId, "event", "list", "view", accessReason(req));
   res.json({ events: events ?? [] });
 });
 
@@ -2385,6 +2400,7 @@ router.get("/admin/users/:userId/moderation-summary", async (req, res) => {
 
   if (!profileRes.data) { sendError(res, "not_found", "User not found"); return; }
 
+  void logAdminAccess(sc, admin.userId, "profile", userId, "expand", accessReason(req));
   res.json({
     profile:           profileRes.data,
     accountStates:     accountStateRes.data    ?? [],

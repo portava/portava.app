@@ -245,6 +245,53 @@ describe("authorizeMediaAccess — the matrix", () => {
     const sc = makeClient();
     assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", `${OWNER}/nothing-references-this.jpg`), false);
   });
+
+  // ── Generated visual block checks (3g branch) ────────────────────────────────
+  // ownerFromPath() returns null for generated-visual paths, so the global block
+  // gate is skipped. These tests confirm the per-branch block check fires.
+
+  const EVENT_ID2 = "d2000000-0000-4000-a000-000000000001";
+  const VIS_ID2   = "e2000000-0000-4000-a000-000000000001";
+  const gvEventPath = `generated-visuals/event/${EVENT_ID2}/${VIS_ID2}/hero.webp`;
+
+  it("blocked viewer denied access to generated event visual — even for a public event", async () => {
+    // VIEWER is blocked by OWNER (the host). The event is public and active.
+    // Without the per-branch block check, this would incorrectly return true.
+    const sc = makeClient({
+      generatedVisuals: [{
+        hero_path: gvEventPath,
+        entity_type: "event",
+        entity_id: EVENT_ID2,
+        owner_user_id: OWNER,
+        status: "ready",
+      }],
+      events: [{ id: EVENT_ID2, host_id: OWNER, visibility: "public", state: "live" }],
+      blocks: [{ blocker_id: OWNER, blocked_id: VIEWER }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", gvEventPath), false);
+  });
+
+  const TRIP2        = "b2000000-0000-4000-a000-000000000001";
+  const VIS_ID3      = "e3000000-0000-4000-a000-000000000001";
+  const gvTripPath   = `generated-visuals/trip/${TRIP2}/${VIS_ID3}/hero.webp`;
+
+  it("blocked viewer denied access to generated trip visual — even when they are a trip member", async () => {
+    // VIEWER is a trip member but OWNER (trip owner) has blocked them.
+    // Without the per-branch block check, membership would incorrectly allow access.
+    const sc = makeClient({
+      generatedVisuals: [{
+        hero_path: gvTripPath,
+        entity_type: "trip",
+        entity_id: TRIP2,
+        owner_user_id: OWNER,
+        status: "ready",
+      }],
+      trips: [{ id: TRIP2, owner_id: OWNER }],
+      tripMembers: [{ trip_id: TRIP2, user_id: VIEWER, role: "member" }],
+      blocks: [{ blocker_id: OWNER, blocked_id: VIEWER }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", gvTripPath), false);
+  });
 });
 
 // ── Endpoint modes ────────────────────────────────────────────────────────────
