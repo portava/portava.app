@@ -8,6 +8,8 @@ import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
 import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
 import { fallbackUriFor } from '../../lib/visuals/fallbackAssets.ts';
 import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
+import { ImageSourceBadge } from '../visuals/ImageSourceBadge.tsx';
+import { usePlaceImage } from '../../hooks/usePlaceImage.ts';
 import { checkSaved, saveItem, unsaveItem } from '../../services/collections.ts';
 import { getSavedListIds } from '../../services/discoveryBookmarks.ts';
 import { usePlanPicker } from '../PlanPickerController.tsx';
@@ -126,6 +128,16 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
 
   const fallbackDesc = getPlaceCategoryFallback(place.category);
 
+  const placeImage = usePlaceImage({
+    url: resolved?.url ?? null,
+    imageSourceType: place.imageSourceType,
+    accuracyStatus: place.accuracyStatus,
+    disclaimerRequired: place.disclaimerRequired,
+    disclaimerText: place.disclaimerText,
+    isRepresentation: resolved?.isRepresentation,
+    altText: place.name,
+  });
+
   return (
     <Pressable
       style={({ pressed }) => [styles.card, pressed && { opacity: layout.pressedOpacity }]}
@@ -139,7 +151,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
           height={HEADER_HEIGHT}
           style={styles.headerImage}
           resizeMode="cover"
-          alt={place.name}
+          alt={placeImage.accessibilityLabel ?? place.name}
           fallback={
             <MediaFallback
               icon={<Text style={styles.fallbackEmoji}>{fallbackDesc.emoji}</Text>}
@@ -150,13 +162,23 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
           }
           testID={`place-card-img-${place.id}`}
         />
-        {/* AI-generated representation disclosure — only for ai_generated images */}
-        {resolved?.isRepresentation && (
+        {/* Image source badge — accuracy pipeline labels supersede legacy AI representation label */}
+        {placeImage.sourceLabel !== null ? (
+          <ImageSourceBadge
+            sourceLabel={placeImage.sourceLabel}
+            disclaimerRequired={placeImage.disclaimerRequired}
+            disclaimerText={placeImage.disclaimerText}
+            placeId={place.id}
+            imageUrl={resolved?.url ?? undefined}
+            style={styles.aiLabel}
+            testID={`image-source-badge-${place.id}`}
+          />
+        ) : resolved?.isRepresentation ? (
           <AiRepresentationLabel
             style={styles.aiLabel}
             testID={`ai-representation-${place.id}`}
           />
-        )}
+        ) : null}
         {/* Open/closed overlay pill on the image */}
         {liveOpenNow != null && (
           <View

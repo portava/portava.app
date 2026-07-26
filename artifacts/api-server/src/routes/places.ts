@@ -438,4 +438,60 @@ router.post("/me/recent-places", async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── POST /api/places/:id/image-report ─────────────────────────────────────────
+//
+// Accepts a user report that an image does not match a place.
+// Requires authentication. Writes a pending row to place_image_reports.
+// Returns { ok: true } without leaking internal review state.
+//
+router.post("/places/:id/image-report", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const placeId = req.params.id;
+  if (!placeId || placeId.length > 500) {
+    sendError(res, "invalid_payload", "Invalid place id");
+    return;
+  }
+
+  const { imageUrl, reason } = (req.body ?? {}) as {
+    imageUrl?: unknown;
+    reason?: unknown;
+  };
+
+  if (typeof imageUrl !== "string" || !imageUrl.trim() || imageUrl.length > 2000) {
+    sendError(res, "invalid_payload", "imageUrl is required (max 2000 chars)");
+    return;
+  }
+
+  const VALID_REASONS = new Set(["wrong_place"]);
+  if (typeof reason !== "string" || !VALID_REASONS.has(reason)) {
+    sendError(res, "invalid_payload", "reason must be 'wrong_place'");
+    return;
+  }
+
+  const db = getServiceClient();
+  if (!db) {
+    sendError(res, "server_not_configured");
+    return;
+  }
+
+  const { error } = await db.from("place_image_reports").insert({
+    place_id: placeId,
+    image_url: imageUrl.trim(),
+    reported_by: user.id,
+    report_reason: reason,
+    status: "pending",
+  });
+
+  if (error) {
+    logger.warn({ err: error, placeId }, "failed to insert place_image_report");
+    sendError(res, "db_error", "Failed to submit report");
+    return;
+  }
+
+  res.json({ ok: true });
+});
+
 export default router;

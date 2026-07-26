@@ -116,6 +116,12 @@ export interface EventListItem extends EventSummary {
   myWaitlistPosition?: number | null;
   isSaved?: boolean;
   distanceKm?: number;
+  /** Nine-category source classification for the cover image (from the accuracy pipeline). */
+  coverImageSourceType?: string | null;
+  /** When true the UI must render a disclaimer alongside the cover image. */
+  coverDisclaimerRequired?: boolean | null;
+  /** Disclaimer copy to show when coverDisclaimerRequired is true. */
+  coverDisclaimerText?: string | null;
 }
 
 export interface JoinRequest {

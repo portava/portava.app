@@ -61,6 +61,15 @@ export interface DiscoveryPlace {
   /** Data-source attribution text for the venue detail view. When present,
    *  replaces the default OSM attribution footer. */
   attribution?: string | null;
+  /** Nine-category image source classification from the accuracy pipeline
+   *  (mirrors ImageSourceType from api-server/src/lib/visuals/types.ts). */
+  imageSourceType?: string | null;
+  /** Image accuracy assessment from the verification pipeline. */
+  accuracyStatus?: string | null;
+  /** When true the UI must render a disclaimer alongside the image. */
+  disclaimerRequired?: boolean | null;
+  /** Disclaimer copy to show when disclaimerRequired is true. */
+  disclaimerText?: string | null;
 }
 
 export interface DiscoveryFilters {

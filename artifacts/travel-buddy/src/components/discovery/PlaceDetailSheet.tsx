@@ -4,6 +4,8 @@ import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
 import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
 import { fallbackUriFor } from '../../lib/visuals/fallbackAssets.ts';
 import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
+import { ImageSourceBadge } from '../visuals/ImageSourceBadge.tsx';
+import { usePlaceImage } from '../../hooks/usePlaceImage.ts';
 import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Linking,
 } from 'react-native';
@@ -119,6 +121,16 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
 
   if (!place) return null;
 
+  const placeImage = usePlaceImage({
+    url: resolvedSheet?.url ?? null,
+    imageSourceType: place.imageSourceType,
+    accuracyStatus: place.accuracyStatus,
+    disclaimerRequired: place.disclaimerRequired,
+    disclaimerText: place.disclaimerText,
+    isRepresentation: resolvedSheet?.isRepresentation,
+    altText: place.name,
+  });
+
   const accent = categoryColor(place.category);
   const fallbackDesc = getPlaceCategoryFallback(place.category);
 
@@ -171,7 +183,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
             height={SHEET_IMAGE_HEIGHT}
             style={styles.sheetImage}
             resizeMode="cover"
-            alt={place.name}
+            alt={placeImage.accessibilityLabel ?? place.name}
             fallback={
               <MediaFallback
                 icon={<Text style={styles.fallbackEmoji}>{fallbackDesc.emoji}</Text>}
@@ -182,10 +194,20 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
             }
             testID="place-sheet-image"
           />
-          {/* AI-generated representation disclosure */}
-          {resolvedSheet?.isRepresentation && (
+          {/* Image source badge — accuracy pipeline labels; falls back to legacy AI label */}
+          {placeImage.sourceLabel !== null ? (
+            <ImageSourceBadge
+              sourceLabel={placeImage.sourceLabel}
+              disclaimerRequired={placeImage.disclaimerRequired}
+              disclaimerText={placeImage.disclaimerText}
+              placeId={place.id}
+              imageUrl={resolvedSheet?.url ?? undefined}
+              style={styles.aiLabel}
+              testID="place-sheet-image-source-badge"
+            />
+          ) : resolvedSheet?.isRepresentation ? (
             <AiRepresentationLabel style={styles.aiLabel} testID="place-sheet-ai-label" />
-          )}
+          ) : null}
           {/* Open/closed overlay on image */}
           {liveOpenNow != null && (
             <View
@@ -199,6 +221,19 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
             </View>
           )}
         </View>
+
+        {/* Illustrative image disclaimer — shown inline (not hidden behind a tap) per spec:
+            "displayed visibly (not hidden behind a tap)" for illustrative_only accuracy status. */}
+        {placeImage.sourceLabel === 'illustrative' && placeImage.disclaimerText ? (
+          <View
+            style={{ backgroundColor: '#FEF3C7', borderLeftWidth: 3, borderLeftColor: '#D97706', paddingHorizontal: space.md, paddingVertical: space.sm }}
+            testID="place-sheet-illustrative-disclaimer"
+          >
+            <Text style={{ fontSize: 12, lineHeight: 17, color: '#92400E' }}>
+              {placeImage.disclaimerText}
+            </Text>
+          </View>
+        ) : null}
 
         {/* Header row: name + type + save + close */}
         <View style={styles.header}>

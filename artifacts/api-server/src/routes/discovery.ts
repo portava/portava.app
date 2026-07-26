@@ -98,6 +98,14 @@ export interface DiscoveryPlace {
    *   'portava_media' — Portava curated media library
    */
   headerImageSource?: string | null;
+  /** Nine-value accuracy source classification (from the accuracy pipeline). */
+  imageSourceType?: string | null;
+  /** Accuracy assessment state: 'verified_real' | 'illustrative_only' | 'unverified' | etc. */
+  accuracyStatus?: string | null;
+  /** When true the UI must render a disclaimer alongside this image. */
+  disclaimerRequired?: boolean | null;
+  /** Disclaimer copy to display when disclaimerRequired is true. */
+  disclaimerText?: string | null;
 }
 
 /** Public shape returned in all API responses. */
@@ -105,6 +113,24 @@ export type PublicDiscoveryPlace = DiscoveryPlace;
 
 function toPublic(p: DiscoveryPlace): PublicDiscoveryPlace {
   return p;
+}
+
+// ── Accuracy-pipeline helpers ─────────────────────────────────────────────────
+// Derives disclaimer presence/text from `image_accuracy_status` so every route
+// that returns a DiscoveryPlace emits the same client-facing accuracy fields.
+
+function placeMustShowDisclaimer(accuracyStatus: string | null | undefined): boolean {
+  return accuracyStatus === 'illustrative_only' || accuracyStatus === 'rejected';
+}
+
+function placeDisclaimerText(accuracyStatus: string | null | undefined): string | null {
+  if (accuracyStatus === 'illustrative_only') {
+    return 'Illustrative image — this does not show the actual location.';
+  }
+  if (accuracyStatus === 'rejected') {
+    return 'This image may not show the actual location.';
+  }
+  return null;
 }
 
 interface CacheEntry {
@@ -485,7 +511,7 @@ async function queryDbPlaces(
   try {
     const { data, error } = await sc
       .from("discovery_places")
-      .select("id, city, name, place_type, category, primary_category, secondary_categories, neighborhood, blurb, image_url, header_image_source, rating, saved_count, lat, lng, tag, verified, created_at, source")
+      .select("id, city, name, place_type, category, primary_category, secondary_categories, neighborhood, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, rating, saved_count, lat, lng, tag, verified, created_at, source")
       .or(`city.ilike.${cityBase},city.ilike.${cityBase}%`)
       .eq("status", "active")
       .order("saved_count", { ascending: false })
@@ -537,6 +563,10 @@ async function queryDbPlaces(
           savedCount: (row.saved_count as number) ?? 0,
           headerImageUrl: (row.image_url ?? null) as string | null,
           headerImageSource: (row.header_image_source ?? null) as string | null,
+          imageSourceType: (row.image_source_type ?? null) as string | null,
+          accuracyStatus: (row.image_accuracy_status ?? null) as string | null,
+          disclaimerRequired: placeMustShowDisclaimer(row.image_accuracy_status as string | null),
+          disclaimerText: placeDisclaimerText(row.image_accuracy_status as string | null),
           attribution: (row.source as string | null)?.startsWith("fsq")
             ? "Place data © Foursquare (CC BY 4.0)"
             : null,

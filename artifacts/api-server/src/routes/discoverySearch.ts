@@ -579,7 +579,7 @@ async function searchPlaces(
     const pat = sqlPattern(q);
     const { data, error } = await sc
       .from("discovery_places")
-      .select("id, name, city, blurb, image_url, header_image_source, category, primary_category, lat, lng, created_at")
+      .select("id, name, city, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, category, primary_category, lat, lng, created_at")
       .or(`name.ilike.${pat},city.ilike.${pat},blurb.ilike.${pat}`)
       .eq("status", "active")
       .order("saved_count", { ascending: false })
@@ -606,6 +606,14 @@ async function searchPlaces(
         lat: (p.lat as number | null) ?? null,
         lng: (p.lng as number | null) ?? null,
         headerImageSource: (p.header_image_source as string | null) ?? null,
+        imageSourceType: (p.image_source_type as string | null) ?? null,
+        accuracyStatus: (p.image_accuracy_status as string | null) ?? null,
+        disclaimerRequired: (p.image_accuracy_status === 'illustrative_only' || p.image_accuracy_status === 'rejected') ? true : false,
+        disclaimerText: p.image_accuracy_status === 'illustrative_only'
+          ? 'Illustrative image — this does not show the actual location.'
+          : p.image_accuracy_status === 'rejected'
+            ? 'This image may not show the actual location.'
+            : null,
       },
       createdAt: (p.created_at as string | null) ?? null,
       startsAt: null,
@@ -895,7 +903,7 @@ async function searchActivities(
     const pat = sqlPattern(q);
     const { data, error } = await sc
       .from("discovery_places")
-      .select("id, name, city, blurb, image_url, header_image_source, category, created_at")
+      .select("id, name, city, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, category, created_at")
       .or(`name.ilike.${pat},city.ilike.${pat},blurb.ilike.${pat}`)
       .in("category", ["activities", "sports", "adventure", "outdoors", "wellness"])
       .eq("status", "active")
@@ -918,7 +926,18 @@ async function searchActivities(
       privacyState: null,
       accessState: { canAccess: true },
       destinationRoute: `/place/${p.id as string}`,
-      metadata: { category: p.category, headerImageSource: (p.header_image_source as string | null) ?? null },
+      metadata: {
+        category: p.category,
+        headerImageSource: (p.header_image_source as string | null) ?? null,
+        imageSourceType: (p.image_source_type as string | null) ?? null,
+        accuracyStatus: (p.image_accuracy_status as string | null) ?? null,
+        disclaimerRequired: (p.image_accuracy_status === 'illustrative_only' || p.image_accuracy_status === 'rejected') ? true : false,
+        disclaimerText: p.image_accuracy_status === 'illustrative_only'
+          ? 'Illustrative image — this does not show the actual location.'
+          : p.image_accuracy_status === 'rejected'
+            ? 'This image may not show the actual location.'
+            : null,
+      },
       createdAt: (p.created_at as string | null) ?? null,
       startsAt: null,
     }));

@@ -28,6 +28,8 @@ import { postCompassAnalyticsEvent, reportCompassViewed, COMPASS_ENGINE_VERSION 
 import type { CompassFeedItem } from '../../services/compass.ts';
 import { resolveCompassTitle, formatCompassSubtitle, formatCompassContext, resolveCompassCategory, resolveCompassImageUrl } from '../../utils/compassFormat.ts';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
+import { ImageSourceBadge } from '../visuals/ImageSourceBadge.tsx';
+import { usePlaceImage } from '../../hooks/usePlaceImage.ts';
 
 // ── Action label mapping ──────────────────────────────────────────────────────
 
@@ -126,6 +128,15 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
   // Track hero image load errors so we can fall back to the emoji/color strip
   const [imageError, setImageError] = useState(false);
 
+  // Centralised image provenance — consistent label, disclaimer, and accessibility text.
+  const placeImage = usePlaceImage({
+    url: imageUrl,
+    imageSourceType: (item.data?.imageSourceType as string | null | undefined) ?? null,
+    disclaimerRequired: (item.data?.disclaimerRequired as boolean | null | undefined) ?? null,
+    disclaimerText: (item.data?.disclaimerText as string | null | undefined) ?? null,
+    altText: title,
+  });
+
   function navigateToItem() {
     // Fire-and-forget "viewed" outcome — the user actually opened the card.
     reportCompassViewed(item.recommendationToken, item.id);
@@ -163,14 +174,24 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
     <Pressable style={({ pressed }) => [s.card, pressed && { opacity: 0.85 }]} onPress={navigateToItem}>
       {/* Hero image when the server provides one; emoji+colour header for all items */}
       {imageUrl && !imageError ? (
-        <Image
-          source={{ uri: imageUrl }}
-          style={s.heroImage}
-          resizeMode="cover"
-          accessibilityLabel={title}
-          testID={`compass-pick-image-${item.id}`}
-          onError={() => setImageError(true)}
-        />
+        <View style={{ position: 'relative' }}>
+          <Image
+            source={{ uri: imageUrl }}
+            style={s.heroImage}
+            resizeMode="cover"
+            accessibilityLabel={placeImage.accessibilityLabel ?? title}
+            testID={`compass-pick-image-${item.id}`}
+            onError={() => setImageError(true)}
+          />
+          <ImageSourceBadge
+            sourceLabel={placeImage.sourceLabel}
+            disclaimerRequired={placeImage.disclaimerRequired}
+            disclaimerText={placeImage.disclaimerText}
+            placeId={isPlace ? item.id : undefined}
+            imageUrl={imageUrl}
+            style={{ position: 'absolute', bottom: 4, left: 4 }}
+          />
+        </View>
       ) : isPlace ? (
         // Place items always fall back to the emoji/colour header.
         <View
