@@ -18,7 +18,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, Image,
 } from 'react-native';
-import { Sparkles, CheckCircle, Navigation, Settings2, MapPin } from 'lucide-react-native';
+import { Sparkles, CheckCircle, Navigation, Settings2, MapPin, Calendar, User, Map, Users } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { useCompassFeed } from '../../hooks/compass/useCompassFeed.ts';
@@ -71,6 +71,30 @@ function resolveCompassFallbackCategory(item: CompassFeedItem): string {
   if (type === 'hidden_gem')                                   return 'places';
   if (type === 'trip')                                         return 'outdoors';
   return 'places';
+}
+
+// ── Generic hero fallback (non-place types, no image or broken image) ─────────
+
+const GENERIC_FALLBACK_ICONS: Record<string, React.ComponentType<{ size: number; color: string }>> = {
+  event:    Calendar,
+  traveler: User,
+  user:     User,
+  trip:     Map,
+  buddy:    Users,
+};
+
+interface GenericFallbackProps { type: string; itemId: string }
+
+function GenericHeroFallback({ type, itemId }: GenericFallbackProps) {
+  const Icon = GENERIC_FALLBACK_ICONS[type] ?? Sparkles;
+  return (
+    <View
+      style={[s.emojiHeader, s.genericFallback]}
+      testID={`compass-pick-generic-fallback-${itemId}`}
+    >
+      <Icon size={28} color={color.mute} />
+    </View>
+  );
 }
 
 // ── Individual compass pick card ──────────────────────────────────────────────
@@ -147,17 +171,19 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
           testID={`compass-pick-image-${item.id}`}
           onError={() => setImageError(true)}
         />
-      ) : (isPlace || !imageUrl) ? (
-        // Place items always fall back to the emoji/colour header on error.
-        // Non-place items (events) with no imageUrl at all also show the emoji.
-        // Non-place items whose imageUrl just failed render nothing (null).
+      ) : isPlace ? (
+        // Place items always fall back to the emoji/colour header.
         <View
           style={[s.emojiHeader, { backgroundColor: categoryFallback.color + '22' }]}
           testID={`compass-pick-emoji-${item.id}`}
         >
           <Text style={s.emojiText}>{categoryFallback.emoji}</Text>
         </View>
-      ) : null /* event whose imageUrl failed to load — render no hero */}
+      ) : (
+        // Non-place items (event, traveler, trip, buddy): show a type-keyed
+        // icon on a neutral tinted background — never a blank gap.
+        <GenericHeroFallback type={item.type ?? ''} itemId={item.id} />
+      )}
 
       {/* Row 1: type chip + overflow menu */}
       <View style={s.typeRow}>
@@ -439,6 +465,11 @@ const s = StyleSheet.create({
   },
   emojiText: {
     fontSize: 34,
+  },
+  // Generic icon fallback — shown for non-place cards (event/traveler/trip/buddy)
+  // when imageUrl is absent or fires onError; neutral tint keeps the card tidy.
+  genericFallback: {
+    backgroundColor: color.haze,
   },
   // Card
   card: {

@@ -109,6 +109,29 @@ describe("appStorageUrlInfo", () => {
     assert.equal(appStorageUrlInfo("not a url"), null);
     assert.equal(appStorageUrlInfo("http://sb.example.test/other/path"), null);
   });
+
+  it("accepts bare storage paths in <bucket>/<path> format", () => {
+    assert.deepEqual(
+      appStorageUrlInfo("post-media/generated-visuals/event/abc123/def456/hero.webp"),
+      { bucket: "post-media", path: "generated-visuals/event/abc123/def456/hero.webp" },
+    );
+    assert.deepEqual(
+      appStorageUrlInfo("profile-media/avatars/u1/avatar.jpg"),
+      { bucket: "profile-media", path: "avatars/u1/avatar.jpg" },
+    );
+    assert.deepEqual(
+      appStorageUrlInfo("post-media/generated-visuals/trip/uuid1/uuid2/card.webp"),
+      { bucket: "post-media", path: "generated-visuals/trip/uuid1/uuid2/card.webp" },
+    );
+  });
+
+  it("rejects bare paths with disallowed buckets, traversal, or URL-like strings", () => {
+    assert.equal(appStorageUrlInfo("stamp-artwork/some/path.png"), null, "disallowed bucket");
+    assert.equal(appStorageUrlInfo("post-media/../secrets"), null, "path traversal");
+    assert.equal(appStorageUrlInfo("post-media/"), null, "empty path after bucket");
+    assert.equal(appStorageUrlInfo("post-media"), null, "no slash — not a valid bare path");
+    assert.equal(appStorageUrlInfo("//evil.com/post-media/x.jpg"), null, "scheme-relative URL rejected");
+  });
 });
 
 describe("resolveDisplayMedia", () => {
