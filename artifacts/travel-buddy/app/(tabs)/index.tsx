@@ -35,6 +35,7 @@ import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { useBottomInset } from '../../src/hooks/useBottomInset';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useSnapshotCache } from '../../src/hooks/useSnapshotCache';
+import { FeedSkeleton } from '../../src/components/loading/FeedSkeleton';
 
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
 
@@ -475,8 +476,10 @@ function Pulse() {
           FollowingEmpty
         ) : null
       ) : pulseFeed.loading && feed.length === 0 ? (
-        // Initial For You load — spinner, not a misleading empty state.
-        <View style={styles.loadingWrap}><ActivityIndicator size="large" color={color.signal} /></View>
+        // Initial For You load — skeleton, not a misleading empty state.
+        <View style={{ paddingHorizontal: space.lg }}>
+          <FeedSkeleton count={3} />
+        </View>
       ) : pulseFeed.error ? (
         ForYouError
       ) : feed.length === 0 ? (

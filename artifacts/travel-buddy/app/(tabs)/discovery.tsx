@@ -41,6 +41,8 @@ import { DiscoveryEventPostCard } from '../../src/components/discovery/Discovery
 import type { DiscoveryEventPost } from '../../src/types/discovery';
 import { freshToken } from '../../src/services/apiToken';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
+import { PlaceCardSkeleton } from '../../src/components/loading/PlaceCardSkeleton';
+import { EventCardSkeleton } from '../../src/components/loading/EventCardSkeleton';
 
 /** Returns the value only when it is a real, finite number — otherwise null. */
 function finiteOrNull(v: number | null | undefined): number | null {
@@ -762,10 +764,12 @@ export default function DiscoveryHub() {
         </SectionErrorBoundary>
       )}
 
-      {/* ── Location-loading placeholder ── */}
+      {/* ── Location-loading placeholder — skeletons while location resolves ── */}
       {screenStatus === 'loading' && (
         <View style={styles.loadingState}>
-          <Text style={styles.loadingStateText}>Finding your location…</Text>
+          <PlaceCardSkeleton />
+          <EventCardSkeleton />
+          <PlaceCardSkeleton />
         </View>
       )}
     </View>

@@ -85,6 +85,39 @@ export const shadow = {
 /** Normalized sizing tokens for the design-layer pass. */
 export const icon = { sm: 14, md: 18, lg: 22, xl: 26 } as const;
 
+/**
+ * Named typography roles — every text element in the app maps to exactly one
+ * role. Use these instead of hardcoded fontSize/lineHeight/fontWeight values.
+ */
+export const typography = {
+  display:      { fontSize: 30, lineHeight: 32, fontWeight: '800' as const, letterSpacing: -0.8 },
+  pageTitle:    { fontSize: 22, lineHeight: 26, fontWeight: '800' as const, letterSpacing: -0.5 },
+  sectionTitle: { fontSize: 18, lineHeight: 23, fontWeight: '700' as const, letterSpacing: -0.3 },
+  cardTitle:    { fontSize: 15, lineHeight: 20, fontWeight: '700' as const },
+  body:         { fontSize: 15, lineHeight: 22, fontWeight: '400' as const },
+  supporting:   { fontSize: 14, lineHeight: 20, fontWeight: '400' as const },
+  label:        { fontSize: 12, lineHeight: 16, fontWeight: '600' as const },
+  caption:      { fontSize: 13, lineHeight: 18, fontWeight: '400' as const },
+  button:       { fontSize: 14, lineHeight: 20, fontWeight: '700' as const },
+  metadata:     { fontSize: 11, lineHeight: 14, fontWeight: '600' as const, letterSpacing: 0.4 },
+} satisfies Record<string, import('react-native').TextStyle>;
+
+/**
+ * Explicit numeric spacing scale. Prefer the named `space` tokens for component
+ * internal padding/gap; use `spacing` when a component needs to express size as
+ * a numeric value (e.g. skeleton placeholder heights).
+ */
+export const spacing = {
+  4: 4,
+  8: 8,
+  12: 12,
+  16: 16,
+  20: 20,
+  24: 24,
+  32: 32,
+  40: 40,
+} as const;
+
 /** Standard image aspect ratios for cards. */
 export const aspect = { wide: 16 / 9, card: 4 / 3, square: 1, portrait: 3 / 4 } as const;
 

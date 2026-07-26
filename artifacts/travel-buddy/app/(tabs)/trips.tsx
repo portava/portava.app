@@ -31,6 +31,9 @@ import type { TripRow } from '../../src/services/trips';
 import { CachedImage } from '../../src/components/CachedImage';
 import { AvatarImage } from '../../src/components/ui/DisplayMediaImage';
 import { useBlockedIds } from '../../src/context/BlockedIdsContext';
+import { TripCard } from '../../src/components/cards/TripCard';
+import { TripCardSkeleton } from '../../src/components/loading/TripCardSkeleton';
+import { EmptyState } from '../../src/components/ui/EmptyState';
 
 function MeetupsShortcut({ count }: { count: number }) {
   const label = count > 9 ? '9+' : count > 0 ? String(count) : null;
@@ -436,45 +439,40 @@ function TripsScreen() {
 }
 
 function TripCardItem({ tr, onPickTrip }: { tr: any; onPickTrip?: (tripId: string) => void }) {
-  const [coverErr, setCoverErr] = React.useState(false);
   return (
-    <Pressable
-      style={styles.card}
+    <TripCard
+      id={tr.id}
+      title={tr.title}
+      destinationCity={tr.destinationCity}
+      destinationCountry={tr.destinationCountry ?? null}
+      startDate={tr.startDate ?? null}
+      endDate={tr.endDate ?? null}
+      status={tr.status}
+      coverUrl={tr.coverUrl ?? null}
       onPress={() => (onPickTrip ? onPickTrip(tr.id) : router.push(`/trip/${tr.id}`))}
-    >
-      {tr.coverUrl && !coverErr ? (
-        <CachedImage source={{ uri: tr.coverUrl }} style={styles.cover} resizeMode="cover" onError={() => setCoverErr(true)} />
-      ) : (
-        <View style={[styles.cover, styles.coverFallback]}>
-          <MapPin size={22} color={color.onInk} />
-          <Text style={styles.coverFallbackText} numberOfLines={1}>{tr.destinationCity}</Text>
-        </View>
-      )}
-      <View style={styles.body}>
-        <View style={styles.stampRow}>
-          <Stamp label={tr.destinationCity} tone="deep" />
-          <Stamp label={tr.visibility} rotate={2} />
-        </View>
-        <Text style={styles.title}>{tr.title}</Text>
-        <View style={styles.metaRow}>
-          <CalendarDays size={14} color={color.mute} />
-          <Text style={styles.meta}>{tr.startDate ?? 'Dates TBD'}{tr.endDate ? ` – ${tr.endDate}` : ''} · {tr.status}</Text>
-        </View>
-      </View>
-    </Pressable>
+    />
   );
 }
 
 function LiveTrips({ trips, loading, error, onPickTrip }: { trips: any[]; loading: boolean; error: string | null; onPickTrip?: (tripId: string) => void }) {
-  if (loading) return <View style={styles.state}><ActivityIndicator color={color.signal} /></View>;
+  if (loading) {
+    return (
+      <>
+        <TripCardSkeleton />
+        <TripCardSkeleton />
+        <TripCardSkeleton />
+      </>
+    );
+  }
   if (error) return <View style={styles.state}><Text style={styles.stateText}>Couldn't load your trips. Pull to retry.</Text></View>;
   if (!trips.length) {
     return (
-      <View style={styles.bigEmpty}>
-        <MapPin size={28} color={color.deep} />
-        <Text style={styles.bigEmptyTitle}>No trips yet</Text>
-        <Text style={styles.bigEmptySub}>Create your first trip to start planning, saving places, and meeting travelers.</Text>
-      </View>
+      <EmptyState
+        icon={MapPin}
+        title="No trips yet"
+        description="Create your first trip to start planning, saving places, and meeting travelers."
+        primaryAction={{ label: 'Plan your first trip', onPress: () => router.push('/trip/new') }}
+      />
     );
   }
   return (
