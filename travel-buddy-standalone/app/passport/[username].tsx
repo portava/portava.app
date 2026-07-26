@@ -335,7 +335,7 @@ export default function PassportDeepLinkScreen() {
               <View style={{ marginTop: space.md }}>
                 {tab === 'postcards' && <PostcardsTab postcards={postcards} isOwner={false} sentinel={postcardSentinel ?? undefined} />}
                 {tab === 'stamps'    && <StampsTab stamps={[]} viewingUsername={username} viewingUserId={profile?.id} />}
-                {tab === 'map'       && <MapTab postcards={postcards} />}
+                {tab === 'map'       && <MapTab postcards={postcards} sentinel={postcardSentinel ?? undefined} />}
                 {tab === 'memories'  && <MemoriesTab memories={[]} onReload={() => {}} />}
                 {tab === 'plans'     && <TripsTab trips={[]} isOwner={false} />}
               </View>

@@ -991,7 +991,7 @@ function PublicPassportScreenNative() {
               isOwner={isOwn}
             />
           )}
-          {tab === 'map' && <MapTab postcards={postcards} />}
+          {tab === 'map' && <MapTab postcards={postcards} sentinel={isOwn ? undefined : postcardSentinel ?? undefined} />}
           {tab === 'about' && (
             <View style={{ paddingHorizontal: space.lg, gap: space.md }}>
               {!canViewAbout ? (
