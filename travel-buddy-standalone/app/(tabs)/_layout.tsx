@@ -16,41 +16,29 @@ import { getPendingTripInvites } from '../../src/services/trips';
 import { getMyProfile } from '../../src/services/profile';
 import { useSession } from '../../src/context/SessionContext';
 import { navBarProgress } from '../../src/hooks/useNavBarCollapse';
-import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 
 const NAV_ITEMS = [
   { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
-  { href: '/(tabs)/discovery', label: 'Explore', icon: Compass, match: ['/(tabs)/discovery'] },
+  { href: '/(tabs)/discovery', label: 'Discovery', icon: Compass, match: ['/(tabs)/discovery'] },
+  { href: '/(tabs)/media', label: 'Media', icon: Film, match: ['/(tabs)/media'] },
   { href: '/(tabs)/trips', label: 'Trips', icon: Plane, match: ['/(tabs)/trips'] },
   { href: '/(tabs)/passport', label: 'Passport', icon: PassportIcon, match: ['/(tabs)/passport'] },
 ] as const;
-
-const MEDIA_NAV_ITEM = {
-  href: '/(tabs)/media',
-  label: 'Media',
-  icon: Film,
-  match: ['/(tabs)/media'],
-} as const;
 
 /* ─── Desktop sidebar ──────────────────────────────────────────────────── */
 function DesktopSidebar({
   unreadNotifications,
   unreadMessages,
   pendingRequests,
-  mediaTabEnabled,
 }: {
   unreadNotifications: number;
   unreadMessages: number;
   pendingRequests: number;
-  mediaTabEnabled: boolean;
 }) {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
 
-  // Build sidebar items: insert Media between Explore and Trips when enabled.
-  const sidebarItems = mediaTabEnabled
-    ? [NAV_ITEMS[0], NAV_ITEMS[1], MEDIA_NAV_ITEM, NAV_ITEMS[2], NAV_ITEMS[3]]
-    : [...NAV_ITEMS];
+  const sidebarItems = [...NAV_ITEMS];
 
   return (
     <View style={[ds.sidebar, { paddingTop: insets.top + space.xl, paddingBottom: insets.bottom + space.lg }]}>
@@ -98,10 +86,9 @@ interface FloatBarProps {
   newHighlights: number;
   pendingTripInvites: number;
   unreadNotifications: number;
-  mediaTabEnabled: boolean;
 }
 
-function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications, mediaTabEnabled }: FloatBarProps) {
+function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications }: FloatBarProps) {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
@@ -149,13 +136,6 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
   // recognisable — 20 px × 0.80 = 16 px rendered.
   const animatedIconStyle = useAnimatedStyle(() => {
     const scale = interpolate(navBarProgress.value, [0, 1], [1, 0.80]);
-    return { transform: [{ scale }] };
-  });
-
-  // The plus button is 44×44 px. 44 × 0.62 ≈ 27 px — a coherent mini-circle
-  // centred inside the 40 px collapsed pill (36 px inner space).
-  const animatedPlusStyle = useAnimatedStyle(() => {
-    const scale = interpolate(navBarProgress.value, [0, 1], [1, 0.62]);
     return { transform: [{ scale }] };
   });
 
@@ -225,37 +205,16 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
           />
         )}
 
-        {/* Left items: Pulse, Explore */}
+        {/* Pulse, Discovery */}
         <TabItem href={NAV_ITEMS[0].href} label={NAV_ITEMS[0].label} icon={NAV_ITEMS[0].icon} match={NAV_ITEMS[0].match} badge={0} />
         <TabItem href={NAV_ITEMS[1].href} label={NAV_ITEMS[1].label} icon={NAV_ITEMS[1].icon} match={NAV_ITEMS[1].match} badge={newHighlights} />
 
-        {/* Center: Media tab (flag on) or Plus/create button (flag off) */}
-        {mediaTabEnabled ? (
-          /* Media tab item — same visual style as other items */
-          <TabItem
-            href={MEDIA_NAV_ITEM.href}
-            label={MEDIA_NAV_ITEM.label}
-            icon={MEDIA_NAV_ITEM.icon}
-            match={MEDIA_NAV_ITEM.match}
-          />
-        ) : (
-          /* Original Plus/create button */
-          <Pressable
-            style={fb.plusWrap}
-            onPress={() => router.push('/create')}
-            hitSlop={TAB_HITSLOP}
-            accessibilityRole="button"
-            accessibilityLabel="Create a post"
-          >
-            <Animated.View style={[fb.plusBtn, animatedPlusStyle]}>
-              <Plus size={22} color="#fff" strokeWidth={2.5} />
-            </Animated.View>
-          </Pressable>
-        )}
+        {/* Center: Media */}
+        <TabItem href={NAV_ITEMS[2].href} label={NAV_ITEMS[2].label} icon={NAV_ITEMS[2].icon} match={NAV_ITEMS[2].match} />
 
-        {/* Right items: Trips, Passport */}
-        <TabItem href={NAV_ITEMS[2].href} label={NAV_ITEMS[2].label} icon={NAV_ITEMS[2].icon} match={NAV_ITEMS[2].match} badge={pendingTripInvites} />
-        <TabItem href={NAV_ITEMS[3].href} label={NAV_ITEMS[3].label} icon={NAV_ITEMS[3].icon} match={NAV_ITEMS[3].match} badge={unreadNotifications} />
+        {/* Trips, Passport */}
+        <TabItem href={NAV_ITEMS[3].href} label={NAV_ITEMS[3].label} icon={NAV_ITEMS[3].icon} match={NAV_ITEMS[3].match} badge={pendingTripInvites} />
+        <TabItem href={NAV_ITEMS[4].href} label={NAV_ITEMS[4].label} icon={NAV_ITEMS[4].icon} match={NAV_ITEMS[4].match} badge={unreadNotifications} />
       </Animated.View>
     </View>
   );
@@ -270,9 +229,6 @@ export default function TabLayout() {
   const [pendingRequests, setPendingRequests] = useState(0);
   const [pendingTripInvites, setPendingTripInvites] = useState(0);
   const { isAuthed, loading, configured } = useSession();
-  const { isEnabled } = useFeatureFlags();
-  const mediaTabEnabled = isEnabled('MEDIA_TAB_ENABLED');
-
   useEffect(() => {
     if (configured && !loading && !isAuthed) {
       router.replace('/(auth)/sign-in' as any);
@@ -331,14 +287,12 @@ export default function TabLayout() {
       <Tabs.Screen name="index" options={{ title: 'Pulse' }} />
       <Tabs.Screen
         name="discovery"
-        options={{ title: 'Explore' }}
+        options={{ title: 'Discovery' }}
         listeners={{ focus: refreshUnread }}
       />
-      {/* Media tab — always registered; href:null hides it from default tab bar
-          when the feature flag is off so deep-links don't resolve to it. */}
       <Tabs.Screen
         name="media"
-        options={{ title: 'Media', href: mediaTabEnabled ? undefined : null }}
+        options={{ title: 'Media' }}
       />
       <Tabs.Screen name="events" options={{ title: 'Events', href: null }} />
       <Tabs.Screen
@@ -370,7 +324,6 @@ export default function TabLayout() {
           unreadNotifications={unreadNotifications}
           unreadMessages={unreadMessages}
           pendingRequests={pendingRequests}
-          mediaTabEnabled={mediaTabEnabled}
         />
         <View style={ds.desktopContent}>{tabs}</View>
       </View>
@@ -384,7 +337,6 @@ export default function TabLayout() {
         newHighlights={newHighlights}
         pendingTripInvites={pendingTripInvites}
         unreadNotifications={unreadNotifications}
-        mediaTabEnabled={mediaTabEnabled}
       />
     </View>
   );
@@ -467,23 +419,6 @@ const fb = StyleSheet.create({
     fontSize: 8,
     fontWeight: '700',
     lineHeight: 10,
-  },
-  plusWrap: {
-    paddingHorizontal: 6,
-    paddingVertical: 6,
-  },
-  plusBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: color.signal,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: color.signal,
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
   },
 });
 
