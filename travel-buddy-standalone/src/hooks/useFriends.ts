@@ -11,6 +11,7 @@ import {
   acceptFriendRequest,
   declineFriendRequest,
   cancelFriendRequest,
+  removeFriend,
   resolveSendFriendRequestOutcome,
   type FriendStatus,
   type FriendRequest,
@@ -18,6 +19,7 @@ import {
   type FriendResult,
 } from '../services/friends.ts';
 import { onFriendsChanged, emitFriendsChanged } from '../lib/friendEvents.ts';
+import { bumpSocialVersion } from './useSocialVersion.ts';
 
 /** Friend status for a single user (e.g., on their profile page). */
 export function useFriendStatus(userId: string | null | undefined) {
@@ -77,7 +79,19 @@ export function useFriendStatus(userId: string | null | undefined) {
     return res;
   }, [requestId]);
 
-  return { status, requestId, loading, error, reload, send, accept, decline, cancel };
+  const remove = useCallback(async (): Promise<FriendResult<any>> => {
+    if (!userId) return { ok: false, data: null, errorKind: 'config_error' };
+    const res = await removeFriend(userId);
+    if (res.ok) {
+      setStatus('none');
+      setRequestId(undefined);
+      bumpSocialVersion();
+      emitFriendsChanged();
+    }
+    return res;
+  }, [userId]);
+
+  return { status, requestId, loading, error, reload, send, accept, decline, cancel, remove };
 }
 
 /** Incoming friend requests for the notification/inbox surface. */
@@ -120,25 +134,9 @@ export function useIncomingFriendRequests() {
 /**
  * Current user's friends list.
  *
- * CONTRACT: if a "remove friend" / unfriend mutation is added to this hook
- * (or to a new hook in this file), it MUST call `bumpSocialVersion()` from
- * `../hooks/useSocialVersion.ts` on success — the same way the follow/unfollow
- * toggle does.  Skipping the bump leaves the passport follower count stale for
- * any screen that is already mounted when the friendship is removed.
- *
- * Example pattern (add when the API endpoint exists):
- *
- *   import { bumpSocialVersion } from './useSocialVersion.ts';
- *
- *   const remove = useCallback(async (friendId: string) => {
- *     const res = await removeFriend(friendId);          // src/services/friends.ts
- *     if (res.ok) {
- *       setData((prev) => prev.filter((f) => f.id !== friendId));
- *       bumpSocialVersion();   // ← keeps passport follower counts in sync
- *       emitFriendsChanged();  // ← refreshes other mounted friend surfaces
- *     }
- *     return res;
- *   }, []);
+ * Includes a `remove(friendId)` callback that unfriends the given user,
+ * optimistically removes them from local state, and signals all mounted
+ * social surfaces via `bumpSocialVersion()` and `emitFriendsChanged()`.
  */
 export function useMyFriends() {
   const [data, setData] = useState<FriendRow[]>([]);
@@ -158,5 +156,15 @@ export function useMyFriends() {
   // Refresh when a friendship changes elsewhere (e.g. auto-accepted request).
   useEffect(() => onFriendsChanged(reload), [reload]);
 
-  return { data, loading, error, reload };
+  const remove = useCallback(async (friendId: string): Promise<FriendResult<any>> => {
+    const res = await removeFriend(friendId);
+    if (res.ok) {
+      setData((prev) => prev.filter((f) => f.id !== friendId));
+      bumpSocialVersion();   // keeps passport follower counts in sync
+      emitFriendsChanged();  // refreshes other mounted friend surfaces
+    }
+    return res;
+  }, []);
+
+  return { data, loading, error, reload, remove };
 }

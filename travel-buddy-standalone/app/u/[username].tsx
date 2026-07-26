@@ -7,7 +7,7 @@ import PassportDocumentScreen from '../passport/[username]';
 import { useLocalSearchParams, useFocusEffect, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  ArrowLeft, Users, UserCheck, UserPlus, Clock,
+  ArrowLeft, Users, UserCheck, UserPlus, UserMinus, Clock,
   MessageCircle, X, MoreVertical, ShieldAlert,
   Image as ImageIcon, Tag, Map as MapIcon, Info,
   Bookmark, BookmarkCheck, BellOff, Bell, Flag,
@@ -72,7 +72,7 @@ interface SocialProfile {
 // ── Friend action button ─────────────────────────────────────────────────────
 
 function FriendButton({ userId, isOwn }: { userId: string; isOwn: boolean }) {
-  const { status, loading, send, accept, decline, cancel } = useFriendStatus(isOwn ? null : userId);
+  const { status, loading, send, accept, decline, cancel, remove } = useFriendStatus(isOwn ? null : userId);
   const [busy, setBusy] = useState(false);
 
   if (isOwn || !userId) return null;
@@ -92,10 +92,27 @@ function FriendButton({ userId, isOwn }: { userId: string; isOwn: boolean }) {
 
   if (status === 'friends') {
     return (
-      <View style={[st.actionBtn, st.friendsBtnStyle]}>
+      <Pressable
+        style={[st.actionBtn, st.friendsBtnStyle]}
+        disabled={busy}
+        onPress={() => {
+          Alert.alert(
+            'Remove friend',
+            'Are you sure you want to unfriend this person?',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Unfriend',
+                style: 'destructive',
+                onPress: () => run(remove),
+              },
+            ],
+          );
+        }}
+      >
         <UserCheck size={15} color={color.signal} />
         <Text style={[st.btnText, { color: color.signal }]}>Friends</Text>
-      </View>
+      </Pressable>
     );
   }
 
