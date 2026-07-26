@@ -137,16 +137,14 @@ describe('CompassPickCard — image error fallback', () => {
     });
   });
 
-  it('renders no hero area — neither Image nor emoji — after onError fires on a non-place item (event type)', async () => {
-    // An event item with a broken imageUrl and no category that maps to a
-    // place fallback. After onError, the ternary reaches the final `null`
-    // branch (placeFallback is null for non-place types), so no hero element
-    // should appear at all. The card must not crash — it should still render
-    // its title text.
+  it('shows the generic icon fallback (not a blank gap) after onError fires on a non-place item (event type)', async () => {
+    // An event item with a broken imageUrl. After onError the ternary should
+    // now reach the new GenericHeroFallback branch — a type-keyed icon strip —
+    // rather than null. The card must not crash and must still render its title.
     mockFeedItems = [{
       id:       'event-img-1',
       type:     'event',
-      category: '', // no category → no place fallback even if isPlace were true
+      category: '',
       title:    'Broken Image Concert',
       data: {
         imageUrl: 'https://broken.example.com/no-such-event.jpg',
@@ -159,8 +157,7 @@ describe('CompassPickCard — image error fallback', () => {
       <CompassPicksSection city="Testville" enabled />,
     );
 
-    // Image must be present before the error fires (the broken URL is rendered
-    // initially because imageError starts as false)
+    // Image must be present before the error fires (imageError starts as false)
     await waitFor(() => {
       expect(getByTestId('compass-pick-image-event-img-1')).toBeTruthy();
     });
@@ -168,11 +165,12 @@ describe('CompassPickCard — image error fallback', () => {
     // Simulate the image load error
     fireEvent(getByTestId('compass-pick-image-event-img-1'), 'error');
 
-    // After the error: no Image, no emoji strip — the blank-box is gracefully
-    // absent rather than an invisible placeholder crashing the layout.
+    // After the error: Image gone, place emoji strip absent, but the generic
+    // fallback hero (icon on tinted background) must be present — no blank gap.
     await waitFor(() => {
       expect(queryByTestId('compass-pick-image-event-img-1')).toBeNull();
       expect(queryByTestId('compass-pick-emoji-event-img-1')).toBeNull();
+      expect(getByTestId('compass-pick-generic-fallback-event-img-1')).toBeTruthy();
       // The card body still renders — title must remain visible
       expect(getByText('Broken Image Concert')).toBeTruthy();
     });
