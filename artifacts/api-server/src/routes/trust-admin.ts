@@ -111,7 +111,7 @@ router.get("/admin/trust/reviews", async (req, res) => {
 router.get("/admin/trust/users/:userId", async (req, res) => {
   const admin = await requireAdminGuard(req, res);
   if (!admin) return;
-  const { sc } = admin;
+  const { sc, userId: adminId } = admin;
 
   const { userId } = req.params;
   if (!UUID.test(userId)) { sendError(res, "invalid_payload", "Invalid userId"); return; }

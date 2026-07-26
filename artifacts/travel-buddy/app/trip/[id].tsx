@@ -40,7 +40,8 @@ import { useTrip, usePendingTripInvites } from '../../src/hooks/useBackend';
 import { openTripChat } from '../../src/services/messaging';
 import { getTripMemory, createTripMemory, type Memory } from '../../src/services/memories';
 import { getEventsNearTrip, type EventSummary } from '../../src/services/events';
-import { updateTrip, createInviteLink, getTripMemberRole } from '../../src/services/trips';
+import { updateTrip, createInviteLink, getTripMemberRole, fetchTripPrivatePreview } from '../../src/services/trips';
+import { PrivateTripCard, type PrivateTripPreview } from '../../src/components/privacy/PrivateTripCard';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
@@ -88,6 +89,8 @@ function TripDetailScreen() {
   const [pageRefreshing, setPageRefreshing] = useState(false);
   const [readinessRefresh, setReadinessRefresh] = useState(false);
   const [memberRole, setMemberRole] = useState<string | null>(null);
+  /** Set when the trip is private and the API returns a minimal preview sentinel. */
+  const [privateTrip, setPrivateTrip] = useState<PrivateTripPreview | null>(null);
 
   const handlePageRefresh = useCallback(async () => {
     setPageRefreshing(true);
@@ -116,6 +119,21 @@ function TripDetailScreen() {
     if (!live || !id) return;
     getTripMemberRole(id).then((role) => setMemberRole(role)).catch(() => {});
   }, [live, id]);
+
+  // When the trip fails to load (access denied / private), check whether the
+  // server returns a private-trip sentinel so we can render PrivateTripCard
+  // instead of the generic "trip not found" message.
+  useEffect(() => {
+    if (loading || !!realTrip || !id) {
+      setPrivateTrip(null);
+      return;
+    }
+    let cancelled = false;
+    fetchTripPrivatePreview(id).then((preview) => {
+      if (!cancelled && preview) setPrivateTrip(preview);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [id, loading, realTrip]);
 
   useEffect(() => {
     if (!live) return;
@@ -236,6 +254,22 @@ function TripDetailScreen() {
         <Pressable style={{ marginTop: space.sm, padding: space.sm }} onPress={() => router.back()}>
           <Text style={{ ...t.small, color: color.mute }}>Go back</Text>
         </Pressable>
+      </View>
+    );
+  }
+
+  // Private trip: server returned a minimal preview sentinel instead of full detail.
+  if (!realTrip && privateTrip) {
+    return (
+      <View style={{ flex: 1, backgroundColor: color.paper }}>
+        <View style={{ paddingTop: insets.top + space.sm, paddingHorizontal: space.md, paddingBottom: space.sm }}>
+          <Pressable onPress={() => router.back()} hitSlop={8} style={{ padding: 4 }}>
+            <ChevronLeft size={22} color={color.ink} />
+          </Pressable>
+        </View>
+        <ScrollView>
+          <PrivateTripCard trip={privateTrip} />
+        </ScrollView>
       </View>
     );
   }
