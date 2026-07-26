@@ -253,11 +253,17 @@ export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMed
 /** Best-effort cleanup: remove an uploaded object if post creation later fails. */
 export async function deleteUploadedMedia(publicUrl: string): Promise<void> {
   try {
-    // publicUrl ends with /storage/v1/object/public/post-media/<path>
-    const marker = '/post-media/';
-    const idx = publicUrl.indexOf(marker);
-    if (idx === -1) return;
-    const path = publicUrl.slice(idx + marker.length);
+    let path: string | null = null;
+    // Format 1: bare storage path "post-media/<path>" (new format after bucket-privacy migration)
+    if (publicUrl.startsWith('post-media/')) {
+      path = publicUrl.slice('post-media/'.length);
+    } else {
+      // Format 2: legacy Supabase public URL ending with /post-media/<path>
+      const marker = '/post-media/';
+      const idx = publicUrl.indexOf(marker);
+      if (idx !== -1) path = publicUrl.slice(idx + marker.length);
+    }
+    if (!path) return;
     await supabase.storage.from('post-media').remove([path]);
   } catch {
     // best-effort; ignore

@@ -469,11 +469,10 @@ async function uploadBufferToPath(
 
   if (error) throw new Error(`Storage upload failed: ${error.message}`);
 
-  const { data: urlData } = sc.storage
-    .from(STORAGE_BUCKET)
-    .getPublicUrl(path);
-
-  return urlData?.publicUrl ?? path;
+  // Return the storage path rather than a public URL — the stamp-artwork
+  // bucket will be private; callers that need a displayable URL sign via
+  // the admin relay or the Supabase signed-URL endpoint.
+  return path;
 }
 
 async function uploadToStorage(

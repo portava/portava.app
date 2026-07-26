@@ -619,10 +619,10 @@ describe("runGenerationCycle — real http images: successful download + upload"
     for (const row of rows) {
       assert.equal(row.catalog_id, "cat-1");
       assert.equal(row.status, "candidate");
-      // public_url must come from storage.getPublicUrl, not the original http URL.
+      // public_url is the storage path (bucket is private; relay signs on demand).
       assert.ok(
-        row.public_url.startsWith("https://storage.fake/catalog/cat-1/"),
-        `public_url should be from storage, got: ${row.public_url}`,
+        row.public_url.startsWith("catalog/cat-1/"),
+        `public_url should be the storage path, got: ${row.public_url}`,
       );
       assert.ok(
         row.storage_path.startsWith("catalog/cat-1/"),
@@ -1269,7 +1269,7 @@ describe("runGenerationCycle — placeholder data-URL candidates excluded from o
     // Asserts:
     //   - result.processed === true and job reaches review_required with shortfall in last_error
     //   - placeholder row: public_url starts with 'data:' and storage_path does NOT start with 'catalog/'
-    //   - real-http row: public_url starts with 'https://storage.fake/' and storage_path starts with 'catalog/'
+    //   - real-http row: public_url is the storage path (starts with 'catalog/') and storage_path starts with 'catalog/'
     const { sc, updates, inserts, storageCalls } = makeFakeClientWithStorage();
     _setTestServiceClient(sc);
     _setTestStampImageProvider(makeMixedProvider(1, 1));
@@ -1317,8 +1317,8 @@ describe("runGenerationCycle — placeholder data-URL candidates excluded from o
     // Second row = real-http candidate.
     const realRow = rows[1];
     assert.ok(
-      realRow.public_url.startsWith("https://storage.fake/"),
-      `real-http row public_url must be a storage URL, got: ${realRow.public_url}`,
+      realRow.public_url.startsWith("catalog/"),
+      `real-http row public_url must be the storage path, got: ${realRow.public_url}`,
     );
     assert.ok(
       typeof realRow.storage_path === "string" && realRow.storage_path.startsWith("catalog/"),
@@ -1407,8 +1407,8 @@ describe("runGenerationCycle — placeholder data-URL candidates excluded from o
     assert.equal(realRows.length, 2, "must have exactly 2 real-http candidate rows");
     for (const row of realRows) {
       assert.ok(
-        row.public_url.startsWith("https://storage.fake/catalog/cat-1/"),
-        `real-http row public_url must be from storage, got: ${row.public_url}`,
+        row.public_url.startsWith("catalog/cat-1/"),
+        `real-http row public_url must be the storage path, got: ${row.public_url}`,
       );
       assert.ok(
         typeof row.storage_path === "string" && row.storage_path.startsWith("catalog/cat-1/"),

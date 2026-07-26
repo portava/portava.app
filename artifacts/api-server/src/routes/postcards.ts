@@ -553,10 +553,9 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     return;
   }
 
-  // Compute public URL from storage path
+  // Compute bare bucket/path reference (bucket will be private; client hydration signs on demand)
   const storagePath = (mediaRow as any).storage_path as string;
-  const { data: urlData } = sc.storage.from(STORAGE_BUCKET).getPublicUrl(storagePath);
-  const publicUrl = (urlData as any)?.publicUrl ?? '';
+  const publicUrl = `${STORAGE_BUCKET}/${storagePath}`;
 
   // Audit privacy fix: postcard media goes DIRECT to storage via signed URL, so
   // the server never saw the bytes — EXIF/GPS survived and width/height were
@@ -587,11 +586,10 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     }
   }
 
-  // Compute thumbnail public URL if client supplied a thumbnail path
+  // Compute thumbnail bare bucket/path if client supplied a thumbnail path
   let thumbnailUrl: string | null = null;
   if (p.thumbnailPath) {
-    const { data: tData } = sc.storage.from(STORAGE_BUCKET).getPublicUrl(p.thumbnailPath);
-    thumbnailUrl = (tData as any)?.publicUrl ?? null;
+    thumbnailUrl = `${STORAGE_BUCKET}/${p.thumbnailPath}`;
   }
 
   // Optional stamp overlay — resolved & pinned server-side. An ineligible or

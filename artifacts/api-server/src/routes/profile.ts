@@ -6,6 +6,7 @@ import { retranslateForUser } from "../services/messageTranslation";
 import { isFlagEnabled } from "../lib/featureFlags";
 import { invalidateCompassHomeCache } from "./compassHome";
 import { sniffMedia, processImage, type ProcessedImage, type SniffResult } from "../lib/mediaProcessing";
+import { appMediaRef } from "../lib/postSchemas";
 
 /**
  * Sniff + strip-EXIF/auto-orient an avatar/cover image. Returns the processed
@@ -350,8 +351,8 @@ const patchProfileSchema = z.object({
   currentCity: z.string().max(100).nullish(),
   interests: z.array(z.string().max(50)).max(20).optional(),
   passportVisibility: z.enum(["public", "followers_only", "private"]).optional(),
-  avatarUrl: z.string().url().nullish(),
-  coverUrl: z.string().url().nullish(),
+  avatarUrl: appMediaRef.nullish(),
+  coverUrl: appMediaRef.nullish(),
   travelStyle: z.string().max(50).nullish(),
   openToMeet: z.boolean().optional(),
   spokenLanguages: z.array(z.string().max(50)).max(20).optional(),
@@ -822,8 +823,7 @@ router.post(
       return;
     }
 
-    const { data: urlData } = sc.storage.from(AVATAR_BUCKET).getPublicUrl(path);
-    res.status(201).json({ url: urlData.publicUrl, path });
+    res.status(201).json({ url: `${AVATAR_BUCKET}/${path}`, path });
   },
 );
 
@@ -894,8 +894,7 @@ router.post(
       return;
     }
 
-    const { data: urlData } = sc.storage.from(AVATAR_BUCKET).getPublicUrl(path);
-    res.status(201).json({ url: urlData.publicUrl, path });
+    res.status(201).json({ url: `${AVATAR_BUCKET}/${path}`, path });
   },
 );
 

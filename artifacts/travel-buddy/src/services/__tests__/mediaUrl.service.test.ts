@@ -230,4 +230,47 @@ describe('hydrateMediaUrls', () => {
     assert.equal(fetchCalled, false, 'no fetch calls for empty input');
     assert.equal(Object.keys(result).length, 0);
   });
+
+  it('bare post-media storage path is treated as a private-bucket URL and signed', async () => {
+    const barePath = 'post-media/user-123/1234567890.jpg';
+    stubFetch(true, ({ urls }) => Object.fromEntries(urls.map((u) => [u, `${u}?token=signed-bare`])));
+
+    const result = await hydrateMediaUrls([barePath]);
+
+    assert.equal(
+      result[barePath],
+      `${barePath}?token=signed-bare`,
+      'bare post-media path must be forwarded to the signer and resolved',
+    );
+  });
+
+  it('bare profile-media storage path is treated as a private-bucket URL and signed', async () => {
+    const barePath = 'profile-media/avatars/user-456/uuid.webp';
+    stubFetch(true, ({ urls }) => Object.fromEntries(urls.map((u) => [u, `${u}?token=ok`])));
+
+    const result = await hydrateMediaUrls([barePath]);
+
+    assert.equal(
+      result[barePath],
+      `${barePath}?token=ok`,
+      'bare profile-media path must be forwarded to the signer and resolved',
+    );
+  });
+
+  it('bare stamp-artwork path passes through unchanged — not a private bucket', async () => {
+    const stampPath = 'stamp-artwork/catalog/cat-1/v1.png';
+    let signCalled = false;
+    (globalThis as any).fetch = async (url: string) => {
+      if (url.includes('/api/feature-flags')) {
+        return { ok: true, json: async () => ({ flags: { media_private_buckets_enabled: true } }) };
+      }
+      if (url.includes('/api/media/sign')) { signCalled = true; }
+      throw new Error(`unexpected: ${url}`);
+    };
+
+    const result = await hydrateMediaUrls([stampPath]);
+
+    assert.equal(signCalled, false, 'stamp-artwork bare path must not trigger a sign request');
+    assert.equal(result[stampPath], stampPath, 'stamp-artwork bare path returned unchanged');
+  });
 });

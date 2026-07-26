@@ -28,9 +28,26 @@ export const PRIVATE_BUCKETS: string[] = ['post-media', 'profile-media'];
 // Matches: .../storage/v1/object/public/<bucket>/…
 const STORAGE_PUBLIC_BUCKET_RE = /\/storage\/v1\/object\/public\/([^/?#]+)\//;
 
+/**
+ * Extract the storage bucket from a URL or bare storage path.
+ *
+ * Accepts two formats:
+ *   1. Supabase public URL: `https://…/storage/v1/object/public/<bucket>/…`
+ *   2. Bare storage path: `<bucket>/<path>` — returned by upload endpoints
+ *      after the bucket-privacy migration (no URL scheme, bucket name first).
+ *
+ * Returns null for anything that doesn't match either format.
+ */
 function extractBucket(url: string): string | null {
+  // Format 1: full Supabase public URL
   const m = STORAGE_PUBLIC_BUCKET_RE.exec(url);
-  return m ? m[1] : null;
+  if (m) return m[1];
+  // Format 2: bare storage path "bucket/path" — no scheme, no double-slash
+  if (!url.startsWith('//') && !url.includes('://')) {
+    const slash = url.indexOf('/');
+    if (slash > 0) return url.slice(0, slash);
+  }
+  return null;
 }
 
 /**

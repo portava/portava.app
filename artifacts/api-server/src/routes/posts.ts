@@ -179,18 +179,18 @@ router.post(
         req.log.warn({ err: tErr }, "Thumbnail upload failed — continuing without");
         thumbnailPath = null;
       } else {
-        thumbnailUrl = sc.storage.from(STORAGE_BUCKET).getPublicUrl(thumbnailPath).data.publicUrl;
+        thumbnailUrl = `${STORAGE_BUCKET}/${thumbnailPath}`;
       }
     }
 
-    const { data: urlData } = sc.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+    const mediaRelayUrl = `${STORAGE_BUCKET}/${path}`;
 
     // Canonical dual-write (flag-gated OFF; fail-soft — legacy flow unaffected).
     void recordMediaAsset(sc, {
       ownerUserId: user.id,
       storageBucket: STORAGE_BUCKET,
       storagePath: path,
-      publicUrl: urlData.publicUrl,
+      publicUrl: mediaRelayUrl,
       mediaType: sniffed.kind,
       mimeType: uploadMime,
       sizeBytes: uploadBuf.length,
@@ -201,7 +201,7 @@ router.post(
     });
 
     // Response stays backward-compatible ({url, path}); new fields are additive.
-    res.status(201).json({ url: urlData.publicUrl, path, thumbnailUrl, width, height, processed });
+    res.status(201).json({ url: mediaRelayUrl, path, thumbnailUrl, width, height, processed });
   },
 );
 

@@ -43,8 +43,35 @@ export const locationSensitivityLevel = z.enum(["low", "medium", "high"]);
 export type LocationSensitivityLevel = z.infer<typeof locationSensitivityLevel>;
 
 const uuid = z.string().uuid();
+const APP_MEDIA_BUCKETS = new Set(["post-media", "profile-media"]);
+
+/**
+ * Accept a media reference in any of these forms:
+ *   1. Bare storage path: `<bucket>/<path>` (e.g. "post-media/userId/ts.jpg")
+ *      — the format returned by upload endpoints; the batch-signer
+ *      (appStorageUrlInfo) already understands this format.
+ *   2. Relay path: `/api/media/file/<bucket>/...` (still accepted during migration)
+ *   3. Absolute URL (https://...) — old Supabase public URLs, accepted during migration
+ *
+ * Arbitrary strings like "not-a-url" are still rejected.
+ */
+export const appMediaRef = z.string().min(1).refine(
+  (v) => {
+    // Bare bucket/path: no scheme, starts with a known bucket name + "/"
+    if (!v.startsWith("//") && !v.includes("://")) {
+      const slash = v.indexOf("/");
+      if (slash > 0 && APP_MEDIA_BUCKETS.has(v.slice(0, slash))) return true;
+    }
+    // Relay path
+    if (v.startsWith("/api/media/file/")) return true;
+    // Absolute URL (old public format)
+    try { new URL(v); return true; } catch { return false; }
+  },
+  { message: "Must be a valid URL, relay path, or app storage path (e.g. post-media/…)" },
+);
+
 const mediaUrls = z
-  .array(z.string().url())
+  .array(appMediaRef)
   .max(10, "At most 10 media URLs")
   .optional()
   .default([]);
@@ -198,7 +225,7 @@ export const createPostSchema = z
     // media filter fields
     filterId: z.enum(KNOWN_FILTER_IDS).optional().default('original'),
     filterIntensity: z.number().int().min(0).max(100).optional().default(100),
-    mediaThumbnailUrl: z.string().url().nullish(),
+    mediaThumbnailUrl: appMediaRef.nullish(),
     mediaDurationSeconds: z.number().int().min(0).max(10).nullish(),
     // ── Delayed geotag fields ──────────────────────────────────────────────────
     locationPrivacyMode: locationPrivacyMode.optional(),
@@ -248,7 +275,7 @@ export type CreatePostInput = z.infer<typeof createPostSchema>;
 export const updatePostSchema = z
   .object({
     content: z.string().max(5000).optional(),
-    mediaUrls: z.array(z.string().url()).max(10).optional(),
+    mediaUrls: z.array(appMediaRef).max(10).optional(),
     visibility: postVisibility.optional(),
     status: postStatus.optional(), // author may hide their own post
     /** Update or clear the editorial category. Pass null to remove it. */
