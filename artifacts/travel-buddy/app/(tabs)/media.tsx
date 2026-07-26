@@ -5,14 +5,16 @@
  * when the flag is off, but the route is registered so deep-links still work).
  *
  * Each mode owns independent state via MediaStoreProvider. The mode selector
- * sits inside the safe area at the top of the screen. A floating camera button
- * (bottom-right) navigates to /create so content creation is always reachable.
+ * sits inside the safe area at the top of the screen. A floating camera/create
+ * button (bottom-right) navigates to /create in Watch and Grid modes. In Gems
+ * mode the button opens MediaQuickCreateSheet which offers both "Add a Gem"
+ * (when MEDIA_HIDDEN_GEMS_CREATE_ENABLED is on) and all standard creation types.
  *
  * useFocusEffect emits MEDIA_PAUSE_ALL when the screen blurs so any future
  * player instances pause automatically on tab switch.
  */
 
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Pressable,
@@ -21,7 +23,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
-import { Camera } from 'lucide-react-native';
+import { Camera, Gem } from 'lucide-react-native';
 
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 import {
@@ -33,6 +35,7 @@ import { MediaModeSelector } from '../../src/components/media/MediaModeSelector'
 import { WatchFeed } from '../../src/components/media/WatchFeed';
 import { GridFeed } from '../../src/components/media/GridFeed';
 import { GemsFeed } from '../../src/components/media/GemsFeed';
+import { MediaQuickCreateSheet } from '../../src/components/media/MediaQuickCreateSheet';
 import { mediaEvents } from '../../src/lib/mediaEvents';
 import { color, shadow } from '../../src/theme/tokens';
 import { useBottomInset } from '../../src/hooks/useBottomInset';
@@ -60,6 +63,8 @@ function MediaScreenInner() {
   const { isEnabled } = useFeatureFlags();
   const { selectedMode, setMode } = useMediaStore();
 
+  const [quickSheetOpen, setQuickSheetOpen] = useState(false);
+
   // Filter out modes disabled by feature flags.
   const enabledModes = useMemo(
     () => ALL_MODES.filter(({ flagKey }) => isEnabled(flagKey)),
@@ -79,13 +84,29 @@ function MediaScreenInner() {
   const isImmersive = selectedMode !== 'grid';
   const screenBg = isImmersive ? color.ink : color.paper;
 
+  // In Gems mode: open the quick-create sheet (which offers "Add a Gem" + others).
+  // In Watch/Grid mode: navigate directly to /create.
+  const isGemsMode = selectedMode === 'gems';
+
+  function handleFabPress() {
+    if (isGemsMode) {
+      setQuickSheetOpen(true);
+    } else {
+      router.push('/create');
+    }
+  }
+
   return (
     <View style={[styles.screen, { backgroundColor: screenBg }]}>
       {/* ── Mode content (fills remaining space) ────────────────────── */}
       <View style={styles.content}>
         {selectedMode === 'watch' && <WatchFeed />}
         {selectedMode === 'grid'  && <GridFeed />}
-        {selectedMode === 'gems'  && <GemsFeed />}
+        {selectedMode === 'gems'  && (
+          <GemsFeed
+            nearMeEnabled={isEnabled('MEDIA_HIDDEN_GEMS_NEARBY_ENABLED')}
+          />
+        )}
       </View>
 
       {/* ── Mode selector — overlaid at the top, inside safe area ───── */}
@@ -102,20 +123,33 @@ function MediaScreenInner() {
         </View>
       )}
 
-      {/* ── Floating create / camera button ─────────────────────────── */}
+      {/* ── Floating create button ───────────────────────────────────── */}
+      {/* In Gems mode: Gem icon that opens the quick-create sheet.
+          In Watch / Grid: Camera icon that navigates directly to /create. */}
       <Pressable
-        style={[styles.fab, { bottom: bottomInset + 16 }]}
-        onPress={() => router.push('/create')}
+        style={[
+          styles.fab,
+          isGemsMode && styles.fabGems,
+          { bottom: bottomInset + 16 },
+        ]}
+        onPress={handleFabPress}
         accessibilityRole="button"
-        accessibilityLabel="Create a post"
+        accessibilityLabel={isGemsMode ? 'Add a Gem' : 'Create a post'}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       >
-        <Camera
-          size={22}
-          color="#fff"
-          strokeWidth={2}
-        />
+        {isGemsMode ? (
+          <Gem size={22} color="#fff" strokeWidth={2} />
+        ) : (
+          <Camera size={22} color="#fff" strokeWidth={2} />
+        )}
       </Pressable>
+
+      {/* ── Quick-create sheet (Gems mode only) ─────────────────────── */}
+      <MediaQuickCreateSheet
+        visible={quickSheetOpen}
+        onClose={() => setQuickSheetOpen(false)}
+        showGemEntry={isGemsMode}
+      />
     </View>
   );
 }
@@ -180,5 +214,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     zIndex: 20,
     ...shadow.float,
+  },
+  fabGems: {
+    // Gem-mode FAB uses the gem green accent instead of signal red.
+    backgroundColor: '#10B981',
   },
 });

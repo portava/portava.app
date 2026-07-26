@@ -83,6 +83,8 @@ interface FakeState {
   tripMembers?:     Record<string, any>[];
   locationTrust?:   Record<string, any>[];
   passportVizPrefs?: Record<string, any>[];
+  /** Canonical places — used by the dedicated Add a Gem flow validation. */
+  places?:          Record<string, any>[];
 }
 
 function makeFakeClient(state: FakeState, userId: string) {
@@ -189,6 +191,7 @@ function makeFakeClient(state: FakeState, userId: string) {
         trip_members:            state.tripMembers ?? [],
         location_trust_events:   state.locationTrust ?? [],
         passport_visibility_preferences: state.passportVizPrefs ?? [],
+        places:                  state.places ?? [],
       };
       return (tableData[table] ?? []).filter((r) => filters.every((f) => f(r)));
     }
@@ -341,6 +344,179 @@ describe("Hidden Gems — submission", () => {
     const r = await req("POST", "/api/hidden-gems", { city: "Tokyo" }); // missing name + category
     assert.equal(r.status, 400);
     assert.equal(r.body.error, "invalid_payload");
+  });
+
+  // ── Canonical place validation (dedicated Add a Gem flow) ─────────────────
+
+  const CANONICAL_PLACE_ID = "a1b2c3d4-0000-0000-0000-000000000001";
+  const BASE_GEM_PAYLOAD = {
+    name: "Hidden Waterfall",
+    category: "nature",
+    city: "Bali",
+    country: "Indonesia",
+  };
+
+  it("POST /hidden-gems with sourceConfirmation=true and valid canonicalPlaceId creates gem and persists canonical fields", async () => {
+    const client = makeFakeClient(
+      {
+        featureFlags: { hidden_gems_enabled: true },
+        gems: [],
+        places: [{ id: CANONICAL_PLACE_ID, status: "active" }],
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("POST", "/api/hidden-gems", {
+      ...BASE_GEM_PAYLOAD,
+      canonicalPlaceId: CANONICAL_PLACE_ID,
+      sourceConfirmation: true,
+      visibility: "public",
+      accessibility: "Steep path — good mobility required.",
+      crowdLevel: "quiet",
+    });
+
+    assert.equal(r.status, 201, `expected 201 but got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.ok(r.body.gem?.id, "should return gem id");
+
+    // Verify the insert row actually carried the new fields through
+    const hiddenGemInsert = client._inserted.find((i: any) => i.table === "hidden_gems");
+    assert.ok(hiddenGemInsert, "should have inserted into hidden_gems");
+    assert.equal(hiddenGemInsert.row.canonical_place_id, CANONICAL_PLACE_ID, "canonical_place_id must be persisted");
+    assert.equal(hiddenGemInsert.row.source_confirmation, true, "source_confirmation must be persisted");
+    assert.equal(hiddenGemInsert.row.visibility, "public", "visibility must be persisted");
+    assert.equal(hiddenGemInsert.row.accessibility, "Steep path — good mobility required.", "accessibility must be persisted");
+    assert.equal(hiddenGemInsert.row.crowd_level, "quiet", "crowd_level must be persisted");
+  });
+
+  it("POST /hidden-gems rejects sourceConfirmation=false with 422", async () => {
+    const client = makeFakeClient(
+      {
+        featureFlags: { hidden_gems_enabled: true },
+        gems: [],
+        places: [{ id: CANONICAL_PLACE_ID, status: "active" }],
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("POST", "/api/hidden-gems", {
+      ...BASE_GEM_PAYLOAD,
+      canonicalPlaceId: CANONICAL_PLACE_ID,
+      sourceConfirmation: false, // must be true
+    });
+
+    assert.equal(r.status, 422, `expected 422 but got ${r.status}`);
+    assert.equal(r.body.error, "invalid_payload");
+    assert.ok(
+      r.body.message?.includes("confirm"),
+      `message should mention confirmation; got: ${r.body.message}`,
+    );
+    // Nothing should have been inserted
+    const insertedTables = client._inserted.map((i: any) => i.table);
+    assert.ok(!insertedTables.includes("hidden_gems"), "should not insert gem when confirmation is false");
+  });
+
+  it("POST /hidden-gems rejects canonicalPlaceId present but sourceConfirmation omitted with 422 — no bypass via omission", async () => {
+    // Attestation bypass attempt: caller sends canonicalPlaceId without
+    // sourceConfirmation, hoping to skip the confirmation gate.
+    const client = makeFakeClient(
+      {
+        featureFlags: { hidden_gems_enabled: true },
+        gems: [],
+        places: [{ id: CANONICAL_PLACE_ID, status: "active" }],
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("POST", "/api/hidden-gems", {
+      ...BASE_GEM_PAYLOAD,
+      canonicalPlaceId: CANONICAL_PLACE_ID,
+      // sourceConfirmation intentionally omitted — must still be rejected
+    });
+
+    assert.equal(r.status, 422, `expected 422 (bypass should be blocked) but got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.error, "invalid_payload");
+    assert.ok(
+      r.body.message?.includes("confirm"),
+      `message should mention confirmation; got: ${r.body.message}`,
+    );
+    // Nothing should have been inserted
+    const insertedTables = client._inserted.map((i: any) => i.table);
+    assert.ok(!insertedTables.includes("hidden_gems"), "should not insert gem when confirmation is bypassed");
+  });
+
+  it("POST /hidden-gems rejects sourceConfirmation=true without canonicalPlaceId with 422", async () => {
+    const client = makeFakeClient(
+      { featureFlags: { hidden_gems_enabled: true }, gems: [] },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("POST", "/api/hidden-gems", {
+      ...BASE_GEM_PAYLOAD,
+      sourceConfirmation: true,
+      // canonicalPlaceId intentionally omitted
+    });
+
+    assert.equal(r.status, 422, `expected 422 but got ${r.status}`);
+    assert.equal(r.body.error, "invalid_payload");
+    assert.ok(
+      r.body.message?.toLowerCase().includes("verified place"),
+      `message should mention verified place; got: ${r.body.message}`,
+    );
+  });
+
+  it("POST /hidden-gems rejects canonicalPlaceId that does not exist in places table with 422", async () => {
+    const NONEXISTENT_PLACE_ID = "deadbeef-0000-0000-0000-000000000099";
+    const client = makeFakeClient(
+      {
+        featureFlags: { hidden_gems_enabled: true },
+        gems: [],
+        places: [], // empty — place lookup will return null
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("POST", "/api/hidden-gems", {
+      ...BASE_GEM_PAYLOAD,
+      canonicalPlaceId: NONEXISTENT_PLACE_ID,
+      sourceConfirmation: true,
+    });
+
+    assert.equal(r.status, 422, `expected 422 but got ${r.status}`);
+    assert.equal(r.body.error, "invalid_payload");
+    assert.ok(
+      r.body.message?.toLowerCase().includes("verified") || r.body.message?.toLowerCase().includes("could not be"),
+      `message should mention place verification; got: ${r.body.message}`,
+    );
+  });
+
+  it("POST /hidden-gems without sourceConfirmation uses legacy path and creates gem without canonical fields", async () => {
+    // The legacy submission path (no sourceConfirmation) must still work
+    const client = makeFakeClient(
+      { featureFlags: { hidden_gems_enabled: true }, gems: [] },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("POST", "/api/hidden-gems", {
+      name: "Local Market",
+      category: "market",
+      city: "Marrakech",
+      country: "Morocco",
+    });
+
+    assert.equal(r.status, 201, `expected 201 but got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.ok(r.body.gem?.id, "should return gem id for legacy path");
   });
 });
 

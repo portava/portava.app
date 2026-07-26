@@ -102,6 +102,12 @@ const ALLOWLIST = new Set<string>([
   "generated_visuals.verified_at",
   "generated_visuals.verified_by",
   "places.header_image_generated_id",
+  // Add-a-Gem creation flow columns — migration pending live apply.
+  // Remove once the columns exist in the live hidden_gems table.
+  "hidden_gems.accessibility",
+  "hidden_gems.crowd_level",
+  "hidden_gems.source_confirmation",
+  "hidden_gems.visibility",
 ]);
 
 // Tables that are not real live relations and should be skipped entirely

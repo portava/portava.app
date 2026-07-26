@@ -204,6 +204,21 @@ export async function submitGem(input: {
   sensitivityLevel?: GemSensitivity;
   /** Optional representative photo URL for the gem. */
   imageUrl?: string;
+  // ── Dedicated "Add a Gem" creation flow fields ──────────────────────────────
+  /** UUID of the verified canonical place (required for the dedicated gem flow). */
+  canonicalPlaceId?: string;
+  /**
+   * Explicit attestation that the submitted media depicts the selected place.
+   * Must be true when present; the server rejects false or omission alongside
+   * canonicalPlaceId.
+   */
+  sourceConfirmation?: boolean;
+  /** Visibility tier: 'public' | 'circle_only' | 'private'. */
+  visibility?: string;
+  /** Accessibility notes (wheelchair access, sensory-friendly, etc.). */
+  accessibility?: string;
+  /** Crowd level estimate: 'quiet' | 'moderate' | 'busy' | 'very_busy'. */
+  crowdLevel?: string;
 }): Promise<HiddenGem> {
   const data = await apiFetch<{ gem: any }>('/api/hidden-gems', {
     method: 'POST',

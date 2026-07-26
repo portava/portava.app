@@ -39,6 +39,19 @@ export interface CreateGemInput {
   sensitivityLevel?: string;
   submittedBy: string;
   imageUrl?: string | null;
+  /** UUID of the verified canonical place linked to this gem. */
+  canonicalPlaceId?: string | null;
+  /**
+   * When true, the submitter explicitly confirmed the media depicts the
+   * selected place. Stored for audit purposes.
+   */
+  sourceConfirmation?: boolean;
+  /** Visibility tier: 'public' | 'circle_only' | 'private'. Defaults to 'public'. */
+  visibility?: string | null;
+  /** Free-text accessibility notes (wheelchair access, sensory-friendly, etc.). */
+  accessibility?: string | null;
+  /** Crowd level estimate: 'quiet' | 'moderate' | 'busy' | 'very_busy'. */
+  crowdLevel?: string | null;
 }
 
 export interface GemListOptions {
@@ -78,6 +91,28 @@ export async function submitGem(db: SupabaseClient, input: CreateGemInput) {
       submitted_by: input.submittedBy,
       status: "pending",
       image_url: input.imageUrl ?? null,
+      // ── Fields from the dedicated "Add a Gem" creation flow ─────────────────
+      // These columns are written only when the caller provides them so that
+      // legacy submissions that omit them do not include the column keys in the
+      // insert payload at all.  PostgREST rejects any column key that is absent
+      // from the live schema — even with a null value — so unconditional writes
+      // would break ALL submissions before the migration is applied.
+      // Remove the `!== undefined` guards once the columns are confirmed live.
+      ...(input.canonicalPlaceId !== undefined
+        ? { canonical_place_id: input.canonicalPlaceId }
+        : {}),
+      ...(input.sourceConfirmation !== undefined
+        ? { source_confirmation: input.sourceConfirmation }
+        : {}),
+      ...(input.visibility !== undefined
+        ? { visibility: input.visibility }
+        : {}),
+      ...(input.accessibility !== undefined
+        ? { accessibility: input.accessibility }
+        : {}),
+      ...(input.crowdLevel !== undefined
+        ? { crowd_level: input.crowdLevel }
+        : {}),
     })
     .select(GEM_SELECT_COLS)
     .single();

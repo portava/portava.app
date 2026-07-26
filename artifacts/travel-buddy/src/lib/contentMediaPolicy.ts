@@ -207,15 +207,20 @@ export const CONTENT_MEDIA_POLICIES: Record<ContentPolicyKey, ContentMediaPolicy
     fallbackCategory: 'buddy_application',
   },
 
-  /** Single representative photo for a hidden gem submission. */
+  /**
+   * Representative photo OR video for a hidden gem submission (Add a Gem flow).
+   * Allows both image and video (≤60 s). The allowed types are further narrowed
+   * at runtime by MEDIA_IMAGE_UPLOAD_ENABLED / MEDIA_VIDEO_UPLOAD_ENABLED flags.
+   */
   hiddenGem: {
     maxItems: 1,
-    allowedTypes: ['images'],
+    allowedTypes: ['images', 'videos'],
     supportsCover: false,
     supportsGallery: false,
     supportsAltText: false,
     fallbackCategory: 'gem',
     allowsEditing: false,
+    videoMaxDuration: 60,
   },
 
   /**

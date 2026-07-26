@@ -115,6 +115,11 @@ const VALID_REPORT_REASONS = [
   "inaccurate", "unsafe", "outdated", "duplicate", "spam", "offensive", "other",
 ] as const;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const VALID_CROWD_LEVELS = ["quiet", "moderate", "busy", "very_busy"] as const;
+const VALID_VISIBILITIES = ["public", "circle_only", "private"] as const;
+
 const submitSchema = z.object({
   name: z.string().min(1).max(200),
   category: z.enum(VALID_CATEGORIES),
@@ -134,6 +139,26 @@ const submitSchema = z.object({
   minimumLayoverMinutes: z.number().int().min(0).max(1440).optional().nullable(),
   sensitivityLevel: z.enum(VALID_SENSITIVITY).optional(),
   imageUrl: z.string().url().max(2048).optional().nullable(),
+  // ── Fields required by the dedicated "Add a Gem" creation flow ──────────────
+  /**
+   * canonicalPlaceId — UUID of the verified place from the places table.
+   * Required when sourceConfirmation is provided (dedicated gem creation flow).
+   * Must be a valid UUID; raw coordinates or free-text names are rejected.
+   */
+  canonicalPlaceId: z.string().uuid().optional().nullable(),
+  /**
+   * sourceConfirmation — the submitter's explicit attestation that the
+   * submitted media actually depicts the selected place. Must be true when
+   * present; submitting false or omitting it while providing canonicalPlaceId
+   * is rejected with 422.
+   */
+  sourceConfirmation: z.boolean().optional(),
+  /** Visibility for the gem (defaults to 'public' when omitted). */
+  visibility: z.enum(VALID_VISIBILITIES).optional().nullable(),
+  /** Accessibility information (optional). */
+  accessibility: z.string().max(500).optional().nullable(),
+  /** Crowd level estimate (optional). */
+  crowdLevel: z.enum(VALID_CROWD_LEVELS).optional().nullable(),
 });
 
 const updateSchema = z.object({
@@ -192,6 +217,69 @@ router.post("/hidden-gems", async (req, res) => {
   if (!parsed.success) {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
     return;
+  }
+
+  // ── Dedicated "Add a Gem" flow validation ─────────────────────────────────
+  // When canonicalPlaceId OR sourceConfirmation is present in the payload (i.e.
+  // the request came from the dedicated gem-creation UI, not a legacy path),
+  // enforce the full set of required gem-creation fields:
+  //   1. sourceConfirmation must be exactly true (not false, not omitted).
+  //   2. canonicalPlaceId must be a non-empty, well-formed UUID that resolves
+  //      to a live, non-duplicate place row.
+  //
+  // Callers cannot bypass the attestation requirement by omitting sourceConfirmation
+  // while providing canonicalPlaceId — the presence of either field triggers
+  // the full validation gate.
+  // Free-text names, raw coordinates, hashtags, or unconfirmed media are blocked.
+  const isGemCreationFlow =
+    parsed.data.canonicalPlaceId !== undefined ||
+    parsed.data.sourceConfirmation !== undefined;
+
+  if (isGemCreationFlow) {
+    if (parsed.data.sourceConfirmation !== true) {
+      res.status(422).json({
+        error: "invalid_payload",
+        message:
+          "You must confirm that the submitted media actually depicts the selected place. " +
+          "Illustrative images and unrelated media are not accepted.",
+      });
+      return;
+    }
+
+    const cpid = parsed.data.canonicalPlaceId;
+    if (!cpid || !UUID_RE.test(cpid)) {
+      res.status(422).json({
+        error: "invalid_payload",
+        message:
+          "A verified place selection is required. " +
+          "Free-text place names, raw coordinates, and hashtags are not accepted — " +
+          "please select a place from the autocomplete list.",
+      });
+      return;
+    }
+
+    // Verify the canonicalPlaceId actually exists in the places table.
+    const { data: placeRow } = await sc
+      .from("places")
+      .select("id, status")
+      .eq("id", cpid)
+      .maybeSingle();
+
+    if (!placeRow) {
+      res.status(422).json({
+        error: "invalid_payload",
+        message: "The selected place could not be verified. Please search and select the location again.",
+      });
+      return;
+    }
+
+    if ((placeRow as any).status === "duplicate") {
+      res.status(422).json({
+        error: "invalid_payload",
+        message: "The selected place has been merged into another record. Please search and select the location again.",
+      });
+      return;
+    }
   }
 
   try {
