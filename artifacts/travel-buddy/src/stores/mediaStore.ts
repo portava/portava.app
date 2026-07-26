@@ -33,24 +33,55 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export type MediaMode = 'watch' | 'grid' | 'gems';
 
+export type GeoAreaMode = 'near_me' | 'this_city' | 'my_trip' | 'all';
+
+export type GemCategory =
+  | 'food'
+  | 'nightlife'
+  | 'nature'
+  | 'beaches'
+  | 'waterfalls'
+  | 'views'
+  | 'culture'
+  | 'shopping'
+  | 'wellness';
+
 /** Per-mode persistent state. Extend as each mode gains real content. */
 export interface MediaModeState {
   /** Scroll offset preserved across tab switches. */
   scrollOffset: number;
 }
 
+/** Gems-specific persistent state, independent of Watch and Grid. */
+export interface GemsModeState extends MediaModeState {
+  areaMode: GeoAreaMode;
+  category: GemCategory | null;
+  cursor: string | null;
+  activeItemId: string | null;
+  sessionId: string;
+}
+
 const DEFAULT_MODE_STATE: MediaModeState = { scrollOffset: 0 };
+
+const DEFAULT_GEMS_STATE: GemsModeState = {
+  scrollOffset: 0,
+  areaMode: 'all',
+  category: null,
+  cursor: null,
+  activeItemId: null,
+  sessionId: Math.random().toString(36).slice(2),
+};
 
 interface AllModeState {
   watch: MediaModeState;
   grid: MediaModeState;
-  gems: MediaModeState;
+  gems: GemsModeState;
 }
 
 const makeAllModeState = (): AllModeState => ({
   watch: { ...DEFAULT_MODE_STATE },
   grid: { ...DEFAULT_MODE_STATE },
-  gems: { ...DEFAULT_MODE_STATE },
+  gems: { ...DEFAULT_GEMS_STATE },
 });
 
 // ── Context ───────────────────────────────────────────────────────────────────
@@ -63,6 +94,10 @@ interface MediaStoreContextValue {
   getModeState: (mode: MediaMode) => MediaModeState;
   /** Partial-update per-mode state without replacing the whole object. */
   setModeState: (mode: MediaMode, state: Partial<MediaModeState>) => void;
+  /** Read gems-specific state. */
+  getGemsModeState: () => GemsModeState;
+  /** Partial-update gems-specific state (areaMode, category, cursor, activeItemId). */
+  setGemsModeState: (state: Partial<GemsModeState>) => void;
 }
 
 const MediaStoreContext = createContext<MediaStoreContextValue>({
@@ -70,6 +105,8 @@ const MediaStoreContext = createContext<MediaStoreContextValue>({
   setMode: () => {},
   getModeState: () => DEFAULT_MODE_STATE,
   setModeState: () => {},
+  getGemsModeState: () => DEFAULT_GEMS_STATE,
+  setGemsModeState: () => {},
 });
 
 // ── AsyncStorage key ──────────────────────────────────────────────────────────
@@ -179,9 +216,24 @@ export function MediaStoreProvider({
     [],
   );
 
+  const getGemsModeState = useCallback(
+    (): GemsModeState => modeStates.gems,
+    [modeStates],
+  );
+
+  const setGemsModeState = useCallback(
+    (partial: Partial<GemsModeState>) => {
+      setModeStates((prev) => ({
+        ...prev,
+        gems: { ...prev.gems, ...partial },
+      }));
+    },
+    [],
+  );
+
   const value = useMemo<MediaStoreContextValue>(
-    () => ({ selectedMode, setMode, getModeState, setModeState }),
-    [selectedMode, setMode, getModeState, setModeState],
+    () => ({ selectedMode, setMode, getModeState, setModeState, getGemsModeState, setGemsModeState }),
+    [selectedMode, setMode, getModeState, setModeState, getGemsModeState, setGemsModeState],
   );
 
   return (

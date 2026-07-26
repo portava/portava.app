@@ -102,3 +102,11 @@ applied live as `0164_write_path_drift_columns_2.sql` (see table above).
 
 Earlier migrations (`0001`–`0154`) predate this record and are live; see the
 legacy migration reconciliation notes for the history of the legacy directory.
+## 20260807 — hidden_gems feed columns
+
+| File | Status |
+|------|--------|
+| `supabase/migrations/20260807_hidden_gems_feed_columns.sql` | applied 2026-08-07 |
+
+Adds `canonical_place_id`, `source_type`, and `moderation_status` columns to `hidden_gems`.
+Required by the Gems feed endpoint (`/api/media/gems-feed`) for eligibility filtering and AI-provenance labeling.

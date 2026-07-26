@@ -136,7 +136,9 @@ export async function discoverGems(
       layover_safe, minimum_layover_minutes,
       sensitivity_level, verification_level, status,
       submitted_by, guide_verified_by,
-      save_count, visit_count, report_count, created_at, updated_at
+      save_count, visit_count, report_count,
+      image_url, canonical_place_id, source_type, moderation_status,
+      created_at, updated_at
     `)
     .eq("status", "active");
 

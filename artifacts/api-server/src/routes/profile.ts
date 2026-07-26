@@ -153,9 +153,9 @@ function mapProfile(r: any) {
   };
 }
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * POST /profile/ensure — idempotently create a profile row for the authed user
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Uses the service-role key so the insert bypasses RLS. This is necessary for
  * new sign-ups before PostgREST picks up the P-256 JWT key rotation (auth.uid()
  * returns NULL under PostgREST when the key is in ECC P-256 format).
@@ -211,9 +211,9 @@ router.post("/profile/ensure", async (req, res) => {
   res.status(200).json({ ok: true });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * GET /me/profile/analytics — private owner analytics (7d / 30d views, follower growth)
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Only the profile owner can call this. Never exposes viewer identity.
  */
 router.get("/me/profile/analytics", async (req, res) => {
@@ -273,9 +273,9 @@ router.get("/me/profile/analytics", async (req, res) => {
   });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * GET /me/profile — full own profile (with completeness score)
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  */
 router.get("/me/profile", async (req, res) => {
   const auth = await requireUser(req, res);
@@ -337,9 +337,9 @@ router.get("/me/profile", async (req, res) => {
   res.status(200).json({ ...mapProfile(data), ageGateRequired, completeness, tripCount, followersCount, followingCount });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * PATCH /me/profile — update own profile
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * User identity always from auth token — never from body.
  */
 const patchProfileSchema = z.object({
@@ -730,9 +730,9 @@ router.patch("/me/profile", async (req, res) => {
   res.status(200).json(mapProfile(updated));
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * GET /users/check-username — check username availability
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  */
 router.get("/users/check-username", async (req, res) => {
   const auth = await requireUser(req, res);
@@ -765,9 +765,9 @@ router.get("/users/check-username", async (req, res) => {
   res.status(200).json({ available: true });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * POST /me/avatar/upload — upload avatar image
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Accepts raw binary body, Content-Type = MIME. ≤5 MB. jpeg/png/webp only.
  * Uploads to profile-media bucket at avatars/{userId}/{uuid}.{ext}.
  * Returns { url }. Does NOT update avatar_url on the profile row —
@@ -835,9 +835,9 @@ router.post(
   },
 );
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * POST /me/cover/upload — upload cover photo image
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Accepts raw binary body, Content-Type = MIME. ≤10 MB. jpeg/png/webp only.
  * Uploads to profile-media bucket at covers/{userId}/cover.{ext} (fixed path,
  * so each upload replaces the previous one). Returns { url }.
@@ -906,9 +906,9 @@ router.post(
   },
 );
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * DELETE /me/avatar/file — purge an orphaned avatar upload
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Called by the mobile client when the avatar upload succeeded but the
  * subsequent PATCH /me/profile call failed, leaving the new file orphaned in
  * storage.  Path must be scoped to the authenticated user's own directory.
@@ -935,9 +935,9 @@ router.delete("/me/avatar/file", async (req, res) => {
   res.status(204).end();
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * DELETE /me/cover/file — purge an orphaned cover upload
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Same contract as DELETE /me/avatar/file but for cover photos stored at
  * covers/{userId}/cover.{ext}.
  */
@@ -990,9 +990,9 @@ router.put("/me/push-token", async (req, res) => {
   res.json({ ok: true });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * GET /me/account-status — lightweight account health check
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Returns accountStatus ("active" | "deactivated" | "pending_deletion") and,
  * when pending_deletion, the scheduled deletion date.
  * Uses the service client so the read bypasses RLS reliably.
@@ -1050,9 +1050,9 @@ router.get("/me/account-status", async (req, res) => {
   res.status(200).json({ accountStatus: rawStatus, deletionScheduledAt: null });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * POST /me/reactivate — re-activate a self-deactivated account
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Only works when account was self-deactivated (state = 'deactivated').
  * Admin-suspended or admin-banned accounts cannot self-reactivate.
  */
@@ -1131,9 +1131,9 @@ router.post("/me/reactivate", async (req, res) => {
   res.status(200).json({ reactivated: true });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * POST /me/deactivate — temporarily deactivate the caller's account
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Sets user_account_states to 'deactivated' and flags discovery off.
  */
 router.post("/me/deactivate", async (req, res) => {
@@ -1190,9 +1190,9 @@ router.post("/me/deactivate", async (req, res) => {
   res.status(200).json({ deactivated: true });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * POST /me/delete-request — schedule account deletion (30-day hold)
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Creates a deletion request record and flags the account as deactivated
  * so it becomes invisible to other users during the hold period.
  */
@@ -1239,9 +1239,9 @@ router.post("/me/delete-request", async (req, res) => {
   res.status(200).json({ deletionScheduled: true, scheduledAt });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * GET /me/delete-request — check whether a pending deletion request exists
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Returns { pending: true, scheduledAt } if a pending request exists,
  * or { pending: false, scheduledAt: null } otherwise.
  */
@@ -1272,9 +1272,9 @@ router.get("/me/delete-request", async (req, res) => {
   });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * DELETE /me/delete-request — cancel a pending account deletion
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Sets user_deletion_requests.status = 'cancelled', cancelled_at = now().
  * Restores profiles.account_status = 'active' and
  * user_account_states.state = 'active'.
@@ -1351,9 +1351,9 @@ router.delete("/me/delete-request", async (req, res) => {
   res.status(200).json({ cancelled: true });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * GET /me/privacy — fetch caller's privacy settings
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Returns the profile_privacy_settings row, or defaults if none exists yet.
  */
 const PRIVACY_DEFAULTS = {
@@ -1380,12 +1380,19 @@ const PRIVACY_DEFAULTS = {
 } as const;
 
 /**
- * show_profile_picture_publicly column is not yet in the live DB.
- * Always return true (existing behaviour — pictures are public by default).
- * Re-implement as a real DB fetch once the migration is applied.
+ * Fetch the show_profile_picture_publicly flag from the profiles table.
+ * Defaults to true (public) when the row or column is absent.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-async function fetchShowProfilePicPublicly(_sc: unknown, _userId: string): Promise<boolean> {
+async function fetchShowProfilePicPublicly(sc: ReturnType<typeof getServiceClient>, userId: string): Promise<boolean> {
+  if (!sc) return true;
+  const { data } = await sc
+    .from("profiles")
+    .select("show_profile_picture_publicly")
+    .eq("id", userId)
+    .maybeSingle();
+  if (data && typeof data.show_profile_picture_publicly === "boolean") {
+    return data.show_profile_picture_publicly;
+  }
   return true;
 }
 
@@ -1429,9 +1436,9 @@ router.get("/me/privacy", async (req, res) => {
   res.status(200).json({ ...data, show_profile_picture_publicly: showPicPublicly });
 });
 
-/* ===========================================================================
+/* ---------------------------------------------------------------------------
  * PATCH /me/privacy — update privacy settings
- * ===========================================================================
+ * ---------------------------------------------------------------------------
  * Upserts profile_privacy_settings and syncs profile_visibility to
  * user_privacy_settings so the interactionPermissions engine stays consistent.
  */

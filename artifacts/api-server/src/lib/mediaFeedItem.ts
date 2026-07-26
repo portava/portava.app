@@ -64,6 +64,11 @@ export interface MediaFeedMediaItem {
   width: number | null;
   height: number | null;
   sortOrder: number;
+  /**
+   * Gems mode only — set when the image has illustrative/AI-generated provenance.
+   * Clients should render a banner: "Illustrative image — not the actual location".
+   */
+  provenanceLabel?: "illustrative" | null;
 }
 
 export interface MediaFeedStats {
@@ -82,6 +87,12 @@ export interface MediaFeedLocation {
   name: string | null;
   city: string | null;
   country: string | null;
+  /** Gems mode only — canonical place record ID. */
+  canonicalPlaceId?: string | null;
+  /** Gems mode only — gem category used as place type label. */
+  placeType?: string | null;
+  /** Gems mode only — whether the gem has been verified. */
+  isVerified?: boolean;
 }
 
 export interface MediaFeedViewerState {
@@ -117,9 +128,11 @@ export interface MediaFeedLinkedEntity {
  */
 export interface MediaFeedItem {
   id: string;
-  /** Source entity type — 'post', 'memory', 'story', etc. */
-  sourceType: "post" | "memory" | "story";
+  /** Source entity type — 'post', 'memory', 'story', 'gem'. */
+  sourceType: "post" | "memory" | "story" | "gem";
   sourceId: string;
+  /** Gems mode only — the hidden_gems record ID (same as id for gem items). */
+  gemId?: string | null;
   caption: string | null;
   tags: string[];
   createdAt: string;
@@ -249,7 +262,135 @@ function relayUrlFor(
   return `${apiBaseUrl}/api/media/file/${bucket}/${storagePath}`;
 }
 
-// ── Hydrator ──────────────────────────────────────────────────────────────────
+// ── Gems hydration ────────────────────────────────────────────────────────────
+
+/** Source types that indicate AI-generated or illustrative provenance. */
+const ILLUSTRATIVE_SOURCE_TYPES = new Set(["ai_generated_generic", "illustrative"]);
+
+export interface HydrateGemInput {
+  /** Raw hidden_gems row from the DB. */
+  gem: any;
+  /** The viewing user's id. */
+  viewerUserId: string;
+  /** Set of author ids that have opted in to showing their real name. */
+  allowedRealNameIds: Set<string>;
+  /** Set of gem ids the viewer has saved. */
+  savedGemIds: Set<string>;
+  /** Set of creator ids the viewer follows. */
+  followedCreatorIds: Set<string>;
+  /** Submitter's profile row (pre-fetched). */
+  submitterProfile: any;
+}
+
+/**
+ * Map a raw hidden_gems DB row into a MediaFeedItem for the Gems feed.
+ * The gem itself becomes the location context; image_url becomes the single media item.
+ */
+export function hydrateGemFeedItem(input: HydrateGemInput): MediaFeedItem {
+  const { gem, viewerUserId, allowedRealNameIds, savedGemIds, followedCreatorIds, submitterProfile } = input;
+
+  const creatorId: string = gem.submitted_by ?? "";
+  const isOwnItem = creatorId === viewerUserId;
+  const isFollowing = followedCreatorIds.has(creatorId);
+  const creatorIsPrivate = Boolean(submitterProfile?.is_private);
+
+  const displayName =
+    (isOwnItem || allowedRealNameIds.has(creatorId))
+      ? (submitterProfile?.full_name ?? submitterProfile?.username ?? "")
+      : (submitterProfile?.username ?? "");
+
+  const relationshipStatus: RelationshipStatus = isOwnItem
+    ? "self"
+    : isFollowing
+      ? "following"
+      : "none";
+
+  const creator: MediaFeedCreator = {
+    id: creatorId,
+    username: submitterProfile?.username ?? "",
+    displayName,
+    avatarUrl: submitterProfile?.avatar_url ?? null,
+    isPrivate: creatorIsPrivate,
+    relationshipStatus,
+    isVerified: Boolean(submitterProfile?.is_verified),
+    followersCount: (!creatorIsPrivate || isFollowing || isOwnItem)
+      ? (submitterProfile?.followers_count ?? null)
+      : null,
+    followingCount: (!creatorIsPrivate || isFollowing || isOwnItem)
+      ? (submitterProfile?.following_count ?? null)
+      : null,
+    bio: (!creatorIsPrivate || isFollowing || isOwnItem)
+      ? (submitterProfile?.bio ?? null)
+      : null,
+  };
+
+  // Determine provenance
+  const sourceType: string = gem.source_type ?? "";
+  const isIllustrative = ILLUSTRATIVE_SOURCE_TYPES.has(sourceType);
+  const provenanceLabel: "illustrative" | null = isIllustrative ? "illustrative" : null;
+
+  const mediaItems: MediaFeedMediaItem[] = gem.image_url
+    ? [{
+        id: `gem-img-${gem.id}`,
+        type: "image" as const,
+        url: gem.image_url,
+        thumbnailUrl: null,
+        durationSeconds: null,
+        width: null,
+        height: null,
+        sortOrder: 0,
+        provenanceLabel,
+      }]
+    : [];
+
+  const stats: MediaFeedStats = {
+    viewCount: gem.visit_count ?? 0,
+    likeCount: 0,
+    saveCount: gem.save_count ?? 0,
+    commentCount: 0,
+  };
+
+  const location: MediaFeedLocation = {
+    name: gem.name ?? null,
+    city: gem.city ?? null,
+    country: gem.country ?? null,
+    canonicalPlaceId: gem.canonical_place_id ?? null,
+    placeType: gem.category ?? null,
+    isVerified: gem.verification_level !== "unverified" && gem.verification_level != null,
+  };
+
+  const viewerState: MediaFeedViewerState = {
+    hasLiked: false,
+    hasSaved: savedGemIds.has(gem.id),
+    isFollowingCreator: isFollowing || isOwnItem,
+    hasFollowRequestPending: false,
+  };
+
+  const privacy: MediaFeedPrivacy = { isPrivate: false };
+  const moderation: MediaFeedModeration = { status: gem.moderation_status ?? gem.status ?? "active" };
+  const tags: string[] = Array.isArray(gem.vibe_tags) ? gem.vibe_tags : [];
+  const caption: string | null = gem.description ?? null;
+
+  return {
+    id: gem.id,
+    sourceType: "gem",
+    sourceId: gem.id,
+    gemId: gem.id,
+    caption,
+    tags,
+    createdAt: gem.created_at,
+    creator,
+    media: mediaItems,
+    stats,
+    location,
+    viewerState,
+    privacy,
+    moderation,
+    linkedEntity: null,
+  };
+}
+
+// ── Post hydration ────────────────────────────────────────────────────────────
 
 /**
  * Map a raw DB row to a hydrated MediaFeedItem.

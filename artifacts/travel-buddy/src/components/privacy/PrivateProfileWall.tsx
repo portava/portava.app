@@ -44,11 +44,7 @@ export function PrivateProfileWall({
 
   // Derive initials for the avatar fallback: prefer first char of display name,
   // fall back to first char of handle.
-  const initial = displayName
-    ? displayName[0].toUpperCase()
-    : handle
-    ? handle[0].toUpperCase()
-    : '?';
+  const initial = getInitial(displayName, handle);
 
   return (
     <View style={s.container}>
@@ -69,6 +65,7 @@ export function PrivateProfileWall({
         <Text style={s.privateBadgeText}>Private account</Text>
       </View>
 
+      {/* Lock message */}
       <Text style={s.wallMessage}>
         {friendRequestPending
           ? 'Your request is pending. The owner must accept before you can view their Passport.'
@@ -113,11 +110,13 @@ const s = StyleSheet.create({
     color: color.ink,
     fontSize: 17,
     fontWeight: '600' as const,
+    textAlign: 'center' as const,
   },
   handle: {
     ...t.small,
     color: color.mute,
     fontSize: 13,
+    textAlign: 'center' as const,
   },
   privateBadge: {
     flexDirection: 'row' as const,

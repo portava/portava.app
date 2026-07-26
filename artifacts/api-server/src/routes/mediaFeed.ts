@@ -21,7 +21,6 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
-import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import {
   filterEligibleMediaCandidates,
   type MediaCandidate,
@@ -30,9 +29,17 @@ import {
   hydrateMediaFeedItem,
   stripPrivateEventFields,
   stripPrivateTripFields,
+  hydrateGemFeedItem,
   type MediaFeedItem,
   type MediaFeedLinkedEntity,
 } from "../lib/mediaFeedItem.js";
+import {
+  findNearbyGems,
+} from "../services/hiddenGems/HiddenGemDiscoveryService.js";
+import {
+  reportGem,
+} from "../services/hiddenGems/HiddenGemModerationService.js";
+import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import {
   encodeCursor,
   decodeCursor,
@@ -321,11 +328,295 @@ const feedQuerySchema = z.object({
   sessionId: z.string().optional(),
 });
 
+const gemsQuerySchema = z.object({
+  mode: z.literal("hidden_gems"),
+  areaMode: z.enum(["near_me", "this_city", "my_trip", "all"]).optional().default("all"),
+  category: z.string().optional(),
+  /** City name for areaMode=this_city. */
+  city: z.string().optional(),
+  /** Trip ID for areaMode=my_trip. */
+  tripId: z.string().optional(),
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(MAX_LIMIT).optional().default(DEFAULT_LIMIT),
+  sessionId: z.string().optional(),
+});
+
+/** Source types excluded from the Gems feed (no verified real-place grounding). */
+const GEMS_EXCLUDED_SOURCE_TYPES = new Set(["ai_generated_generic"]);
+
+/** Columns selected for gem submitter profiles. */
+const GEM_PROFILE_COLUMNS =
+  "id, username, full_name, avatar_url, is_private, is_verified, bio, " +
+  "followers_count, following_count, account_status";
+
+/**
+ * Columns selected for the gems feed query (statically resolvable single-line
+ * literal so check:write-path-columns can verify every column against the live
+ * schema without needing an allowlist entry).
+ */
+// eslint-disable-next-line max-len
+const GEM_FEED_COLUMNS = "id, name, category, city, country, neighborhood, description, latitude, longitude, approx_latitude, approx_longitude, vibe_tags, price_range, safety_notes, best_time_to_go, local_etiquette, layover_safe, minimum_layover_minutes, sensitivity_level, verification_level, status, moderation_status, submitted_by, guide_verified_by, save_count, visit_count, report_count, image_url, canonical_place_id, source_type, created_at, updated_at";
+
+/** km radius used for near_me bounding-box pre-filter. */
+const NEAR_ME_RADIUS_KM = 25;
+
 const viewBodySchema = z.object({
   type: z.enum(["impression", "qualified_view", "completion", "rewatch"]),
   watchedMs: z.number().int().min(0).optional(),
   sessionId: z.string().optional(),
 });
+
+// ── GET /api/media/feed?mode=hidden_gems ─────────────────────────────────────
+
+router.get("/media/gems-feed", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not available");
+    return;
+  }
+
+  // Feature flag gate
+  if (!(await isFlagEnabled(sc, "MEDIA_VIEW_MODE_HIDDEN_GEMS_ENABLED"))) {
+    sendError(res, "feature_disabled", "Gems mode is not available");
+    return;
+  }
+
+  const parsed = gemsQuerySchema.safeParse({ mode: "hidden_gems", ...req.query });
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid query");
+    return;
+  }
+  const { areaMode, category, city: cityParam, tripId, limit, sessionId: clientSessionId } = parsed.data;
+  const sessionId = clientSessionId ?? randomUUID();
+
+  // ── Near Me: requires nearby flag ─────────────────────────────────────────
+  if (areaMode === "near_me" && !(await isFlagEnabled(sc, "MEDIA_HIDDEN_GEMS_NEARBY_ENABLED"))) {
+    sendError(res, "feature_disabled", "Near Me mode is not available");
+    return;
+  }
+
+  // ── Resolve area filter ────────────────────────────────────────────────────
+  let resolvedCity: string | undefined;
+  let userLat: number | undefined;
+  let userLng: number | undefined;
+
+  if (areaMode === "near_me") {
+    // Viewer's location from client-supplied headers (set after permission grant).
+    // Never stored or forwarded to other clients.
+    const latHeader = req.headers["x-user-lat"];
+    const lngHeader = req.headers["x-user-lng"];
+    const parsedLat = latHeader ? parseFloat(String(latHeader)) : NaN;
+    const parsedLng = lngHeader ? parseFloat(String(lngHeader)) : NaN;
+    if (!isFinite(parsedLat) || !isFinite(parsedLng)) {
+      sendError(res, "invalid_payload", "Near Me requires X-User-Lat and X-User-Lng headers");
+      return;
+    }
+    userLat = parsedLat;
+    userLng = parsedLng;
+  } else if (areaMode === "this_city") {
+    resolvedCity = cityParam;
+  } else if (areaMode === "my_trip") {
+    if (!tripId) {
+      sendError(res, "invalid_payload", "my_trip areaMode requires tripId");
+      return;
+    }
+    // Load trip destination city — requires membership
+    const { data: tripRow } = await sc
+      .from("trips")
+      .select("id, destination_city, owner_id")
+      .eq("id", tripId)
+      .maybeSingle();
+    if (!tripRow) {
+      sendError(res, "not_found", "Trip not found");
+      return;
+    }
+    // Verify caller is a trip member
+    const { data: memberRow } = await sc
+      .from("trip_members")
+      .select("user_id")
+      .eq("trip_id", tripId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!memberRow && (tripRow as any).owner_id !== user.id) {
+      sendError(res, "forbidden", "Not a trip member");
+      return;
+    }
+    resolvedCity = (tripRow as any).destination_city?.split(",")[0]?.trim();
+  }
+  // areaMode === "all": no city/location filter
+
+  // ── DB-level keyset cursor: (created_at DESC, id DESC) ───────────────────
+  // Cursor encodes JSON { ts: ISO string, id: UUID }.
+  let cursorTs: string | null = null;
+  let cursorId: string | null = null;
+  if (parsed.data.cursor) {
+    try {
+      const rawC = Buffer.from(parsed.data.cursor, "base64url").toString("utf8");
+      const c = JSON.parse(rawC) as { ts: string; id: string };
+      cursorTs = c.ts;
+      cursorId = c.id;
+    } catch { /* invalid cursor — serve from top */ }
+  }
+
+  // ── Build DB query with all filters, ordering, and cursor pushed to DB ────
+  // Eligibility gates applied at query time so the result set is correctly
+  // bounded — no in-memory truncation that would silently skip items.
+  //
+  // source_type filter uses OR so that rows where source_type IS NULL are
+  // included (NULL != 'ai_generated_generic' is NULL in SQL, not TRUE).
+  let q = (sc as any)
+    .from("hidden_gems")
+    .select(GEM_FEED_COLUMNS)
+    .eq("status", "active")
+    .not("canonical_place_id", "is", null)
+    .or("source_type.is.null,source_type.neq.ai_generated_generic")
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(limit + 1); // +1 to detect whether a next page exists
+
+  // Area filter
+  if (areaMode === "near_me" && userLat != null && userLng != null) {
+    // Bounding-box pre-filter; keeps the result set local without disclosing
+    // the viewer's exact coordinates.  Ordering remains (created_at DESC, id DESC)
+    // across all modes for cursor consistency.
+    const dLat = NEAR_ME_RADIUS_KM / 111.32;
+    const dLng = NEAR_ME_RADIUS_KM / (111.32 * Math.max(0.2, Math.cos((userLat * Math.PI) / 180)));
+    const box = {
+      minLat: Number((userLat - dLat).toFixed(5)),
+      maxLat: Number((userLat + dLat).toFixed(5)),
+      minLng: Number((userLng - dLng).toFixed(5)),
+      maxLng: Number((userLng + dLng).toFixed(5)),
+    };
+    q = q.or(
+      `and(latitude.gte.${box.minLat},latitude.lte.${box.maxLat},longitude.gte.${box.minLng},longitude.lte.${box.maxLng}),` +
+      `and(approx_latitude.gte.${box.minLat},approx_latitude.lte.${box.maxLat},approx_longitude.gte.${box.minLng},approx_longitude.lte.${box.maxLng})`,
+    );
+  } else if (resolvedCity) {
+    q = q.ilike("city", resolvedCity);
+  }
+
+  if (category) q = q.eq("category", category);
+
+  // Keyset cursor predicate — applied last so the DB index scan skips
+  // everything at or before the previous page's last item.
+  if (cursorTs && cursorId) {
+    q = q.or(`created_at.lt.${cursorTs},and(created_at.eq.${cursorTs},id.lt.${cursorId})`);
+  }
+
+  const { data: rawRows, error: gemsError } = await q;
+  if (gemsError) {
+    req.log.error({ err: gemsError }, "gems feed: DB query failed");
+    sendError(res, "db_error", gemsError.message);
+    return;
+  }
+
+  const allRows = (rawRows ?? []) as any[];
+  const hasMore = allRows.length > limit;
+  const page: any[] = hasMore ? allRows.slice(0, limit) : allRows;
+  const lastGem = page[page.length - 1];
+  const nextCursor = lastGem && hasMore
+    ? Buffer.from(JSON.stringify({ ts: lastGem.created_at, id: lastGem.id }), "utf8").toString("base64url")
+    : null;
+
+  // ── Hydration: load submitter profiles ────────────────────────────────────
+  const submitterIds: string[] = [
+    ...new Set(page.map((g: any) => g.submitted_by as string).filter(Boolean)),
+  ];
+  const profileMap = new Map<string, any>();
+  if (submitterIds.length > 0) {
+    try {
+      const { data: profiles } = await sc
+        .from("profiles")
+        .select(GEM_PROFILE_COLUMNS)
+        .in("id", submitterIds);
+      for (const p of (profiles as any[]) ?? []) profileMap.set(p.id as string, p);
+    } catch { /* non-fatal: profiles stay empty */ }
+  }
+
+  // Batch: saved gems, follows, display-name privacy
+  const gemIds: string[] = page.map((g: any) => g.id as string);
+  const [savedSet, followedCreatorIds, allowedRealNameIds] = await Promise.all([
+    (async () => {
+      const s = new Set<string>();
+      if (gemIds.length === 0) return s;
+      try {
+        const { data } = await sc
+          .from("hidden_gem_saves")
+          .select("gem_id")
+          .eq("user_id", user.id)
+          .in("gem_id", gemIds);
+        for (const r of (data as any[]) ?? []) s.add(r.gem_id as string);
+      } catch { /* non-fatal */ }
+      return s;
+    })(),
+    (async () => {
+      const s = new Set<string>();
+      if (submitterIds.length === 0) return s;
+      try {
+        const { data } = await sc
+          .from("user_follows")
+          .select("following_id")
+          .eq("follower_id", user.id)
+          .in("following_id", submitterIds);
+        for (const r of (data as any[]) ?? []) s.add(r.following_id as string);
+      } catch { /* non-fatal */ }
+      return s;
+    })(),
+    nameVisibilitySet(sc, submitterIds),
+  ]);
+
+  const items: MediaFeedItem[] = page.map((gem: any) =>
+    hydrateGemFeedItem({
+      gem,
+      viewerUserId: user.id,
+      allowedRealNameIds,
+      savedGemIds: savedSet,
+      followedCreatorIds,
+      submitterProfile: profileMap.get(gem.submitted_by) ?? null,
+    }),
+  );
+
+  res.json({ items, nextCursor, sessionId });
+}));
+
+// ── POST /api/media/:id/report (wrong-place) ─────────────────────────────────
+
+router.post("/media/:id/report", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not available");
+    return;
+  }
+
+  const { id } = req.params;
+  if (!id) { sendError(res, "invalid_payload", "Missing id"); return; }
+
+  const reasonSchema = z.object({
+    reason: z.string().max(100).default("media_does_not_match_place"),
+    notes: z.string().max(500).optional(),
+  });
+  const parsed = reasonSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+
+  try {
+    const result = await reportGem(sc, id, user.id, parsed.data.reason, parsed.data.notes);
+    res.json({ ok: result.ok, alreadyReported: result.alreadyReported });
+  } catch (err: any) {
+    req.log.error({ err }, "media/:id/report failed");
+    sendError(res, "db_error", err.message);
+  }
+}));
 
 // ── GET /api/media/feed ───────────────────────────────────────────────────────
 
