@@ -1,7 +1,7 @@
 /**
  * usePublicPassport — loads a public passport by username.
- * Returns { profile, postcards, loading, error, isPrivate, isFriend,
- *           friendRequestPending, notFound, isBlocked, blockedTargetId }.
+ * Returns { profile, postcards, loading, error, isPrivate, previewProfile,
+ *           isFriend, friendRequestPending, notFound, isBlocked, blockedTargetId }.
  *
  * Sentinel shapes from GET /api/users/:username/passport:
  *   { unavailable: true }                → notFound: true  (deleted / deactivated / banned)
@@ -14,12 +14,25 @@ import { useState, useEffect } from 'react';
 import type { PublicProfile, PassportPostcard } from '../types/models.ts';
 import { getPublicPassport, getPublicPostcards } from '../services/profile.ts';
 
+/** Minimal safe fields returned by the private sentinel — enough for the locked header. */
+export interface PrivatePreviewProfile {
+  id: string;
+  handle: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+}
+
 export interface PublicPassportState {
   profile: PublicProfile | null;
   postcards: PassportPostcard[];
   loading: boolean;
   error: string | null;
   isPrivate: boolean;
+  /**
+   * Minimal profile stub from the private sentinel — avatar, handle, display
+   * name. Populated when isPrivate is true so the locked header can render.
+   */
+  previewProfile: PrivatePreviewProfile | null;
   /**
    * True when the server confirmed the viewer is already friends with the
    * target.  In this case the private wall should not be shown even if
@@ -44,21 +57,19 @@ export interface PublicPassportState {
   blockedTargetId: string | null;
 }
 
+const EMPTY_STATE: PublicPassportState = {
+  profile: null, postcards: [], loading: true, error: null,
+  isPrivate: false, previewProfile: null, isFriend: false, friendRequestPending: false,
+  privateProfileId: null, notFound: false, isBlocked: false, blockedTargetId: null,
+};
+
 export function usePublicPassport(username: string): PublicPassportState {
-  const [state, setState] = useState<PublicPassportState>({
-    profile: null, postcards: [], loading: true, error: null,
-    isPrivate: false, isFriend: false, friendRequestPending: false,
-    privateProfileId: null, notFound: false, isBlocked: false, blockedTargetId: null,
-  });
+  const [state, setState] = useState<PublicPassportState>({ ...EMPTY_STATE });
 
   useEffect(() => {
     if (!username) return;
     let alive = true;
-    setState({
-      profile: null, postcards: [], loading: true, error: null,
-      isPrivate: false, isFriend: false, friendRequestPending: false,
-      privateProfileId: null, notFound: false, isBlocked: false, blockedTargetId: null,
-    });
+    setState({ ...EMPTY_STATE });
 
     getPublicPassport(username).then(async (res) => {
       if (!alive) return;
@@ -98,13 +109,20 @@ export function usePublicPassport(username: string): PublicPassportState {
       // The server attaches is_friend / friend_request_pending so the client
       // can show the correct CTA without a second round-trip.
       if (d && (d.visibility === 'private' || d.private === true)) {
+        const pid: string | null = typeof d.id === 'string' ? d.id : null;
         setState((s) => ({
           ...s,
           loading: false,
           isPrivate: true,
+          previewProfile: pid ? {
+            id: pid,
+            handle: d.username ?? null,
+            displayName: d.displayName ?? null,
+            avatarUrl: d.avatarUrl ?? null,
+          } : null,
           isFriend: d.is_friend === true,
           friendRequestPending: d.friend_request_pending === true,
-          privateProfileId: typeof d.id === 'string' ? d.id : null,
+          privateProfileId: pid,
         }));
         return;
       }

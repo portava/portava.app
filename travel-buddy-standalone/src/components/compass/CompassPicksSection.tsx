@@ -147,14 +147,17 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
           testID={`compass-pick-image-${item.id}`}
           onError={() => setImageError(true)}
         />
-      ) : (
+      ) : (isPlace || !imageUrl) ? (
+        // Place items always fall back to the emoji/colour header on error.
+        // Non-place items (events) with no imageUrl at all also show the emoji.
+        // Non-place items whose imageUrl just failed render nothing (null).
         <View
           style={[s.emojiHeader, { backgroundColor: categoryFallback.color + '22' }]}
           testID={`compass-pick-emoji-${item.id}`}
         >
           <Text style={s.emojiText}>{categoryFallback.emoji}</Text>
         </View>
-      ) : null}
+      ) : null /* event whose imageUrl failed to load — render no hero */}
 
       {/* Row 1: type chip + overflow menu */}
       <View style={s.typeRow}>

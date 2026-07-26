@@ -31,6 +31,7 @@ import { primaryIdentityText } from '../lib/displayIdentity.ts';
 import { MediaStampOverlay } from './StampOverlayBadge.tsx';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
+import { navigateToProfile } from '../lib/navigateToProfile.ts';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -71,7 +72,7 @@ function AuthorRow({
   const AVATAR_SIZE = 40;
 
   const handleAuthorPress = item.author?.username
-    ? () => router.push(`/u/${item.author!.username}` as any)
+    ? () => navigateToProfile(item.author!.username, item.author!.id, currentUserId)
     : undefined;
 
   const authorText = item.author

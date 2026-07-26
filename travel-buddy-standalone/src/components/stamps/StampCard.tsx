@@ -47,7 +47,7 @@ export function StampCard({ stamp, isOwner, onPress }: Props) {
         showGlow && { borderWidth: 1.5, borderRadius: 12, borderColor: RARITY_COLORS[rarity].ring },
       ]}>
         <UniversalStampArtwork
-          activeArtworkUrl={stamp.activeArtworkUrl}
+          activeArtworkUrl={stamp.activeArtworkUrl ?? stamp.definition?.universalArtworkUrl}
           thumbnailUrl={stamp.thumbnailUrl}
           stamp={legacy}
           size={64}

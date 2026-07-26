@@ -573,8 +573,9 @@ function PublicPassportScreenNative() {
   const { username } = useLocalSearchParams<{ username: string }>();
   const { userId: currentUserId } = useSession();
 
-  const { profile, postcards, loading, error, isPrivate, isFriend, friendRequestPending, privateProfileId, notFound, isBlocked, blockedTargetId } = usePublicPassport(username ?? '');
-  const follow = useFollow(profile?.id ?? null);
+  const { profile, postcards, loading, error, isPrivate, previewProfile, isFriend, friendRequestPending, privateProfileId, notFound, isBlocked, blockedTargetId } = usePublicPassport(username ?? '');
+  // Use privateProfileId as fallback so the Follow button works on the private-profile header.
+  const follow = useFollow(profile?.id ?? privateProfileId ?? null);
   const ringState = useHighlightRingState(profile?.id ?? null);
 
   const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
@@ -804,28 +805,56 @@ function PublicPassportScreenNative() {
     }
 
     if (isPrivate && !isFriend) {
+      // Build a minimal profile shell from the sentinel preview data so the
+      // locked header can render an avatar, display name, and @handle.
+      const minimalPrivateProfile: PublicProfile = {
+        id: previewProfile?.id ?? (privateProfileId ?? social?.id ?? ''),
+        username: previewProfile?.handle ?? username ?? null,
+        displayName: previewProfile?.displayName ?? null,
+        bio: null,
+        avatarUrl: previewProfile?.avatarUrl ?? null,
+        homeCity: null,
+        homeCountry: null,
+        travelStyle: null,
+        interests: [],
+        verified: false,
+        verificationStatus: 'unverified',
+        verifiedAt: null,
+        passportVisibility: 'private',
+        createdAt: null,
+      };
       return (
         <View style={{ flex: 1 }}>
           {navHeader}
-          <View style={styles.center}>
-            <Text style={styles.stateIcon}>🔒</Text>
-            <Text style={styles.stateTitle}>This Passport is private</Text>
-            <Text style={styles.stateSub}>
-              {friendRequestPending
-                ? 'Your request is pending. The owner must accept before you can view their Passport.'
-                : 'Send a friend request to view this Passport.'}
-            </Text>
-            {/* Show request CTA for non-own profiles.
-                privateProfileId is set from the sentinel; social?.id is a fallback
-                that resolves once the social load completes. */}
-            {!isOwn && (privateProfileId ?? social?.id) && (
-              <PrivateRequestButton
-                userId={(privateProfileId ?? social?.id)!}
-                initialPending={friendRequestPending}
-                style={styles.privateWallBtn}
-              />
-            )}
-          </View>
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <PassportHero
+              profile={minimalPrivateProfile}
+              isOwner={false}
+              isPrivateView
+              isFollowing={follow.isFollowing}
+              followLoading={follow.loading || follow.toggling}
+              onFollowPress={!isOwn ? follow.toggle : undefined}
+            />
+            <View style={styles.center}>
+              <Text style={styles.stateIcon}>🔒</Text>
+              <Text style={styles.stateTitle}>This Passport is private</Text>
+              <Text style={styles.stateSub}>
+                {friendRequestPending
+                  ? 'Your request is pending. The owner must accept before you can view their Passport.'
+                  : 'Send a friend request to view this Passport.'}
+              </Text>
+              {/* Show request CTA for non-own profiles.
+                  privateProfileId is set from the sentinel; social?.id is a fallback
+                  that resolves once the social load completes. */}
+              {!isOwn && (privateProfileId ?? social?.id) && (
+                <PrivateRequestButton
+                  userId={(privateProfileId ?? social?.id)!}
+                  initialPending={friendRequestPending}
+                  style={styles.privateWallBtn}
+                />
+              )}
+            </View>
+          </ScrollView>
         </View>
       );
     }

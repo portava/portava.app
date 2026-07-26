@@ -70,6 +70,7 @@ function fmtMemberSince(iso: string | null | undefined): string {
 export function PassportHero({
   profile,
   isOwner,
+  isPrivateView,
   onMenuPress,
   onAvatarPress,
   isFollowing,
@@ -86,6 +87,12 @@ export function PassportHero({
 }: {
   profile: OwnProfile | PublicProfile;
   isOwner: boolean;
+  /**
+   * When true (private profile viewed by a non-friend), the hero shows only
+   * avatar, display name, and @handle — no bio, location, interests, or badges.
+   * Prevents leaking any private information to outsiders.
+   */
+  isPrivateView?: boolean;
   onMenuPress?: () => void;
   onAvatarPress?: () => void;
   isFollowing?: boolean;
@@ -119,6 +126,9 @@ export function PassportHero({
   const isVerified = isTravelBuddyVerified(profile);
   const verificationStatus = 'verificationStatus' in profile ? profile.verificationStatus : undefined;
   const ownerPrompt = isOwner ? getVerificationOwnerPrompt(verificationStatus) : null;
+
+  // When rendering the locked minimal view, suppress all private fields.
+  const hidePrivateFields = isPrivateView && !isOwner;
 
   return (
     <View style={styles.card}>
@@ -204,8 +214,8 @@ export function PassportHero({
             {isVerified ? <InlineVerifiedStamp size={22} /> : null}
           </View>
           {handleSubline ? <Text style={styles.handle}>{handleSubline}</Text> : null}
-          {bio ? <Text style={styles.bio} numberOfLines={2}>{bio}</Text> : null}
-          {(homeCity || homeCountry) ? (
+          {!hidePrivateFields && bio ? <Text style={styles.bio} numberOfLines={2}>{bio}</Text> : null}
+          {!hidePrivateFields && (homeCity || homeCountry) ? (
             <View style={styles.locRow}>
               <MapPin size={12} color={color.deep} />
               <Text style={styles.loc} numberOfLines={1}>
@@ -213,7 +223,7 @@ export function PassportHero({
               </Text>
             </View>
           ) : null}
-          {shown.length > 0 && (
+          {!hidePrivateFields && shown.length > 0 && (
             <View style={styles.interests}>
               {shown.map((i) => (
                 <View key={i} style={styles.chip}>
@@ -228,51 +238,55 @@ export function PassportHero({
             </View>
           )}
 
-          {/* Compact badges row: Member since + Trust Score */}
-          <View style={styles.badgesRow}>
-            {profile.createdAt ? (
-              <View style={styles.memberBadge}>
-                <Calendar size={11} color={color.mute} />
-                <Text style={styles.memberText}>
-                  Member since {fmtMemberSince(profile.createdAt)}
-                </Text>
-              </View>
-            ) : null}
-            {trustScore != null ? (
-              <Pressable
-                style={styles.trustBadge}
-                onPress={onTrustInfo}
-                accessibilityRole="button"
-                accessibilityLabel={`Trust Score ${Math.round(trustScore)} out of 100, ${trustLabel ?? 'Trusted Traveler'}`}
-                hitSlop={6}
-              >
-                <ShieldCheck size={12} color="#0D9B6F" strokeWidth={2.5} />
-                <Text style={styles.trustText}>
-                  {`Trust ${Math.round(trustScore)} / 100 · ${trustLabel ?? 'Trusted Traveler'}`}
-                </Text>
-              </Pressable>
-            ) : null}
-          </View>
+          {/* Compact badges row: Member since + Trust Score — hidden for private view */}
+          {!hidePrivateFields && (
+            <View style={styles.badgesRow}>
+              {profile.createdAt ? (
+                <View style={styles.memberBadge}>
+                  <Calendar size={11} color={color.mute} />
+                  <Text style={styles.memberText}>
+                    Member since {fmtMemberSince(profile.createdAt)}
+                  </Text>
+                </View>
+              ) : null}
+              {trustScore != null ? (
+                <Pressable
+                  style={styles.trustBadge}
+                  onPress={onTrustInfo}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Trust Score ${Math.round(trustScore)} out of 100, ${trustLabel ?? 'Trusted Traveler'}`}
+                  hitSlop={6}
+                >
+                  <ShieldCheck size={12} color="#0D9B6F" strokeWidth={2.5} />
+                  <Text style={styles.trustText}>
+                    {`Trust ${Math.round(trustScore)} / 100 · ${trustLabel ?? 'Trusted Traveler'}`}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+          )}
         </View>
       </View>
 
       {/* Owner-only verification prompt (unverified / pending / rejected / expired) */}
-      {!isVerified && ownerPrompt && (
+      {!isVerified && ownerPrompt && !hidePrivateFields && (
         <View style={styles.verifyPrompt}>
           <Text style={styles.verifyPromptText}>{ownerPrompt}</Text>
         </View>
       )}
 
-      {/* MRZ strip */}
-      <View style={styles.mrzRow}>
-        <Text style={styles.mrzChevron}>‹‹‹‹‹</Text>
-        <Text style={styles.mrz} numberOfLines={1}>
-          {isVerified
-            ? 'PORTAVA · VERIFIED TRAVEL ID · SOCIAL PASSPORT'
-            : 'PORTAVA · SOCIAL PASSPORT'}
-        </Text>
-        <Text style={styles.mrzChevron}>›››››</Text>
-      </View>
+      {/* MRZ strip — hidden for private view */}
+      {!hidePrivateFields && (
+        <View style={styles.mrzRow}>
+          <Text style={styles.mrzChevron}>‹‹‹‹‹</Text>
+          <Text style={styles.mrz} numberOfLines={1}>
+            {isVerified
+              ? 'PORTAVA · VERIFIED TRAVEL ID · SOCIAL PASSPORT'
+              : 'PORTAVA · SOCIAL PASSPORT'}
+          </Text>
+          <Text style={styles.mrzChevron}>›››››</Text>
+        </View>
+      )}
     </View>
   );
 }

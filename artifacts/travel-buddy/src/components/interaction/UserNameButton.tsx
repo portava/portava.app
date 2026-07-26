@@ -1,9 +1,9 @@
 import React from 'react';
 import { Pressable, Text, StyleSheet } from 'react-native';
-import { router } from 'expo-router';
 import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
 import { color, type as t } from '../../theme/tokens.ts';
 import { primaryIdentityText } from '../../lib/displayIdentity.ts';
+import { navigateToProfile } from '../../lib/navigateToProfile.ts';
 
 interface Props {
   userId: string;
@@ -12,15 +12,17 @@ interface Props {
   style?: object;
   numberOfLines?: number;
   disabled?: boolean;
+  /** Pass the signed-in user's UUID so self-taps route to the own Passport tab. */
+  currentUserId?: string | null;
 }
 
-export function UserNameButton({ userId, handle, displayName, style, numberOfLines = 1, disabled }: Props) {
+export function UserNameButton({ userId, handle, displayName, style, numberOfLines = 1, disabled, currentUserId }: Props) {
   const { blockedIds, blockerIds, isLoading } = useBlockedIds();
   const isBlocked = blockedIds.has(userId) || blockerIds.has(userId);
 
   function handlePress() {
     if (disabled || isBlocked || !handle) return;
-    router.push(`/u/${handle}` as any);
+    navigateToProfile(handle, userId, currentUserId);
   }
 
   if (isBlocked) {

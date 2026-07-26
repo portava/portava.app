@@ -4,7 +4,7 @@
  */
 import React from 'react';
 import {
-  View, Text, Pressable, StyleSheet, Modal, SafeAreaView,
+  View, Text, Pressable, StyleSheet, Modal, SafeAreaView, ScrollView,
 } from 'react-native';
 import { ArrowLeft } from 'lucide-react-native';
 import { StampsTab } from '../StampsTab.tsx';
@@ -54,15 +54,17 @@ export function PassportStampsFullView({
         {/* Top rule */}
         <View style={s.topRule} />
 
-        {/* Stamp grid — existing StampsTab handles its own fetching + category filter */}
-        <View style={s.content}>
+        {/* Stamp grid — existing StampsTab handles its own fetching + category filter.
+            ScrollView here is required: StampGrid has scrollEnabled={false} and
+            defers scrolling to its parent container. */}
+        <ScrollView style={s.content} contentContainerStyle={{ flexGrow: 1 }} showsVerticalScrollIndicator={false}>
           <StampsTab
             stamps={stamps}
             isOwner={isOwner}
             viewingUsername={viewingUsername}
             viewingUserId={viewingUserId}
           />
-        </View>
+        </ScrollView>
 
         {/* Bottom collectible tagline */}
         <View style={s.footer}>

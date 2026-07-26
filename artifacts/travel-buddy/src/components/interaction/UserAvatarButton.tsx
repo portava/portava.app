@@ -1,9 +1,9 @@
 import React from 'react';
 import { Pressable, View, Text, StyleSheet } from 'react-native';
-import { router } from 'expo-router';
 import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
 import { color } from '../../theme/tokens.ts';
 import { AvatarImage } from '../ui/DisplayMediaImage.tsx';
+import { navigateToProfile } from '../../lib/navigateToProfile.ts';
 
 interface Props {
   userId: string;
@@ -12,9 +12,11 @@ interface Props {
   size?: number;
   children?: React.ReactNode;
   disabled?: boolean;
+  /** Pass the signed-in user's UUID so self-taps route to the own Passport tab. */
+  currentUserId?: string | null;
 }
 
-export function UserAvatarButton({ userId, handle, avatarUrl, size = 40, children, disabled }: Props) {
+export function UserAvatarButton({ userId, handle, avatarUrl, size = 40, children, disabled, currentUserId }: Props) {
   const { blockedIds, blockerIds, isLoading } = useBlockedIds();
   const isBlocked = blockedIds.has(userId) || blockerIds.has(userId);
 
@@ -22,7 +24,7 @@ export function UserAvatarButton({ userId, handle, avatarUrl, size = 40, childre
     if (disabled || isBlocked || !handle) return;
     // If the block list is still loading, navigate anyway — the block check
     // will be live on the profile screen itself.
-    router.push(`/u/${handle}` as any);
+    navigateToProfile(handle, userId, currentUserId);
   }
 
   if (isBlocked) {

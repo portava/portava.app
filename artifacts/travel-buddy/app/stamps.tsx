@@ -55,7 +55,14 @@ function toLegacy(s: PassportStampNew): PassportStamp {
   const sub: string[] = [];
   if (s.country && s.city) sub.push(s.country);
   if (s.earnedAt) sub.push(new Date(s.earnedAt).getFullYear().toString());
-  return { id: s.id, kind, label, sublabel: sub.join(' · ') || undefined, earnedAt: s.earnedAt, locked: s.isRevoked };
+  return {
+    id: s.id, kind, label,
+    sublabel: sub.join(' · ') || undefined,
+    earnedAt: s.earnedAt,
+    locked: s.isRevoked,
+    // Propagate AI-generated artwork so StampArtwork renders the picture stamp
+    universalArtworkUrl: s.definition?.universalArtworkUrl ?? undefined,
+  };
 }
 
 export default function StampsPage() {

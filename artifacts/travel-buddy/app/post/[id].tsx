@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { useLocalSearchParams, router } from 'expo-router';
+import { navigateToProfile } from '../../src/lib/navigateToProfile.ts';
 import * as Linking from 'expo-linking';
 import {
   MoreVertical, Share2, Flag, Flag as FlagFill,
@@ -103,6 +104,7 @@ function ReportedBanner({
 
 function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: number }) {
   const { width } = useWindowDimensions();
+  const { userId: currentUserId } = useSession();
   const mediaHeight = Math.min(Math.round(width * (5 / 4)), 560);
   const firstMediaItem = post.media?.[0] ?? null;
   const firstMedia = firstMediaItem?.url ?? post.mediaUrls[0] ?? null;
@@ -117,7 +119,7 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
     <View style={card.wrap}>
       <Pressable
         style={card.authorRow}
-        onPress={post.author?.handle ? () => router.push(`/u/${post.author!.handle}` as any) : undefined}
+        onPress={post.author?.handle ? () => navigateToProfile(post.author!.handle, post.author!.id, currentUserId) : undefined}
       >
         {authorAvatar ? (
           <Image source={{ uri: authorAvatar }} style={card.avatar} />

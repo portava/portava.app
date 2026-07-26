@@ -34,6 +34,7 @@ import React, { useState } from 'react';
 import { Text, StyleSheet, Alert, type TextStyle, type StyleProp } from 'react-native';
 import { router } from 'expo-router';
 import { color } from '../theme/tokens.ts';
+import { navigateToProfile } from '../lib/navigateToProfile.ts';
 import { TagPreviewSheet, type PreviewEntityType } from './TagPreviewSheet.tsx';
 import { removeSelfTag } from '../services/tagging.ts';
 import {
@@ -71,11 +72,11 @@ export interface RichTextProps {
 // ── Navigation ─────────────────────────────────────────────────────────────────
 
 /** Short-press navigation — routes that actually exist in the app. */
-function navigateTag(tag: RichTextTag) {
+function navigateTag(tag: RichTextTag, currentUserId?: string) {
   switch (tag.type) {
     case 'user':
-      // Navigate by handle (matchToken), not UUID
-      router.push(`/u/${tag.matchToken}` as any);
+      // Navigate by handle (matchToken), not UUID. Self-taps → own Passport tab.
+      navigateToProfile(tag.matchToken, tag.id, currentUserId);
       break;
     case 'trip':
       router.push(`/trip/${tag.id}` as any);
@@ -196,7 +197,7 @@ export function RichText({
         <Text
           key={i}
           style={[_s.mention, mentionColor ? { color: mentionColor } : null]}
-          onPress={canNav ? () => navigateTag(seg.tag) : undefined}
+          onPress={canNav ? () => navigateTag(seg.tag, currentUserId) : undefined}
           onLongPress={handleLongPress}
           suppressHighlighting={canNav}
         >
@@ -227,7 +228,7 @@ export function RichText({
     setPreview(null);
     if (!p) return;
     if (p.kind === 'tag') {
-      if (canNavigateShortPress(p.tag)) navigateTag(p.tag);
+      if (canNavigateShortPress(p.tag)) navigateTag(p.tag, currentUserId);
     } else {
       navigateHashtag(p.hashtag.slug);
     }

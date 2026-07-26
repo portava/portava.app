@@ -276,6 +276,7 @@ export default function PassportScreen() {
         highlights={ownRingState?.highlights ?? []}
         onHighlightRingPress={handleOwnRingPress}
         onNewHighlightPress={handleCameraPress}
+        onDirectAddHighlight={openHighlightComposer}
         onHighlightBubblePress={(i) => { setHighlightViewerIndex(i); setHighlightViewerOpen(true); }}
         onAddPostcard={() => setPostcardComposerOpen(true)}
         stampsViewOpen={stampsViewOpen}
@@ -347,7 +348,7 @@ function PassportContent({
   openSettings, actions, handleEditProfile, handleViewAsPublic,
   reload, stampsTotal, loadingMoreStamps, loadMoreStamps,
   lastLoadedAt, insets, hasHighlights, allHighlightsViewed, highlights,
-  onHighlightRingPress, onNewHighlightPress, onHighlightBubblePress, onAddPostcard,
+  onHighlightRingPress, onNewHighlightPress, onDirectAddHighlight, onHighlightBubblePress, onAddPostcard,
   stampsViewOpen, setStampsViewOpen, verificationLevels, noSafetyFlags, cardRef, share, sharing,
   sectionOrder, onArrangeSections, tabOrder, onArrangeTabs,
 }: {
@@ -382,6 +383,8 @@ function PassportContent({
   highlights: any[];
   onHighlightRingPress?: () => void;
   onNewHighlightPress?: () => void;
+  /** Direct path to the highlight composer — used by the highlights strip "+" button. */
+  onDirectAddHighlight?: () => void;
   onHighlightBubblePress?: (index: number) => void;
   onAddPostcard?: () => void;
   stampsViewOpen: boolean;
@@ -722,7 +725,7 @@ function PassportContent({
           allViewed={allHighlightsViewed ?? false}
           isOwner
           onHighlightPress={onHighlightBubblePress}
-          onAddHighlight={onNewHighlightPress}
+          onAddHighlight={onDirectAddHighlight ?? onNewHighlightPress}
         />
               </>
             )}

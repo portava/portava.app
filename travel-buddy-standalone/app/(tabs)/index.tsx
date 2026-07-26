@@ -30,8 +30,6 @@ import { PeopleYouMayKnow } from '../../src/components/PeopleYouMayKnow';
 import { CircleCompassSuggestions } from '../../src/components/CircleCompassSuggestions';
 import { LivePulseRail } from '../../src/components/LivePulseRail';
 import { useLivePulse } from '../../src/hooks/useLivePulse';
-import { fireRankOutcome } from '../../src/hooks/useRankOutcome';
-import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { useBottomInset } from '../../src/hooks/useBottomInset';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useSnapshotCache } from '../../src/hooks/useSnapshotCache';
@@ -108,7 +106,6 @@ function Pulse() {
     () => new Map(getCommentCountSnapshot()),
   );
 
-  const navBarScrollHandler = useNavBarScrollHandler();
   const bottomInset = useBottomInset();
   const { markFirstContent, epoch } = useScreenTiming('Pulse');
 
@@ -507,15 +504,13 @@ function Pulse() {
         ListHeaderComponent={Header}
         ListFooterComponent={Footer}
         renderItem={({ item }) => (
-          <View style={{ paddingHorizontal: space.lg }} onTouchStart={() => fireRankOutcome(item.id, 'pulse', 'tap', pulseFeed.sessionId)}>
+          <View style={{ paddingHorizontal: space.lg }}>
             <PulseFeedCard item={item} onDeleteSuccess={() => handlePostDeleted(item.id)} sessionId={pulseFeed.sessionId} />
           </View>
         )}
         ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
         contentContainerStyle={{ paddingBottom: bottomInset }}
         showsVerticalScrollIndicator={false}
-        onScroll={navBarScrollHandler}
-        scrollEventThrottle={16}
         onEndReached={() => {
           if (feedMode === 'following') followingFeed.loadMore();
           else pulseFeed.loadMore();
