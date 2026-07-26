@@ -600,6 +600,8 @@ export interface OwnProfile {
   passportSectionOrder?: string[] | null;
   /** Owner's preferred passport tab order; null/absent = canonical order. */
   passportTabOrder?: string[] | null;
+  /** Section keys the owner has hidden; null/absent = none hidden. */
+  passportHiddenSections?: string[] | null;
 }
 
 /* ───────────────────────────────────────────────────────────────────────

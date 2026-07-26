@@ -46,7 +46,7 @@ import { PassportAboutSection } from '../../src/components/passport/PassportAbou
 import { PassportSafetySection } from '../../src/components/passport/PassportSafetySection';
 import { PP, PP_LABEL } from '../../src/theme/passportTokens';
 import { PassportSectionReorderSheet } from '../../src/components/passport/PassportSectionReorderSheet';
-import { resolveSectionOrder, type PassportSectionKey } from '../../src/components/passport/passportSections';
+import { resolveSectionOrder, resolveHiddenSections, type PassportSectionKey } from '../../src/components/passport/passportSections';
 import { PassportTabReorderSheet } from '../../src/components/passport/PassportTabReorderSheet';
 import { resolveTabOrder, type PassportTabKey, TAB_LABELS } from '../../src/components/passport/passportTabs';
 import { MapTab } from '../../src/components/MapTab';
@@ -67,6 +67,7 @@ export default function PassportScreen() {
   const [stampsViewOpen, setStampsViewOpen] = useState(false);
   const [reorderOpen, setReorderOpen] = useState(false);
   const [sectionOrderOverride, setSectionOrderOverride] = useState<PassportSectionKey[] | null>(null);
+  const [hiddenSectionsOverride, setHiddenSectionsOverride] = useState<PassportSectionKey[] | null>(null);
   const [tabReorderOpen, setTabReorderOpen] = useState(false);
   const [tabOrderOverride, setTabOrderOverride] = useState<PassportTabKey[] | null>(null);
   const insets = useSafeAreaInsets();
@@ -237,6 +238,15 @@ export default function PassportScreen() {
   };
   const noSafetyFlags = (profile.safetyFlagsCount ?? 0) === 0;
 
+  // Hidden sections: derive the effective (visible) section order for the owner
+  // by filtering out any sections the owner has toggled off. Position in the
+  // ordering is preserved so sections reappear in the right place when un-hidden.
+  const _rawSectionOrder = sectionOrderOverride ?? resolveSectionOrder(profile.passportSectionOrder);
+  const _hiddenSet = resolveHiddenSections(hiddenSectionsOverride ?? profile.passportHiddenSections);
+  const effectiveSectionOrder = _hiddenSet.size > 0
+    ? _rawSectionOrder.filter((k) => !_hiddenSet.has(k))
+    : _rawSectionOrder;
+
   return (
     <View style={[s.root, { backgroundColor: PP.paperDeep }]}>
       <PassportContent
@@ -275,7 +285,7 @@ export default function PassportScreen() {
         cardRef={cardRef}
         share={share}
         sharing={sharing}
-        sectionOrder={sectionOrderOverride ?? resolveSectionOrder(profile.passportSectionOrder)}
+        sectionOrder={effectiveSectionOrder}
         onArrangeSections={() => setReorderOpen(true)}
         tabOrder={tabOrderOverride ?? resolveTabOrder(profile.passportTabOrder)}
         onArrangeTabs={() => setTabReorderOpen(true)}
@@ -304,8 +314,13 @@ export default function PassportScreen() {
       <PassportSectionReorderSheet
         visible={reorderOpen}
         initialOrder={sectionOrderOverride ?? resolveSectionOrder(profile.passportSectionOrder)}
+        initialHidden={hiddenSectionsOverride ?? profile.passportHiddenSections}
         onClose={() => setReorderOpen(false)}
-        onSaved={(order) => { setSectionOrderOverride(order); reload(); }}
+        onSaved={(order, hidden) => {
+          setSectionOrderOverride(order);
+          setHiddenSectionsOverride(hidden.length > 0 ? hidden : null);
+          reload();
+        }}
       />
       <PassportTabReorderSheet
         visible={tabReorderOpen}

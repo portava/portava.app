@@ -1,18 +1,22 @@
 /**
- * PassportSectionReorderSheet — drag-to-reorder the owner's passport sections.
+ * PassportSectionReorderSheet — drag-to-reorder the owner's passport sections,
+ * with per-section visibility toggles (eye / eye-off).
  *
  * Five fixed-height rows; long-press-free pan drag on the grip handle.
- * Saves via PATCH /me/profile (passportSectionOrder). "Reset" restores
- * canonical order (persists null).
+ * Saves via PATCH /me/profile (passportSectionOrder + passportHiddenSections).
+ * "Reset" restores canonical order and clears all hidden sections (persists null).
+ *
+ * The 'identity' row never shows an eye icon — it cannot be hidden.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, Modal, Pressable, StyleSheet, Animated, PanResponder, ActivityIndicator, Alert,
 } from 'react-native';
-import { GripVertical, RotateCcw } from 'lucide-react-native';
+import { GripVertical, RotateCcw, Eye, EyeOff } from 'lucide-react-native';
 import { updateMyProfile } from '../../services/profile.ts';
 import {
   CANONICAL_SECTION_ORDER, SECTION_LABELS, isCanonicalOrder, resolveSectionOrder,
+  NON_HIDEABLE_SECTIONS, resolveHiddenSections,
   type PassportSectionKey,
 } from './passportSections.ts';
 import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
@@ -23,20 +27,26 @@ const ROW_HEIGHT = 56;
 interface Props {
   visible: boolean;
   initialOrder: string[] | null | undefined;
+  /** Current hidden sections so the sheet opens in the right state. */
+  initialHidden?: string[] | null;
   onClose: () => void;
-  /** Called with the saved order after a successful save. */
-  onSaved: (order: PassportSectionKey[]) => void;
+  /** Called with the saved order and hidden set after a successful save. */
+  onSaved: (order: PassportSectionKey[], hidden: PassportSectionKey[]) => void;
 }
 
-export function PassportSectionReorderSheet({ visible, initialOrder, onClose, onSaved }: Props) {
+export function PassportSectionReorderSheet({ visible, initialOrder, initialHidden, onClose, onSaved }: Props) {
   const [order, setOrder] = useState<PassportSectionKey[]>(() => resolveSectionOrder(initialOrder));
+  const [hidden, setHidden] = useState<Set<PassportSectionKey>>(() => resolveHiddenSections(initialHidden));
   const [dragKey, setDragKey] = useState<PassportSectionKey | null>(null);
   const [saving, setSaving] = useState(false);
   const dragY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    if (visible) setOrder(resolveSectionOrder(initialOrder));
-  }, [visible, initialOrder]);
+    if (visible) {
+      setOrder(resolveSectionOrder(initialOrder));
+      setHidden(resolveHiddenSections(initialHidden));
+    }
+  }, [visible, initialOrder, initialHidden]);
 
   // Refs so the PanResponder always sees fresh state.
   const orderRef = useRef(order);
@@ -90,22 +100,36 @@ export function PassportSectionReorderSheet({ visible, initialOrder, onClose, on
       onPanResponderTerminate: endDrag,
     }), [beginDrag, endDrag, dragY]);
 
+  const toggleHidden = useCallback((key: PassportSectionKey) => {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
   const handleReset = useCallback(() => {
     setOrder([...CANONICAL_SECTION_ORDER]);
+    setHidden(new Set());
   }, []);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
     const canonical = isCanonicalOrder(order);
-    const res = await updateMyProfile({ passportSectionOrder: canonical ? null : order });
+    const hiddenArr = Array.from(hidden) as PassportSectionKey[];
+    const res = await updateMyProfile({
+      passportSectionOrder: canonical ? null : order,
+      passportHiddenSections: hiddenArr.length === 0 ? null : hiddenArr,
+    });
     setSaving(false);
     if (!res.ok) {
       Alert.alert('Could not save layout', res.message ?? 'Please try again.');
       return;
     }
-    onSaved(order);
+    onSaved(order, hiddenArr);
     onClose();
-  }, [order, onSaved, onClose]);
+  }, [order, hidden, onSaved, onClose]);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -114,18 +138,21 @@ export function PassportSectionReorderSheet({ visible, initialOrder, onClose, on
         <View style={rs.handle} />
         <Text style={rs.title}>Arrange your passport</Text>
         <Text style={rs.subtitle}>
-          Drag sections into the order that tells your travel story. Visitors always see the classic layout.
+          Drag sections into the order that tells your travel story. Tap the eye to show or hide a section. Visitors always see the classic layout.
         </Text>
 
         <View style={{ height: ROW_HEIGHT * order.length, marginTop: space.md }}>
           {order.map((key, index) => {
             const isDragging = dragKey === key;
+            const isHidden = hidden.has(key);
+            const canHide = !NON_HIDEABLE_SECTIONS.includes(key);
             return (
               <Animated.View
                 key={key}
                 style={[
                   rs.row,
                   { top: index * ROW_HEIGHT },
+                  isHidden && rs.rowHidden,
                   isDragging && {
                     transform: [{ translateY: dragY }],
                     zIndex: 10, elevation: 6,
@@ -137,7 +164,24 @@ export function PassportSectionReorderSheet({ visible, initialOrder, onClose, on
                 <View style={rs.rowIndex}>
                   <Text style={rs.rowIndexText}>{index + 1}</Text>
                 </View>
-                <Text style={rs.rowLabel}>{SECTION_LABELS[key]}</Text>
+                <Text style={[rs.rowLabel, isHidden && rs.rowLabelHidden]}>
+                  {SECTION_LABELS[key]}{isHidden ? ' (Hidden)' : ''}
+                </Text>
+                {canHide ? (
+                  <Pressable
+                    style={rs.eyeBtn}
+                    onPress={() => toggleHidden(key)}
+                    accessibilityLabel={isHidden ? `Show ${SECTION_LABELS[key]}` : `Hide ${SECTION_LABELS[key]}`}
+                    accessibilityRole="button"
+                    hitSlop={8}
+                  >
+                    {isHidden
+                      ? <EyeOff size={18} color={PP.inkMuted} />
+                      : <Eye size={18} color={PP.inkMuted} />}
+                  </Pressable>
+                ) : (
+                  <View style={rs.eyeBtn} />
+                )}
                 <View
                   {...makeResponder(key).panHandlers}
                   style={rs.grip}
@@ -195,13 +239,16 @@ const rs = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: PP.borderLight,
     backgroundColor: PP.paper,
   },
+  rowHidden: { opacity: 0.45 },
   rowIndex: {
     width: 24, height: 24, borderRadius: 12,
     backgroundColor: PP.paperDeep, alignItems: 'center', justifyContent: 'center',
   },
   rowIndexText: { ...PP_LABEL, fontSize: 11, color: PP.inkMuted },
   rowLabel: { ...t.bodyStrong, color: PP.ink, fontSize: 15, flex: 1 },
-  grip: { paddingVertical: 14, paddingLeft: 16, paddingRight: 4 },
+  rowLabelHidden: { color: PP.inkMuted },
+  eyeBtn: { paddingVertical: 10, paddingHorizontal: 6, width: 34, alignItems: 'center' },
+  grip: { paddingVertical: 14, paddingLeft: 8, paddingRight: 4 },
   footer: {
     flexDirection: 'row', alignItems: 'center', gap: space.md, marginTop: space.lg,
   },

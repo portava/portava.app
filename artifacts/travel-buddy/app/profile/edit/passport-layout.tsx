@@ -1,17 +1,18 @@
 /**
  * Passport Layout — Edit Profile & Settings sub-page.
  *
- * Inline (non-modal) drag-to-reorder of the owner's passport sections. Row /
- * PanResponder logic is duplicated from PassportSectionReorderSheet (that sheet
- * is untouched and keeps working). Saves via updateMyProfile({ passportSectionOrder }):
- * canonical order persists null. All five sections are draggable — passportSections.ts
- * marks none as required/fixed.
+ * Inline (non-modal) drag-to-reorder of the owner's passport sections, with
+ * per-section visibility toggles (eye / eye-off). Row / PanResponder logic is
+ * duplicated from PassportSectionReorderSheet (that sheet is untouched and
+ * keeps working). Saves via updateMyProfile({ passportSectionOrder,
+ * passportHiddenSections }): canonical order / empty hidden set persists null.
+ * The 'identity' row never shows an eye icon — it cannot be hidden.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, Animated, PanResponder, ActivityIndicator,
 } from 'react-native';
-import { GripVertical, RotateCcw } from 'lucide-react-native';
+import { GripVertical, RotateCcw, Eye, EyeOff } from 'lucide-react-native';
 import {
   SettingsScreen, SettingsSection, SaveBar, useUnsavedGuard, useSavedThenBack, type SaveState,
 } from '../../../src/components/settings/SettingsUI';
@@ -21,6 +22,7 @@ import { getMyProfile, updateMyProfile } from '../../../src/services/profile';
 import { resolveProfileSaveOutcome } from '../../../src/services/profileSaveFlow';
 import {
   CANONICAL_SECTION_ORDER, SECTION_LABELS, isCanonicalOrder, resolveSectionOrder,
+  NON_HIDEABLE_SECTIONS, resolveHiddenSections,
   type PassportSectionKey,
 } from '../../../src/components/passport/passportSections';
 
@@ -30,21 +32,29 @@ function ordersEqual(a: PassportSectionKey[], b: PassportSectionKey[]): boolean 
   return a.length === b.length && a.every((k, i) => k === b[i]);
 }
 
+function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
+  if (a.size !== b.size) return false;
+  for (const v of a) if (!b.has(v)) return false;
+  return true;
+}
+
 export default function PassportLayoutScreen() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [baseline, setBaseline] = useState<PassportSectionKey[]>(() => [...CANONICAL_SECTION_ORDER]);
   const [order, setOrder] = useState<PassportSectionKey[]>(() => [...CANONICAL_SECTION_ORDER]);
+  const [baselineHidden, setBaselineHidden] = useState<Set<PassportSectionKey>>(() => new Set());
+  const [hidden, setHidden] = useState<Set<PassportSectionKey>>(() => new Set());
   const [dragKey, setDragKey] = useState<PassportSectionKey | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const savedThenBack = useSavedThenBack(setSaveState);
   const [saveError, setSaveError] = useState<string | null>(null);
   const dragY = useRef(new Animated.Value(0)).current;
 
-  const dirty = !ordersEqual(order, baseline);
+  const dirty = !ordersEqual(order, baseline) || !setsEqual(hidden, baselineHidden);
   useUnsavedGuard(dirty);
 
-  // Load initial order via getMyProfile.
+  // Load initial order and hidden sections via getMyProfile.
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -53,8 +63,11 @@ export default function PassportLayoutScreen() {
       setLoading(false);
       if (res.ok && res.data) {
         const resolved = resolveSectionOrder(res.data.passportSectionOrder);
+        const resolvedHidden = resolveHiddenSections(res.data.passportHiddenSections);
         setBaseline(resolved);
         setOrder(resolved);
+        setBaselineHidden(resolvedHidden);
+        setHidden(resolvedHidden);
       } else {
         setLoadError(res.message ?? 'Could not load your passport layout');
       }
@@ -112,8 +125,19 @@ export default function PassportLayoutScreen() {
       onPanResponderTerminate: endDrag,
     }), [beginDrag, endDrag, dragY]);
 
+  const toggleHidden = useCallback((key: PassportSectionKey) => {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+    if (saveState !== 'idle') setSaveState('idle');
+  }, [saveState]);
+
   const handleReset = useCallback(() => {
     setOrder([...CANONICAL_SECTION_ORDER]);
+    setHidden(new Set());
     if (saveState !== 'idle') setSaveState('idle');
   }, [saveState]);
 
@@ -121,7 +145,11 @@ export default function PassportLayoutScreen() {
     setSaveState('saving');
     setSaveError(null);
     const canonical = isCanonicalOrder(order);
-    const res = await updateMyProfile({ passportSectionOrder: canonical ? null : order });
+    const hiddenArr = Array.from(hidden) as PassportSectionKey[];
+    const res = await updateMyProfile({
+      passportSectionOrder: canonical ? null : order,
+      passportHiddenSections: hiddenArr.length === 0 ? null : hiddenArr,
+    });
     const outcome = resolveProfileSaveOutcome(res, 'Please try again.');
     if (outcome.kind === 'error') {
       setSaveState('error');
@@ -131,8 +159,9 @@ export default function PassportLayoutScreen() {
     // Reset dirty baseline; show 'saved' briefly, then auto-return to the
     // previous screen (universal post-save behavior).
     setBaseline(order);
+    setBaselineHidden(hidden);
     savedThenBack();
-  }, [order]);
+  }, [order, hidden]);
 
   if (loading) {
     return (
@@ -150,20 +179,25 @@ export default function PassportLayoutScreen() {
     );
   }
 
+  const isAtDefault = isCanonicalOrder(order) && hidden.size === 0;
+
   return (
     <SettingsScreen title="Passport Layout" subtitle="Arrange your passport sections">
       <SettingsSection
-        title="Section Order"
-        subtitle="Drag sections into the order that tells your travel story. Visitors always see the classic layout."
+        title="Section Order & Visibility"
+        subtitle="Drag sections into the order that tells your travel story. Tap the eye to show or hide a section. Visitors always see the classic layout."
       >
         <View style={{ height: ROW_HEIGHT * order.length }}>
           {order.map((key, index) => {
             const isDragging = dragKey === key;
+            const isHidden = hidden.has(key);
+            const canHide = !NON_HIDEABLE_SECTIONS.includes(key);
             return (
               <Animated.View
                 key={key}
                 style={[
                   sx.row,
+                  isHidden && sx.rowHidden,
                   { top: index * ROW_HEIGHT },
                   isDragging && {
                     transform: [{ translateY: dragY }],
@@ -176,7 +210,24 @@ export default function PassportLayoutScreen() {
                 <View style={sx.rowIndex}>
                   <Text style={sx.rowIndexText}>{index + 1}</Text>
                 </View>
-                <Text style={sx.rowLabel}>{SECTION_LABELS[key]}</Text>
+                <Text style={[sx.rowLabel, isHidden && sx.rowLabelHidden]}>
+                  {SECTION_LABELS[key]}{isHidden ? ' (Hidden)' : ''}
+                </Text>
+                {canHide ? (
+                  <Pressable
+                    style={sx.eyeBtn}
+                    onPress={() => toggleHidden(key)}
+                    accessibilityLabel={isHidden ? `Show ${SECTION_LABELS[key]}` : `Hide ${SECTION_LABELS[key]}`}
+                    accessibilityRole="button"
+                    hitSlop={8}
+                  >
+                    {isHidden
+                      ? <EyeOff size={18} color={PP.inkMuted} />
+                      : <Eye size={18} color={PP.inkMuted} />}
+                  </Pressable>
+                ) : (
+                  <View style={sx.eyeBtn} />
+                )}
                 <View
                   {...makeResponder(key).panHandlers}
                   style={sx.grip}
@@ -194,12 +245,19 @@ export default function PassportLayoutScreen() {
       <View style={sx.previewBlock}>
         <Text style={sx.previewLabel}>Preview</Text>
         <View style={sx.previewStrip}>
-          {order.map((key, index) => (
-            <View key={key} style={sx.pill}>
-              <View style={sx.pillNum}><Text style={sx.pillNumText}>{index + 1}</Text></View>
-              <Text style={sx.pillText} numberOfLines={1}>{SECTION_LABELS[key]}</Text>
-            </View>
-          ))}
+          {order.map((key, index) => {
+            const isHidden = hidden.has(key);
+            return (
+              <View key={key} style={[sx.pill, isHidden && sx.pillHidden]}>
+                <View style={[sx.pillNum, isHidden && sx.pillNumHidden]}>
+                  <Text style={sx.pillNumText}>{index + 1}</Text>
+                </View>
+                <Text style={[sx.pillText, isHidden && sx.pillTextHidden]} numberOfLines={1}>
+                  {SECTION_LABELS[key]}
+                </Text>
+              </View>
+            );
+          })}
         </View>
       </View>
 
@@ -207,7 +265,7 @@ export default function PassportLayoutScreen() {
       <Pressable
         style={sx.resetBtn}
         onPress={handleReset}
-        disabled={saveState === 'saving' || isCanonicalOrder(order)}
+        disabled={saveState === 'saving' || isAtDefault}
         accessibilityRole="button"
         accessibilityLabel="Reset to classic layout"
       >
@@ -237,13 +295,16 @@ const sx = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: PP.borderLight,
     backgroundColor: '#FFFDF7',
   },
+  rowHidden: { opacity: 0.45 },
   rowIndex: {
     width: 24, height: 24, borderRadius: 12,
     backgroundColor: PP.paperDeep, alignItems: 'center', justifyContent: 'center',
   },
   rowIndexText: { ...PP_LABEL, fontSize: 11, color: PP.inkMuted },
   rowLabel: { ...t.bodyStrong, color: PP.ink, fontSize: 15, flex: 1 },
-  grip: { paddingVertical: 14, paddingLeft: 16, paddingRight: 4 },
+  rowLabelHidden: { color: PP.inkMuted },
+  eyeBtn: { paddingVertical: 10, paddingHorizontal: 6, width: 34, alignItems: 'center' },
+  grip: { paddingVertical: 14, paddingLeft: 8, paddingRight: 4 },
 
   previewBlock: { gap: space.sm },
   previewLabel: {
@@ -257,12 +318,15 @@ const sx = StyleSheet.create({
     borderWidth: 1, borderColor: PP.borderLight,
     paddingLeft: 5, paddingRight: space.md, paddingVertical: 4,
   },
+  pillHidden: { opacity: 0.4 },
   pillNum: {
     width: 18, height: 18, borderRadius: 9,
     backgroundColor: PP.ink, alignItems: 'center', justifyContent: 'center',
   },
+  pillNumHidden: { backgroundColor: PP.inkMuted },
   pillNumText: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: PP.paper },
   pillText: { ...t.small, color: PP.ink, fontSize: 12, fontWeight: '600' },
+  pillTextHidden: { color: PP.inkMuted },
 
   resetBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,

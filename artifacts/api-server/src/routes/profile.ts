@@ -74,7 +74,7 @@ function validateUsername(u: string): { valid: boolean; reason?: string } {
 }
 
 const PROFILE_COLUMNS =
-  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language, verification_level, id_verified_at, selfie_verified_at, home_country_verified_at, safety_flags_count, host_verified_at, buddy_verified_at, passport_section_order, passport_tab_order, date_of_birth";
+  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language, verification_level, id_verified_at, selfie_verified_at, home_country_verified_at, safety_flags_count, host_verified_at, buddy_verified_at, passport_section_order, passport_tab_order, passport_hidden_sections, date_of_birth";
 
 /**
  * Fallback column list for older DB schemas that may not have the full set of columns
@@ -141,6 +141,7 @@ function mapProfile(r: any) {
     preferredLanguage: r.preferred_language ?? null,
     passportSectionOrder: r.passport_section_order ?? null,
     passportTabOrder: r.passport_tab_order ?? null,
+    passportHiddenSections: r.passport_hidden_sections ?? null,
     verificationLevel: r.verification_level ?? null,
     idVerifiedAt: r.id_verified_at ?? null,
     selfieVerifiedAt: r.selfie_verified_at ?? null,
@@ -377,6 +378,10 @@ const patchProfileSchema = z.object({
     .length(5)
     .nullable()
     .optional(),
+  passportHiddenSections: z
+    .array(z.enum(["stamps", "highlights", "tabs", "dossier"]))
+    .nullable()
+    .optional(),
   isPrivate: z.boolean().optional(),
 });
 
@@ -469,6 +474,15 @@ router.patch("/me/profile", async (req, res) => {
       }
     }
     row.passport_tab_order = p.passportTabOrder;
+  }
+  if (p.passportHiddenSections !== undefined) {
+    // Persist null when the array is empty (no sections hidden) to keep the
+    // column tidy.  The Zod schema already restricts values to the four
+    // hideable section keys, so no additional validation is needed here.
+    row.passport_hidden_sections =
+      p.passportHiddenSections && p.passportHiddenSections.length > 0
+        ? p.passportHiddenSections
+        : null;
   }
   if (p.tagPermission !== undefined) row.tag_permission = p.tagPermission;
   if (p.isPrivate !== undefined) row.is_private = p.isPrivate;
@@ -594,6 +608,7 @@ router.patch("/me/profile", async (req, res) => {
       preferred_language: "preferredLanguage",
       passport_section_order: "passportSectionOrder",
       passport_tab_order: "passportTabOrder",
+      passport_hidden_sections: "passportHiddenSections",
     };
     const safeRow = { ...row };
     const stripped: string[] = [];

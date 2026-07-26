@@ -48,3 +48,25 @@ export function resolveSectionOrder(stored: string[] | null | undefined): Passpo
 export function isCanonicalOrder(order: PassportSectionKey[]): boolean {
   return order.every((k, i) => k === CANONICAL_SECTION_ORDER[i]);
 }
+
+/**
+ * The 'identity' card cannot be hidden — the owner always sees their own identity section.
+ */
+export const NON_HIDEABLE_SECTIONS: PassportSectionKey[] = ['identity'];
+
+/**
+ * Sanitize stored hidden-section data: returns a Set of valid, hideable section keys.
+ * Unknown keys and non-hideable keys (identity) are silently dropped.
+ * Returns an empty Set for null/absent input.
+ */
+export function resolveHiddenSections(stored: string[] | null | undefined): Set<PassportSectionKey> {
+  if (!stored || stored.length === 0) return new Set();
+  const hideable = CANONICAL_SECTION_ORDER.filter((k) => !NON_HIDEABLE_SECTIONS.includes(k));
+  const out = new Set<PassportSectionKey>();
+  for (const k of stored) {
+    if ((hideable as string[]).includes(k)) {
+      out.add(k as PassportSectionKey);
+    }
+  }
+  return out;
+}

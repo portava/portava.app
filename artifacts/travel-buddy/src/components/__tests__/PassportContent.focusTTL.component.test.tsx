@@ -196,6 +196,7 @@ jest.mock('../../lib/availabilityChip', () => ({
 // their modules transitively import RN components that need native modules.
 jest.mock('../passport/passportSections', () => ({
   resolveSectionOrder: () => [],
+  resolveHiddenSections: () => new Set(),
 }));
 
 // NOTE: intentionally exhaustive — see passportSections note above.

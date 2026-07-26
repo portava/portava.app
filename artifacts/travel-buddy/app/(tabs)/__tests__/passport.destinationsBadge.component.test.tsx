@@ -150,6 +150,7 @@ jest.mock('../../../src/lib/availabilityChip', () => ({
 // native modules.
 jest.mock('../../../src/components/passport/passportSections', () => ({
   resolveSectionOrder: () => ['tabs'],
+  resolveHiddenSections: () => new Set(),
 }));
 
 // Expose only the 'destinations' tab so we can assert its label in isolation.

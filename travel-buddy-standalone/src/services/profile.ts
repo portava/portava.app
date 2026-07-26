@@ -95,6 +95,8 @@ export interface UpdateProfileInput {
   passportSectionOrder?: string[] | null;
   /** Permutation of the five passport tab keys; null resets to canonical order. */
   passportTabOrder?: string[] | null;
+  /** Hidden section keys for the owner's passport; null clears all hidden sections. */
+  passportHiddenSections?: string[] | null;
 }
 
 export async function updateMyProfile(patch: UpdateProfileInput): Promise<ProfileResult<OwnProfile>> {
