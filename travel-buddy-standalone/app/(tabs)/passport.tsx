@@ -23,7 +23,7 @@ import { SuggestedMemoryModal } from '../../src/components/SuggestedMemoryModal'
 import type { PassportMemory, PassportStats } from '../../src/services/passportStamps';
 import { useSession } from '../../src/context/SessionContext';
 import { listMyTrips } from '../../src/services/trips';
-import { OwnerActionMenu } from '../../src/components/OwnerActionMenu';
+import { PassportOwnerMenuSheet } from '../../src/components/passport/PassportOwnerMenuSheet';
 import { CreateHubSheet } from '../../src/components/create/CreateHubSheet';
 import { ProfileCompletionCard } from '../../src/components/ProfileCompletionCard';
 import { PassportShareCard } from '../../src/components/PassportShareCard';
@@ -292,6 +292,7 @@ export default function PassportScreen() {
         onArrangeSections={() => setReorderOpen(true)}
         tabOrder={tabOrderOverride ?? resolveTabOrder(profile.passportTabOrder)}
         onArrangeTabs={() => setTabReorderOpen(true)}
+        onChangeAvatar={handleChangeAvatarViaCamera}
       />
 
       {/* ── Modals ── */}
@@ -353,6 +354,7 @@ function PassportContent({
   onHighlightRingPress, onNewHighlightPress, onDirectAddHighlight, onHighlightBubblePress, onAddPostcard,
   stampsViewOpen, setStampsViewOpen, verificationLevels, noSafetyFlags, cardRef, share, sharing,
   sectionOrder, onArrangeSections, tabOrder, onArrangeTabs,
+  onChangeAvatar,
 }: {
   profile: OwnProfile;
   postcards: PassportPostcard[];
@@ -400,6 +402,8 @@ function PassportContent({
   onArrangeSections: () => void;
   tabOrder: PassportTabKey[];
   onArrangeTabs: () => void;
+  /** Direct avatar/photo picker — skips the Alert chooser. */
+  onChangeAvatar?: () => void;
 }) {
   const verifiedStamps = (stamps ?? []).filter((st) => !st.locked).length;
   const destinationCount = useMemo(
@@ -786,17 +790,19 @@ function PassportContent({
         />
       </View>
 
-      {/* Owner action menu */}
-      <OwnerActionMenu
+      {/* Owner action menu — five-section scrollable sheet */}
+      <PassportOwnerMenuSheet
         visible={menuOpen}
         onClose={() => setMenuOpen(false)}
         username={profile.username}
         onEditProfile={() => { setMenuOpen(false); handleEditProfile(); }}
-        onSettings={() => { setMenuOpen(false); router.push('/profile/edit' as any); }}
-        onViewAsPublic={handleViewAsPublic}
-        onArrangeSections={onArrangeSections}
-        onArrangeTabs={onArrangeTabs}
-        onCreatePress={() => setCreateHubOpen(true)}
+        onChangeAvatar={() => { setMenuOpen(false); onChangeAvatar?.(); }}
+        onChangeCover={() => { setMenuOpen(false); handleChangeCover(); }}
+        onArrangeTabs={() => { setMenuOpen(false); onArrangeTabs(); }}
+        onManageHighlights={() => { setMenuOpen(false); onDirectAddHighlight?.(); }}
+        onViewAsPublic={() => { setMenuOpen(false); handleViewAsPublic(); }}
+        onArrangeSections={() => { setMenuOpen(false); onArrangeSections(); }}
+        onSwitchTab={(tabKey) => { setMenuOpen(false); setTab(tabKey as PassportTabKey); }}
       />
 
       {/* Create hub sheet — opened from the owner action menu's Create entry */}

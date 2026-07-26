@@ -183,6 +183,8 @@ jest.mock('../../../src/components/SuggestedMemoryModal',  () => ({ SuggestedMem
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/OwnerActionMenu',       () => ({ OwnerActionMenu:       Null }));
 // NOTE: intentional stub — not under test here.
+jest.mock('../../../src/components/passport/PassportOwnerMenuSheet', () => ({ PassportOwnerMenuSheet: Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ProfileCompletionCard', () => ({ ProfileCompletionCard: Null }));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PassportShareCard',     () => ({ PassportShareCard:     Null }));
