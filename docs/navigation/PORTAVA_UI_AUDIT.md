@@ -306,3 +306,38 @@ The target architecture is documented in full in [`PORTAVA_INFORMATION_ARCHITECT
 | `app/discover.tsx` | Audit and remove if dead; redirect shim if still used |
 | `app/profile/edit/index.tsx` | Group settings into sections for legibility |
 | `src/navigation/portavaRoutes.ts` | Update entries as routes change |
+
+---
+
+## 9. Route Registry Check
+
+`src/navigation/portavaRoutes.ts` is the single authoritative registry of every primary and significant nested route in the app.
+
+A lightweight CI script at `scripts/check-route-registry.mjs` keeps the registry in sync with the file system automatically. It:
+
+1. Enumerates every `*.tsx` file under `app/` (excluding `__tests__/`, `_layout.tsx`, `+not-found.tsx`, and platform-specific siblings like `*.web.tsx`).
+2. Normalises each file path to the Expo-Router path key used in `PORTAVA_ROUTES`.
+3. Exits 1 — failing CI — for any screen file not represented in the registry.
+
+**Run manually:**
+
+```sh
+pnpm --filter @workspace/travel-buddy run lint:routes
+```
+
+**Wired into CI** via the `check-route-registry` validation workflow.
+
+### Conventions for new routes
+
+When adding a screen file under `app/`, also add a `PortavaRouteDefinition` entry to `PORTAVA_ROUTES` with:
+
+| Field | Guidance |
+|-------|----------|
+| `key` | Stable, hyphenated identifier — never re-use or rename (deep-links depend on it) |
+| `path` | Exact Expo-Router path relative to `app/`, using `[param]` for dynamic segments and `(group)` for route groups |
+| `title` | Human-readable screen title matching `options.title` in the layout |
+| `parent` | Key of the enclosing tab or logical owner, or `null` for top-level routes |
+| `icon` | Lucide icon name, or `null` |
+| `requiresAuth` | `true` if a valid session is required |
+| `featureFlag` | Key of any feature flag that gates the screen, or omit if ungated |
+| `ownerOnly` / `adminOnly` | Set appropriately for ownership- or role-gated screens |
