@@ -62,6 +62,19 @@ export interface PortavaRouteDefinition {
 
 export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
 
+  // ── Root entry gate ───────────────────────────────────────────────────────
+
+  {
+    key: 'root-entry',
+    path: 'index',
+    title: 'Entry Gate',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+    // Renders a spinner while session resolves, then redirects to (auth)/sign-in
+    // or (tabs)/index.  Not a real screen — just the routing gate.
+  },
+
   // ── Auth ─────────────────────────────────────────────────────────────────
 
   {
@@ -236,6 +249,16 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     icon: null,
     requiresAuth: true,
     ownerOnly: true,
+  },
+  {
+    key: 'explore-portava',
+    path: 'explore-portava',
+    title: 'Explore Portava',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+    // App-wide directory screen — categorised index of every major system.
+    // Accessible from the Passport owner menu and Settings.
   },
 
   // ── Profile ───────────────────────────────────────────────────────────────
