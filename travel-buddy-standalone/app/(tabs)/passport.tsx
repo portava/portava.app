@@ -47,6 +47,7 @@ import { PassportStampsFullView } from '../../src/components/passport/PassportSt
 import { PassportHighlightsStrip } from '../../src/components/passport/PassportHighlightsStrip';
 import { PassportAboutSection } from '../../src/components/passport/PassportAboutSection';
 import { PassportSafetySection } from '../../src/components/passport/PassportSafetySection';
+import { PassportTravelInfoSection } from '../../src/components/passport/PassportTravelInfoSection';
 import { PP, PP_LABEL } from '../../src/theme/passportTokens';
 import { AppHeader } from '../../src/components/ui/AppHeader';
 import { PassportSectionReorderSheet } from '../../src/components/passport/PassportSectionReorderSheet';
@@ -595,6 +596,7 @@ function PassportContent({
         isOwner
         onPrivacySettings={() => openSettings('safety')}
       />
+      <PassportTravelInfoSection trips={trips} />
       <View style={{ height: 24 }} />
     </>
   );
