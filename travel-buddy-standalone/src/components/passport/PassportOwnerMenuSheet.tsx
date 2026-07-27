@@ -299,8 +299,8 @@ const SECTIONS: Section[] = [
         label: 'Follow Requests',
         Icon: UserCheck,
         iconColor: '#2563EB',
-        live: false,
-        action: (_p) => {},
+        live: true,
+        action: (p) => { close(p); router.push('/follow-requests' as any); },
       },
       {
         key: 'blocked',
