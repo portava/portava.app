@@ -306,6 +306,21 @@ function Pulse() {
 
   const Header = (
     <View>
+      {/* AppHeader lives inside ListHeaderComponent so it scrolls with the feed
+          (collapsing-header design). A compact overlay bar at root takes the
+          "fixed" role once the large header scrolls off screen. */}
+      <AppHeader
+        variant="primary"
+        title="Pulse"
+        rightActions={[
+          { icon: <NotificationBell />, accessibilityLabel: 'Notifications' },
+          { icon: <MessageCircle size={22} color={color.ink} />, onPress: () => router.push('/(tabs)/messages' as any), accessibilityLabel: 'Messages' },
+          { icon: <PlusCircle size={22} color={color.ink} />, onPress: () => router.push('/create' as any), accessibilityLabel: 'Create post' },
+        ]}
+        overflowActions={[
+          { label: filterCount > 0 ? `Filters (${filterCount})` : 'Filters', onPress: () => setSheetOpen(true) },
+        ]}
+      />
       {/* Live Pulse smart rail — above all other sections */}
       <LivePulseRail pulse={livePulse} />
 
@@ -490,18 +505,6 @@ function Pulse() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <AppHeader
-        variant="primary"
-        title="Pulse"
-        rightActions={[
-          { icon: <NotificationBell />, accessibilityLabel: 'Notifications' },
-          { icon: <MessageCircle size={22} color={color.ink} />, onPress: () => router.push('/(tabs)/messages' as any), accessibilityLabel: 'Messages' },
-          { icon: <PlusCircle size={22} color={color.ink} />, onPress: () => router.push('/create' as any), accessibilityLabel: 'Create post' },
-        ]}
-        overflowActions={[
-          { label: filterCount > 0 ? `Filters (${filterCount})` : 'Filters', onPress: () => setSheetOpen(true) },
-        ]}
-      />
       <FlatList
         data={feed}
         keyExtractor={(it) => it.id}

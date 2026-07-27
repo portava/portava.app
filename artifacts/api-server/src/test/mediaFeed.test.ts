@@ -228,6 +228,13 @@ function makeClient(state: FakeState = {}) {
 function makeApp() {
   const app = express();
   app.use(express.json());
+  // Shim req.log so fire-and-forget handlers (e.g. ranking snapshot .catch)
+  // don't throw "Cannot read properties of undefined (reading 'warn')" after
+  // the response is sent.  All pino log levels become silent no-ops in tests.
+  app.use((req: any, _res: any, next: any) => {
+    req.log = { trace: () => {}, debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, fatal: () => {} };
+    next();
+  });
   app.use(mediaFeedRouter);
   return app;
 }
@@ -1051,5 +1058,123 @@ describe("GET /media/:id (single item)", () => {
     _setTestClient(client, true);
     const { status } = await jsonFetch(base, `/media/not-a-uuid`);
     assert.equal(status, 400);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ── I. Feed freshness after upload (write→read cycle) ────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// After a creator uploads a new post the feed must return it on the very next
+// request.  Because makeClient() reads from the *same* state object reference
+// on every call, pushing a row into state.posts is equivalent to a DB insert:
+// the next GET /media/feed query sees it immediately.  Any in-process response
+// cache that held a stale snapshot would cause these tests to fail.
+//
+// Sub-tests:
+//   I-A  for_you feed (viewer's discovery feed) — new post visible immediately
+//   I-B  following feed (follower's feed) — new post visible immediately after
+//        the creator uploads
+
+describe("GET /media/feed — freshness after upload (write→read cycle)", () => {
+  let server: http.Server;
+  let base: string;
+
+  const NEW_POST = "99999999-0000-4000-a000-000000000099";
+
+  const uploadFlags = [
+    { flag: "MEDIA_FOR_YOU_ENABLED",   enabled: true },
+    { flag: "MEDIA_FOLLOWING_ENABLED", enabled: true },
+    { flag: "MEDIA_RANKING_ENABLED",   enabled: true },
+  ];
+
+  before(async () => {
+    const app = makeApp();
+    ({ server, base } = await startServer(app));
+  });
+
+  after(() => { server.close(); });
+
+  // ── I-A. Creator's for_you feed ───────────────────────────────────────────
+
+  it("for_you feed returns new post immediately after upload — no stale snapshot served", async () => {
+    // Mutable state: start with no posts so we can confirm the before/after
+    const state: FakeState = {
+      posts: [],
+      featureFlags: uploadFlags,
+      profiles: [makeProfile({ id: CREATOR_A })],
+      userFollows: [],
+    };
+    // makeClient reads from the *same* state reference on every DB call,
+    // so pushing to state.posts simulates a DB insert visible to subsequent reads.
+    const client = makeClient(state);
+    _setTestClient(client, true);
+
+    // Before upload: feed must be empty
+    const before = await jsonFetch(base, "/media/feed?mode=fullscreen&feedType=for_you&limit=10");
+    assert.equal(before.status, 200, `pre-upload feed: expected 200, got ${before.status}`);
+    assert.equal(
+      before.body.items.length,
+      0,
+      "feed must return no items before the upload",
+    );
+
+    // Simulate upload: creator inserts a new post into the DB.
+    // has_video:true is required — the fullscreen feed is video-first and
+    // filters .eq("has_video", true) at the DB level.
+    state.posts!.push(
+      makePost({ id: NEW_POST, author_id: CREATOR_A, created_at: new Date().toISOString(), has_video: true }),
+    );
+
+    // After upload: feed must include the new post on the very next request
+    const after = await jsonFetch(base, "/media/feed?mode=fullscreen&feedType=for_you&limit=10");
+    assert.equal(after.status, 200, `post-upload feed: expected 200, got ${after.status}`);
+    const ids: string[] = after.body.items.map((i: any) => i.id);
+    assert.ok(
+      ids.includes(NEW_POST),
+      `New post ${NEW_POST} must appear in for_you feed immediately after upload; ` +
+        `got: [${ids.join(", ")}]`,
+    );
+  });
+
+  // ── I-B. Follower's following feed ────────────────────────────────────────
+
+  it("follower's following feed reflects creator's new post immediately after upload", async () => {
+    // VIEWER_ID is the follower; CREATOR_A is the creator.
+    // Start with no posts from CREATOR_A.
+    const state: FakeState = {
+      posts: [],
+      featureFlags: uploadFlags,
+      profiles: [makeProfile({ id: CREATOR_A })],
+      // Viewer follows CREATOR_A
+      userFollows: [{ follower_id: VIEWER_ID, following_id: CREATOR_A }],
+    };
+    const client = makeClient(state);
+    _setTestClient(client, true);
+
+    // Before upload: follower's feed is empty
+    const before = await jsonFetch(base, "/media/feed?mode=fullscreen&feedType=following&limit=10");
+    assert.equal(before.status, 200, `pre-upload following feed: expected 200, got ${before.status}`);
+    assert.equal(
+      before.body.items.length,
+      0,
+      "follower's following feed must be empty before creator uploads",
+    );
+
+    // Simulate CREATOR_A uploading a new public post.
+    // has_video:true is required — the fullscreen feed filters .eq("has_video", true).
+    state.posts!.push(
+      makePost({ id: NEW_POST, author_id: CREATOR_A, created_at: new Date().toISOString(), has_video: true }),
+    );
+
+    // After upload: follower's feed must surface the creator's new post
+    const after = await jsonFetch(base, "/media/feed?mode=fullscreen&feedType=following&limit=10");
+    assert.equal(after.status, 200, `post-upload following feed: expected 200, got ${after.status}`);
+    const ids: string[] = after.body.items.map((i: any) => i.id);
+    assert.ok(
+      ids.includes(NEW_POST),
+      `New post ${NEW_POST} must appear in follower's following feed immediately after creator uploads; ` +
+        `got: [${ids.join(", ")}]`,
+    );
   });
 });
