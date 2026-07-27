@@ -8,7 +8,7 @@ export const IMAGE_MAX_SIZE_BYTES = 10_000_000; // 10 MB
 
 export const VIDEO_MAX_DURATION_SECONDS = {
   highlight: 10,
-  memory: 30,
+  memory: 45,
   postcard: 60,
   event: 120,
   trip: 120,

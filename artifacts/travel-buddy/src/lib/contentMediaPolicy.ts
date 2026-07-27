@@ -119,7 +119,7 @@ export const CONTENT_MEDIA_POLICIES: Record<ContentPolicyKey, ContentMediaPolicy
     supportsGallery: true,
     supportsAltText: true,
     fallbackCategory: 'memory',
-    videoMaxDuration: 30,
+    videoMaxDuration: 45,
   },
 
   profileAvatar: {
