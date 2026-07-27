@@ -31,6 +31,13 @@ export interface PostCardProps {
   onSave?: () => void;
   onComment?: () => void;
   /**
+   * Replaces the plain caption <Text> with a pre-rendered node.
+   * Use when the caption contains rich-text spans (@mentions, #hashtags) that
+   * must be rendered through RichText rather than a bare Text element.
+   * When provided, the `caption` prop is ignored for display purposes.
+   */
+  captionNode?: React.ReactNode;
+  /**
    * Extra content rendered at the bottom of the card body.
    * Use for type-specific action rows (buttons, feedback menus, engagement bars).
    * Caller is responsible for providing a flexDirection:'row' View when needed.
@@ -59,7 +66,7 @@ const TYPE_BADGE: Record<PostCardType, { label: string; bg: string; fg: string }
 };
 
 export function PostCard({
-  type, title, caption, city, imageUrl, authorName, authorHandle, timeAgo,
+  type, title, caption, captionNode, city, imageUrl, authorName, authorHandle, timeAgo,
   likeCount, commentCount, likedByMe, savedByMe, tags,
   onPress, onLike, onSave, onComment, actionsSlot, cardStyle, authorRow,
 }: PostCardProps) {
@@ -105,10 +112,10 @@ export function PostCard({
           </View>
         ) : null)}
 
-        {/* Post text */}
-        {displayText ? (
+        {/* Post text — captionNode takes priority for rich-text rendering */}
+        {captionNode ?? (displayText ? (
           <Text style={styles.text} numberOfLines={4}>{displayText}</Text>
-        ) : null}
+        ) : null)}
 
         {/* Tags */}
         {tags && tags.length > 0 ? (

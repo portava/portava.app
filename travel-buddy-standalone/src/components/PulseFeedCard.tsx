@@ -473,7 +473,15 @@ function GemCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Pulse
       id={item.id}
       type="hidden_gem"
       title={item.title ?? null}
-      caption={item.blurb ?? null}
+      captionNode={item.blurb ? (
+        <RichText
+          content={item.blurb}
+          tags={item.spanTags}
+          hashtagUsages={item.spanHashtags}
+          style={{ fontSize: 14, lineHeight: 20, color: '#1a1a1a' }}
+          numberOfLines={4}
+        />
+      ) : undefined}
       city={item.city ?? null}
       tags={item.tags}
       savedByMe={item.savedByMe ?? false}
