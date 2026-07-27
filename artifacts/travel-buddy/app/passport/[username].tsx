@@ -36,6 +36,7 @@ import type { PublicProfile } from '../../src/types/models';
 import { PublicStampShowcaseSection } from '../../src/components/stamps/PublicStampShowcaseSection';
 import { PassportIdentityCard, PassportStatsRow } from '../../src/components/passport/PassportIdentityCard';
 import { PassportDivider } from '../../src/components/passport/PassportDivider';
+import { CircleSection } from '../../src/components/profile/CircleSection';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 
@@ -346,6 +347,9 @@ export default function PassportDeepLinkScreen() {
           }}
           iconOnly={statsIconOnly}
         />
+
+        {/* ── Circle — mutual connections (visitor only) ── */}
+        {!isOwner && <CircleSection targetUserId={profile.id} />}
 
         {/* ── Featured stamps showcase (public, read-only) ── */}
         {isFlagEnabled('stamp_showcase_enabled') && showcaseItems && showcaseItems.length > 0 && (

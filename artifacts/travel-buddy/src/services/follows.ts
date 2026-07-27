@@ -306,6 +306,67 @@ export async function respondToFollowRequest(
   }
 }
 
+/* ---------- Mutual follows (people viewer follows who also follow the target) ---------- */
+
+export interface MutualFollowUser {
+  id: string;
+  handle: string | null;
+  /** display_name ?? name from profiles — ready for display */
+  displayName: string | null;
+  avatarUrl: string | null;
+}
+
+/**
+ * Returns up to 20 users that both the current viewer and the target profile follow —
+ * i.e. (viewer follows them) AND (they follow targetUserId).
+ * Queries Supabase directly. Returns [] on any error / unauthenticated.
+ */
+export async function getMutualFollows(targetUserId: string): Promise<MutualFollowUser[]> {
+  if (!isSupabaseConfigured) return [];
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return [];
+    const viewerUserId = user.id;
+    if (viewerUserId === targetUserId) return [];
+
+    // Step 1: IDs the viewer follows
+    const { data: viewerFollowing, error: e1 } = await supabase
+      .from('user_follows')
+      .select('following_id')
+      .eq('follower_id', viewerUserId);
+    if (e1 || !viewerFollowing || viewerFollowing.length === 0) return [];
+
+    const viewerFollowingIds = viewerFollowing.map((r) => r.following_id as string);
+
+    // Step 2: which of those also follow the target
+    const { data: mutualRows, error: e2 } = await supabase
+      .from('user_follows')
+      .select('follower_id')
+      .eq('following_id', targetUserId)
+      .in('follower_id', viewerFollowingIds)
+      .limit(20);
+    if (e2 || !mutualRows || mutualRows.length === 0) return [];
+
+    const mutualIds = mutualRows.map((r) => r.follower_id as string);
+
+    // Step 3: fetch profile info for those users
+    const { data: profiles, error: e3 } = await supabase
+      .from('profiles')
+      .select('id, handle, name, display_name, avatar_url')
+      .in('id', mutualIds);
+    if (e3 || !profiles) return [];
+
+    return profiles.map((p: any) => ({
+      id: p.id as string,
+      handle: (p.handle as string | null) ?? null,
+      displayName: (p.display_name as string | null) ?? (p.name as string | null) ?? null,
+      avatarUrl: (p.avatar_url as string | null) ?? null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 /* ---------- My followers list ---------- */
 
 export async function getMyFollowers(): Promise<FollowResult<FollowUser[]>> {
