@@ -16,6 +16,7 @@ import { getPendingTripInvites } from '../../src/services/trips';
 import { getMyProfile } from '../../src/services/profile';
 import { useSession } from '../../src/context/SessionContext';
 import { navBarProgress } from '../../src/hooks/useNavBarCollapse';
+import { CreateHubSheet } from '../../src/components/create/CreateHubSheet';
 
 const NAV_ITEMS = [
   { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
@@ -37,6 +38,7 @@ function DesktopSidebar({
 }) {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
+  const [hubVisible, setHubVisible] = useState(false);
 
   const sidebarItems = [...NAV_ITEMS];
 
@@ -70,10 +72,12 @@ function DesktopSidebar({
         <Text style={ds.navLabel}>Notifications</Text>
       </View>
 
-      <Pressable style={ds.composeBtn} onPress={() => router.push('/create')}>
+      <Pressable style={ds.composeBtn} onPress={() => setHubVisible(true)}>
         <Plus size={18} color={color.onInk} />
-        <Text style={ds.composeBtnText}>New Post</Text>
+        <Text style={ds.composeBtnText}>Create</Text>
       </Pressable>
+
+      <CreateHubSheet visible={hubVisible} onClose={() => setHubVisible(false)} />
     </View>
   );
 }
