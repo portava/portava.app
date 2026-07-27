@@ -183,7 +183,7 @@ export default function AvailabilityScreen() {
                   <View style={s.tripIcon}><MapPin size={16} color={color.deep} /></View>
                   <View style={{ flex: 1 }}>
                     <Text style={s.tripCity}>{w.citySlug}</Text>
-                    <Text style={s.tripMeta}>{w.startDate.slice(0, 10)} – {w.endDate.slice(0, 10)} · {w.blocks.join(', ') || 'flexible'}</Text>
+                    <Text style={s.tripMeta}>{(w.startDate ?? '').slice(0, 10)} – {(w.endDate ?? '').slice(0, 10)} · {w.blocks.join(', ') || 'flexible'}</Text>
                   </View>
                   <Pressable hitSlop={layout.hitSlop} onPress={() => removeTripWindow(w.id)}><Trash2 size={17} color={color.mute} /></Pressable>
                 </View>

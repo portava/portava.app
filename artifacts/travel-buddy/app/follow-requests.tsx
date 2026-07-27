@@ -64,7 +64,7 @@ export default function FollowRequestsScreen() {
           scrollEventThrottle={16}
           ListFooterComponent={<NavBarFiller />}
           renderItem={({ item }) => {
-            const isResponding = responding === item.requesterId;
+            const isResponding = responding === item.requestId;
             return (
               <View style={s.row}>
                 <Pressable

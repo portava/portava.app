@@ -238,12 +238,17 @@ export function PassportStatsRow({ profile, isOwner, overrideStats, onStatPress,
       .catch(() => {});
   }, [isOwner]);
 
+  // liveStats (from getPassportStats) is the authoritative source for all counts
+  // when isOwner — it includes tripCount/followersCount/followingCount as of the
+  // same fetch that returns stamp/country stats, avoiding a separate profile call.
+  // Fall back to the profile prop values (populated from /api/me/profile) in case
+  // the stats fetch hasn't resolved yet or the flag is disabled (returns 0).
   const ownStats: StatItem[] = [
-    { n: formatStatN('tripCount'      in profile ? (profile.tripCount      ?? 0) : 0), label: 'Trips',     onPress: () => onStatPress?.('Trips')     },
-    { n: formatStatN('followersCount' in profile ? (profile.followersCount ?? 0) : 0), label: 'Followers', onPress: () => onStatPress?.('Followers') },
-    { n: formatStatN('followingCount' in profile ? (profile.followingCount ?? 0) : 0), label: 'Following', onPress: () => onStatPress?.('Following') },
-    { n: liveStats?.countries ?? 0,                                                     label: 'Countries', onPress: () => onStatPress?.('Countries') },
-    { n: liveStats?.totalStamps ?? 0,                                                   label: 'Stamps',    onPress: () => onStatPress?.('Stamps')    },
+    { n: formatStatN(liveStats?.tripCount      ?? ('tripCount'      in profile ? (profile.tripCount      ?? 0) : 0)), label: 'Trips',     onPress: () => onStatPress?.('Trips')     },
+    { n: formatStatN(liveStats?.followersCount ?? ('followersCount' in profile ? (profile.followersCount ?? 0) : 0)), label: 'Followers', onPress: () => onStatPress?.('Followers') },
+    { n: formatStatN(liveStats?.followingCount ?? ('followingCount' in profile ? (profile.followingCount ?? 0) : 0)), label: 'Following', onPress: () => onStatPress?.('Following') },
+    { n: liveStats?.countries    ?? 0,                                                                                 label: 'Countries', onPress: () => onStatPress?.('Countries') },
+    { n: liveStats?.totalStamps  ?? 0,                                                                                 label: 'Stamps',    onPress: () => onStatPress?.('Stamps')    },
   ];
   const stats = overrideStats ?? ownStats;
 

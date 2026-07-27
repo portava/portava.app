@@ -276,7 +276,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
             {source === 'compass'
               ? 'Compass picks · personalised for you'
               : source === 'osm'
-              ? 'Popular spots · sign in for personalised picks'
+              ? (isAuthed ? 'Popular spots' : 'Popular spots · sign in for personalised picks')
               : 'Curated picks'}
           </Text>
         </View>

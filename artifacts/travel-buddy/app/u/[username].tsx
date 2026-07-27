@@ -28,6 +28,7 @@ import { StampsTab } from '../../src/components/StampsTab';
 import { AboutTab } from '../../src/components/AboutTab';
 import { MapTab } from '../../src/components/MapTab';
 import { getProfileByHandle, getProfileById } from '../../src/services/friends';
+import { followUser } from '../../src/services/follows';
 import { blockUser, getBlockStatus, unblockUser } from '../../src/services/blocks';
 import { muteUser, unmuteUser, getMuteStatus } from '../../src/services/mutes';
 import { saveProfile, unsaveProfile, getSaveStatus } from '../../src/services/saves';
@@ -601,6 +602,8 @@ function PublicPassportScreenNative() {
   // Tracks whether the viewer just sent a request this session so the header
   // badge can flip to "Pending" without waiting for a full data reload.
   const [requestSent, setRequestSent] = useState(false);
+  // Tracks in-flight follow-request (for the PassportHero badge loading state).
+  const [followRequestBusy, setFollowRequestBusy] = useState(false);
 
   // Social profile (friend/block/about data) loaded via the friends service
   const [social, setSocial] = useState<SocialProfile | null>(null);
@@ -608,6 +611,21 @@ function PublicPassportScreenNative() {
   const [isBlockedRelation, setIsBlockedRelation] = useState(false);
   const [iBlockedThem, setIBlockedThem] = useState(false);
   const [isMutedByMe, setIsMutedByMe] = useState(false);
+
+  // Handles the follow-request tap from both the PassportHero badge and the
+  // PrivateProfileWall button — shared so state stays in sync between them.
+  const handleSendRequest = useCallback(async () => {
+    const uid = previewProfile?.id ?? privateProfileId ?? social?.id;
+    if (!uid || followRequestBusy || requestSent || friendRequestPending) return;
+    setFollowRequestBusy(true);
+    const res = await followUser(uid);
+    setFollowRequestBusy(false);
+    if (res.ok) {
+      setRequestSent(true);
+    } else {
+      Alert.alert('Could not send request', res.message ?? 'Please try again.');
+    }
+  }, [previewProfile?.id, privateProfileId, social?.id, followRequestBusy, requestSent, friendRequestPending]);
 
   // loadSocial has no parameter — it derives userId from the getProfileByHandle response.
   // It runs on username (not profile?.id) so blocked users are detected even when
@@ -861,6 +879,8 @@ function PublicPassportScreenNative() {
               isOwner={false}
               isPrivateView={true}
               privatePendingRequest={friendRequestPending || requestSent}
+              onFollowPress={isOwn ? undefined : handleSendRequest}
+              followLoading={followRequestBusy}
             />
             {/* Lock message + CTA below the always-visible header */}
             <PrivateProfileWall

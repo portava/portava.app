@@ -1,20 +1,23 @@
 /**
  * seed-demo-city-events.ts
  *
- * Populates every seed city with 5 realistic, currently-ongoing demo events so
- * the Pulse header "What's happening right now" carousel can be exercised in
- * every city without real user activity.
+ * Populates every seed city with 5 realistic demo events spread across the
+ * next 14 hours so the Pulse tab "Happening Now" strip and time-band picker
+ * always have something to show, at any time of day.
  *
  * Events are:
- *   • starts_at  = now − 10 min  (clearly "started" from the carousel's POV)
- *   • ends_at    = now + 8 h     (stays live for a comfortable testing window)
+ *   • starts_at  = staggered — event 0 starts now−10 min (already live),
+ *                  events 1-4 start at +2 h, +5 h, +9 h, +13 h so the
+ *                  calendar stays populated morning → late night.
+ *   • ends_at    = now + 7 days for every event — a single seed run stays
+ *                  valid across full testing sessions without needing a re-run.
  *   • state      = 'open'        (picked up by GET /api/events?state=open)
  *   • visibility = 'public'
  *   • show_exact_location = true (coords returned to every viewer)
- *   • source     = 'demo_seed'   (easy identification / cleanup)
+ *   • tags       = ['demo', 'demo_seed', <category>]
  *
  * The script is fully idempotent — re-running it UPDATES starts_at / ends_at
- * so events are always "live" for 8 hours after the last run.
+ * so the time window is always anchored to "now" at execution time.
  *
  * Usage (from artifacts/api-server):
  *   node --env-file-if-exists=.env --import tsx/esm src/scripts/seed-demo-city-events.ts
@@ -49,9 +52,24 @@ function uuidv5(name: string): string {
 }
 
 // ── Timestamps (recomputed every run → always fresh) ─────────────────────────
-const now      = new Date();
-const startsAt = new Date(now.getTime() - 10 * 60 * 1000).toISOString();  // now − 10 min
-const endsAt   = new Date(now.getTime() + 8  * 60 * 60 * 1000).toISOString(); // now + 8 h
+const now = new Date();
+
+// Five staggered start offsets so events span morning → late night:
+//   slot 0: already live (now − 10 min)  — shows in "Happening Now"
+//   slot 1: starting in 2 h              — "starting soon" peak actionability
+//   slot 2: starting in 5 h              — afternoon window
+//   slot 3: starting in 9 h             — evening window
+//   slot 4: starting in 13 h             — late-night window
+const START_OFFSETS_MS = [
+  -10 * 60_000,         // −10 min
+   2 * 3_600_000,       // +2 h
+   5 * 3_600_000,       // +5 h
+   9 * 3_600_000,       // +9 h
+  13 * 3_600_000,       // +13 h
+];
+
+// ends_at 7 days out — a single seed run stays valid for a full testing week.
+const endsAt = new Date(now.getTime() + 7 * 24 * 3_600_000).toISOString();
 
 // ── Seed cities (matches popularCities.ts exactly) ───────────────────────────
 const CITIES = [
@@ -222,9 +240,12 @@ async function upsertRows(table: string, rows: any[]) {
 
 async function main() {
   console.log(`\n🌍 seed-demo-city-events — ${DRY_RUN ? "DRY RUN" : "LIVE"}`);
-  console.log(`   Target: ${EMAIL}`);
-  console.log(`   starts_at : ${startsAt}`);
-  console.log(`   ends_at   : ${endsAt}\n`);
+  console.log(`   Target  : ${EMAIL}`);
+  console.log(`   Slots   : now${START_OFFSETS_MS.map((ms) => {
+    const h = ms / 3_600_000;
+    return h < 0 ? `${h * 60}min` : `+${h}h`;
+  }).join(', ')}`);
+  console.log(`   ends_at : now + 7 days (${endsAt})\n`);
 
   const { profile } = await getTargetProfile();
   const hostId = profile.id;
@@ -237,8 +258,11 @@ async function main() {
     if (!events) { console.warn(`  ⚠ No events defined for "${cityDef.city}" — skipping`); continue; }
 
     console.log(`📍 ${cityDef.city} — ${events.length} events`);
-    for (const ev of events) {
+    events.forEach((ev, evIdx) => {
       const id = uuidv5(`demo-city-event:${cityDef.city}:${ev.slug}`);
+      // Each event gets a different start slot so they span morning → late night.
+      const offsetMs  = START_OFFSETS_MS[evIdx % START_OFFSETS_MS.length] ?? 0;
+      const startsAt  = new Date(now.getTime() + offsetMs).toISOString();
       rows.push({
         id,
         host_id:            hostId,
@@ -263,7 +287,7 @@ async function main() {
         is_recurring:       false,
         tags:               ["demo", "demo_seed", ev.category],
       });
-    }
+    });
   }
 
   console.log(`\n⬆  Upserting ${rows.length} event rows…`);
@@ -271,7 +295,7 @@ async function main() {
   if (!result.ok) { console.error("\n✗ Upsert failed — check errors above."); process.exit(1); }
 
   console.log(`\n✅ Done — ${rows.length} demo events seeded across ${CITIES.length} cities.`);
-  console.log(`   Events are live for ~8 hours. Re-run this script to refresh them.\n`);
+  console.log(`   Events live until: ${endsAt}  (re-run anytime to reset the clock)\n`);
 }
 
 main().catch((err) => { console.error("Fatal:", err); process.exit(1); });

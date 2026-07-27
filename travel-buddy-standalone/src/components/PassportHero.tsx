@@ -158,12 +158,28 @@ export function PassportHero({
             <MoreHorizontal size={20} color={color.ink} />
           </Pressable>
         ) : isPrivateView && !isOwner ? (
-          // Non-interactive status badge — changes to "Pending" after Send Request is tapped.
-          <View style={styles.followStatusBadge}>
-            <Text style={styles.followStatusText}>
-              {privatePendingRequest ? 'Pending' : '+ Follow'}
-            </Text>
-          </View>
+          // Tappable "+" badge when a handler is wired and no request is pending yet.
+          // Flips to a static "Pending" label once the request has been sent.
+          onFollowPress && !privatePendingRequest ? (
+            <Pressable
+              onPress={onFollowPress}
+              hitSlop={8}
+              disabled={followLoading}
+              style={styles.followStatusBadge}
+              accessibilityRole="button"
+              accessibilityLabel="Send follow request"
+            >
+              <Text style={styles.followStatusText}>
+                {followLoading ? '…' : '+ Follow'}
+              </Text>
+            </Pressable>
+          ) : (
+            <View style={styles.followStatusBadge}>
+              <Text style={styles.followStatusText}>
+                {privatePendingRequest ? 'Pending' : '+ Follow'}
+              </Text>
+            </View>
+          )
         ) : !isOwner && onFollowPress !== undefined ? (
           <View style={{ alignItems: 'flex-end', gap: 4 }}>
             <Pressable

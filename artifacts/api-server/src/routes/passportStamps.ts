@@ -504,6 +504,7 @@ router.get("/me/passport/stats", async (req, res) => {
       countries: 0, cities: 0, neighborhoods: 0,
       planStamps: 0, hostStamps: 0, hiddenGemStamps: 0,
       safeReturnStamps: 0, totalStamps: 0,
+      tripCount: 0, followersCount: 0, followingCount: 0,
     });
     return;
   }
@@ -512,8 +513,19 @@ router.get("/me/passport/stats", async (req, res) => {
   if (!auth) return;
   const { client, user } = auth;
 
-  const stats = await buildStats(client, user.id);
-  res.json(stats);
+  const [stats, tripResult, followersResult, followingResult] = await Promise.all([
+    buildStats(client, user.id),
+    client.from("trips").select("id", { count: "exact", head: true }).eq("owner_id", user.id),
+    client.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("following_id", user.id),
+    client.from("user_follows").select("following_id", { count: "exact", head: true }).eq("follower_id", user.id),
+  ]);
+
+  res.json({
+    ...stats,
+    tripCount:      tripResult.count      ?? 0,
+    followersCount: followersResult.count ?? 0,
+    followingCount: followingResult.count ?? 0,
+  });
 });
 
 // ── Visibility Preferences routes ─────────────────────────────────────────────

@@ -193,13 +193,13 @@ describe('GridFeed — render, tile tap, and scroll', () => {
       expect.objectContaining({ scrollOffset: 300 }),
     );
 
-    // ── Tile tap: calls router.push with /post/<id> ──
+    // ── Tile tap: calls router.push with /media-viewer/<id> ──
     mockRouterPush.mockClear();
     fireEvent.press(screen.getByTestId('grid-tile-item-1'));
     await act(async () => {});
     expect(mockRouterPush).toHaveBeenCalledTimes(1);
     expect(mockRouterPush).toHaveBeenCalledWith(
-      expect.stringMatching(/\/post\/item-1/),
+      expect.stringMatching(/\/media-viewer\/item-1/),
     );
   });
 });

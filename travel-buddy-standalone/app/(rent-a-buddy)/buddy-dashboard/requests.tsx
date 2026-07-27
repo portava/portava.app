@@ -271,7 +271,7 @@ function RequestCard({
       {/* Traveller row */}
       <View style={rc.topRow}>
         <View style={rc.avatar}>
-          <Text style={rc.avatarText}>{booking.travelerId.slice(0, 2).toUpperCase()}</Text>
+          <Text style={rc.avatarText}>{(booking.travelerId ?? '??').slice(0, 2).toUpperCase()}</Text>
         </View>
         <View style={{ flex: 1 }}>
           <Text style={rc.travelerName}>Traveller</Text>

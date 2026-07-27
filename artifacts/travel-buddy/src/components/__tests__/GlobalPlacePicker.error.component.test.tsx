@@ -35,6 +35,12 @@ jest.mock('../../hooks/usePlaceSearch', () => ({
   usePlaceSearch: jest.fn(),
 }));
 
+jest.mock('../../hooks/useGooglePlacesAutocomplete', () => ({
+  ...jest.requireActual('../../hooks/useGooglePlacesAutocomplete'),
+  useGooglePlacesAutocomplete: jest.fn().mockReturnValue({ places: [], loading: false }),
+  fetchGooglePlaceDetails: jest.fn().mockResolvedValue(null),
+}));
+
 jest.mock('../../hooks/useRecentPlaces', () => ({
   ...jest.requireActual('../../hooks/useRecentPlaces'),
   useRecentPlaces: () => ({ recents: [], saveRecent: jest.fn() }),

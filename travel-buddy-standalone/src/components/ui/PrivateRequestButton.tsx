@@ -10,8 +10,8 @@
  * follow into a friend request.  On success the button transitions to the
  * pending state and cannot be pressed again.
  */
-import React, { useState } from 'react';
-import { View, Text, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, Pressable, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import { Clock, Lock } from 'lucide-react-native';
 import { followUser } from '../../services/follows.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
@@ -34,6 +34,12 @@ export function PrivateRequestButton({
   const [pending, setPending] = useState(initialPending);
   const [inFlight, setInFlight] = useState(false);
 
+  // Sync prop changes so the wall button reflects state set by the header badge
+  // (parent flips requestSent → initialPending becomes true → we disable here too).
+  useEffect(() => {
+    if (initialPending) setPending(true);
+  }, [initialPending]);
+
   async function handlePress() {
     if (pending || inFlight) return;
     setInFlight(true);
@@ -42,6 +48,8 @@ export function PrivateRequestButton({
     if (res.ok) {
       onRequestSent?.();
       setPending(true);
+    } else {
+      Alert.alert('Could not send request', res.message ?? 'Please try again.');
     }
   }
 

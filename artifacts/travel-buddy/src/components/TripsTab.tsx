@@ -18,6 +18,7 @@ import type { TripRow } from '../services/trips.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { useBottomInset } from '../hooks/useBottomInset.ts';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
+import { fromISODate } from '../lib/dateTime/formatters.ts';
 
 const STATUS_COLOR: Record<string, string> = {
   planning: color.mute,
@@ -46,15 +47,15 @@ function bucket(trip: TripRow): Exclude<Filter, 'all'> | 'other' {
 function fmtDates(trip: TripRow): string {
   return [trip.startDate, trip.endDate]
     .filter(Boolean)
-    .map((d) => new Date(d!).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))
+    .map((d) => (fromISODate(d!) ?? new Date(d!)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))
     .join(' – ');
 }
 
 function fmtRange(trip: TripRow): string {
   const opts = { month: 'short', year: 'numeric' } as const;
   try {
-    const s = trip.startDate ? new Date(trip.startDate).toLocaleDateString('en-US', opts) : '';
-    const e = trip.endDate ? new Date(trip.endDate).toLocaleDateString('en-US', opts) : '';
+    const s = trip.startDate ? (fromISODate(trip.startDate) ?? new Date(trip.startDate)).toLocaleDateString('en-US', opts) : '';
+    const e = trip.endDate ? (fromISODate(trip.endDate) ?? new Date(trip.endDate)).toLocaleDateString('en-US', opts) : '';
     if (s && e && s !== e) return `${s} – ${e}`;
     return s || e || '';
   } catch {

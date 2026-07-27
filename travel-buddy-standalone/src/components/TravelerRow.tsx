@@ -47,12 +47,16 @@ export function TravelerRow({ user, isOwnProfile = false, onFollowed, onBlockSuc
   const [toggling, setToggling] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [hidden, setHidden] = useState(false);
+  // For private accounts: tracks whether the viewer has sent a follow request
+  // this session so the button can flip to "Pending" without a page reload.
+  const [requestSent, setRequestSent] = useState(false);
+  const [requesting, setRequesting] = useState(false);
   const ringState = useHighlightRingState(user.id);
 
   if (hidden) return null;
 
   async function handleToggle() {
-    if (toggling || user.isPrivate) return;
+    if (toggling) return;
     const wasFollowing = isFollowing;
     setToggling(true);
     setIsFollowing(!wasFollowing);
@@ -69,6 +73,19 @@ export function TravelerRow({ user, isOwnProfile = false, onFollowed, onBlockSuc
       onFollowed?.(user.id);
     }
     setToggling(false);
+  }
+
+  // Sends a follow request to a private account. The server converts the
+  // follow call into a friend_request row and returns { friendRequest: true }.
+  async function handleRequest() {
+    if (requesting || requestSent) return;
+    setRequesting(true);
+    const res = await followUser(user.id);
+    setRequesting(false);
+    if (res.ok) {
+      setRequestSent(true);
+      onFollowed?.(user.id);
+    }
   }
 
   function handleBlockSuccess(userId: string) {
@@ -121,7 +138,30 @@ export function TravelerRow({ user, isOwnProfile = false, onFollowed, onBlockSuc
         {user.reason ? <RowReasonLines reason={user.reason} /> : null}
       </View>
 
-      {!isOwnProfile && !user.isPrivate && (
+      {!isOwnProfile && user.isPrivate ? (
+        // Private account: show "Request" → "Pending" instead of Follow/Following.
+        requestSent ? (
+          <View style={[styles.followBtn, styles.followingBtn]}>
+            <UserCheck size={13} color={color.mute} />
+            <Text style={styles.followingText}>Pending</Text>
+          </View>
+        ) : (
+          <Pressable
+            style={styles.followBtn}
+            onPress={handleRequest}
+            disabled={requesting}
+          >
+            {requesting ? (
+              <ActivityIndicator size="small" color={color.onInk} />
+            ) : (
+              <>
+                <UserPlus size={13} color={color.onInk} />
+                <Text style={styles.followText}>Follow</Text>
+              </>
+            )}
+          </Pressable>
+        )
+      ) : !isOwnProfile ? (
         <Pressable
           style={[styles.followBtn, isFollowing && styles.followingBtn]}
           onPress={handleToggle}
@@ -141,7 +181,7 @@ export function TravelerRow({ user, isOwnProfile = false, onFollowed, onBlockSuc
             </>
           )}
         </Pressable>
-      )}
+      ) : null}
 
       {!isOwnProfile && (
         <SaveButton entityType="profile" entityId={user.id} />

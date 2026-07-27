@@ -224,14 +224,14 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
           {source === 'compass'
             ? 'Compass picks · personalised for you'
             : source === 'osm'
-            ? 'Popular spots · sign in for personalised picks'
+            ? (isAuthed ? 'Popular spots' : 'Popular spots · sign in for personalised picks')
             : 'Curated picks'}
         </Text>
       </View>
       <CompassTravelerRow city={destination} limit={6} />
     </View>
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [source, destination]);
+  ), [source, destination, isAuthed]);
 
   // Combined header: discovery header (from parent) + source label + traveler row.
   // The discovery header is included inline rather than memoised; it changes whenever

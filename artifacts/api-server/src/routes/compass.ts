@@ -2705,7 +2705,7 @@ router.get("/compass/recommendations", async (req, res) => {
         type:     "buddy",
         category: ((s.row.categories ?? []) as string[])[0] ?? "city",
         title:    s.row.display_name ?? null,
-        reason:   buildBuddyReasonText(s.reasonCode, effectiveCity, {
+        reason:   buildBuddyReasonText(s.reasonCode, s.row.city ?? effectiveCity, {
           languages: s.row.languages,
         }),
         city:     s.row.city ?? effectiveCity ?? null,

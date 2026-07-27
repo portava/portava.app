@@ -712,6 +712,17 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     deepLink: '/messages/[id]',
   },
 
+  // ── Media viewer ──────────────────────────────────────────────────────────
+
+  {
+    key: 'media-viewer',
+    path: 'media-viewer/[id]',
+    title: 'Media Viewer',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+  },
+
   // ── Posts ─────────────────────────────────────────────────────────────────
 
   {

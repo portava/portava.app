@@ -36,7 +36,12 @@ export default function RestrictedUsersScreen() {
         {loading ? (
           <ActivityIndicator color={color.signal} style={{ marginTop: space.xl }} />
         ) : restricted.length === 0 ? (
-          <Text style={s.empty}>No restricted accounts</Text>
+          <View style={{ alignItems: 'center' }}>
+            <Text style={s.empty}>No restricted accounts</Text>
+            <Text style={[s.empty, { fontSize: 12, marginTop: 4 }]}>
+              Restricting someone limits what they can see on your profile without blocking them.
+            </Text>
+          </View>
         ) : (
           <FlatList
             data={restricted}

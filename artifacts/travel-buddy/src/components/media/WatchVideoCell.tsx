@@ -30,6 +30,18 @@ import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
 import { WifiOff, PlayCircle } from 'lucide-react-native';
 import { color, type as t } from '../../theme/tokens.ts';
 
+// Web: inject a stylesheet rule with !important so expo-av's inline-style overrides
+// (which run on every React render) can never win. CSS !important in an author
+// stylesheet beats inline styles per the cascade spec — RAF patching cannot.
+if (typeof document !== 'undefined') {
+  const _s = document.createElement('style');
+  _s.textContent =
+    '[id^="watch-cell-"] video{' +
+    'position:absolute!important;inset:0!important;' +
+    'width:100%!important;height:100%!important;object-fit:cover!important;}';
+  document.head.appendChild(_s);
+}
+
 const { height: SCREEN_H, width: SCREEN_W } = Dimensions.get('window');
 const MAX_FAILURES = 3;
 
@@ -39,7 +51,8 @@ export interface WatchVideoCellProps {
   posterUrl: string | null;
   isActive: boolean;
   isMuted: boolean;
-  onProgress: (ratio: number) => void;
+  /** Called on every playback tick. `durationMs` is null until the video metadata loads. */
+  onProgress: (ratio: number, durationMs: number | null) => void;
   /** Called once the cell is fully registered so the playback manager can control it. */
   onVideoRef?: (id: string, ref: React.RefObject<Video | null>) => void;
   onVideoUnmount?: (id: string) => void;
@@ -106,7 +119,9 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
 
         const dur = status.durationMillis;
         if (dur && dur > 0) {
-          onProgress(status.positionMillis / dur);
+          onProgress(status.positionMillis / dur, dur);
+        } else {
+          onProgress(0, null);
         }
       },
       [failureCount, onProgress],
@@ -129,11 +144,11 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
     }
 
     return (
-      <View style={s.cell}>
+      <View nativeID={`watch-cell-${id}`} style={s.cell}>
         <Video
           ref={videoRef}
           source={{ uri: videoUrl }}
-          style={StyleSheet.absoluteFill}
+          style={{ position: 'absolute', top: 0, left: 0, width: SCREEN_W, height: SCREEN_H }}
           resizeMode={ResizeMode.COVER}
           shouldPlay={isActive}
           isLooping

@@ -123,7 +123,7 @@ const STORY_COLS = "id, owner_id, media_url, media_type, caption, visibility, cl
 // ── POST /stories — create ────────────────────────────────────────────────────
 
 const createStorySchema = z.object({
-  mediaUrl:       z.string().url("mediaUrl must be a URL"),
+  mediaUrl:       z.string().min(1, "mediaUrl is required"),
   mediaType:      z.string().min(1),
   caption:        z.string().max(1000).nullable().optional(),
   visibility:     z.enum(STORY_VISIBILITY).default("public"),

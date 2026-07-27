@@ -274,6 +274,143 @@ async function runUniversalSearch(
   return ranked.slice(0, 12);
 }
 
+// ── GET /api/places/google-autocomplete ───────────────────────────────────────
+//
+// Server-side proxy for the Google Places Autocomplete API. Keeping the call
+// server-side avoids CORS restrictions on web and keeps GOOGLE_MAPS_API_KEY
+// out of the client bundle.
+//
+// Returns up to 5 normalized Place-shaped objects (no lat/lng — those come
+// from /places/google-details on selection) plus `powered_by: "google"` for
+// attribution.
+//
+// Degrades gracefully: returns { places: [], powered_by: "google" } when the
+// key is unconfigured or Google returns a non-OK status.
+
+function inferGoogleType(types: string[]): string {
+  if (types.includes("country")) return "country";
+  if (types.includes("administrative_area_level_1")) return "region";
+  if (types.includes("locality") || types.includes("administrative_area_level_2")) return "city";
+  if (types.includes("sublocality") || types.includes("neighborhood")) return "neighborhood";
+  if (types.includes("airport")) return "airport";
+  return "place";
+}
+
+router.get("/places/google-autocomplete", async (req, res) => {
+  const input = String(req.query.input ?? "").trim();
+  if (!input || input.length > 200) {
+    res.status(400).json({ error: "invalid_payload", message: "input is required (max 200 chars)" });
+    return;
+  }
+
+  const key = process.env.GOOGLE_MAPS_API_KEY;
+  if (!key) {
+    res.json({ places: [], powered_by: "google" });
+    return;
+  }
+
+  const type = typeof req.query.type === "string" ? req.query.type : "all";
+  const countryCode = typeof req.query.countryCode === "string" ? req.query.countryCode : undefined;
+
+  try {
+    const params = new URLSearchParams({ input, key, language: "en" });
+    if (type === "city") params.set("types", "(cities)");
+    if (countryCode) params.set("components", `country:${countryCode}`);
+
+    const gRes = await fetch(
+      `https://maps.googleapis.com/maps/api/place/autocomplete/json?${params}`,
+      { signal: AbortSignal.timeout(4000) },
+    );
+    if (!gRes.ok) throw new Error(`Google Places HTTP ${gRes.status}`);
+    const body = (await gRes.json()) as any;
+
+    if (body.status !== "OK" && body.status !== "ZERO_RESULTS") {
+      logger.warn({ status: body.status as string, input }, "Google Places Autocomplete non-OK");
+      res.json({ places: [], powered_by: "google" });
+      return;
+    }
+
+    const predictions: any[] = body.predictions ?? [];
+    const places = predictions.slice(0, 5).map((pred: any) => {
+      const mainText: string = pred.structured_formatting?.main_text ?? pred.description;
+      const types: string[] = pred.types ?? [];
+      return {
+        id: `google-${pred.place_id as string}`,
+        type: inferGoogleType(types),
+        name: mainText,
+        displayName: String(pred.description ?? mainText),
+        country: null,
+        countryCode: null,
+        region: null,
+        city: null,
+        district: null,
+        lat: null,
+        lng: null,
+        timezone: null,
+        source: "google" as const,
+        formattedAddress: String(pred.description ?? mainText),
+      };
+    });
+
+    res.json({ places, powered_by: "google" });
+  } catch (err) {
+    logger.warn({ err, input }, "Google Places Autocomplete failed — returning empty");
+    res.json({ places: [], powered_by: "google" });
+  }
+});
+
+// ── GET /api/places/google-details ────────────────────────────────────────────
+//
+// Returns geometry (lat/lng) and formatted_address for a Google place_id.
+// Called after the user selects a Google autocomplete result to enrich the
+// Place with coordinates before canonical resolution.
+
+router.get("/places/google-details", async (req, res) => {
+  const placeId = String(req.query.place_id ?? "").trim();
+  if (!placeId || placeId.length > 500) {
+    res.status(400).json({ error: "invalid_payload", message: "place_id is required (max 500 chars)" });
+    return;
+  }
+
+  const key = process.env.GOOGLE_MAPS_API_KEY;
+  if (!key) {
+    res.json({ details: null });
+    return;
+  }
+
+  try {
+    const params = new URLSearchParams({
+      place_id: placeId,
+      fields: "geometry,formatted_address,name,address_components",
+      key,
+      language: "en",
+    });
+    const gRes = await fetch(
+      `https://maps.googleapis.com/maps/api/place/details/json?${params}`,
+      { signal: AbortSignal.timeout(4000) },
+    );
+    if (!gRes.ok) throw new Error(`Google Place Details HTTP ${gRes.status}`);
+    const body = (await gRes.json()) as any;
+
+    if (body.status !== "OK" || !body.result?.geometry) {
+      res.json({ details: null });
+      return;
+    }
+
+    const { lat, lng } = body.result.geometry.location as { lat: number; lng: number };
+    res.json({
+      details: {
+        lat,
+        lng,
+        formattedAddress: String(body.result.formatted_address ?? ""),
+      },
+    });
+  } catch (err) {
+    logger.warn({ err, placeId }, "Google Place Details failed");
+    res.json({ details: null });
+  }
+});
+
 // ── GET /api/places/live-status ───────────────────────────────────────────────
 //
 // Live open-now lookup for Explore / place detail surfaces. Reuses the same

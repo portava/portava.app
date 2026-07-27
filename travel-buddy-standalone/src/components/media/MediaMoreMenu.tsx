@@ -212,7 +212,7 @@ export function MediaMoreMenu({
   const handleEdit = useCallback(() => {
     onClose();
     if (!mediaId) return;
-    router.push(`/posts/${mediaId}/edit` as any);
+    router.push(`/post/edit/${mediaId}`);
   }, [mediaId, onClose]);
 
   const handleDelete = useCallback(() => {

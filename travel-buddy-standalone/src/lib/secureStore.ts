@@ -119,28 +119,40 @@ export async function deleteSecure(key: string): Promise<void> {
 // Supabase storage adapter
 //
 // Passed to createClient({ auth: { storage: SecureStoreAdapter } }).
-// On web, falls back to a no-op in-memory shim so the web preview renders.
+// On native, uses expo-secure-store (Keychain / Keystore).
+// On web, uses localStorage so sessions survive page refreshes in the preview.
 // ---------------------------------------------------------------------------
 
+// Fallback in-memory store for SSR / environments without localStorage.
 const _webMemory = new Map<string, string>();
+
+function webGet(key: string): string | null {
+  try { return localStorage.getItem(key); } catch { return _webMemory.get(key) ?? null; }
+}
+function webSet(key: string, value: string): void {
+  try { localStorage.setItem(key, value); } catch { _webMemory.set(key, value); }
+}
+function webRemove(key: string): void {
+  try { localStorage.removeItem(key); } catch { _webMemory.delete(key); }
+}
 
 export const SecureStoreAdapter = {
   getItem: async (key: string): Promise<string | null> => {
-    if (!isNative()) return _webMemory.get(key) ?? null;
+    if (!isNative()) return webGet(key);
     const store = getStore();
-    if (!store) return _webMemory.get(key) ?? null;
+    if (!store) return webGet(key);
     return store.getItemAsync(key);
   },
   setItem: async (key: string, value: string): Promise<void> => {
-    if (!isNative()) { _webMemory.set(key, value); return; }
+    if (!isNative()) { webSet(key, value); return; }
     const store = getStore();
-    if (!store) { _webMemory.set(key, value); return; }
+    if (!store) { webSet(key, value); return; }
     return store.setItemAsync(key, value);
   },
   removeItem: async (key: string): Promise<void> => {
-    if (!isNative()) { _webMemory.delete(key); return; }
+    if (!isNative()) { webRemove(key); return; }
     const store = getStore();
-    if (!store) { _webMemory.delete(key); return; }
+    if (!store) { webRemove(key); return; }
     return store.deleteItemAsync(key);
   },
 };

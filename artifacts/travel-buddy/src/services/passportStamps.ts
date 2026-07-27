@@ -93,6 +93,10 @@ export interface PassportStats {
   hiddenGemStamps: number;
   safeReturnStamps: number;
   totalStamps: number;
+  /** Core profile counts returned alongside stamp stats to avoid a separate fetch. */
+  tripCount: number;
+  followersCount: number;
+  followingCount: number;
 }
 
 export interface PassportVisibilityPrefs {

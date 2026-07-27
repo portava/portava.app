@@ -15,8 +15,11 @@ import {
   getCloseFriends, addCloseFriend, removeCloseFriend,
   type CloseFriend,
 } from '../src/services/stories';
+import { searchUsers } from '../src/services/follows';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default function CloseFriendsScreen() {
   const insets = useSafeAreaInsets();
@@ -36,9 +39,22 @@ export default function CloseFriendsScreen() {
   useEffect(() => { load(); }, [load]);
 
   async function handleAdd() {
-    const userId = addInput.trim();
-    if (!userId) return;
+    const raw = addInput.trim().replace(/^@/, '');
+    if (!raw) return;
     setAdding(true);
+
+    // Resolve @handle → UUID if needed
+    let userId = raw;
+    if (!UUID_RE.test(raw)) {
+      const sr = await searchUsers(raw, 1);
+      if (!sr.ok || !sr.data?.length) {
+        setAdding(false);
+        Alert.alert('Not found', `No traveler found with username "@${raw}". Make sure you follow them first.`);
+        return;
+      }
+      userId = sr.data[0].id;
+    }
+
     const res = await addCloseFriend(userId);
     setAdding(false);
     if (res.ok) {
@@ -88,7 +104,7 @@ export default function CloseFriendsScreen() {
         <Search size={16} color={color.mute} />
         <TextInput
           style={s.addInput}
-          placeholder="Enter user ID to add..."
+          placeholder="Add by @username"
           placeholderTextColor={color.faint}
           value={addInput}
           onChangeText={setAddInput}
@@ -113,7 +129,7 @@ export default function CloseFriendsScreen() {
       ) : friends.length === 0 ? (
         <View style={s.empty}>
           <Text style={s.emptyText}>No Close Friends yet</Text>
-          <Text style={s.emptySub}>Enter a user ID above to add your first trusted traveler.</Text>
+          <Text style={s.emptySub}>Add a traveler by their @username above to build your Trusted Crew.</Text>
         </View>
       ) : (
         <FlatList

@@ -514,10 +514,13 @@ export default function SearchScreen() {
                   </View>
                 )}
 
-                {/* When history has loaded but is empty: show nothing (blank canvas) */}
+                {/* When history has loaded but is empty: prompt the user */}
                 {historyLoaded && recentSearches.length === 0 && (
-                  <View style={[styles.center, { paddingVertical: space.xl }]}>
+                  <View style={[styles.center, { paddingVertical: space.xl, gap: space.sm }]}>
                     <Search size={36} color={color.haze} />
+                    <Text style={{ ...t.small, color: color.mute, textAlign: 'center' }}>
+                      No search history yet — try searching for a traveler, trip, or place.
+                    </Text>
                   </View>
                 )}
 

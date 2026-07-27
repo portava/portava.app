@@ -47,6 +47,10 @@ import { useRecentPlaces } from '../../hooks/useRecentPlaces.ts';
 import { usePopularCities } from '../../hooks/usePopularCities.ts';
 import { resolveCanonicalPlace } from '../../lib/location/resolveCanonical.ts';
 import type { Place } from '../../lib/location/placeTypes.ts';
+import {
+  useGooglePlacesAutocomplete,
+  fetchGooglePlaceDetails,
+} from '../../hooks/useGooglePlacesAutocomplete.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -118,6 +122,10 @@ export function GlobalPlacePicker({
     lng: nearbyCoords?.lng,
     refreshKey: searchRetry,
   });
+  const { places: googlePlaces, loading: googleLoading } = useGooglePlacesAutocomplete(query, {
+    countryCode,
+    type: cityMode ? 'city' : 'all',
+  });
   const { recents, saveRecent } = useRecentPlaces();
   const { places: popularPlaces } = usePopularCities({
     lat: nearbyCoords?.lat,
@@ -175,7 +183,17 @@ export function GlobalPlacePicker({
     if (resolvingId) return; // guard double-tap while a selection is in flight
     setResolvingId(place.id);
     try {
-      const resolved = await resolveCanonicalPlace(place);
+      // Google autocomplete results have no lat/lng — fetch Place Details to
+      // enrich with coordinates before canonical resolution.
+      let enriched = place;
+      if (place.source === 'google') {
+        const rawId = place.id.replace(/^google-/, '');
+        const details = await fetchGooglePlaceDetails(rawId);
+        if (details) {
+          enriched = { ...place, lat: details.lat, lng: details.lng, formattedAddress: details.formattedAddress };
+        }
+      }
+      const resolved = await resolveCanonicalPlace(enriched);
       saveRecent(resolved, usedFor);
       onSelect(resolved);
       onClose();
@@ -232,8 +250,9 @@ export function GlobalPlacePicker({
   const showSearch = query.trim().length > 0;
   // The custom free-text row stays available when search errors, so the
   // picker degrades to manual entry instead of appearing broken.
-  const showCustom = showSearch && !searching
-    && !searchResults.find((r) => r.name.toLowerCase() === query.trim().toLowerCase());
+  const showCustom = showSearch && !searching && !googleLoading
+    && !searchResults.find((r) => r.name.toLowerCase() === query.trim().toLowerCase())
+    && !googlePlaces.find((r) => r.name.toLowerCase() === query.trim().toLowerCase());
 
   const popular = popularPlaces.length > 0 ? popularPlaces : POPULAR;
 
@@ -242,6 +261,7 @@ export function GlobalPlacePicker({
     | { kind: 'section'; label: string; icon?: 'trending' }
     | { kind: 'place'; place: Place; icon: 'pin' | 'clock' | 'near' }
     | { kind: 'custom' }
+    | { kind: 'google-attribution' }
     | { kind: 'error' };
 
   const items: ListItem[] = [];
@@ -270,8 +290,20 @@ export function GlobalPlacePicker({
       popularRows.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
     }
   } else {
-    if (searchError && !searching) items.push({ kind: 'error' });
-    searchResults.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
+    // Google results are shown first with attribution. The existing API results
+    // backfill any suggestions not already covered by Google's top-5.
+    const useGoogle = googlePlaces.length > 0;
+    if (searchError && !searching && !useGoogle) items.push({ kind: 'error' });
+    if (useGoogle) {
+      items.push({ kind: 'google-attribution' });
+      googlePlaces.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
+      const googleDescriptions = new Set(googlePlaces.map((p) => p.displayName.toLowerCase()));
+      searchResults
+        .filter((p) => !googleDescriptions.has(p.displayName.toLowerCase()))
+        .forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
+    } else {
+      searchResults.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
+    }
     if (showCustom) items.push({ kind: 'custom' });
   }
 
@@ -306,7 +338,7 @@ export function GlobalPlacePicker({
               returnKeyType="search"
               onSubmitEditing={useCustom}
             />
-            {searching && <ActivityIndicator size="small" color={color.signal} />}
+            {(searching || googleLoading) && <ActivityIndicator size="small" color={color.signal} />}
             {query.length > 0 && !searching && (
               <Pressable onPress={() => setQuery('')} hitSlop={8}>
                 <X size={14} color={color.mute} />
@@ -329,6 +361,7 @@ export function GlobalPlacePicker({
               if (item.kind === 'gps') return 'gps';
               if (item.kind === 'custom') return 'custom';
               if (item.kind === 'error') return 'error';
+              if (item.kind === 'google-attribution') return 'google-attribution';
               if (item.kind === 'section') return `section-${item.label}`;
               return `${item.icon}-${item.place.id}`;
             }}
@@ -341,6 +374,13 @@ export function GlobalPlacePicker({
                   <View style={s.sectionRow}>
                     {item.icon === 'trending' && <TrendingUp size={11} color={color.mute} />}
                     <Text style={s.sectionLabel}>{item.label}</Text>
+                  </View>
+                );
+              }
+              if (item.kind === 'google-attribution') {
+                return (
+                  <View style={s.googleAttrib}>
+                    <Text style={s.googleAttribText}>Suggestions powered by Google</Text>
                   </View>
                 );
               }
@@ -475,6 +515,16 @@ const s = StyleSheet.create({
   rowSub: { ...t.small, color: color.mute, marginTop: 1 },
   empty: { padding: space.xl, alignItems: 'center' },
   emptyText: { ...t.body, color: color.mute, textAlign: 'center' },
+  googleAttrib: {
+    paddingHorizontal: space.xl,
+    paddingTop: space.md,
+    paddingBottom: 4,
+  },
+  googleAttribText: {
+    ...t.small,
+    color: color.mute,
+    fontSize: 11,
+  },
   errorRow: {
     flexDirection: 'row', alignItems: 'center', gap: space.md,
     marginHorizontal: space.xl, marginTop: space.sm, marginBottom: space.xs,

@@ -97,12 +97,20 @@ function MediaScreenInner() {
     }
   }
 
+  // Grid mode: content must clear the mode-selector pill, which sits at
+  // (insets.top + 8) and is 44 px tall, plus a 4 px breathing gap.
+  const GRID_SELECTOR_CLEARANCE = 56; // 8 gap + 44 pill + 4 gap
+
   return (
     <View style={[styles.screen, { backgroundColor: screenBg }]}>
       {/* ── Mode content (fills remaining space) ────────────────────── */}
       <View style={styles.content}>
         {selectedMode === 'watch' && <WatchFeed />}
-        {selectedMode === 'grid'  && <GridFeed />}
+        {selectedMode === 'grid'  && (
+          <View style={{ flex: 1, paddingTop: insets.top + GRID_SELECTOR_CLEARANCE }}>
+            <GridFeed />
+          </View>
+        )}
         {selectedMode === 'gems'  && (
           <GemsFeed
             nearMeEnabled={isEnabled('MEDIA_HIDDEN_GEMS_NEARBY_ENABLED')}
@@ -130,6 +138,21 @@ function MediaScreenInner() {
             onSelect={setMode}
           />
         </View>
+      )}
+
+      {/* ── Grid mode: subtle create button at top-right (screen coordinates)
+          Rendered here — not inside GridFeed — so `top` is measured from the
+          screen's safe-area origin, not GridFeed's offset container.         */}
+      {selectedMode === 'grid' && (
+        <Pressable
+          style={[styles.gridCreateBtn, { top: insets.top + 8 }]}
+          onPress={() => router.push('/create')}
+          accessibilityRole="button"
+          accessibilityLabel="Create a post"
+          hitSlop={8}
+        >
+          <Camera size={18} color={color.ink} strokeWidth={2} />
+        </Pressable>
       )}
 
       {/* ── Floating create button ───────────────────────────────────── */}
@@ -227,5 +250,21 @@ const styles = StyleSheet.create({
   fabGems: {
     // Gem-mode FAB uses the gem green accent instead of signal red.
     backgroundColor: '#10B981',
+  },
+  // Grid-mode create button: subtle, positioned at screen top-right (not inside
+  // the GridFeed offset container, so safe-area inset is not double-counted).
+  gridCreateBtn: {
+    position: 'absolute',
+    right: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: color.paperRaised,
+    borderWidth: 1,
+    borderColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 20,
+    ...shadow.card,
   },
 });

@@ -17,6 +17,7 @@ import type { BookmarkedPlace } from '../services/discoveryBookmarks.ts';
 import type { TripDetail, SavedIdea, TimelineDay, PassportStamp, User } from '../types/models.ts';
 import type { TripPlan, TripPlanStatus } from '../__fixtures__/tripDetail.ts';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
+import { fromISODate } from '../lib/dateTime/formatters.ts';
 import { PassportStampCard } from './PassportStampCard.tsx';
 import { TravelSectionHeader, TravelEmptyState } from './primitives.tsx';
 import { HighlightRing } from './HighlightRing.tsx';
@@ -476,7 +477,7 @@ export function SectionHead({
 }
 
 function fmt(iso: string) {
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return (fromISODate(iso) ?? new Date(iso)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 function cap(s: string) { return s.charAt(0).toUpperCase() + s.slice(1); }
 

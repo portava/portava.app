@@ -372,6 +372,7 @@ export function WatchItemOverlay({
                 strokeWidth={isSaved ? 0 : 1.8}
               />
             }
+            count={item.saveCount}
             onPress={onSave}
             label={isSaved ? 'Unsave' : 'Save'}
           />

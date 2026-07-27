@@ -220,7 +220,7 @@ export default function PassportScreen() {
         </Text>
         <Pressable
           style={{ backgroundColor: PP.ink, paddingHorizontal: space.xl, paddingVertical: 12, borderRadius: radius.pill }}
-          onPress={error ? reload : () => router.push('/sign-in')}
+          onPress={error ? reload : () => router.push('/(auth)/sign-in')}
           accessibilityLabel={error ? 'Retry' : 'Sign in'}
           accessibilityRole="button"
         >
@@ -295,7 +295,7 @@ export default function PassportScreen() {
         tabOrder={tabOrderOverride ?? resolveTabOrder(profile.passportTabOrder)}
         onArrangeTabs={() => setTabReorderOpen(true)}
         onChangeAvatar={handleChangeAvatarViaCamera}
-        onSignOut={async () => { await signOut(); router.replace('/sign-in' as any); }}
+        onSignOut={async () => { await signOut(); router.replace('/(auth)/sign-in'); }}
       />
 
       {/* ── Modals ── */}
@@ -675,6 +675,8 @@ function PassportContent({
             if (label === 'Trips') setTab('plans');
             else if (label === 'Stamps') setTab('stamps');
             else if (label === 'Countries') setTab('map');
+            else if (label === 'Followers') router.push('/followers' as any);
+            else if (label === 'Following') router.push('/following' as any);
           }}
         />
 

@@ -5,9 +5,10 @@
  * - Viewability tracking drives isActive prop on each cell.
  * - Gesture layer: single-tap → toggle play/pause, double-tap → like,
  *   press-and-hold → pause while held.
- * - Progress bar driven by playback status updates.
- * - Heart animation on double-tap.
+ * - HeartBurst animation on double-tap (multi-particle).
+ * - Progress bar at the bottom with scrubbing (pan to seek).
  * - Mute/unmute button with AsyncStorage persistence.
+ * - Poster prefetch for upcoming items on active-index change.
  */
 
 import React, {
@@ -23,8 +24,8 @@ import {
   Pressable,
   StyleSheet,
   Dimensions,
-  Animated,
   Text,
+  Image,
   type ViewToken,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -32,8 +33,9 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Volume2, VolumeX } from 'lucide-react-native';
 import type { Video } from 'expo-av';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { WatchVideoCell } from './WatchVideoCell.tsx';
+import { WatchVideoCell, type WatchVideoCellHandle } from './WatchVideoCell.tsx';
 import { WatchItemOverlay } from './WatchItemOverlay.tsx';
+import { HeartBurst, type HeartBurstHandle } from './HeartBurst.tsx';
 import { useWatchPlayback } from '../../hooks/useWatchPlayback.ts';
 import type { MediaFeedItem } from '../../types/media.ts';
 import { color, radius } from '../../theme/tokens.ts';
@@ -61,7 +63,6 @@ interface CellWrapperProps {
   onMore: (id: string) => void;
   onVideoRef: (id: string, ref: React.RefObject<Video | null>) => void;
   onVideoUnmount: (id: string) => void;
-  // Local like state passed from parent
   isLiked: boolean;
   isSaved: boolean;
   likeCount: number;
@@ -82,61 +83,68 @@ const CellWrapper = React.memo(function CellWrapper({
   isSaved,
   likeCount,
 }: CellWrapperProps) {
-  // Per-cell playback progress (0–1).
+  // ── Playback state ─────────────────────────────────────────────────────────
   const [progress, setProgress] = useState(0);
-  // Play/pause local toggle (driven by gesture; isActive resets it).
   const [userPaused, setUserPaused] = useState(false);
-  const videoRefLocal = useRef<Video>(null);
 
-  // Reset user-pause when the cell becomes active/inactive.
+  // ── Scrub state ────────────────────────────────────────────────────────────
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  const [scrubProgress, setScrubProgress] = useState(0);
+  const isScrubbingRef = useRef(false);
+  const scrubProgressRef = useRef(0);
+  const durationMsRef = useRef<number | null>(null);
+  const lastSeekRef = useRef(0);
+
+  // ── Refs ───────────────────────────────────────────────────────────────────
+  const cellVideoHandle = useRef<WatchVideoCellHandle>(null);
+  const heartBurstRef = useRef<HeartBurstHandle>(null);
+
+  // Reset user-pause and scrub when the cell becomes active/inactive.
   useEffect(() => {
     if (!isActive) {
       setUserPaused(false);
       setProgress(0);
+      setScrubProgress(0);
+      isScrubbingRef.current = false;
+      setIsScrubbing(false);
     }
   }, [isActive]);
 
-  // Heart animation state.
-  const heartScale = useRef(new Animated.Value(0)).current;
-  const heartOpacity = useRef(new Animated.Value(0)).current;
+  // ── Progress callback ──────────────────────────────────────────────────────
 
-  const triggerHeartAnim = useCallback(() => {
-    heartScale.setValue(0);
-    heartOpacity.setValue(1);
-    Animated.sequence([
-      Animated.spring(heartScale, { toValue: 1, useNativeDriver: true, speed: 20, bounciness: 12 }),
-      Animated.delay(400),
-      Animated.timing(heartOpacity, { toValue: 0, duration: 250, useNativeDriver: true }),
-    ]).start();
-  }, [heartScale, heartOpacity]);
+  const handleProgress = useCallback((ratio: number, durMs: number | null) => {
+    if (!isScrubbingRef.current) {
+      setProgress(ratio);
+    }
+    if (durMs != null) {
+      durationMsRef.current = durMs;
+    }
+  }, []);
+
+  // ── Like helpers ───────────────────────────────────────────────────────────
 
   const handleLike = useCallback(() => {
     onLike(item.id);
-    triggerHeartAnim();
-  }, [item.id, onLike, triggerHeartAnim]);
+    heartBurstRef.current?.trigger();
+  }, [item.id, onLike]);
 
-  // Double-tap: always show heart anim, but only fire the like action when the
-  // item is not already liked. Double-tap is idempotent like-once — it never
-  // unlikes (unlike the action-button which is a full toggle).
+  // Double-tap: always show burst, but only fire the like action when not
+  // already liked. Double-tap is idempotent like-once — never unlikes.
   const handleDoubleTapLike = useCallback(() => {
     if (!isLiked) {
       onLike(item.id);
     }
-    triggerHeartAnim();
-  }, [item.id, isLiked, onLike, triggerHeartAnim]);
+    heartBurstRef.current?.trigger();
+  }, [item.id, isLiked, onLike]);
 
-  // ── Gestures ──────────────────────────────────────────────────────────────
+  // ── Main gesture (full-screen layer) ──────────────────────────────────────
 
-  // Double-tap → like (idempotent) + heart anim.
   const doubleTap = Gesture.Tap()
     .numberOfTaps(2)
     .maxDuration(250)
     .runOnJS(true)
-    .onEnd(() => {
-      handleDoubleTapLike();
-    });
+    .onEnd(() => { handleDoubleTapLike(); });
 
-  // Single tap → toggle play/pause.
   const singleTap = Gesture.Tap()
     .numberOfTaps(1)
     .maxDuration(250)
@@ -147,23 +155,56 @@ const CellWrapper = React.memo(function CellWrapper({
       setUserPaused((p) => !p);
     });
 
-  // Long press → pause while held.
   const longPress = Gesture.LongPress()
     .minDuration(400)
     .runOnJS(true)
-    .onStart(() => {
-      setUserPaused(true);
-    })
-    .onEnd(() => {
-      setUserPaused(false);
-    })
-    .onFinalize(() => {
-      setUserPaused(false);
-    });
+    .onStart(() => { setUserPaused(true); })
+    .onEnd(() => { setUserPaused(false); })
+    .onFinalize(() => { setUserPaused(false); });
 
   const composed = Gesture.Exclusive(doubleTap, singleTap, longPress);
 
-  const effectiveActive = isActive && !userPaused;
+  // ── Scrub gesture (progress bar area) ─────────────────────────────────────
+
+  const scrubGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .minDistance(1)
+        .runOnJS(true)
+        .onBegin((e) => {
+          isScrubbingRef.current = true;
+          setIsScrubbing(true);
+          const ratio = Math.max(0, Math.min(1, e.absoluteX / SCREEN_W));
+          scrubProgressRef.current = ratio;
+          setScrubProgress(ratio);
+        })
+        .onChange((e) => {
+          const ratio = Math.max(0, Math.min(1, e.absoluteX / SCREEN_W));
+          scrubProgressRef.current = ratio;
+          setScrubProgress(ratio);
+          // Throttle actual seek calls to ≈12 fps to avoid hammering expo-av
+          const now = Date.now();
+          if (now - lastSeekRef.current >= 80 && durationMsRef.current) {
+            lastSeekRef.current = now;
+            cellVideoHandle.current?.videoRef.current
+              ?.setPositionAsync(ratio * durationMsRef.current)
+              .catch(() => {});
+          }
+        })
+        .onFinalize(() => {
+          isScrubbingRef.current = false;
+          setIsScrubbing(false);
+          // Final seek to exact scrub position
+          if (durationMsRef.current) {
+            cellVideoHandle.current?.videoRef.current
+              ?.setPositionAsync(scrubProgressRef.current * durationMsRef.current)
+              .catch(() => {});
+          }
+        }),
+    [], // all values accessed via refs — safe to skip as deps
+  );
+
+  // ── Video ref forwarding (for playback manager) ────────────────────────────
 
   const handleVideoRef = useCallback(
     (id: string, ref: React.RefObject<Video | null>) => {
@@ -172,20 +213,24 @@ const CellWrapper = React.memo(function CellWrapper({
     [onVideoRef],
   );
 
+  const effectiveActive = isActive && !userPaused;
+  const displayProgress = isScrubbing ? scrubProgress : progress;
+
   return (
     <View style={s.cellContainer}>
       <WatchVideoCell
+        ref={cellVideoHandle}
         id={item.id}
         videoUrl={item.videoUrl}
         posterUrl={item.posterUrl}
         isActive={effectiveActive}
         isMuted={isMuted}
-        onProgress={setProgress}
+        onProgress={handleProgress}
         onVideoRef={handleVideoRef}
         onVideoUnmount={onVideoUnmount}
       />
 
-      {/* Gesture layer over the video */}
+      {/* Full-screen gesture layer (tap / double-tap / long press) */}
       <GestureDetector gesture={composed}>
         <View style={StyleSheet.absoluteFill} />
       </GestureDetector>
@@ -203,18 +248,31 @@ const CellWrapper = React.memo(function CellWrapper({
         onMore={() => onMore(item.id)}
       />
 
-      {/* Playback progress bar */}
-      <View style={s.progressTrack} pointerEvents="none">
-        <View style={[s.progressFill, { width: `${Math.round(progress * 100)}%` }]} />
-      </View>
+      {/* ── Progress bar with scrub gesture ──────────────────────────── */}
+      <GestureDetector gesture={scrubGesture}>
+        <View style={[s.progressHitArea, isScrubbing && s.progressHitAreaActive]}>
+          <View style={[s.progressTrack, isScrubbing && s.progressTrackActive]}>
+            <View
+              style={[
+                s.progressFill,
+                { width: `${Math.round(displayProgress * 100)}%` as any },
+              ]}
+            />
+            {/* Scrub handle dot — visible only while scrubbing */}
+            {isScrubbing ? (
+              <View
+                style={[
+                  s.scrubHandle,
+                  { left: displayProgress * SCREEN_W - 6 },
+                ]}
+              />
+            ) : null}
+          </View>
+        </View>
+      </GestureDetector>
 
-      {/* Heart animation overlay */}
-      <Animated.View
-        style={[s.heartAnim, { transform: [{ scale: heartScale }], opacity: heartOpacity }]}
-        pointerEvents="none"
-      >
-        <Text style={s.heartEmoji}>❤️</Text>
-      </Animated.View>
+      {/* Heart burst animation overlay */}
+      <HeartBurst ref={heartBurstRef} />
 
       {/* Pause indicator */}
       {userPaused ? (
@@ -285,11 +343,20 @@ export function WatchFeedList({
     });
   }, []);
 
+  // ── Poster prefetch — preload upcoming items so they start fast ────────────
+
+  useEffect(() => {
+    // Prefetch poster images for the next 2 items whenever the active item changes.
+    const nextItems = items.slice(activeIndex + 1, activeIndex + 3);
+    for (const ni of nextItems) {
+      if (ni.posterUrl) {
+        Image.prefetch(ni.posterUrl).catch(() => {});
+      }
+    }
+  }, [activeIndex, items]);
+
   // ── Viewability ────────────────────────────────────────────────────────────
 
-  // Keep a ref to the latest onActiveIndexChange so viewability events always
-  // target the CURRENT feed type's slot — not a stale closure from before the
-  // last feed-type switch (for_you ↔ following).
   const onActiveIndexChangeRef = useRef(onActiveIndexChange);
   useEffect(() => {
     onActiveIndexChangeRef.current = onActiveIndexChange;
@@ -300,7 +367,7 @@ export function WatchFeedList({
       if (viewableItems.length === 0) return;
       const first = viewableItems[0];
       const idx = first.index ?? 0;
-      onActiveIndexChangeRef.current(idx); // always calls the latest version
+      onActiveIndexChangeRef.current(idx);
       const item = first.item as MediaFeedItem;
       playback.setActiveId(item.id);
     },
@@ -345,6 +412,7 @@ export function WatchFeedList({
     <View style={s.root}>
       <FlatList
         data={items}
+        style={s.list}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         getItemLayout={getItemLayout}
@@ -357,7 +425,7 @@ export function WatchFeedList({
         viewabilityConfig={VIEWABILITY_CONFIG}
         onEndReached={onEndReached}
         onEndReachedThreshold={0.5}
-        windowSize={5}
+        windowSize={7}
         maxToRenderPerBatch={3}
         initialNumToRender={2}
         removeClippedSubviews
@@ -387,34 +455,54 @@ const s = StyleSheet.create({
     flex: 1,
     backgroundColor: color.ink,
   },
+  list: {
+    flex: 1,
+  },
   cellContainer: {
     width: SCREEN_W,
     height: SCREEN_H,
     backgroundColor: color.ink,
     overflow: 'hidden',
   },
-  progressTrack: {
+
+  // ── Progress bar ──────────────────────────────────────────────────────────
+  progressHitArea: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    height: 2,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    height: 28,      // large touch target
+    justifyContent: 'flex-end',
+  },
+  progressHitAreaActive: {
+    height: 36,      // slightly larger while scrubbing for easier control
+  },
+  progressTrack: {
+    height: 3,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+  },
+  progressTrackActive: {
+    height: 5,
   },
   progressFill: {
     height: '100%',
     backgroundColor: color.signal,
   },
-  heartAnim: {
+  scrubHandle: {
     position: 'absolute',
-    top: '35%',
-    left: 0,
-    right: 0,
-    alignItems: 'center',
+    bottom: -4.5,   // vertically centre on the 3-px track
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOpacity: 0.35,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 3,
   },
-  heartEmoji: {
-    fontSize: 80,
-  },
+
+  // ── Pause indicator ───────────────────────────────────────────────────────
   pauseIndicator: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
@@ -434,6 +522,8 @@ const s = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: 'rgba(255,255,255,0.7)',
   },
+
+  // ── Mute button ───────────────────────────────────────────────────────────
   muteBtn: {
     position: 'absolute',
     right: 16,

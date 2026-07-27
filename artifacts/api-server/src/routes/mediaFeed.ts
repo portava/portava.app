@@ -104,13 +104,11 @@ function pruneViewDedup(): void {
  * they are never forwarded to the client (hydrateMediaGridItem omits them).
  */
 const GRID_POST_COLUMNS =
-  "id, author_id, has_video, primary_media_type, " +
-  "view_count, qualified_view_count, " +
+  "id, author_id, " +
   "location_name, location_city, location_country, " +
   "location_lat, location_lng, " +
   "created_at, category, " +
-  "status, post_status, visibility, moderation_status, publish_at, " +
-  "geo_restriction, age_restriction_enabled, age_min, age_max, tags";
+  "status, post_status, visibility";
 
 /**
  * Grid-mode post_media columns — minimal set for static tile rendering.
@@ -122,22 +120,17 @@ const GRID_MEDIA_COLUMNS =
 
 /** Columns projected from posts for media feed (never include exact GPS). */
 const FEED_POST_COLUMNS =
-  "id, author_id, trip_id, event_id, content, visibility, status, post_status, publish_at, " +
-  "created_at, tags, category, " +
+  "id, author_id, trip_id, content, visibility, status, post_status, " +
+  "created_at, category, " +
   "location_name, location_city, location_country, location_source, " +
-  "save_count, like_count, comment_count, view_count, qualified_view_count, " +
-  "has_video, primary_media_type, moderation_status, " +
-  // Eligibility fields: geo + age restriction gates in filterEligibleMediaCandidates.
-  // Both gates are fail-closed; omitting these fields would silently bypass them.
-  "geo_restriction, age_restriction_enabled, age_min, age_max";
+  "save_count, like_count, comment_count";
 
 const POST_MEDIA_COLUMNS =
   "id, media_type, public_url, thumbnail_url, duration_seconds, " +
   "width, height, sort_order, processing_status, moderation_status, storage_path, storage_bucket";
 
 const PROFILE_COLUMNS =
-  "id, username, full_name, avatar_url, is_private, is_verified, bio, " +
-  "followers_count, following_count, account_status";
+  "id, username, avatar_url, is_private, bio, account_status";
 
 // ── Linked entity resolution ──────────────────────────────────────────────────
 
@@ -389,8 +382,7 @@ const GEMS_EXCLUDED_SOURCE_TYPES = new Set(["ai_generated_generic"]);
 
 /** Columns selected for gem submitter profiles. */
 const GEM_PROFILE_COLUMNS =
-  "id, username, full_name, avatar_url, is_private, is_verified, bio, " +
-  "followers_count, following_count, account_status";
+  "id, username, avatar_url, is_private, bio, account_status";
 
 /**
  * Columns selected for the gems feed query (statically resolvable single-line
@@ -530,7 +522,6 @@ async function handleGridFeed(req: any, res: any): Promise<void> {
     .from("posts")
     .select(gridSelect)
     .eq("status", "active")
-    .or("publish_at.is.null,publish_at.lte." + new Date(nowMs).toISOString())
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(candidateLimit);
@@ -1029,13 +1020,6 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     .from("posts")
     .select(feedSelect)
     .eq("status", "active")
-    .eq("has_video", true)  // Watch mode: video-first
-    // Delayed posting: exclude items scheduled for future publication.
-    // publish_at IS NULL covers posts with no scheduled time (most posts).
-    // This is a belt-and-suspenders guard — post_status='published' is the
-    // primary delayed-post gate; publish_at ensures the DB scheduler hasn't
-    // already set the time but missed flipping post_status.
-    .or("publish_at.is.null,publish_at.lte." + new Date(nowMs).toISOString())
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(candidateLimit);
@@ -1056,30 +1040,9 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   // produce false positives against other well-formed 2-char codes in the list.
   // The in-memory gate in filterEligibleMediaCandidates is retained as the
   // authoritative belt-and-suspenders fallback.
-  if (viewerCountry) {
-    // viewerCountry is reassigned inside an async closure that TypeScript's
-    // control-flow analysis cannot track; cast to string to satisfy the checker.
-    const c = (viewerCountry as string).toUpperCase();
-    query = query.or(`geo_restriction.is.null,geo_restriction.ilike.%${c}%`);
-  }
-
-  // SQL-level age-restriction pre-filter: when viewer's age is known, exclude
-  // rows where age_restriction_enabled=true and the viewer's age is outside
-  // [age_min, age_max]. Null bounds are treated as open (no limit in that direction).
-  // The in-memory gate in filterEligibleMediaCandidates is retained as the
-  // authoritative belt-and-suspenders fallback (handles unknown viewer age fail-closed).
-  if (viewerAge !== null) {
-    // viewerAge is reassigned inside an async closure; cast to number to satisfy TypeScript.
-    const age = viewerAge as number;
-    // Pass a post when:
-    //   • age_restriction_enabled is null/false (unrestricted), OR
-    //   • BOTH age_min is null OR age_min ≤ viewer age
-    //        AND age_max is null OR age_max ≥ viewer age
-    query = query.or(
-      `age_restriction_enabled.is.null,age_restriction_enabled.eq.false,` +
-      `and(or(age_min.is.null,age_min.lte.${age}),or(age_max.is.null,age_max.gte.${age}))`,
-    );
-  }
+  // Note: geo_restriction and age_restriction columns do not exist on posts;
+  // eligibility filtering for these gates is handled at the application layer
+  // inside filterEligibleMediaCandidates.
 
   // Apply cursor filter for stable pagination
   if (cursor) {
@@ -1525,7 +1488,7 @@ router.post("/media/:id/view", asyncHandler(async (req, res) => {
   // Self-view rejection: verify the post exists and check authorship
   const { data: postRow, error: postErr } = await sc
     .from("posts")
-    .select("id, author_id, status, visibility, post_status, has_video")
+    .select("id, author_id, status, visibility, post_status")
     .eq("id", id)
     .maybeSingle();
 

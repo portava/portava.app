@@ -183,7 +183,9 @@ function EmptyState({ label }: { label: string }) {
       <Text style={styles.emptyIcon}>🔔</Text>
       <Text style={styles.emptyTitle}>All caught up</Text>
       <Text style={styles.emptyBody}>
-        No {label.toLowerCase()} notifications yet.
+        {label.toLowerCase() === 'all'
+          ? 'No notifications yet.'
+          : `No ${label.toLowerCase()} notifications yet.`}
       </Text>
     </View>
   );

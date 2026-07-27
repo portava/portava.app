@@ -46,7 +46,9 @@ function StatusChip({ status }: { status: string }) {
 // ── Relative date ─────────────────────────────────────────────────────────────
 
 function timeAgo(iso: string): string {
-  const secs = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!isFinite(ms)) return '—';
+  const secs = Math.max(0, Math.floor(ms / 1000));
   if (secs < 60) return 'Just now';
   const m = Math.floor(secs / 60);
   if (m < 60) return `${m}m ago`;

@@ -91,7 +91,7 @@ const KNOWN_FILTER_IDS = [
 ] as const;
 
 const createHighlightSchema = z.object({
-  mediaUrl: z.string().url("media_url must be a URL"),
+  mediaUrl: z.string().min(1, "media_url is required"),
   mediaType: z.string().min(1),
   videoDurationSeconds: z.number().nullable().optional(),
   caption: z.string().max(500).nullable().optional(),
@@ -106,7 +106,7 @@ const createHighlightSchema = z.object({
   }).default(24),
   filterId: z.enum(KNOWN_FILTER_IDS).optional().default('original'),
   filterIntensity: z.number().int().min(0).max(100).optional().default(100),
-  mediaThumbnailUrl: z.string().url().nullable().optional(),
+  mediaThumbnailUrl: z.string().min(1).nullable().optional(),
   mediaDurationSeconds: z.number().int().min(0).max(10).nullable().optional(),
 });
 

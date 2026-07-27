@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform, useColorScheme } from 'react-native';
-import Animated, { useAnimatedStyle, interpolate } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, interpolate, useSharedValue } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
 import { Tabs, router, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -98,13 +98,25 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
 
-  const pillBg      = isDark ? 'rgba(20,20,20,0.30)'     : 'rgba(255,255,255,0.30)';
-  const pillBorder  = isDark ? 'rgba(255,255,255,0.12)'  : 'rgba(255,255,255,0.45)';
+  const pillBg      = isDark ? '#1a1a1a' : '#ffffff';
+  const pillBorder  = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
   const blurTint    = (isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterial') as
     'systemChromeMaterialDark' | 'systemChromeMaterial';
   const iconActive  = isDark ? color.onInk               : color.ink;
   const iconMuted   = isDark ? color.onInkMute            : color.mute;
   const activeHighlight = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.07)';
+
+  // Shared values for pill background/border so Reanimated always applies them
+  // through its own style pipeline.  Passing colors in a plain inline-style
+  // array alongside an Animated.View can be silently ignored on Android/web
+  // (Reanimated processes its own style last and doesn't merge non-animated
+  // array entries reliably), leaving the static 30%-opacity fallback visible.
+  const pillBgSV     = useSharedValue(pillBg);
+  const pillBorderSV = useSharedValue(pillBorder);
+  useEffect(() => {
+    pillBgSV.value     = pillBg;
+    pillBorderSV.value = pillBorder;
+  }, [pillBg, pillBorder]);
 
   const isActive = (match: readonly string[]) =>
     match.some((m) => pathname === m || pathname.startsWith(m + '/'));
@@ -115,9 +127,11 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
   const animatedPillStyle = useAnimatedStyle(() => {
     const progress = navBarProgress.value;
     return {
-      height:         interpolate(progress, [0, 1], [64, 40]),
-      borderRadius:   interpolate(progress, [0, 1], [36, 22]),
+      height:          interpolate(progress, [0, 1], [64, 40]),
+      borderRadius:    interpolate(progress, [0, 1], [36, 22]),
       paddingVertical: interpolate(progress, [0, 1], [6, 2]),
+      backgroundColor: pillBgSV.value,
+      borderColor:     pillBorderSV.value,
     };
   });
 
@@ -199,7 +213,7 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
       style={[fb.wrapper, { bottom: insets.bottom + 12 }]}
       pointerEvents="box-none"
     >
-      <Animated.View style={[fb.pill, { backgroundColor: pillBg, borderColor: pillBorder }, animatedPillStyle]}>
+      <Animated.View style={[fb.pill, animatedPillStyle]}>
         {/* Glass blur layer — iOS: real blur; Android: rgba only */}
         {Platform.OS === 'ios' && (
           <BlurView
@@ -364,12 +378,12 @@ const fb = StyleSheet.create({
   pill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.30)',
+    backgroundColor: '#ffffff', // solid fallback; overridden by animatedPillStyle
     borderRadius: 36,
     paddingHorizontal: 6,
     paddingVertical: 6,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.45)',
+    borderColor: 'rgba(0,0,0,0.08)', // solid fallback; overridden by animatedPillStyle
     overflow: 'hidden',
   },
   item: {
