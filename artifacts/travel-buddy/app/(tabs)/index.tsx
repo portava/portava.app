@@ -1,5 +1,8 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, ActivityIndicator, RefreshControl } from 'react-native';
+import Animated from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useCollapsingHeader } from '../../src/hooks/useCollapsingHeader';
 import { getCommentCountSnapshot, subscribeCommentCount } from '../../src/lib/commentCountStore';
 import { router, useFocusEffect } from 'expo-router';
 import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
@@ -111,6 +114,8 @@ function Pulse() {
 
   const navBarScrollHandler = useNavBarScrollHandler();
   const bottomInset = useBottomInset();
+  const insets = useSafeAreaInsets();
+  const { compactBarStyle, compactBarInteractive } = useCollapsingHeader();
   const { markFirstContent, epoch } = useScreenTiming('Pulse');
 
   // Stale-while-revalidate: pre-paint the Pulse feed from the previous session's
@@ -309,6 +314,19 @@ function Pulse() {
 
   const Header = (
     <View>
+      {/* Large title — scrolls with the feed; compact bar (below) fades in once scrolled away */}
+      <AppHeader
+        variant="primary"
+        title="Pulse"
+        rightActions={[
+          { icon: <NotificationBell />, accessibilityLabel: 'Notifications' },
+          { icon: <MessageCircle size={22} color={color.ink} />, onPress: () => router.push('/(tabs)/messages' as any), accessibilityLabel: 'Messages' },
+          { icon: <PlusCircle size={22} color={color.ink} />, onPress: () => router.push('/create' as any), accessibilityLabel: 'Create post' },
+        ]}
+        overflowActions={[
+          { label: filterCount > 0 ? `Filters (${filterCount})` : 'Filters', onPress: () => setSheetOpen(true) },
+        ]}
+      />
       {/* Live Pulse smart rail — above all other sections */}
       <LivePulseRail pulse={livePulse} />
 
@@ -495,18 +513,34 @@ function Pulse() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <AppHeader
-        variant="primary"
-        title="Pulse"
-        rightActions={[
-          { icon: <NotificationBell />, accessibilityLabel: 'Notifications' },
-          { icon: <MessageCircle size={22} color={color.ink} />, onPress: () => router.push('/(tabs)/messages' as any), accessibilityLabel: 'Messages' },
-          { icon: <PlusCircle size={22} color={color.ink} />, onPress: () => router.push('/create' as any), accessibilityLabel: 'Create post' },
-        ]}
-        overflowActions={[
-          { label: filterCount > 0 ? `Filters (${filterCount})` : 'Filters', onPress: () => setSheetOpen(true) },
-        ]}
-      />
+      {/* Compact sticky bar — invisible until the large AppHeader scrolls away */}
+      <Animated.View
+        style={[styles.compactBar, { paddingTop: insets.top }, compactBarStyle]}
+        pointerEvents={compactBarInteractive ? 'auto' : 'none'}
+      >
+        <View style={styles.compactBarInner}>
+          <Text style={styles.compactBarTitle}>Pulse</Text>
+          <View style={styles.compactBarActions}>
+            <NotificationBell />
+            <Pressable
+              style={styles.compactBarBtn}
+              onPress={() => router.push('/(tabs)/messages' as any)}
+              accessibilityLabel="Messages"
+              hitSlop={8}
+            >
+              <MessageCircle size={20} color={color.ink} />
+            </Pressable>
+            <Pressable
+              style={styles.compactBarBtn}
+              onPress={() => router.push('/create' as any)}
+              accessibilityLabel="Create post"
+              hitSlop={8}
+            >
+              <PlusCircle size={20} color={color.ink} />
+            </Pressable>
+          </View>
+        </View>
+      </Animated.View>
       <FlatList
         data={feed}
         keyExtractor={(it) => it.id}
@@ -563,6 +597,27 @@ function Pulse() {
 }
 
 const styles = StyleSheet.create({
+  // ── Compact sticky bar ────────────────────────────────────────────────────
+  compactBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    backgroundColor: color.paper,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: color.haze,
+  },
+  compactBarInner: {
+    height: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: space.lg,
+  },
+  compactBarTitle: { ...t.title, color: color.ink, fontSize: 18, flex: 1 },
+  compactBarActions: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  compactBarBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  // ── Feed sections ─────────────────────────────────────────────────────────
   fitsHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, marginTop: space.lg, marginBottom: space.md, flexWrap: 'wrap' },
   sectionTitle: { ...t.title, color: color.ink, fontSize: 20 },
   insideBadge: { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: 999, paddingHorizontal: space.sm, paddingVertical: 3 },

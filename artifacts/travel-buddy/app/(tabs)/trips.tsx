@@ -1,4 +1,6 @@
 import React, { useState, useCallback } from 'react';
+import Animated from 'react-native-reanimated';
+import { useCollapsingHeader } from '../../src/hooks/useCollapsingHeader';
 import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
@@ -256,6 +258,7 @@ function TripsScreen() {
   }, [addTarget, addBusy]);
   const insets = useSafeAreaInsets();
   const navScrollHandler = useNavBarScrollHandler();
+  const { compactBarStyle, compactBarInteractive } = useCollapsingHeader();
   const { markFirstContent, epoch } = useScreenTiming('Trips');
 
   // Stale-while-revalidate: pre-paint the trip list from the previous session's
@@ -300,6 +303,26 @@ function TripsScreen() {
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       {activeTab === 'trips' ? (
         <>
+          {/* Compact sticky bar — fades in as the large AppHeader scrolls away */}
+          <Animated.View
+            style={[styles.compactBar, { paddingTop: insets.top }, compactBarStyle]}
+            pointerEvents={compactBarInteractive ? 'auto' : 'none'}
+          >
+            <View style={styles.compactBarInner}>
+              <Text style={styles.compactBarTitle}>Trips</Text>
+              <View style={styles.compactBarActions}>
+                <NotificationBell />
+                <Pressable
+                  style={styles.compactBarBtn}
+                  onPress={() => router.push('/trip/new')}
+                  accessibilityLabel="New trip"
+                  hitSlop={8}
+                >
+                  <Plus size={20} color={color.ink} />
+                </Pressable>
+              </View>
+            </View>
+          </Animated.View>
           <ScrollView
             onScroll={navScrollHandler}
             scrollEventThrottle={16}
@@ -473,6 +496,26 @@ function LiveTrips({ trips, loading, error, onPickTrip }: { trips: any[]; loadin
 }
 
 const styles = StyleSheet.create({
+  // ── Compact sticky bar ────────────────────────────────────────────────────
+  compactBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    backgroundColor: color.paper,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: color.haze,
+  },
+  compactBarInner: {
+    height: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: space.lg,
+  },
+  compactBarTitle: { fontSize: 18, fontWeight: '700', color: color.ink, flex: 1, letterSpacing: -0.3 },
+  compactBarActions: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  compactBarBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   addBanner: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   View, Text, Pressable, ScrollView, StyleSheet, TextInput, Modal, InteractionManager, FlatList,
 } from 'react-native';
+import Animated from 'react-native-reanimated';
+import { useCollapsingHeader } from '../../src/hooks/useCollapsingHeader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
 import {
@@ -104,6 +106,7 @@ export default function DiscoveryHub() {
   // so that trending-hashtag and buddy fetches re-anchor on GPS updates.
   const currentCity = resolvedLocation.place.city ?? null;
   const navScrollHandler = useNavBarScrollHandler();
+  const { compactBarStyle, compactBarInteractive } = useCollapsingHeader();
 
   const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([]);
   useEffect(() => {
@@ -795,6 +798,33 @@ export default function DiscoveryHub() {
   return (
     <SectionErrorBoundary label="DiscoveryHub" fullScreen>
     <View style={styles.root}>
+      {/* Compact sticky bar — fades in as the large AppHeader scrolls away */}
+      <Animated.View
+        style={[styles.compactBar, { paddingTop: insets.top }, compactBarStyle]}
+        pointerEvents={compactBarInteractive ? 'auto' : 'none'}
+      >
+        <View style={styles.compactBarInner}>
+          <Text style={styles.compactBarTitle}>Discovery</Text>
+          <View style={styles.compactBarActions}>
+            <Pressable
+              style={styles.compactBarBtn}
+              onPress={() => router.push({ pathname: '/search', params: { q: '', type: 'all' } } as any)}
+              accessibilityLabel="Search"
+              hitSlop={8}
+            >
+              <Search size={20} color={color.mute} />
+            </Pressable>
+            <Pressable
+              style={styles.compactBarBtn}
+              onPress={() => setAgePickerOpen(true)}
+              accessibilityLabel="Filters"
+              hitSlop={8}
+            >
+              <SlidersHorizontal size={20} color={ageFilter !== 'any' ? color.signal : color.mute} />
+            </Pressable>
+          </View>
+        </View>
+      </Animated.View>
       {/* ── Age filter modal — opened via the filter button in the search row ── */}
       <Modal
         visible={agePickerOpen}
@@ -979,6 +1009,26 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: color.paper,
   },
+  // ── Compact sticky bar ────────────────────────────────────────────────────
+  compactBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    backgroundColor: color.paper,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: color.haze,
+  },
+  compactBarInner: {
+    height: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: space.lg,
+  },
+  compactBarTitle: { fontSize: 18, fontWeight: '700', color: color.ink, flex: 1, letterSpacing: -0.3 },
+  compactBarActions: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  compactBarBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   loadingState: {
     flex: 1,
     alignItems: 'center',

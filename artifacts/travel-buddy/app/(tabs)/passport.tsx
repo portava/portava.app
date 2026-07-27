@@ -1,5 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert } from 'react-native';
+import Animated from 'react-native-reanimated';
+import { useCollapsingHeader } from '../../src/hooks/useCollapsingHeader';
 import { router, useFocusEffect } from 'expo-router';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { useBottomInset } from '../../src/hooks/useBottomInset';
@@ -477,6 +479,7 @@ function PassportContent({
 
   const navScrollHandler = useNavBarScrollHandler();
   const bottomInset = useBottomInset();
+  const { compactBarStyle, compactBarInteractive } = useCollapsingHeader();
   const [statsIconOnly, setStatsIconOnly] = useState(false);
   // Filled by StampsTab with its load-more function (paginated grid data).
   const stampsLoadMoreRef = React.useRef<(() => void) | null>(null);
@@ -595,6 +598,30 @@ function PassportContent({
 
   return (
     <View style={s.root}>
+      {/* Compact sticky bar — fades in as the large AppHeader scrolls away.
+          Replaces the always-visible absolute share/bell buttons. */}
+      <Animated.View
+        style={[s.compactBar, { paddingTop: insets.top }, compactBarStyle]}
+        pointerEvents={compactBarInteractive ? 'auto' : 'none'}
+      >
+        <View style={s.compactBarInner}>
+          <Text style={s.compactBarTitle}>Passport</Text>
+          <View style={s.compactBarActions}>
+            <Pressable
+              style={s.compactBarBtn}
+              onPress={share}
+              disabled={sharing}
+              accessibilityLabel="Share Passport"
+              hitSlop={8}
+            >
+              {sharing
+                ? <ActivityIndicator size="small" color={PP.ink} />
+                : <Share2 size={20} color={PP.ink} strokeWidth={1.5} />}
+            </Pressable>
+            <NotificationBell style={s.compactBarBell} />
+          </View>
+        </View>
+      </Animated.View>
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: bottomInset }}
@@ -761,19 +788,7 @@ function PassportContent({
         <View style={{ height: 24 }} />
       </ScrollView>
 
-      {/* ── Absolute UI: share + bell + menus ── */}
-      <Pressable
-        style={[s.shareBtn, { top: insets.top + space.sm }]}
-        onPress={share}
-        disabled={sharing}
-        hitSlop={8}
-        accessibilityLabel="Share Passport"
-      >
-        {sharing
-          ? <ActivityIndicator size="small" color={PP.ink} />
-          : <Share2 size={20} color={PP.ink} strokeWidth={1.5} />}
-      </Pressable>
-      <NotificationBell style={[s.bellBtn, { top: insets.top + space.sm }]} />
+      {/* Share + bell are now in the compact sticky bar above — no duplicate floaters */}
 
       {/* Off-screen share card */}
       <View style={s.offScreen} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
@@ -803,6 +818,7 @@ function PassportContent({
         onViewAsPublic={() => { setMenuOpen(false); handleViewAsPublic(); }}
         onArrangeSections={() => { setMenuOpen(false); onArrangeSections(); }}
         onSwitchTab={(tabKey) => { setMenuOpen(false); setTab(tabKey as PassportTabKey); }}
+        onCreatePress={() => { setMenuOpen(false); setCreateHubOpen(true); }}
       />
 
       {/* Create hub sheet — opened from the owner action menu's Create entry */}
@@ -817,6 +833,28 @@ function PassportContent({
 const s = StyleSheet.create({
   root: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+
+  // ── Compact sticky bar ────────────────────────────────────────────────────
+  compactBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    backgroundColor: PP.paperDeep,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: PP.borderLight,
+  },
+  compactBarInner: {
+    height: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: space.lg,
+  },
+  compactBarTitle: { fontSize: 18, fontWeight: '700', color: PP.ink, flex: 1, letterSpacing: -0.3 },
+  compactBarActions: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  compactBarBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  compactBarBell: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' } as any,
 
   // Pending posts row
   pendingRow: {

@@ -1,10 +1,10 @@
 /**
  * Pulse (app/(tabs)/index.tsx) — scroll-architecture regression test.
  *
- * Confirms the current Pulse layout after the Task #1519/rewrite:
- *   - PulseHeader renders as a direct sibling ABOVE the FlatList (not inside
- *     ListHeaderComponent). This is intentional: the header is now a fixed
- *     topbar, not an in-list element.
+ * Confirms the standalone Pulse layout after the header refactor:
+ *   - AppHeader renders as a direct sibling ABOVE the FlatList (fixed
+ *     topbar — standalone uses AppHeader in the fixed position, not inside
+ *     ListHeaderComponent).
  *   - The FlatList/ScrollView exists as the primary scroll container.
  *   - The FlatList's ListHeaderComponent (containing LivePulseRail, fits, etc.)
  *     is rendered INSIDE the ScrollView subtree.
@@ -22,9 +22,12 @@ jest.mock('react-native-reanimated', () => {
     __esModule: true,
     default: { View: RN.View, ScrollView: RN.ScrollView },
     useAnimatedStyle: () => ({}),
+    useAnimatedReaction: () => {},
     interpolate: (_v: number, _in: number[], out: number[]) => out[0],
     makeMutable: (v: number) => ({ value: v }),
     withSpring: (v: number) => v,
+    runOnJS: (fn: any) => fn,
+    useReducedMotion: () => false,
   };
 });
 
@@ -149,8 +152,7 @@ jest.mock('../../../src/components/PulseHeader', () => ({
 
 // ── AppHeader — sentinel stub ─────────────────────────────────────────────────
 // Renders a Text node so toJSON tree-walking can confirm AppHeader appears
-// as a direct sibling ABOVE the FlatList (fixed-header position, same as
-// the old PulseHeader). Overflow actions not under test here.
+// as a fixed sibling ABOVE the FlatList (standalone fixed-header position).
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ui/AppHeader.tsx', () => ({
   AppHeader: () => {
@@ -214,7 +216,7 @@ function subtreeHasText(node: any, text: string): boolean {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('Pulse screen — scroll architecture', () => {
-  it('AppHeader renders as a direct sibling ABOVE the FlatList — fixed header design', async () => {
+  it('AppHeader renders as a direct sibling ABOVE the FlatList — fixed header position', async () => {
     const Pulse = require('../index.tsx').default;
 
     const { toJSON } = await render(<Pulse />);
@@ -260,7 +262,8 @@ describe('Pulse screen — scroll architecture', () => {
 
     const tree = toJSON() as any;
 
-    // Verify the architecture: AppHeader does NOT scroll with the list.
+    // Verify the standalone architecture: AppHeader is fixed above the FlatList
+    // and does NOT scroll with the list content.
     const scrollViews = findScrollViews(tree);
     const headerInScroll = scrollViews.some((sv) =>
       subtreeHasText(sv, '__AppHeaderSentinel__'),

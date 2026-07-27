@@ -249,7 +249,9 @@ describe('DiscoveryHub crash resilience', () => {
   it('(a) renders with complete data', async () => {
     await render(<DiscoveryHub />);
 
-    expect(screen.getByText('Discovery')).toBeTruthy();
+    // The screen renders "Discovery" in both the large scrolling header and the
+    // compact sticky bar overlay; getAllByText handles both occurrences.
+    expect(screen.getAllByText('Discovery').length).toBeGreaterThan(0);
     expect(screen.getByTestId('stub-for-you')).toBeTruthy();
     expect(screen.getByTestId('stub-compass-row')).toBeTruthy();
 
@@ -266,7 +268,7 @@ describe('DiscoveryHub crash resilience', () => {
 
     await render(<DiscoveryHub />);
 
-    expect(screen.getByText('Discovery')).toBeTruthy();
+    expect(screen.getAllByText('Discovery').length).toBeGreaterThan(0);
     expect(screen.getByTestId('stub-for-you')).toBeTruthy();
 
     await waitFor(() => {
@@ -281,7 +283,7 @@ describe('DiscoveryHub crash resilience', () => {
 
     await render(<DiscoveryHub />);
 
-    expect(screen.getByText('Discovery')).toBeTruthy();
+    expect(screen.getAllByText('Discovery').length).toBeGreaterThan(0);
     await waitFor(() => {
       expect(screen.queryByText('lisbon')).toBeNull();
     });
@@ -293,7 +295,7 @@ describe('DiscoveryHub crash resilience', () => {
 
     await render(<DiscoveryHub />);
 
-    expect(screen.getByText('Discovery')).toBeTruthy();
+    expect(screen.getAllByText('Discovery').length).toBeGreaterThan(0);
     // Location nudge (generalized, non-location-gated path) is offered.
     expect(screen.getByLabelText('Set your location to discover nearby places')).toBeTruthy();
     // For You tab still renders (its stub stands in for generalized picks).
@@ -315,7 +317,7 @@ describe('DiscoveryHub crash resilience', () => {
     expect(screen.getByTestId('section-error-CompassPicks')).toBeTruthy();
     expect(screen.getByText("Couldn't load this section")).toBeTruthy();
     // …while the rest of the screen still renders.
-    expect(screen.getByText('Discovery')).toBeTruthy();
+    expect(screen.getAllByText('Discovery').length).toBeGreaterThan(0);
     expect(screen.getByTestId('stub-for-you')).toBeTruthy();
     // And the real error was logged for developers.
     expect(

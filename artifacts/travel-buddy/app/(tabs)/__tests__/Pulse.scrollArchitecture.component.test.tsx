@@ -1,13 +1,14 @@
 /**
  * Pulse (app/(tabs)/index.tsx) — scroll-architecture regression test.
  *
- * Confirms the current Pulse layout after the Task #1519/rewrite:
- *   - PulseHeader renders as a direct sibling ABOVE the FlatList (not inside
- *     ListHeaderComponent). This is intentional: the header is now a fixed
- *     topbar, not an in-list element.
+ * Confirms the collapsing-header layout introduced by the collapsible-header task:
+ *   - AppHeader is rendered INSIDE the FlatList's ListHeaderComponent so it
+ *     scrolls away with the feed content (large-title pattern).
+ *   - A compact Animated.View overlay at root fades in when the large header
+ *     has scrolled off screen.
  *   - The FlatList/ScrollView exists as the primary scroll container.
- *   - The FlatList's ListHeaderComponent (containing LivePulseRail, fits, etc.)
- *     is rendered INSIDE the ScrollView subtree.
+ *   - The FlatList's ListHeaderComponent (containing AppHeader, LivePulseRail,
+ *     fits, etc.) is rendered INSIDE the ScrollView subtree.
  *
  * Run with: pnpm --filter @workspace/travel-buddy run test:component
  */
@@ -22,9 +23,12 @@ jest.mock('react-native-reanimated', () => {
     __esModule: true,
     default: { View: RN.View, ScrollView: RN.ScrollView },
     useAnimatedStyle: () => ({}),
+    useAnimatedReaction: () => {},
     interpolate: (_v: number, _in: number[], out: number[]) => out[0],
     makeMutable: (v: number) => ({ value: v }),
     withSpring: (v: number) => v,
+    runOnJS: (fn: any) => fn,
+    useReducedMotion: () => false,
   };
 });
 
@@ -214,7 +218,7 @@ function subtreeHasText(node: any, text: string): boolean {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('Pulse screen — scroll architecture', () => {
-  it('AppHeader renders as a direct sibling ABOVE the FlatList — fixed header design', async () => {
+  it('AppHeader scrolls with content — sentinel is inside the FlatList scroll container (collapsing-header design)', async () => {
     const Pulse = require('../index.tsx').default;
 
     const { toJSON } = await render(<Pulse />);
@@ -222,14 +226,14 @@ describe('Pulse screen — scroll architecture', () => {
 
     const tree = toJSON() as any;
 
-    // Root is a View whose direct children include AppHeader (sentinel) and
-    // the FlatList (as ScrollView). Both should appear at this level.
-    const rootChildren: any[] = Array.isArray(tree?.children) ? tree.children : [];
-
-    const hasSentinelAtRoot = rootChildren.some((child: any) =>
-      subtreeHasText(child, '__AppHeaderSentinel__'),
+    // Collapsing-header design: AppHeader lives inside ListHeaderComponent so
+    // it scrolls away with the feed. The sentinel must appear INSIDE a ScrollView
+    // (i.e. the FlatList's scroll container), not at root as a fixed sibling.
+    const scrollViews = findScrollViews(tree);
+    const headerInScroll = scrollViews.some((sv) =>
+      subtreeHasText(sv, '__AppHeaderSentinel__'),
     );
-    expect(hasSentinelAtRoot).toBe(true);
+    expect(headerInScroll).toBe(true);
   });
 
   it('FlatList exists and its ListHeaderComponent renders inside the scroll container', async () => {
@@ -252,7 +256,7 @@ describe('Pulse screen — scroll architecture', () => {
     expect(railInScroll).toBe(true);
   });
 
-  it('AppHeader sentinel is NOT inside the FlatList scroll container — it is a fixed sibling', async () => {
+  it('AppHeader sentinel IS inside the FlatList scroll container — it scrolls with content, not fixed at root', async () => {
     const Pulse = require('../index.tsx').default;
 
     const { toJSON } = await render(<Pulse />);
@@ -260,11 +264,13 @@ describe('Pulse screen — scroll architecture', () => {
 
     const tree = toJSON() as any;
 
-    // Verify the architecture: AppHeader does NOT scroll with the list.
+    // Verify the collapsing-header architecture: AppHeader scrolls WITH the list
+    // (lives in ListHeaderComponent). A compact overlay bar at root takes the
+    // "fixed" role when the large header has scrolled off screen.
     const scrollViews = findScrollViews(tree);
     const headerInScroll = scrollViews.some((sv) =>
       subtreeHasText(sv, '__AppHeaderSentinel__'),
     );
-    expect(headerInScroll).toBe(false);
+    expect(headerInScroll).toBe(true);
   });
 });

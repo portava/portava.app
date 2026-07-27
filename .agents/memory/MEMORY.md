@@ -1,4 +1,5 @@
 - [FlatList test contamination](flatlist-test-contamination.md) — fireEvent on FlatList items zeros tiles in subsequent renders; combine all interactions into one it(); restoreAllMocks() breaks jest.mock() factories.
+- [Reanimated test mock gaps](reanimated-test-mock-gaps.md) — default mock omits useReducedMotion; per-file mocks miss useAnimatedReaction/runOnJS/useReducedMotion; makeMutable(0) returns 0 (identity), not undefined — ?? fallback misses it.
 - [Expo Router tests as routes](expo-router-tests-as-routes.md) — Jest component tests under `app/` are discovered and bundled as routes unless Metro's `blockList` excludes `__tests__` and `*.test.*` files.
 - [Env/secrets audit gotchas](env-secrets-gotchas.md) — shared env vars can shadow same-name secrets with corrupted values; user-typed secret names often have typos the app can't see.
 - [Supabase migration access](supabase-migration-access.md) — apply migrations via the Supabase Management API query endpoint; direct psql/pooler connections are unreachable from this workspace.
