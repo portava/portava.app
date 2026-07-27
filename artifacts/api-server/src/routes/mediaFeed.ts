@@ -98,8 +98,6 @@ function pruneViewDedup(): void {
  * Grid-mode post columns — strictly lightweight.
  * No captions (content), no reaction counts, no linked event/trip fields.
  * Includes only the fields needed to render a static poster tile.
- * Eligibility fields (geo_restriction / age_restriction_*) are still present
- * because filterEligibleMediaCandidates requires them to be fail-closed.
  * location_lat / location_lng are included for the nearby radius filter;
  * they are never forwarded to the client (hydrateMediaGridItem omits them).
  */
@@ -108,12 +106,7 @@ const GRID_POST_COLUMNS =
   "location_name, location_city, location_country, " +
   "location_lat, location_lng, " +
   "created_at, category, " +
-  "status, post_status, visibility, " +
-  // Eligibility fields required by filterEligibleMediaCandidates (fail-closed gates)
-  "moderation_status, publish_at, " +
-  "geo_restriction, age_restriction_enabled, age_min, age_max, " +
-  // Engagement metrics surfaced in grid tile hydration
-  "view_count, qualified_view_count";
+  "status, post_status, visibility";
 
 /**
  * Grid-mode post_media columns — minimal set for static tile rendering.
@@ -125,20 +118,17 @@ const GRID_MEDIA_COLUMNS =
 
 /** Columns projected from posts for media feed (never include exact GPS). */
 const FEED_POST_COLUMNS =
-  "id, author_id, event_id, trip_id, content, visibility, status, post_status, " +
-  "moderation_status, publish_at, " +
-  // Geo/age restriction fields required by filterEligibleMediaCandidates (fail-closed gates)
-  "geo_restriction, age_restriction_enabled, age_min, age_max, " +
-  "created_at, category, tags, " +
+  "id, author_id, trip_id, content, visibility, status, post_status, " +
+  "created_at, category, " +
   "location_name, location_city, location_country, location_source, " +
-  "save_count, like_count, comment_count, view_count, qualified_view_count";
+  "save_count, like_count, comment_count";
 
 const POST_MEDIA_COLUMNS =
   "id, media_type, public_url, thumbnail_url, duration_seconds, " +
   "width, height, sort_order, processing_status, moderation_status, storage_path, storage_bucket";
 
 const PROFILE_COLUMNS =
-  "id, username, full_name, avatar_url, is_private, is_verified, bio, account_status, followers_count, following_count";
+  "id, username, full_name, avatar_url, is_private, verified, bio, account_status";
 
 // ── Linked entity resolution ──────────────────────────────────────────────────
 
@@ -390,7 +380,7 @@ const GEMS_EXCLUDED_SOURCE_TYPES = new Set(["ai_generated_generic"]);
 
 /** Columns selected for gem submitter profiles. */
 const GEM_PROFILE_COLUMNS =
-  "id, username, full_name, avatar_url, is_private, is_verified, bio, account_status, followers_count, following_count";
+  "id, username, full_name, avatar_url, is_private, verified, bio, account_status";
 
 /**
  * Columns selected for the gems feed query (statically resolvable single-line
@@ -1042,9 +1032,9 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     query = query.in("author_id", [...followedCreatorIds]);
   }
 
-  // geo_restriction and age_restriction_* columns are projected in FEED_POST_COLUMNS
-  // and enforced in-memory by filterEligibleMediaCandidates as the authoritative
-  // belt-and-suspenders gate.
+  // Note: geo_restriction and age_restriction_* columns are not present in the
+  // live schema yet — filterEligibleMediaCandidates skips those gates when the
+  // fields are absent (fail-open for now).
 
   // Apply cursor filter for stable pagination
   if (cursor) {

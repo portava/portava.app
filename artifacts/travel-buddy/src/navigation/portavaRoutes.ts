@@ -145,7 +145,7 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
   {
     key: 'tab-media',
     path: '(tabs)/media',
-    title: 'Media',
+    title: 'Roam',
     parent: null,
     icon: 'Film',
     requiresAuth: false,

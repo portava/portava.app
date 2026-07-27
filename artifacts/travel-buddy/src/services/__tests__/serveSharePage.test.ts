@@ -51,8 +51,13 @@ before(async () => {
 });
 
 after(() => {
-  apiStub.close();
   serveProc?.kill('SIGTERM');
+  // Force-close any keep-alive connections so apiStub.close() can drain
+  // immediately and the node:test process can exit. Without this the
+  // http.globalAgent retains pooled sockets to PORT and the process hangs.
+  (apiStub as any).closeAllConnections?.();
+  apiStub.close();
+  http.globalAgent.destroy();
 });
 
 function rawRequest(rawPath: string): Promise<{ status: number; body: string }> {

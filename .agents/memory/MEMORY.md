@@ -1,3 +1,4 @@
+- [Media feed column drift](media-feed-column-drift.md) — posts/profiles columns assumed in FEED/GRID/PROFILE constants that don't exist live; verified fix + safe-fallback pattern.
 - [FlatList test contamination](flatlist-test-contamination.md) — fireEvent on FlatList items zeros tiles in subsequent renders; combine all interactions into one it(); restoreAllMocks() breaks jest.mock() factories.
 - [Reanimated test mock gaps](reanimated-test-mock-gaps.md) — default mock omits useReducedMotion; per-file mocks miss useAnimatedReaction/runOnJS/useReducedMotion; makeMutable(0) returns 0 (identity), not undefined — ?? fallback misses it.
 - [Expo Router tests as routes](expo-router-tests-as-routes.md) — Jest component tests under `app/` are discovered and bundled as routes unless Metro's `blockList` excludes `__tests__` and `*.test.*` files.

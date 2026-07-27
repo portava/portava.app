@@ -792,13 +792,28 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
   const [repliesLoading, setRepliesLoading] = useState<Set<string>>(new Set());
   const [previewHandle, setPreviewHandle] = useState<string | null>(null);
   const submitGuardRef = useRef(createSubmitGuard());
+  /**
+   * Set to true whenever a comment is successfully appended optimistically.
+   * Reset to false at the start of each load() call.
+   *
+   * Guards against the stale-GET race: if the user submits while the initial
+   * load() GET is in-flight, that GET started before the POST committed so its
+   * result doesn't include the new comment. Without this guard, load()'s
+   * setComments(data) would overwrite the optimistic state and the new comment
+   * would vanish from the list even though the POST succeeded.
+   */
+  const submittedSinceLoadRef = useRef(false);
   const [reportTarget, setReportTarget] = useState<{ subjectId: string; authorId: string; authorName: string } | null>(null);
 
   // ── Load comments ───────────────────────────────────────────────────────────
   const load = useCallback(async () => {
     setLoading(true);
+    submittedSinceLoadRef.current = false;
     const data = await listComments(postId);
-    setComments(data);
+    // Use a functional update so we can inspect the flag atomically.
+    // If a submit raced this load the fetched data is stale — keep the
+    // optimistic state rather than overwriting it with the old server snapshot.
+    setComments((prev) => (submittedSinceLoadRef.current ? prev : data));
     setLoading(false);
   }, [postId]);
 
@@ -983,6 +998,9 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
           const result = await addComment(postId, t);
           if (result && 'comment' in result) {
             setText('');
+            // Mark that a successful submit has raced any in-flight load so
+            // load()'s setComments won't overwrite the optimistic state.
+            submittedSinceLoadRef.current = true;
             setComments((prev) => [...prev, result.comment]);
             onCountChange(result.commentCount);
           } else if (result && 'error' in result) {

@@ -405,6 +405,9 @@ async function seedVideoPostsForUser(userId: string, handle: string): Promise<vo
       .maybeSingle();
 
     if (existing) {
+      // Ensure has_video is set correctly on previously-seeded posts
+      // (original seed may have run before this flag was tracked).
+      await sc.from("posts").update({ has_video: true }).eq("id", postId).eq("has_video", false);
       tally.postsSkipped++;
     } else {
       const post = {
@@ -436,9 +439,7 @@ async function seedVideoPostsForUser(userId: string, handle: string): Promise<vo
         public_lng: video.lng,
         public_location_label: video.locationCity,
         add_to_passport: true,
-        moderation_status: "approved",
         source: "seed_script",
-        tags: video.tags,
         category: video.category,
         like_count: 0,
         comment_count: 0,

@@ -552,7 +552,7 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
     isPrivate: creatorIsPrivate,
     relationshipStatus,
     // Strip isVerified, counts, and bio for private profiles when viewer isn't following
-    isVerified: viewerCanSeePrivateDetails ? Boolean(profile?.is_verified) : null,
+    isVerified: viewerCanSeePrivateDetails ? Boolean(profile?.verified) : null,
     followersCount: viewerCanSeePrivateDetails ? (profile?.followers_count ?? null) : null,
     followingCount: viewerCanSeePrivateDetails ? (profile?.following_count ?? null) : null,
     bio: viewerCanSeePrivateDetails ? (profile?.bio ?? null) : null,

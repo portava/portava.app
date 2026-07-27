@@ -21,7 +21,7 @@ import { CreateHubSheet } from '../../src/components/create/CreateHubSheet';
 const NAV_ITEMS = [
   { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
   { href: '/(tabs)/discovery', label: 'Discovery', icon: Compass, match: ['/(tabs)/discovery'] },
-  { href: '/(tabs)/media', label: 'Media', icon: Film, match: ['/(tabs)/media'] },
+  { href: '/(tabs)/media', label: 'Roam', icon: Film, match: ['/(tabs)/media'] },
   { href: '/(tabs)/trips', label: 'Trips', icon: Plane, match: ['/(tabs)/trips'] },
   { href: '/(tabs)/passport', label: 'Passport', icon: PassportIcon, match: ['/(tabs)/passport'] },
 ] as const;
@@ -310,7 +310,7 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="media"
-        options={{ title: 'Media' }}
+        options={{ title: 'Roam' }}
       />
       <Tabs.Screen name="events" options={{ title: 'Events', href: null }} />
       <Tabs.Screen

@@ -134,7 +134,7 @@ function adaptLinkedEntity(ent: ServerLinkedEntity | null): MediaFeedLinkedEntit
  * Poster: video thumbnailUrl → first image url → null.
  */
 export function mapServerFeedItem(raw: ServerFeedItem): MediaFeedItem {
-  const sorted = [...raw.media].sort((a, b) => a.sortOrder - b.sortOrder);
+  const sorted = [...(raw.media ?? [])].sort((a, b) => a.sortOrder - b.sortOrder);
   const firstVideo = sorted.find((m) => m.type === 'video');
   const firstImage = sorted.find((m) => m.type === 'image');
 
@@ -324,7 +324,7 @@ export async function fetchWatchFeed(params: FetchFeedParams): Promise<FeedServi
     const body: ServerFeedPage = await res.json();
 
     const page: WatchFeedPage = {
-      items: body.items.map(mapServerFeedItem),
+      items: (body.items ?? []).map(mapServerFeedItem),
       nextCursor: body.nextCursor,
       sessionId: body.sessionId,
     };
