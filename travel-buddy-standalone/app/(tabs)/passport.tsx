@@ -479,7 +479,7 @@ function PassportContent({
 
   const navScrollHandler = useNavBarScrollHandler();
   const bottomInset = useBottomInset();
-  const { compactBarStyle, compactBarInteractive } = useCollapsingHeader();
+  const { largeHeaderStyle, compactBarStyle, compactBarInteractive } = useCollapsingHeader();
   const [statsIconOnly, setStatsIconOnly] = useState(false);
   // Filled by StampsTab with its load-more function (paginated grid data).
   const stampsLoadMoreRef = React.useRef<(() => void) | null>(null);
@@ -632,6 +632,7 @@ function PassportContent({
         <AppHeader
           variant="primary"
           title="Passport"
+          animatedStyle={largeHeaderStyle}
           rightActions={[
             { icon: <Share2 size={22} color={color.ink} />, onPress: share, accessibilityLabel: 'Share passport' },
           ]}

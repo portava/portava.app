@@ -258,7 +258,7 @@ function TripsScreen() {
   }, [addTarget, addBusy]);
   const insets = useSafeAreaInsets();
   const navScrollHandler = useNavBarScrollHandler();
-  const { compactBarStyle, compactBarInteractive } = useCollapsingHeader();
+  const { largeHeaderStyle, compactBarStyle, compactBarInteractive } = useCollapsingHeader();
   const { markFirstContent, epoch } = useScreenTiming('Trips');
 
   // Stale-while-revalidate: pre-paint the trip list from the previous session's
@@ -338,6 +338,7 @@ function TripsScreen() {
             <AppHeader
               variant="primary"
               title="Trips"
+              animatedStyle={largeHeaderStyle}
               rightActions={[
                 { icon: <NotificationBell />, accessibilityLabel: 'Notifications' },
                 { icon: <Plus size={22} color={color.ink} />, onPress: () => router.push('/trip/new'), accessibilityLabel: 'New trip' },
