@@ -63,7 +63,7 @@ import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 export default function PassportScreen() {
   const { profile, postcards, stamps, stampsNew, memories, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, updateStamp, reload, lastLoadedAt } = usePassport();
   const { markFirstContent, epoch } = useScreenTiming('Passport');
-  const { userId: ownUserId } = useSession();
+  const { userId: ownUserId, signOut } = useSession();
   const [tab, setTab] = useState<PassportTabKey>('postcards');
   const [menuOpen, setMenuOpen] = useState(false);
   const [trips, setTrips] = useState<TripRow[]>([]);
@@ -295,6 +295,7 @@ export default function PassportScreen() {
         tabOrder={tabOrderOverride ?? resolveTabOrder(profile.passportTabOrder)}
         onArrangeTabs={() => setTabReorderOpen(true)}
         onChangeAvatar={handleChangeAvatarViaCamera}
+        onSignOut={async () => { await signOut(); router.replace('/sign-in' as any); }}
       />
 
       {/* ── Modals ── */}
@@ -356,7 +357,7 @@ function PassportContent({
   onHighlightRingPress, onNewHighlightPress, onDirectAddHighlight, onHighlightBubblePress, onAddPostcard,
   stampsViewOpen, setStampsViewOpen, verificationLevels, noSafetyFlags, cardRef, share, sharing,
   sectionOrder, onArrangeSections, tabOrder, onArrangeTabs,
-  onChangeAvatar,
+  onChangeAvatar, onSignOut,
 }: {
   profile: OwnProfile;
   postcards: PassportPostcard[];
@@ -406,6 +407,8 @@ function PassportContent({
   onArrangeTabs: () => void;
   /** Direct avatar/photo picker — skips the Alert chooser. */
   onChangeAvatar?: () => void;
+  /** Sign the current user out (confirmation prompt handled by the sheet). */
+  onSignOut?: () => Promise<void>;
 }) {
   const verifiedStamps = (stamps ?? []).filter((st) => !st.locked).length;
   const destinationCount = useMemo(
@@ -820,6 +823,7 @@ function PassportContent({
         onArrangeSections={() => { setMenuOpen(false); onArrangeSections(); }}
         onSwitchTab={(tabKey) => { setMenuOpen(false); setTab(tabKey as PassportTabKey); }}
         onCreatePress={() => { setMenuOpen(false); setCreateHubOpen(true); }}
+        onSignOut={onSignOut}
       />
 
       {/* Create hub sheet — opened from the owner action menu's Create entry */}

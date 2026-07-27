@@ -12,7 +12,7 @@
  */
 import React from 'react';
 import {
-  View, Text, Pressable, Modal, ScrollView, StyleSheet,
+  View, Text, Pressable, Modal, ScrollView, StyleSheet, Alert,
 } from 'react-native';
 import { router } from 'expo-router';
 import {
@@ -50,6 +50,8 @@ export interface PassportOwnerMenuSheetProps {
   onSwitchTab?: (tab: string) => void;
   /** Open the Create Hub sheet */
   onCreatePress?: () => void;
+  /** Sign the user out (shows confirmation prompt first) */
+  onSignOut?: () => Promise<void>;
 }
 
 // ─── Item definitions ─────────────────────────────────────────────────────────
@@ -366,8 +368,21 @@ const SECTIONS: Section[] = [
         label: 'Sign Out',
         Icon: LogOut,
         iconColor: '#D94040',
-        live: false,
-        action: (_p) => {},
+        live: true,
+        action: (p) => {
+          Alert.alert(
+            'Sign Out',
+            'Are you sure you want to sign out?',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Sign Out',
+                style: 'destructive',
+                onPress: () => { close(p); p.onSignOut?.(); },
+              },
+            ],
+          );
+        },
       },
     ],
   },
