@@ -382,9 +382,13 @@ export async function draftTripFromText(text: string): Promise<{
       method: 'POST',
       body: JSON.stringify({ text }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      let serverMsg: string | undefined;
+      try { serverMsg = ((await res.json()) as { error?: string }).error; } catch { /* ignore */ }
+      throw new Error(serverMsg ?? 'service_error');
+    }
     return await res.json();
-  } catch {
-    return null;
+  } catch (err) {
+    throw err;
   }
 }

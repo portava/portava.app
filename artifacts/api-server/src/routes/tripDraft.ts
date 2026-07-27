@@ -86,7 +86,7 @@ router.post("/trips/draft-from-text", asyncHandler(async (req, res) => {
   let draft: z.infer<typeof DraftSchema>;
   try {
     const completion = await getOpenAI().chat.completions.create({
-      model:                 "gpt-5-mini",
+      model:                 "gpt-4o-mini",
       temperature:           0,
       max_completion_tokens: 400,
       messages: [

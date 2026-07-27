@@ -104,8 +104,7 @@ export default function NewTrip() {
     try {
       const result = await draftTripFromText(text);
       if (!result) {
-        // Feature disabled or service unavailable — silently allow the user to
-        // continue filling the form manually.
+        setNlError('Pre-fill is not available right now — fill the form manually or try again.');
         return;
       }
       const draft = result.draft as Record<string, unknown>;
