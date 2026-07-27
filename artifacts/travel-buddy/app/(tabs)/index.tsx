@@ -115,7 +115,7 @@ function Pulse() {
   const navBarScrollHandler = useNavBarScrollHandler();
   const bottomInset = useBottomInset();
   const insets = useSafeAreaInsets();
-  const { compactBarStyle, compactBarInteractive } = useCollapsingHeader();
+  const { largeHeaderStyle, compactBarStyle, compactBarInteractive } = useCollapsingHeader();
   const { markFirstContent, epoch } = useScreenTiming('Pulse');
 
   // Stale-while-revalidate: pre-paint the Pulse feed from the previous session's
@@ -318,6 +318,7 @@ function Pulse() {
       <AppHeader
         variant="primary"
         title="Pulse"
+        animatedStyle={largeHeaderStyle}
         rightActions={[
           { icon: <NotificationBell />, accessibilityLabel: 'Notifications' },
           { icon: <MessageCircle size={22} color={color.ink} />, onPress: () => router.push('/(tabs)/messages' as any), accessibilityLabel: 'Messages' },

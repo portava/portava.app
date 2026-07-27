@@ -106,7 +106,7 @@ export default function DiscoveryHub() {
   // so that trending-hashtag and buddy fetches re-anchor on GPS updates.
   const currentCity = resolvedLocation.place.city ?? null;
   const navScrollHandler = useNavBarScrollHandler();
-  const { compactBarStyle, compactBarInteractive } = useCollapsingHeader();
+  const { largeHeaderStyle, compactBarStyle, compactBarInteractive } = useCollapsingHeader();
 
   const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([]);
   useEffect(() => {
@@ -501,6 +501,7 @@ export default function DiscoveryHub() {
       <AppHeader
         variant="primary"
         title="Discovery"
+        animatedStyle={largeHeaderStyle}
         rightActions={isAuthed && isFlagEnabled('external_places_enabled') ? [
           { icon: <PlusCircle size={20} color={color.signal} />, onPress: () => setSubmitPlaceOpen(true), accessibilityLabel: 'Share a place' },
         ] : []}
@@ -793,6 +794,7 @@ export default function DiscoveryHub() {
     nudgeHighlighted,
     handleDisabledChipPress,
     eventPosts,
+    largeHeaderStyle,
   ]);
 
   return (

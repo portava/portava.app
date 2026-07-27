@@ -23,6 +23,9 @@ import {
   View, Text, Pressable, TextInput, StyleSheet, Modal,
   TouchableOpacity,
 } from 'react-native';
+import Animated from 'react-native-reanimated';
+import type { AnimatedStyle } from 'react-native-reanimated';
+import type { ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, X, MoreHorizontal } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
@@ -75,6 +78,12 @@ export interface AppHeaderProps {
   searchProps?: AppHeaderSearchProps;
   /** overlay variant: use a fully transparent background instead of the tint. */
   transparent?: boolean;
+  /**
+   * primary variant only — Reanimated animated style (from useCollapsingHeader's
+   * `largeHeaderStyle`) applied to the wrapper so the large title fades and
+   * slides upward as the compact sticky bar fades in during down-scroll.
+   */
+  animatedStyle?: AnimatedStyle<ViewStyle>;
 }
 
 export function AppHeader({
@@ -86,6 +95,7 @@ export function AppHeader({
   overflowActions = [],
   searchProps,
   transparent = false,
+  animatedStyle,
 }: AppHeaderProps) {
   const insets = useSafeAreaInsets();
   const [overflowOpen, setOverflowOpen] = useState(false);
@@ -168,15 +178,20 @@ export function AppHeader({
 
   // ── primary ───────────────────────────────────────────────────────────────
   if (variant === 'primary') {
+    const primaryInner = (
+      <View style={[s.primary, { paddingTop: insets.top + space.sm }]}>
+        <View style={s.primaryRow}>
+          <Text style={s.primaryTitle} numberOfLines={1}>{title}</Text>
+          {renderActions()}
+        </View>
+        {subtitle ? <Text style={s.subtitle}>{subtitle}</Text> : null}
+      </View>
+    );
     return (
       <>
-        <View style={[s.primary, { paddingTop: insets.top + space.sm }]}>
-          <View style={s.primaryRow}>
-            <Text style={s.primaryTitle} numberOfLines={1}>{title}</Text>
-            {renderActions()}
-          </View>
-          {subtitle ? <Text style={s.subtitle}>{subtitle}</Text> : null}
-        </View>
+        {animatedStyle
+          ? <Animated.View style={animatedStyle}>{primaryInner}</Animated.View>
+          : primaryInner}
         {overflowSheet}
       </>
     );
