@@ -34,6 +34,7 @@
     "test:media-privacy": "node --import tsx/esm --test src/test/mediaPrivacy.test.ts",
     "seed:demo-profile": "node --env-file-if-exists=.env --import tsx/esm src/scripts/seed-demo-profile.ts",
     "seed:demo-social": "node --env-file-if-exists=.env --import tsx/esm src/scripts/seed-demo-social.ts",
+    "seed:test-media": "node --env-file-if-exists=.env --import tsx/esm src/scripts/seed-test-media.ts",
     "verify:demo-profile": "node --env-file-if-exists=.env --import tsx/esm src/scripts/verify-demo-profile.ts",
     "verify:events-discovery": "node --env-file-if-exists=.env --import tsx/esm src/scripts/verify-events-discovery.ts",
     "fix:demo-events-city": "node --env-file-if-exists=.env --import tsx/esm src/scripts/fix-demo-events-city.ts",
