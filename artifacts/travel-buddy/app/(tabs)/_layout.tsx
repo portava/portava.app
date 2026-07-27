@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform, useColorScheme } from 'react-native';
-import Animated, { useAnimatedStyle, interpolate, useSharedValue } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, interpolate, useSharedValue, withTiming } from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { BlurView } from 'expo-blur';
 import { Tabs, router, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -247,6 +248,63 @@ export default function TabLayout() {
   const [pendingRequests, setPendingRequests] = useState(0);
   const [pendingTripInvites, setPendingTripInvites] = useState(0);
   const { isAuthed, loading, configured } = useSession();
+  const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  useEffect(() => { pathnameRef.current = pathname; }, [pathname]);
+
+  // ── Slide-in animation shared values ──────────────────────────────────
+  const slideX = useSharedValue(0);
+  const slideOpacity = useSharedValue(1);
+
+  const animatedSlideStyle = useAnimatedStyle(() => ({
+    flex: 1,
+    transform: [{ translateX: slideX.value }],
+    opacity: slideOpacity.value,
+  }));
+
+  // ── Inter-tab swipe gesture ────────────────────────────────────────────
+  const swipePan = useMemo(
+    () =>
+      Gesture.Pan()
+        .minDistance(30)
+        .runOnJS(true)
+        .onEnd((e) => {
+          // Only act on strongly horizontal swipes
+          if (Math.abs(e.translationX) <= Math.abs(e.translationY) * 1.5) return;
+          const distOk = Math.abs(e.translationX) > 80;
+          const velOk  = Math.abs(e.velocityX) > 300;
+          if (!distOk && !velOk) return;
+
+          // Find active tab index
+          const p = pathnameRef.current;
+          let currentIdx = 0;
+          for (let i = 0; i < NAV_ITEMS.length; i++) {
+            if (NAV_ITEMS[i].match.some((m) => p === m || p.startsWith(m + '/'))) {
+              currentIdx = i;
+              break;
+            }
+          }
+
+          // Skip when on Roam — Watch feed owns its own horizontal gestures
+          if (NAV_ITEMS[currentIdx].label === 'Roam') return;
+
+          // swipe left (translationX < 0) → advance; swipe right → go back
+          const delta    = e.translationX < 0 ? 1 : -1;
+          const nextIdx  = currentIdx + delta;
+          if (nextIdx < 0 || nextIdx >= NAV_ITEMS.length) return;
+
+          const nextHref = NAV_ITEMS[nextIdx].href;
+
+          // Brief slide-in: incoming content enters from ±20 px, fades in
+          slideX.value      = -delta * 20;
+          slideOpacity.value = 0;
+          router.replace(nextHref as any);
+          slideX.value       = withTiming(0, { duration: 200 });
+          slideOpacity.value = withTiming(1, { duration: 200 });
+        }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
   useEffect(() => {
     if (configured && !loading && !isAuthed) {
       router.replace('/(auth)/sign-in' as any);
@@ -349,14 +407,18 @@ export default function TabLayout() {
   }
 
   return (
-    <View style={{ flex: 1 }}>
-      {tabs}
-      <FloatingTabBar
-        newHighlights={newHighlights}
-        pendingTripInvites={pendingTripInvites}
-        unreadNotifications={unreadNotifications}
-      />
-    </View>
+    <GestureDetector gesture={swipePan}>
+      <View style={{ flex: 1 }}>
+        <Animated.View style={animatedSlideStyle}>
+          {tabs}
+        </Animated.View>
+        <FloatingTabBar
+          newHighlights={newHighlights}
+          pendingTripInvites={pendingTripInvites}
+          unreadNotifications={unreadNotifications}
+        />
+      </View>
+    </GestureDetector>
   );
 }
 
