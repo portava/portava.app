@@ -8,7 +8,7 @@ import { View, Text, Pressable, Image, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { Users } from 'lucide-react-native';
 import { getMutualFollows, type MutualFollowUser } from '../../services/follows.ts';
-import { useSession } from '../../context/SessionContext.ts';
+import { useSession } from '../../context/SessionContext.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
 const MAX_AVATARS = 5;
