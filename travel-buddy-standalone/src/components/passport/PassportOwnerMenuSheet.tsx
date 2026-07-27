@@ -21,7 +21,7 @@ import {
   ShieldCheck, Shield, LayoutGrid, Film, BookOpen,
   Briefcase, Bookmark, Users, UserPlus, UserCheck, UserX,
   VolumeX, Settings, Lock, Bell, HelpCircle, LogOut,
-  ChevronRight, X, MoreHorizontal, Edit2, Compass,
+  ChevronRight, X, MoreHorizontal, Edit2, Compass, PlusCircle,
 } from 'lucide-react-native';
 import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
 import { space, radius } from '../../theme/tokens.ts';
@@ -48,6 +48,8 @@ export interface PassportOwnerMenuSheetProps {
   onArrangeSections?: () => void;
   /** Switch the passport tab (for My Posts / My Memories / My Trips) */
   onSwitchTab?: (tab: string) => void;
+  /** Open the Create Hub sheet */
+  onCreatePress?: () => void;
 }
 
 // ─── Item definitions ─────────────────────────────────────────────────────────
@@ -205,6 +207,14 @@ const SECTIONS: Section[] = [
   {
     title: 'Content',
     items: [
+      {
+        key: 'create',
+        label: 'Create',
+        Icon: PlusCircle,
+        iconColor: '#3B7DED',
+        live: true,
+        action: (p) => { close(p); p.onCreatePress?.(); },
+      },
       {
         key: 'my-posts',
         label: 'My Posts',

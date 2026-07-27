@@ -36,9 +36,12 @@ jest.mock('react-native-reanimated', () => {
     __esModule: true,
     default: { View: RN.View, ScrollView: RN.ScrollView },
     useAnimatedStyle: () => ({}),
+    useAnimatedReaction: () => {},
     interpolate: (_v: number, _in: number[], out: number[]) => out[0],
     makeMutable: (v: number) => ({ value: v }),
     withSpring: (v: number) => v,
+    runOnJS: (fn: any) => fn,
+    useReducedMotion: () => false,
   };
 });
 
