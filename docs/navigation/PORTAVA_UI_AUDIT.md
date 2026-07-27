@@ -311,13 +311,15 @@ The target architecture is documented in full in [`PORTAVA_INFORMATION_ARCHITECT
 
 ## 9. Route Registry Check
 
-`src/navigation/portavaRoutes.ts` is the single authoritative registry of every primary and significant nested route in the app.
+`src/navigation/portavaRoutes.ts` is the single authoritative registry of every primary and significant nested route in the app, **and** every layout file that defines a nested navigator.
 
-A lightweight CI script at `scripts/check-route-registry.mjs` keeps the registry in sync with the file system automatically. It:
+A lightweight CI script at `scripts/check-route-registry.mjs` keeps both registries in sync with the file system automatically. It:
 
-1. Enumerates every `*.tsx` file under `app/` (excluding `__tests__/`, `_layout.tsx`, `+not-found.tsx`, and platform-specific siblings like `*.web.tsx`).
-2. Normalises each file path to the Expo-Router path key used in `PORTAVA_ROUTES`.
-3. Exits 1 — failing CI — for any screen file not represented in the registry.
+1. Enumerates every `*.tsx` file under `app/` (excluding `__tests__/`, `+not-found.tsx`, and platform-specific siblings like `*.web.tsx`).
+2. Splits the results into **screen files** and **layout files** (`_layout.tsx`).
+3. Normalises each file path to the Expo-Router path key (e.g. `(tabs)/_layout`).
+4. Checks screen files against `PORTAVA_ROUTES` and layout files against `PORTAVA_LAYOUT_FILES`.
+5. Exits 1 — failing CI — if any file is absent from its respective registry.
 
 **Run manually:**
 
@@ -341,3 +343,37 @@ When adding a screen file under `app/`, also add a `PortavaRouteDefinition` entr
 | `requiresAuth` | `true` if a valid session is required |
 | `featureFlag` | Key of any feature flag that gates the screen, or omit if ungated |
 | `ownerOnly` / `adminOnly` | Set appropriately for ownership- or role-gated screens |
+
+---
+
+## 10. Layout File Registry
+
+Every `_layout.tsx` under `app/` is documented in the `PORTAVA_LAYOUT_FILES` array in `src/navigation/portavaRoutes.ts`. Layout files define nested navigators and are **not** screen routes, but they must be registered so new route groups don't go undocumented.
+
+### Current layout files
+
+| Layout path | Navigator | Description |
+|-------------|-----------|-------------|
+| `_layout` | Stack | Root app shell — wraps the entire tree in all global providers (Session, FeatureFlags, Compass, Call, etc.) and registers background tasks |
+| `(auth)/_layout` | Stack | Auth group (sign-in, onboarding) — `headerShown: false` |
+| `(tabs)/_layout` | Tabs | Primary tab navigator — floating pill bar on mobile, left sidebar on desktop; owns five visible tabs plus three hidden (`href: null`) tabs |
+| `place/_layout` | Stack | Place subtree — themed header (paperRaised background, ink tint, no shadow) |
+| `profile/edit/_layout` | Stack | Edit-profile subtree — `headerShown: false`, Passport paper background; each screen renders its own header |
+| `(rent-a-buddy)/_layout` | Stack | Rent a Buddy group — feature-flag gate (`rent_buddy_enabled`); shows a "COMING SOON" screen when the flag is off |
+| `admin/place-images/_layout` | Stack | Admin place-images subtree — `headerShown: false`; admin auth enforced per-screen |
+| `admin/stamps/_layout` | Stack | Admin Stamp Studio subtree — `headerShown: false`; admin auth enforced per-screen |
+| `admin/visuals/_layout` | Stack | Admin AI Visuals subtree — `headerShown: false`; admin auth enforced per-screen |
+
+### Conventions for new layout files
+
+When adding a `_layout.tsx` under `app/`, also add a `PortavaLayoutDefinition` entry to `PORTAVA_LAYOUT_FILES` with:
+
+| Field | Guidance |
+|-------|----------|
+| `key` | Stable, hyphenated identifier for this layout |
+| `path` | Expo-Router path relative to `app/`, **including** the `_layout` segment and without `.tsx` (e.g. `'(my-group)/_layout'`) |
+| `title` | Human-readable label for the navigator |
+| `navigator` | `'Stack'` or `'Tabs'` |
+| `description` | One-line summary of what this layout controls / wraps |
+| `featureFlag` | Feature flag key that gates the whole group, or omit if always active |
+| `adminOnly` | `true` if the subtree is restricted to admin accounts |

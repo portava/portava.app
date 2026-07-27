@@ -11,7 +11,36 @@
  *   import { PORTAVA_ROUTES, type PortavaRouteDefinition } from '@/src/navigation/portavaRoutes';
  */
 
-// ── Type ──────────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Documents a single _layout.tsx file under app/.
+ * Layout files define the nested navigator for their directory; they are NOT
+ * screen routes but still need to be tracked so new route groups don't go
+ * undocumented.
+ */
+export interface PortavaLayoutDefinition {
+  /** Stable, hyphenated identifier for this layout. */
+  key: string;
+  /**
+   * Expo-Router file-system path relative to `app/`, **including** the
+   * `_layout` segment and without the `.tsx` extension.
+   * e.g. `'(tabs)/_layout'`, `'profile/edit/_layout'`
+   */
+  path: string;
+  /** Human-readable label for the navigator this layout owns. */
+  title: string;
+  /** The Expo-Router navigator component used by this layout. */
+  navigator: 'Stack' | 'Tabs';
+  /** One-line description of what this layout controls / wraps. */
+  description: string;
+  /**
+   * Feature flag key that gates the entire group, or omit when always active.
+   */
+  featureFlag?: string;
+  /** True when the entire subtree is restricted to Portava admin accounts. */
+  adminOnly?: boolean;
+}
 
 export interface PortavaRouteDefinition {
   /** Stable identifier for this route (no slashes, hyphenated). */
@@ -1452,5 +1481,102 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     parent: null,
     icon: null,
     requiresAuth: false,
+  },
+];
+
+// ── Layout registry ───────────────────────────────────────────────────────────
+//
+// Every _layout.tsx under app/ must have a matching entry here.
+// Run `pnpm --filter @workspace/travel-buddy run lint:routes` to verify.
+
+export const PORTAVA_LAYOUT_FILES: PortavaLayoutDefinition[] = [
+  {
+    key: 'root-layout',
+    path: '_layout',
+    title: 'Root Layout',
+    navigator: 'Stack',
+    description:
+      'Top-level app shell. Wraps the entire tree in SessionProvider, FeatureFlagsProvider, ' +
+      'CompassProvider, CallProvider, and all global context providers. Bootstraps the ' +
+      'root Stack navigator and registers background tasks (geofence, checkpoint arrival).',
+  },
+  {
+    key: 'auth-layout',
+    path: '(auth)/_layout',
+    title: 'Auth Group Layout',
+    navigator: 'Stack',
+    description:
+      'Stack navigator for the (auth) route group (sign-in, onboarding). ' +
+      'Renders with headerShown: false so each auth screen controls its own chrome.',
+  },
+  {
+    key: 'tabs-layout',
+    path: '(tabs)/_layout',
+    title: 'Tabs Layout',
+    navigator: 'Tabs',
+    description:
+      'Primary tab navigator. Renders the floating pill bar on mobile and a left sidebar ' +
+      'on desktop (useIsDesktop). Owns the five main tabs (Pulse, Explore, Media/+, Trips, ' +
+      'Passport) plus three hidden tabs (Messages, Events, Compass AI) with href: null.',
+  },
+  {
+    key: 'place-layout',
+    path: 'place/_layout',
+    title: 'Place Stack Layout',
+    navigator: 'Stack',
+    description:
+      'Stack navigator for the place/ subtree (place/[id]). Applies a themed header ' +
+      '(paperRaised background, ink tint, no shadow) across all place screens.',
+  },
+  {
+    key: 'profile-edit-layout',
+    path: 'profile/edit/_layout',
+    title: 'Edit Profile Stack Layout',
+    navigator: 'Stack',
+    description:
+      'Stack navigator for the profile/edit/ subtree. Hides the default header ' +
+      '(headerShown: false) and sets the Passport paper background colour so each ' +
+      'edit screen can render its own custom header.',
+  },
+  {
+    key: 'rent-a-buddy-layout',
+    path: '(rent-a-buddy)/_layout',
+    title: 'Rent a Buddy Group Layout',
+    navigator: 'Stack',
+    description:
+      'Stack navigator for the (rent-a-buddy) route group. Guards the entire subtree ' +
+      'via useRentABuddyFlag — shows a "COMING SOON" screen when the flag is off ' +
+      'instead of rendering child routes.',
+    featureFlag: 'rent_buddy_enabled',
+  },
+  {
+    key: 'admin-place-images-layout',
+    path: 'admin/place-images/_layout',
+    title: 'Admin Place Images Stack Layout',
+    navigator: 'Stack',
+    description:
+      'Stack navigator for the admin/place-images/ subtree. Renders headerShown: false ' +
+      'so the admin place-images screens control their own headers.',
+    adminOnly: true,
+  },
+  {
+    key: 'admin-stamps-layout',
+    path: 'admin/stamps/_layout',
+    title: 'Admin Stamp Studio Stack Layout',
+    navigator: 'Stack',
+    description:
+      'Stack navigator for the admin/stamps/ subtree (Stamp Studio). Renders ' +
+      'headerShown: false; admin auth is enforced by each individual screen.',
+    adminOnly: true,
+  },
+  {
+    key: 'admin-visuals-layout',
+    path: 'admin/visuals/_layout',
+    title: 'Admin AI Visuals Stack Layout',
+    navigator: 'Stack',
+    description:
+      'Stack navigator for the admin/visuals/ subtree. Renders headerShown: false; ' +
+      'admin auth is enforced by each individual screen.',
+    adminOnly: true,
   },
 ];
