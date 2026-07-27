@@ -320,6 +320,15 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     ownerOnly: true,
   },
   {
+    key: 'follow-requests',
+    path: 'follow-requests',
+    title: 'Follow Requests',
+    parent: 'user-profile',
+    icon: null,
+    requiresAuth: true,
+    ownerOnly: true,
+  },
+  {
     key: 'profile-handle-redirect',
     path: 'profile/[handle]',
     title: 'Profile (Legacy Redirect)',

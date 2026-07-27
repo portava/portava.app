@@ -226,6 +226,84 @@ export async function getSuggestedTravelers(limit = 10): Promise<FollowResult<Tr
   }
 }
 
+/* ---------- My follow requests (incoming, pending) ---------- */
+
+export interface FollowRequest {
+  /** The friend_requests row ID — required for accept/decline calls. */
+  requestId: string;
+  /** The requesting user's profile ID. */
+  requesterId: string;
+  handle: string | null;
+  name: string | null;
+  avatarUrl: string | null;
+  requestedAt: string;
+}
+
+/**
+ * Returns pending incoming follow requests for private-account owners.
+ * Backed by GET /api/me/friend-requests/incoming (existing endpoint).
+ */
+export async function getMyFollowRequests(): Promise<FollowResult<FollowRequest[]>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/me/friend-requests/incoming`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message };
+    }
+    const body = await res.json();
+    // Reshape from friend-request format to FollowRequest
+    const requests: FollowRequest[] = (body.requests ?? []).map((r: any) => ({
+      requestId: r.requestId,
+      requesterId: r.user?.id ?? '',
+      handle: r.user?.handle ?? null,
+      name: r.user?.name ?? null,
+      avatarUrl: r.user?.avatarUrl ?? null,
+      requestedAt: r.createdAt,
+    }));
+    return { ok: true, data: requests };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+/**
+ * Accept or decline an incoming follow request.
+ * Uses the existing POST /api/friend-requests/:requestId/accept|decline endpoints.
+ */
+export async function respondToFollowRequest(
+  requestId: string,
+  action: 'accept' | 'decline',
+): Promise<FollowResult<{ status: string }>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(
+      `${apiBase()}/api/friend-requests/${encodeURIComponent(requestId)}/${action}`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    );
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message };
+    }
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
 /* ---------- My followers list ---------- */
 
 export async function getMyFollowers(): Promise<FollowResult<FollowUser[]>> {
