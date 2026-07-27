@@ -6,8 +6,8 @@ import { batchSignUrls } from '../lib/batchSignMedia.ts';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import {
-  MapPin, Heart, MessageCircle, Bookmark, MoreHorizontal, HelpCircle, Users,
-  Sparkles, Gem, Route, Info, Plus, ShieldCheck, Clock, PlayCircle,
+  MapPin, MoreHorizontal, HelpCircle, Users,
+  Sparkles, Info, Plus, ShieldCheck, Clock,
 } from 'lucide-react-native';
 import type { PulseFeedItem } from '../types/models.ts';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
@@ -32,6 +32,7 @@ import { MediaStampOverlay } from './StampOverlayBadge.tsx';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { navigateToProfile } from '../lib/navigateToProfile.ts';
+import { PostCard as SharedPostCard } from './cards/PostCard.tsx';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -355,147 +356,190 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
   );
 }
 
-/* ── Question ── */
+/* ── Question — delegates to SharedPostCard ── */
 function QuestionCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void }) {
   const [dismissed, setDismissed] = useState(false);
+  // dismiss = local-only hide (Compass feedback / hide-from-feed)
   const dismiss = () => setDismissed(true);
   const undismiss = () => setDismissed(false);
-  const handleDeleted = () => { dismiss(); onDeleteSuccess?.(); };
+  // handleDeleted = local hide + notify parent (actual post deletion via AuthorRow)
+  const handleDeleted = () => { setDismissed(true); onDeleteSuccess?.(); };
   if (dismissed) return null;
   return (
-    <View style={s.card}>
-      <AuthorRow item={item} badge={{ label: 'QUESTION', bg: '#EFE7FA', fg: '#7A4DBF' }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={handleDeleted} />
-      <Text style={s.question}>{item.question}</Text>
-      <TagRow tags={item.tags} />
-      <View style={s.actions}>
-        <View style={s.action}><HelpCircle size={15} color={color.mute} /><Text style={s.actionText}>{item.replyCount ?? 0} answers</Text></View>
-        <View style={{ flex: 1 }} />
-        <Pressable style={s.outlineBtn} onPress={() => router.push('/(tabs)/ai')}><Text style={s.outlineText}>Answer</Text></Pressable>
-        <CompassFeedbackMenu
-          recommendationId={item.id}
-          itemType={item.type}
-          category={item.type}
-          onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
-          onDismiss={() => setDismissed(true)}
-        />
-      </View>
-      {item.source === 'user' && (
-        <PostEngagementBar
-          postId={item.id}
-          likeCount={item.likeCount ?? 0}
-          commentCount={item.commentCount ?? 0}
-          likedByMe={item.likedByMe ?? false}
-          canLike={item.canLike !== false}
-          canComment={item.canComment !== false}
-          canShare={item.canShare !== false}
-        />
-      )}
-    </View>
+    <SharedPostCard
+      id={item.id}
+      type="question"
+      title={item.question ?? item.title ?? null}
+      city={item.city ?? null}
+      tags={item.tags}
+      cardStyle={{ marginBottom: 0 }}
+      onPress={() => router.push(`/post/${item.id}` as any)}
+      authorRow={
+        <AuthorRow item={item} badge={{ label: 'QUESTION', bg: '#EFE7FA', fg: '#7A4DBF' }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={handleDeleted} />
+      }
+      actionsSlot={
+        <>
+          <View style={s.actions}>
+            <View style={s.action}><HelpCircle size={15} color={color.mute} /><Text style={s.actionText}>{item.replyCount ?? 0} answers</Text></View>
+            <View style={{ flex: 1 }} />
+            <Pressable style={s.outlineBtn} onPress={() => router.push('/(tabs)/ai')}><Text style={s.outlineText}>Answer</Text></Pressable>
+            <CompassFeedbackMenu
+              recommendationId={item.id}
+              itemType={item.type}
+              category={item.type}
+              onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
+              onDismiss={dismiss}
+            />
+          </View>
+          {item.source === 'user' ? (
+            <PostEngagementBar
+              postId={item.id}
+              likeCount={item.likeCount ?? 0}
+              commentCount={item.commentCount ?? 0}
+              likedByMe={item.likedByMe ?? false}
+              canLike={item.canLike !== false}
+              canComment={item.canComment !== false}
+              canShare={item.canShare !== false}
+            />
+          ) : null}
+        </>
+      }
+    />
   );
 }
 
-/* ── Open Plan ── */
+/* ── Open Plan — delegates to SharedPostCard ── */
 function PlanCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void }) {
   const planPicker = usePlanPicker();
   const [dismissed, setDismissed] = useState(false);
   const dismiss = () => setDismissed(true);
   const undismiss = () => setDismissed(false);
-  const handleDeleted = () => { dismiss(); onDeleteSuccess?.(); };
+  const handleDeleted = () => { setDismissed(true); onDeleteSuccess?.(); };
   if (dismissed) return null;
   return (
-    <View style={s.card}>
-      <AuthorRow item={item} badge={{ label: 'OPEN PLAN', bg: '#E3F1EA', fg: color.success }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={handleDeleted} />
-      <Text style={s.title}>{item.title}</Text>
-      {item.time ? <View style={s.line}><Clock size={13} color={color.mute} /><Text style={s.lineText}>{item.time}</Text></View> : null}
-      {item.neighborhood || item.city ? <View style={s.line}><MapPin size={13} color={color.mute} /><Text style={s.lineText}>{item.neighborhood ?? item.city}</Text></View> : null}
-      {item.availabilityMatch ? <FitBadge /> : null}
-      <TagRow tags={item.tags} />
-      <View style={s.actions}>
-        <Text style={s.going}>{item.attendeeCount ?? 0} going</Text>
-        <View style={{ flex: 1 }} />
-        <Pressable
-          style={({ pressed }) => [s.outlineBtn, pressed && { opacity: 0.7 }]}
-          onPress={() => planPicker.open({ id: item.id, type: 'plan', title: item.title ?? 'Meetup', city: item.city, category: 'meeting_point' })}
-        >
-          <Text style={s.outlineText}>Add to Plan</Text>
-        </Pressable>
-        <Pressable style={s.solidBtn} onPress={() => router.push((item.relatedTripId ? `/trip/${item.relatedTripId}` : '/(tabs)/trips') as any)}><Text style={s.solidText}>Join Plan</Text></Pressable>
-        <CompassFeedbackMenu
-          recommendationId={item.id}
-          itemType={item.type}
-          category={item.type}
-          onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
-          onDismiss={() => setDismissed(true)}
-        />
-      </View>
-    </View>
+    <SharedPostCard
+      id={item.id}
+      type="plan"
+      title={item.title ?? null}
+      city={item.city ?? null}
+      tags={item.tags}
+      cardStyle={{ marginBottom: 0 }}
+      onPress={() => router.push((item.relatedTripId ? `/trip/${item.relatedTripId}` : '/(tabs)/trips') as any)}
+      authorRow={
+        <AuthorRow item={item} badge={{ label: 'OPEN PLAN', bg: '#E3F1EA', fg: color.success }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={handleDeleted} />
+      }
+      actionsSlot={
+        <>
+          {/* Plan-specific metadata rows */}
+          {item.time ? <View style={s.line}><Clock size={13} color={color.mute} /><Text style={s.lineText}>{item.time}</Text></View> : null}
+          {item.neighborhood || item.city ? <View style={s.line}><MapPin size={13} color={color.mute} /><Text style={s.lineText}>{item.neighborhood ?? item.city}</Text></View> : null}
+          {item.availabilityMatch ? <FitBadge /> : null}
+          <View style={s.actions}>
+            <Text style={s.going}>{item.attendeeCount ?? 0} going</Text>
+            <View style={{ flex: 1 }} />
+            <Pressable
+              style={({ pressed }) => [s.outlineBtn, pressed && { opacity: 0.7 }]}
+              onPress={() => planPicker.open({ id: item.id, type: 'plan', title: item.title ?? 'Meetup', city: item.city, category: 'meeting_point' })}
+            >
+              <Text style={s.outlineText}>Add to Plan</Text>
+            </Pressable>
+            <Pressable style={s.solidBtn} onPress={() => router.push((item.relatedTripId ? `/trip/${item.relatedTripId}` : '/(tabs)/trips') as any)}>
+              <Text style={s.solidText}>Join Plan</Text>
+            </Pressable>
+            <CompassFeedbackMenu
+              recommendationId={item.id}
+              itemType={item.type}
+              category={item.type}
+              onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
+              onDismiss={dismiss}
+            />
+          </View>
+        </>
+      }
+    />
   );
 }
 
-/* ── Hidden Gem Share ── */
+/* ── Hidden Gem Share — delegates to SharedPostCard ── */
 function GemCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void; sessionId?: string | null }) {
   const planPicker = usePlanPicker();
-  const { userId: currentUserId } = useSession();
   const [dismissed, setDismissed] = useState(false);
   const dismiss = () => setDismissed(true);
   const undismiss = () => setDismissed(false);
-  const handleDeleted = () => { dismiss(); onDeleteSuccess?.(); };
+  const handleDeleted = () => { setDismissed(true); onDeleteSuccess?.(); };
   if (dismissed) return null;
   return (
-    <View style={s.card}>
-      <AuthorRow item={item} badge={{ label: 'HIDDEN GEM', bg: '#E3F1EA', fg: color.success }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={handleDeleted} />
-      <View style={s.media}><View style={s.gemIcon}><Gem size={15} color={color.onInk} /></View></View>
-      <Text style={s.title}>{item.title}</Text>
-      {item.blurb ? <RichText content={item.blurb} tags={item.spanTags} hashtagUsages={item.spanHashtags} currentUserId={currentUserId ?? undefined} style={s.blurb} /> : null}
-      <View style={s.actions}>
-        <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'hidden_gem', title: item.title ?? 'Hidden gem', city: item.city, category: 'Hidden Gem' })}><Text style={s.outlineText}>Add to Plan</Text></Pressable>
-        <View style={{ flex: 1 }} />
-        <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={17} sessionId={sessionId} />
-        <CompassFeedbackMenu
-          recommendationId={item.id}
-          itemType={item.type}
-          category={item.type}
-          onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
-          onDismiss={dismiss}
-        />
-      </View>
-    </View>
+    <SharedPostCard
+      id={item.id}
+      type="hidden_gem"
+      title={item.title ?? null}
+      caption={item.blurb ?? null}
+      city={item.city ?? null}
+      tags={item.tags}
+      savedByMe={item.savedByMe ?? false}
+      cardStyle={{ marginBottom: 0 }}
+      onPress={() => router.push(`/post/${item.id}` as any)}
+      authorRow={
+        <AuthorRow item={item} badge={{ label: 'HIDDEN GEM', bg: '#E3F1EA', fg: color.success }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={handleDeleted} />
+      }
+      actionsSlot={
+        <View style={s.actions}>
+          <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'hidden_gem', title: item.title ?? 'Hidden gem', city: item.city, category: 'Hidden Gem' })}>
+            <Text style={s.outlineText}>Add to Plan</Text>
+          </Pressable>
+          <View style={{ flex: 1 }} />
+          <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={17} sessionId={sessionId} />
+          <CompassFeedbackMenu
+            recommendationId={item.id}
+            itemType={item.type}
+            category={item.type}
+            onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
+            onDismiss={dismiss}
+          />
+        </View>
+      }
+    />
   );
 }
 
-/* ── Itinerary / Plan Idea ── */
+/* ── Itinerary / Plan Idea — delegates to SharedPostCard ── */
 function ItineraryCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void; sessionId?: string | null }) {
   const planPicker = usePlanPicker();
   const [dismissed, setDismissed] = useState(false);
   const dismiss = () => setDismissed(true);
   const undismiss = () => setDismissed(false);
-  const handleDeleted = () => { dismiss(); onDeleteSuccess?.(); };
+  const handleDeleted = () => { setDismissed(true); onDeleteSuccess?.(); };
   if (dismissed) return null;
   return (
-    <View style={s.card}>
-      <AuthorRow item={item} badge={{ label: 'ITINERARY', bg: '#E2EDF0', fg: color.deep }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={handleDeleted} />
-      <View style={s.titleRow}>
-        <Route size={16} color={color.deep} />
-        <Text style={[s.title, { flex: 1 }]}>{item.title}</Text>
-        {item.estimate ? <Text style={s.estimate}>{item.estimate}</Text> : null}
-      </View>
-      {item.steps?.map((step, i) => (
-        <View key={i} style={s.step}><Text style={s.stepN}>{i + 1}</Text><Text style={s.stepText}>{step}</Text></View>
-      ))}
-      <TagRow tags={item.tags} />
-      <View style={s.actions}>
-        <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'experience', title: item.title ?? 'Itinerary', city: item.city, category: 'Itinerary' })}><Text style={s.outlineText}>Use this plan</Text></Pressable>
-        <View style={{ flex: 1 }} />
-        <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={17} sessionId={sessionId} />
-        <CompassFeedbackMenu
-          recommendationId={item.id}
-          itemType={item.type}
-          category={item.type}
-          onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
-          onDismiss={dismiss}
-        />
-      </View>
-    </View>
+    <SharedPostCard
+      id={item.id}
+      type="itinerary"
+      title={item.title ?? null}
+      city={item.city ?? null}
+      tags={item.tags}
+      savedByMe={item.savedByMe ?? false}
+      cardStyle={{ marginBottom: 0 }}
+      onPress={() => router.push(`/post/${item.id}` as any)}
+      authorRow={
+        <AuthorRow item={item} badge={{ label: 'ITINERARY', bg: '#E2EDF0', fg: color.deep }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={handleDeleted} />
+      }
+      actionsSlot={
+        <View style={s.actions}>
+          <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'experience', title: item.title ?? 'Itinerary', city: item.city, category: 'Itinerary' })}>
+            <Text style={s.outlineText}>Use this plan</Text>
+          </Pressable>
+          <View style={{ flex: 1 }} />
+          <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={17} sessionId={sessionId} />
+          <CompassFeedbackMenu
+            recommendationId={item.id}
+            itemType={item.type}
+            category={item.type}
+            onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
+            onDismiss={dismiss}
+          />
+        </View>
+      }
+    />
   );
 }
 

@@ -30,6 +30,23 @@ export interface PostCardProps {
   onLike?: () => void;
   onSave?: () => void;
   onComment?: () => void;
+  /**
+   * Extra content rendered at the bottom of the card body.
+   * Use for type-specific action rows (buttons, feedback menus, engagement bars).
+   * Caller is responsible for providing a flexDirection:'row' View when needed.
+   */
+  actionsSlot?: React.ReactNode;
+  /**
+   * Override the outer card container style.
+   * Use `{ marginBottom: 0 }` when the parent feed supplies its own separator.
+   */
+  cardStyle?: object;
+  /**
+   * Replaces the built-in simplified author row.
+   * Pass the full AuthorRow from PulseFeedCard to preserve overflow actions
+   * (delete, share, report, hide-from-feed) and highlight/avatar interactions.
+   */
+  authorRow?: React.ReactNode;
 }
 
 const TYPE_BADGE: Record<PostCardType, { label: string; bg: string; fg: string } | null> = {
@@ -44,7 +61,7 @@ const TYPE_BADGE: Record<PostCardType, { label: string; bg: string; fg: string }
 export function PostCard({
   type, title, caption, city, imageUrl, authorName, authorHandle, timeAgo,
   likeCount, commentCount, likedByMe, savedByMe, tags,
-  onPress, onLike, onSave, onComment,
+  onPress, onLike, onSave, onComment, actionsSlot, cardStyle, authorRow,
 }: PostCardProps) {
   const [imgFailed, setImgFailed] = useState(false);
   const badge = TYPE_BADGE[type];
@@ -53,7 +70,7 @@ export function PostCard({
 
   return (
     <Pressable
-      style={({ pressed }) => [styles.card, pressed && { opacity: layout.pressedOpacity }]}
+      style={({ pressed }) => [styles.card, cardStyle, pressed && { opacity: layout.pressedOpacity }]}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={displayText ?? 'Post'}
@@ -76,8 +93,9 @@ export function PostCard({
           </View>
         ) : null}
 
-        {/* Author + time */}
-        {authorLine || timeAgo ? (
+        {/* Author row — use authorRow slot when provided (full overflow/highlight/delete),
+            otherwise fall back to the built-in simplified display */}
+        {authorRow ?? (authorLine || timeAgo ? (
           <View style={styles.authorRow}>
             {authorLine ? (
               <Text style={styles.author} numberOfLines={1}>{authorLine}</Text>
@@ -85,7 +103,7 @@ export function PostCard({
             {timeAgo ? <Text style={styles.timeAgo}>{timeAgo}</Text> : null}
             {city ? <Text style={styles.city}>· {city}</Text> : null}
           </View>
-        ) : null}
+        ) : null)}
 
         {/* Post text */}
         {displayText ? (
@@ -126,6 +144,9 @@ export function PostCard({
             ) : null}
           </View>
         ) : null}
+
+        {/* actionsSlot — type-specific action rows from the caller */}
+        {actionsSlot ?? null}
       </View>
     </Pressable>
   );
