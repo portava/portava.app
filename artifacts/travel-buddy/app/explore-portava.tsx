@@ -62,7 +62,7 @@ interface DirectorySection {
 
 // ─── Section data ──────────────────────────────────────────────────────────────
 
-const SECTIONS: DirectorySection[] = [
+export const SECTIONS: DirectorySection[] = [
   {
     title: 'Social',
     data: [
@@ -85,10 +85,10 @@ const SECTIONS: DirectorySection[] = [
       { key: 'compass',        label: 'Compass',         Icon: Compass,  iconColor: '#3B7DED', disabled: true },
       { key: 'map',            label: 'Map',             Icon: Map,      iconColor: '#2563EB', route: '/map' },
       { key: 'places',         label: 'Places',          Icon: MapPin,   iconColor: '#059669', disabled: true },
-      { key: 'hidden-gems',    label: 'Hidden Gems',     Icon: Gem,      iconColor: '#D97706', disabled: true },
+      { key: 'hidden-gems',    label: 'Hidden Gems',     Icon: Gem,      iconColor: '#D97706', route: '/gems' },
       { key: 'events',         label: 'Events',          Icon: Calendar, iconColor: '#7C3AED', route: '/(tabs)/events' },
-      { key: 'travelers',      label: 'Travelers',       Icon: Globe,    iconColor: '#0891B2', disabled: true },
-      { key: 'neighborhoods',  label: 'Neighborhoods',   Icon: Home,     iconColor: '#27AE71', disabled: true },
+      { key: 'travelers',      label: 'Travelers',       Icon: Globe,    iconColor: '#0891B2', route: '/discover' },
+      { key: 'neighborhoods',  label: 'Neighborhoods',   Icon: Home,     iconColor: '#27AE71', route: '/map' },
       { key: 'nearby',         label: 'Nearby',          Icon: Navigation, iconColor: '#DB2777', disabled: true },
     ],
   },
@@ -163,12 +163,12 @@ const SECTIONS: DirectorySection[] = [
       { key: 'acc-translation', label: 'Translation',        Icon: Globe,        iconColor: '#059669', disabled: true },
       { key: 'acc-a11y',        label: 'Accessibility',      Icon: Accessibility, iconColor: '#7C3AED', disabled: true },
       { key: 'acc-data',        label: 'Data and Storage',   Icon: Database,     iconColor: '#4F46E5', disabled: true },
-      { key: 'acc-blocked',     label: 'Blocked Accounts',   Icon: UserX,        iconColor: '#D94040', disabled: true },
-      { key: 'acc-muted',       label: 'Muted Accounts',     Icon: VolumeX,      iconColor: '#6B6862', disabled: true },
+      { key: 'acc-blocked',     label: 'Blocked Accounts',   Icon: UserX,        iconColor: '#D94040', route: '/blocked-users' },
+      { key: 'acc-muted',       label: 'Muted Accounts',     Icon: VolumeX,      iconColor: '#6B6862', route: '/muted-users' },
       { key: 'acc-security',    label: 'Security',           Icon: KeyRound,     iconColor: '#2563EB', disabled: true },
       { key: 'acc-devices',     label: 'Devices',            Icon: Smartphone,   iconColor: '#0891B2', disabled: true },
       { key: 'acc-help',        label: 'Help',               Icon: HelpCircle,   iconColor: '#27AE71', disabled: true },
-      { key: 'acc-report',      label: 'Report a Problem',   Icon: Flag,         iconColor: '#D97706', disabled: true },
+      { key: 'acc-report',      label: 'Report a Problem',   Icon: Flag,         iconColor: '#D97706', route: '/profile/edit/reports' },
       { key: 'acc-sign-out',    label: 'Sign Out',           Icon: LogOut,       iconColor: '#D94040', action: 'sign-out' },
     ],
   },
