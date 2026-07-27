@@ -108,7 +108,12 @@ const GRID_POST_COLUMNS =
   "location_name, location_city, location_country, " +
   "location_lat, location_lng, " +
   "created_at, category, " +
-  "status, post_status, visibility";
+  "status, post_status, visibility, " +
+  // Eligibility fields required by filterEligibleMediaCandidates (fail-closed gates)
+  "moderation_status, publish_at, " +
+  "geo_restriction, age_restriction_enabled, age_min, age_max, " +
+  // Engagement metrics surfaced in grid tile hydration
+  "view_count, qualified_view_count";
 
 /**
  * Grid-mode post_media columns — minimal set for static tile rendering.
@@ -120,17 +125,20 @@ const GRID_MEDIA_COLUMNS =
 
 /** Columns projected from posts for media feed (never include exact GPS). */
 const FEED_POST_COLUMNS =
-  "id, author_id, trip_id, content, visibility, status, post_status, " +
-  "created_at, category, " +
+  "id, author_id, event_id, trip_id, content, visibility, status, post_status, " +
+  "moderation_status, publish_at, " +
+  // Geo/age restriction fields required by filterEligibleMediaCandidates (fail-closed gates)
+  "geo_restriction, age_restriction_enabled, age_min, age_max, " +
+  "created_at, category, tags, " +
   "location_name, location_city, location_country, location_source, " +
-  "save_count, like_count, comment_count";
+  "save_count, like_count, comment_count, view_count, qualified_view_count";
 
 const POST_MEDIA_COLUMNS =
   "id, media_type, public_url, thumbnail_url, duration_seconds, " +
   "width, height, sort_order, processing_status, moderation_status, storage_path, storage_bucket";
 
 const PROFILE_COLUMNS =
-  "id, username, avatar_url, is_private, bio, account_status";
+  "id, username, full_name, avatar_url, is_private, is_verified, bio, account_status, followers_count, following_count";
 
 // ── Linked entity resolution ──────────────────────────────────────────────────
 
@@ -382,7 +390,7 @@ const GEMS_EXCLUDED_SOURCE_TYPES = new Set(["ai_generated_generic"]);
 
 /** Columns selected for gem submitter profiles. */
 const GEM_PROFILE_COLUMNS =
-  "id, username, avatar_url, is_private, bio, account_status";
+  "id, username, full_name, avatar_url, is_private, is_verified, bio, account_status, followers_count, following_count";
 
 /**
  * Columns selected for the gems feed query (statically resolvable single-line
@@ -1020,6 +1028,8 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     .from("posts")
     .select(feedSelect)
     .eq("status", "active")
+    // Watch feed is video-only: never surface image-only posts to a video renderer.
+    .eq("has_video", true)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(candidateLimit);
@@ -1032,17 +1042,9 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     query = query.in("author_id", [...followedCreatorIds]);
   }
 
-  // SQL-level geo-restriction pre-filter: when viewer's country is known, exclude
-  // rows where geo_restriction is set but does NOT include the viewer's country.
-  // This prevents geo-restricted posts from ever leaving the DB on cache misses.
-  //
-  // Safety: ISO-3166-1 alpha-2 codes are exactly 2 chars, so ilike '%XX%' cannot
-  // produce false positives against other well-formed 2-char codes in the list.
-  // The in-memory gate in filterEligibleMediaCandidates is retained as the
-  // authoritative belt-and-suspenders fallback.
-  // Note: geo_restriction and age_restriction columns do not exist on posts;
-  // eligibility filtering for these gates is handled at the application layer
-  // inside filterEligibleMediaCandidates.
+  // geo_restriction and age_restriction_* columns are projected in FEED_POST_COLUMNS
+  // and enforced in-memory by filterEligibleMediaCandidates as the authoritative
+  // belt-and-suspenders gate.
 
   // Apply cursor filter for stable pagination
   if (cursor) {

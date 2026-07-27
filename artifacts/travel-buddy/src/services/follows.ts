@@ -152,6 +152,8 @@ export interface TravelerSearchResult {
   followerCount: number;
   isFollowing: boolean;
   isPrivate: boolean;
+  /** True when the viewer has already sent a follow request to this private account (status = pending). */
+  friendRequestPending?: boolean;
   mutualCount?: number;
   reason?: string | null;
 }

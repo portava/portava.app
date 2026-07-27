@@ -47,9 +47,10 @@ export function TravelerRow({ user, isOwnProfile = false, onFollowed, onBlockSuc
   const [toggling, setToggling] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [hidden, setHidden] = useState(false);
-  // For private accounts: tracks whether the viewer has sent a follow request
-  // this session so the button can flip to "Pending" without a page reload.
-  const [requestSent, setRequestSent] = useState(false);
+  // For private accounts: tracks whether the viewer has sent a follow request.
+  // Initialised from the server-provided friendRequestPending field so the
+  // "Pending" state survives app restarts without an extra round-trip.
+  const [requestSent, setRequestSent] = useState(user.friendRequestPending ?? false);
   const [requesting, setRequesting] = useState(false);
   const ringState = useHighlightRingState(user.id);
 

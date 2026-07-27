@@ -508,10 +508,11 @@ router.get("/users/search", async (req, res) => {
     return;
   }
 
-  // Follower counts and isFollowing state in parallel (single query each).
-  const [followerEdgesRes, myFollowsRes] = await Promise.all([
+  // Follower counts, isFollowing state, and pending friend-request state in parallel.
+  const [followerEdgesRes, myFollowsRes, pendingRequestsRes] = await Promise.all([
     sc.from("user_follows").select("following_id").in("following_id", ids),
     sc.from("user_follows").select("following_id").eq("follower_id", user.id).in("following_id", ids),
+    sc.from("friend_requests").select("recipient_id").eq("requester_id", user.id).eq("status", "pending").in("recipient_id", ids),
   ]);
 
   const followerCounts: Record<string, number> = {};
@@ -522,6 +523,10 @@ router.get("/users/search", async (req, res) => {
 
   const followingSet = new Set<string>(
     (myFollowsRes.data ?? []).map((e: any) => e.following_id as string),
+  );
+
+  const pendingRequestSet = new Set<string>(
+    (pendingRequestsRes.data ?? []).map((e: any) => e.recipient_id as string),
   );
 
   // Shared trip destinations: "Both going to <city>" — same logic as /users/suggestions.
@@ -633,6 +638,7 @@ router.get("/users/search", async (req, res) => {
       followerCount: followerCounts[p.id as string] ?? 0,
       isFollowing: followingSet.has(p.id as string),
       isPrivate: (p.is_private as boolean) ?? false,
+      friendRequestPending: pendingRequestSet.has(p.id as string),
       reason: sharedDestinations[p.id as string] ?? null,
     }));
 
