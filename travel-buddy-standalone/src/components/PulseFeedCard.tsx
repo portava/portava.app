@@ -532,20 +532,32 @@ function ItineraryCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item:
         <AuthorRow item={item} badge={{ label: 'ITINERARY', bg: '#E2EDF0', fg: color.deep }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={handleDeleted} />
       }
       actionsSlot={
-        <View style={s.actions}>
-          <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'experience', title: item.title ?? 'Itinerary', city: item.city, category: 'Itinerary' })}>
-            <Text style={s.outlineText}>Use this plan</Text>
-          </Pressable>
-          <View style={{ flex: 1 }} />
-          <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={17} sessionId={sessionId} />
-          <CompassFeedbackMenu
-            recommendationId={item.id}
-            itemType={item.type}
-            category={item.type}
-            onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
-            onDismiss={dismiss}
-          />
-        </View>
+        <>
+          {item.steps && item.steps.length > 0 ? (
+            <View style={{ gap: 5 }}>
+              {item.steps.map((step, i) => (
+                <View key={i} style={s.step}>
+                  <Text style={s.stepN}>{i + 1}.</Text>
+                  <Text style={s.stepText} numberOfLines={2}>{step}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+          <View style={s.actions}>
+            <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'experience', title: item.title ?? 'Itinerary', city: item.city, category: 'Itinerary' })}>
+              <Text style={s.outlineText}>Use this plan</Text>
+            </Pressable>
+            <View style={{ flex: 1 }} />
+            <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={17} sessionId={sessionId} />
+            <CompassFeedbackMenu
+              recommendationId={item.id}
+              itemType={item.type}
+              category={item.type}
+              onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
+              onDismiss={dismiss}
+            />
+          </View>
+        </>
       }
     />
   );
