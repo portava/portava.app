@@ -3,14 +3,17 @@
  * check-route-registry.mjs
  *
  * Compares every *.tsx screen file under app/ against the `path` values
- * registered in src/navigation/portavaRoutes.ts.
+ * registered in src/navigation/portavaRoutes.ts (PORTAVA_ROUTES), and
+ * compares every _layout.tsx file against the layout paths registered in
+ * PORTAVA_LAYOUT_FILES in the same file.
  *
- * Exits 1 if any screen file is absent from PORTAVA_ROUTES so the check
- * can run in CI and catch registry drift before it ships.
+ * Exits 1 if any screen file is absent from PORTAVA_ROUTES, or if any
+ * _layout.tsx is absent from PORTAVA_LAYOUT_FILES, so the check can run in
+ * CI and catch registry drift before it ships.
  *
- * Intentional exclusions (not expected in the registry):
+ * Intentional exclusions from the screen check (not expected in PORTAVA_ROUTES):
  *   - Files anywhere inside __tests__/ directories
- *   - Layout files (_layout.tsx)
+ *   - Layout files (_layout.tsx)  ← these are checked separately below
  *   - +not-found.tsx
  *   - Platform-specific siblings (*.web.tsx, *.native.tsx, *.ios.tsx, *.android.tsx)
  */
@@ -64,18 +67,30 @@ function toRoutePath(filePath) {
 
 const allFiles = collectRouteFiles(APP_DIR);
 
+// ── Screen files (not layouts) ─────────────────────────────────────────────
+
 const routeFilePaths = allFiles
   .filter((f) => {
     const name = basename(f);
     // Belt-and-suspenders: skip anything inside a __tests__ dir
     if (f.includes('__tests__')) return false;
-    // Skip layout files
+    // Skip layout files — checked separately below
     if (name === '_layout.tsx') return false;
     // Skip the 404 catch-all (deliberately excluded from the registry or registered as '+not-found')
     if (name === '+not-found.tsx') return false;
     // Skip platform-specific siblings — these are not separate routes
     if (PLATFORM_SUFFIXES.some((s) => name.endsWith(s))) return false;
     return true;
+  })
+  .map(toRoutePath)
+  .sort();
+
+// ── Layout files ───────────────────────────────────────────────────────────
+
+const layoutFilePaths = allFiles
+  .filter((f) => {
+    if (f.includes('__tests__')) return false;
+    return basename(f) === '_layout.tsx';
   })
   .map(toRoutePath)
   .sort();
@@ -99,20 +114,45 @@ while ((m = PATH_RE.exec(routesSrc)) !== null) {
   registeredPaths.add(m[1]);
 }
 
-// ── Compare ────────────────────────────────────────────────────────────────
+// ── Compare screens ────────────────────────────────────────────────────────
 
-const missing = routeFilePaths.filter((p) => !registeredPaths.has(p));
+const missingScreens = routeFilePaths.filter((p) => !registeredPaths.has(p));
 
-if (missing.length > 0) {
+// ── Compare layouts ────────────────────────────────────────────────────────
+
+const missingLayouts = layoutFilePaths.filter((p) => !registeredPaths.has(p));
+
+// ── Report ─────────────────────────────────────────────────────────────────
+
+let failed = false;
+
+if (missingScreens.length > 0) {
   console.error(
-    `\nRoute registry drift — ${missing.length} screen file(s) not found in PORTAVA_ROUTES:\n\n` +
-      missing.map((p) => `  app/${p}.tsx  →  add path: '${p}'`).join('\n') +
+    `\nRoute registry drift — ${missingScreens.length} screen file(s) not found in PORTAVA_ROUTES:\n\n` +
+      missingScreens.map((p) => `  app/${p}.tsx  →  add path: '${p}'`).join('\n') +
       '\n\nAdd a matching entry to src/navigation/portavaRoutes.ts for each missing route.\n' +
       'See docs/navigation/PORTAVA_UI_AUDIT.md for field conventions.\n',
   );
+  failed = true;
+}
+
+if (missingLayouts.length > 0) {
+  console.error(
+    `\nLayout registry drift — ${missingLayouts.length} layout file(s) not found in PORTAVA_LAYOUT_FILES:\n\n` +
+      missingLayouts.map((p) => `  app/${p}.tsx  →  add path: '${p}'`).join('\n') +
+      '\n\nAdd a matching entry to the PORTAVA_LAYOUT_FILES array in\n' +
+      'src/navigation/portavaRoutes.ts for each missing layout.\n' +
+      'See docs/navigation/PORTAVA_UI_AUDIT.md §10 for field conventions.\n',
+  );
+  failed = true;
+}
+
+if (failed) {
   process.exit(1);
 }
 
 console.log(
-  `check-route-registry — OK. All ${routeFilePaths.length} screen file(s) are represented in PORTAVA_ROUTES.`,
+  `check-route-registry — OK. ` +
+    `All ${routeFilePaths.length} screen file(s) are represented in PORTAVA_ROUTES and ` +
+    `all ${layoutFilePaths.length} layout file(s) are represented in PORTAVA_LAYOUT_FILES.`,
 );
