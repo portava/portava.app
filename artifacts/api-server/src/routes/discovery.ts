@@ -633,22 +633,36 @@ async function enrichOsmSavedCounts(places: DiscoveryPlace[]): Promise<Discovery
 
   try {
     const osmIds = places.map((p) => p.id);
+    // Fetch id (UUID) alongside saved_count so we can look up vote aggregates.
+    // Drop the saved_count > 0 filter — a place with 0 saves may still have votes.
     const { data } = await sc
       .from("discovery_places")
-      .select("osm_id, saved_count")
-      .in("osm_id", osmIds)
-      .gt("saved_count", 0);
+      .select("id, osm_id, saved_count")
+      .in("osm_id", osmIds);
 
     if (!data || data.length === 0) return places;
 
-    const countMap = new Map(
-      (data as Array<{ osm_id: string; saved_count: number }>)
-        .map((r) => [r.osm_id, r.saved_count]),
-    );
+    const rows = data as Array<{ id: string; osm_id: string; saved_count: number }>;
+
+    const countMap = new Map(rows.map((r) => [r.osm_id, r.saved_count]));
+    // Map osm_id → discovery_places UUID so we can query place_votes / reviews
+    const uuidMap = new Map(rows.map((r) => [r.osm_id, r.id]));
+
+    // Batch-fetch vote + review aggregates keyed by the DB UUID
+    const uuids = rows.map((r) => r.id);
+    const agg = await batchFetchVoteAndRatingAggregates(sc, uuids, "place");
 
     return places.map((p) => {
       const count = countMap.get(p.id);
-      return count != null ? { ...p, savedCount: count } : p;
+      const uuid = uuidMap.get(p.id);
+      const voteAgg = uuid ? agg.get(uuid) : undefined;
+      return {
+        ...p,
+        ...(count != null ? { savedCount: count } : {}),
+        ...(voteAgg
+          ? { worthItCount: voteAgg.worthItCount, avgRating: voteAgg.avgRating, reviewCount: voteAgg.reviewCount }
+          : {}),
+      };
     });
   } catch {
     return places;
