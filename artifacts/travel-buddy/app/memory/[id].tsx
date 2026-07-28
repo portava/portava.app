@@ -23,7 +23,7 @@ import {
 } from '../../src/services/memories';
 import { useSession } from '../../src/context/SessionContext';
 import { EngagementUserListSheet } from '../../src/components/EngagementUserListSheet';
-import * as ImagePicker from 'expo-image-picker';
+import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 
@@ -58,6 +58,7 @@ function formatDate(iso: string): string {
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 export default function MemoryDetailScreen() {
+  const { pickMedia } = useMediaPicker();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { userId } = useSession();
@@ -149,26 +150,21 @@ export default function MemoryDetailScreen() {
   const handleAddMedia = useCallback(async () => {
     if (!memory) return;
 
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Allow access to your photo library to attach media.');
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
+    const assets = await pickMedia({
+      title: 'Add to memory',
       mediaTypes: ['images', 'videos'],
       allowsMultipleSelection: true,
       quality: 0.85,
       selectionLimit: Math.max(1, 10 - (memory.items?.length ?? 0)),
     });
 
-    if (result.canceled) return;
+    if (!assets || assets.length === 0) return;
 
     setAddingMedia(true);
     const currentCount = memory.items?.length ?? 0;
 
     const results = await Promise.allSettled(
-      result.assets.map((asset, i) => {
+      assets.map((asset, i) => {
         const mediaType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
         return addMemoryItem(memory.id, asset.uri, mediaType, null, currentCount + i);
       }),
@@ -192,7 +188,7 @@ export default function MemoryDetailScreen() {
     }
 
     setAddingMedia(false);
-  }, [memory]);
+  }, [memory, pickMedia]);
 
   // ── Like ────────────────────────────────────────────────────────────────────
 

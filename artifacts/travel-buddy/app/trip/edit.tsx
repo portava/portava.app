@@ -3,8 +3,8 @@ import {
   View, Text, TextInput, Pressable, ActivityIndicator,
   ScrollView, StyleSheet, Alert, Image, Switch,
 } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
+import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 import { router, useLocalSearchParams } from 'expo-router';
 import { CalendarDays, MapPin, X, ImagePlus, Film } from 'lucide-react-native';
 import { AppHeader } from '../../src/components/ui/AppHeader';
@@ -29,6 +29,7 @@ const VISIBILITY_OPTIONS: { value: TripVisibility; label: string }[] = [
 ];
 
 export default function EditTrip() {
+  const { pickMedia } = useMediaPicker();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { configured, isAuthed, userId } = useSession();
   const live = configured && isAuthed;
@@ -110,19 +111,14 @@ export default function EditTrip() {
   }, [multiCity, id, live]);
 
   const pickCover = useCallback(async () => {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert('Permission needed', 'Allow access to your photos and videos to set a cover.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
+    const assets = await pickMedia({
+      title: 'Add cover',
       mediaTypes: ['images', 'videos'],
       quality: 0.9,
       videoMaxDuration: VIDEO_MAX_DURATION_SECONDS.trip,
-      allowsEditing: false,
     });
-    if (result.canceled || result.assets.length === 0) return;
-    const asset = result.assets[0];
+    if (!assets || assets.length === 0) return;
+    const asset = assets[0];
     const isVideo = asset.type === 'video';
     const picked: PickedMedia = {
       uri: asset.uri,
@@ -153,7 +149,7 @@ export default function EditTrip() {
     } finally {
       setUploading(false);
     }
-  }, []);
+  }, [pickMedia]);
 
   const removeCover = useCallback(() => {
     setCoverUrl(null);

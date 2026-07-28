@@ -1,15 +1,18 @@
 /**
- * MediaPickerButton — trigger button that opens MediaSourceSheet via
- * useMediaComposer. Renders camera + image-library icons side by side.
+ * MediaPickerButton — trigger button that opens MediaSourceSheet so users
+ * can choose "Take Photo" or "Choose from Library".
  *
- * The composer must pass the hook's `openSheet` + `sheetVisible` +
- * `onPickResult` + `closeSheet` props so this component delegates all state
- * back to useMediaComposer.
+ * Sheet state is managed internally; callers only need to pass `onPickResult`,
+ * `policy`, and `canAddMore` from their composer. The legacy sheet-control
+ * fields (`sheetVisible`, `openSheet`, `closeSheet`) are accepted for
+ * backward compatibility but are no longer required.
  *
- * For full-size "pick area" layouts (memory/create), use the `variant="area"`
- * prop which renders the dashed-border pick zone.
+ * All policy behaviour (story-video crop, effectiveAllowsEditing, video max
+ * duration, aspect ratio) is forwarded to MediaSourceSheet unchanged.
+ *
+ * For full-size "pick area" layouts (memory/create), use `variant="area"`.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet,
 } from 'react-native';
@@ -24,11 +27,16 @@ import { policyAllowsVideo } from '../../lib/contentMediaPolicy.ts';
 // ---------------------------------------------------------------------------
 
 export interface MediaPickerButtonProps {
-  /** State + methods from useMediaComposer. */
+  /**
+   * State + methods from useMediaComposer. Only `policy`, `onPickResult`, and
+   * `canAddMore` are consumed; the legacy sheet-state fields (`sheetVisible`,
+   * `openSheet`, `closeSheet`) are accepted but ignored — sheet state is now
+   * managed internally so callers don't need to thread it through.
+   */
   composer: Pick<
     UseMediaComposerReturn,
-    'policy' | 'sheetVisible' | 'openSheet' | 'closeSheet' | 'onPickResult' | 'canAddMore'
-  >;
+    'policy' | 'onPickResult' | 'canAddMore'
+  > & Partial<Pick<UseMediaComposerReturn, 'sheetVisible' | 'openSheet' | 'closeSheet'>>;
   /** Visual variant. 'icon' = compact row of icons. 'area' = dashed pick zone. */
   variant?: 'icon' | 'area';
   /** Label shown in 'area' variant. */
@@ -51,8 +59,12 @@ export function MediaPickerButton({
   disabled = false,
   testID,
 }: MediaPickerButtonProps) {
-  const { policy, sheetVisible, openSheet, closeSheet, onPickResult, canAddMore } = composer;
+  const { policy, onPickResult, canAddMore } = composer;
   const allowsVideo = policyAllowsVideo(policy);
+
+  // Sheet state is managed here so callers don't need to pass sheetVisible /
+  // openSheet / closeSheet through their composer.
+  const [sheetVisible, setSheetVisible] = useState(false);
 
   const isDisabled = disabled || !canAddMore;
 
@@ -61,7 +73,7 @@ export function MediaPickerButton({
       {variant === 'area' ? (
         <Pressable
           style={[s.area, isDisabled && s.disabled]}
-          onPress={openSheet}
+          onPress={() => setSheetVisible(true)}
           disabled={isDisabled}
           testID={testID ?? 'media-picker-button'}
           accessibilityRole="button"
@@ -79,7 +91,7 @@ export function MediaPickerButton({
         <View style={s.iconRow}>
           <Pressable
             style={[s.iconBtn, isDisabled && s.disabled]}
-            onPress={openSheet}
+            onPress={() => setSheetVisible(true)}
             disabled={isDisabled}
             testID={testID ?? 'media-picker-button'}
             accessibilityRole="button"
@@ -92,8 +104,11 @@ export function MediaPickerButton({
 
       <MediaSourceSheet
         visible={sheetVisible}
-        onClose={closeSheet}
-        onResult={onPickResult}
+        onClose={() => setSheetVisible(false)}
+        onResult={(asset) => {
+          setSheetVisible(false);
+          onPickResult(asset);
+        }}
         allowsVideo={allowsVideo}
         videoMaxDuration={policy.videoMaxDuration ?? 60}
         title={sheetTitle ?? (allowsVideo ? 'Add photo or video' : 'Add photo')}

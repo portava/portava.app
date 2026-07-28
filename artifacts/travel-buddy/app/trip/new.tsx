@@ -15,10 +15,11 @@ import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { formatDisplayDate, fromISODate } from '../../src/lib/dateTime/formatters';
 import type { Place } from '../../src/lib/location/placeTypes';
 import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
-import * as ImagePicker from 'expo-image-picker';
 import { uploadMedia, type PickedMedia } from '../../src/services/media.ts';
+import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 
 export default function NewTrip() {
+  const { pickMedia } = useMediaPicker();
   const { configured, isAuthed } = useSession();
   const live = configured && isAuthed;
   const { checkForNewStamps } = useStampToast();
@@ -59,18 +60,9 @@ export default function NewTrip() {
 
   // ── Cover photo picker ────────────────────────────────────────────────────
   const pickCover = useCallback(async () => {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert('Permission needed', 'Allow access to your photos to add a cover.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 0.9,
-      allowsEditing: false,
-    });
-    if (result.canceled || result.assets.length === 0) return;
-    const asset = result.assets[0];
+    const assets = await pickMedia({ title: 'Add cover photo', mediaTypes: ['images'], quality: 0.9 });
+    if (!assets || assets.length === 0) return;
+    const asset = assets[0];
     const picked: PickedMedia = {
       uri: asset.uri,
       type: 'image',
@@ -93,7 +85,7 @@ export default function NewTrip() {
     } finally {
       setCoverUploading(false);
     }
-  }, []);
+  }, [pickMedia]);
 
   // ── NL draft handler ──────────────────────────────────────────────────────
   const handleNLDraft = useCallback(async () => {

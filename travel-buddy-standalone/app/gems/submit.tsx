@@ -12,8 +12,8 @@ import {
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as ImagePicker from 'expo-image-picker';
 import { submitGem, type GemCategory, type GemSensitivity } from '../../src/services/hiddenGems';
+import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 import { KeyboardSafeView } from '../../src/components/ui/KeyboardSafeView';
 import { GpsLocationCapture } from '../../src/components/location/GpsLocationCapture';
 import type { Place } from '../../src/lib/location/placeTypes';
@@ -273,24 +273,14 @@ function PhotoStep({
 }) {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const { pickMedia } = useMediaPicker();
 
   const pickAndUpload = useCallback(async () => {
     setUploadError(null);
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      setUploadError('Photo library permission is required to add a photo.');
-      return;
-    }
+    const assets = await pickMedia({ title: 'Add gem photo', mediaTypes: ['images'], quality: 0.85 });
+    if (!assets || !assets[0]) return;
 
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsMultipleSelection: false,
-      quality: 0.85,
-    });
-    if (result.canceled) return;
-
-    const asset = result.assets[0];
-    if (!asset) return;
+    const asset = assets[0];
 
     setUploading(true);
     try {

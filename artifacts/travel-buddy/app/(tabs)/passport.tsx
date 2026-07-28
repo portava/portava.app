@@ -7,8 +7,8 @@ import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { useBottomInset } from '../../src/hooks/useBottomInset';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Share2, Clock } from 'lucide-react-native';
-import * as ImagePicker from 'expo-image-picker';
 import { uploadAvatar, uploadCover } from '../../src/services/profile';
+import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 import { getPendingPosts } from '../../src/services/posts';
 import { FEED_FOCUS_TTL_MS } from '../../src/hooks/usePosts';
 import { usePassport } from '../../src/hooks/usePassport';
@@ -62,6 +62,7 @@ import { resolveAvailabilityChip } from '../../src/lib/availabilityChip';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 
 export default function PassportScreen() {
+  const { pickMedia } = useMediaPicker();
   const { profile, postcards, stamps, stampsNew, memories, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, updateStamp, reload, lastLoadedAt } = usePassport();
   const { markFirstContent, epoch } = useScreenTiming('Passport');
   const { userId: ownUserId, signOut } = useSession();
@@ -115,17 +116,15 @@ export default function PassportScreen() {
   }, []);
 
   const handleChangeAvatarViaCamera = useCallback(async () => {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert('Permission required', 'Allow photo library access to change your profile photo.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true, aspect: [1, 1], quality: 0.85,
+    const assets = await pickMedia({
+      title: 'Change display photo',
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.85,
     });
-    if (result.canceled || !result.assets?.[0]) return;
-    const uri = result.assets[0].uri;
+    if (!assets?.[0]) return;
+    const uri = assets[0].uri;
     const mime = uri.endsWith('.png') ? 'image/png' : uri.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
     const res = await uploadAvatar(uri, mime);
     if (!res.ok) {
@@ -133,7 +132,7 @@ export default function PassportScreen() {
       return;
     }
     reload();
-  }, [reload]);
+  }, [reload, pickMedia]);
 
   const handleCameraPress = useCallback(() => {
     Alert.alert('Profile photo', undefined, [
@@ -411,6 +410,7 @@ function PassportContent({
   /** Sign the current user out (confirmation prompt handled by the sheet). */
   onSignOut?: () => Promise<void>;
 }) {
+  const { pickMedia } = useMediaPicker();
   const verifiedStamps = (stamps ?? []).filter((st) => !st.locked).length;
   const destinationCount = useMemo(
     () => groupByDestination(memories, stamps, postcards, trips).length,
@@ -438,18 +438,16 @@ function PassportContent({
   });
 
   const handleChangeCover = useCallback(async () => {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert('Permission required', 'Allow photo library access to change your cover photo.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true, aspect: [16, 9], quality: 0.85,
+    const assets = await pickMedia({
+      title: 'Change cover photo',
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [16, 9],
+      quality: 0.85,
     });
-    if (result.canceled || !result.assets?.[0]) return;
+    if (!assets?.[0]) return;
     setCoverUploading(true);
-    const uri = result.assets[0].uri;
+    const uri = assets[0].uri;
     const mime = uri.endsWith('.png') ? 'image/png' : uri.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
     const res = await uploadCover(uri, mime);
     setCoverUploading(false);
@@ -458,7 +456,7 @@ function PassportContent({
       return;
     }
     reload();
-  }, [reload]);
+  }, [reload, pickMedia]);
 
   useFocusEffect(useCallback(() => {
     // Only re-fetch passport data when it's older than the feed TTL — avoids

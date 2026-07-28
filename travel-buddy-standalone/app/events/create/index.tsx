@@ -21,8 +21,8 @@ import {
   ScrollView, Switch, Alert, ActivityIndicator, Image,
 } from 'react-native';
 import { KeyboardSafeScrollView } from '../../../src/components/ui/KeyboardSafeView';
-import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useMediaPicker } from '../../../src/hooks/useMediaPicker.ts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, ChevronRight, ChevronLeft,
@@ -95,6 +95,7 @@ const RSVP_OPTION_KEYS: { key: EventRsvpStatus; label: string; desc: string }[] 
 type JoinMode = 'open' | 'approval' | 'invite_only';
 
 export default function CreateEventScreen() {
+  const { pickMedia } = useMediaPicker();
   const insets = useSafeAreaInsets();
   const { draftId: draftIdParam, preLocation, preCircleId, preTripId, preTitle } =
     useLocalSearchParams<{ draftId?: string; preLocation?: string; preCircleId?: string; preTripId?: string; preTitle?: string }>();
@@ -284,19 +285,15 @@ export default function CreateEventScreen() {
 
   // ── Cover photo picker ───────────────────────────────────────────────────────
   async function handlePickCoverPhoto() {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert('Permission required', 'Allow photo library access to pick a cover photo.');
-      return;
-    }
-    const res = await ImagePicker.launchImageLibraryAsync({
+    const assets = await pickMedia({
+      title: 'Add cover photo',
       mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [16, 9],
       quality: 0.85,
     });
-    if (res.canceled || !res.assets?.[0]) return;
-    const asset = res.assets[0];
+    if (!assets?.[0]) return;
+    const asset = assets[0];
     setCoverUri(asset.uri);
     setCoverUrl(null);
     setCoverUploading(true);
