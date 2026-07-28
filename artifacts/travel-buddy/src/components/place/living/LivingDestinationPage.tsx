@@ -976,6 +976,22 @@ const bef = StyleSheet.create({
   },
 });
 
+// ── Week-timeline module-level cache ─────────────────────────────────────────
+
+/** How long a cached week-timeline result is considered fresh (5 minutes). */
+const WEEK_TIMELINE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+interface WeekTimelineCacheEntry {
+  posts: LivingTimelinePost[];
+  expiresAt: number;
+}
+
+/**
+ * Module-level cache — persists across PlaceBucketTabs mounts for the app's
+ * lifetime, so navigating away and back within the TTL skips the network call.
+ */
+const weekTimelineCache = new Map<string, WeekTimelineCacheEntry>();
+
 // ── PlaceBucketTabs ───────────────────────────────────────────────────────────
 
 type ContentTab =
@@ -995,16 +1011,31 @@ function PlaceBucketTabs({ living, placeName, placeId }: PlaceBucketTabsProps) {
   const [weekPosts, setWeekPosts] = useState<LivingTimelinePost[] | null>(null);
   const [weekLoading, setWeekLoading] = useState(false);
 
-  // Fetch week-slice timeline whenever the top_week tab becomes active
+  // Fetch week-slice timeline whenever the top_week tab becomes active.
+  // Results are stored in the module-level weekTimelineCache so that
+  // navigating away and back within the TTL skips the network request.
   useEffect(() => {
     if (activeTab.type !== 'top_week') return;
-    if (weekPosts !== null) return; // already fetched
+    if (weekPosts !== null) return; // already hydrated for this mount
+
+    // Serve from cache if the entry is still fresh
+    const cached = weekTimelineCache.get(placeId);
+    if (cached && Date.now() < cached.expiresAt) {
+      setWeekPosts(cached.posts);
+      return;
+    }
+
     let cancelled = false;
     setWeekLoading(true);
     getPlaceTimeline(placeId, 'week')
       .then((result) => {
         if (cancelled) return;
-        setWeekPosts(result?.posts ?? []);
+        const posts = result?.posts ?? [];
+        weekTimelineCache.set(placeId, {
+          posts,
+          expiresAt: Date.now() + WEEK_TIMELINE_CACHE_TTL_MS,
+        });
+        setWeekPosts(posts);
       })
       .catch(() => {
         if (!cancelled) setWeekPosts([]);
