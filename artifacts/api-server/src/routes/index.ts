@@ -109,6 +109,7 @@ import mediaAnalyticsBatchRouter from "./mediaAnalyticsBatch.js";
 import placesCanonicalRouter from "./placesCanonical";
 import fsqPlacesRouter from "./fsqPlaces";
 import ogRouter from "./og";
+import adminPortavaPostsRouter from "./adminPortavaPosts.js";
 
 const router: IRouter = Router();
 
@@ -227,5 +228,6 @@ router.use(adminMediaRouter);
 router.use(mediaAnalyticsBatchRouter);
 router.use(placesCanonicalRouter);
 router.use(ogRouter);
+router.use(adminPortavaPostsRouter);
 
 export default router;

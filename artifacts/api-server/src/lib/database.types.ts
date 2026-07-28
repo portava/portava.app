@@ -4305,6 +4305,7 @@ export type Database = {
           home_country: string | null
           id: string
           interests: string[]
+          is_official: boolean
           is_private: boolean
           looking_for: string[] | null
           name: string
@@ -4359,6 +4360,7 @@ export type Database = {
           home_country?: string | null
           id: string
           interests?: string[]
+          is_official?: boolean
           is_private?: boolean
           looking_for?: string[] | null
           name: string
@@ -4413,6 +4415,7 @@ export type Database = {
           home_country?: string | null
           id?: string
           interests?: string[]
+          is_official?: boolean
           is_private?: boolean
           looking_for?: string[] | null
           name?: string

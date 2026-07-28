@@ -60,6 +60,10 @@ const RESERVED_USERNAMES = new Set([
   "null", "undefined", "help", "security", "moderator", "owner",
   "passport", "api", "settings", "login", "signup", "me", "user",
   "users", "about", "terms", "privacy",
+  // @Portava official publisher account — permanently reserved; cannot be
+  // claimed via normal registration. Only the service-role seed script may
+  // create this handle.
+  "portava", "portava_official",
 ]);
 
 /** No periods: keeps usernames clean; max 30 chars (was 24). */
@@ -76,7 +80,7 @@ function validateUsername(u: string): { valid: boolean; reason?: string } {
 }
 
 const PROFILE_COLUMNS =
-  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language, verification_level, id_verified_at, selfie_verified_at, home_country_verified_at, safety_flags_count, host_verified_at, buddy_verified_at, passport_section_order, passport_tab_order, passport_hidden_sections, date_of_birth";
+  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language, verification_level, id_verified_at, selfie_verified_at, home_country_verified_at, safety_flags_count, host_verified_at, buddy_verified_at, passport_section_order, passport_tab_order, passport_hidden_sections, date_of_birth, is_official";
 
 /**
  * Fallback column list for older DB schemas that may not have the full set of columns
@@ -151,6 +155,7 @@ function mapProfile(r: any) {
     safetyFlagsCount: r.safety_flags_count ?? null,
     hostVerifiedAt: r.host_verified_at ?? null,
     buddyVerifiedAt: r.buddy_verified_at ?? null,
+    isOfficial: r.is_official ?? false,
   };
 }
 

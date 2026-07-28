@@ -89,6 +89,7 @@ export function toPublicProfilePreview(
     lookingFor: (r.looking_for as string[]) ?? [],
     passportTabOrder: (r.passport_tab_order as string[] | null) ?? null,
     openToMeet: Boolean(r.open_to_meet),
+    isOfficial: Boolean(r.is_official),
   };
 }
 

@@ -58,6 +58,8 @@ export interface PublicProfilePreview {
   lookingFor: string[];
   passportTabOrder: string[] | null;
   openToMeet: boolean;
+  /** True only for the @Portava official publisher account. Cannot be self-set. */
+  isOfficial: boolean;
 }
 
 /**
