@@ -8,7 +8,7 @@ import '../src/tasks/geofenceExitTask';
 import '../src/tasks/checkpointArrivalTask';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { Platform } from 'react-native';
+import { Platform, Linking } from 'react-native';
 
 // Initialize Sentry as early as possible — before any component tree mounts —
 // so that native crashes and JS errors during startup are captured.
@@ -129,6 +129,55 @@ export default function RootLayout() {
       }
     });
     return () => subscription.unsubscribe();
+  }, []);
+
+  // Handle deep links that carry Supabase password-recovery tokens.
+  //
+  // When a user taps the reset-email link the Supabase auth server redirects to
+  //   travelbuddy://update-password#access_token=…&refresh_token=…&type=recovery
+  // (implicit flow) or
+  //   travelbuddy://update-password?code=…
+  // (PKCE flow).
+  //
+  // Because detectSessionInUrl is false on the Supabase client (required for RN),
+  // supabase-js never sees the URL on its own — we must feed it the tokens so it
+  // can fire the PASSWORD_RECOVERY onAuthStateChange event above.
+  useEffect(() => {
+    async function handleDeepLink(url: string) {
+      try {
+        // ── PKCE flow: ?code=<authorization_code> ─────────────────────────────
+        const parsed = new URL(url);
+        const code = parsed.searchParams.get('code');
+        if (code) {
+          await supabase.auth.exchangeCodeForSession(code);
+          // onAuthStateChange PASSWORD_RECOVERY fires after exchange — routing
+          // is handled there.
+          return;
+        }
+
+        // ── Implicit flow: #access_token=…&refresh_token=…&type=recovery ─────
+        const fragment = url.includes('#') ? url.split('#')[1] : '';
+        if (!fragment) return;
+        const params = new URLSearchParams(fragment);
+        const type = params.get('type');
+        const access_token = params.get('access_token');
+        const refresh_token = params.get('refresh_token');
+        if (type === 'recovery' && access_token && refresh_token) {
+          await supabase.auth.setSession({ access_token, refresh_token });
+          // onAuthStateChange PASSWORD_RECOVERY fires after setSession.
+        }
+      } catch {
+        // Non-fatal — if parsing fails the user stays on the current screen
+        // and can request another reset link.
+      }
+    }
+
+    // Cold-start: app was not running when the link was tapped.
+    Linking.getInitialURL().then((url) => { if (url) void handleDeepLink(url); });
+
+    // Warm-start: app was already running when the link arrived.
+    const sub = Linking.addEventListener('url', ({ url }) => void handleDeepLink(url));
+    return () => sub.remove();
   }, []);
 
   return (

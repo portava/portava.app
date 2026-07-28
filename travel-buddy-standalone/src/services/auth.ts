@@ -153,7 +153,12 @@ export async function requestPasswordReset(email: string): Promise<{ error?: str
   if (!isSupabaseConfigured) return { error: 'Backend not configured.' };
   let error: any;
   try {
-    ({ error } = await supabase.auth.resetPasswordForEmail(email.trim()));
+    ({ error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      // Deep-link the email button back into the app's update-password screen.
+      // This URL must also be listed in the Supabase Auth dashboard under
+      // Authentication → URL Configuration → Redirect URLs.
+      redirectTo: 'travelbuddy://update-password',
+    }));
   } catch (e) {
     return { error: networkMessage(e) };
   }

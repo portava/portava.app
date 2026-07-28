@@ -100,6 +100,9 @@ const KNOWN_BROKEN = [
   // react-native@0.81.5 esbuild "Unexpected typeof" via apiToken.ts → supabase.ts
   // → secureStore.ts → expo-secure-store (same wall as apiToken.freshToken.test.ts)
   'src/services/__tests__/places.getCanonicalPlace.test.ts',
+  // auth.ts imports supabase.ts → SecureStoreAdapter → react-native (esbuild "Unexpected typeof")
+  // Uses Jest syntax (jest.mock/describe/expect) — run via `pnpm test:component`
+  'src/services/__tests__/auth.requestPasswordReset.test.ts',
   // Jest-syntax (describe/it/expect) test — not converted to node:test yet
   'src/lib/__tests__/stampRarity.test.ts',
   // expo-modules-core@3.0.30 requires native sweet/setUpJsLogger.fx — not in Node

@@ -50,5 +50,10 @@ module.exports = {
     // modules; stub it out so component tests can assert on list content.
     '^react-native-draggable-flatlist$':
       '<rootDir>/src/__mocks__/react-native-draggable-flatlist.tsx',
+    // @sentry/react-native uses ESM and native modules unavailable in jest-expo.
+    // Stub it out so component tests that import crashReporter (which wraps
+    // Sentry) don't fail with "unexpected token" during the transform step.
+    '^@sentry/react-native$':
+      '<rootDir>/src/__mocks__/@sentry/react-native.tsx',
   },
 };
