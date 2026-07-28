@@ -15,7 +15,7 @@ import { Sparkles, Info, Share2, Navigation, X } from 'lucide-react-native';
 import { DiscoveryShareSheet } from '../DiscoveryShareSheet.tsx';
 import type { DiscoverySharePayload } from '../DiscoveryShareSheet.tsx';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
-import { getDiscoveryPlaces, getSavedPlaceIds } from '../../services/discovery.ts';
+import { getDiscoveryPlaces, getSavedPlaceIds, getCachedDiscoveryPlaces } from '../../services/discovery.ts';
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceDetailSheet } from './PlaceDetailSheet.tsx';
@@ -76,8 +76,16 @@ function compassItemToPlace(item: import('../../services/compass.ts').CompassFee
 
 export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list', sortBy }: ForYouTabProps) {
   const { isAuthed }            = useSession();
-  const [items, setItems]       = useState<ForYouItem[]>([]);
-  const [loading, setLoading]   = useState(false);
+  // SWR: seed from in-memory client cache so second opens paint instantly.
+  const [items, setItems]       = useState<ForYouItem[]>(() => {
+    if (!destination) return [];
+    const cached = getCachedDiscoveryPlaces(destination, 'for_you', 25, 1);
+    return cached?.places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p })) ?? [];
+  });
+  const [loading, setLoading]   = useState<boolean>(() => {
+    if (!destination) return false;
+    return getCachedDiscoveryPlaces(destination, 'for_you', 25, 1) === null;
+  });
   const [refreshing, setRefreshing] = useState(false);
   const [source, setSource]     = useState<'compass' | 'osm' | 'none'>('none');
   const [detail, setDetail]     = useState<DiscoveryPlace | null>(null);
@@ -211,11 +219,21 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   // Reset state and start loading when destination, auth, or sort/coord changes.
   // load() identity changes when any dependency changes, so this effect fires
   // when the user switches city, logs in/out, or changes the sort filter.
+  // SWR: immediately hydrate with the cache for the active destination so that
+  // city switches never show content from the previous city while loading.
   useEffect(() => {
-    setItems([]);
+    const cachedResult = destination
+      ? getCachedDiscoveryPlaces(destination, 'for_you', 25, 1)
+      : null;
+    if (cachedResult) {
+      setItems(cachedResult.places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p })));
+      setLoading(false);
+    } else {
+      setItems([]);
+    }
     setSource('none');
-    load(false);
-  }, [load]);
+    load(cachedResult !== null); // isRefresh=true when cache hit → no skeleton
+  }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRefresh = () => {
     setRefreshing(true);

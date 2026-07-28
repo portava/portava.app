@@ -142,6 +142,19 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
+// ── Compass candidate cache ───────────────────────────────────────────────────
+// Per-user, per-city short-lived cache for the Compass scored candidate list.
+// Skips the full scoring pipeline (profile fetch + Compass context build +
+// rankItemsForDiscovery) on repeated For You requests within the TTL window
+// — e.g. the user swipes away to another tab and back within a few minutes.
+// 10-minute TTL matches the Compass feed TTL used elsewhere.
+const COMPASS_CANDIDATE_CACHE_TTL_MS = 10 * 60 * 1_000;
+const _compassCandidateCache = new Map<string, { places: DiscoveryPlace[]; at: number }>();
+
+function compassCandidateCacheKey(userId: string, destination: string, radiusKm: number, sortBy: string | null): string {
+  return `${userId}:${destination.toLowerCase().trim()}:r${radiusKm}:s${sortBy ?? "default"}`;
+}
+
 function cacheKey(dest: string, cat: string, radius: number) {
   return `${dest.toLowerCase().trim()}:${cat}:${radius}`;
 }
@@ -1072,6 +1085,22 @@ router.get("/discovery", async (req, res) => {
         try {
           const compassFlagOn = await isEnabled(compassSc, "COMPASS_V1_RULE_BASED_ENABLED");
           if (compassFlagOn) {
+            // ── Candidate cache hit — skip expensive scoring pipeline ──────
+            // Skip cache entirely for nearest sort — results depend on user
+            // position which changes continuously, so a TTL-keyed entry would
+            // return stale ordering with incorrect distances.
+            const cCacheKey = compassCandidateCacheKey(callerUserId, destination, radiusKm, sortBy);
+            const skipCache = sortBy === "nearest";
+            const cCacheHit = skipCache ? undefined : _compassCandidateCache.get(cCacheKey);
+            if (cCacheHit && Date.now() - cCacheHit.at < COMPASS_CANDIDATE_CACHE_TTL_MS) {
+              const cFiltered = applyFilters(cCacheHit.places);
+              const cSlice = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+              req.log.info({ destination, cacheLevel: "compass_candidate_hit" }, "discovery: compass candidate cache hit");
+              res.json({ places: cSlice, total: cFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
+                sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
+              return;
+            }
+
             const compassProfile = await getCompassProfile(compassSc, callerUserId);
             const localHour = localHourFor(nowUtcInstant(), null, await fetchUserTimezone(compassSc, callerUserId));
             const compassContext = buildCompassContext(compassProfile, defaultSignals(compassProfile, localHour));
@@ -1098,6 +1127,12 @@ router.get("/discovery", async (req, res) => {
                 rating: null, isOpenNow: null,
               };
             });
+            // Store scored candidates in cache before paginating so subsequent
+            // requests within the TTL skip the full scoring pipeline.
+            // Skip storage for nearest sort — position-dependent results must not be cached.
+            if (!skipCache) {
+              _compassCandidateCache.set(cCacheKey, { places: compassRanked, at: Date.now() });
+            }
             // Compass is authoritative: blocked/rejected items are excluded.
             // Only pipeline-passed items appear when the flag is enabled.
             const merged = compassRanked;

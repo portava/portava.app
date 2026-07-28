@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import { Search } from 'lucide-react-native';
 import type { DiscoveryCategory, DiscoveryContextMode, DiscoveryFilters, DiscoveryPlace } from '../../services/discovery.ts';
-import { getDiscoveryPlaces } from '../../services/discovery.ts';
+import { getDiscoveryPlaces, getCachedDiscoveryPlaces } from '../../services/discovery.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
@@ -261,8 +261,15 @@ export function DiscoveryCategoryTab({
   onScroll,
   listHeaderComponent,
 }: DiscoveryCategoryTabProps) {
-  const [places, setPlaces]         = useState<DiscoveryPlace[]>([]);
-  const [loading, setLoading]       = useState(false);
+  // SWR: seed from in-memory client cache so second opens paint instantly.
+  const [places, setPlaces]         = useState<DiscoveryPlace[]>(() => {
+    if (!destination) return [];
+    return getCachedDiscoveryPlaces(destination, category, 10, 1)?.places ?? [];
+  });
+  const [loading, setLoading]       = useState<boolean>(() => {
+    if (!destination) return false;
+    return getCachedDiscoveryPlaces(destination, category, 10, 1) === null;
+  });
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [page, setPage]             = useState(1);
@@ -317,14 +324,29 @@ export function DiscoveryCategoryTab({
     const rawPlaces = Array.isArray(res.data?.places) ? res.data.places : [];
     const filtered = applyClientFilters(rawPlaces);
     setTotal(Number.isFinite(res.data?.total) ? res.data.total : 0);
-    setPlaces((prev) => reset ? filtered : [...prev, ...filtered]);
+    // Replace on page-1 (new query), append on subsequent pages (pagination).
+    // Using nextPage===1 (not the reset flag) ensures a first-page revalidation
+    // after a cache hit still replaces stale content rather than appending.
+    setPlaces((prev) => nextPage === 1 ? filtered : [...prev, ...filtered]);
     setPage(nextPage);
   }, [destination, category, filters, ageFilter, customMinAge, customMaxAge]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    setPlaces([]);
+    // SWR: immediately hydrate with the cache entry for the active destination/
+    // category/filters so city or tab switches never show old-query content.
+    // On miss, clear and show skeleton; on hit, show stale content while the
+    // network refresh runs (reset=false → no skeleton, page-1 → list replaced).
+    const cachedResult = destination
+      ? getCachedDiscoveryPlaces(destination, category, filters.radiusKm, 1)
+      : null;
+    if (cachedResult) {
+      setPlaces(cachedResult.places);
+      setLoading(false);
+    } else {
+      setPlaces([]);
+    }
     setPage(1);
-    load(1, filters, true);
+    load(1, filters, cachedResult === null); // reset=true (skeleton) only on miss
   }, [destination, category, filters, ageFilter, customMinAge, customMaxAge, load]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRefresh = () => {

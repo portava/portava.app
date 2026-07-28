@@ -214,7 +214,7 @@ export default function DiscoveryHub() {
           setCategoryCounts(cached);
           if (__DEV__) {
             console.log(
-              `[Discovery] cache-first paint: ${Date.now() - mountedAt.current}ms city=${city}`,
+              `[discovery] render ms: ${Date.now() - mountedAt.current} city=${city}`,
             );
           }
         }
@@ -352,7 +352,7 @@ export default function DiscoveryHub() {
           firstContentLogged.current = true;
           if (__DEV__) {
             console.log(
-              `[Discovery] first-content (network): ${Date.now() - mountedAt.current}ms city=${destination}`,
+              `[discovery] first-content ms: ${Date.now() - mountedAt.current} city=${destination}`,
             );
           }
         }

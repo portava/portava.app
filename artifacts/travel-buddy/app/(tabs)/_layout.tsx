@@ -18,6 +18,8 @@ import { getMyProfile } from '../../src/services/profile';
 import { useSession } from '../../src/context/SessionContext';
 import { navBarProgress } from '../../src/hooks/useNavBarCollapse';
 import { CreateHubSheet } from '../../src/components/create/CreateHubSheet';
+import { useLocationContext } from '../../src/context/LocationContext';
+import { getDiscoveryCategoryCountsBatch, getDiscoveryPlaces } from '../../src/services/discovery';
 
 const NAV_ITEMS = [
   { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
@@ -248,6 +250,7 @@ export default function TabLayout() {
   const [pendingRequests, setPendingRequests] = useState(0);
   const [pendingTripInvites, setPendingTripInvites] = useState(0);
   const { isAuthed, loading, configured } = useSession();
+  const { resolvedLocation } = useLocationContext();
   const pathname = usePathname();
   const pathnameRef = useRef(pathname);
   useEffect(() => { pathnameRef.current = pathname; }, [pathname]);
@@ -305,6 +308,29 @@ export default function TabLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
+  // Prefetch Discovery data when the user is on an adjacent tab (Pulse or Trips).
+  // Warms the client-side in-memory cache so the Discovery tab paints instantly
+  // from cache when the user navigates there. Fires once per city change, after a
+  // 300 ms delay so it doesn't compete with the active tab's own data fetches.
+  const prefetchCity = resolvedLocation.place.city ?? null;
+  useEffect(() => {
+    if (!prefetchCity) return;
+    const onAdjacentTab =
+      pathname === '/(tabs)' || pathname === '/(tabs)/' ||
+      pathname.startsWith('/(tabs)/trips');
+    if (!onAdjacentTab) return;
+    const timer = setTimeout(() => {
+      // Warm the batch counts endpoint (1 request covers all 7 category tabs)
+      getDiscoveryCategoryCountsBatch(prefetchCity, 10).catch(() => {});
+      // Warm the For You OSM baseline (populates the client result cache)
+      getDiscoveryPlaces(
+        prefetchCity, 'for_you',
+        { radiusKm: 25, openNow: false, minRating: null },
+      ).catch(() => {});
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [pathname, prefetchCity]);
+
   useEffect(() => {
     if (configured && !loading && !isAuthed) {
       router.replace('/(auth)/sign-in' as any);

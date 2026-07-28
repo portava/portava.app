@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import { Search } from 'lucide-react-native';
 import type { DiscoveryCategory, DiscoveryContextMode, DiscoveryFilters, DiscoveryPlace } from '../../services/discovery.ts';
-import { getDiscoveryPlaces } from '../../services/discovery.ts';
+import { getDiscoveryPlaces, getCachedDiscoveryPlaces } from '../../services/discovery.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
@@ -377,8 +377,15 @@ export function DiscoveryCategoryTab({
   filters,
   listTopInset = 0,
 }: DiscoveryCategoryTabProps) {
-  const [places, setPlaces]         = useState<DiscoveryPlace[]>([]);
-  const [loading, setLoading]       = useState(false);
+  // SWR: seed from in-memory client cache so second opens paint instantly.
+  const [places, setPlaces]         = useState<DiscoveryPlace[]>(() => {
+    if (!destination) return [];
+    return getCachedDiscoveryPlaces(destination, category, 10, 1)?.places ?? [];
+  });
+  const [loading, setLoading]       = useState<boolean>(() => {
+    if (!destination) return false;
+    return getCachedDiscoveryPlaces(destination, category, 10, 1) === null;
+  });
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [page, setPage]             = useState(1);
@@ -482,14 +489,25 @@ export function DiscoveryCategoryTab({
 
     const filtered = applyClientFilters(res.data.places);
     setTotal(res.data.total);
-    setPlaces((prev) => reset ? filtered : [...prev, ...filtered]);
+    // Replace on page-1 (new query), append on subsequent pages (pagination).
+    setPlaces((prev) => nextPage === 1 ? filtered : [...prev, ...filtered]);
     setPage(nextPage);
   }, [destination, category, filters, ageFilter, customMinAge, customMaxAge]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    setPlaces([]);
+    // SWR: immediately hydrate with the cache for the active destination/category
+    // so city or tab switches never show stale content from the previous query.
+    const cachedResult = destination
+      ? getCachedDiscoveryPlaces(destination, category, filters.radiusKm, 1)
+      : null;
+    if (cachedResult) {
+      setPlaces(cachedResult.places);
+      setLoading(false);
+    } else {
+      setPlaces([]);
+    }
     setPage(1);
-    load(1, filters, true);
+    load(1, filters, cachedResult === null); // reset=true (skeleton) only on miss
   }, [destination, category, filters, ageFilter, customMinAge, customMaxAge, load]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Detect meaningful location changes while 'nearest' sort is active and
