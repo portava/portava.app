@@ -417,8 +417,9 @@ export function PassportIdentityCard({
                   reachable via the ⋯ menu (OwnerActionMenu), so no
                   functionality is lost. */}
 
-              {/* Public: Follow pill */}
-              {!isOwner ? (
+              {/* Public: Follow pill — hidden when no handler is provided (e.g. private profiles
+                   where PrivateProfileWall owns the CTA; an undefined handler means a no-op press) */}
+              {!isOwner && onFollowPress !== undefined ? (
                 <View style={s.publicActions}>
                   <Pressable
                     style={[s.followPill, isFollowing && s.followPillActive]}

@@ -6,7 +6,7 @@ import React from 'react';
 import { router } from 'expo-router';
 import {
   User, Camera, LayoutGrid, Heart, Compass, Eye, Shield,
-  Bell, MapPin, Link2, KeyRound, Phone, BookMarked, Map,
+  Bell, MapPin, Link2, KeyRound, Phone, BookMarked, Map, Globe,
 } from 'lucide-react-native';
 import {
   SettingsScreen, SettingsSection, SettingsRow, SettingsDivider,
@@ -97,6 +97,13 @@ export default function EditSettingsHub() {
       </SettingsSection>
 
       <SettingsSection title="App">
+        <SettingsRow
+          icon={<Globe size={ICON} color={PP.ink} />}
+          title="Content Language"
+          subtitle="Language for feed and post translations"
+          onPress={go('/profile/edit/content-language')}
+        />
+        <SettingsDivider />
         <SettingsRow
           icon={<Bell size={ICON} color={PP.ink} />}
           title="Notifications"

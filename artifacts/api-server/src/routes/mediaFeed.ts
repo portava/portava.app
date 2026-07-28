@@ -26,6 +26,7 @@ import {
   type MediaCandidate,
 } from "../lib/mediaEligibility.js";
 import { calculateUserAge } from "../lib/ageEligibility.js";
+import { excludePrivateAuthorPosts } from "../lib/privacyFilter.js";
 import {
   hydrateMediaFeedItem,
   hydrateMediaGridItem,
@@ -609,8 +610,12 @@ async function handleGridFeed(req: any, res: any): Promise<void> {
     return;
   }
 
+  // ── Private-account guard ─────────────────────────────────────────────────
+  // Grid candidates don't join profiles, so this requires a profiles query.
+  const eligibleGrid = await excludePrivateAuthorPosts(eligible, user.id, sc);
+
   // ── Apply limit + compute next cursor (no ranking — chronological order) ────
-  const page = eligible.slice(0, limit);
+  const page = eligibleGrid.slice(0, limit);
   const lastFetched = candidates[candidates.length - 1];
   const nextCursor = lastFetched && candidates.length >= candidateLimit
     ? encodeCursor({ created_at: lastFetched.created_at, id: lastFetched.id })
@@ -1231,6 +1236,12 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     .map((r) => candidateById.get(r.item.id))
     .filter((c): c is MediaCandidate => c !== undefined);
 
+  // ── Private-account guard ─────────────────────────────────────────────────
+  // Applied after ranking so scoring is unaffected. PROFILE_COLUMNS already
+  // includes is_private; read from the joined profiles data to skip an extra
+  // round-trip.
+  const cappedSafe = await excludePrivateAuthorPosts(capped, user.id, sc, { profilesKey: "profiles" });
+
   // ── Apply limit + compute next cursor ─────────────────────────────────────
   // IMPORTANT: The cursor must advance past ALL candidates fetched in this
   // round (DB order), NOT the last item served (ranking order). Ranking
@@ -1241,7 +1252,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   // Correct contract: nextCursor points to the DB position of the last
   // candidate fetched. The next page query starts after that position,
   // ensuring zero overlap with any item fetched in this round.
-  const page = capped.slice(0, limit);
+  const page = cappedSafe.slice(0, limit);
   // Use the last RAW CANDIDATE (by DB order) as the cursor anchor so the
   // next page begins after all candidates evaluated this round.
   const lastFetched = candidates[candidates.length - 1];

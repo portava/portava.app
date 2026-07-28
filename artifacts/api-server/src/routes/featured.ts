@@ -62,7 +62,7 @@ router.get("/featured", asyncHandler(async (req, res) => {
   // String must be a literal directly in .select() so the column-drift checker can parse it.
   let query = sc
     .from("portava_featured")
-    .select("id, post_id, category, featured_at, posts!post_id(id, content, location_city, location_country, author_id, post_media(id, media_type, public_url, thumbnail_url, thumbnail_path, sort_order, processing_status, storage_path, storage_bucket), profiles!author_id(id, username, full_name, avatar_url, verified))")
+    .select("id, post_id, category, featured_at, posts!post_id(id, content, location_city, location_country, author_id, post_media(id, media_type, public_url, thumbnail_url, thumbnail_path, sort_order, processing_status, storage_path, storage_bucket), profiles!author_id(id, username, full_name, avatar_url, verified, is_private))")
     .eq("status", "live")
     .order("featured_at", { ascending: false })
     .limit(200);
@@ -125,7 +125,12 @@ router.get("/featured", asyncHandler(async (req, res) => {
     };
   }
 
-  const posts = filtered.map(mapRow);
+  // Privacy guard: the Featured endpoint is public (no auth), so any post
+  // from a private account must be excluded entirely — we cannot check
+  // whether an anonymous viewer follows the author. is_private is now
+  // included in the profiles join above.
+  const visible = filtered.filter((r: any) => (r.posts as any)?.profiles?.is_private !== true);
+  const posts = visible.map(mapRow);
 
   // This week's winners (featured within last 7 days)
   const thisWeeksWinners = posts.filter((p: any) => p.featuredAt >= sevenDaysAgo);

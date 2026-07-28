@@ -1,3 +1,4 @@
+- [Private-account feed guard](private-account-feed-guard.md) — post.visibility='public' is not enough; must also filter by author profile.is_private; shared utility in src/lib/privacyFilter.ts.
 - [radius token values](radius-token-values.md) — only sm/md/lg/pill exist; radius.xl throws TS2339. Use hardcoded 24 for sheet corner radii.
 - [Per-message receipts pattern](per-message-receipts.md) — receiptForMsg callback (not useMemo on lastOwnMsgId); groupMemberReads fetch for reader avatar chips; readerAvatars prop on both bubble types.
 - [Media feed column drift](media-feed-column-drift.md) — posts/profiles columns assumed in FEED/GRID/PROFILE constants that don't exist live; verified fix + safe-fallback pattern.

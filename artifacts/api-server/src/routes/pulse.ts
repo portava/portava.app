@@ -16,6 +16,7 @@ import { emitFeedSlotAnalytics } from '../services/ranking/FeedSlotAllocator.js'
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime";
+import { excludePrivateAuthorPosts } from '../lib/privacyFilter';
 
 /**
  * Pulse feed routes
@@ -228,6 +229,10 @@ router.get("/pulse", async (req, res) => {
   if (blockedSet.size > 0) {
     rows = rows.filter((row) => !blockedSet.has(row.author_id as string));
   }
+
+  // Private-account guard: exclude posts from private accounts the viewer
+  // doesn't follow. Must run after the block filter.
+  rows = await excludePrivateAuthorPosts(rows, user.id, sc);
 
   // Delayed-posting location guard: posts whose location has not yet been
   // cleared by the delayed-publish job must have location fields scrubbed

@@ -43,13 +43,18 @@ export function PrivateRequestButton({
   async function handlePress() {
     if (pending || inFlight) return;
     setInFlight(true);
-    const res = await followUser(userId);
-    setInFlight(false);
-    if (res.ok) {
-      onRequestSent?.();
-      setPending(true);
-    } else {
-      Alert.alert('Could not send request', res.message ?? 'Please try again.');
+    try {
+      const res = await followUser(userId);
+      if (res.ok) {
+        onRequestSent?.();
+        setPending(true);
+      } else {
+        Alert.alert('Could not send request', res.message ?? 'Please try again.');
+      }
+    } catch {
+      Alert.alert('Could not send request', 'Please try again.');
+    } finally {
+      setInFlight(false);
     }
   }
 
