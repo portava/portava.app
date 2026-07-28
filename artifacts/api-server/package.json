@@ -74,7 +74,8 @@
     "test:post-wrong-place": "node --import tsx/esm --test src/test/postWrongPlace.test.ts",
     "test:onboarding-autofollow": "node --import tsx/esm --test src/test/onboardingAutoFollow.test.ts",
     "test:portava-feed": "node --import tsx/esm --test src/test/portavaFeed.test.ts",
-    "test:media-dedup-phash": "node --import tsx/esm --test src/test/mediaDedupPhash.test.ts"
+    "test:media-dedup-phash": "node --import tsx/esm --test src/test/mediaDedupPhash.test.ts",
+    "test:place-living": "node --import tsx/esm --test src/test/placeLiving.test.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",

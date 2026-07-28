@@ -16,6 +16,7 @@
 import { getServiceClient } from "../supabase.js";
 import { resolvePostPlace } from "./placeResolve.js";
 import { classifyBuckets, incrementBucketCounts } from "./bucketClassifier.js";
+import { enqueueLivingCacheInvalidation } from "./placeCollections.js";
 
 const TICK_INTERVAL_MS = 10 * 60 * 1_000; // 10 minutes
 const BATCH_SIZE = 200;
@@ -106,6 +107,8 @@ export async function runBackfillTick(scOverride?: any): Promise<{
 
         if (!updateErr) {
           updated++;
+          // Enqueue living cache invalidation for this place (best-effort).
+          void enqueueLivingCacheInvalidation(result.placeId, sc);
         } else {
           console.warn(JSON.stringify({
             event: "post_place_backfill.update_error",

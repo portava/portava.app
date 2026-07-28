@@ -179,6 +179,13 @@ const SKIP_TABLES = new Set<string>([
   // Remove once the tables exist in the live DB schema.
   "place_coverage_buckets",
   "post_bucket_ledger",
+  // Place Living Page tables — migration 2047_place_living_cache.sql pending live apply.
+  // Remove once the tables exist in the live DB schema.
+  "place_living_cache",
+  "place_best_of",
+  "place_top_contributors",
+  "place_ai_summaries",
+  "place_cache_invalidation_queue",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────

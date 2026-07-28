@@ -1,0 +1,153 @@
+/**
+ * placeCollections — best-of collections for the Living Destination Page.
+ *
+ * getBestOf(placeId) reads from the precomputed `place_best_of` table first.
+ * If missing or stale (> 6 h), falls back to a real-time ranking query over
+ * posts + post_media, scoring by:
+ *   (like_count * 0.4 + save_count * 0.3 + share_count * 0.2)
+ *
+ * Always returns the BestOf envelope regardless of source; callers never see
+ * which path was taken.
+ *
+ * enqueueLivingCacheInvalidation(placeId) upserts into
+ * place_cache_invalidation_queue so the precompute worker (Task 6) knows to
+ * rebuild place_best_of for this place.
+ */
+
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { getServiceClient } from "../supabase.js";
+
+export interface BestOfItem {
+  postId: string;
+  mediaUrl: string | null;
+  thumbnailUrl?: string | null;
+  caption?: string | null;
+  score?: number;
+}
+
+export interface BestOf {
+  videos: BestOfItem[];
+  photos: BestOfItem[];
+  viewpoints: BestOfItem[];
+  foodNearby: BestOfItem[];
+  experiences: BestOfItem[];
+  fromCache: boolean;
+}
+
+const BEST_OF_STALE_MS = 6 * 60 * 60 * 1_000; // 6 hours
+
+function engagementScore(row: any): number {
+  return (
+    (row.like_count  ?? 0) * 0.4 +
+    (row.save_count  ?? 0) * 0.3 +
+    (row.share_count ?? 0) * 0.2
+  );
+}
+
+/** Map raw post rows with optional media_type filter to BestOfItem[]. */
+function rowsToBestOf(rows: any[], mediaType: string | null, limit: number): BestOfItem[] {
+  const filtered = mediaType
+    ? rows.filter((r) => (r.media_type ?? "").toLowerCase().includes(mediaType))
+    : rows;
+  return filtered
+    .sort((a, b) => engagementScore(b) - engagementScore(a))
+    .slice(0, limit)
+    .map((r) => ({
+      postId:       r.id as string,
+      mediaUrl:     (r.media_url ?? r.thumbnail_url ?? null) as string | null,
+      thumbnailUrl: (r.thumbnail_url ?? null) as string | null,
+      caption:      (r.content ?? null) as string | null,
+      score:        engagementScore(r),
+    }));
+}
+
+/** Real-time best-of fallback query. */
+async function fetchBestOfRealtime(sc: SupabaseClient, placeId: string): Promise<BestOf> {
+  const { data, error } = await sc
+    .from("posts")
+    .select("id, content, media_type, media_urls, media_thumbnail_url, like_count, save_count, share_count")
+    .eq("canonical_place_id", placeId)
+    .eq("status", "active")
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  const rows = error ? [] : ((data as any[]) ?? []);
+
+  // Extract the first media URL from media_urls array
+  const enriched = rows.map((r) => ({
+    ...r,
+    media_url:     Array.isArray(r.media_urls) ? (r.media_urls[0] ?? null) : null,
+    thumbnail_url: r.media_thumbnail_url ?? null,
+  }));
+
+  return {
+    videos:      rowsToBestOf(enriched, "video",   25),
+    photos:      rowsToBestOf(enriched, "photo",   25),
+    viewpoints:  rowsToBestOf(enriched, "viewpoint", 5),
+    foodNearby:  rowsToBestOf(enriched, "food",    10),
+    experiences: rowsToBestOf(enriched, null,       10).filter(
+      (item) => !["video", "photo", "viewpoint", "food"].some(
+        (t) => (enriched.find((r) => r.id === item.postId)?.media_type ?? "").toLowerCase().includes(t),
+      ),
+    ),
+    fromCache: false,
+  };
+}
+
+/**
+ * Returns the best-of collections for a place.
+ * Reads from place_best_of (cached) first; falls back to real-time query.
+ */
+export async function getBestOf(placeId: string, sc?: SupabaseClient): Promise<BestOf> {
+  const client = sc ?? getServiceClient();
+  if (!client) {
+    return { videos: [], photos: [], viewpoints: [], foodNearby: [], experiences: [], fromCache: false };
+  }
+
+  // 1. Try precomputed table
+  const { data: cached } = await client
+    .from("place_best_of")
+    .select("top_videos, top_photos, top_viewpoints, food_nearby, top_experiences, updated_at")
+    .eq("place_id", placeId)
+    .maybeSingle();
+
+  if (cached) {
+    const ageMs = Date.now() - new Date((cached as any).updated_at).getTime();
+    if (ageMs < BEST_OF_STALE_MS) {
+      return {
+        videos:      ((cached as any).top_videos       as BestOfItem[]) ?? [],
+        photos:      ((cached as any).top_photos       as BestOfItem[]) ?? [],
+        viewpoints:  ((cached as any).top_viewpoints   as BestOfItem[]) ?? [],
+        foodNearby:  ((cached as any).food_nearby      as BestOfItem[]) ?? [],
+        experiences: ((cached as any).top_experiences  as BestOfItem[]) ?? [],
+        fromCache: true,
+      };
+    }
+  }
+
+  // 2. Fallback: real-time query
+  return fetchBestOfRealtime(client, placeId);
+}
+
+/**
+ * Upsert a place_cache_invalidation_queue row so the precompute worker
+ * (Task 6) knows to rebuild place_best_of for this place.
+ * Best-effort — never throws.
+ */
+export async function enqueueLivingCacheInvalidation(
+  placeId: string,
+  sc?: SupabaseClient,
+): Promise<void> {
+  const client = sc ?? getServiceClient();
+  if (!client) return;
+  try {
+    await client
+      .from("place_cache_invalidation_queue")
+      .upsert(
+        { place_id: placeId, queued_at: new Date().toISOString() },
+        { onConflict: "place_id" },
+      );
+  } catch {
+    // best-effort
+  }
+}
