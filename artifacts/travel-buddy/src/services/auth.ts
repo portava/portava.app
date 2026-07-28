@@ -7,7 +7,16 @@ import { freshToken as freshApiToken } from './apiToken.ts';
 
 /** Test seam — set to a fake token to bypass supabase.auth.getSession in ensureProfile. */
 let _testSessionToken: string | null = null;
-export function _setTestSessionToken(t: string | null): void { _testSessionToken = t; }
+/**
+ * Inject a fake session token for unit tests.
+ * ONLY functional in __DEV__ builds and NODE_ENV=test — no-op in production
+ * so the bypass can never be triggered by production code paths.
+ */
+export function _setTestSessionToken(t: string | null): void {
+  if (__DEV__ || process.env.NODE_ENV === 'test') {
+    _testSessionToken = t;
+  }
+}
 
 export interface AuthResult {
   userId: string | null;
@@ -72,7 +81,7 @@ export async function ensureProfile(userId: string, email: string, meta?: { name
   }
 
   let token: string | undefined;
-  if (_testSessionToken) {
+  if (_testSessionToken && (__DEV__ || process.env.NODE_ENV === 'test')) {
     token = _testSessionToken;
   } else {
     token = (await freshApiToken()) ?? undefined;

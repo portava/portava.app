@@ -1,5 +1,5 @@
 import { useCallback, useEffect, type PropsWithChildren } from 'react';
-import { Stack } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 // Register the geofence background task at module root — must be imported
 // before any call to Location.startGeofencingAsync.
@@ -33,6 +33,7 @@ import { AgeGate } from '../src/components/AgeGate';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { reportCrash } from '@/src/lib/crashReporter';
 import { useCryptoInit } from '../src/hooks/useCryptoInit';
+import { supabase } from '../src/lib/supabase';
 
 /**
  * Session-aware root crash boundary. Sits inside SessionProvider so it can
@@ -106,6 +107,17 @@ function PushSetup() {
 const livekitBridge = createLiveKitBridge();
 
 export default function RootLayout() {
+  // Navigate to update-password screen when Supabase fires a PASSWORD_RECOVERY
+  // event (user opened the app via the reset-password email link).
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        router.replace('/(auth)/update-password' as any);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>

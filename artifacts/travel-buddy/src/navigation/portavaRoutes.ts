@@ -123,6 +123,14 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     requiresAuth: true,
     ownerOnly: true,
   },
+  {
+    key: 'update-password',
+    path: '(auth)/update-password',
+    title: 'Update Password',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+  },
 
   // ── Primary tabs ──────────────────────────────────────────────────────────
 
