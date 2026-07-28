@@ -6,6 +6,7 @@ import {
 import { useFocusEffect, router } from 'expo-router';
 import { Users } from 'lucide-react-native';
 import { AppHeader } from '../src/components/ui/AppHeader';
+import { OfficialBadge } from '../src/components/OfficialBadge';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { getMyFollowers } from '../src/services/follows';
 import type { FollowUser } from '../src/services/follows';
@@ -63,9 +64,12 @@ export default function FollowersScreen() {
                 </View>
               )}
               <View style={{ flex: 1 }}>
-                <Text style={s.name} numberOfLines={1}>
-                  {item.name ?? item.handle ?? 'Unknown'}
-                </Text>
+                <View style={s.nameRow}>
+                  <Text style={s.name} numberOfLines={1}>
+                    {item.name ?? item.handle ?? 'Unknown'}
+                  </Text>
+                  {item.isOfficial ? <OfficialBadge size="sm" /> : null}
+                </View>
                 {item.handle ? (
                   <Text style={s.handle} numberOfLines={1}>@{item.handle}</Text>
                 ) : null}
@@ -95,6 +99,7 @@ const s = StyleSheet.create({
   avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: color.haze, flexShrink: 0 },
   avatarPlaceholder: { alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
   avatarInitial: { ...t.body, color: color.mute, fontWeight: '700' },
+  nameRow: { flexDirection: 'row', alignItems: 'center' },
   name: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   handle: { ...t.small, color: color.mute },
 });

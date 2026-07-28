@@ -944,7 +944,7 @@ router.get("/posts", async (req, res) => {
     if (authorIds.length > 0) {
       const { data: profiles } = await sc
         .from("profiles")
-        .select("id, handle, name, avatar_url")
+        .select("id, handle, name, avatar_url, is_official")
         .in("id", authorIds);
       const allowedNames = await nameVisibilitySet(sc, authorIds);
       for (const p of profiles ?? []) profileMap[p.id] = sanitizeIdentity(p as any, allowedNames, user.id);
@@ -1003,7 +1003,7 @@ router.get("/posts", async (req, res) => {
       return {
         ...safe,
         author: pr
-          ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null }
+          ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null, isOfficial: (pr.is_official as boolean) ?? false }
           : null,
         likeCount: eng.likeCount,
         commentCount: eng.commentCount,
@@ -1084,7 +1084,7 @@ router.get("/posts", async (req, res) => {
   if (globalAuthorIds.length > 0) {
     const { data: profiles } = await svc
       .from("profiles")
-      .select("id, handle, name, avatar_url")
+      .select("id, handle, name, avatar_url, is_official")
       .in("id", globalAuthorIds);
     const allowedNames = await nameVisibilitySet(svc, globalAuthorIds);
     for (const p of profiles ?? []) globalProfileMap[p.id] = sanitizeIdentity(p as any, allowedNames, user.id);
@@ -1140,7 +1140,7 @@ router.get("/posts", async (req, res) => {
     const spans = (globalSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
     return {
       ...safe,
-      author: pr ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null } : null,
+      author: pr ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null, isOfficial: (pr.is_official as boolean) ?? false } : null,
       likeCount: eng.likeCount,
       commentCount: eng.commentCount,
       likedByMe: eng.likedByMe,
@@ -1248,7 +1248,7 @@ router.get("/trips/:tripId/posts", async (req, res) => {
   let tripProfileMap: Record<string, any> = {};
   if (tripSvc && tripAuthorIds.length > 0) {
     const { data: profiles } = await tripSvc
-      .from("profiles").select("id, handle, name, avatar_url").in("id", tripAuthorIds);
+      .from("profiles").select("id, handle, name, avatar_url, is_official").in("id", tripAuthorIds);
     const allowedNames = await nameVisibilitySet(tripSvc, tripAuthorIds);
     for (const p of profiles ?? []) tripProfileMap[p.id] = sanitizeIdentity(p as any, allowedNames, user.id);
   }
@@ -1297,7 +1297,7 @@ router.get("/trips/:tripId/posts", async (req, res) => {
     const canEngage = p.visibility === "public" || (p.visibility === "trip_only" && accepted);
     return {
       ...p,
-      author: pr ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null } : null,
+      author: pr ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null, isOfficial: (pr.is_official as boolean) ?? false } : null,
       likeCount: eng.likeCount,
       commentCount: eng.commentCount,
       likedByMe: eng.likedByMe,
@@ -1463,7 +1463,7 @@ router.get("/posts/:postId", async (req, res) => {
     return;
   }
 
-  const [{ data: likedRow }, { data: savedRow }, { data: rawMedia }, { data: featuredRow }] = await Promise.all([
+  const [{ data: likedRow }, { data: savedRow }, { data: rawMedia }, { data: featuredRow }, { data: authorProfile }, allowedNames] = await Promise.all([
     sc.from("posts_likes").select("post_id").eq("post_id", postId).eq("user_id", user.id).maybeSingle(),
     sc.from("post_saves").select("post_id").eq("post_id", postId).eq("user_id", user.id).maybeSingle(),
     sc.from("post_media")
@@ -1478,6 +1478,8 @@ router.get("/posts/:postId", async (req, res) => {
       .order("featured_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
+    sc.from("profiles").select("id, handle, name, avatar_url, is_official").eq("id", post.author_id).maybeSingle(),
+    nameVisibilitySet(sc, [post.author_id]),
   ]);
 
   // Filter out moderated items; preserve backward-compat mediaUrls field on the base object
@@ -1500,8 +1502,18 @@ router.get("/posts/:postId", async (req, res) => {
   const featuredByPortava = featuredRow
     ? { category: (featuredRow as any).category, featuredAt: (featuredRow as any).featured_at }
     : null;
+
+  // Build author object matching the shape used by feed endpoints.
+  // Universal display-name rule: show real name only when the author opted in or is the viewer.
+  const ap = authorProfile as any | null;
+  const nameOk = ap && (ap.id === user.id || allowedNames.has(ap.id as string));
+  const author = ap
+    ? { id: ap.id, handle: ap.handle, name: nameOk ? (ap.name ?? null) : null, avatarUrl: ap.avatar_url ?? null, isOfficial: (ap.is_official as boolean) ?? false }
+    : null;
+
   res.status(200).json({
     ...base,
+    author,
     likeCount: post.like_count ?? 0,
     commentCount: post.comment_count ?? 0,
     saveCount: post.save_count ?? 0,

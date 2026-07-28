@@ -541,6 +541,8 @@ export interface PublicProfile {
    * 'open_to_plans', 'busy'). Absent = no quick-status secondary on the chip.
    */
   quickStatus?: string | null;
+  /** True when this profile is an @Portava Official account. */
+  isOfficial?: boolean;
 }
 
 /* ───────────────────────────────────────────────────────────────────────
@@ -622,6 +624,8 @@ export interface OwnProfile {
   passportTabOrder?: string[] | null;
   /** Section keys the owner has hidden; null/absent = none hidden. */
   passportHiddenSections?: string[] | null;
+  /** True when this profile is an @Portava Official account. */
+  isOfficial?: boolean;
 }
 
 /* ───────────────────────────────────────────────────────────────────────
@@ -809,6 +813,8 @@ export interface PulseAuthor {
   username?: string | null;
   /** True when the author holds a verified traveler status. */
   verified?: boolean;
+  /** True when the author is an @Portava Official account. */
+  isOfficial?: boolean;
 }
 
 export interface PulseFeedItem {

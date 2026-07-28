@@ -46,6 +46,8 @@ export interface FollowUser {
   since: string;
   followsYou?: boolean;
   youFollow?: boolean;
+  /** True when this user is an @Portava Official account. */
+  isOfficial?: boolean;
 }
 
 /* ---------- Follow ---------- */
@@ -158,6 +160,8 @@ export interface TravelerSearchResult {
   reason?: string | null;
   /** True when this user holds a verified traveler status. */
   verified?: boolean;
+  /** True when this user is an @Portava Official account. */
+  isOfficial?: boolean;
 }
 
 export async function searchUsers(query: string, limit = 20): Promise<FollowResult<TravelerSearchResult[]>> {

@@ -39,6 +39,8 @@ export interface PostAuthor {
   handle: string;
   name: string;
   avatarUrl: string | null;
+  /** True when this author is an @Portava Official account. */
+  isOfficial?: boolean;
 }
 
 export interface PostRow {
@@ -124,7 +126,7 @@ function mapPost(r: any): PostRow {
     locationCity: r.location_city ?? null,
     locationCountry: r.location_country ?? null,
     author: r.author
-      ? { id: r.author.id, handle: r.author.handle, name: r.author.name, avatarUrl: r.author.avatarUrl ?? null }
+      ? { id: r.author.id, handle: r.author.handle, name: r.author.name, avatarUrl: r.author.avatarUrl ?? null, isOfficial: r.author.isOfficial ?? false }
       : null,
     likeCount: r.likeCount ?? r.like_count ?? 0,
     commentCount: r.commentCount ?? r.comment_count ?? 0,

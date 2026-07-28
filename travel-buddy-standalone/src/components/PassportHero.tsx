@@ -10,6 +10,7 @@ import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdenti
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
 import { HighlightRing } from './HighlightRing.tsx';
 import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
+import { OfficialBadge } from './OfficialBadge.tsx';
 
 const INTEREST_LABEL: Record<string, string> = {
   nightlife: 'Nightlife', food: 'Food', beach: 'Beach', luxury: 'Luxury',
@@ -109,6 +110,7 @@ export function PassportHero({
   const avatarUrl = resolveAvatarUrl(profile.avatarUrl);
   const initials = fallbackInitials(profile);
   const isVerified = isTravelBuddyVerified(profile);
+  const isOfficial = (profile as { isOfficial?: boolean }).isOfficial === true;
   const verificationStatus = 'verificationStatus' in profile ? profile.verificationStatus : undefined;
   const ownerPrompt = isOwner ? getVerificationOwnerPrompt(verificationStatus) : null;
 
@@ -219,7 +221,7 @@ export function PassportHero({
         <View style={styles.details}>
           <View style={styles.nameRow}>
             <Text style={styles.name} numberOfLines={2}>{resolvedName}</Text>
-            {isVerified ? <VerifiedStamp size="md" /> : null}
+            {isOfficial ? <OfficialBadge size="md" /> : isVerified ? <VerifiedStamp size="md" /> : null}
           </View>
           {handleSubline ? <Text style={styles.handle}>{handleSubline}</Text> : null}
           {!hidePrivateFields && bio ? <Text style={styles.bio} numberOfLines={2}>{bio}</Text> : null}

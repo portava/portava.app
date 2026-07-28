@@ -5,6 +5,7 @@ import { color, type as t } from '../../theme/tokens.ts';
 import { primaryIdentityText } from '../../lib/displayIdentity.ts';
 import { navigateToProfile } from '../../lib/navigateToProfile.ts';
 import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
+import { OfficialBadge } from '../OfficialBadge.tsx';
 
 interface Props {
   userId: string;
@@ -17,9 +18,11 @@ interface Props {
   currentUserId?: string | null;
   /** When true, renders an inline verified stamp badge after the name. */
   verified?: boolean;
+  /** When true, renders the Portava Official gold-shield badge after the name. */
+  isOfficial?: boolean;
 }
 
-export function UserNameButton({ userId, handle, displayName, style, numberOfLines = 1, disabled, currentUserId, verified }: Props) {
+export function UserNameButton({ userId, handle, displayName, style, numberOfLines = 1, disabled, currentUserId, verified, isOfficial }: Props) {
   const { blockedIds, blockerIds, isLoading } = useBlockedIds();
   const isBlocked = blockedIds.has(userId) || blockerIds.has(userId);
 
@@ -41,7 +44,7 @@ export function UserNameButton({ userId, handle, displayName, style, numberOfLin
       <Text style={[styles.name, style]} numberOfLines={numberOfLines}>
         {primaryIdentityText({ displayName, handle })}
       </Text>
-      {verified ? <VerifiedStamp size="sm" /> : null}
+      {isOfficial ? <OfficialBadge size="sm" /> : verified ? <VerifiedStamp size="sm" /> : null}
     </Pressable>
   );
 }

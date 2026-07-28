@@ -151,7 +151,7 @@ router.get("/pulse", async (req, res) => {
 
   let query = sc
     .from("posts")
-    .select(`${POST_SAFE_COLUMNS}, post_media(${POST_MEDIA_COLUMNS}${await stampOverlayCol(sc)}), pulse_geo_tags(${GEO_TAG_COLUMNS}), profiles!author_id(id, username, full_name, avatar_url, verified)`)
+    .select(`${POST_SAFE_COLUMNS}, post_media(${POST_MEDIA_COLUMNS}${await stampOverlayCol(sc)}), pulse_geo_tags(${GEO_TAG_COLUMNS}), profiles!author_id(id, username, full_name, avatar_url, verified, is_official)`)
     .eq("status", "active")
     .eq("visibility", "public")
     .order("created_at", { ascending: false })
@@ -318,8 +318,9 @@ router.get("/pulse", async (req, res) => {
         name:      (row.author_id === user.id || allowedAuthorNames.has(row.author_id as string))
           ? (profile.full_name ?? profile.username)
           : profile.username,
-        avatarUrl: profile.avatar_url ?? null,
-        verified:  (profile.verified as boolean) ?? false,
+        avatarUrl:  profile.avatar_url ?? null,
+        verified:   (profile.verified as boolean) ?? false,
+        isOfficial: (profile.is_official as boolean) ?? false,
       } : null,
       // Structured media items (photo + video); legacy mediaUrls preserved for backward compat
       media: filterPublicMedia(row.post_media),

@@ -312,7 +312,7 @@ router.get("/users/:userId/follow-status", async (req, res) => {
  * Returns ONLY the social edge + public profile basics (id, handle, name,
  * avatar). Never private content.
  */
-const PUBLIC_PROFILE = "id, handle, name, avatar_url";
+const PUBLIC_PROFILE = "id, handle, name, avatar_url, is_official";
 
 router.get("/me/following", async (req, res) => {
   const auth = await requireUser(req, res);
@@ -388,7 +388,7 @@ function rowToUser(r: any, allowedNames?: Set<string>, viewerId?: string | null)
   const p = r.profile ?? {};
   // Universal display-name rule: name only when the subject opted in (or is the viewer).
   const nameOk = !!p.id && (p.id === viewerId || (allowedNames?.has(p.id) ?? false));
-  return { id: p.id, handle: p.handle, name: nameOk ? p.name : null, avatarUrl: p.avatar_url ?? null, since: r.created_at };
+  return { id: p.id, handle: p.handle, name: nameOk ? p.name : null, avatarUrl: p.avatar_url ?? null, since: r.created_at, isOfficial: (p.is_official as boolean) ?? false };
 }
 
 /* ===========================================================================
@@ -432,7 +432,7 @@ router.get("/users/search", async (req, res) => {
   // Exclude deactivated/suspended/banned/deleted accounts.
   let profileQuery = sc
     .from("profiles")
-    .select("id, handle, username, name, avatar_url, is_private, account_status, home_city, home_country, spoken_languages, interests, verified")
+    .select("id, handle, username, name, avatar_url, is_private, account_status, home_city, home_country, spoken_languages, interests, verified, is_official")
     .or(`name.ilike.${pattern},handle.ilike.${pattern},username.ilike.${pattern}`)
     .neq("id", user.id)
     .in("account_status", ["active"])
@@ -641,6 +641,7 @@ router.get("/users/search", async (req, res) => {
       friendRequestPending: pendingRequestSet.has(p.id as string),
       reason: sharedDestinations[p.id as string] ?? null,
       verified: (p.verified as boolean) ?? false,
+      isOfficial: (p.is_official as boolean) ?? false,
     }));
 
   res.status(200).json({ users });
@@ -811,7 +812,7 @@ router.get("/users/suggestions", async (req, res) => {
   //    list after status changes — filter them out here).
   const { data: poolProfiles, error: profErr } = await sc
     .from("profiles")
-    .select("id, handle, name, avatar_url, is_private, account_status, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, planning_style, verified")
+    .select("id, handle, name, avatar_url, is_private, account_status, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, planning_style, verified, is_official")
     .in("id", safeIds)
     .in("account_status", ["active"]);
 
@@ -1189,6 +1190,7 @@ router.get("/users/suggestions", async (req, res) => {
         mutualCount: mc,
         reason,
         verified: (p.verified as boolean) ?? false,
+        isOfficial: (p.is_official as boolean) ?? false,
       };
     });
 

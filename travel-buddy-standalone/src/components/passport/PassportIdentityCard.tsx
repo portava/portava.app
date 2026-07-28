@@ -22,6 +22,7 @@ import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIde
 import { AvatarImage } from '../ui/DisplayMediaImage.tsx';
 import { isTravelBuddyVerified } from '../../lib/verification.ts';
 import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
+import { OfficialBadge } from '../OfficialBadge.tsx';
 import { HighlightRing } from '../HighlightRing.tsx';
 import { getPassportStats } from '../../services/passportStamps.ts';
 import type { PassportStats } from '../../services/passportStamps.ts';
@@ -264,6 +265,7 @@ export function PassportIdentityCard({
   const avatarUrl     = resolveAvatarUrl(profile.avatarUrl);
   const initials      = fallbackInitials(profile);
   const isVerified    = isTravelBuddyVerified(profile);
+  const isOfficial    = (profile as { isOfficial?: boolean }).isOfficial === true;
 
   // Location: prefer currentCity, then homeCity + homeCountry
   const homeCity    = 'homeCity'    in profile ? (profile.homeCity    ?? null) : null;
@@ -373,7 +375,7 @@ export function PassportIdentityCard({
                 <Text style={s.displayName} numberOfLines={1}>
                   {resolvedName}
                 </Text>
-                {isVerified ? <VerifiedStamp size="md" /> : null}
+                {isOfficial ? <OfficialBadge size="md" /> : isVerified ? <VerifiedStamp size="md" /> : null}
               </View>
 
               {handleSubline ? (

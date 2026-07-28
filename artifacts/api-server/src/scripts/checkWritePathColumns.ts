@@ -122,6 +122,11 @@ const ALLOWLIST = new Set<string>([
   "hidden_gems.source_confirmation",
   "hidden_gems.visibility",
   "hidden_gems.trip_id",
+  // Official-account flag — column exists on `profiles` and is already used by
+  // profile/passport serializers.  The static select patterns added by the
+  // OfficialBadge task (follows + posts batch-fetches) are newly detectable
+  // by this script; allowlisted until the live schema fetch reflects the column.
+  "profiles.is_official",
 ]);
 
 // Tables that are not real live relations and should be skipped entirely

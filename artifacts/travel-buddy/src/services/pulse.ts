@@ -59,7 +59,7 @@ export interface PulsePost {
   venueName: string | null;
   locationVisibility: string;
   hotelBlurApplied: boolean;
-  author: { id: string; username: string; name: string; avatarUrl: string | null } | null;
+  author: { id: string; username: string; name: string; avatarUrl: string | null; isOfficial?: boolean } | null;
   likeCount: number;
   commentCount: number;
   likedByMe: boolean;
@@ -134,6 +134,7 @@ export function pulsePostToFeedItem(p: PulsePost): PulseFeedItem {
       name: p.author?.name ?? 'Traveler',
       avatarUrl: p.author?.avatarUrl ?? '',
       username: p.author?.username ?? null,
+      isOfficial: p.author?.isOfficial ?? false,
     },
     createdAt: p.createdAt,
     timeAgo: timeAgo(p.createdAt),

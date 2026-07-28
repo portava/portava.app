@@ -29,6 +29,7 @@ import { deletePost } from '../services/postEngagement.ts';
 import { hidePost } from '../services/posts.ts';
 import { primaryIdentityText } from '../lib/displayIdentity.ts';
 import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
+import { OfficialBadge } from './OfficialBadge.tsx';
 import { MediaStampOverlay } from './StampOverlayBadge.tsx';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
@@ -162,7 +163,7 @@ function AuthorRow({
         {item.author ? (
           <Pressable onPress={handleAuthorPress} style={s.authorNameRow}>
             <Text style={[s.author, light ? { color: color.onInk } : undefined]}>{authorText}</Text>
-            {item.author.verified ? <VerifiedStamp size="sm" dark={light} /> : null}
+            {item.author.isOfficial ? <OfficialBadge size="sm" /> : item.author.verified ? <VerifiedStamp size="sm" dark={light} /> : null}
           </Pressable>
         ) : null}
         <Text style={[s.meta, light ? { color: color.onInkMute } : undefined]}>{item.timeAgo}{item.neighborhood ? ` · ${item.neighborhood}` : item.city ? ` · ${item.city}` : ''}</Text>

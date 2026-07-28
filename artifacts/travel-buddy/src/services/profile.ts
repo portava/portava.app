@@ -297,6 +297,8 @@ export interface PublicProfileCard {
   verifiedAt?: string | null;
   passportVisibility?: string;
   createdAt?: string | null;
+  /** True when this profile is an @Portava Official account. */
+  isOfficial?: boolean;
 }
 
 export async function getPublicProfile(username: string): Promise<ProfileResult<PublicProfileCard>> {

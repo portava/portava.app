@@ -123,6 +123,7 @@ export function TravelerRow({ user, isOwnProfile = false, onFollowed, onBlockSuc
           displayName={displayName}
           style={styles.name}
           verified={user.verified}
+          isOfficial={user.isOfficial}
         />
         {handleSubline ? (
           <Text style={styles.handle} numberOfLines={1}>{handleSubline}</Text>

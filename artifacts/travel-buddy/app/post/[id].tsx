@@ -13,6 +13,7 @@ import {
   MapPin, Heart, MessageCircle, UserCircle, Pencil,
 } from 'lucide-react-native';
 import { AppHeader } from '../../src/components/ui/AppHeader';
+import { OfficialBadge } from '../../src/components/OfficialBadge';
 import { ReportSheet } from '../../src/components/ReportSheet';
 import { PostWrongPlaceSheet } from '../../src/components/PostWrongPlaceSheet';
 import { CommentsSection } from '../../src/components/CommentsSheet';
@@ -141,7 +142,10 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
           </View>
         )}
         <View style={{ flex: 1 }}>
-          <Text style={card.authorName}>{authorName}</Text>
+          <View style={card.authorNameRow}>
+            <Text style={card.authorName}>{authorName}</Text>
+            {post.author?.isOfficial ? <OfficialBadge size="sm" /> : null}
+          </View>
           <Text style={card.ts}>{ts}</Text>
         </View>
       </Pressable>
@@ -397,6 +401,7 @@ const card = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  authorNameRow: { flexDirection: 'row', alignItems: 'center' },
   authorName: { ...t.bodyStrong, color: color.ink },
   ts:         { ...t.small,     color: color.mute },
   media:      { width: '100%' },
