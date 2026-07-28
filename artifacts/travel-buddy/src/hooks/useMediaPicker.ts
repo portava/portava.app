@@ -112,14 +112,25 @@ function pickViaFileInputWeb(
 async function requestCamera(): Promise<boolean> {
   const perm = await ImagePicker.requestCameraPermissionsAsync();
   if (!perm.granted) {
-    Alert.alert(
-      'Camera access required',
-      'Enable camera access in Settings to take photos.',
-      [
-        { text: 'Open Settings', onPress: () => Linking.openSettings() },
-        { text: 'Cancel', style: 'cancel' },
-      ],
-    );
+    if (!perm.canAskAgain) {
+      Alert.alert(
+        'Camera access blocked',
+        'Open Settings to enable camera access.',
+        [
+          { text: 'Open Settings', onPress: () => Linking.openSettings() },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+      );
+    } else {
+      Alert.alert(
+        'Camera access required',
+        'Enable camera access in Settings to take photos.',
+        [
+          { text: 'Open Settings', onPress: () => Linking.openSettings() },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+      );
+    }
     return false;
   }
   return true;
@@ -128,14 +139,25 @@ async function requestCamera(): Promise<boolean> {
 async function requestLibrary(): Promise<boolean> {
   const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!perm.granted) {
-    Alert.alert(
-      'Photo access required',
-      'Enable photo library access in Settings to choose photos.',
-      [
-        { text: 'Open Settings', onPress: () => Linking.openSettings() },
-        { text: 'Cancel', style: 'cancel' },
-      ],
-    );
+    if (!perm.canAskAgain) {
+      Alert.alert(
+        'Photo access blocked',
+        'Open Settings to enable photo library access.',
+        [
+          { text: 'Open Settings', onPress: () => Linking.openSettings() },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+      );
+    } else {
+      Alert.alert(
+        'Photo access required',
+        'Enable photo library access in Settings to choose photos.',
+        [
+          { text: 'Open Settings', onPress: () => Linking.openSettings() },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+      );
+    }
     return false;
   }
   return true;
