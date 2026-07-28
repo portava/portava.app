@@ -60,6 +60,7 @@ const ageVerifiedKey = (uid: string) => `@travel_buddy/age_verified:${uid}`;
  * in beforeEach/afterEach without needing to reload the module.
  */
 
+
 type GateState = 'loading' | 'clear' | 'blocked' | 'error';
 
 export function AgeGate({ children }: PropsWithChildren) {

@@ -106,7 +106,9 @@ function unauthSession() {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-beforeEach(() => {
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+beforeEach(async () => {
   jest.clearAllMocks();
   // Disable the DEV bypass so the real gate logic runs in tests.
   // AgeGate.tsx checks __DEV__ inline inside the effect (not as a module-level
