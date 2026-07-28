@@ -487,6 +487,20 @@ router.get("/pulse", async (req, res) => {
         } catch { /* non-fatal — trust scores contribute 0 when absent */ }
       }
 
+      // ── Official-publisher boost setup ───────────────────────────────────
+      // Resolve the @portava account ID and the feature flag once here so the
+      // candidate mapper and cap enforcer can both use them without extra queries.
+      let publisherBoostEnabled = false;
+      let portavaAuthorId: string | null = null;
+      try {
+        const [flagVal, portavaRow] = await Promise.all([
+          isFlagEnabled(sc, "PORTAVA_PUBLISHER_BOOST_ENABLED"),
+          sc.from("profiles").select("id").eq("username", "portava").maybeSingle(),
+        ]);
+        publisherBoostEnabled = flagVal;
+        portavaAuthorId = (portavaRow.data as any)?.id ?? null;
+      } catch { /* non-fatal — no boost applied when lookup fails */ }
+
       // ── Unified ranking (portavaRank — spec §42) ─────────────────────────
       // The previous inline scorer (linear recency + follow/hashtag/city
       // boosts) is preserved as features inside the shared scoring core,
@@ -503,6 +517,11 @@ router.get("/pulse", async (req, res) => {
         neighborhood: (p.locationName as string | null) ?? null,
         authorId: (p.authorId as string | null) ?? null,
         authorTrustScore: trustMap.get(p.authorId as string) ?? null,
+        // Official-publisher signal: true when the post is from @Portava and the
+        // publisher boost feature flag is on.
+        isOfficialPublisher: publisherBoostEnabled && portavaAuthorId !== null
+          ? (p.authorId as string | null) === portavaAuthorId
+          : null,
         tags: Array.isArray(p.spanHashtags)
           ? (p.spanHashtags as Array<{ slug?: string }>)
               .map((h) => (h.slug ?? "").toLowerCase())
@@ -580,6 +599,7 @@ router.get("/pulse", async (req, res) => {
           followedIds,
           interestTags,
         },
+        { publisherBoost: publisherBoostEnabled },
       );
       void logImpression(ranked, user.id, "pulse", sessionId);
 
@@ -675,10 +695,16 @@ router.get("/pulse", async (req, res) => {
         const diversityOn = await isFlagEnabled(sc, "DISCOVERY_DIVERSITY_ENABLED").catch(() => false);
         if (diversityOn && ranked.length > 0) {
           const caps = await getCreatorCaps(sc).catch(() => ({ maxPerPage: 3, maxConsecutive: 2 }));
+          // Official-publisher items are exempt from per-creator frequency caps
+          // when the publisher boost is enabled — @Portava posts are never
+          // fully suppressed by the diversity limiter.
           ranked = enforceCreatorCapsGeneric(
             ranked,
             (x) => ((x.candidate as any).authorId as string | null | undefined) ?? null,
             caps,
+            publisherBoostEnabled
+              ? (x) => (x.candidate as any).isOfficialPublisher === true
+              : undefined,
           );
         }
       } catch { /* non-fatal — portavaRank order is preserved on any DRS error */ }

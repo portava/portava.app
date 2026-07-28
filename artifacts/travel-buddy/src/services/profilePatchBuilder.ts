@@ -29,6 +29,9 @@ export function buildOnboardingPatch(state: OnboardingFormState): UpdateProfileI
   const patch: UpdateProfileInput = {
     interests: state.interests as any,
     travelStyle: state.travelStyle,
+    // Signal to the server that onboarding is complete so it can trigger
+    // server-side mechanics (e.g. auto-follow @Portava).
+    onboardingComplete: true,
   };
   const trimmedName = state.displayName.trim();
   const trimmedHandle = state.handle.trim().replace(/^@/, '');

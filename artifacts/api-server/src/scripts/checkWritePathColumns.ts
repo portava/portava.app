@@ -90,6 +90,9 @@ const ALLOWLIST = new Set<string>([
   // Featured by Portava — migration 0106_portava_featured.sql
   // pending live apply. Remove once the column exists in the live DB schema.
   "profiles.featured_count",
+  // Official publisher flag — migration 0106_portava_featured.sql adds is_official
+  // alongside featured_count. Remove once the column exists in the live DB schema.
+  "profiles.is_official",
   // Place-image accuracy/provenance columns — Task 1 migration (20260809_place_image_accuracy.sql)
   // pending live apply. Remove once the columns are present in the live DB schema.
   "generated_visuals.accuracy_status",

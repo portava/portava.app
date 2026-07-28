@@ -37,6 +37,7 @@ import {
   scoreCandidate,
   diversify,
   DEFAULT_WEIGHTS,
+  PUBLISHER_BOOST,
   type RankCandidate,
   type ViewerContext,
   type ScoredCandidate,
@@ -79,6 +80,14 @@ export interface MediaFeedItem extends RankCandidate {
    */
   placeUniqueness?: number | null;
 
+  // ── Publisher signal ──────────────────────────────────────────────────────
+  /**
+   * True when the author is the @Portava official publisher account
+   * (profiles.is_official = true).  Triggers PUBLISHER_BOOST and exempts
+   * the item from per-creator frequency caps.
+   */
+  isOfficialPublisher?: boolean | null;
+
   // ── Creator / account metadata ────────────────────────────────────────────
   /** How many days since the creator's account was created. */
   creatorAccountAgeDays?: number | null;
@@ -104,6 +113,8 @@ export interface MediaRankingFlags {
   returningCreatorBoostEnabled: boolean;
   underexposedBoostEnabled: boolean;
   creatorFatigueEnabled: boolean;
+  /** When true, official-publisher posts receive PUBLISHER_BOOST and are exempt from per-creator caps. */
+  publisherBoostEnabled: boolean;
 }
 
 /** Config thresholds (loaded from rankingConfig or defaulted). */
@@ -412,20 +423,24 @@ export function enforceMediaCreatorCaps<T extends MediaFeedItem>(
   config: MediaRankingConfig,
   sessionState: MediaSessionState,
   sessionSize: number,
+  publisherBoostEnabled = false,
 ): MediaRankedItem<T>[] {
   if (items.length === 0) return items;
 
   const maxConsecutive = config.maxConsecutive;
   const maxPerSession  = Math.max(1, Math.round(config.maxSessionFraction * sessionSize));
 
-  // Phase 1: session-fraction cap (items over limit go to overflow)
+  // Phase 1: session-fraction cap (items over limit go to overflow).
+  // Official-publisher items are exempt when publisherBoostEnabled is true —
+  // they always pass through to main regardless of session count.
   const sessionCount = new Map<string, number>(sessionState.creatorImpressions);
   const main:     MediaRankedItem<T>[] = [];
   const overflow: MediaRankedItem<T>[] = [];
 
   for (const item of items) {
     const authorId = item.item.authorId ?? null;
-    if (!authorId) { main.push(item); continue; }
+    const isPublisher = publisherBoostEnabled && item.item.isOfficialPublisher === true;
+    if (!authorId || isPublisher) { main.push(item); continue; }
 
     const count = sessionCount.get(authorId) ?? 0;
     if (count < maxPerSession) {
@@ -576,7 +591,12 @@ export function rankMediaFeed<T extends MediaFeedItem>(
 
   const scored: MediaRankedItem<T>[] = candidates.map((item) => {
     // ── 1. Base score via portavaRank ─────────────────────────────────────
-    const portava = scoreCandidate(item, { ...viewer, nowMs }, DEFAULT_WEIGHTS);
+    const portava = scoreCandidate(
+      item,
+      { ...viewer, nowMs },
+      DEFAULT_WEIGHTS,
+      flags.publisherBoostEnabled,
+    );
     let score = portava.score;
     const features: Record<string, number> = { ...portava.features };
 
@@ -721,12 +741,16 @@ export function rankMediaFeed<T extends MediaFeedItem>(
   });
 
   // ── 7. Creator cap + session-fraction enforcement ─────────────────────────
+  // Official-publisher items (when boost is enabled) are exempt from the
+  // per-creator frequency cap so @Portava content is never fully suppressed
+  // by the diversity limiter; they always appear at least once per page.
   const sessionSize = Math.max(candidates.length, 20);
   const capped = enforceMediaCreatorCaps(
     scored.sort((a, b) => b.finalScore - a.finalScore),
     cfg,
     sessionState,
     sessionSize,
+    flags.publisherBoostEnabled,
   );
 
   // ── 8. Diversity re-ranking pass ──────────────────────────────────────────
@@ -756,6 +780,7 @@ export async function loadMediaRankingFlags(
     returningCreatorBoostEnabled: false,
     underexposedBoostEnabled:     false,
     creatorFatigueEnabled:        false,
+    publisherBoostEnabled:        false,
   };
   if (!db) return defaults;
   try {
@@ -769,6 +794,7 @@ export async function loadMediaRankingFlags(
         "MEDIA_RETURNING_CREATOR_BOOST_ENABLED",
         "MEDIA_UNDEREXPOSED_BOOST_ENABLED",
         "MEDIA_CREATOR_FATIGUE_ENABLED",
+        "PORTAVA_PUBLISHER_BOOST_ENABLED",
       ]);
     for (const row of (data as any[]) ?? []) {
       const flag = row.flag as string;
@@ -779,6 +805,7 @@ export async function loadMediaRankingFlags(
       if (flag === "MEDIA_RETURNING_CREATOR_BOOST_ENABLED") defaults.returningCreatorBoostEnabled = val;
       if (flag === "MEDIA_UNDEREXPOSED_BOOST_ENABLED")    defaults.underexposedBoostEnabled     = val;
       if (flag === "MEDIA_CREATOR_FATIGUE_ENABLED")       defaults.creatorFatigueEnabled        = val;
+      if (flag === "PORTAVA_PUBLISHER_BOOST_ENABLED")     defaults.publisherBoostEnabled        = val;
     }
   } catch { /* return defaults */ }
   return defaults;
@@ -846,6 +873,11 @@ export async function loadMediaSignals(
  * Load creator-level signals for a batch of creator IDs.
  * Returns a map of creatorId → partial MediaFeedItem signals.
  *
+ * Currently loads:
+ *   - `isOfficialPublisher` — derived from profiles.is_official so the
+ *     publisher boost and cap-exemption mechanics work without callers needing
+ *     to query profiles themselves.
+ *
  * NOTE: weekly_post_count, last_post_at, and account_age_days are not yet
  * columns in the live creator_activity_scores schema. Only score and
  * spam_penalty exist live (verified by DiscoveryRankingService usage).
@@ -853,10 +885,27 @@ export async function loadMediaSignals(
  * the boost functions receive null and apply no boost (safe default).
  */
 export async function loadCreatorSignals(
-  _db: SupabaseClient | null,
-  _creatorIds: string[],
+  db: SupabaseClient | null,
+  creatorIds: string[],
 ): Promise<Map<string, Partial<MediaFeedItem>>> {
-  // Stub: returns empty map until live schema has creator signal columns.
-  // Boost functions handle null inputs by returning 0 (no boost applied).
-  return new Map<string, Partial<MediaFeedItem>>();
+  const result = new Map<string, Partial<MediaFeedItem>>();
+  if (!db || creatorIds.length === 0) return result;
+
+  try {
+    // Load is_official from profiles so the publisher-boost signal is
+    // available to rankMediaFeed without requiring callers to do a separate
+    // join.  Non-fatal: missing rows default to isOfficialPublisher = false.
+    const { data, error } = await db
+      .from("profiles")
+      .select("id, is_official")
+      .in("id", creatorIds);
+
+    if (!error && data) {
+      for (const row of (data as { id: string; is_official: boolean | null }[])) {
+        result.set(row.id, { isOfficialPublisher: row.is_official === true });
+      }
+    }
+  } catch { /* non-fatal: ranking falls back to isOfficialPublisher = undefined */ }
+
+  return result;
 }

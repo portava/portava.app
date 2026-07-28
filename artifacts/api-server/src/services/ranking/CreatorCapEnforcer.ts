@@ -238,23 +238,32 @@ export function enforceCreatorCaps(
 /**
  * Generic variant of enforceCreatorCaps that works on any item type.
  * Useful for pulse/discovery feeds that use types other than PipelineResult.
+ *
+ * Optional `isOfficialPublisher` predicate: when provided and returns true for
+ * an item, that item is exempt from the per-page cap (official-publisher items
+ * such as @Portava posts always pass through to main so they are never fully
+ * suppressed by the diversity limiter).  The consecutive cap still applies to
+ * all items including official publishers.
  */
 export function enforceCreatorCapsGeneric<T>(
-  items:       T[],
-  getAuthorId: (item: T) => string | null | undefined,
-  config:      CreatorCapConfig = DEFAULT_CREATOR_CAP,
+  items:               T[],
+  getAuthorId:         (item: T) => string | null | undefined,
+  config:              CreatorCapConfig = DEFAULT_CREATOR_CAP,
+  isOfficialPublisher: ((item: T) => boolean) | undefined = undefined,
 ): T[] {
   if (items.length === 0) return items;
   const { maxConsecutive, maxPerPage } = config;
 
   // Phase 1: Per-page cap.
+  // Official-publisher items bypass the cap and always enter main.
   const pageCount = new Map<string, number>();
   const main:     T[] = [];
   const overflow: T[] = [];
 
   for (const item of items) {
-    const authorId = getAuthorId(item) ?? null;
-    if (!authorId) { main.push(item); continue; }
+    const authorId  = getAuthorId(item) ?? null;
+    const isPublish = isOfficialPublisher ? isOfficialPublisher(item) : false;
+    if (!authorId || isPublish) { main.push(item); continue; }
 
     const count = pageCount.get(authorId) ?? 0;
     if (count < maxPerPage) {

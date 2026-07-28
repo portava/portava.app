@@ -56,6 +56,12 @@ export interface RankCandidate {
   distanceKm?: number | null;
   /** Free capacity for capacity-bound items (events) — joinability. */
   hasCapacity?: boolean | null;
+  /**
+   * True when the author is an official Portava publisher (is_official = true
+   * on their profile row). Triggers a configurable lift in Pulse, Roam, and
+   * Discovery and exempts the item from per-creator frequency caps.
+   */
+  isOfficialPublisher?: boolean | null;
 }
 
 export interface ViewerContext {
@@ -101,6 +107,17 @@ export interface RankWeights {
   seenPenalty: number;
   kindPrior: Partial<Record<CandidateKind, number>>;
 }
+
+/**
+ * Trusted-publisher boost multiplier applied to the total score when
+ * `candidate.isOfficialPublisher` is true.  Configurable via the
+ * PORTAVA_PUBLISHER_BOOST_ENABLED feature flag; callers opt in by passing
+ * `applyPublisherBoost: true` to `scoreCandidate`.
+ *
+ * Default 1.2× — gives @Portava a 20 % lift without overriding normal
+ * relevance signals (a completely off-topic post still ranks low).
+ */
+export const PUBLISHER_BOOST = 1.2;
 
 /**
  * v1 hand-tuned weights. Sum-scale is arbitrary; relative magnitude is what
@@ -213,7 +230,10 @@ export interface ScoredCandidate<T extends RankCandidate = RankCandidate> {
 }
 
 export function scoreCandidate<T extends RankCandidate>(
-  c: T, ctx: ViewerContext, w: RankWeights = DEFAULT_WEIGHTS,
+  c: T,
+  ctx: ViewerContext,
+  w: RankWeights = DEFAULT_WEIGHTS,
+  applyPublisherBoost = false,
 ): ScoredCandidate<T> {
   const nowMs = ctx.nowMs ?? Date.now();
   const f: Record<string, number> = {};
@@ -253,6 +273,15 @@ export function scoreCandidate<T extends RankCandidate>(
 
   let score = 0;
   for (const k of Object.keys(f)) score += f[k];
+
+  // Official-publisher boost: multiply the total score when the caller has
+  // opted in via `applyPublisherBoost` (controlled by feature flag at the
+  // call site) and the candidate carries the publisher signal.
+  if (applyPublisherBoost && c.isOfficialPublisher) {
+    f.officialPublisher = score * (PUBLISHER_BOOST - 1); // record the additive delta
+    score *= PUBLISHER_BOOST;
+  }
+
   return { candidate: c, score, features: f };
 }
 
@@ -359,6 +388,12 @@ export interface RankOptions {
   weights?: RankWeights;
   diversity?: DiversityOptions | false;
   exploration?: ExplorationOptions | false;
+  /**
+   * When true, candidates with `isOfficialPublisher = true` receive a
+   * PUBLISHER_BOOST multiplier on their total score.  Controlled by the
+   * PORTAVA_PUBLISHER_BOOST_ENABLED feature flag at each call site.
+   */
+  publisherBoost?: boolean;
 }
 
 /**
@@ -369,7 +404,7 @@ export interface RankOptions {
 export function rankCandidates<T extends RankCandidate>(
   candidates: T[], ctx: ViewerContext, opts: RankOptions = {},
 ): ScoredCandidate<T>[] {
-  const scored = candidates.map((c) => scoreCandidate(c, ctx, opts.weights ?? DEFAULT_WEIGHTS));
+  const scored = candidates.map((c) => scoreCandidate(c, ctx, opts.weights ?? DEFAULT_WEIGHTS, opts.publisherBoost ?? false));
   const diversified = opts.diversity === false ? scored.sort((a, b) => b.score - a.score)
     : diversify(scored, opts.diversity ?? {});
   return opts.exploration === false ? diversified

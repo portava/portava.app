@@ -392,6 +392,12 @@ const patchProfileSchema = z.object({
   preferredLanguage: z.string().max(20).nullish(),
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "dateOfBirth must be YYYY-MM-DD").nullable().optional(),
   tagPermission: z.enum(['anyone', 'interacted', 'friends_only', 'nobody']).optional(),
+  /**
+   * Set to true by the onboarding flow after the user completes all steps.
+   * Triggers a silent server-side auto-follow of the @Portava account so the
+   * new user's Pulse/Roam feed is non-empty from day one.
+   */
+  onboardingComplete: z.boolean().optional(),
   passportSectionOrder: z
     .array(z.enum(["identity", "stamps", "highlights", "tabs", "dossier"]))
     .length(5)
@@ -745,6 +751,36 @@ router.patch("/me/profile", async (req, res) => {
   // Profile changes (current city, visibility, interests…) shape Compass Home
   // — evict the cached payload so the next open reflects them immediately.
   invalidateCompassHomeCache(user.id);
+
+  // ── Onboarding auto-follow ───────────────────────────────────────────────
+  // When the client signals onboarding completion, silently auto-follow the
+  // @Portava account so the new user's Pulse/Roam feed is non-empty from day
+  // one.  Wrapped in a fire-and-forget try/catch so any failure here never
+  // blocks the profile save response.
+  if (p.onboardingComplete === true) {
+    setImmediate(async () => {
+      try {
+        const sc = getServiceClient();
+        if (!sc) return;
+        // Look up the @portava account id.
+        const { data: portavaProfile } = await sc
+          .from("profiles")
+          .select("id")
+          .eq("username", "portava")
+          .maybeSingle();
+        if (!portavaProfile?.id) return;
+        // Idempotent upsert — safe to call multiple times.
+        await sc
+          .from("user_follows")
+          .upsert(
+            { follower_id: user.id, following_id: portavaProfile.id },
+            { onConflict: "follower_id,following_id", ignoreDuplicates: true },
+          );
+      } catch (err) {
+        req.log.warn({ err }, "onboarding auto-follow @portava failed (non-fatal)");
+      }
+    });
+  }
 
   res.status(200).json(mapProfile(updated));
 });

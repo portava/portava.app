@@ -46,6 +46,10 @@ async function request<T>(
       const b = await res.json().catch(() => ({}));
       return { ok: false, error: (b as any)?.message ?? `HTTP ${res.status}` };
     }
+    // 204 No Content (e.g. DELETE) — no body to parse; return null as data.
+    if (res.status === 204 || res.headers.get('content-length') === '0') {
+      return { ok: true, data: null as unknown as T };
+    }
     return { ok: true, data: await res.json() as T };
   } catch (e: any) { return { ok: false, error: e?.message ?? 'Network error' }; }
 }
