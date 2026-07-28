@@ -19,12 +19,18 @@ export interface LoginBackground {
 }
 
 export const LOGIN_BACKGROUNDS: LoginBackground[] = [
-  { uri: 'https://picsum.photos/seed/portava-city1/800/1400' },
-  { uri: 'https://picsum.photos/seed/portava-night2/800/1400' },
-  { uri: 'https://picsum.photos/seed/portava-travel3/800/1400' },
-  { uri: 'https://picsum.photos/seed/portava-rooftop4/800/1400' },
-  { uri: 'https://picsum.photos/seed/portava-social5/800/1400' },
-  { uri: 'https://picsum.photos/seed/portava-street6/800/1400' },
+  // Tokyo neon city streets at night
+  { uri: 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?auto=format&fit=crop&w=800&h=1400' },
+  // Tropical beach with turquoise water
+  { uri: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&h=1400' },
+  // Santorini white rooftops and sea views
+  { uri: 'https://images.unsplash.com/photo-1516483638261-f4dbaf036963?auto=format&fit=crop&w=800&h=1400' },
+  // Alpine mountain landscape at sunrise
+  { uri: 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=800&h=1400' },
+  // Narrow European cobblestone alley
+  { uri: 'https://images.unsplash.com/photo-1523906834658-6b0e951f5d27?auto=format&fit=crop&w=800&h=1400' },
+  // Desert dunes at golden hour
+  { uri: 'https://images.unsplash.com/photo-1509316785289-025f5b846b35?auto=format&fit=crop&w=800&h=1400' },
 ];
 
 /** How long each image stays fully visible before the crossfade begins (ms). */
