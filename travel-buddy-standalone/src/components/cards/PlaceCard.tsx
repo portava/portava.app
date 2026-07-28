@@ -7,7 +7,7 @@
  */
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { MapPin, Clock } from 'lucide-react-native';
+import { MapPin, Clock, ThumbsUp } from 'lucide-react-native';
 import { CachedImage } from '../CachedImage.tsx';
 import { useEntityHeaderImage } from '../../hooks/useEntityHeaderImage.ts';
 import { color, space, radius, shadow, typography, layout } from '../../theme/tokens.ts';
@@ -26,10 +26,17 @@ export interface PlaceCardProps {
     label: string;
     onPress: () => void;
   };
+  /** Average star rating from traveler reviews (1–5). Shown when > 0. */
+  avgRating?: number | null;
+  /** Total number of reviews backing the rating. */
+  reviewCount?: number;
+  /** Worth-It vote tally. Shown when > 0. */
+  worthItCount?: number;
 }
 
 export function PlaceCard({
   name, category, address, area, imageUrl, isOpen, distance, onPress, primaryAction,
+  avgRating, reviewCount, worthItCount,
 }: PlaceCardProps) {
   const [imgFailed, setImgFailed] = useState(false);
   const subtitle = address ?? area ?? null;
@@ -75,6 +82,27 @@ export function PlaceCard({
           <View style={styles.metaRow}>
             <MapPin size={11} color={color.faint} />
             <Text style={styles.meta} numberOfLines={1}>{subtitle}</Text>
+          </View>
+        ) : null}
+
+        {/* Social signals row — avg rating + worth-it count */}
+        {(avgRating != null && avgRating > 0) || (worthItCount != null && worthItCount > 0) ? (
+          <View style={styles.socialRow}>
+            {avgRating != null && avgRating > 0 ? (
+              <View style={styles.metaRow}>
+                <Text style={styles.starChar}>★</Text>
+                <Text style={styles.ratingText}>
+                  {avgRating.toFixed(1)}
+                  {reviewCount != null && reviewCount > 0 ? ` (${reviewCount})` : ''}
+                </Text>
+              </View>
+            ) : null}
+            {worthItCount != null && worthItCount > 0 ? (
+              <View style={styles.metaRow}>
+                <ThumbsUp size={11} color="#047857" strokeWidth={2} />
+                <Text style={styles.worthItText}>{worthItCount} worth it</Text>
+              </View>
+            ) : null}
           </View>
         ) : null}
 
@@ -162,6 +190,31 @@ const styles = StyleSheet.create({
     ...typography.metadata,
     color: color.deep,
     flex: 1,
+  },
+  socialRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    marginTop: 2,
+    marginBottom: 2,
+    flexWrap: 'wrap',
+  },
+  starChar: {
+    fontSize: 11,
+    color: '#F59E0B',
+    lineHeight: 14,
+  },
+  ratingText: {
+    ...typography.metadata,
+    color: color.ink,
+    fontWeight: '600',
+    fontSize: 11,
+  },
+  worthItText: {
+    ...typography.metadata,
+    color: '#047857',
+    fontWeight: '600',
+    fontSize: 11,
   },
   actionBtn: {
     backgroundColor: color.signal,

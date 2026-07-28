@@ -32,6 +32,9 @@ import { TripWishlistPicker } from '../../src/components/discovery/TripWishlistP
 import { checkSaved, toggleSave } from '../../src/services/collections';
 import { getPlaceLiveStatus } from '../../src/services/discovery';
 import { categoryColor } from '../../src/components/discovery/PlaceCard';
+import { ReviewsSection } from '../../src/components/ReviewsSection';
+import { WorthItVoteRow } from '../../src/components/WorthItVoteRow';
+import { useSession } from '../../src/context/SessionContext';
 import type { CanonicalPlace } from '../../src/types/canonicalPlace';
 import type { MapEntity } from '../../src/types/mapTypes';
 import type { DiscoveryPlace, PlaceLiveStatus } from '../../src/services/discovery';
@@ -298,6 +301,7 @@ export default function PlaceDetailScreen() {
   const city = Array.isArray(params.city) ? params.city[0] : (params.city ?? null);
 
   const { isEnabled: isFlagEnabled } = useFeatureFlags();
+  const { isAuthed } = useSession();
 
   const [canonicalPlace, setCanonicalPlace] = useState<CanonicalPlace | null | undefined>(undefined);
   const [reportOpen, setReportOpen] = useState(false);
@@ -344,6 +348,21 @@ export default function PlaceDetailScreen() {
             <View style={ps.actionRowWrap}>
               <MapEntityActionRow entity={entity} />
             </View>
+            {/* Worth-It / Skip-It voting */}
+            <View style={ps.socialCard}>
+              <WorthItVoteRow entityId={canonicalPlace.id} entityType="place" />
+            </View>
+
+            {/* Reviews */}
+            <View style={ps.socialCard}>
+              <ReviewsSection
+                entityType="place"
+                entityId={canonicalPlace.id}
+                entityName={canonicalPlace.name}
+                canReview={isAuthed}
+              />
+            </View>
+
             <Pressable
               testID="place-detail-report-btn"
               style={ps.reportBtn}
@@ -424,6 +443,12 @@ const ps = StyleSheet.create({
     textAlign: 'center',
   },
   actionRowWrap: {
+    backgroundColor: color.paperRaised,
+    borderRadius: 12,
+    padding: space.md,
+    marginBottom: space.md,
+  },
+  socialCard: {
     backgroundColor: color.paperRaised,
     borderRadius: 12,
     padding: space.md,

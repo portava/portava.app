@@ -5,7 +5,7 @@ import { useEntityHeaderImage } from '../hooks/useEntityHeaderImage.ts';
 import { router } from 'expo-router';
 import {
   Compass, Search, SlidersHorizontal, Bookmark, MapPin, Plus, Sparkles, Info, ChevronRight,
-  Gem, Share2, Route, Flag,
+  Gem, Share2, Route, Flag, ThumbsUp,
 } from 'lucide-react-native';
 import type { RouteStopDraft } from './RouteBuilderSheet.tsx';
 import type { DiscoveryItem } from '../data/discovery.ts';
@@ -385,6 +385,12 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
               <Text style={g.ratingValue}>{gem.rating.toFixed(1)}</Text>
             </View>
           )}
+          {(gem as any).worthItCount != null && (gem as any).worthItCount > 0 && (
+            <View style={g.worthItRow}>
+              <ThumbsUp size={11} color="#047857" strokeWidth={2} />
+              <Text style={g.worthItText}>{(gem as any).worthItCount} worth it</Text>
+            </View>
+          )}
           <Text style={g.blurb} numberOfLines={2}>{gem.blurb}</Text>
           {displayCount > 0 && (
             <View style={g.savedRow}>
@@ -762,6 +768,8 @@ const g = StyleSheet.create({
   ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 2, marginTop: 1 },
   ratingStar: { fontSize: 10, color: '#F59E0B', lineHeight: 13 },
   ratingValue: { fontSize: 10, color: color.ink, fontWeight: '600' },
+  worthItRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 1 },
+  worthItText: { fontSize: 10, color: '#047857', fontWeight: '600' },
 });
 
 const nb = StyleSheet.create({

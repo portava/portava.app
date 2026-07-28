@@ -64,15 +64,23 @@ async function checkEligibility(
   switch (entityType) {
     case "place": {
       // Any authenticated user may rate a seeded/community place.
-      // Check discovery_places first; fall back to hidden_gems so that gem
-      // detail pages (which use hidden_gems IDs) can also accept ratings.
-      const { data: placeRow } = await sc
+      // Check discovery_places first; fall back to canonical places table
+      // (used by /place/[id] screens) then hidden_gems (gem detail pages
+      // pass entityType="place" to reuse the same reviews table).
+      const { data: discoveryRow } = await sc
         .from("discovery_places")
         .select("id")
         .eq("id", entityId)
         .eq("status", "active")
         .maybeSingle();
-      if (placeRow) return true;
+      if (discoveryRow) return true;
+
+      const { data: canonicalRow } = await sc
+        .from("places")
+        .select("id")
+        .eq("id", entityId)
+        .maybeSingle();
+      if (canonicalRow) return true;
 
       const { data: gemRow } = await sc
         .from("hidden_gems")
@@ -646,6 +654,166 @@ router.delete("/reviews/:id", asyncHandler(async (req, res) => {
   if (error) { req.log.error({ err: error }, "delete review"); sendError(res, "db_error", error.message); return; }
 
   res.json({ ok: true, state: newState });
+}));
+
+// ── GET /api/places/:id/votes ─────────────────────────────────────────────────
+// Returns Worth-It / Skip-It tally for a place or gem.
+// Auth is optional — unauthed callers see counts but no myVote.
+// Query param: entityType = 'place' (default) | 'gem'
+
+router.get("/places/:id/votes", asyncHandler(async (req, res) => {
+  const viewer = await optionalUser(req);
+  const viewerId = viewer?.user.id ?? null;
+
+  const { id } = req.params;
+  if (!id || id.length > 200) {
+    sendError(res, "invalid_payload", "Invalid entity id");
+    return;
+  }
+
+  const entityType = req.query.entityType === "gem" ? "gem" : "place";
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: rows, error } = await sc
+    .from("place_votes")
+    .select("vote, user_id")
+    .eq("entity_type", entityType)
+    .eq("entity_id", id);
+
+  if (error) {
+    // Table may not exist yet in some envs — degrade gracefully
+    if ((error as any).code === "42P01") {
+      res.json({ worthItCount: 0, skipItCount: 0, myVote: null });
+      return;
+    }
+    req.log.error({ err: error }, "get place votes");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  const voteRows = (rows as any[]) ?? [];
+  const worthItCount = voteRows.filter((r: any) => r.vote === "worth_it").length;
+  const skipItCount  = voteRows.filter((r: any) => r.vote === "skip_it").length;
+  const myVote = viewerId
+    ? (voteRows.find((r: any) => r.user_id === viewerId)?.vote ?? null)
+    : null;
+
+  res.json({ worthItCount, skipItCount, myVote: myVote as string | null });
+}));
+
+// ── POST /api/places/:id/votes ────────────────────────────────────────────────
+// Cast or retract a Worth-It / Skip-It vote.
+// Body: { vote: 'worth_it' | 'skip_it' | null, entityType?: 'place' | 'gem' }
+// Passing vote=null retracts the current vote.
+// Returns updated tallies.
+
+router.post("/places/:id/votes", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+
+  const { id } = req.params;
+  if (!id || id.length > 200) {
+    sendError(res, "invalid_payload", "Invalid entity id");
+    return;
+  }
+
+  const voteRaw = req.body?.vote as string | null | undefined;
+  const entityTypeRaw = req.body?.entityType;
+  const entityType = entityTypeRaw === "gem" ? "gem" : "place";
+
+  if (voteRaw !== null && voteRaw !== undefined && !["worth_it", "skip_it"].includes(voteRaw)) {
+    sendError(res, "invalid_payload", "vote must be 'worth_it', 'skip_it', or null");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Validate entity exists before writing — prevents orphaned votes for arbitrary IDs.
+  // Retract (vote=null) is allowed without the existence check since
+  // deleting a non-existent row is a no-op.
+  if (voteRaw !== null && voteRaw !== undefined) {
+    if (entityType === "gem") {
+      const { data: gemRow } = await sc
+        .from("hidden_gems")
+        .select("id")
+        .eq("id", id)
+        .maybeSingle();
+      if (!gemRow) {
+        sendError(res, "not_found", "Gem not found");
+        return;
+      }
+    } else {
+      // Accept IDs from discovery_places (active) OR canonical places table.
+      const { data: discoveryRow } = await sc
+        .from("discovery_places")
+        .select("id")
+        .eq("id", id)
+        .eq("status", "active")
+        .maybeSingle();
+      if (!discoveryRow) {
+        const { data: canonicalRow } = await sc
+          .from("places")
+          .select("id")
+          .eq("id", id)
+          .maybeSingle();
+        if (!canonicalRow) {
+          sendError(res, "not_found", "Place not found");
+          return;
+        }
+      }
+    }
+  }
+
+  if (voteRaw === null || voteRaw === undefined) {
+    // Retract vote
+    const { error } = await sc
+      .from("place_votes")
+      .delete()
+      .eq("user_id", auth.user.id)
+      .eq("entity_type", entityType)
+      .eq("entity_id", id);
+    if (error && (error as any).code !== "42P01") {
+      req.log.error({ err: error }, "retract place vote");
+      sendError(res, "db_error", error.message);
+      return;
+    }
+  } else {
+    // Upsert vote
+    const { error } = await sc
+      .from("place_votes")
+      .upsert(
+        {
+          user_id:     auth.user.id,
+          entity_type: entityType,
+          entity_id:   id,
+          vote:        voteRaw,
+          created_at:  new Date().toISOString(),
+        },
+        { onConflict: "user_id,entity_type,entity_id" },
+      );
+    if (error && (error as any).code !== "42P01") {
+      req.log.error({ err: error }, "upsert place vote");
+      sendError(res, "db_error", error.message);
+      return;
+    }
+  }
+
+  // Re-fetch tallies
+  const { data: rows } = await sc
+    .from("place_votes")
+    .select("vote, user_id")
+    .eq("entity_type", entityType)
+    .eq("entity_id", id);
+
+  const voteRows = (rows as any[]) ?? [];
+  const worthItCount = voteRows.filter((r: any) => r.vote === "worth_it").length;
+  const skipItCount  = voteRows.filter((r: any) => r.vote === "skip_it").length;
+  const myVote = voteRows.find((r: any) => r.user_id === auth.user.id)?.vote ?? null;
+
+  res.json({ worthItCount, skipItCount, myVote: myVote as string | null });
 }));
 
 // ── POST /api/reviews/:id/report ──────────────────────────────────────────────

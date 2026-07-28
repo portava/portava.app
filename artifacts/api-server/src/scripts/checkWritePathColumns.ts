@@ -141,6 +141,9 @@ const SKIP_TABLES = new Set<string>([
   // Event agenda items (places attached to an event) — migration 2043_event_agenda_items.sql
   // pending live apply. Remove once the table exists in the live DB schema.
   "event_agenda_items",
+  // Worth-It / Skip-It votes for places and gems — migration 20260808_place_votes.sql
+  // pending live apply. Remove once the table exists in the live DB schema.
+  "place_votes",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────

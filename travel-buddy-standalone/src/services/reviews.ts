@@ -253,3 +253,50 @@ export async function getEventReviews(
   if (!res.ok) throw new Error('Failed to load event reviews');
   return res.json();
 }
+
+// ── Place / gem votes (Worth It / Skip It) ────────────────────────────────────
+
+export type PlaceVoteType = 'worth_it' | 'skip_it';
+
+export interface PlaceVotesResponse {
+  worthItCount: number;
+  skipItCount:  number;
+  myVote:       PlaceVoteType | null;
+}
+
+export async function getPlaceVotes(
+  entityId:   string,
+  entityType: 'place' | 'gem' = 'place',
+): Promise<PlaceVotesResponse> {
+  const params = new URLSearchParams({ entityType });
+  const res = await fetch(api(`places/${entityId}/votes?${params}`), {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to load votes');
+  return res.json();
+}
+
+/**
+ * Cast or retract a Worth-It / Skip-It vote.
+ * Passing `vote = null` retracts the current vote.
+ * Returns updated tallies from the server.
+ */
+export async function castPlaceVote(
+  entityId:   string,
+  entityType: 'place' | 'gem' = 'place',
+  vote:       PlaceVoteType | null,
+): Promise<PlaceVotesResponse> {
+  const res = await fetch(api(`places/${entityId}/votes`), {
+    method:  'POST',
+    headers: await authHeaders(),
+    body:    JSON.stringify({ vote, entityType }),
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}));
+    throw Object.assign(
+      new Error((json as any).message ?? 'Failed to cast vote'),
+      { code: (json as any).error },
+    );
+  }
+  return res.json();
+}

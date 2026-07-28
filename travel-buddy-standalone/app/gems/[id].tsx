@@ -22,6 +22,7 @@ import { useGemDetail, useGemCheckin, useGemReport } from '../../src/hooks/useHi
 import { verificationBadge, sensitivityLabel, shareGemToTelegraph } from '../../src/services/hiddenGems';
 import { TripWishlistPicker, type AddToTripPayload } from '../../src/components/discovery/TripWishlistPicker';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
+import { WorthItVoteRow } from '../../src/components/WorthItVoteRow';
 import { PlaceInfoSection } from '../../src/components/place/PlaceInfoSection';
 import { GemMapPreview } from '../../src/components/discovery/GemMapPreview';
 import { useSession } from '../../src/context/SessionContext';
@@ -464,6 +465,11 @@ export default function GemDetailScreen() {
             </View>
           </View>
         )}
+
+        {/* Worth-It / Skip-It voting */}
+        <View style={[styles.section, { backgroundColor: '#13213A', borderRadius: 16, marginHorizontal: 16, marginBottom: 12, padding: 16 }]}>
+          <WorthItVoteRow entityId={gem.id} entityType="gem" />
+        </View>
 
         {/* Reviews */}
         <View style={[styles.section, { backgroundColor: '#fff', borderRadius: 16, marginHorizontal: 16, marginBottom: 20, padding: 16 }]}>
