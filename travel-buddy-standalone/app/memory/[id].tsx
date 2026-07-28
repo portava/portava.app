@@ -13,16 +13,16 @@ import {
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  ArrowLeft, Trash2, Heart, Globe, Users, Lock, Eye,
+  ArrowLeft, Trash2, Globe, Users, Lock, Eye,
   MoreHorizontal, Plus, CalendarDays, MapPin,
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import {
-  getMemory, deleteMemoryItem, deleteMemory, likeMemory, unlikeMemory,
+  getMemory, deleteMemoryItem, deleteMemory,
   addMemoryItem, type Memory, type MemoryItem,
 } from '../../src/services/memories';
+import { StampButton } from '../../src/components/stamps/StampButton';
 import { useSession } from '../../src/context/SessionContext';
-import { EngagementUserListSheet } from '../../src/components/EngagementUserListSheet';
 import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
@@ -69,8 +69,6 @@ export default function MemoryDetailScreen() {
   const [error, setError] = useState('');
   const [addingMedia, setAddingMedia] = useState(false);
   const [deletingItemId, setDeletingItemId] = useState<string | null>(null);
-  const [likeLoading, setLikeLoading] = useState(false);
-  const [likerSheetOpen, setLikerSheetOpen] = useState(false);
 
   const isOwner = memory?.ownerId === userId;
 
@@ -190,24 +188,6 @@ export default function MemoryDetailScreen() {
     setAddingMedia(false);
   }, [memory, pickMedia]);
 
-  // ── Like ────────────────────────────────────────────────────────────────────
-
-  const handleLike = useCallback(async () => {
-    if (!memory || likeLoading) return;
-    setLikeLoading(true);
-    if (memory.likedByMe) {
-      const res = await unlikeMemory(memory.id);
-      if (res.ok) {
-        setMemory((prev) => prev ? { ...prev, likedByMe: false, likeCount: (prev.likeCount ?? 1) - 1 } : prev);
-      }
-    } else {
-      const res = await likeMemory(memory.id);
-      if (res.ok) {
-        setMemory((prev) => prev ? { ...prev, likedByMe: true, likeCount: (prev.likeCount ?? 0) + 1 } : prev);
-      }
-    }
-    setLikeLoading(false);
-  }, [memory, likeLoading]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -365,41 +345,21 @@ export default function MemoryDetailScreen() {
             <Text style={s.metaChip}>{formatDate(memory.createdAt)}</Text>
           </View>
 
-          {/* Like */}
+          {/* Stamp */}
           <View style={s.likeRow}>
-            <Pressable
-              onPress={handleLike}
-              onLongPress={() => setLikerSheetOpen(true)}
-              disabled={likeLoading}
-              hitSlop={8}
-            >
-              <Heart
-                size={20}
-                color={memory.likedByMe ? color.signal : color.mute}
-                fill={memory.likedByMe ? color.signal : 'none'}
-              />
-            </Pressable>
-            {(memory.likeCount ?? 0) > 0 && (
-              <Pressable onPress={() => setLikerSheetOpen(true)} hitSlop={6}>
-                <Text style={s.likeCount}>{memory.likeCount}</Text>
-              </Pressable>
-            )}
+            <StampButton
+              entityType="memory"
+              entityId={memory.id}
+              initialCount={memory.likeCount ?? 0}
+              initialIsStamped={memory.likedByMe ?? false}
+              iconSize={20}
+            />
           </View>
         </View>
 
         <PlainBottomFiller />
       </ScrollView>
 
-      {likerSheetOpen && (
-        <EngagementUserListSheet
-          visible
-          targetType="memory_like"
-          targetId={id ?? ''}
-          title="Liked by"
-          initialTotal={memory.likeCount ?? 0}
-          onClose={() => setLikerSheetOpen(false)}
-        />
-      )}
     </View>
   );
 }

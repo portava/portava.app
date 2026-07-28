@@ -48,6 +48,7 @@ import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useEventRsvp } from '../../src/hooks/useEventRsvp';
 import { HostDashboardPanel } from '../../src/components/HostDashboardPanel';
 import { EventVoiceRoomCard } from '../../src/components/events/EventVoiceRoomCard.tsx';
+import { StampButton } from '../../src/components/stamps/StampButton';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { ReportSheet } from '../../src/components/ReportSheet';
 import { SharedVideoPlayer } from '../../src/components/ui/SharedVideoPlayer';
@@ -569,6 +570,15 @@ export default function EventDetailScreen() {
             </Pressable>
             <Text style={styles.headerTitle} numberOfLines={1}>{event?.title ?? 'Event'}</Text>
             <View style={styles.headerRight}>
+              {event && (
+                <StampButton
+                  entityType="event"
+                  entityId={event.id}
+                  initialCount={0}
+                  initialIsStamped={false}
+                  iconSize={20}
+                />
+              )}
               {event && !isHost && (
                 <Pressable style={styles.headerBtn} onPress={handleSaveToggle} disabled={saveLoading} hitSlop={8}>
                   {saveLoading

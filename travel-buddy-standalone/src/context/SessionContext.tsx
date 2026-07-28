@@ -5,9 +5,8 @@ import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { getAccountStatus } from '../services/profile.ts';
 import type { AccountStatus } from '../services/profile.ts';
 import { pauseOnSessionEnd } from '../services/circle.ts';
-import { clearForUser as clearLikedForUser, primeLikes } from '../services/likedPostsCache.ts';
 import { clearForUser as clearSavedForUser, primeSaved } from '../services/savedPostsCache.ts';
-import { fetchMyLikedPostIds, fetchMySavedPostIds } from '../services/postEngagement.ts';
+import { fetchMySavedPostIds } from '../services/postEngagement.ts';
 import { clearCachedFeed } from '../services/compass.ts';
 
 // AsyncStorage keys that may hold private entity data and must be wiped on logout.
@@ -131,15 +130,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     await fetchAccountStatus(userId);
   }, [userId, fetchAccountStatus]);
 
-  // Pre-warm the liked-posts and saved-posts caches as soon as we have a
-  // userId so heart and bookmark indicators are correct from the first feed
-  // paint.  Both are fire-and-forget — the cache starts empty on any error
-  // and components fall back to the feed API's likedByMe/savedByMe props.
+  // Pre-warm the saved-posts cache as soon as we have a userId so bookmark
+  // indicators are correct from the first feed paint. Fire-and-forget.
   useEffect(() => {
     if (!userId) return;
-    fetchMyLikedPostIds().then((postIds) => {
-      if (postIds.length > 0) primeLikes(userId, postIds);
-    }).catch(() => {});
     fetchMySavedPostIds().then((postIds) => {
       if (postIds.length > 0) primeSaved(userId, postIds);
     }).catch(() => {});
@@ -163,7 +157,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     // Clear per-user caches before wiping the userId so we can still
     // reference the outgoing user's id inside the clear calls.
     if (userId) {
-      clearLikedForUser(userId);
       clearSavedForUser(userId);
       // Remove the personalised Compass feed cache so it doesn't persist
       // private recommendation data (event addresses, place details) to disk.

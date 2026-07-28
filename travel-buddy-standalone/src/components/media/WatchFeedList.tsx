@@ -65,15 +65,12 @@ interface CellWrapperProps {
   isActive: boolean;
   isMuted: boolean;
   currentUserId?: string;
-  onLike: (id: string) => void;
   onComment: (id: string) => void;
   onSave: (id: string) => void;
   onMore: (id: string) => void;
   onVideoRef: (id: string, ref: React.RefObject<Video | null>) => void;
   onVideoUnmount: (id: string) => void;
-  isLiked: boolean;
   isSaved: boolean;
-  likeCount: number;
   /** Show a faint swipe-right hint arrow (after user has seen ≥3 videos). */
   showSwipeHint?: boolean;
 }
@@ -83,15 +80,12 @@ const CellWrapper = React.memo(function CellWrapper({
   isActive,
   isMuted,
   currentUserId,
-  onLike,
   onComment,
   onSave,
   onMore,
   onVideoRef,
   onVideoUnmount,
-  isLiked,
   isSaved,
-  likeCount,
   showSwipeHint = false,
 }: CellWrapperProps) {
   // ── Playback state ─────────────────────────────────────────────────────────
@@ -158,21 +152,13 @@ const CellWrapper = React.memo(function CellWrapper({
     }
   }, []);
 
-  // ── Like helpers ───────────────────────────────────────────────────────────
+  // ── Double-tap burst ───────────────────────────────────────────────────────
 
-  const handleLike = useCallback(() => {
-    onLike(item.id);
+  // Double-tap shows a heart burst animation (visual delight).
+  // Stamp state is managed by the StampButton in the overlay.
+  const handleDoubleTapBurst = useCallback(() => {
     heartBurstRef.current?.trigger();
-  }, [item.id, onLike]);
-
-  // Double-tap: always show burst, but only fire the like action when not
-  // already liked. Double-tap is idempotent like-once — never unlikes.
-  const handleDoubleTapLike = useCallback(() => {
-    if (!isLiked) {
-      onLike(item.id);
-    }
-    heartBurstRef.current?.trigger();
-  }, [item.id, isLiked, onLike]);
+  }, []);
 
   // ── Radial menu action callbacks ──────────────────────────────────────────
 
@@ -215,7 +201,7 @@ const CellWrapper = React.memo(function CellWrapper({
     .numberOfTaps(2)
     .maxDuration(250)
     .runOnJS(true)
-    .onEnd(() => { handleDoubleTapLike(); });
+    .onEnd(() => { handleDoubleTapBurst(); });
 
   const singleTap = Gesture.Tap()
     .numberOfTaps(1)
@@ -348,10 +334,7 @@ const CellWrapper = React.memo(function CellWrapper({
       <WatchItemOverlay
         item={item}
         currentUserId={currentUserId}
-        isLiked={isLiked}
         isSaved={isSaved}
-        likeCount={likeCount}
-        onLike={() => handleLike()}
         onComment={() => onComment(item.id)}
         onSave={() => onSave(item.id)}
         onMore={() => onMore(item.id)}
@@ -432,16 +415,11 @@ export interface WatchFeedListProps {
   currentUserId?: string;
   onActiveIndexChange: (idx: number) => void;
   onEndReached: () => void;
-  onLike: (id: string) => void;
   onComment: (id: string) => void;
   onSave: (id: string) => void;
   onMore: (id: string) => void;
-  /** Liked items set (id → true). */
-  likedSet: Record<string, boolean>;
   /** Saved items set (id → true). */
   savedSet: Record<string, boolean>;
-  /** Like counts (id → count). */
-  likeCounts: Record<string, number>;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -452,13 +430,10 @@ export function WatchFeedList({
   currentUserId,
   onActiveIndexChange,
   onEndReached,
-  onLike,
   onComment,
   onSave,
   onMore,
-  likedSet,
   savedSet,
-  likeCounts,
 }: WatchFeedListProps) {
   const insets = useSafeAreaInsets();
   const playback = useWatchPlayback();
@@ -529,20 +504,17 @@ export function WatchFeedList({
         isActive={index === activeIndex}
         isMuted={isMuted}
         currentUserId={currentUserId}
-        onLike={onLike}
         onComment={onComment}
         onSave={onSave}
         onMore={onMore}
         onVideoRef={playback.registerRef}
         onVideoUnmount={playback.unregisterRef}
-        isLiked={likedSet[item.id] ?? item.likedByMe}
         isSaved={savedSet[item.id] ?? item.savedByMe}
-        likeCount={likeCounts[item.id] ?? item.likeCount}
         showSwipeHint={showSwipeHint}
       />
     ),
-    [activeIndex, isMuted, currentUserId, onLike, onComment, onSave, onMore,
-      playback.registerRef, playback.unregisterRef, likedSet, savedSet, likeCounts,
+    [activeIndex, isMuted, currentUserId, onComment, onSave, onMore,
+      playback.registerRef, playback.unregisterRef, savedSet,
       showSwipeHint],
   );
 

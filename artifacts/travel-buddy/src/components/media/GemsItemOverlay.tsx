@@ -32,6 +32,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import type { GemsFeedItem } from '../../hooks/useGemsFeed.ts';
 import { PlaceQuickActions } from '../PlaceQuickActions.tsx';
+import { StampButton } from '../stamps/StampButton.tsx';
 
 // ── Helper: place type display label ─────────────────────────────────────────
 
@@ -66,7 +67,6 @@ export interface GemsItemOverlayProps {
   onAddToTrip?: (item: GemsFeedItem) => void;
   onDirections?: (item: GemsFeedItem) => void;
   onFollowCreator?: (creatorId: string) => void;
-  onLike?: (item: GemsFeedItem) => void;
   /** Omit to disable comment action for non-post-backed items (e.g. gems). */
   onComment?: (item: GemsFeedItem) => void;
   onSave?: (item: GemsFeedItem) => void;
@@ -77,12 +77,8 @@ export interface GemsItemOverlayProps {
    * Use this to delegate to a unified MediaMoreMenu (recommended for all new surfaces).
    */
   onMore?: (item: GemsFeedItem) => void;
-  /** Optimistic liked state from useMediaLike — overrides item.viewerState.hasLiked when provided. */
-  isLiked?: boolean;
   /** Optimistic saved state from useMediaSave — overrides item.viewerState.hasSaved when provided. */
   isSaved?: boolean;
-  /** Optimistic like count from useMediaLike — overrides item.stats.likeCount when provided. */
-  likeCount?: number;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -93,15 +89,12 @@ export function GemsItemOverlay({
   onAddToTrip,
   onDirections,
   onFollowCreator,
-  onLike,
   onComment,
   onSave,
   onShare,
   onWrongPlace,
   onMore,
-  isLiked,
   isSaved,
-  likeCount,
 }: GemsItemOverlayProps) {
   // Legacy inline mini-menu — only used when onMore is not provided.
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
@@ -146,12 +139,13 @@ export function GemsItemOverlay({
 
       {/* ── Right action column ───────────────────────────────────────────── */}
       <View style={styles.actionColumn}>
-        <ActionButton
-          label={(isLiked ?? item.viewerState.hasLiked) ? '♥' : '♡'}
-          sublabel={String((likeCount ?? item.stats.likeCount) || '')}
-          active={isLiked ?? item.viewerState.hasLiked}
-          onPress={() => onLike?.(item)}
-          accessibilityLabel="Like"
+        <StampButton
+          entityType="hidden_gem"
+          entityId={item.id}
+          initialCount={item.stats.likeCount ?? 0}
+          initialIsStamped={item.viewerState?.hasLiked ?? false}
+          iconSize={24}
+          style={styles.stampBtnWrapper}
         />
         {/* Comments are disabled for gem items (not post-backed); only shown when onComment is wired. */}
         {onComment && (
@@ -368,6 +362,12 @@ const styles = StyleSheet.create({
     bottom: BOTTOM_SAFE + 120,
     alignItems: 'center',
     gap: space.lg,
+  },
+  stampBtnWrapper: {
+    minHeight: 44,
+    minWidth: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   actionBtn: {
     alignItems: 'center',

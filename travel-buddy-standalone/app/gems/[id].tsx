@@ -31,6 +31,7 @@ import { useSession } from '../../src/context/SessionContext';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 import { ReasonPromptModal } from '../../src/components/ReasonPromptModal';
+import { StampButton } from '../../src/components/stamps/StampButton';
 
 // ── Privacy section ────────────────────────────────────────────────────────────
 
@@ -501,6 +502,17 @@ export default function GemDetailScreen() {
 
         {/* Action bar */}
         <View style={styles.actionBar}>
+          {gem?.id ? (
+            <View style={styles.actionBtn}>
+              <StampButton
+                entityType="hidden_gem"
+                entityId={gem.id}
+                initialCount={0}
+                initialIsStamped={false}
+                iconSize={20}
+              />
+            </View>
+          ) : null}
           <TouchableOpacity style={styles.actionBtn} onPress={() => setShowCheckin(true)}>
             <Ionicons name="location" size={20} color="#4C8BF5" />
             <Text style={styles.actionBtnText}>Check In</Text>

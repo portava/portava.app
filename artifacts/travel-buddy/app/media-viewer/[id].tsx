@@ -38,7 +38,6 @@ import { useLocalSearchParams, router } from 'expo-router';
 import { Video, ResizeMode } from 'expo-av';
 import {
   X,
-  Heart,
   MessageCircle,
   Bookmark,
   Share2,
@@ -52,8 +51,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { fetchMediaFeedItemById } from '../../src/services/mediaFeed.ts';
 import { VerifiedLocationStamp } from '../../src/components/media/VerifiedLocationStamp.tsx';
-import { useMediaLike } from '../../src/hooks/useMediaLike.ts';
 import { useMediaSave } from '../../src/hooks/useMediaSave.ts';
+import { StampButton } from '../../src/components/stamps/StampButton.tsx';
 import { recordMediaShare } from '../../src/services/mediaInteractions.ts';
 import { MediaCommentSheet } from '../../src/components/media/MediaCommentSheet.tsx';
 import {
@@ -134,15 +133,12 @@ function fmtCount(n: number): string {
 
 interface OverlayProps {
   post: ViewerPost | null;
-  isLiked: boolean;
   isSaved: boolean;
-  likeCount: number;
   saveCount: number;
   commentCount: number;
   isMuted: boolean;
   isVideo: boolean;
   onClose: () => void;
-  onLike: () => void;
   onComment: () => void;
   onSave: () => void;
   onShare: () => void;
@@ -159,15 +155,12 @@ interface OverlayProps {
 
 function ViewerOverlay({
   post,
-  isLiked,
   isSaved,
-  likeCount,
   saveCount,
   commentCount,
   isMuted,
   isVideo,
   onClose,
-  onLike,
   onComment,
   onSave,
   onShare,
@@ -298,11 +291,18 @@ function ViewerOverlay({
 
         {/* Right column: action buttons */}
         <View style={ov.rightCol}>
-          {/* Like */}
-          <Pressable style={ov.actionBtn} onPress={onLike} hitSlop={6} accessibilityRole="button" accessibilityLabel={isLiked ? 'Unlike' : 'Like'}>
-            <Heart size={28} color={isLiked ? color.signal : '#fff'} fill={isLiked ? color.signal : 'transparent'} strokeWidth={isLiked ? 0 : 1.8} />
-            {likeCount > 0 ? <Text style={ov.actionCount}>{fmtCount(likeCount)}</Text> : null}
-          </Pressable>
+          {/* Stamp — key forces remount when the active post changes so stamp state resets */}
+          {post ? (
+            <StampButton
+              key={post.id}
+              entityType="media_post"
+              entityId={post.id}
+              initialCount={post.likeCount}
+              initialIsStamped={post.likedByMe}
+              iconSize={28}
+              style={ov.stampBtnWrapper}
+            />
+          ) : null}
 
           {/* Comment */}
           <Pressable style={ov.actionBtn} onPress={onComment} hitSlop={6} accessibilityRole="button" accessibilityLabel="Comment">
@@ -442,6 +442,10 @@ const ov = StyleSheet.create({
   actionBtn: {
     alignItems: 'center',
     gap: 4,
+  },
+  stampBtnWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   actionCount: {
     ...t.stamp,
@@ -598,8 +602,7 @@ export default function MediaViewer() {
     }
   }, [initialIndex]);
 
-  // ── Like / save hooks ──────────────────────────────────────────────────────
-  const likeHook = useMediaLike();
+  // ── Save hook ──────────────────────────────────────────────────────────────
   const saveHook = useMediaSave();
 
   // ── Mute state — shared with WatchFeedList via AsyncStorage ───────────────
@@ -627,15 +630,14 @@ export default function MediaViewer() {
           if (result.ok && result.data) {
             const vp = mapMediaFeedItem(result.data);
             setPostDataMap((prev) => ({ ...prev, [item.id]: vp }));
-            // Seed like/save state from server data
-            likeHook.seed([{ id: item.id, likedByMe: vp.likedByMe, likeCount: vp.likeCount }]);
+            // Seed save state from server data; stamp state is managed by StampButton
             saveHook.seed([{ id: item.id, savedByMe: vp.savedByMe }]);
           }
         })
         .catch(() => {})
         .finally(() => { fetchingRef.current.delete(item.id); });
     },
-    [postDataMap, likeHook, saveHook],
+    [postDataMap, saveHook],
   );
 
   // Fetch active item and its immediate neighbours
@@ -652,11 +654,6 @@ export default function MediaViewer() {
   const [commentItemId, setCommentItemId] = useState<string | null>(null);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
-
-  const handleLike = useCallback(() => {
-    const item = items[activeIndex];
-    if (item) likeHook.toggleLike(item.id);
-  }, [activeIndex, items, likeHook]);
 
   const handleSave = useCallback(() => {
     const item = items[activeIndex];
@@ -711,10 +708,8 @@ export default function MediaViewer() {
   const activeItem = items[activeIndex];
   const activePost = activeItem ? postDataMap[activeItem.id] ?? null : null;
 
-  // Counts: prefer hook values (optimistic) falling back to server data
-  const activeIsLiked  = activeItem ? (likeHook.likedSet[activeItem.id] ?? activePost?.likedByMe ?? false) : false;
-  const activeIsSaved  = activeItem ? (saveHook.savedSet[activeItem.id] ?? activePost?.savedByMe ?? false) : false;
-  const activeLikeCount    = activeItem ? (likeHook.likeCounts[activeItem.id] ?? activePost?.likeCount ?? 0) : 0;
+  // Counts — save is optimistic via hook; stamp is managed by StampButton itself
+  const activeIsSaved      = activeItem ? (saveHook.savedSet[activeItem.id] ?? activePost?.savedByMe ?? false) : false;
   const activeSaveCount    = activePost?.saveCount ?? 0;
   const activeCommentCount = activePost?.commentCount ?? 0;
   const activeStampItCount = activePost?.stampItCount ?? 0;
@@ -761,15 +756,12 @@ export default function MediaViewer() {
       {/* ── Overlay (always on top) ───────────────────────────────── */}
       <ViewerOverlay
         post={activePost}
-        isLiked={activeIsLiked}
         isSaved={activeIsSaved}
-        likeCount={activeLikeCount}
         saveCount={activeSaveCount}
         commentCount={activeCommentCount}
         isMuted={isMuted}
         isVideo={activeItem?.mediaType === 'video' || activePost?.isVideo === true}
         onClose={handleClose}
-        onLike={handleLike}
         onComment={handleComment}
         onSave={handleSave}
         onShare={handleShare}

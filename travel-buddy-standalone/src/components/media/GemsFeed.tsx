@@ -28,7 +28,6 @@ import * as ExpoLocation from 'expo-location';
 import { color, space, type as t } from '../../theme/tokens.ts';
 import { useMediaStore, type GeoAreaMode, type GemCategory } from '../../stores/mediaStore.ts';
 import { useGemsFeed, type GemsFeedItem } from '../../hooks/useGemsFeed.ts';
-import { useMediaLike } from '../../hooks/useMediaLike.ts';
 import { useMediaSave } from '../../hooks/useMediaSave.ts';
 import { useSession } from '../../context/SessionContext.tsx';
 import { GemsFilterBar } from './GemsFilterBar.tsx';
@@ -76,7 +75,6 @@ export function GemsFeed({
   const currentUserId = session?.userId ?? undefined;
 
   // ── Interaction hooks ────────────────────────────────────────────────────
-  const likeHook = useMediaLike();
   const saveHook = useMediaSave();
 
   // ── Sheet state ──────────────────────────────────────────────────────────
@@ -144,11 +142,6 @@ export function GemsFeed({
   // ── Seed interaction state when feed items arrive ─────────────────────────
   useEffect(() => {
     if (items.length === 0) return;
-    likeHook.seed(items.map((i) => ({
-      id: i.id,
-      likedByMe: i.viewerState?.hasLiked ?? false,
-      likeCount: i.stats.likeCount,
-    })));
     saveHook.seed(items.map((i) => ({
       id: i.id,
       savedByMe: i.viewerState?.hasSaved ?? false,
@@ -156,10 +149,6 @@ export function GemsFeed({
   }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Interaction handlers ──────────────────────────────────────────────────
-  const handleLike = useCallback((item: GemsFeedItem) => {
-    likeHook.toggleLike(item.id);
-  }, [likeHook]);
-
   const handleSave = useCallback((item: GemsFeedItem) => {
     saveHook.toggleSave(item.id);
   }, [saveHook]);
@@ -213,17 +202,14 @@ export function GemsFeed({
           onAddToTrip={onAddToTrip}
           onDirections={onDirections}
           onFollowCreator={onViewCreator}
-          onLike={handleLike}
           onSave={handleSave}
-          isLiked={likeHook.isLiked(item.id)}
           isSaved={saveHook.isSaved(item.id)}
-          likeCount={likeHook.getLikeCount(item.id)}
           onShare={handleShare}
           onMore={handleMore}
         />
       </View>
     );
-  }, [screenWidth, screenHeight, onViewPlace, onAddToTrip, onDirections, onViewCreator, handleLike, handleSave, handleShare, handleMore]);
+  }, [screenWidth, screenHeight, onViewPlace, onAddToTrip, onDirections, onViewCreator, handleSave, handleShare, handleMore]);
 
   const keyExtractor = useCallback((item: GemsFeedItem) => item.id, []);
 

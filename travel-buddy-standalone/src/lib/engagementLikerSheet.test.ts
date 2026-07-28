@@ -406,6 +406,9 @@ describe('EngagementUserListSheet — hasMore-driven loadMore guard', () => {
 // Any regression (removed handler, wrong targetType, missing component) fails here.
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// § 4 note: PostEngagementBar was migrated from a heart/like model to stamp + reaction.
+// The like-count tap and heart long-press that previously opened likerSheet are gone.
+// The reactionLikerSheet (renamed from likerSheet) now only surfaces for reaction chips.
 describe('PostEngagementBar — source-level JSX wiring', () => {
   let src = '';
   before(() => { src = fs.readFileSync(path.join(COMPONENTS, 'PostEngagementBar.tsx'), 'utf8'); });
@@ -414,38 +417,30 @@ describe('PostEngagementBar — source-level JSX wiring', () => {
     assert.ok(src.includes("from './EngagementUserListSheet.tsx'"), 'PostEngagementBar must import EngagementUserListSheet');
   });
 
-  it('like-count Pressable onPress calls setLikerSheet({})', () => {
-    assert.ok(src.includes('onPress={() => setLikerSheet({})}'), 'count-tap Pressable must call setLikerSheet({})');
-  });
-
-  it('heart onLongPress calls setLikerSheet({})', () => {
-    assert.ok(src.includes('onLongPress={() => setLikerSheet({})}'), 'heart long-press must call setLikerSheet({})');
-  });
-
-  it('reaction chip onChipPress passes emoji into likerSheet', () => {
+  it('reaction chip onChipPress passes emoji into reactionLikerSheet', () => {
     assert.ok(
-      src.includes('onChipPress={(emoji) => setLikerSheet({ emoji })}'),
-      'chip press must set likerSheet with emoji'
+      src.includes('onChipPress={(emoji) => setReactionLikerSheet({ emoji })}'),
+      'chip press must set reactionLikerSheet with emoji'
     );
   });
 
-  it("EngagementUserListSheet targetType is 'post_reaction' when emoji set, 'post_like' otherwise", () => {
+  it("EngagementUserListSheet targetType is 'post_reaction'", () => {
     assert.ok(
-      src.includes("targetType={likerSheet.emoji ? 'post_reaction' : 'post_like'}"),
-      "targetType must derive from likerSheet.emoji"
+      src.includes("targetType=\"post_reaction\""),
+      "targetType must be post_reaction"
     );
   });
 
-  it('EngagementUserListSheet reactionType is likerSheet.emoji', () => {
-    assert.ok(src.includes('reactionType={likerSheet.emoji}'), 'reactionType prop must be likerSheet.emoji');
+  it('EngagementUserListSheet reactionType is reactionLikerSheet.emoji', () => {
+    assert.ok(src.includes('reactionType={reactionLikerSheet.emoji}'), 'reactionType prop must be reactionLikerSheet.emoji');
   });
 
-  it('EngagementUserListSheet onClose resets likerSheet to null', () => {
-    assert.ok(src.includes('onClose={() => setLikerSheet(null)}'), 'onClose must reset likerSheet to null');
+  it('EngagementUserListSheet onClose resets reactionLikerSheet to null', () => {
+    assert.ok(src.includes('onClose={() => setReactionLikerSheet(null)}'), 'onClose must reset reactionLikerSheet to null');
   });
 
-  it('EngagementUserListSheet is only rendered when likerSheet !== null', () => {
-    assert.ok(src.includes('likerSheet !== null'), 'sheet must be gated on likerSheet !== null');
+  it('EngagementUserListSheet is only rendered when reactionLikerSheet !== null', () => {
+    assert.ok(src.includes('reactionLikerSheet !== null'), 'sheet must be gated on reactionLikerSheet !== null');
   });
 });
 

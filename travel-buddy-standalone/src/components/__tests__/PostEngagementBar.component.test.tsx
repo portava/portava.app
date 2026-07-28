@@ -2,14 +2,15 @@
  * Component-level tests for PostEngagementBar — lucide Proxy coverage.
  *
  * The primary goal is to confirm that the lucide-react-native Proxy mock
- * correctly handles icon names beyond the X close-button that ReportPostSheet
- * already exercises.  PostEngagementBar renders Heart, Smile, MessageCircle,
- * and Share2 — none of which appear in any other component test assertion.
+ * correctly handles icon names relevant to PostEngagementBar.  PostEngagementBar
+ * now renders Smile, MessageCircle (and uses StampButton, which has its own
+ * internal icon rendering) — none of which appear in any other component test
+ * assertion.
  *
  * By intentionally NOT providing an inline jest.mock('lucide-react-native', …)
  * override, these tests rely on the file-level Proxy in
  * src/__mocks__/lucide-react-native.tsx.  If the Proxy's get trap were broken
- * for any icon name, getByTestId('icon-Heart') etc. would throw and make the
+ * for any icon name, getByTestId('icon-Smile') etc. would throw and make the
  * regression immediately visible.
  *
  * Run with:  pnpm test:component
@@ -40,23 +41,21 @@ jest.mock('../ReactionPicker', () => ({
 jest.mock('../EngagementUserListSheet', () => ({
   EngagementUserListSheet: () => null,
 }));
+// NOTE: intentionally an exhaustive stub — requiring the actual StampButton module
+// would pull in useStamp, useStampAnimation, PortavaInkStamp, and the Reanimated
+// worklet chain, all of which require native bridging unavailable under jest-expo.
+jest.mock('../stamps/StampButton', () => ({
+  StampButton: () => null,
+}));
 
 // ── Service mocks ─────────────────────────────────────────────────────────────
 
 jest.mock('../../services/postEngagement', () => ({
   ...jest.requireActual('../../services/postEngagement'),
-  likePost:       jest.fn().mockResolvedValue(null),
-  unlikePost:     jest.fn().mockResolvedValue(null),
   getReactions:   jest.fn().mockResolvedValue({ reactions: [], myReaction: null }),
   reactToPost:    jest.fn().mockResolvedValue(null),
   removeReaction: jest.fn().mockResolvedValue(null),
   recordShare:    jest.fn().mockResolvedValue(null),
-}));
-
-jest.mock('../../services/likedPostsCache', () => ({
-  ...jest.requireActual('../../services/likedPostsCache'),
-  getLiked: jest.fn().mockReturnValue(undefined),
-  setLiked: jest.fn(),
 }));
 
 jest.mock('../../context/SessionContext', () => ({
@@ -72,10 +71,10 @@ async function renderBar(
   return render(
     <PostEngagementBar
       postId="post-icon-test"
-      likeCount={0}
+      stampCount={0}
       commentCount={0}
-      likedByMe={false}
-      canLike
+      isStampedByViewer={false}
+      canStamp
       canComment
       canShare
       {...overrides}
@@ -86,35 +85,28 @@ async function renderBar(
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('PostEngagementBar — lucide Proxy mock coverage', () => {
-  it('renders the three lucide icons when all actions are enabled', async () => {
-    // PostEngagementBar imports { Heart, Smile, MessageCircle } from
+  it('renders the lucide icons when all actions are enabled', async () => {
+    // PostEngagementBar imports { Smile, MessageCircle } from
     // 'lucide-react-native'.  The share button uses TelegraphSendIcon (react-native-svg),
     // not a lucide icon.  This test confirms the Proxy's get trap resolves every
     // lucide named export to <View testID="icon-<Name>" /> — not just the first
     // one it sees.  A regression in the cache or get trap would cause one or
     // more of these to be missing.
     const { getByTestId } = await renderBar({
-      canLike: true,
+      canStamp: true,
       canComment: true,
       canShare: true,
     });
     await waitFor(() => {
-      expect(getByTestId('icon-Heart')).toBeTruthy();
       expect(getByTestId('icon-Smile')).toBeTruthy();
       expect(getByTestId('icon-MessageCircle')).toBeTruthy();
     });
   });
 
-  it('does not render Heart when canLike is false', async () => {
+  it('does not render MessageCircle when canComment is false', async () => {
     // Confirms the testID assertion is sensitive to render conditions — the icon
     // genuinely being absent produces a null result, not a false positive.
-    const { queryByTestId } = await renderBar({ canLike: false });
-    await waitFor(() => expect(queryByTestId('icon-Heart')).toBeNull());
-  });
-
-  it('does not render Share2 when canShare is false', async () => {
-    // Parity check: Share2 is also conditionally rendered behind canShare.
-    const { queryByTestId } = await renderBar({ canShare: false });
-    await waitFor(() => expect(queryByTestId('icon-Share2')).toBeNull());
+    const { queryByTestId } = await renderBar({ canComment: false });
+    await waitFor(() => expect(queryByTestId('icon-MessageCircle')).toBeNull());
   });
 });

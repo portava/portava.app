@@ -1,7 +1,8 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Heart, MessageCircle, Bookmark, Share2 } from 'lucide-react-native';
+import { MessageCircle, Bookmark, Share2 } from 'lucide-react-native';
 import { color, space, type as t } from '../theme/tokens.ts';
+import { StampButton } from './stamps/StampButton.tsx';
 
 function compact(n: number) {
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
@@ -9,24 +10,28 @@ function compact(n: number) {
 }
 
 export function ActionBar({
-  liked,
+  entityType,
+  entityId,
+  initialStampCount = 0,
+  initialIsStamped = false,
   saved,
-  likeCount,
   commentCount,
   saveCount,
-  onLike,
   onComment,
   onSave,
   onShare,
   renderSave,
   tint = color.ink,
 }: {
-  liked?: boolean;
+  /** Entity type for stamp (e.g. 'post', 'event', 'trip'). */
+  entityType: string;
+  /** Entity ID for stamp. */
+  entityId: string;
+  initialStampCount?: number;
+  initialIsStamped?: boolean;
   saved?: boolean;
-  likeCount: number;
   commentCount: number;
   saveCount: number;
-  onLike?: () => void;
   onComment?: () => void;
   onSave?: () => void;
   onShare?: () => void;
@@ -35,8 +40,13 @@ export function ActionBar({
 }) {
   return (
     <View style={styles.row}>
-      <Action icon={<Heart size={20} color={liked ? color.signal : tint} fill={liked ? color.signal : 'transparent'} />}
-        label={compact(likeCount)} onPress={onLike} tint={tint} />
+      <StampButton
+        entityType={entityType}
+        entityId={entityId}
+        initialCount={initialStampCount}
+        initialIsStamped={initialIsStamped}
+        iconSize={20}
+      />
       <Action icon={<MessageCircle size={20} color={tint} />}
         label={compact(commentCount)} onPress={onComment} tint={tint} />
       {renderSave ? (

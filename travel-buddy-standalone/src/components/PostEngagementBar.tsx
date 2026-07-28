@@ -1,40 +1,38 @@
 /**
- * PostEngagementBar — Like / Reaction / Comment / Share actions for a post card.
+ * PostEngagementBar — Stamp / Reaction / Comment / Share actions for a post card.
  *
- * Manages its own like and reaction state.
- * Opens CommentsSheet, ShareSheet, ReactionPicker, and EngagementUserListSheet as local Modals.
+ * Manages its own stamp and reaction state.
+ * Opens CommentsSheet, ShareSheet, ReactionPicker as local Modals.
  *
- * Tapping the like count opens the likers sheet (who liked this post).
+ * Tapping the stamp count opens the stampers sheet (who stamped this post).
  * Tapping a reaction emoji chip opens the reaction likers sheet (filtered by emoji).
  */
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
-import { Heart, MessageCircle, Smile } from 'lucide-react-native';
+import { MessageCircle, Smile } from 'lucide-react-native';
 import { TelegraphSendIcon } from './icons/TelegraphSendIcon.tsx';
 import { color, space, layout } from '../theme/tokens.ts';
 import {
-  likePost,
-  unlikePost,
   getReactions,
   reactToPost,
   removeReaction,
   recordShare,
   type ReactionCount,
 } from '../services/postEngagement.ts';
-import { getLiked, setLiked } from '../services/likedPostsCache.ts';
 import { useSession } from '../context/SessionContext.tsx';
 import { CommentsSheet } from './CommentsSheet.tsx';
 import { ShareSheet, type ShareTarget } from './ShareSheet.tsx';
 import { ReactionPicker, ReactionSummary } from './ReactionPicker.tsx';
 import { EngagementUserListSheet } from './EngagementUserListSheet.tsx';
+import { StampButton } from './stamps/StampButton.tsx';
 
 interface Props {
   postId: string;
-  likeCount: number;
+  stampCount: number;
   commentCount: number;
   shareCount?: number;
-  likedByMe: boolean;
-  canLike?: boolean;
+  isStampedByViewer: boolean;
+  canStamp?: boolean;
   canComment?: boolean;
   canShare?: boolean;
   sharingDisabled?: boolean;
@@ -43,10 +41,10 @@ interface Props {
 
 export function PostEngagementBar({
   postId,
-  likeCount,
+  stampCount,
   commentCount,
-  likedByMe,
-  canLike = true,
+  isStampedByViewer,
+  canStamp = true,
   canComment = true,
   canShare = true,
   sharingDisabled = false,
@@ -54,41 +52,17 @@ export function PostEngagementBar({
 }: Props) {
   const { userId } = useSession();
 
-  // Use the cache value when available — it reflects the user's explicit
-  // like/unlike action from earlier in this session, overriding stale feed
-  // data that may not have refreshed yet after a re-mount.  Falls back to
-  // the feed-data prop (always server-authoritative) when no cache entry
-  // exists for this post.
-  const cachedLiked = userId ? getLiked(userId, postId) : undefined;
-  const [localLiked, setLocalLiked] = useState(cachedLiked ?? likedByMe);
-  const [localLikeCount, setLocalLikeCount] = useState(likeCount);
-
-  // Track whether the user has explicitly tapped like/unlike this session so
-  // incoming prop changes (feed refresh) or async preload cache updates don't
-  // overwrite their deliberate action.
-  const hasInteracted = useRef(false);
-
-  // Sync localLiked when the feed refreshes new data (likedByMe prop changes).
-  // Prefer cache if available (user interacted earlier this session); otherwise
-  // accept the fresh server value.  Skip if the user has already tapped in
-  // the current component instance — their action takes precedence.
-  useEffect(() => {
-    if (hasInteracted.current) return;
-    const cached = userId ? getLiked(userId, postId) : undefined;
-    setLocalLiked(cached ?? likedByMe);
-  }, [likedByMe, userId, postId]);
   const [localCommentCount, setLocalCommentCount] = useState(commentCount);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [liking, setLiking] = useState(false);
 
   const [reactions, setReactions] = useState<ReactionCount[]>([]);
   const [myReaction, setMyReaction] = useState<string | null>(null);
   const [reactionsFetched, setReactionsFetched] = useState(false);
 
-  // likerSheet: null = closed, { emoji: undefined } = post likes, { emoji: '❤️' } = specific reaction
-  const [likerSheet, setLikerSheet] = useState<{ emoji?: string } | null>(null);
+  // reactionLikerSheet: null = closed, { emoji: '❤️' } = specific reaction
+  const [reactionLikerSheet, setReactionLikerSheet] = useState<{ emoji: string } | null>(null);
 
   const fetchReactions = useCallback(async () => {
     if (reactionsFetched) return;
@@ -103,40 +77,6 @@ export function PostEngagementBar({
   useEffect(() => {
     fetchReactions();
   }, [fetchReactions]);
-
-  const handleLike = useCallback(async () => {
-    if (liking) return;
-    setLiking(true);
-
-    const wasLiked = localLiked;
-    const prevCount = localLikeCount;
-
-    // Optimistically update UI and cache so re-mounts during the API call
-    // (e.g. navigation back) already show the correct state.
-    hasInteracted.current = true;
-    const optimisticLiked = !wasLiked;
-    setLocalLiked(optimisticLiked);
-    setLocalLikeCount(wasLiked ? Math.max(0, prevCount - 1) : prevCount + 1);
-    if (userId) setLiked(userId, postId, optimisticLiked);
-
-    try {
-      const result = wasLiked ? await unlikePost(postId) : await likePost(postId);
-      if (result) {
-        setLocalLiked(result.likedByMe);
-        setLocalLikeCount(result.likeCount);
-        // Confirm the definitive server state in the cache.
-        if (userId) setLiked(userId, postId, result.likedByMe);
-      } else {
-        setLocalLiked(wasLiked);
-        setLocalLikeCount(prevCount);
-        // Revert the cache to the pre-tap state on failure.
-        if (userId) setLiked(userId, postId, wasLiked);
-        Alert.alert('Could not update like', 'Please try again.');
-      }
-    } finally {
-      setLiking(false);
-    }
-  }, [liking, localLiked, localLikeCount, postId, userId]);
 
   const handleCommentCountChange = useCallback(
     (n: number) => {
@@ -220,7 +160,7 @@ export function PostEngagementBar({
     setShareOpen(true);
   }, [sharingDisabled]);
 
-  if (!canLike && !canComment && !canShare) return null;
+  if (!canStamp && !canComment && !canShare) return null;
 
   const totalReactions = reactions.reduce((sum, r) => sum + r.count, 0);
 
@@ -228,33 +168,15 @@ export function PostEngagementBar({
     <>
       <View style={s.container}>
         <View style={s.bar}>
-          {canLike && (
-            <View style={s.likeGroup}>
-              <Pressable
-                style={s.iconBtn}
-                onPress={handleLike}
-                onLongPress={() => setLikerSheet({})}
-                hitSlop={layout.hitSlop}
-                disabled={liking}
-              >
-                <Heart
-                  size={17}
-                  color={localLiked ? color.signal : color.mute}
-                  fill={localLiked ? color.signal : 'transparent'}
-                />
-              </Pressable>
-              {localLikeCount > 0 ? (
-                <Pressable
-                  onPress={() => setLikerSheet({})}
-                  hitSlop={6}
-                  style={s.countBtn}
-                >
-                  <Text style={[s.count, localLiked && s.countActive]}>
-                    {localLikeCount}
-                  </Text>
-                </Pressable>
-              ) : null}
-            </View>
+          {canStamp && (
+            <StampButton
+              entityType="post"
+              entityId={postId}
+              initialCount={stampCount}
+              initialIsStamped={isStampedByViewer}
+              iconSize={17}
+              style={s.stampBtnWrapper}
+            />
           )}
 
           <Pressable
@@ -302,7 +224,7 @@ export function PostEngagementBar({
             reactions={reactions}
             myReaction={myReaction}
             onPress={handleOpenPicker}
-            onChipPress={(emoji) => setLikerSheet({ emoji })}
+            onChipPress={(emoji) => setReactionLikerSheet({ emoji })}
           />
         )}
       </View>
@@ -327,15 +249,14 @@ export function PostEngagementBar({
         onClose={() => setPickerOpen(false)}
       />
 
-      {likerSheet !== null && (
+      {reactionLikerSheet !== null && (
         <EngagementUserListSheet
           visible
-          targetType={likerSheet.emoji ? 'post_reaction' : 'post_like'}
+          targetType="post_reaction"
           targetId={postId}
-          reactionType={likerSheet.emoji}
-          title={likerSheet.emoji ? `${likerSheet.emoji} Reactions` : 'Liked by'}
-          initialTotal={likerSheet.emoji ? undefined : localLikeCount}
-          onClose={() => setLikerSheet(null)}
+          reactionType={reactionLikerSheet.emoji}
+          title={`${reactionLikerSheet.emoji} Reactions`}
+          onClose={() => setReactionLikerSheet(null)}
         />
       )}
     </>
@@ -352,22 +273,9 @@ const s = StyleSheet.create({
     gap: space.lg,
     paddingTop: 2,
   },
-  likeGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
+  stampBtnWrapper: {
     minHeight: 44,
-  },
-  iconBtn: {
-    alignItems: 'center',
     justifyContent: 'center',
-    minWidth: 24,
-    minHeight: 36,
-  },
-  countBtn: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 36,
   },
   action: {
     flexDirection: 'row',

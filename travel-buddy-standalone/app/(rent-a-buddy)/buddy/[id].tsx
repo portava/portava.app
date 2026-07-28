@@ -5,8 +5,9 @@ import {
 import { router, useLocalSearchParams } from 'expo-router';
 import {
   ArrowLeft, Star, Shield, CheckCircle, Globe, Clock,
-  Heart, Flag, ChevronDown, ChevronUp, MapPin,
+  Bookmark, Flag, ChevronDown, ChevronUp, MapPin,
 } from 'lucide-react-native';
+import { StampButton } from '../../../src/components/stamps/StampButton';
 import { color, space, radius, type as t, shadow, layout } from '../../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState, TravelCard } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
@@ -198,11 +199,18 @@ export default function BuddyProfileScreen() {
             >
               <ArrowLeft size={18} color={color.onInk} />
             </Pressable>
+            <StampButton
+              entityType="rent_a_buddy_profile"
+              entityId={buddy.userId}
+              initialCount={0}
+              initialIsStamped={false}
+              iconSize={18}
+            />
             <Pressable
               style={({ pressed }) => [styles.navBtn, pressed && { opacity: layout.pressedOpacity }]}
               onPress={toggleSave}
             >
-              <Heart size={18} color={color.onInk} fill={saved ? color.signal : 'none'} />
+              <Bookmark size={18} color={saved ? color.signal : color.onInk} fill={saved ? color.signal : 'none'} />
             </Pressable>
             <UserOverflowMenu
               userId={buddy.userId}

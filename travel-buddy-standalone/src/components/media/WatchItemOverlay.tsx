@@ -12,7 +12,7 @@
  *   - Audio label row
  *
  * Right column (bottom-right):
- *   - Like button + count (long-press → Stamp It animation)
+ *   - Stamp button + count (ink overlay appears centered over the video frame)
  *   - Comment button + count
  *   - Save button + count
  *   - Share button
@@ -21,7 +21,8 @@
  * Cinematic gradient scrim behind the content for readability.
  */
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback } from 'react';
+import Animated from 'react-native-reanimated';
 import {
   View,
   Text,
@@ -38,7 +39,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import {
-  Heart,
   MessageCircle,
   Bookmark,
   Share2,
@@ -59,8 +59,10 @@ import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
 import { FeaturedBadge } from '../FeaturedBadge.tsx';
 import { useFollow } from '../../hooks/useFollow.ts';
 import type { MediaFeedItem } from '../../types/media.ts';
-import { reactToMediaStampIt } from '../../services/mediaInteractions.ts';
-import { StampItBurst, type StampItBurstHandle } from './StampItBurst.tsx';
+import { useStamp } from '../../hooks/useStamp.ts';
+import { useStampAnimation } from '../../hooks/useStampAnimation.ts';
+import { StampIcon } from '../stamps/StampIcon.tsx';
+import { PortavaInkStamp } from '../stamps/PortavaInkStamp.tsx';
 import { VerifiedLocationStamp } from './VerifiedLocationStamp.tsx';
 import { PlaceQuickActions } from '../PlaceQuickActions.tsx';
 
@@ -148,10 +150,7 @@ function ActionBtn({ icon, count, onPress, onLongPress, label }: ActionBtnProps)
 export interface WatchItemOverlayProps {
   item: MediaFeedItem;
   currentUserId?: string;
-  isLiked: boolean;
   isSaved: boolean;
-  likeCount: number;
-  onLike: () => void;
   onComment: () => void;
   onSave: () => void;
   onMore: () => void;
@@ -164,10 +163,7 @@ export interface WatchItemOverlayProps {
 export function WatchItemOverlay({
   item,
   currentUserId,
-  isLiked,
   isSaved,
-  likeCount,
-  onLike,
   onComment,
   onSave,
   onMore,
@@ -175,45 +171,29 @@ export function WatchItemOverlay({
 }: WatchItemOverlayProps) {
   const insets = useSafeAreaInsets();
   const [captionExpanded, setCaptionExpanded] = useState(false);
-  const stampBurstRef = useRef<StampItBurstHandle>(null);
 
-  // Guard: prevents the like Pressable's onPress from also firing after a
-  // long-press — React Native can invoke onPress on finger-up even when
-  // onLongPress already fired. Reset synchronously inside handleLikePress.
-  const longPressJustFiredRef = useRef(false);
+  // ── Stamp state + frame ink overlay ──────────────────────────────────────
 
-  // ── Stamp It (long-press heart) ───────────────────────────────────────────
+  const { count: stampCount, isStamped, isLoading: stampLoading, toggle: toggleStamp } = useStamp({
+    entityType: 'media_post',
+    entityId: item.id,
+    initialCount: item.stampCount ?? item.likeCount ?? 0,
+    initialIsStamped: item.isStampedByViewer ?? item.likedByMe ?? false,
+  });
 
-  const handleStampIt = useCallback(() => {
-    // Mark that long-press fired; handleLikePress will see this flag and bail.
-    longPressJustFiredRef.current = true;
-    // 1. Only like when not already liked — onLike is a toggle; Stamp It is
-    //    a positive idempotent action and must never accidentally unlike.
-    if (!isLiked) {
-      onLike();
+  const { buttonStyle, overlayStyle, playStamp, playUnstamp } = useStampAnimation();
+
+  const handleStampPress = useCallback(() => {
+    if (stampLoading) return;
+    if (!isStamped) {
+      playStamp(() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+      });
+    } else {
+      playUnstamp();
     }
-    // 2. Trigger stamp burst animation (always — even for already-liked items)
-    stampBurstRef.current?.trigger();
-    // 3. Haptic feedback — heavy impact on "stamp contact"
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
-    // 4. Record stamp-it reaction on the media item in background (fail-soft).
-    // reactToMediaStampIt calls POST /api/media/:id/react — a dedicated
-    // endpoint that writes to media_stamp_reactions so it never conflicts
-    // with the ❤️ like row in post_reactions.
-    reactToMediaStampIt(item.id).catch(() => {});
-  }, [item.id, isLiked, onLike]);
-
-  // ── Short-press heart (normal like/unlike toggle) ─────────────────────────
-
-  const handleLikePress = useCallback(() => {
-    // If a long-press just fired in the same touch, consume the flag and skip
-    // so we don't double-like or accidentally unlike after a Stamp It.
-    if (longPressJustFiredRef.current) {
-      longPressJustFiredRef.current = false;
-      return;
-    }
-    onLike();
-  }, [onLike]);
+    toggleStamp();
+  }, [stampLoading, isStamped, playStamp, playUnstamp, toggleStamp]);
 
   const handleCreate = useCallback(() => {
     if (isGemsMode) {
@@ -419,23 +399,17 @@ export function WatchItemOverlay({
 
         {/* ── Right action column ──────────────────────────────────────── */}
         <View style={s.rightCol} pointerEvents="box-none">
-          {/* Like button — long-press triggers Stamp It */}
+          {/* Stamp button — ink overlay appears over the full video frame */}
           <View style={s.heartGroup}>
-            <ActionBtn
-              icon={
-                <Heart
-                  size={28}
-                  color={isLiked ? color.signal : '#fff'}
-                  fill={isLiked ? color.signal : 'transparent'}
-                  strokeWidth={isLiked ? 0 : 1.8}
-                />
-              }
-              count={likeCount}
-              onPress={handleLikePress}
-              onLongPress={handleStampIt}
-              label={isLiked ? 'Unlike' : 'Like'}
-            />
-            {/* Stamp-it count — shown when at least one viewer has stamped */}
+            <Animated.View style={buttonStyle as any}>
+              <ActionBtn
+                icon={<StampIcon size={28} active={isStamped} />}
+                count={stampCount}
+                onPress={handleStampPress}
+                label={isStamped ? 'Unstamp' : 'Stamp'}
+              />
+            </Animated.View>
+            {/* Stamp-it count — shown when at least one viewer has Stamp It'd */}
             {(item.stampItCount ?? 0) > 0 ? (
               <View style={s.stampRow} pointerEvents="none">
                 <Zap size={9} color="rgba(255,220,80,0.9)" fill="rgba(255,220,80,0.9)" />
@@ -479,8 +453,13 @@ export function WatchItemOverlay({
         </View>
       </View>
 
-      {/* Stamp It burst animation — absolutely positioned over everything */}
-      <StampItBurst ref={stampBurstRef} />
+      {/* ── Ink stamp overlay — centered over the full video frame ── */}
+      <PortavaInkStamp
+        animatedStyle={overlayStyle}
+        theme="Default"
+        size={220}
+        style={s.frameInkOverlay}
+      />
     </View>
   );
 }
@@ -656,7 +635,17 @@ const s = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
   },
-  // Stamp-it count group (heart + stamp count stacked)
+  frameInkOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    pointerEvents: 'none',
+  },
+  // Stamp action group (icon + stampItCount below)
   heartGroup: {
     alignItems: 'center',
     gap: 3,

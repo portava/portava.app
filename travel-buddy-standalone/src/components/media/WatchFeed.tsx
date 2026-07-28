@@ -21,7 +21,6 @@ import {
   Film,
 } from 'lucide-react-native';
 import { useWatchFeed } from '../../hooks/useWatchFeed.ts';
-import { useMediaLike } from '../../hooks/useMediaLike.ts';
 import { useMediaSave } from '../../hooks/useMediaSave.ts';
 import { WatchFeedList } from './WatchFeedList.tsx';
 import { MediaCommentSheet } from './MediaCommentSheet.tsx';
@@ -148,7 +147,6 @@ export function WatchFeed() {
   const currentUserId = session?.userId ?? undefined;
 
   // ── Interaction hooks (optimistic, API-backed) ──────────────────────────
-  const likeHook = useMediaLike();
   const saveHook = useMediaSave();
 
   // ── Sheet state ─────────────────────────────────────────────────────────
@@ -156,10 +154,9 @@ export function WatchFeed() {
   const [moreMenuItemId, setMoreMenuItemId] = useState<string | null>(null);
   const [whyThisItemId, setWhyThisItemId] = useState<string | null>(null);
 
-  // Seed like/save state when new items arrive (seeder skips already-known ids).
+  // Seed save state when new items arrive (seeder skips already-known ids).
   useEffect(() => {
     if (feed.items.length === 0) return;
-    likeHook.seed(feed.items);
     saveHook.seed(feed.items);
   }, [feed.items]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -170,10 +167,6 @@ export function WatchFeed() {
   }, []);
 
   // ── Interaction handlers ─────────────────────────────────────────────────
-
-  const handleLike = useCallback((id: string) => {
-    likeHook.toggleLike(id);
-  }, [likeHook]);
 
   const handleComment = useCallback((id: string) => {
     setCommentItemId(id);
@@ -274,13 +267,10 @@ export function WatchFeed() {
         currentUserId={currentUserId}
         onActiveIndexChange={feed.setActiveIndex}
         onEndReached={feed.loadMore}
-        onLike={handleLike}
         onComment={handleComment}
         onSave={handleSave}
         onMore={handleMore}
-        likedSet={likeHook.likedSet}
         savedSet={saveHook.savedSet}
-        likeCounts={likeHook.likeCounts}
       />
 
       {/* Feed type toggle — floated top-center */}

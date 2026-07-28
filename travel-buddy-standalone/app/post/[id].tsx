@@ -10,8 +10,9 @@ import { navigateToProfile } from '../../src/lib/navigateToProfile.ts';
 import * as Linking from 'expo-linking';
 import {
   MoreVertical, Share2, Flag, Flag as FlagFill,
-  MapPin, Heart, MessageCircle, UserCircle, Pencil,
+  MapPin, MessageCircle, UserCircle, Pencil,
 } from 'lucide-react-native';
+import { StampIcon } from '../../src/components/stamps/StampIcon';
 import { AppHeader } from '../../src/components/ui/AppHeader';
 import { OfficialBadge } from '../../src/components/OfficialBadge';
 import { ReportSheet } from '../../src/components/ReportSheet';
@@ -189,7 +190,7 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
 
       <View style={card.engRow}>
         <View style={card.engItem}>
-          <Heart size={14} color={color.mute} />
+          <StampIcon size={14} active={false} />
           <Text style={card.engText}>{post.likeCount}</Text>
         </View>
         <View style={card.engItem}>

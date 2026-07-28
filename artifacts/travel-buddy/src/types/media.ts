@@ -54,9 +54,15 @@ export interface MediaFeedItem {
   linkedEntity: MediaFeedLinkedEntity | null;
   /** Shown in the audio row (original audio label, etc.). */
   audioLabel: string | null;
+  /** Stamp count from entity_stamps (replaces legacy likeCount). Falls back to likeCount for legacy items. */
+  stampCount?: number;
+  /** True when the viewer has stamped this item. Replaces legacy likedByMe. */
+  isStampedByViewer?: boolean;
+  /** @deprecated Use stampCount. Kept for backward compat during transition. */
   likeCount: number;
   commentCount: number;
   saveCount: number;
+  /** @deprecated Use isStampedByViewer. Kept for backward compat during transition. */
   likedByMe: boolean;
   savedByMe: boolean;
   /** Number of distinct viewers who stamped this video. Absent on legacy items. */

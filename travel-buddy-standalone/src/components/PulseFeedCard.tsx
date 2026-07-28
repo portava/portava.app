@@ -355,10 +355,10 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
           <View style={{ flex: 1 }}>
             <PostEngagementBar
               postId={item.id}
-              likeCount={item.likeCount ?? 0}
+              stampCount={item.likeCount ?? 0}
               commentCount={item.commentCount ?? 0}
-              likedByMe={item.likedByMe ?? false}
-              canLike={item.canLike !== false}
+              isStampedByViewer={item.likedByMe ?? false}
+              canStamp={item.canLike !== false}
               canComment={item.canComment !== false}
               canShare={item.canShare !== false}
             />
@@ -428,10 +428,10 @@ function QuestionCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedIt
           {item.source === 'user' ? (
             <PostEngagementBar
               postId={item.id}
-              likeCount={item.likeCount ?? 0}
+              stampCount={item.likeCount ?? 0}
               commentCount={item.commentCount ?? 0}
-              likedByMe={item.likedByMe ?? false}
-              canLike={item.canLike !== false}
+              isStampedByViewer={item.likedByMe ?? false}
+              canStamp={item.canLike !== false}
               canComment={item.canComment !== false}
               canShare={item.canShare !== false}
             />

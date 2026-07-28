@@ -5,7 +5,8 @@
  */
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { MapPin, MessageCircle, Heart, Bookmark } from 'lucide-react-native';
+import { MapPin, MessageCircle, Bookmark } from 'lucide-react-native';
+import { StampIcon } from '../stamps/StampIcon.tsx';
 import { CachedImage } from '../CachedImage.tsx';
 import { color, space, radius, shadow, typography, layout } from '../../theme/tokens.ts';
 import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
@@ -152,7 +153,7 @@ export function PostCard({
           <View style={styles.engagementBar}>
             {onLike ? (
               <Pressable style={styles.engagementBtn} onPress={(e) => { e.stopPropagation?.(); onLike(); }} hitSlop={8}>
-                <Heart size={15} color={likedByMe ? color.signal : color.mute} fill={likedByMe ? color.signal : 'none'} />
+                <StampIcon size={15} active={likedByMe} />
                 {likeCount != null ? <Text style={styles.engagementCount}>{likeCount}</Text> : null}
               </Pressable>
             ) : null}

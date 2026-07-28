@@ -25,6 +25,7 @@ import { PassportHero } from '../../src/components/PassportHero';
 import { HighlightViewer } from '../../src/components/HighlightViewer';
 import { PostcardsTab } from '../../src/components/PostcardsTab';
 import { StampsTab } from '../../src/components/StampsTab';
+import { StampButton } from '../../src/components/stamps/StampButton';
 import { AboutTab } from '../../src/components/AboutTab';
 import { MapTab } from '../../src/components/MapTab';
 import { getProfileByHandle, getProfileById } from '../../src/services/friends';
@@ -762,12 +763,21 @@ function PublicPassportScreenNative() {
         {displayHandle ? `@${displayHandle}` : (displayName || username || '')}
       </Text>
       {!isOwn && profile?.id && social ? (
-        <KebabMenu
-          userId={profile.id}
-          name={social.name}
-          handle={social.handle}
-          onBlocked={() => router.back()}
-        />
+        <View style={styles.headerActions}>
+          <StampButton
+            entityType="user_profile"
+            entityId={profile.id}
+            initialCount={0}
+            initialIsStamped={false}
+            iconSize={18}
+          />
+          <KebabMenu
+            userId={profile.id}
+            name={social.name}
+            handle={social.handle}
+            onBlocked={() => router.back()}
+          />
+        </View>
       ) : (
         <View style={{ width: 38 }} />
       )}
@@ -1137,6 +1147,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: color.haze,
     backgroundColor: color.paper,
   },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
   backBtn: { padding: 6 },
   headerTitle: { ...t.heading, color: color.ink, flex: 1, textAlign: 'center' },
 
