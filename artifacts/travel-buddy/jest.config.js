@@ -80,6 +80,11 @@ module.exports = {
     // The stub renders a plain View with testID forwarded so snapshot tests
     // and getByTestId queries work. Per-file jest.mock factories override it.
     '^expo-image$': '<rootDir>/src/__mocks__/expo-image.tsx',
+    // @sentry/react-native uses ESM and native modules unavailable in jest-expo.
+    // The stub exports no-op replacements so crashReporter and any module that
+    // imports from @sentry/react-native can be tested without crashing the suite.
+    '^@sentry/react-native$':
+      '<rootDir>/src/__mocks__/@sentry/react-native.tsx',
     // Resolve the @/ path alias used in source files (maps to the package root).
     // Without this, Jest cannot find @/components/... imports and test files
     // for screens that use @/ (e.g. Trips, Trip Detail) fail to load.

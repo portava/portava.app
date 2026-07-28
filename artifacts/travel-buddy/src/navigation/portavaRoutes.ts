@@ -319,6 +319,15 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     ownerOnly: true,
   },
   {
+    key: 'mutual-connections',
+    path: 'mutual-connections/[userId]',
+    title: 'Mutual Connections',
+    parent: 'user-profile',
+    icon: null,
+    requiresAuth: true,
+    ownerOnly: false,
+  },
+  {
     key: 'following',
     path: 'following',
     title: 'Following',

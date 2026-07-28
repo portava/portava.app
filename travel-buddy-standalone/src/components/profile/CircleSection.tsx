@@ -83,7 +83,7 @@ export function CircleSection({ targetUserId }: Props) {
         {/* See all */}
         <Pressable
           style={cs.seeAllBtn}
-          onPress={() => router.push('/followers' as any)}
+          onPress={() => router.push(`/mutual-connections/${targetUserId}` as any)}
           hitSlop={8}
           accessibilityLabel="See all mutual connections"
           accessibilityRole="button"
