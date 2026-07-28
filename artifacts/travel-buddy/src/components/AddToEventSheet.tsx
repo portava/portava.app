@@ -26,12 +26,48 @@ import { freshToken as freshApiToken } from '../services/apiToken.ts';
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import type { MapsPlace } from '../lib/maps.ts';
 
-// ── Attach place to event ─────────────────────────────────────────────────────
+// ── API helpers ───────────────────────────────────────────────────────────────
 
 const BASE = (() => {
   const domain = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
   return domain.endsWith('/') ? domain.slice(0, -1) : domain;
 })();
+
+/** Return the set of event IDs that already have this placeId on their agenda. */
+async function fetchAlreadyAddedEventIds(
+  eventIds: string[],
+  placeId: string,
+): Promise<Set<string>> {
+  if (!isSupabaseConfigured || eventIds.length === 0) return new Set();
+  let token: string | null = null;
+  try { token = await freshApiToken(); } catch { /* ignore */ }
+  if (!token) return new Set();
+
+  const results = await Promise.allSettled(
+    eventIds.map((eid) =>
+      fetch(`${BASE}/api/events/${eid}/agenda-items`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then((r) => (r.ok ? r.json() : Promise.resolve({ items: [] })))
+        .then((json: { items?: { place_id?: string | null }[] }) => ({
+          eid,
+          items: json.items ?? [],
+        }))
+        .catch(() => ({ eid, items: [] })),
+    ),
+  );
+
+  const alreadyAdded = new Set<string>();
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      const { eid, items } = r.value;
+      if (items.some((item) => item.place_id === placeId)) {
+        alreadyAdded.add(eid);
+      }
+    }
+  }
+  return alreadyAdded;
+}
 
 async function attachPlaceToEvent(
   eventId: string,
@@ -85,25 +121,37 @@ export function AddToEventSheet({ visible, place, onClose }: AddToEventSheetProp
   const [submitting, setSubmitting] = useState<string | null>(null); // eventId being submitted
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
 
-  // Fetch events when sheet opens
+  // Fetch events when sheet opens; pre-populate addedIds if place.id is known
   useEffect(() => {
     if (!visible) return;
     setLoading(true);
     setError(null);
-    listMyEvents(30).then((result) => {
+    setAddedIds(new Set());
+    listMyEvents(30).then(async (result) => {
       if (result.ok && result.data) {
         // Filter to upcoming + open events
         const upcoming = result.data.events.filter(
           (e) => e.state === 'open' || e.state === 'draft' || e.state === 'started',
         );
         setEvents(upcoming);
+
+        // Pre-mark events that already contain this place
+        if (place?.id && upcoming.length > 0) {
+          const alreadyAdded = await fetchAlreadyAddedEventIds(
+            upcoming.map((e) => e.id),
+            place.id,
+          );
+          if (alreadyAdded.size > 0) {
+            setAddedIds(alreadyAdded);
+          }
+        }
       } else {
         setError(result.message ?? 'Could not load events');
       }
     }).catch(() => {
       setError('Could not load events');
     }).finally(() => setLoading(false));
-  }, [visible]);
+  }, [visible, place?.id]);
 
   const handleSelectEvent = useCallback(async (event: EventListItem) => {
     if (!place || submitting) return;

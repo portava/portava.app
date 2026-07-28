@@ -120,6 +120,7 @@
  * POST   /api/events/:id/updates                  — post host update / pin
  *
  * ── Agenda items ─────────────────────────────────────────────────────────────
+ * GET    /api/events/:id/agenda-items             — list agenda items (host/cohost/RSVP'd attendee)
  * POST   /api/events/:id/agenda-items             — attach a place/note to an event (host/cohost/attendee)
  *
  * ── Cross-system integrations ────────────────────────────────────────────────
@@ -177,7 +178,7 @@
  *                                | checkDuplicateEvent                         |                                          |               |   duplicate detection
  * Cross-system integrations      | events.ts /add-to-trip, /link-circle,       | trip_plan_items, events, messages         | complete      | add-to-trip inserts plan item; link-circle
  *                                |   /telegraph-thread                         |                                          |               |   updates circle_id; telegraph-thread wires chat
- * Agenda items                   | events.ts POST /events/:id/agenda-items     | event_agenda_items                       | complete      | Host/cohost or RSVP'd attendee; migration 2043
+ * Agenda items                   | events.ts GET+POST /events/:id/agenda-items | event_agenda_items                       | complete      | Host/cohost or RSVP'd attendee; GET lists ordered items
  */
 
 import { randomUUID } from "node:crypto";
@@ -5824,6 +5825,53 @@ router.post("/events/:id/telegraph-thread", async (req, res) => {
   res.json({ threadId });
 });
 
+// ── GET /api/events/:id/agenda-items ─────────────────────────────────────────
+
+router.get("/events/:id/agenda-items", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: ev } = await sc.from("events").select("host_id").eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  // Allow host/co-host and going/maybe RSVP'd attendees; 403 for outsiders
+  const isStaff = await isHostOrCoHost(sc, id, user.id);
+  if (!isStaff) {
+    const { data: rsvp } = await sc
+      .from("event_rsvps")
+      .select("status")
+      .eq("event_id", id)
+      .eq("user_id", user.id)
+      .in("status", ["going", "maybe"])
+      .maybeSingle();
+    if (!rsvp) {
+      sendError(res, "forbidden", "Must be a host or going/maybe attendee to view agenda items");
+      return;
+    }
+  }
+
+  const { data: items, error } = await sc
+    .from("event_agenda_items")
+    .select("*")
+    .eq("event_id", id)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    req.log.error({ err: error }, "list event agenda items");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  res.json({ items: items ?? [] });
+});
+
 // ── POST /api/events/:id/agenda-items ────────────────────────────────────────
 
 router.post("/events/:id/agenda-items", async (req, res) => {
@@ -5840,7 +5888,7 @@ router.post("/events/:id/agenda-items", async (req, res) => {
   const { data: ev } = await sc.from("events").select("state, host_id").eq("id", id).maybeSingle();
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
-  // Allow hosts/co-hosts and any RSVP'd attendee to add agenda items
+  // Allow hosts/co-hosts and going/maybe attendees to add agenda items
   const isStaff = await isHostOrCoHost(sc, id, user.id);
   if (!isStaff) {
     const { data: rsvp } = await sc
@@ -5848,9 +5896,10 @@ router.post("/events/:id/agenda-items", async (req, res) => {
       .select("status")
       .eq("event_id", id)
       .eq("user_id", user.id)
+      .in("status", ["going", "maybe"])
       .maybeSingle();
     if (!rsvp) {
-      sendError(res, "forbidden", "Must be a host or RSVP'd attendee to add agenda items");
+      sendError(res, "forbidden", "Must be a host or going/maybe attendee to add agenda items");
       return;
     }
   }

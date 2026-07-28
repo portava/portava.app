@@ -61,7 +61,7 @@ function HoursDisplay({ hours }: { hours: NormalizedOpeningHours }) {
         <Text style={[pi.infoText, pi.infoLink]}>
           {todayEntry
             ? `${DAY_SHORT[today]}: ${todayEntry.open} – ${todayEntry.close}`
-            : 'Closed today'}
+            : 'Hours not available'}
         </Text>
         {expanded
           ? <ChevronUp size={13} color={color.mute} />

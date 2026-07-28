@@ -77,7 +77,7 @@ function getTodayHours(hours: NormalizedOpeningHours | null | undefined): { open
 function formatTodayHoursLabel(hours: NormalizedOpeningHours): string {
   const today = new Date().getDay();
   const entry = hours.find((h) => h.dayOfWeek === today);
-  if (!entry) return 'Closed today';
+  if (!entry) return 'Hours not available';
   return `${DAY_NAMES[today]}: ${entry.open} – ${entry.close}`;
 }
 
@@ -199,7 +199,7 @@ export function PlaceCard({ place }: PlaceCardProps) {
         {place.openingHours && !todayHours && (
           <View style={pc.infoRow}>
             <Clock size={13} color={color.faint} />
-            <Text style={[pc.infoText, pc.infoTextNA]}>Closed today</Text>
+            <Text style={[pc.infoText, pc.infoTextNA]}>Hours not available</Text>
           </View>
         )}
 
