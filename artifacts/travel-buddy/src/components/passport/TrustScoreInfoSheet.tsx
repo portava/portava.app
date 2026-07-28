@@ -103,7 +103,7 @@ export function TrustScoreInfoSheet({ visible, onClose, score, label, breakdown 
       animationType="slide"
       onRequestClose={onClose}
     >
-      <Pressable style={s.backdrop} onPress={onClose} />
+      <Pressable style={s.backdrop} onPress={onClose} testID="trust-sheet-backdrop" />
       <View style={s.sheet}>
         {/* Handle bar */}
         <View style={s.handle} />
@@ -114,7 +114,7 @@ export function TrustScoreInfoSheet({ visible, onClose, score, label, breakdown 
             <ShieldCheck size={20} color={TEAL} strokeWidth={2} />
             <Text style={s.title}>Trust Score</Text>
           </View>
-          <Pressable onPress={onClose} hitSlop={12} style={s.closeBtn}>
+          <Pressable onPress={onClose} hitSlop={12} style={s.closeBtn} testID="trust-sheet-close">
             <X size={18} color={MUTED} strokeWidth={2} />
           </Pressable>
         </View>
