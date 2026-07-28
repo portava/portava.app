@@ -100,6 +100,17 @@ const LANDMARK_DESCRIPTOR_TOKENS = new Set([
   "1st", "2nd", "3rd", "4th", "5th", "i", "ii", "iii", "iv", "v",
   // Geographic qualifiers (blocklist — extend as needed)
   "cebu",
+  // Country names
+  "philippines", "indonesia", "malaysia", "thailand", "vietnam",
+  "cambodia", "myanmar", "singapore", "japan", "korea",
+  // Major Philippine islands / regions / provinces
+  "palawan", "boracay", "bohol", "batangas",
+  "leyte", "samar", "negros", "panay",
+  "mindanao", "luzon", "visayas",
+  "davao", "ilocos", "bataan", "pampanga",
+  "laguna", "iloilo", "bacolod", "cagayan",
+  // Indonesian / SE-Asian regions commonly embedded in landmark names
+  "bali", "lombok", "java", "sumatra",
 ]);
 
 /** Strip Unicode combining diacritical marks. */

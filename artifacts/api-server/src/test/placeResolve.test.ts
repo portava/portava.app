@@ -536,8 +536,9 @@ describe("normalizeLandmarkName", () => {
     assert.deepEqual(normalizeLandmarkName("Mount Apo"), ["apo"]);
   });
 
-  it("handles diacritics — 'Boracáy Beach' → ['boracay']", () => {
-    assert.deepEqual(normalizeLandmarkName("Boracáy Beach"), ["boracay"]);
+  it("handles diacritics — 'Boracáy Beach' → [] (both tokens are now descriptor/qualifier tokens)", () => {
+    // 'boracay' is a geographic qualifier; 'beach' is a type noun — both stripped.
+    assert.deepEqual(normalizeLandmarkName("Boracáy Beach"), []);
   });
 
   it("handles hyphenated names — 'El Nido-Beach' → ['el', 'nido']", () => {
@@ -553,6 +554,36 @@ describe("normalizeLandmarkName", () => {
 
   it("returns empty array for a name composed entirely of descriptor tokens", () => {
     assert.deepEqual(normalizeLandmarkName("Upper Falls"), []);
+  });
+
+  // ── Extended geographic-qualifier blocklist ─────────────────────────────────
+  it("strips 'Palawan' from 'Palawan Underground River' → ['underground']", () => {
+    assert.deepEqual(normalizeLandmarkName("Palawan Underground River"), ["underground"]);
+  });
+
+  it("strips 'Boracay' from 'Boracay Puka Beach' → ['puka']", () => {
+    assert.deepEqual(normalizeLandmarkName("Boracay Puka Beach"), ["puka"]);
+  });
+
+  it("strips 'Bohol' from 'Chocolate Hills Bohol' → ['chocolate', 'hills']", () => {
+    const tokens = normalizeLandmarkName("Chocolate Hills Bohol");
+    assert.ok(tokens.includes("chocolate") && tokens.includes("hills"),
+      `expected 'chocolate' and 'hills' in ${JSON.stringify(tokens)}`);
+    assert.ok(!tokens.includes("bohol"));
+  });
+
+  it("strips 'Philippines' from 'Mayon Volcano Philippines' → ['mayon', 'volcano']", () => {
+    const tokens = normalizeLandmarkName("Mayon Volcano Philippines");
+    assert.ok(tokens.includes("mayon") && tokens.includes("volcano"),
+      `expected 'mayon' and 'volcano' in ${JSON.stringify(tokens)}`);
+    assert.ok(!tokens.includes("philippines"));
+  });
+
+  it("strips 'Bali' from 'Bali Rice Terraces' → ['rice', 'terraces']", () => {
+    const tokens = normalizeLandmarkName("Bali Rice Terraces");
+    assert.ok(tokens.includes("rice") && tokens.includes("terraces"),
+      `expected 'rice' and 'terraces' in ${JSON.stringify(tokens)}`);
+    assert.ok(!tokens.includes("bali"));
   });
 });
 
@@ -689,7 +720,7 @@ describe("isSamePlace: landmark relaxed heuristics", () => {
     );
   });
 
-  it("beach variants within 300 m are merged", () => {
+  it("beach variants within 300 m are merged — 'boracay' geographic qualifier stripped", () => {
     const whiteBeach: PlaceLike = {
       name: "White Beach",
       latitude: 11.9674,
@@ -702,13 +733,12 @@ describe("isSamePlace: landmark relaxed heuristics", () => {
       longitude: 121.9209,
       primary_category: "beach",
     };
-    // "boracay" is not in the descriptor blocklist, so tokens are ["white"] vs ["white","boracay"]
-    // Jaccard = 1 / (1 + 2 - 1) = 0.5 — below 0.6 threshold.
-    // This correctly keeps them separate (Boracay qualifier distinguishes location).
+    // "boracay" is now in the descriptor blocklist, so both names reduce to ["white"].
+    // Jaccard = 1.0 ≥ 0.6 threshold → should merge.
     assert.equal(
       isSamePlace(whiteBeach, whiteBeachBoracay),
-      false,
-      "'White Beach' vs 'White Beach Boracay' — geographic qualifier distinguishes them",
+      true,
+      "'White Beach' vs 'White Beach Boracay' — 'boracay' stripped, core tokens match",
     );
   });
 
@@ -770,6 +800,50 @@ describe("isSamePlace: landmark relaxed heuristics", () => {
       isSamePlace(a, b),
       true,
       "cross-tile-boundary waterfall variants within 300 m must merge",
+    );
+  });
+
+  // ── Extended geographic-qualifier merge tests ───────────────────────────────
+
+  it("merges 'Palawan Underground River' and 'Underground River' — 'palawan' stripped", () => {
+    const palawanRiver: PlaceLike = {
+      name: "Palawan Underground River",
+      latitude: 10.1780,
+      longitude: 118.9117,
+      primary_category: "cave",
+    };
+    const undergroundRiver: PlaceLike = {
+      name: "Underground River",
+      latitude: 10.1780 + 0.001,  // ~111 m
+      longitude: 118.9117,
+      primary_category: "cave",
+    };
+    // Both reduce to ["underground"] after stripping "palawan" / "river" / "cave" tokens.
+    assert.equal(
+      isSamePlace(palawanRiver, undergroundRiver),
+      true,
+      "'Palawan Underground River' vs 'Underground River' must merge with 'palawan' in blocklist",
+    );
+  });
+
+  it("merges 'Boracay Puka Beach' and 'Puka Beach' — 'boracay' stripped", () => {
+    const boracayPuka: PlaceLike = {
+      name: "Boracay Puka Beach",
+      latitude: 11.9925,
+      longitude: 121.9440,
+      primary_category: "beach",
+    };
+    const pukaBeach: PlaceLike = {
+      name: "Puka Beach",
+      latitude: 11.9925 + 0.001,  // ~111 m
+      longitude: 121.9440,
+      primary_category: "beach",
+    };
+    // Both reduce to ["puka"] after stripping "boracay" / "beach".
+    assert.equal(
+      isSamePlace(boracayPuka, pukaBeach),
+      true,
+      "'Boracay Puka Beach' vs 'Puka Beach' must merge with 'boracay' in blocklist",
     );
   });
 
