@@ -53,6 +53,7 @@ import {
   Image as ImageIcon,
   Award,
 } from 'lucide-react-native';
+import { router } from 'expo-router';
 import { CachedImage } from '../../CachedImage.tsx';
 import { color, space, radius, type as t, shadow, typography } from '../../../theme/tokens.ts';
 import { getPlaceTimeline } from '../../../services/places.ts';
@@ -924,9 +925,10 @@ const pg = StyleSheet.create({
 interface PlaceBeFirstCardProps {
   placeName: string;
   bucketLabel: string;
+  onPress?: () => void;
 }
 
-function PlaceBeFirstCard({ placeName, bucketLabel }: PlaceBeFirstCardProps) {
+function PlaceBeFirstCard({ placeName, bucketLabel, onPress }: PlaceBeFirstCardProps) {
   return (
     <View style={bef.card}>
       <Camera size={32} color={color.faint} />
@@ -934,9 +936,12 @@ function PlaceBeFirstCard({ placeName, bucketLabel }: PlaceBeFirstCardProps) {
       <Text style={bef.body}>
         No one has shared {bucketLabel.toLowerCase()} shots of {placeName} yet.
       </Text>
-      <View style={bef.cta}>
+      <Pressable
+        style={({ pressed }) => [bef.cta, pressed && { opacity: 0.75 }]}
+        onPress={onPress}
+      >
         <Text style={bef.ctaText}>Share your {bucketLabel}</Text>
-      </View>
+      </Pressable>
     </View>
   );
 }
@@ -1081,6 +1086,16 @@ function PlaceBucketTabs({ living, placeName }: PlaceBucketTabsProps) {
         <PlaceBeFirstCard
           placeName={placeName}
           bucketLabel={BUCKET_LABELS[activeBucket.bucket] ?? capitalize(activeBucket.bucket.replace(/_/g, ' '))}
+          onPress={() =>
+            router.push({
+              pathname: '/create',
+              params: {
+                placeId: living.placeId,
+                placeName,
+                bucket: activeBucket.bucket,
+              },
+            } as any)
+          }
         />
       )}
 
@@ -1549,9 +1564,17 @@ export function LivingDestinationPage({ place, living }: LivingDestinationPagePr
             <Text style={ld.beFirstBody}>
               Help future travelers by sharing photos, tips, or a quick review.
             </Text>
-            <View style={ld.beFirstBtn}>
+            <Pressable
+              style={({ pressed }) => [ld.beFirstBtn, pressed && { opacity: 0.75 }]}
+              onPress={() =>
+                router.push({
+                  pathname: '/create',
+                  params: { placeId: living.placeId, placeName: place.name },
+                } as any)
+              }
+            >
               <Text style={ld.beFirstBtnText}>Share a moment here</Text>
-            </View>
+            </Pressable>
           </View>
         ) : (
           <>
