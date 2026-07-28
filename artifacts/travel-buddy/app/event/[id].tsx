@@ -67,7 +67,7 @@ import { AiRepresentationLabel } from '../../src/components/visuals/AiRepresenta
 import { resolveHeaderImage } from '../../src/lib/visuals/resolveHeaderImage';
 import { fallbackUriFor } from '../../src/lib/visuals/fallbackAssets';
 import { PlaceInfoSection } from '../../src/components/place/PlaceInfoSection';
-import { getVenueInfoByCoords, type VenueContactInfo } from '../../src/services/places';
+import { getVenueInfoByCoords, clearVenueInfoCache, type VenueContactInfo } from '../../src/services/places';
 
 const STATE_BADGE: Record<string, { label: string; bg: string; fg: string }> = {
   draft:     { label: 'Draft',          bg: color.haze, fg: color.mute },
@@ -303,12 +303,28 @@ export default function EventDetailScreen() {
   }, [buddyCityAvailable, event?.city]);
 
   // ── Venue contact info enrichment (FSQ nearby lookup) ─────────────────────
+  // Tracks the coordinates used for the most-recent venue fetch so we can
+  // invalidate that cache entry if the event's location changes.
+  const prevVenueCoordsRef = useRef<{ lat: number; lng: number; name: string | null | undefined } | null>(null);
+
   useEffect(() => {
     const lat = event?.locationLat;
     const lng = event?.locationLng;
-    if (lat == null || lng == null) { setVenueInfo(null); return; }
+    const name = event?.locationName ?? undefined;
+    if (lat == null || lng == null) {
+      setVenueInfo(null);
+      prevVenueCoordsRef.current = null;
+      return;
+    }
+    // When the event's location changes, evict the stale cache entry so the
+    // next fetch returns fresh contact info for the new coordinates.
+    const prev = prevVenueCoordsRef.current;
+    if (prev !== null && (prev.lat !== lat || prev.lng !== lng || prev.name !== name)) {
+      clearVenueInfoCache(prev.lat, prev.lng, prev.name);
+    }
+    prevVenueCoordsRef.current = { lat, lng, name };
     let cancelled = false;
-    getVenueInfoByCoords(lat, lng, event?.locationName ?? undefined).then((info) => {
+    getVenueInfoByCoords(lat, lng, name).then((info) => {
       if (!cancelled) setVenueInfo(info);
     }).catch(() => { /* non-fatal; PlaceInfoSection falls back to event description */ });
     return () => { cancelled = true; };

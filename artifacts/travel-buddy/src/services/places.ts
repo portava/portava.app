@@ -41,6 +41,18 @@ function venueInfoCacheKey(lat: number, lng: number, name?: string | null): stri
 }
 
 /**
+ * Invalidate the in-memory cache entry for the given coordinates (and optional
+ * venue name). Call this when an event's location changes so the next
+ * `getVenueInfoByCoords` call fetches fresh data rather than serving stale
+ * contact info for the old location.
+ *
+ * Silently does nothing when no entry for those coordinates exists.
+ */
+export function clearVenueInfoCache(lat: number, lng: number, name?: string | null): void {
+  venueCache.delete(venueInfoCacheKey(lat, lng, name));
+}
+
+/**
  * Fetch contact info (phone, website, opening hours) for a venue near the
  * given coordinates via GET /api/places/nearby-venue.
  *
