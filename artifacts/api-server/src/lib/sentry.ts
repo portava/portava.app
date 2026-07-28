@@ -19,6 +19,11 @@ if (dsn) {
   // Detect that case and skip a second init so the instrumentation hooks are
   // not double-registered; just emit the startup log confirming it is active.
   if (!Sentry.getClient()) {
+    // Fallback: the --import sentry-preload.mjs did not share the same @sentry/node
+    // module instance (e.g. the dist was stale or module resolution diverged).
+    // Initialize here so error reporting still works, and suppress the
+    // "express is not instrumented" warning — request context IS available via
+    // setupExpressErrorHandler() registered in app.ts, just without OTel wrapping.
     Sentry.init({
       dsn,
       // Include the environment so events are bucketed correctly in the Sentry UI.
@@ -27,6 +32,11 @@ if (dsn) {
       serverName: process.env["HOSTNAME"] ?? "api-server",
       // Capture 100 % of traces in development; tighten in production via env var.
       tracesSampleRate: process.env["NODE_ENV"] === "production" ? 0.1 : 1.0,
+      // OTel cannot wrap Express in an esbuild ESM bundle (the ESM loader resolves
+      // external CJS imports synchronously before any preload code runs).  Suppress
+      // the resulting "express is not instrumented" console warning — errors are
+      // still captured with full request context via setupExpressErrorHandler().
+      disableInstrumentationWarnings: true,
     });
   }
   // Deliberately avoid logging the DSN value.
