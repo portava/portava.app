@@ -57,7 +57,7 @@ import {
 import { color, space, type as t, radius } from '../../theme/tokens.ts';
 import { useFollow } from '../../hooks/useFollow.ts';
 import type { MediaFeedItem } from '../../types/media.ts';
-import { admireStamp } from '../../services/stampAdmire.ts';
+import { reactToMediaStampIt } from '../../services/mediaInteractions.ts';
 import { usePlanPicker } from '../PlanPickerController.tsx';
 import { StampItBurst, type StampItBurstHandle } from './StampItBurst.tsx';
 
@@ -194,8 +194,11 @@ export function WatchItemOverlay({
     stampBurstRef.current?.trigger();
     // 3. Haptic feedback — heavy impact on "stamp contact"
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
-    // 4. Record admire reaction in background (fail-soft)
-    admireStamp(item.id).catch(() => {});
+    // 4. Record stamp-it reaction on the media item in background (fail-soft).
+    // reactToMediaStampIt calls POST /api/media/:id/react — a dedicated
+    // endpoint that writes to media_stamp_reactions so it never conflicts
+    // with the ❤️ like row in post_reactions.
+    reactToMediaStampIt(item.id).catch(() => {});
   }, [item.id, isLiked, onLike]);
 
   // ── Short-press heart (normal like/unlike toggle) ─────────────────────────

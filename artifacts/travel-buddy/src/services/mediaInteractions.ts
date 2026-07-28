@@ -118,3 +118,19 @@ export async function hideMedia(mediaId: string): Promise<MediaActionResult> {
     reason: 'not_interested',
   });
 }
+
+// ── Stamp It reaction ─────────────────────────────────────────────────────────
+
+/**
+ * Record a "Stamp It" long-press reaction on a Watch feed media item.
+ *
+ * Uses the dedicated POST /api/media/:id/react endpoint which writes to
+ * media_stamp_reactions — separate from the post_reactions ❤️ like row so the
+ * two gestures never conflict. Idempotent server-side.
+ *
+ * Fail-soft: returns { ok: false } on any network or auth error so the caller
+ * can safely ignore the result without crashing.
+ */
+export async function reactToMediaStampIt(mediaId: string): Promise<MediaActionResult> {
+  return call('POST', `/api/media/${encodeURIComponent(mediaId)}/react`);
+}

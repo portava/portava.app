@@ -135,6 +135,9 @@ const SKIP_TABLES = new Set<string>([
   // Ranking config audit log — migration pending live apply (Task 2735).
   // Remove once the table exists in the live DB schema.
   "ranking_config_audit_log",
+  // Stamp-it reactions on media posts — migration 20260814_media_stamp_reactions.sql
+  // pending live apply. Remove once the table exists in the live DB schema.
+  "media_stamp_reactions",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────

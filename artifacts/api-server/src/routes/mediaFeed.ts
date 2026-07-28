@@ -1695,6 +1695,45 @@ router.post("/media/:id/like", asyncHandler(async (req, res) => {
   res.json({ liked: true, mediaId: id });
 }));
 
+// ── POST /api/media/:id/react ─────────────────────────────────────────────────
+// Records a "stamp_it" reaction from the Watch feed long-press gesture.
+// Uses a dedicated media_stamp_reactions table so it never conflicts with the
+// single-reaction-per-user constraint on post_reactions (the ❤️ like row).
+// Idempotent: a second stamp_it from the same viewer is silently ignored.
+// Only works for posts (not gems — gems have no posts.id FK target).
+
+router.post("/media/:id/react", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { id } = req.params;
+  if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid media id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const mediaAccess = await verifyMediaAccess(sc, id, user.id);
+  if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; }
+
+  if (mediaAccess.kind === "post") {
+    const { error } = await sc
+      .from("media_stamp_reactions")
+      .upsert(
+        { post_id: id, user_id: user.id },
+        { onConflict: "post_id,user_id", ignoreDuplicates: true },
+      );
+    if (error) {
+      req.log.error({ err: error }, "media_stamp_reactions upsert failed");
+      sendError(res, "db_error", error.message);
+      return;
+    }
+  }
+  // Gems: no target table — acknowledge silently so the client never retries.
+
+  res.json({ stamped: true, mediaId: id });
+}));
+
 // ── DELETE /api/media/:id/like ────────────────────────────────────────────────
 
 router.delete("/media/:id/like", asyncHandler(async (req, res) => {
