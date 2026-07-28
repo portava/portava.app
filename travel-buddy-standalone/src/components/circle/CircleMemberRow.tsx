@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { MessageCircle, User, MoreHorizontal } from 'lucide-react-native';
+import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
 import { router } from 'expo-router';
 import type { CircleMember } from '../../services/circle.ts';
 import { blockUser } from '../../services/blocks.ts';
@@ -146,6 +147,7 @@ export function CircleMemberRow({ member, isViewerRow = false }: Props) {
           <Text style={s.displayName} numberOfLines={1}>
             {member.displayName || member.username}
           </Text>
+          {member.verified ? <VerifiedStamp size="sm" /> : null}
           {isViewerRow && <Text style={s.youBadge}> (you)</Text>}
           {statusCfg && (
             <View style={[s.chip, { backgroundColor: statusCfg.bg }]}>

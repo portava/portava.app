@@ -178,6 +178,7 @@ export function mapServerFeedItem(raw: ServerFeedItem): MediaFeedItem {
       username: raw.creator.username,
       avatarUrl: raw.creator.avatarUrl,
       isFollowing: raw.viewerState.isFollowingCreator,
+      verified: raw.creator.isVerified,
     },
     caption: raw.caption ?? '',
     hashtags: raw.tags ?? [],

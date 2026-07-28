@@ -9,8 +9,9 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { BadgeCheck, MapPin, X, ArrowRight, HandMetal } from 'lucide-react-native';
+import { MapPin, X, ArrowRight, HandMetal } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
+import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
 import type { MapTraveler } from '../../services/mapTravelers.ts';
 import { travelerInitials } from './TravelerMapLayer.tsx';
 import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity.ts';
@@ -47,7 +48,7 @@ export function TravelerPreviewCard({ traveler, onClose }: {
         <View style={{ flex: 1, minWidth: 0 }}>
           <View style={s.nameRow}>
             <Text style={s.name} numberOfLines={1}>{nameText}</Text>
-            {traveler.verified && <BadgeCheck size={15} color={color.signal} />}
+            {traveler.verified ? <VerifiedStamp size="sm" /> : null}
           </View>
           {handleSubline ? (
             <Text style={s.handle} numberOfLines={1}>{handleSubline}</Text>

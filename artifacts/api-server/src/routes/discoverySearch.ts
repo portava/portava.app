@@ -109,6 +109,8 @@ export interface SearchResult {
   metadata: Record<string, unknown> | null;
   createdAt: string | null;
   startsAt: string | null;
+  /** True when the result user holds verified traveler status. Only set for travelers/buddies results. */
+  verified?: boolean;
 }
 
 // ── Static taxonomic datasets ──────────────────────────────────────────────────
@@ -251,7 +253,7 @@ async function searchTravelers(
     const pat = sqlPattern(q);
     let query = sc
       .from("profiles")
-      .select("id, handle, username, name, avatar_url, is_private, home_city, home_country, account_status")
+      .select("id, handle, username, name, avatar_url, is_private, home_city, home_country, account_status, verified")
       .or(`name.ilike.${pat},handle.ilike.${pat},username.ilike.${pat}`)
       .neq("id", userId)
       .in("account_status", ["active"])
@@ -331,6 +333,7 @@ async function searchTravelers(
         metadata: null,
         createdAt: null,
         startsAt: null,
+        verified: (p.verified as boolean) ?? false,
       };
     });
 

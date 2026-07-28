@@ -21,6 +21,8 @@ export interface StoryAuthor {
   handle: string | null;
   name: string | null;
   avatarUrl: string | null;
+  /** True when the author holds verified traveler status. */
+  verified?: boolean;
 }
 
 export interface Story {
@@ -55,6 +57,7 @@ export interface StoryViewer {
   name: string | null;
   avatarUrl: string | null;
   viewedAt: string;
+  verified?: boolean;
 }
 
 export interface ViewersResult {

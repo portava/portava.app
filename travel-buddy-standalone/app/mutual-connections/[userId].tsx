@@ -8,6 +8,7 @@ import { Users } from 'lucide-react-native';
 import { AppHeader } from '../../src/components/ui/AppHeader';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { getMutualFollows, type MutualFollowUser } from '../../src/services/follows';
+import { VerifiedStamp } from '../../src/components/ui/VerifiedStamp';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 
@@ -63,9 +64,12 @@ export default function MutualConnectionsScreen() {
                 </View>
               )}
               <View style={{ flex: 1 }}>
-                <Text style={s.name} numberOfLines={1}>
-                  {item.displayName ?? item.handle ?? 'Unknown'}
-                </Text>
+                <View style={s.nameRow}>
+                  <Text style={s.name} numberOfLines={1}>
+                    {item.displayName ?? item.handle ?? 'Unknown'}
+                  </Text>
+                  {item.verified ? <VerifiedStamp size="sm" /> : null}
+                </View>
                 {item.handle ? (
                   <Text style={s.handle} numberOfLines={1}>@{item.handle}</Text>
                 ) : null}
@@ -95,6 +99,7 @@ const s = StyleSheet.create({
   avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: color.haze, flexShrink: 0 },
   avatarPlaceholder: { alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
   avatarInitial: { ...t.body, color: color.mute, fontWeight: '700' },
-  name: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
+  nameRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 3 },
+  name: { ...t.bodyStrong, color: color.ink, fontSize: 14, flexShrink: 1 },
   handle: { ...t.small, color: color.mute },
 });

@@ -1,9 +1,10 @@
 import React from 'react';
-import { Pressable, Text, StyleSheet } from 'react-native';
+import { Pressable, Text, View, StyleSheet } from 'react-native';
 import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
 import { color, type as t } from '../../theme/tokens.ts';
 import { primaryIdentityText } from '../../lib/displayIdentity.ts';
 import { navigateToProfile } from '../../lib/navigateToProfile.ts';
+import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
 
 interface Props {
   userId: string;
@@ -14,9 +15,11 @@ interface Props {
   disabled?: boolean;
   /** Pass the signed-in user's UUID so self-taps route to the own Passport tab. */
   currentUserId?: string | null;
+  /** When true, renders an inline verified stamp badge after the name. */
+  verified?: boolean;
 }
 
-export function UserNameButton({ userId, handle, displayName, style, numberOfLines = 1, disabled, currentUserId }: Props) {
+export function UserNameButton({ userId, handle, displayName, style, numberOfLines = 1, disabled, currentUserId, verified }: Props) {
   const { blockedIds, blockerIds, isLoading } = useBlockedIds();
   const isBlocked = blockedIds.has(userId) || blockerIds.has(userId);
 
@@ -34,19 +37,25 @@ export function UserNameButton({ userId, handle, displayName, style, numberOfLin
   }
 
   return (
-    <Pressable onPress={handlePress} disabled={disabled || !handle}>
+    <Pressable onPress={handlePress} disabled={disabled || !handle} style={styles.row}>
       <Text style={[styles.name, style]} numberOfLines={numberOfLines}>
         {primaryIdentityText({ displayName, handle })}
       </Text>
+      {verified ? <VerifiedStamp size="sm" /> : null}
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   name: {
     ...t.bodyStrong,
     color: color.ink,
     fontSize: 14,
+    flexShrink: 1,
   },
   blockedName: {
     color: color.mute,

@@ -26,6 +26,8 @@ export interface StampAdmirer {
   username: string | null;
   displayName: string | null;
   avatarUrl: string | null;
+  /** True when the admirer holds verified traveler status. */
+  verified?: boolean;
 }
 
 export interface AdmirersResult {

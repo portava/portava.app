@@ -38,6 +38,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { X } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
 import { getLikers, type LikeTargetType, type LikerUser } from '../services/engagementLikers.ts';
 import { followUser, unfollowUser } from '../services/follows.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
@@ -93,7 +94,10 @@ function LikerRow({ user, onClose }: LikerRowProps) {
       )}
 
       <View style={s.info}>
-        <Text style={s.name} numberOfLines={1}>{primaryIdentityText({ displayName: user.displayName, handle: user.handle })}</Text>
+        <View style={s.nameRow}>
+          <Text style={s.name} numberOfLines={1}>{primaryIdentityText({ displayName: user.displayName, handle: user.handle })}</Text>
+          {user.verified ? <VerifiedStamp size="sm" /> : null}
+        </View>
         <View style={s.handleRow}>
           {secondaryIdentityText({ displayName: user.displayName, handle: user.handle }) ? <Text style={s.handle} numberOfLines={1}>{secondaryIdentityText({ displayName: user.displayName, handle: user.handle })}</Text> : null}
           {user.followsYou && !isFollowing && (
@@ -361,6 +365,7 @@ const s = StyleSheet.create({
     fontWeight: '700',
     color: color.onInk,
   },
+  nameRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 3 },
   info: {
     flex: 1,
     gap: 2,

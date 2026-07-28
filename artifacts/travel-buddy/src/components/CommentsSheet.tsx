@@ -64,6 +64,7 @@ import { createSubmitGuard } from '../lib/commentSubmitGuard.ts';
 import { createLikeToggleGuard } from '../lib/likeToggleGuard.ts';
 import { EngagementUserListSheet } from './EngagementUserListSheet.tsx';
 import { primaryIdentityText } from '../lib/displayIdentity.ts';
+import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
 
 // ── Shared contexts ───────────────────────────────────────────────────────────
 
@@ -396,8 +397,9 @@ function CommentItem({
           <CommentAvatar uri={comment.author.avatarUrl} name={primaryIdentityText({ name: comment.author.name, handle: comment.author.handle })} size={32} />
           <View style={s.commentBody}>
             <View style={s.commentMeta}>
-              <Pressable onPress={() => onAuthorPress(comment.author.handle)} hitSlop={4}>
+              <Pressable onPress={() => onAuthorPress(comment.author.handle)} hitSlop={4} style={s.commentAuthorRow}>
                 <Text style={s.commentAuthor}>{primaryIdentityText({ name: comment.author.name, handle: comment.author.handle })}</Text>
+                {comment.author.verified ? <VerifiedStamp size="sm" /> : null}
               </Pressable>
               <Text style={s.commentTime}>{timeAgo(comment.createdAt)}</Text>
             </View>
@@ -1332,6 +1334,7 @@ const s = StyleSheet.create({
   replyIcon: { marginTop: 6 },
   commentBody: { flex: 1, gap: 3 },
   commentMeta: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  commentAuthorRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   commentAuthor: { fontSize: 13, fontWeight: '700', color: color.ink },
   commentTime: { fontSize: 11, color: color.faint },
   commentText: { fontSize: 14, color: color.ink, lineHeight: 20 },

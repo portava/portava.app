@@ -807,6 +807,8 @@ export interface PulseAuthor {
   name: string;
   avatarUrl: string;
   username?: string | null;
+  /** True when the author holds a verified traveler status. */
+  verified?: boolean;
 }
 
 export interface PulseFeedItem {

@@ -24,6 +24,7 @@ import {
 import { getTrip } from '../services/trips.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
+import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 
 interface Props {
@@ -61,7 +62,10 @@ function MemberRow({
     <View style={s.row}>
       <PersonAvatar user={user} />
       <View style={s.rowMeta}>
-        <Text style={s.rowName} numberOfLines={1}>{primaryIdentityText({ name: user.name, handle: user.handle })}</Text>
+        <View style={s.rowNameRow}>
+          <Text style={s.rowName} numberOfLines={1}>{primaryIdentityText({ name: user.name, handle: user.handle })}</Text>
+          {user.verified ? <VerifiedStamp size="sm" /> : null}
+        </View>
         {secondaryIdentityText({ name: user.name, handle: user.handle }) ? <Text style={s.rowHandle} numberOfLines={1}>{secondaryIdentityText({ name: user.name, handle: user.handle })}</Text> : null}
         {reason ? <Text style={s.rowReason} numberOfLines={1}>{reason}</Text> : null}
       </View>
@@ -319,7 +323,8 @@ const s = StyleSheet.create({
 
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 10 },
   rowMeta: { flex: 1, minWidth: 0 },
-  rowName: { ...t.body, color: color.ink, fontWeight: '600' },
+  rowNameRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 3 },
+  rowName: { ...t.body, color: color.ink, fontWeight: '600', flexShrink: 1 },
   rowHandle: { ...t.small, color: color.mute, fontSize: 12 },
   rowReason: { fontSize: 11, color: color.signal, marginTop: 1 },
 

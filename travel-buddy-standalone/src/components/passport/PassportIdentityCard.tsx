@@ -21,6 +21,7 @@ import { resolveAvatarUrl, fallbackInitials, truncateDisplayName } from '../../u
 import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity.ts';
 import { AvatarImage } from '../ui/DisplayMediaImage.tsx';
 import { isTravelBuddyVerified } from '../../lib/verification.ts';
+import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
 import { HighlightRing } from '../HighlightRing.tsx';
 import { getPassportStats } from '../../services/passportStamps.ts';
 import type { PassportStats } from '../../services/passportStamps.ts';
@@ -100,31 +101,7 @@ function PortavaBrandStamp() {
   );
 }
 
-// ─── Passport-style verified stamp (replaces generic CheckCircle2) ─────────────
-
-function PassportVerifiedStamp() {
-  return (
-    <Svg
-      width={22}
-      height={22}
-      viewBox="0 0 30 30"
-      accessibilityLabel="Verified traveler"
-    >
-      {/* Outer dashed ring */}
-      <Circle cx={15} cy={15} r={13} stroke={NAVY} strokeWidth={2} strokeDasharray="3 1.5" fill="none" />
-      {/* Inner thin ring */}
-      <Circle cx={15} cy={15} r={9.5} stroke={NAVY} strokeWidth={0.8} fill="none" opacity={0.55} />
-      {/* Plane silhouette pointing upper-right */}
-      <Path
-        d="M7.5 16.5 L12 9 L14 11.5 L10.5 14.5 L18 16.8 L16 19.2 L9.5 17 L10.5 21 L8.5 22 Z"
-        fill={NAVY}
-        opacity={0.9}
-      />
-      {/* Decorative dots at bottom */}
-      <SvgText x="15" y="27.5" textAnchor="middle" fill={NAVY} fontSize="3.5" fontWeight="800" opacity={0.6}>✦ ✦ ✦</SvgText>
-    </Svg>
-  );
-}
+// PassportVerifiedStamp removed — use shared VerifiedStamp component instead.
 
 // ─── Trust Score bar ──────────────────────────────────────────────────────────
 
@@ -396,7 +373,7 @@ export function PassportIdentityCard({
                 <Text style={s.displayName} numberOfLines={1}>
                   {resolvedName}
                 </Text>
-                {isVerified ? <PassportVerifiedStamp /> : null}
+                {isVerified ? <VerifiedStamp size="md" /> : null}
               </View>
 
               {handleSubline ? (

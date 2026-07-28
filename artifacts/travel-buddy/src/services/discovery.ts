@@ -569,6 +569,8 @@ export interface UnifiedSearchResult {
   metadata: Record<string, unknown> | null;
   createdAt: string | null;
   startsAt: string | null;
+  /** True when this result's subject holds a verified traveler status. */
+  verified?: boolean;
 }
 
 export interface UnifiedSearchResponse {

@@ -432,7 +432,7 @@ router.get("/users/search", async (req, res) => {
   // Exclude deactivated/suspended/banned/deleted accounts.
   let profileQuery = sc
     .from("profiles")
-    .select("id, handle, username, name, avatar_url, is_private, account_status, home_city, home_country, spoken_languages, interests")
+    .select("id, handle, username, name, avatar_url, is_private, account_status, home_city, home_country, spoken_languages, interests, verified")
     .or(`name.ilike.${pattern},handle.ilike.${pattern},username.ilike.${pattern}`)
     .neq("id", user.id)
     .in("account_status", ["active"])
@@ -640,6 +640,7 @@ router.get("/users/search", async (req, res) => {
       isPrivate: (p.is_private as boolean) ?? false,
       friendRequestPending: pendingRequestSet.has(p.id as string),
       reason: sharedDestinations[p.id as string] ?? null,
+      verified: (p.verified as boolean) ?? false,
     }));
 
   res.status(200).json({ users });
@@ -810,7 +811,7 @@ router.get("/users/suggestions", async (req, res) => {
   //    list after status changes — filter them out here).
   const { data: poolProfiles, error: profErr } = await sc
     .from("profiles")
-    .select("id, handle, name, avatar_url, is_private, account_status, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, planning_style")
+    .select("id, handle, name, avatar_url, is_private, account_status, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, planning_style, verified")
     .in("id", safeIds)
     .in("account_status", ["active"]);
 
@@ -1187,6 +1188,7 @@ router.get("/users/suggestions", async (req, res) => {
         isPrivate: (p.is_private as boolean) ?? false,
         mutualCount: mc,
         reason,
+        verified: (p.verified as boolean) ?? false,
       };
     });
 

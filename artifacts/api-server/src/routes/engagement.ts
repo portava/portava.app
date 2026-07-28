@@ -255,7 +255,7 @@ router.get("/engagement/likes", asyncHandler(async (req, res) => {
   // display_name match to survive only when that user opted in (or is viewer).
   const { data: profiles, error: profileErr } = await sc
     .from("profiles")
-    .select("id, username, display_name, avatar_url, account_status")
+    .select("id, username, display_name, avatar_url, account_status, verified")
     .in("id", filteredIds)
     .not("account_status", "eq", "deleted")
     .not("account_status", "eq", "banned")
@@ -316,6 +316,7 @@ router.get("/engagement/likes", asyncHandler(async (req, res) => {
         handle: p.username ?? "",
         displayName: shownName ?? p.username ?? "Traveler",
         avatarUrl: p.avatar_url ?? null,
+        verified: (p.verified as boolean) ?? false,
         isFollowing: followingSet.has(p.id),
         followsYou: followsYouSet.has(p.id),
         likedAt: likedAts.get(id) ?? "",

@@ -16,6 +16,7 @@ interface Props {
   displayName: string | null | undefined;
   avatarUrl?: string | null;
   bio?: string | null;
+  verified?: boolean;
   showOverflow?: boolean;
   onBlockSuccess?: (userId: string) => void;
 }
@@ -26,6 +27,7 @@ export function UserMiniProfileCard({
   displayName,
   avatarUrl,
   bio,
+  verified,
   showOverflow = true,
   onBlockSuccess,
 }: Props) {
@@ -43,7 +45,7 @@ export function UserMiniProfileCard({
       <UserAvatarButton userId={userId} handle={handle} avatarUrl={avatarUrl} size={52} />
       <View style={s.body}>
         <View style={s.nameRow}>
-          <UserNameButton userId={userId} handle={handle} displayName={name} style={s.name} />
+          <UserNameButton userId={userId} handle={handle} displayName={name} verified={verified} style={s.name} />
           <RelationshipBadge label={label} />
           {showOverflow && (
             <UserOverflowMenu userId={userId} displayName={name} onBlockSuccess={onBlockSuccess} />

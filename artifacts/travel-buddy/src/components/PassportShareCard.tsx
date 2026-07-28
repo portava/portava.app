@@ -3,6 +3,7 @@ import { View, Text, Image, StyleSheet } from 'react-native';
 import { Plane, Map, Award } from 'lucide-react-native';
 import { color, space, radius } from '../theme/tokens.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
+import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
 
 export interface PassportShareCardProps {
   displayName: string | null;
@@ -11,10 +12,12 @@ export interface PassportShareCardProps {
   tripCount: number;
   stampCount: number;
   tagline?: string | null;
+  /** When true, renders a verified stamp badge next to the display name. */
+  verified?: boolean;
 }
 
 export const PassportShareCard = React.forwardRef<View, PassportShareCardProps>(
-  ({ displayName, username, avatarUrl, tripCount, stampCount, tagline }, ref) => {
+  ({ displayName, username, avatarUrl, tripCount, stampCount, tagline, verified }, ref) => {
     return (
       <View ref={ref} style={styles.card} collapsable={false}>
         {/* Header */}
@@ -37,9 +40,12 @@ export const PassportShareCard = React.forwardRef<View, PassportShareCardProps>(
         </View>
 
         {/* Name + handle */}
-        <Text style={styles.displayName} numberOfLines={1}>
-          {primaryIdentityText({ displayName, username })}
-        </Text>
+        <View style={styles.nameRow}>
+          <Text style={styles.displayName} numberOfLines={1}>
+            {primaryIdentityText({ displayName, username })}
+          </Text>
+          {verified ? <VerifiedStamp size="md" dark /> : null}
+        </View>
         {secondaryIdentityText({ displayName, username }) ? (
           <Text style={styles.handle}>{secondaryIdentityText({ displayName, username })}</Text>
         ) : null}
@@ -122,13 +128,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   avatarEmoji: { fontSize: 36 },
+  nameRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    gap: 6,
+    paddingHorizontal: space.lg,
+  },
   displayName: {
     color: color.onInk,
     fontSize: 22,
     fontWeight: '800',
     letterSpacing: -0.3,
     textAlign: 'center',
-    paddingHorizontal: space.lg,
+    flexShrink: 1,
   },
   handle: {
     color: color.onInkMute,

@@ -296,7 +296,7 @@ router.get("/stories/feed", asyncHandler(async (req, res) => {
   const allStoryIds = visible.map((s: any) => s.id as string);
   const [viewedRows, profileRows] = await Promise.all([
     sc.from("story_views").select("story_id").eq("viewer_id", user.id).in("story_id", allStoryIds),
-    sc.from("profiles").select("id, handle, name, avatar_url").in("id", ownerIds),
+    sc.from("profiles").select("id, handle, name, avatar_url, verified").in("id", ownerIds),
   ]);
 
   const viewedSet = new Set<string>((viewedRows.data ?? []).map((r: any) => r.story_id as string));
@@ -304,7 +304,7 @@ router.get("/stories/feed", asyncHandler(async (req, res) => {
   const profileMap: Record<string, any> = {};
   for (const p of profileRows.data ?? []) {
     const nameAllowed = (p as any).id === user.id || allowedNames.has((p as any).id as string);
-    profileMap[(p as any).id] = { id: (p as any).id, handle: (p as any).handle, name: nameAllowed ? (p as any).name : null, avatarUrl: (p as any).avatar_url ?? null };
+    profileMap[(p as any).id] = { id: (p as any).id, handle: (p as any).handle, name: nameAllowed ? (p as any).name : null, avatarUrl: (p as any).avatar_url ?? null, verified: (p as any).verified ?? false };
   }
 
   const users = ownerIds.slice(0, limit).map((ownerId) => {
@@ -525,14 +525,14 @@ router.get("/stories/:id/viewers", asyncHandler(async (req, res) => {
 
   const { data: profiles } = await sc
     .from("profiles")
-    .select("id, handle, name, avatar_url")
+    .select("id, handle, name, avatar_url, verified")
     .in("id", viewerIds);
 
   const allowedNames = await nameVisibilitySet(sc, viewerIds);
   const profileMap: Record<string, any> = {};
   for (const p of profiles ?? []) {
     const nameAllowed = (p as any).id === user.id || allowedNames.has((p as any).id as string);
-    profileMap[(p as any).id] = { handle: (p as any).handle, name: nameAllowed ? (p as any).name : null, avatarUrl: (p as any).avatar_url ?? null };
+    profileMap[(p as any).id] = { handle: (p as any).handle, name: nameAllowed ? (p as any).name : null, avatarUrl: (p as any).avatar_url ?? null, verified: (p as any).verified ?? false };
   }
 
   const viewers = viewerIds.map((vid) => ({

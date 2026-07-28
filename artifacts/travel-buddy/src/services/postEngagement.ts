@@ -14,6 +14,8 @@ export interface CommentAuthor {
   handle: string;
   name: string;
   avatarUrl: string | null;
+  /** True when the author holds a verified traveler status. */
+  verified?: boolean;
 }
 
 export interface EngagementComment {

@@ -82,19 +82,13 @@ export interface MediaFeedStats {
 
 /**
  * Location shape returned in the feed response.
- * Human-readable place labels and canonical IDs are always included.
- * Coordinates (lat/lng) are included for Route It / Take Me Here map
- * features; they are sourced from the post's own location_lat/location_lng
- * columns (GPS-tagged by the uploader at post time, not from a place record).
+ * Only human-readable place labels and canonical IDs are included.
+ * Raw coordinates are never exposed in the feed — they stay server-side only.
  */
 export interface MediaFeedLocation {
   name: string | null;
   city: string | null;
   country: string | null;
-  /** Latitude from the post's location_lat column. Null when absent. */
-  lat?: number | null;
-  /** Longitude from the post's location_lng column. Null when absent. */
-  lng?: number | null;
   /** Gems mode only — canonical place record ID. */
   canonicalPlaceId?: string | null;
   /** Gems mode only — gem category used as place type label. */
@@ -674,22 +668,14 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
   };
 
   // ── Location ───────────────────────────────────────────────────────────────
-  // Coordinates (lat/lng) are included from the post's location_lat/location_lng
-  // columns so that Route It / Take Me Here can show a real MapTiler thumbnail.
-  // Privacy policy: coordinates are withheld for private posts (visibility ≠ 'public')
-  // to prevent precise-location inference from the Following feed.
+  // Only human-readable labels are included. Raw coordinates are never
+  // emitted in feed responses — precise GPS data stays server-side only.
   const hasLocation = row.location_city || row.location_name || row.location_country;
-  const rawLat = row.location_lat as number | null | undefined;
-  const rawLng = row.location_lng as number | null | undefined;
-  const includeCoords = !isPrivatePost && rawLat != null && rawLng != null;
   const location: MediaFeedLocation | null = hasLocation
     ? {
         name: row.location_name ?? null,
         city: row.location_city ?? null,
         country: row.location_country ?? null,
-        // Only emit lat/lng when they are present and the post is public.
-        // Absent or private → field omitted entirely so legacy assertions (=== undefined) still hold.
-        ...(includeCoords ? { lat: rawLat as number, lng: rawLng as number } : {}),
       }
     : null;
 

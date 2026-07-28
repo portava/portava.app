@@ -156,6 +156,8 @@ export interface TravelerSearchResult {
   friendRequestPending?: boolean;
   mutualCount?: number;
   reason?: string | null;
+  /** True when this user holds a verified traveler status. */
+  verified?: boolean;
 }
 
 export async function searchUsers(query: string, limit = 20): Promise<FollowResult<TravelerSearchResult[]>> {
@@ -314,6 +316,7 @@ export interface MutualFollowUser {
   /** display_name ?? name from profiles — ready for display */
   displayName: string | null;
   avatarUrl: string | null;
+  verified?: boolean;
 }
 
 /**
@@ -352,7 +355,7 @@ export async function getMutualFollows(targetUserId: string): Promise<MutualFoll
     // Step 3: fetch profile info for those users
     const { data: profiles, error: e3 } = await supabase
       .from('profiles')
-      .select('id, handle, name, display_name, avatar_url')
+      .select('id, handle, name, display_name, avatar_url, verified')
       .in('id', mutualIds);
     if (e3 || !profiles) return [];
 
@@ -361,6 +364,7 @@ export async function getMutualFollows(targetUserId: string): Promise<MutualFoll
       handle: (p.handle as string | null) ?? null,
       displayName: (p.display_name as string | null) ?? (p.name as string | null) ?? null,
       avatarUrl: (p.avatar_url as string | null) ?? null,
+      verified: (p.verified as boolean) ?? false,
     }));
   } catch {
     return [];

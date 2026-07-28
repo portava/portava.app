@@ -21,6 +21,7 @@ import { getViewers, type StoryViewer } from '../services/stories.ts';
 import { useSession } from '../context/SessionContext.tsx';
 import { formatRelativeTime as formatRelative } from '../lib/dateTime/formatters.ts';
 import { primaryIdentityText } from '../lib/displayIdentity.ts';
+import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
 
@@ -127,7 +128,10 @@ export function StoryViewer({ visible, feedUser, onClose }: Props) {
             <View style={s.authorRow}>
               <View style={s.avatar} />
               <View>
-                <Text style={s.authorName}>{primaryIdentityText({ name: feedUser.name, handle: feedUser.handle })}</Text>
+                <View style={s.authorNameRow}>
+                  <Text style={s.authorName}>{primaryIdentityText({ name: feedUser.name, handle: feedUser.handle })}</Text>
+                  {feedUser.verified ? <VerifiedStamp size="sm" dark /> : null}
+                </View>
                 <Text style={s.timeAgo}>{formatRelative(current.created_at)}</Text>
               </View>
             </View>
@@ -201,7 +205,10 @@ export function StoryViewer({ visible, feedUser, onClose }: Props) {
                   >
                     <View style={s.viewerRow}>
                       <View style={s.viewerAvatar} />
-                      <Text style={s.viewerName}>{primaryIdentityText({ name: v.name, handle: v.handle })}</Text>
+                      <View style={s.viewerNameRow}>
+                        <Text style={s.viewerName}>{primaryIdentityText({ name: v.name, handle: v.handle })}</Text>
+                        {v.verified ? <VerifiedStamp size="sm" /> : null}
+                      </View>
                       <Text style={s.viewerTime}>{formatRelative(v.viewedAt)}</Text>
                     </View>
                   </UserIdentityLink>
@@ -223,6 +230,7 @@ const s = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space.md, paddingVertical: space.sm },
   authorRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.2)' },
+  authorNameRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 4 },
   authorName: { color: '#fff', fontWeight: '700', fontSize: 14 },
   timeAgo: { color: 'rgba(255,255,255,0.7)', fontSize: 11 },
   captionBg: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: space.lg, backgroundColor: 'rgba(0,0,0,0.4)' },
@@ -238,6 +246,7 @@ const s = StyleSheet.create({
   emptyText: { ...t.body, color: color.mute, textAlign: 'center', paddingVertical: space.xl },
   viewerRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.sm },
   viewerAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: color.haze },
-  viewerName: { flex: 1, ...t.body, color: color.ink },
+  viewerNameRow: { flex: 1, flexDirection: 'row' as const, alignItems: 'center' as const, gap: 3 },
+  viewerName: { flexShrink: 1, ...t.body, color: color.ink },
   viewerTime: { ...t.small, color: color.mute },
 });

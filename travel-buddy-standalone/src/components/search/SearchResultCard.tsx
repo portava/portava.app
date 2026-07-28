@@ -20,6 +20,7 @@ import { rsvpEvent } from '../../services/events.ts';
 import { saveItem, unsaveItem } from '../../services/collections.ts';
 import type { UnifiedSearchResult } from '../../services/discovery.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
 import { TypeIcon, resolveRoute } from './searchNav.tsx';
 
 export type { UnifiedSearchResult };
@@ -369,6 +370,9 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
           <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
             {result.title}
           </Text>
+          {result.verified && (result.type === 'travelers' || result.type === 'buddies') ? (
+            <VerifiedStamp size="sm" />
+          ) : null}
           <View style={[styles.badge, { backgroundColor: badgeBg }]}>
             <Text style={[styles.badgeText, { color: badgeTextColor }]}>{label}</Text>
           </View>

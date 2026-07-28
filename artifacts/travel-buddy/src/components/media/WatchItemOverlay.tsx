@@ -55,6 +55,7 @@ import {
   Zap,
 } from 'lucide-react-native';
 import { color, space, type as t, radius } from '../../theme/tokens.ts';
+import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
 import { useFollow } from '../../hooks/useFollow.ts';
 import type { MediaFeedItem } from '../../types/media.ts';
 import { reactToMediaStampIt } from '../../services/mediaInteractions.ts';
@@ -302,10 +303,11 @@ export function WatchItemOverlay({
             </Pressable>
 
             <View style={s.creatorInfo} pointerEvents="box-none">
-              <Pressable onPress={goProfile} hitSlop={4}>
+              <Pressable onPress={goProfile} hitSlop={4} style={s.creatorNameRow}>
                 <Text style={s.displayName} numberOfLines={1}>
                   {item.creator.displayName}
                 </Text>
+                {item.creator.verified ? <VerifiedStamp size="sm" dark /> : null}
               </Pressable>
               <Pressable onPress={goProfile} hitSlop={4}>
                 <Text style={s.username} numberOfLines={1}>
@@ -528,6 +530,10 @@ const s = StyleSheet.create({
   creatorInfo: {
     flex: 1,
     gap: 1,
+  },
+  creatorNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   displayName: {
     ...t.bodyStrong,

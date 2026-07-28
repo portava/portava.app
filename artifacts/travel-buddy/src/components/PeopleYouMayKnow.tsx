@@ -22,6 +22,7 @@ import { useSession } from '../context/SessionContext.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
 import { AvatarImage } from './ui/DisplayMediaImage.tsx';
+import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
 
 const FOLLOWING_THRESHOLD = 10;
 const STRIP_LIMIT = 5;
@@ -180,7 +181,10 @@ function SuggestionCard({ user, onFollowed, onDismiss }: CardProps) {
           size={44}
           style={styles.avatar}
         />
-        <Text style={styles.cardName} numberOfLines={1}>{displayName}</Text>
+        <View style={styles.cardNameRow}>
+          <Text style={styles.cardName} numberOfLines={1}>{displayName}</Text>
+          {user.verified ? <VerifiedStamp size="sm" /> : null}
+        </View>
         {handle ? <Text style={styles.cardHandle} numberOfLines={1}>{handle}</Text> : null}
         {reason ? <CardReasonLines reason={reason} /> : null}
         <Pressable
@@ -521,12 +525,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#F0EDE8',
   },
+  cardNameRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    gap: 2,
+  },
   cardName: {
     ...t.bodyStrong,
     color: color.ink,
     fontSize: 12,
     textAlign: 'center',
-    width: '100%',
+    flexShrink: 1,
   },
   cardHandle: {
     fontFamily: 'Courier',

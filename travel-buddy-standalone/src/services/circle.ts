@@ -52,6 +52,8 @@ export interface CircleMember {
   canViewProfile: boolean;
   safetyActionsAllowed: boolean;
   presenceAbsent: boolean;
+  /** True when the member holds verified traveler status. */
+  verified?: boolean;
 }
 
 export interface CircleWatcher {

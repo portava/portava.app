@@ -14,6 +14,8 @@ export interface MediaFeedCreator {
   username: string;
   avatarUrl: string | null;
   isFollowing?: boolean;
+  /** True when the creator holds a verified traveler status. */
+  verified?: boolean;
 }
 
 /** A resolved location label — place ID may be absent for unstructured locations. */

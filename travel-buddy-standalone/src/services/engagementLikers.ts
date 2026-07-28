@@ -24,6 +24,8 @@ export interface LikerUser {
   isFollowing: boolean;
   followsYou: boolean;
   likedAt: string;
+  /** True when the user holds verified traveler status. */
+  verified?: boolean;
 }
 
 export interface LikersPage {

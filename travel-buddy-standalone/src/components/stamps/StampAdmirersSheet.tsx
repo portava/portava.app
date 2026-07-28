@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { X } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
 import type { StampAdmirer } from '../../services/stampAdmire.ts';
 import {
   primaryIdentityText,
@@ -60,7 +61,10 @@ function AdmirerRow({ item, onClose }: RowProps) {
       )}
 
       <View style={s.info}>
-        <Text style={s.name} numberOfLines={1}>{primary}</Text>
+        <View style={s.nameRow}>
+          <Text style={s.name} numberOfLines={1}>{primary}</Text>
+          {item.verified ? <VerifiedStamp size="sm" /> : null}
+        </View>
         {secondary ? <Text style={s.handle} numberOfLines={1}>{secondary}</Text> : null}
       </View>
     </Pressable>
@@ -123,6 +127,7 @@ const s = StyleSheet.create({
     maxHeight: '72%',
     paddingTop: space.sm,
   },
+  nameRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 3 },
   grabBar: {
     alignSelf: 'center',
     width: 40,

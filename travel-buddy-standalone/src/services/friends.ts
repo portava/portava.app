@@ -17,6 +17,8 @@ export interface FriendUser {
   avatarUrl: string | null;
   followsYou?: boolean;
   youFollow?: boolean;
+  /** True when the user holds verified traveler status. */
+  verified?: boolean;
 }
 
 export interface FriendStatusResult {

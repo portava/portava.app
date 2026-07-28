@@ -28,6 +28,7 @@ import { SaveButton } from './SaveButton.tsx';
 import { deletePost } from '../services/postEngagement.ts';
 import { hidePost } from '../services/posts.ts';
 import { primaryIdentityText } from '../lib/displayIdentity.ts';
+import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
 import { MediaStampOverlay } from './StampOverlayBadge.tsx';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
@@ -158,8 +159,9 @@ function AuthorRow({
       <View style={{ flex: 1 }}>
         {badge ? <View style={[s.kindBadge, { backgroundColor: badge.bg }]}><Text style={[s.kindText, { color: badge.fg }]}>{badge.label}</Text></View> : null}
         {item.author ? (
-          <Pressable onPress={handleAuthorPress}>
+          <Pressable onPress={handleAuthorPress} style={s.authorNameRow}>
             <Text style={[s.author, light ? { color: color.onInk } : undefined]}>{authorText}</Text>
+            {item.author.verified ? <VerifiedStamp size="sm" dark={light} /> : null}
           </Pressable>
         ) : null}
         <Text style={[s.meta, light ? { color: color.onInkMute } : undefined]}>{item.timeAgo}{item.neighborhood ? ` · ${item.neighborhood}` : item.city ? ` · ${item.city}` : ''}</Text>
@@ -759,6 +761,7 @@ export function PulseFeedCard({ item, onDeleteSuccess, sessionId }: { item: Puls
 const s = StyleSheet.create({
   card: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: space.sm, ...shadow.card },
   authorRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  authorNameRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.haze },
   avatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: color.deep },
   avatarFallbackText: { color: color.onInk, fontSize: 16, fontWeight: '700' },

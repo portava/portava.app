@@ -8,6 +8,7 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { MapPin, MessageCircle, Heart, Bookmark } from 'lucide-react-native';
 import { CachedImage } from '../CachedImage.tsx';
 import { color, space, radius, shadow, typography, layout } from '../../theme/tokens.ts';
+import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
 
 export type PostCardType = 'post' | 'question' | 'hidden_gem' | 'itinerary' | 'plan' | 'discovery_message';
 
@@ -26,6 +27,8 @@ export interface PostCardProps {
   likedByMe?: boolean;
   savedByMe?: boolean;
   tags?: string[];
+  /** When true, renders a VerifiedStamp badge next to the author name in the simplified row. */
+  authorVerified?: boolean;
   onPress: () => void;
   onLike?: () => void;
   onSave?: () => void;
@@ -67,7 +70,7 @@ const TYPE_BADGE: Record<PostCardType, { label: string; bg: string; fg: string }
 
 export function PostCard({
   type, title, caption, captionNode, city, imageUrl, authorName, authorHandle, timeAgo,
-  likeCount, commentCount, likedByMe, savedByMe, tags,
+  likeCount, commentCount, likedByMe, savedByMe, tags, authorVerified,
   onPress, onLike, onSave, onComment, actionsSlot, cardStyle, authorRow,
 }: PostCardProps) {
   const [imgFailed, setImgFailed] = useState(false);
@@ -107,6 +110,7 @@ export function PostCard({
             {authorLine ? (
               <Text style={styles.author} numberOfLines={1}>{authorLine}</Text>
             ) : null}
+            {authorVerified ? <VerifiedStamp size="sm" /> : null}
             {timeAgo ? <Text style={styles.timeAgo}>{timeAgo}</Text> : null}
             {city ? <Text style={styles.city}>· {city}</Text> : null}
           </View>

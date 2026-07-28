@@ -171,7 +171,7 @@ router.get("/stamps/:userStampId/admirers", asyncHandler(async (req, res) => {
 
   const { data, error } = await sc
     .from("stamp_admires")
-    .select("admirer_id, created_at, profiles:admirer_id ( id, username, display_name, avatar_url )")
+    .select("admirer_id, created_at, profiles:admirer_id ( id, username, display_name, avatar_url, verified )")
     .eq("user_stamp_id", id)
     .order("created_at", { ascending: false })
     .limit(100);
@@ -187,6 +187,7 @@ router.get("/stamps/:userStampId/admirers", asyncHandler(async (req, res) => {
       username: r.profiles?.username ?? null,
       displayName: r.profiles?.display_name ?? null,
       avatarUrl: r.profiles?.avatar_url ?? null,
+      verified: (r.profiles?.verified as boolean) ?? false,
     })),
     enabled: true,
   });

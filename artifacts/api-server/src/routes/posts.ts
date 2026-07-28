@@ -2022,7 +2022,7 @@ router.get("/posts/:postId/comments", async (req, res) => {
   const authorIds = [...new Set(commentRows.map((c) => c.user_id))];
   let profileMap: Record<string, any> = {};
   if (authorIds.length > 0) {
-    const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", authorIds);
+    const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url, verified").in("id", authorIds);
     for (const p of profiles ?? []) profileMap[p.id] = p;
   }
 
@@ -2060,8 +2060,8 @@ router.get("/posts/:postId/comments", async (req, res) => {
       tags: spans.tags,
       hashtagUsages: spans.hashtagUsages,
       author: pr
-        ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null }
-        : { id: c.user_id, handle: "traveler", name: "Traveler", avatarUrl: null },
+        ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null, verified: (pr.verified as boolean) ?? false }
+        : { id: c.user_id, handle: "traveler", name: "Traveler", avatarUrl: null, verified: false },
     };
   });
 
@@ -2646,7 +2646,7 @@ router.get("/posts/:postId/comments/:commentId/replies", async (req, res) => {
   const authorIds = [...new Set(replyRows.map((r) => r.user_id))];
   let profileMap: Record<string, any> = {};
   if (authorIds.length > 0) {
-    const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", authorIds);
+    const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url, verified").in("id", authorIds);
     for (const p of profiles ?? []) profileMap[p.id] = p;
   }
 
@@ -2684,8 +2684,8 @@ router.get("/posts/:postId/comments/:commentId/replies", async (req, res) => {
       tags: spans.tags,
       hashtagUsages: spans.hashtagUsages,
       author: pr
-        ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null }
-        : { id: r.user_id, handle: "traveler", name: "Traveler", avatarUrl: null },
+        ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null, verified: (pr.verified as boolean) ?? false }
+        : { id: r.user_id, handle: "traveler", name: "Traveler", avatarUrl: null, verified: false },
     };
   });
 
