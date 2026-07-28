@@ -532,7 +532,13 @@ router.get("/hidden-gems/saved", async (req, res) => {
   try {
     const gems = await listSavedGems(sc, user.id);
     const safe = await applyGemPrivacyBatch(gems, sc, user.id);
-    res.json({ gems: safe, total: safe.length });
+    const gemIds = (safe as any[]).map((g: any) => g.id as string);
+    const agg = await batchFetchGemAggregates(sc, gemIds);
+    const enriched = (safe as any[]).map((g: any) => {
+      const a = agg.get(g.id);
+      return a ? { ...g, worthItCount: a.worthItCount, avgRating: a.avgRating, reviewCount: a.reviewCount } : g;
+    });
+    res.json({ gems: enriched, total: enriched.length });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }
@@ -608,7 +614,13 @@ router.get("/hidden-gems/trip-city/:tripId", async (req, res) => {
   try {
     const gems = await listGems(sc, { city, limit: 30 });
     const safe = await applyGemPrivacyBatch(gems, sc, user.id, tripId);
-    res.json({ gems: safe, total: safe.length, city });
+    const gemIds = (safe as any[]).map((g: any) => g.id as string);
+    const agg = await batchFetchGemAggregates(sc, gemIds);
+    const enriched = (safe as any[]).map((g: any) => {
+      const a = agg.get(g.id);
+      return a ? { ...g, worthItCount: a.worthItCount, avgRating: a.avgRating, reviewCount: a.reviewCount } : g;
+    });
+    res.json({ gems: enriched, total: enriched.length, city });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }
