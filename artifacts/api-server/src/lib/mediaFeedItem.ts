@@ -495,7 +495,7 @@ export function hydrateMediaGridItem(row: any, postMedia: any[], apiBaseUrl: str
   // relay-bucket assets are accessible even when public_url is absent.
   const posterUrl: string | null = (() => {
     if (primaryVideo) {
-      const thumbPath: string | null = primaryVideo.thumbnail_path ?? null;
+      const thumbPath: string | null = primaryVideo.thumbnail_storage_path ?? null;
       if (thumbPath) {
         const bucket: string = primaryVideo.storage_bucket ?? "post-media";
         return relayUrlFor(bucket, thumbPath, apiBaseUrl);
@@ -650,8 +650,8 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
 
       let thumbnailUrl: string | null = m.thumbnail_url ?? null;
       // For private posts, relay the thumbnail too when it's a storage path
-      if (isPrivatePost && m.thumbnail_path && !thumbnailUrl) {
-        thumbnailUrl = relayUrlFor(bucket, m.thumbnail_path, apiBaseUrl);
+      if (isPrivatePost && m.thumbnail_storage_path && !thumbnailUrl) {
+        thumbnailUrl = relayUrlFor(bucket, m.thumbnail_storage_path, apiBaseUrl);
       }
 
       return {

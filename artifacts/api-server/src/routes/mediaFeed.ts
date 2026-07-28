@@ -119,7 +119,7 @@ const GRID_POST_COLUMNS =
  * present (relay-bucket assets have no accessible public_url).
  */
 const GRID_MEDIA_COLUMNS =
-  "id, media_type, public_url, thumbnail_url, thumbnail_path, " +
+  "id, media_type, public_url, thumbnail_url, thumbnail_storage_path, " +
   "duration_seconds, width, height, sort_order, processing_status, moderation_status, " +
   "storage_path, storage_bucket";
 
@@ -133,7 +133,7 @@ const FEED_POST_COLUMNS =
   "canonical_place_id, post_buckets";
 
 const POST_MEDIA_COLUMNS =
-  "id, media_type, public_url, thumbnail_url, thumbnail_path, duration_seconds, " +
+  "id, media_type, public_url, thumbnail_url, thumbnail_storage_path, duration_seconds, " +
   "width, height, sort_order, processing_status, moderation_status, storage_path, storage_bucket";
 
 const PROFILE_COLUMNS =

@@ -962,7 +962,7 @@ describe("GET /media/feed?mode=grid", () => {
               media_type: "video",
               storage_bucket: "relay-videos",
               storage_path: "uploads/user1/clip.mp4",
-              thumbnail_path: "uploads/user1/clip_thumb.jpg",
+              thumbnail_storage_path: "uploads/user1/clip_thumb.jpg",
               public_url: null,
               thumbnail_url: null,
             }),
@@ -981,7 +981,7 @@ describe("GET /media/feed?mode=grid", () => {
     assert.match(
       item.posterUrl,
       /\/api\/media\/file\/relay-videos\/uploads\/user1\/clip_thumb\.jpg/,
-      "posterUrl must be a relay URL when the video only has storage_path+thumbnail_path",
+      "posterUrl must be a relay URL when the video only has storage_path+thumbnail_storage_path",
     );
   });
 
@@ -1404,21 +1404,21 @@ describe("hydrateMediaGridItem — relay URL resolution for video assets", () =>
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // posterUrl must be resolved via relayUrlFor() when the underlying asset has a
-// storage_path (or thumbnail_path for video thumbnails) — matching the videoUrl
+// storage_path (or thumbnail_storage_path for video thumbnails) — matching the videoUrl
 // relay pattern so relay-bucket thumbnails are visible even when public_url is
 // absent or inaccessible.
 
 describe("hydrateMediaGridItem — relay URL resolution for poster images", () => {
   const API_BASE = "https://api.example.test";
 
-  it("uses relay URL for posterUrl when video has thumbnail_path", () => {
+  it("uses relay URL for posterUrl when video has thumbnail_storage_path", () => {
     const postMedia = [
       {
         id: "vid-thumb-relay-1",
         media_type: "video",
         storage_bucket: "relay-videos",
         storage_path: "uploads/user1/clip.mp4",
-        thumbnail_path: "uploads/user1/clip_thumb.jpg",
+        thumbnail_storage_path: "uploads/user1/clip_thumb.jpg",
         public_url: null,
         thumbnail_url: null,
         duration_seconds: 20,
@@ -1445,7 +1445,7 @@ describe("hydrateMediaGridItem — relay URL resolution for poster images", () =
     );
   });
 
-  it("falls back to thumbnail_url for posterUrl when video has no thumbnail_path", () => {
+  it("falls back to thumbnail_url for posterUrl when video has no thumbnail_storage_path", () => {
     const THUMB_URL = "https://sb.example.test/storage/v1/object/public/post-media/thumb.jpg";
     const postMedia = [
       {
@@ -1476,7 +1476,7 @@ describe("hydrateMediaGridItem — relay URL resolution for poster images", () =
     assert.equal(
       item.posterUrl,
       THUMB_URL,
-      "posterUrl must fall back to thumbnail_url when thumbnail_path is absent",
+      "posterUrl must fall back to thumbnail_url when thumbnail_storage_path is absent",
     );
   });
 
