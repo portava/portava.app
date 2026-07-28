@@ -505,6 +505,7 @@ router.get("/me/passport/stats", async (req, res) => {
       planStamps: 0, hostStamps: 0, hiddenGemStamps: 0,
       safeReturnStamps: 0, totalStamps: 0,
       tripCount: 0, followersCount: 0, followingCount: 0,
+      stampsEarned: 0, milestones: [],
     });
     return;
   }
@@ -513,18 +514,43 @@ router.get("/me/passport/stats", async (req, res) => {
   if (!auth) return;
   const { client, user } = auth;
 
-  const [stats, tripResult, followersResult, followingResult] = await Promise.all([
+  const sc = getServiceClient();
+
+  const [stats, tripResult, followersResult, followingResult, stampsEarnedResult, milestonesResult] = await Promise.all([
     buildStats(client, user.id),
     client.from("trips").select("id", { count: "exact", head: true }).eq("owner_id", user.id),
     client.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("following_id", user.id),
     client.from("user_follows").select("following_id", { count: "exact", head: true }).eq("follower_id", user.id),
+    // Lifetime stamps earned (user_stamps, non-revoked). Fails silently when table is absent.
+    sc
+      ? sc.from("user_stamps").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("is_revoked", false).then(
+          (r: any) => r,
+          () => ({ count: 0 }),
+        )
+      : Promise.resolve({ count: 0 }),
+    // Milestone history from stamp_milestones. Fails silently when table is absent.
+    sc
+      ? sc.from("stamp_milestones").select("milestone_level, celebrated_at").eq("user_id", user.id).then(
+          (r: any) => r,
+          () => ({ data: [] }),
+        )
+      : Promise.resolve({ data: [] }),
   ]);
+
+  const stampsEarned = (stampsEarnedResult as any).count ?? 0;
+  const milestones: Array<{ level: number; celebratedAt: string }> =
+    ((milestonesResult as any).data ?? []).map((m: any) => ({
+      level: m.milestone_level as number,
+      celebratedAt: m.celebrated_at as string,
+    }));
 
   res.json({
     ...stats,
     tripCount:      tripResult.count      ?? 0,
     followersCount: followersResult.count ?? 0,
     followingCount: followingResult.count ?? 0,
+    stampsEarned,
+    milestones,
   });
 });
 

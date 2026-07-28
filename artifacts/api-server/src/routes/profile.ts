@@ -235,7 +235,7 @@ router.get("/me/profile/analytics", async (req, res) => {
   const d7  = new Date(now - 7  * 24 * 60 * 60 * 1000).toISOString();
   const d30 = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [views7Res, views30Res, followers7Res, followers30Res] = await Promise.allSettled([
+  const [views7Res, views30Res, followers7Res, followers30Res, analyticsStampsEarnedRes, analyticsMilestonesRes] = await Promise.allSettled([
     sc.from("profile_views")
       .select("id", { count: "exact", head: true })
       .eq("target_id", user.id)
@@ -254,6 +254,15 @@ router.get("/me/profile/analytics", async (req, res) => {
       .select("follower_id", { count: "exact", head: true })
       .eq("following_id", user.id)
       .gte("created_at", d30),
+    // Lifetime stamps earned (user_stamps, non-revoked). Fails silently.
+    sc.from("user_stamps")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .eq("is_revoked", false),
+    // Milestone history (stamp_milestones). Fails silently.
+    sc.from("stamp_milestones")
+      .select("milestone_level, celebrated_at")
+      .eq("user_id", user.id),
   ]);
 
   // post_impressions_7d: count of impression events logged in post_impressions table.
@@ -272,11 +281,23 @@ router.get("/me/profile/analytics", async (req, res) => {
   const profileViews30d  = views30Res.status   === "fulfilled" ? (views30Res.value.count   ?? 0) : 0;
   const followerDelta7d  = followers7Res.status === "fulfilled" ? (followers7Res.value.count ?? 0) : 0;
   const followerDelta30d = followers30Res.status === "fulfilled" ? (followers30Res.value.count ?? 0) : 0;
+  const analyticsStampsEarned = analyticsStampsEarnedRes.status === "fulfilled"
+    ? ((analyticsStampsEarnedRes.value as any).count ?? 0)
+    : 0;
+  const analyticsMilestones: Array<{ level: number; celebratedAt: string }> =
+    analyticsMilestonesRes.status === "fulfilled"
+      ? (((analyticsMilestonesRes.value as any).data ?? []) as any[]).map((m: any) => ({
+          level: m.milestone_level as number,
+          celebratedAt: m.celebrated_at as string,
+        }))
+      : [];
 
   res.status(200).json({
     profileViews: { sevenDay: profileViews7d, thirtyDay: profileViews30d },
     followerGrowth: { sevenDay: followerDelta7d, thirtyDay: followerDelta30d },
     postImpressions7d: postImpressionsRes,
+    stampsEarned: analyticsStampsEarned,
+    milestones: analyticsMilestones,
   });
 });
 

@@ -84,6 +84,11 @@ export interface PassportMapPayload {
   cities: string[];
 }
 
+export interface PassportMilestone {
+  level: number;
+  celebratedAt: string;
+}
+
 export interface PassportStats {
   countries: number;
   cities: number;
@@ -97,6 +102,10 @@ export interface PassportStats {
   tripCount: number;
   followersCount: number;
   followingCount: number;
+  /** Lifetime stamps earned across all entity types (user_stamps, non-revoked). */
+  stampsEarned: number;
+  /** Milestone history — 100 / 1,000 / 10,000. Empty when none crossed yet. */
+  milestones: PassportMilestone[];
 }
 
 export interface PassportVisibilityPrefs {

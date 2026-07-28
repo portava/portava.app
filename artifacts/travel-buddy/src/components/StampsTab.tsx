@@ -13,6 +13,8 @@ import type { PassportStampNew } from '../services/passportStamps.ts';
 import { getMyPassportStamps, getUserStampsByUsername } from '../services/passportStamps.ts';
 import { getMyProgress } from '../services/stamps.ts';
 import type { StampProgress } from '../services/stamps.ts';
+import { getPassportStats } from '../services/passportStamps.ts';
+import type { PassportMilestone } from '../services/passportStamps.ts';
 import { useBlockedIds } from '../context/BlockedIdsContext.tsx';
 import { StampCategoryFilter } from './stamps/StampCategoryFilter.tsx';
 import type { StampCategory } from './stamps/StampCategoryFilter.tsx';
@@ -135,6 +137,8 @@ export function StampsTab({
   const [category, setCategory]       = useState<StampCategory>('');
   const [selected, setSelected]       = useState<PassportStampNew | null>(null);
   const [progress, setProgress]       = useState<StampProgress | null>(null);
+  const [stampsEarned, setStampsEarned] = useState<number | null>(null);
+  const [milestones, setMilestones]   = useState<PassportMilestone[]>([]);
   // Showcase: null = feature flag off (no UI change), [] = flag on but empty,
   // items = flag on with curated stamps.
   const [showcase, setShowcase]       = useState<ShowcaseStamp[] | null>(null);
@@ -221,6 +225,16 @@ export function StampsTab({
   useEffect(() => {
     if (!isOwner || viewingUsername) return;
     getMyProgress().then((res) => { if (res.ok) setProgress(res.data); }).catch(() => {});
+  }, [isOwner, viewingUsername]);
+
+  useEffect(() => {
+    if (!isOwner || viewingUsername) return;
+    getPassportStats().then((res) => {
+      if (res.ok) {
+        setStampsEarned(res.data.stampsEarned);
+        setMilestones(res.data.milestones ?? []);
+      }
+    }).catch(() => {});
   }, [isOwner, viewingUsername]);
 
   // Fetch showcase on mount for the owner's own passport only.
@@ -312,6 +326,34 @@ export function StampsTab({
                 {progress.nextStamp.description}
               </Text>
             ) : null}
+          </View>
+        )}
+
+        {isOwner && !viewingUsername && stampsEarned !== null && (
+          <View style={styles.earnedRow}>
+            <Text style={styles.earnedLabel}>Stamps Earned</Text>
+            <Text style={styles.earnedValue}>{stampsEarned.toLocaleString()}</Text>
+          </View>
+        )}
+
+        {isOwner && !viewingUsername && milestones.length > 0 && (
+          <View style={styles.milestonesCard}>
+            <Text style={styles.milestonesHeading}>MILESTONES</Text>
+            {milestones
+              .slice()
+              .sort((a, b) => a.level - b.level)
+              .map((m) => {
+                const label = m.level >= 10000 ? '10K stamps' : m.level >= 1000 ? '1K stamps' : `${m.level} stamps`;
+                const date = new Date(m.celebratedAt).toLocaleDateString(undefined, {
+                  month: 'short', day: 'numeric', year: 'numeric',
+                });
+                return (
+                  <View key={m.level} style={styles.milestoneRow}>
+                    <Text style={styles.milestoneLabel}>{label}</Text>
+                    <Text style={styles.milestoneDate}>{date}</Text>
+                  </View>
+                );
+              })}
           </View>
         )}
       </View>
@@ -506,6 +548,34 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   progressSub: { ...t.small, color: color.mute, fontSize: 11 },
+  earnedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: space.xs,
+  },
+  earnedLabel: { ...t.small, color: color.mute, fontWeight: '600' },
+  earnedValue: { ...t.small, color: color.ink, fontWeight: '700' },
+  milestonesCard: {
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: color.haze,
+    padding: space.md,
+    gap: 6,
+  },
+  milestonesHeading: {
+    fontSize: 9, fontWeight: '700', letterSpacing: 1.1,
+    color: color.mute, fontFamily: 'Courier',
+    marginBottom: 2,
+  },
+  milestoneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  milestoneLabel: { ...t.small, color: color.ink, fontWeight: '600' },
+  milestoneDate:  { ...t.small, color: color.mute },
   loadingMore: { paddingVertical: space.md, alignItems: 'center' },
 
   featured: {
