@@ -286,6 +286,17 @@ export default function PortavaPostsScreen() {
                 {isDeletable && (
                   <View style={s.actions}>
                     <Pressable
+                      style={s.editBtn}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/admin/portava-post-edit' as any,
+                          params: { postJson: JSON.stringify(post) },
+                        })
+                      }
+                    >
+                      <Text style={s.editBtnText}>Edit</Text>
+                    </Pressable>
+                    <Pressable
                       style={s.deleteBtn}
                       onPress={() => onDelete(post)}
                       disabled={deleting === post.id}
@@ -337,7 +348,9 @@ const s = StyleSheet.create({
   content:        { fontSize: 14, color: '#374151', lineHeight: 20 },
   meta:           { gap: 2 },
   metaText:       { fontSize: 12, color: '#6B7280' },
-  actions:        { flexDirection: 'row', justifyContent: 'flex-end', paddingTop: 4 },
+  actions:        { flexDirection: 'row', justifyContent: 'flex-end', paddingTop: 4, gap: 8 },
+  editBtn:        { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, borderWidth: 1, borderColor: '#93C5FD', backgroundColor: '#EFF6FF', minWidth: 60, alignItems: 'center' },
+  editBtnText:    { fontSize: 13, color: '#2563EB', fontWeight: '600' },
   deleteBtn:      { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, borderWidth: 1, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', minWidth: 80, alignItems: 'center' },
   deleteBtnText:  { fontSize: 13, color: '#DC2626', fontWeight: '600' },
   centered:       { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 },

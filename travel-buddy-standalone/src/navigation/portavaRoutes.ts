@@ -1269,6 +1269,15 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     requiresAuth: true,
     adminOnly: true,
   },
+  {
+    key: 'admin-portava-post-edit',
+    path: 'admin/portava-post-edit',
+    title: 'Edit @Portava Post',
+    parent: 'admin-portava-posts',
+    icon: null,
+    requiresAuth: true,
+    adminOnly: true,
+  },
 
   // RAB Admin
   {
