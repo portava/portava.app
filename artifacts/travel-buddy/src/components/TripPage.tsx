@@ -47,7 +47,10 @@ function ProgressRing({ pct }: { pct: number }) {
 /* ── Trip hero header ── */
 export function TripHero({ trip }: { trip: TripDetail }) {
   const [addPlanOpen, setAddPlanOpen] = useState(false);
-  const dates = `${fmt(trip.startDate)} – ${fmt(trip.endDate)}, ${new Date(trip.endDate).getFullYear()}`;
+  const hasDates = !!(trip.startDate && trip.endDate);
+  const dates = hasDates
+    ? `${fmt(trip.startDate)} – ${fmt(trip.endDate)}, ${new Date(trip.endDate).getFullYear()}`
+    : null;
   return (
     <View style={hero.wrap}>
       <View style={hero.imageCard}>
@@ -66,7 +69,7 @@ export function TripHero({ trip }: { trip: TripDetail }) {
             <View style={hero.activeChip}><Text style={hero.activeText}>{cap(trip.status)}</Text></View>
           </View>
           <Text style={hero.dest}>{trip.destinationCity}, {trip.destinationCountry}</Text>
-          <View style={hero.metaRow}><CalendarDays size={14} color={color.onInk} /><Text style={hero.meta}>{dates} ({trip.nights} nights)</Text></View>
+          <View style={hero.metaRow}><CalendarDays size={14} color={color.onInk} /><Text style={hero.meta}>{dates ? `${dates} (${trip.nights} nights)` : 'No dates yet'}</Text></View>
           <View style={hero.metaRow}>
             <UserIcon size={14} color={color.onInk} />
             <Text style={hero.meta}>{trip.travelStyle} · {trip.openToMeet ? 'Open to Meet' : 'Private'}</Text>
