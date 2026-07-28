@@ -115,6 +115,14 @@ const ALLOWLIST = new Set<string>([
   // Canonical venue-level place FK on posts — migration 2045_posts_canonical_place_id.sql
   // pending live apply. Remove once the column exists in the live posts table.
   "posts.canonical_place_id",
+  // pHash dedup columns on post_media — migration 2046_phash_dedup.sql
+  // pending live apply. Remove once the columns exist in the live DB schema.
+  "post_media.phash",
+  "post_media.dedup_processed",
+  // Denormalised representative_phash on media_dedup_groups — same migration.
+  // Table is in SKIP_TABLES; this entry covers any static select/write extracted
+  // before the table check runs. Remove once migration 2046 is applied live.
+  "media_dedup_groups.representative_phash",
   // Add-a-Gem creation flow columns — migration pending live apply.
   // Remove once the columns exist in the live hidden_gems table.
   "hidden_gems.accessibility",
@@ -164,6 +172,10 @@ const SKIP_TABLES = new Set<string>([
   // Wrong-place mismatch reports — migration 2045_posts_canonical_place_id.sql
   // pending live apply. Remove once the table exists in the live DB schema.
   "place_mismatch_reports",
+  // Near-duplicate media dedup groups + memberships — migration 2046_phash_dedup.sql
+  // pending live apply. Remove once the tables exist in the live DB schema.
+  "media_dedup_groups",
+  "media_dedup_memberships",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────

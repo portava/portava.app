@@ -111,3 +111,47 @@ export async function makeThumbnail(processed: Buffer): Promise<ProcessedImage> 
     .toBuffer({ resolveWithObject: true });
   return { buffer: data, width: info.width, height: info.height, mime: "image/jpeg", ext: "jpg" };
 }
+
+/**
+ * Compute a 64-bit perceptual difference-hash (pHash) of an image buffer.
+ *
+ * Algorithm:
+ *   1. Resize to 9×8 greyscale (9 columns → 8 horizontal differences per row,
+ *      8 rows → 64 bits total).
+ *   2. For each row, compare adjacent pixel pairs: bit = left > right ? 1 : 0.
+ *   3. Pack the 64 bits into a 16-character lowercase hex string.
+ *
+ * Returns null (never throws) when sharp cannot decode the buffer — fail-soft
+ * so a hash failure never blocks an upload or crashes the worker.
+ *
+ * @param input  Any image buffer accepted by sharp (jpeg, png, webp, etc.).
+ */
+export async function computePHash(input: Buffer): Promise<string | null> {
+  try {
+    // 9 cols × 8 rows greyscale raw pixels (72 bytes).
+    const { data } = await sharp(input)
+      .resize(9, 8, { fit: "fill" })
+      .greyscale()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    // Build 64-bit hash: 8 rows × 8 horizontal comparisons.
+    let bits = "";
+    for (let row = 0; row < 8; row++) {
+      for (let col = 0; col < 8; col++) {
+        const left  = data[row * 9 + col];
+        const right = data[row * 9 + col + 1];
+        bits += left > right ? "1" : "0";
+      }
+    }
+
+    // Pack 64 bits into 16 hex chars (4 bits per char).
+    let hex = "";
+    for (let i = 0; i < 64; i += 4) {
+      hex += parseInt(bits.slice(i, i + 4), 2).toString(16);
+    }
+    return hex;
+  } catch {
+    return null;
+  }
+}

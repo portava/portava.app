@@ -772,4 +772,47 @@ router.post("/places/:id/image-report", async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── GET /api/places/:id/dedup-groups ──────────────────────────────────────────
+//
+// Internal endpoint used by the living destination page API (and future feed
+// services) to surface the top near-duplicate media clusters for a place.
+//
+// Returns the top 10 dedup groups by member_count, with up to 3 sample media
+// ids per group for the collapsed-view chip.
+//
+// Requires authentication. Does NOT leak private post data — only media ids
+// and member counts are returned.
+//
+router.get("/places/:id/dedup-groups", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+
+  const placeId = req.params.id;
+  if (!placeId || placeId.length > 500) {
+    sendError(res, "invalid_payload", "Invalid place id");
+    return;
+  }
+
+  const db = getServiceClient();
+  if (!db) {
+    sendError(res, "server_not_configured", "Service client not ready");
+    return;
+  }
+
+  const { data, error } = await db
+    .from("media_dedup_groups")
+    .select("id, representative_media_id, member_count, sample_media_ids, bucket_key, updated_at")
+    .eq("canonical_place_id", placeId)
+    .order("member_count", { ascending: false })
+    .limit(10);
+
+  if (error) {
+    logger.warn({ err: error, placeId }, "failed to fetch media_dedup_groups");
+    sendError(res, "db_error", "Failed to fetch dedup groups");
+    return;
+  }
+
+  res.json({ groups: data ?? [] });
+});
+
 export default router;

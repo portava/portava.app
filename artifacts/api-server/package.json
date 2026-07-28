@@ -72,7 +72,8 @@
     "test:media-grid-nearby": "node --import tsx/esm --test src/test/mediaGridNearby.test.ts",
     "test:stamp-auto-approve-generation": "node --import tsx/esm --test src/test/stampAutoApproveGeneration.test.ts",
     "test:post-wrong-place": "node --import tsx/esm --test src/test/postWrongPlace.test.ts",
-    "test:onboarding-autofollow": "node --import tsx/esm --test src/test/onboardingAutoFollow.test.ts"
+    "test:onboarding-autofollow": "node --import tsx/esm --test src/test/onboardingAutoFollow.test.ts",
+    "test:media-dedup-phash": "node --import tsx/esm --test src/test/mediaDedupPhash.test.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",

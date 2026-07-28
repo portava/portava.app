@@ -34,6 +34,7 @@ import { runSchemaDriftCheck } from "./lib/schemaDriftCheck";
 import { startCreatorActivityScoreScheduler } from "./lib/creatorActivityScoreScheduler";
 import { startRankingFatigueSweeper } from "./lib/rankingFatigueSweeper";
 import { startPostPlaceBackfillWorker } from "./lib/places/postPlaceBackfillWorker";
+import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js";
 
 assertRequiredEnv(logger);
 
@@ -127,6 +128,11 @@ app.listen(port, (err) => {
   // canonical_location_id but no canonical_place_id to the venue-level
   // places table. Stops automatically when the backlog is exhausted.
   startPostPlaceBackfillWorker();
+
+  // Near-duplicate media collapse worker — groups visually-similar post_media
+  // images at the same canonical place using 64-bit pHash difference hashing.
+  // Runs every 20 minutes; fail-soft (never affects uploads or post creation).
+  startMediaDedupWorker();
 
   // Viewer-creator fatigue row cleanup — deletes rows older than 30 days so
   // the viewer_creator_fatigue table doesn't grow unbounded.

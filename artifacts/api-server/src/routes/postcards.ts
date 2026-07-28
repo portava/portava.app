@@ -20,7 +20,7 @@ import { requireUser, sendError } from '../lib/http.js';
 import { getServiceClient } from '../lib/supabase.js';
 import { processTagging } from '../services/tagging/TaggingService.js';
 import { isFlagEnabled } from '../lib/featureFlags.js';
-import { sniffMedia, processImage } from '../lib/mediaProcessing.js';
+import { sniffMedia, processImage, computePHash } from '../lib/mediaProcessing.js';
 
 const router = Router();
 
@@ -565,6 +565,7 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
   // GPS strip. Videos are untouched (no transcode tier; documented).
   let measuredWidth: number | null = null;
   let measuredHeight: number | null = null;
+  let computedPhash: string | null = null;
   if ((mediaRow as any).media_type === 'image') {
     try {
       const dl = await sc.storage.from(STORAGE_BUCKET).download(storagePath);
@@ -579,6 +580,9 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
       if (reErr) throw new Error(reErr.message);
       measuredWidth = img.width;
       measuredHeight = img.height;
+      // Perceptual hash for near-duplicate detection. Fail-soft: null hash
+      // never blocks completion — the dedup worker skips rows where phash IS NULL.
+      computedPhash = await computePHash(img.buffer);
     } catch (err) {
       req.log.error({ err, mediaId }, 'postcards: image processing failed — completion rejected (retryable)');
       sendError(res, 'invalid_payload', 'Image could not be processed. Please re-upload.');
@@ -614,7 +618,7 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
   }
 
   // Mark ready + store metadata
-  const baseUpdate = {
+  const baseUpdate: Record<string, unknown> = {
     processing_status:      'ready',
     moderation_status:      'approved',
     public_url:             publicUrl,
@@ -627,6 +631,9 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     thumbnail_url:          thumbnailUrl,
     thumbnail_storage_path: p.thumbnailPath ?? null,
     updated_at:             new Date().toISOString(),
+    // Perceptual hash for near-duplicate grouping (null for videos or when
+    // computation failed — worker skips rows with phash IS NULL).
+    phash:                  computedPhash,
   };
 
   let { error: updateErr } = await sc

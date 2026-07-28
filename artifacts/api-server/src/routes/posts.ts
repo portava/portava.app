@@ -40,7 +40,7 @@ import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEng
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
-import { sniffMedia, processImage, makeThumbnail } from "../lib/mediaProcessing.js";
+import { sniffMedia, processImage, makeThumbnail, computePHash } from "../lib/mediaProcessing.js";
 import { recordMediaAsset } from "../lib/mediaAssets.js";
 import { resolvePostPlace } from "../lib/places/placeResolve.js";
 
@@ -129,6 +129,7 @@ router.post(
     let height: number | null = null;
     let thumb: { buffer: Buffer; mime: string } | null = null;
     let processed = false;
+    let phash: string | null = null;
 
     if (sniffed.kind === "image") {
       try {
@@ -143,6 +144,11 @@ router.post(
         const t = await makeThumbnail(img.buffer);
         thumb = { buffer: t.buffer, mime: t.mime };
         processed = true;
+        // Perceptual hash for near-duplicate detection. Computed on the
+        // processed (EXIF-stripped, re-encoded) buffer so the hash is stable
+        // regardless of orientation or metadata. Fail-soft: a null hash never
+        // blocks the upload — the dedup worker skips rows where phash IS NULL.
+        phash = await computePHash(img.buffer);
       } catch (err) {
         if (sniffed.mime === "image/heic") {
           // HEIC decode depends on the libvips build — store as-is rather than
@@ -202,7 +208,8 @@ router.post(
     });
 
     // Response stays backward-compatible ({url, path}); new fields are additive.
-    res.status(201).json({ url: mediaRelayUrl, path, thumbnailUrl, width, height, processed });
+    // `phash` is included so the client can persist it on the post_media row.
+    res.status(201).json({ url: mediaRelayUrl, path, thumbnailUrl, width, height, processed, phash });
   },
 );
 
