@@ -683,7 +683,7 @@ router.get("/users/:username/profile", async (req, res) => {
 
   const { data: profile, error: profileErr } = await sc
     .from("profiles")
-    .select("id, username, display_name, name, avatar_url, cover_photo_url, passport_visibility, bio, is_private")
+    .select("id, username, display_name, name, avatar_url, cover_photo_url, passport_visibility, bio, is_private, featured_count")
     .eq("handle", username)
     .maybeSingle();
 
@@ -756,6 +756,7 @@ router.get("/users/:username/profile", async (req, res) => {
     coverUrl: profile.cover_photo_url ?? null,
     tripCount: tripCount ?? 0,
     stampCount: stampCount ?? 0,
+    featuredCount: (profile.featured_count as number | null | undefined) ?? 0,
     visibility: profile.passport_visibility ?? "public",
   });
 });
