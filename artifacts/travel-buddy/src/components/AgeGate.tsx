@@ -44,17 +44,34 @@ export function AgeGate({ children }: PropsWithChildren) {
   const [gateState, setGateState] = useState<GateState>('loading');
   // Track the latest check so stale responses from a prior auth state are ignored.
   const checkSeqRef = useRef(0);
+  /**
+   * Once a userId is confirmed eligible (ageGateRequired === false) — either by
+   * the initial profile fetch or by the user successfully submitting the DOB form
+   * — store it here so that subsequent effect re-runs triggered by token refreshes
+   * or other auth events don't reset the gate and ask again.
+   *
+   * Stored per-userId so a sign-out → sign-in as a different user forces a fresh
+   * check for the new account.
+   */
+  const verifiedUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (sessionLoading) return;
-
-    // Transition to loading immediately so protected content is never briefly shown.
-    setGateState('loading');
 
     if (!isAuthed || !userId) {
       setGateState('clear');
       return;
     }
+
+    // Already confirmed eligible for this user in this session — skip the
+    // network round-trip and stay clear without flashing a loading spinner.
+    if (verifiedUserIdRef.current === userId) {
+      setGateState('clear');
+      return;
+    }
+
+    // Transition to loading immediately so protected content is never briefly shown.
+    setGateState('loading');
 
     const seq = ++checkSeqRef.current;
     let alive = true;
@@ -71,7 +88,9 @@ export function AgeGate({ children }: PropsWithChildren) {
         }
 
         // Only explicit false clears the gate — undefined/null/true all block (fail closed).
-        setGateState((res.data as any).ageGateRequired === false ? 'clear' : 'blocked');
+        const eligible = (res.data as any).ageGateRequired === false;
+        if (eligible) verifiedUserIdRef.current = userId;
+        setGateState(eligible ? 'clear' : 'blocked');
       } catch {
         if (!alive || checkSeqRef.current !== seq) return;
         // Fail closed on any unexpected error (network, parse, etc.).
@@ -99,7 +118,9 @@ export function AgeGate({ children }: PropsWithChildren) {
           const res = await getMyProfile();
           if (checkSeqRef.current !== seq) return;
           if (!res.ok || !res.data) { setGateState('error'); return; }
-          setGateState((res.data as any).ageGateRequired === false ? 'clear' : 'blocked');
+          const eligible = (res.data as any).ageGateRequired === false;
+          if (eligible) verifiedUserIdRef.current = userId;
+          setGateState(eligible ? 'clear' : 'blocked');
         })();
       }} />
     );
@@ -108,7 +129,12 @@ export function AgeGate({ children }: PropsWithChildren) {
   if (gateState === 'blocked') {
     return (
       <AgeGateScreen
-        onVerified={() => setGateState('clear')}
+        onVerified={() => {
+          // Mark this user as verified so any subsequent effect re-runs caused
+          // by token refreshes or auth events don't re-block them.
+          verifiedUserIdRef.current = userId;
+          setGateState('clear');
+        }}
       />
     );
   }

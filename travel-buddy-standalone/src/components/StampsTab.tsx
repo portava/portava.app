@@ -6,6 +6,7 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { useRouter } from 'expo-router';
 import { ChevronRight } from 'lucide-react-native';
 import type { PassportStamp } from '../types/models.ts';
 import type { PassportStampNew } from '../services/passportStamps.ts';
@@ -42,7 +43,9 @@ function matchesCategory(stamp: PassportStampNew, cat: StampCategory): boolean {
   if (cat === 'location') {
     return (
       // stamp_type values: 'location' (v2) or legacy 'city'/'neighborhood'/'check_in'
-      ['location', 'city', 'neighborhood', 'check_in'].includes(sType) ||
+      // 'place_contributor' stamps are awarded at a specific place and therefore
+      // belong in the location category.
+      ['location', 'city', 'neighborhood', 'check_in', 'place_contributor'].includes(sType) ||
       definitionCat === 'location'
     );
   }
@@ -123,6 +126,7 @@ export function StampsTab({
   // External mode: parent owns fetching/pagination; this tab is render-only.
   const external = data !== undefined;
   // All hooks must be declared before any early return (Rules of Hooks).
+  const router = useRouter();
   const { blockedIds, blockerIds } = useBlockedIds();
   const { isEnabled: isFlagEnabled } = useFeatureFlags();
   const [allStamps, setAllStamps]     = useState<PassportStampNew[]>([]);
@@ -338,10 +342,26 @@ export function StampsTab({
       {featured ? (() => {
         const legacy = toLegacy(featured);
         const location = [featured.city, featured.country].filter(Boolean).join(', ');
+        // place_contributor stamps tap through to the Living Destination Page;
+        // all other stamps open the detail modal.  The place ID lives on the
+        // top-level placeId field of PassportStampNew — not in metadata.
+        const isPlaceContributor = featured.stampType === 'place_contributor';
+        const placeContributorId = isPlaceContributor ? (featured.placeId ?? undefined) : undefined;
+        // Use titleOverride as the place name hint when set, otherwise fall back
+        // to the city field which the award worker stamps at earn time.
+        const placeContributorName = isPlaceContributor
+          ? (featured.titleOverride ?? featured.city ?? undefined)
+          : undefined;
         return (
           <Pressable
             style={styles.featured}
-            onPress={() => setSelected(featured)}
+            onPress={() => {
+              if (isPlaceContributor && placeContributorId) {
+                router.push(`/place/${placeContributorId}` as any);
+              } else {
+                setSelected(featured);
+              }
+            }}
             accessibilityRole="button"
             accessibilityLabel={`Most recent stamp: ${legacy.label}`}
           >
@@ -354,7 +374,9 @@ export function StampsTab({
             <View style={styles.featuredInfo}>
               <Text style={styles.featuredKicker}>MOST RECENT</Text>
               <Text style={styles.featuredName} numberOfLines={1}>{legacy.label}</Text>
-              {location ? (
+              {isPlaceContributor && placeContributorName ? (
+                <Text style={styles.featuredMeta} numberOfLines={1}>📍 {placeContributorName}</Text>
+              ) : location ? (
                 <Text style={styles.featuredMeta} numberOfLines={1}>{location}</Text>
               ) : null}
               <Text style={styles.featuredDate}>
@@ -366,14 +388,22 @@ export function StampsTab({
         );
       })() : null}
 
-      {/* Stamp grid */}
+      {/* Stamp grid — place_contributor stamps navigate directly to the place
+          page; all other stamps open the detail modal. */}
       <StampGrid
         stamps={gridStamps}
         loading={effLoading}
         error={effError}
         isOwner={isOwner}
         onRetry={external ? (onRetry ?? (() => {})) : load}
-        onStampPress={setSelected}
+        onStampPress={(s) => {
+          const pid = s.stampType === 'place_contributor' ? (s.placeId ?? undefined) : undefined;
+          if (pid) {
+            router.push(`/place/${pid}` as any);
+          } else {
+            setSelected(s);
+          }
+        }}
         emptyTitle={emptyTitle}
         emptySub={emptySub}
       />
