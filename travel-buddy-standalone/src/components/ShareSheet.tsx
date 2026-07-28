@@ -17,7 +17,7 @@
  * The parent (PostEngagementBar) calls recordShare(postId, target) via
  * onShareSuccess so the correct target is always persisted.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -45,12 +45,15 @@ import {
   Users,
   PlusCircle,
   X,
+  Search,
 } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { color, space, radius, shadow } from '../theme/tokens.ts';
-import { getMyThreads, sendMessage } from '../services/messaging.ts';
+import { getMyThreads, sendMessage, openDirectThread } from '../services/messaging.ts';
 import type { ThreadSummary } from '../services/messaging.ts';
 import { getPostById } from '../services/posts.ts';
+import { searchUsers } from '../services/follows.ts';
+import type { TravelerSearchResult } from '../services/follows.ts';
 
 export type ShareTarget = 'external' | 'copy_link' | 'dm' | 'group_chat' | 'trip_crew' | 'circle';
 
@@ -93,12 +96,25 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
   const [sending, setSending] = useState(false);
   const [preview, setPreview] = useState<PostPreview | null>(null);
 
+  // Thread search
+  const [threadSearch, setThreadSearch] = useState('');
+  const [userResults, setUserResults] = useState<TravelerSearchResult[]>([]);
+  const [searchingUsers, setSearchingUsers] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Reset + hydrate whenever the sheet opens.
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      setThreadSearch('');
+      setUserResults([]);
+      return;
+    }
     setMode('menu');
     setSelectedId(null);
     setCaption('');
+    setThreadSearch('');
+    setUserResults([]);
     setSending(false);
     setPreview(null);
     // Fetch a lightweight preview of the post so the sent card is rich and real.
@@ -124,6 +140,9 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
 
   const openPicker = useCallback(() => {
     setMode('picker');
+    setThreadSearch('');
+    setUserResults([]);
+    setSelectedId(null);
     setLoadingThreads(true);
     getMyThreads()
       .then((res) => {
@@ -132,6 +151,76 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
       .catch(() => {})
       .finally(() => setLoadingThreads(false));
   }, []);
+
+  const handleSearchChange = useCallback((text: string) => {
+    setThreadSearch(text);
+    setSelectedId(null);
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    if (!text.trim()) {
+      setUserResults([]);
+      setSearchingUsers(false);
+      return;
+    }
+
+    debounceRef.current = setTimeout(async () => {
+      setSearchingUsers(true);
+      try {
+        const res = await searchUsers(text.trim(), 10);
+        if (res.ok && res.data) {
+          setUserResults(res.data);
+        } else {
+          setUserResults([]);
+        }
+      } catch {
+        setUserResults([]);
+      } finally {
+        setSearchingUsers(false);
+      }
+    }, 350);
+  }, []);
+
+  const handleUserResultPress = useCallback(async (user: TravelerSearchResult) => {
+    setSending(true);
+    try {
+      const threadRes = await openDirectThread(user.id);
+      if (!threadRes.ok || !threadRes.data) {
+        Alert.alert('Could not send', 'Could not open a chat with this user. Please try again.');
+        return;
+      }
+      const threadId = threadRes.data.threadId;
+      const payload = {
+        postId,
+        permalink: postPermalink(postId),
+        authorName: preview?.authorName,
+        authorHandle: preview?.authorHandle,
+        authorAvatar: preview?.authorAvatar ?? null,
+        snippet: preview?.snippet,
+        thumbnail: preview?.thumbnail ?? null,
+        city: preview?.city ?? null,
+        country: preview?.country ?? null,
+        likeCount: preview?.likeCount,
+        commentCount: preview?.commentCount,
+        caption: caption.trim() || undefined,
+      };
+      const msgRes = await sendMessage(threadId, JSON.stringify(payload), {
+        msgType: 'system',
+        subtype: 'post_card',
+      });
+      if (msgRes.ok) {
+        onShareSuccess?.('dm');
+        onClose();
+        Alert.alert('Sent!', 'Post shared to your chat.');
+      } else {
+        Alert.alert('Could not send', 'Something went wrong. Please try again.');
+      }
+    } catch {
+      Alert.alert('Could not send', 'Something went wrong. Please try again.');
+    } finally {
+      setSending(false);
+    }
+  }, [postId, preview, caption, onClose, onShareSuccess]);
 
   const handleNativeShare = useCallback(async () => {
     onClose();
@@ -282,48 +371,139 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
 
             <Text style={s.chooseLabel}>CHOOSE A CHAT</Text>
 
-            <Pressable
-              style={s.newThreadRow}
-              onPress={() => {
-                onClose();
-                router.push('/(tabs)/messages' as any);
-              }}
-            >
-              <View style={s.newThreadIcon}>
-                <PlusCircle size={16} color={color.signal} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={s.newThreadLabel}>New Telegraph</Text>
-                <Text style={s.newThreadSub}>Start a new conversation</Text>
-              </View>
-            </Pressable>
-
-            {loadingThreads ? (
-              <View style={s.loadingRow}>
-                <ActivityIndicator size="small" color={color.signal} />
-              </View>
-            ) : threads.length === 0 ? (
-              <View style={s.loadingRow}>
-                <MessageCircle size={24} color={color.faint} />
-                <Text style={s.emptyLabel}>No existing chats yet.</Text>
-              </View>
-            ) : (
-              <FlatList
-                data={threads}
-                keyExtractor={(t) => t.id}
-                style={s.list}
-                renderItem={({ item: thread }) => (
-                  <ThreadRow
-                    thread={thread}
-                    selected={selectedId === thread.id}
-                    onPress={() => setSelectedId(thread.id)}
-                  />
-                )}
-                ItemSeparatorComponent={() => (
-                  <View style={{ height: 1, backgroundColor: color.haze }} />
-                )}
+            {/* Search input */}
+            <View style={s.searchRow}>
+              <Search size={14} color={color.mute} style={{ flexShrink: 0 }} />
+              <TextInput
+                style={s.searchInput}
+                placeholder="Search chats or find someone…"
+                placeholderTextColor={color.faint}
+                value={threadSearch}
+                onChangeText={handleSearchChange}
+                autoCorrect={false}
+                autoCapitalize="none"
+                returnKeyType="search"
               />
+              {threadSearch.length > 0 && (
+                <Pressable onPress={() => handleSearchChange('')} hitSlop={8}>
+                  <X size={13} color={color.mute} />
+                </Pressable>
+              )}
+            </View>
+
+            {/* New Telegraph — only when not in search mode */}
+            {!threadSearch.trim() && (
+              <Pressable
+                style={s.newThreadRow}
+                onPress={() => {
+                  onClose();
+                  router.push('/(tabs)/messages' as any);
+                }}
+              >
+                <View style={s.newThreadIcon}>
+                  <PlusCircle size={16} color={color.signal} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.newThreadLabel}>New Telegraph</Text>
+                  <Text style={s.newThreadSub}>Start a new conversation</Text>
+                </View>
+              </Pressable>
             )}
+
+            {(() => {
+              const isSearchActive = threadSearch.trim().length > 0;
+              const filteredThreads = isSearchActive
+                ? threads.filter((thread) => {
+                    const q = threadSearch.toLowerCase();
+                    if (thread.title?.toLowerCase().includes(q)) return true;
+                    return thread.otherMembers.some(
+                      (m) =>
+                        m.name?.toLowerCase().includes(q) ||
+                        m.handle?.toLowerCase().includes(q),
+                    );
+                  })
+                : threads;
+              const showUserResults = isSearchActive && filteredThreads.length === 0;
+
+              if (loadingThreads) {
+                return (
+                  <View style={s.loadingRow}>
+                    <ActivityIndicator size="small" color={color.signal} />
+                  </View>
+                );
+              }
+
+              if (showUserResults) {
+                if (searchingUsers) {
+                  return (
+                    <View style={s.loadingRow}>
+                      <ActivityIndicator size="small" color={color.signal} />
+                    </View>
+                  );
+                }
+                if (userResults.length > 0) {
+                  return (
+                    <FlatList
+                      data={userResults}
+                      keyExtractor={(u) => u.id}
+                      style={s.list}
+                      renderItem={({ item: user }) => (
+                        <UserResultRow user={user} onPress={() => handleUserResultPress(user)} />
+                      )}
+                      ItemSeparatorComponent={() => (
+                        <View style={{ height: 1, backgroundColor: color.haze }} />
+                      )}
+                    />
+                  );
+                }
+                return (
+                  <View style={s.loadingRow}>
+                    <MessageCircle size={24} color={color.faint} />
+                    <Text style={s.emptyLabel}>No users found for "{threadSearch}".</Text>
+                  </View>
+                );
+              }
+
+              if (filteredThreads.length === 0 && isSearchActive) {
+                return searchingUsers ? (
+                  <View style={s.loadingRow}>
+                    <ActivityIndicator size="small" color={color.signal} />
+                  </View>
+                ) : (
+                  <View style={s.loadingRow}>
+                    <MessageCircle size={24} color={color.faint} />
+                    <Text style={s.emptyLabel}>No chats match "{threadSearch}".</Text>
+                  </View>
+                );
+              }
+
+              if (filteredThreads.length === 0) {
+                return (
+                  <View style={s.loadingRow}>
+                    <MessageCircle size={24} color={color.faint} />
+                    <Text style={s.emptyLabel}>No existing chats yet.</Text>
+                  </View>
+                );
+              }
+
+              return (
+                <FlatList
+                  data={filteredThreads}
+                  keyExtractor={(th) => th.id}
+                  style={s.list}
+                  renderItem={({ item: thread }) => (
+                    <ThreadRow
+                      thread={thread}
+                      selected={selectedId === thread.id}
+                      onPress={() => setSelectedId(thread.id)}
+                    />
+                  )}
+                  ItemSeparatorComponent={() => (
+                    <View style={{ height: 1, backgroundColor: color.haze }} />
+                  )}
+                />
+              );
+            })()}
 
             <Pressable
               style={[s.sendBtn, (!selectedId || sending) && s.sendBtnDisabled]}
@@ -393,6 +573,37 @@ function ThreadRow({
           <Text style={s.checkText}>✓</Text>
         </View>
       )}
+    </Pressable>
+  );
+}
+
+function UserResultRow({
+  user,
+  onPress,
+}: {
+  user: TravelerSearchResult;
+  onPress: () => void;
+}) {
+  const handle = user.username ? `@${user.username}` : null;
+  const displayName = user.displayName ?? handle ?? 'Unknown';
+  const initials = displayName[0]?.toUpperCase() ?? '?';
+
+  return (
+    <Pressable style={s.threadRow} onPress={onPress}>
+      {user.avatarUrl ? (
+        <Image source={{ uri: user.avatarUrl }} style={s.avatar} />
+      ) : (
+        <View style={s.avatarFallback}>
+          <Text style={s.avatarInitial}>{initials}</Text>
+        </View>
+      )}
+      <View style={{ flex: 1 }}>
+        <Text style={s.threadName} numberOfLines={1}>{displayName}</Text>
+        {handle ? <Text style={s.threadSub} numberOfLines={1}>{handle}</Text> : null}
+      </View>
+      <View style={s.startChatBadge}>
+        <Text style={s.startChatText}>Send</Text>
+      </View>
     </Pressable>
   );
 }
@@ -597,4 +808,33 @@ const s = StyleSheet.create({
   },
   sendBtnDisabled: { opacity: 0.45 },
   sendLabel: { fontSize: 15, fontWeight: '700', color: color.onInk },
+
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    backgroundColor: color.paper,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: color.haze,
+    paddingHorizontal: space.md,
+    paddingVertical: 8,
+    marginHorizontal: space.lg,
+    marginBottom: space.sm,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: color.ink,
+    padding: 0,
+  },
+  startChatBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: color.signal + '15',
+    borderWidth: 1,
+    borderColor: color.signal + '40',
+  },
+  startChatText: { fontSize: 12, fontWeight: '700', color: color.signal },
 });

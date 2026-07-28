@@ -329,9 +329,17 @@ export async function getPublicPassport(username: string): Promise<ProfileResult
     return { ok: false, data: null, errorKind: 'config_error' };
   }
 
+  // Auth is optional server-side (unauthenticated callers get a fully-anonymous
+  // viewer), but WHEN a session exists we must attach it — otherwise the server
+  // can never resolve viewerId and every relationship flag (is_friend,
+  // friend_request_pending) silently comes back false even when a real pending
+  // request exists. Unlike getMyProfile(), a missing token here is not fatal.
+  const token = await freshToken();
+
   try {
     const res = await fetch(
       `${apiBase()}/api/users/${encodeURIComponent(username)}/passport`,
+      token ? { headers: { Authorization: `Bearer ${token}` } } : undefined,
     );
     if (res.status === 404) return { ok: false, data: null, errorKind: 'not_found', message: 'User not found' };
     if (!res.ok) {
