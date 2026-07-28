@@ -100,9 +100,10 @@ function makeVideoMedia(overrides: Record<string, any> = {}): Record<string, any
 // ── Fake client factory ───────────────────────────────────────────────────────
 
 interface FakeState {
-  posts?:       Array<Record<string, any>>;
-  userFollows?: Array<{ follower_id: string; following_id: string }>;
+  posts?:        Array<Record<string, any>>;
+  userFollows?:  Array<{ follower_id: string; following_id: string }>;
   featureFlags?: Array<{ flag: string; enabled: boolean }>;
+  profiles?:     Array<Record<string, any>>;
 }
 
 function makeClient(state: FakeState = {}) {
@@ -137,7 +138,7 @@ function makeClient(state: FakeState = {}) {
     hashtags:                   [],
     tags:                       [],
     mention_tags:               [],
-    profiles:                   [],
+    profiles:                   state.profiles ?? [],
     user_location_state:        [{ user_id: CALLER_ID, city: "Manila", country: "Philippines" }],
     trust_profiles:             [],
     user_preference_profiles:   [],
@@ -324,6 +325,73 @@ describe("GET /api/pulse?tab=crew — user follows nobody", async () => {
     const body = await r.json() as any;
     assert.ok(Array.isArray(body.posts), "response.posts must be an array");
     assert.equal(body.posts.length, 0, "crew feed must be empty when no one is followed");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// D: Pulse crew tab — publisher-boost flag ON → @Portava posts survive ranking
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("GET /api/pulse?tab=crew — PORTAVA_PUBLISHER_BOOST_ENABLED=true", async () => {
+  let url: string;
+  let close: () => Promise<void>;
+
+  const portavaPostBoost = makePost({ author_id: PORTAVA_ID, content: "Boosted Portava post" });
+
+  before(async () => {
+    invalidateFlagsCache();
+    const app = makeApp();
+    const { default: pulseRouter } = await import("../routes/pulse.js");
+    app.use("/api", pulseRouter);
+    ({ url, close } = await startServer(app));
+
+    _setTestClient(
+      makeClient({
+        posts:       [portavaPostBoost],
+        userFollows: [{ follower_id: CALLER_ID, following_id: PORTAVA_ID }],
+        featureFlags: [
+          { flag: "COMPASS_ENABLED",                 enabled: true  },
+          { flag: "MEDIA_FOLLOWING_ENABLED",         enabled: true  },
+          { flag: "MEDIA_FOR_YOU_ENABLED",           enabled: true  },
+          { flag: "PORTAVA_PUBLISHER_BOOST_ENABLED", enabled: true  },
+        ],
+        // profiles table must include the @portava row so the boost block can
+        // resolve the account ID via .eq("username","portava").maybeSingle().
+        profiles: [
+          {
+            id:             PORTAVA_ID,
+            username:       "portava",
+            full_name:      "Portava",
+            avatar_url:     null,
+            verified:       true,
+            is_official:    true,
+            is_private:     false,
+            bio:            "The official Portava account",
+            account_status: "active",
+          },
+        ],
+      }),
+      true,
+    );
+  });
+
+  after(async () => {
+    await close();
+    _setTestClient(null as any, false);
+  });
+
+  it("returns at least one @Portava post even when the publisher-boost flag is enabled", async () => {
+    const r = await fetch(`${url}/api/pulse?tab=crew`, {
+      headers: { Authorization: "Bearer caller-token" },
+    });
+    assert.equal(r.status, 200, `Expected 200, got ${r.status}`);
+    const body = await r.json() as any;
+    assert.ok(Array.isArray(body.posts), "response.posts must be an array");
+    const portavaPosts = (body.posts as any[]).filter((p: any) => p.authorId === PORTAVA_ID);
+    assert.ok(
+      portavaPosts.length >= 1,
+      `Expected at least 1 @Portava post with boost ON, got ${portavaPosts.length}. authorIds=${JSON.stringify((body.posts as any[]).map((p: any) => p.authorId))}`,
+    );
   });
 });
 
