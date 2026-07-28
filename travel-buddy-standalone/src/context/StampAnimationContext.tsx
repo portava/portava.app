@@ -369,6 +369,7 @@ export function StampAnimationProvider({ children }: PropsWithChildren) {
       // ── Fire haptic + onImpact at the moment of impact ────────────────────
       setTimeout(fireImpact, TRAVEL_MS);
     },
+    // Shared values are stable Reanimated refs — no deps needed beyond the flag.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [prefersReducedMotion],
   );
