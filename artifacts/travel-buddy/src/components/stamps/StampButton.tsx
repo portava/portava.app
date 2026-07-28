@@ -1,13 +1,28 @@
 /**
  * StampButton — Portava's primary stamp interaction.
  *
- * Composes:
- *   - StampIcon  (rubber-stamp glyph, idle/active states)
- *   - PortavaInkStamp overlay (passport-seal SVG, absolutely positioned)
- *   - useStampAnimation (Reanimated sequence)
- *   - useStamp (optimistic API call + rollback)
+ * Visual architecture (post Batch-7 animation upgrade)
+ * ─────────────────────────────────────────────────────
+ *   - StampIcon renders the rubber-stamp glyph in idle/active state.
+ *   - The heavy animation (stamp travels to content center, shadow,
+ *     haptic at impact, ink impression) is owned by StampAnimationProvider
+ *     in _layout.tsx.  StampButton only supplies the launch coordinates
+ *     and receives `onImpact` to flip its local visual state.
+ *   - useStampAnimation provides a subtle local press-bounce and count pop.
  *
- * Usage:
+ * State separation
+ * ─────────────────
+ *   `visualIsStamped` / `visualCount` are DISPLAY state — they lag the API
+ *   by ~TRAVEL_MS (≈400 ms) so the hollow→filled flip happens exactly at
+ *   the stamp impact, not on press-down.
+ *
+ *   `useStamp` manages the optimistic API call + rollback as before.  When
+ *   `useStamp`'s resolved state differs from the optimistic prediction
+ *   (i.e. a rollback occurred), the correction is applied in `onComplete`
+ *   so it always lands AFTER the animation finishes.
+ *
+ * Usage
+ * ──────
  *   <StampButton
  *     entityType="post"
  *     entityId={post.id}
@@ -16,28 +31,29 @@
  *     theme="Beach"
  *   />
  *
- * The ink-stamp overlay appears centered over the button itself. To render
- * the overlay over a larger parent area, wrap both the content and
- * `<PortavaInkStamp animatedStyle={overlayStyle} ... />` at the parent level
- * and use the exported `useStampAnimation` hook directly.
+ * Double-tap
+ * ───────────
+ *   For double-tap-to-stamp on a content area, use DoubleTapStampable.
+ *   It calls triggerStamp() directly from the context with the tap
+ *   coordinates; pair it with a shared useStamp instance.
  */
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
   Pressable,
   StyleSheet,
-  Platform,
+  Dimensions,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
 import Animated, { type AnimatedStyle } from 'react-native-reanimated';
-import * as Haptics from 'expo-haptics';
 import { color, layout, type as typeTokens } from '../../theme/tokens.ts';
 import { StampIcon } from './StampIcon.tsx';
-import { PortavaInkStamp, type StampTheme } from './PortavaInkStamp.tsx';
 import { useStampAnimation } from '../../hooks/useStampAnimation.ts';
 import { useStamp } from '../../hooks/useStamp.ts';
+import { useStampAnimationContext } from '../../context/StampAnimationContext.tsx';
+import type { StampTheme } from './PortavaInkStamp.tsx';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -49,8 +65,8 @@ export interface StampButtonProps {
   initialCount: number;
   initialIsStamped: boolean;
   /**
-   * Thematic variant for the ink-stamp overlay seal.
-   * Controls the center icon and ring text.
+   * Thematic variant passed through to the ink-stamp overlay seal rendered by
+   * StampAnimationProvider.  Controls the center icon and ring text.
    */
   theme?: StampTheme;
   /** Size of the StampIcon glyph in px (default 22). */
@@ -72,61 +88,130 @@ export function StampButton({
   iconSize = 22,
   style,
 }: StampButtonProps) {
-  const { count, isStamped, isLoading, toggle } = useStamp({
+  // ── API state (optimistic + rollback via useStamp) ───────────────────────
+  const { count: apiCount, isStamped: apiIsStamped, isLoading, toggle } = useStamp({
     entityType,
     entityId,
     initialCount,
     initialIsStamped,
   });
 
-  const { buttonStyle, overlayStyle, countStyle, playStamp, playUnstamp } =
-    useStampAnimation();
+  // ── Visual state (delayed — flips at stamp impact, not on press) ─────────
+  const [visualIsStamped, setVisualIsStamped] = useState(initialIsStamped);
+  const [visualCount,     setVisualCount    ] = useState(initialCount);
 
-  const handlePress = useCallback(() => {
-    if (isLoading) return;
+  // Keep a ref to the latest API state so `onComplete` can apply rollbacks
+  // without stale closure values.
+  const apiStateRef = useRef({ isStamped: apiIsStamped, count: apiCount });
+  useEffect(() => {
+    apiStateRef.current = { isStamped: apiIsStamped, count: apiCount };
+  }, [apiIsStamped, apiCount]);
 
-    if (!isStamped) {
-      playStamp(() => {
-        if (Platform.OS !== 'web') {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-        }
-      });
-    } else {
-      playUnstamp();
+  // ── Animation guard ───────────────────────────────────────────────────────
+  /** True while the screen-level animation is in flight. */
+  const animatingRef = useRef(false);
+
+  // Sync visual ← API whenever the API state changes and no animation is live.
+  // This handles external state updates (e.g. server-push, prop refresh).
+  const prevApiIsStamped = useRef(apiIsStamped);
+  const prevApiCount     = useRef(apiCount);
+  useEffect(() => {
+    if (
+      (apiIsStamped !== prevApiIsStamped.current || apiCount !== prevApiCount.current) &&
+      !animatingRef.current
+    ) {
+      setVisualIsStamped(apiIsStamped);
+      setVisualCount(apiCount);
     }
+    prevApiIsStamped.current = apiIsStamped;
+    prevApiCount.current     = apiCount;
+  }, [apiIsStamped, apiCount]);
 
-    // Fire the API call concurrently with the animation — no need to await.
-    toggle();
-  }, [isLoading, isStamped, playStamp, playUnstamp, toggle]);
+  // ── Local button animation (press bounce + count pop) ────────────────────
+  const { buttonStyle, countStyle, playStamp, playUnstamp } = useStampAnimation();
+
+  // ── Screen-level animation (traveling stamp) ──────────────────────────────
+  const { triggerStamp, isAnimating } = useStampAnimationContext();
+
+  // ── Wrapper ref for position measurement ─────────────────────────────────
+  const wrapperRef = useRef<View>(null);
+
+  // ── Press handler ─────────────────────────────────────────────────────────
+  const handlePress = useCallback(() => {
+    if (isLoading || animatingRef.current || isAnimating) return;
+
+    const wasStamped  = visualIsStamped;
+    const nextStamped = !wasStamped;
+
+    // Play local press bounce immediately.
+    nextStamped ? playStamp() : playUnstamp();
+
+    // Fire the API call concurrently — useStamp manages rollback.
+    void toggle();
+
+    // Measure button center in screen coordinates, then launch animation.
+    wrapperRef.current?.measure((_x, _y, width, height, pageX, pageY) => {
+      animatingRef.current = true;
+
+      const { width: W, height: H } = Dimensions.get('window');
+      const launchX  = pageX + width  / 2;
+      const launchY  = pageY + height / 2;
+
+      triggerStamp({
+        launchX,
+        launchY,
+        contentX: W / 2,
+        contentY: H * 0.42,
+        theme,
+
+        onImpact: () => {
+          // Visual state flips HERE — at the moment of stamp impact.
+          setVisualIsStamped(nextStamped);
+          setVisualCount(prev => nextStamped ? prev + 1 : Math.max(0, prev - 1));
+        },
+
+        onComplete: () => {
+          animatingRef.current = false;
+          // Apply API truth (handles rollback that arrived during animation).
+          const { isStamped: srv, count: srvCount } = apiStateRef.current;
+          setVisualIsStamped(srv);
+          setVisualCount(srvCount);
+        },
+      });
+    });
+  }, [
+    isLoading,
+    isAnimating,
+    visualIsStamped,
+    toggle,
+    playStamp,
+    playUnstamp,
+    triggerStamp,
+    theme,
+  ]);
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <View style={[s.wrapper, style]}>
-      {/* Ink-stamp overlay — positioned over the button center */}
-      <PortavaInkStamp
-        animatedStyle={overlayStyle}
-        theme={theme}
-        size={120}
-        style={s.overlay}
-      />
-
+    <View ref={wrapperRef} style={[s.wrapper, style]}>
       <Pressable
         onPress={handlePress}
         hitSlop={layout.hitSlop}
         accessibilityRole="button"
-        accessibilityLabel={isStamped ? 'Remove stamp' : 'Stamp'}
-        accessibilityState={{ selected: isStamped }}
-        disabled={isLoading}
+        accessibilityLabel={visualIsStamped ? 'Remove stamp' : 'Stamp'}
+        accessibilityState={{ selected: visualIsStamped }}
+        disabled={isLoading || isAnimating}
       >
         <Animated.View style={[s.row, buttonStyle as AnimatedStyle<ViewStyle>]}>
-          <StampIcon size={iconSize} active={isStamped} />
+          <StampIcon size={iconSize} active={visualIsStamped} />
 
-          {count > 0 && (
+          {visualCount > 0 && (
             <Animated.View style={countStyle as AnimatedStyle<ViewStyle>}>
               <Text
-                style={[s.count, isStamped && s.countActive]}
+                style={[s.count, visualIsStamped && s.countActive]}
                 numberOfLines={1}
               >
-                {count}
+                {visualCount}
               </Text>
             </Animated.View>
           )}
@@ -144,11 +229,6 @@ const s = StyleSheet.create({
   wrapper: {
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  overlay: {
-    position: 'absolute',
-    alignSelf: 'center',
-    // Pointer events are disabled inside PortavaInkStamp itself.
   },
   row: {
     flexDirection: 'row',

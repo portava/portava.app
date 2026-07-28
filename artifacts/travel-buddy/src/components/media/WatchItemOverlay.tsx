@@ -21,7 +21,7 @@
  * Cinematic gradient scrim behind the content for readability.
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import Animated from 'react-native-reanimated';
 import {
   View,
@@ -37,7 +37,6 @@ import { recordMediaShare } from '../../services/mediaInteractions.ts';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import * as Haptics from 'expo-haptics';
 import {
   MessageCircle,
   Bookmark,
@@ -61,8 +60,8 @@ import { useFollow } from '../../hooks/useFollow.ts';
 import type { MediaFeedItem } from '../../types/media.ts';
 import { useStamp } from '../../hooks/useStamp.ts';
 import { useStampAnimation } from '../../hooks/useStampAnimation.ts';
+import { useStampAnimationContext } from '../../context/StampAnimationContext.tsx';
 import { StampIcon } from '../stamps/StampIcon.tsx';
-import { PortavaInkStamp } from '../stamps/PortavaInkStamp.tsx';
 import { VerifiedLocationStamp } from './VerifiedLocationStamp.tsx';
 import { PlaceQuickActions } from '../PlaceQuickActions.tsx';
 
@@ -181,19 +180,67 @@ export function WatchItemOverlay({
     initialIsStamped: item.isStampedByViewer ?? item.likedByMe ?? false,
   });
 
-  const { buttonStyle, overlayStyle, playStamp, playUnstamp } = useStampAnimation();
+  const { buttonStyle, playStamp, playUnstamp } = useStampAnimation();
+  const { triggerStamp, isAnimating } = useStampAnimationContext();
+
+  // ── Delayed visual state (flips at stamp impact, not on press) ───────────
+  const [visualIsStamped, setVisualIsStamped] = useState(
+    item.isStampedByViewer ?? item.likedByMe ?? false,
+  );
+  const [visualCount, setVisualCount] = useState(
+    item.stampCount ?? item.likeCount ?? 0,
+  );
+  const apiStateRef   = useRef({ isStamped, count: stampCount });
+  const animatingRef  = useRef(false);
+  const heartGroupRef = useRef<View>(null);
+
+  useEffect(() => {
+    apiStateRef.current = { isStamped, count: stampCount };
+  }, [isStamped, stampCount]);
+
+  const prevApiIsStamped = useRef(isStamped);
+  const prevApiCount     = useRef(stampCount);
+  useEffect(() => {
+    if (
+      (isStamped !== prevApiIsStamped.current || stampCount !== prevApiCount.current) &&
+      !animatingRef.current
+    ) {
+      setVisualIsStamped(isStamped);
+      setVisualCount(stampCount);
+    }
+    prevApiIsStamped.current = isStamped;
+    prevApiCount.current     = stampCount;
+  }, [isStamped, stampCount]);
 
   const handleStampPress = useCallback(() => {
-    if (stampLoading) return;
-    if (!isStamped) {
-      playStamp(() => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    if (stampLoading || animatingRef.current || isAnimating) return;
+    const wasStamped  = visualIsStamped;
+    const nextStamped = !wasStamped;
+    nextStamped ? playStamp() : playUnstamp();
+    void toggleStamp();
+
+    heartGroupRef.current?.measure((_x, _y, width, height, pageX, pageY) => {
+      animatingRef.current = true;
+      const { width: W, height: H } = Dimensions.get('window');
+      triggerStamp({
+        launchX: pageX + width / 2,
+        launchY: pageY + height / 2,
+        contentX: W / 2,
+        contentY: H / 2,
+        theme: 'Default',
+        onImpact: () => {
+          setVisualIsStamped(nextStamped);
+          setVisualCount(prev => nextStamped ? prev + 1 : Math.max(0, prev - 1));
+        },
+        onComplete: () => {
+          animatingRef.current = false;
+          const { isStamped: srv, count: srvCount } = apiStateRef.current;
+          setVisualIsStamped(srv);
+          setVisualCount(srvCount);
+        },
       });
-    } else {
-      playUnstamp();
-    }
-    toggleStamp();
-  }, [stampLoading, isStamped, playStamp, playUnstamp, toggleStamp]);
+    });
+  }, [stampLoading, isAnimating, visualIsStamped, playStamp, playUnstamp, toggleStamp, triggerStamp]);
 
   const handleCreate = useCallback(() => {
     if (isGemsMode) {
@@ -399,14 +446,14 @@ export function WatchItemOverlay({
 
         {/* ── Right action column ──────────────────────────────────────── */}
         <View style={s.rightCol} pointerEvents="box-none">
-          {/* Stamp button — ink overlay appears over the full video frame */}
-          <View style={s.heartGroup}>
+          {/* Stamp button — traveling ink overlay launched from this position */}
+          <View ref={heartGroupRef} style={s.heartGroup}>
             <Animated.View style={buttonStyle as any}>
               <ActionBtn
-                icon={<StampIcon size={28} active={isStamped} />}
-                count={stampCount}
+                icon={<StampIcon size={28} active={visualIsStamped} />}
+                count={visualCount}
                 onPress={handleStampPress}
-                label={isStamped ? 'Unstamp' : 'Stamp'}
+                label={visualIsStamped ? 'Unstamp' : 'Stamp'}
               />
             </Animated.View>
             {/* Stamp-it count — shown when at least one viewer has Stamp It'd */}
@@ -453,13 +500,6 @@ export function WatchItemOverlay({
         </View>
       </View>
 
-      {/* ── Ink stamp overlay — centered over the full video frame ── */}
-      <PortavaInkStamp
-        animatedStyle={overlayStyle}
-        theme="Default"
-        size={220}
-        style={s.frameInkOverlay}
-      />
     </View>
   );
 }
@@ -634,16 +674,6 @@ const s = StyleSheet.create({
     textShadowColor: 'rgba(0,0,0,0.5)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
-  },
-  frameInkOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-    pointerEvents: 'none',
   },
   // Stamp action group (icon + stampItCount below)
   heartGroup: {

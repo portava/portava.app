@@ -34,6 +34,7 @@ import { CompassProvider } from '../src/context/CompassContext';
 import { color } from '../src/theme/tokens';
 import { NotificationToastProvider } from '../src/components/NotificationToast';
 import { StampEarnedToastProvider } from '../src/components/stamps/StampEarnedToast';
+import { StampAnimationProvider } from '../src/context/StampAnimationContext';
 import { setNotificationHandler, setNotificationChannelAsync } from '../src/lib/safeNotifications';
 import { BlockedIdsProvider } from '../src/context/BlockedIdsContext';
 import { CallProvider } from '../src/context/CallContext';
@@ -193,6 +194,7 @@ export default function RootLayout() {
               <PlanPickerControllerProvider>
                 <NotificationToastProvider>
                 <StampEarnedToastProvider>
+                  <StampAnimationProvider>
                   <RootCrashHandler>
                     <AccountStatusGate>
                       <AgeGate>
@@ -223,6 +225,7 @@ export default function RootLayout() {
                       </AgeGate>
                     </AccountStatusGate>
                   </RootCrashHandler>
+                  </StampAnimationProvider>
                 </StampEarnedToastProvider>
                 </NotificationToastProvider>
               </PlanPickerControllerProvider>
