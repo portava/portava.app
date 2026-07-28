@@ -35,15 +35,10 @@ export const withScope = (cb: (scope: {
   });
 };
 
-export const startTransaction = (_ctx: unknown) => ({ finish: () => {}, setTag: () => {} });
-export const getCurrentHub = () => ({ getScope: () => ({ setTag: () => {} }) });
-
 export const wrap = (component: unknown) => component;
 
 export const ReactNativeTracing = class {};
 export const ReactNavigationInstrumentation = class {};
-export const ErrorBoundary = ({ children }: { children: React.ReactNode }) => children;
-export const TouchEventBoundary = ({ children }: { children: React.ReactNode }) => children;
 
 export default {
   init,
@@ -55,11 +50,7 @@ export default {
   setExtra,
   setContext,
   withScope,
-  startTransaction,
-  getCurrentHub,
   wrap,
   ReactNativeTracing,
   ReactNavigationInstrumentation,
-  ErrorBoundary,
-  TouchEventBoundary,
 };
