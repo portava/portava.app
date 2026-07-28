@@ -136,19 +136,19 @@ describe('PlaceCard — today\'s hours', () => {
     expect(getByText(new RegExp(`${todayName}: 09:00`))).toBeTruthy();
   });
 
-  it('does not show "Hours not available" when a valid today entry exists', async () => {
+  it('does not show "Closed today" when a valid today entry exists', async () => {
     const place = makePlace({ openingHours: allDayHours });
     const { queryByText } = await render(<PlaceCard place={place} />);
-    expect(queryByText('Hours not available')).toBeNull();
+    expect(queryByText('Closed today')).toBeNull();
   });
 
-  it('renders "Hours not available" when openingHours is an empty array', async () => {
+  it('renders "Closed today" when openingHours is an empty array', async () => {
     const place = makePlace({ openingHours: [] });
     const { getByText } = await render(<PlaceCard place={place} />);
-    expect(getByText('Hours not available')).toBeTruthy();
+    expect(getByText('Closed today')).toBeTruthy();
   });
 
-  it('renders "Hours not available" when openingHours has no entry for today', async () => {
+  it('renders "Closed today" when openingHours has no entry for today', async () => {
     // Provide entries only for a day that is definitely NOT today.
     const today = new Date().getDay();
     const notToday = (today + 1) % 7;
@@ -156,13 +156,13 @@ describe('PlaceCard — today\'s hours', () => {
       openingHours: [{ dayOfWeek: notToday, open: '10:00', close: '20:00' }],
     });
     const { getByText } = await render(<PlaceCard place={place} />);
-    expect(getByText('Hours not available')).toBeTruthy();
+    expect(getByText('Closed today')).toBeTruthy();
   });
 
   it('does not render any hours row when openingHours is null', async () => {
     const place = makePlace({ openingHours: null });
     const { queryByText } = await render(<PlaceCard place={place} />);
-    expect(queryByText('Hours not available')).toBeNull();
+    expect(queryByText('Closed today')).toBeNull();
     // No formatted hours label either
     expect(queryByText(new RegExp(`${todayName}:`))).toBeNull();
   });

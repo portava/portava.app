@@ -162,6 +162,11 @@ export function PlaceCard({ place }: PlaceCardProps) {
         {/* Name */}
         <Text style={pc.name}>{place.name}</Text>
 
+        {/* Description */}
+        {place.description ? (
+          <Text style={pc.description}>{place.description}</Text>
+        ) : null}
+
         {/* Category chip + price level chip */}
         <View style={pc.chipRow}>
           <View style={pc.chip}>
@@ -194,7 +199,7 @@ export function PlaceCard({ place }: PlaceCardProps) {
         {place.openingHours && !todayHours && (
           <View style={pc.infoRow}>
             <Clock size={13} color={color.faint} />
-            <Text style={[pc.infoText, pc.infoTextNA]}>Hours not available</Text>
+            <Text style={[pc.infoText, pc.infoTextNA]}>Closed today</Text>
           </View>
         )}
 
@@ -219,19 +224,18 @@ export function PlaceCard({ place }: PlaceCardProps) {
           </View>
         )}
 
-        {/* Phone — tappable or "Phone not available" */}
-        <Pressable
-          style={pc.infoRow}
-          onPress={place.phone ? () => Linking.openURL(`tel:${place.phone}`).catch(() => {}) : undefined}
-          disabled={!place.phone}
-          accessibilityRole={place.phone ? 'button' : 'text'}
-          testID="place-card-phone"
-        >
-          <Phone size={13} color={place.phone ? color.deep : color.faint} />
-          <Text style={[pc.infoText, place.phone ? pc.infoTextLink : pc.infoTextNA]}>
-            {place.phone ?? 'Phone not available'}
-          </Text>
-        </Pressable>
+        {/* Phone — tappable tel: link; hidden when not available */}
+        {place.phone ? (
+          <Pressable
+            style={pc.infoRow}
+            onPress={() => Linking.openURL(`tel:${place.phone}`).catch(() => {})}
+            accessibilityRole="button"
+            testID="place-card-phone"
+          >
+            <Phone size={13} color={color.deep} />
+            <Text style={[pc.infoText, pc.infoTextLink]}>{place.phone}</Text>
+          </Pressable>
+        ) : null}
 
         {/* Website */}
         {place.website && (
@@ -396,6 +400,13 @@ const pc = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700',
     color: color.ink,
+    marginBottom: 2,
+  },
+  description: {
+    ...t.body,
+    fontSize: 14,
+    color: color.mute,
+    lineHeight: 20,
     marginBottom: 2,
   },
 

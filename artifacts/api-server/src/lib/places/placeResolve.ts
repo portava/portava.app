@@ -139,6 +139,9 @@ export interface CanonicalPlace {
   status: string;
   detailRoute: string;
 
+  // Description
+  description: string | null;
+
   // Images
   headerImageUrl: string | null;
   galleryImages: string[];
@@ -315,6 +318,8 @@ export function toCanonicalPlace(place: any, refs: any[]): CanonicalPlace {
     id: place.id,
     name: place.name,
     category: categoryFamily(place.primary_category),
+
+    description: toStr(place.description),
 
     coordinates: place.latitude != null && place.longitude != null
       ? { lat: place.latitude, lng: place.longitude } : null,

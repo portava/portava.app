@@ -24,6 +24,7 @@ import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { getCanonicalPlace } from '../../src/services/places';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 import { PlaceCard } from '../../src/components/place/PlaceCard';
+import { PlaceInfoSection } from '../../src/components/place/PlaceInfoSection';
 import { PlaceReportSheet } from '../../src/components/PlaceReportSheet';
 import { MapEntityActionRow } from '../../src/components/map/MapEntityActionRow';
 import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
@@ -337,6 +338,9 @@ export default function PlaceDetailScreen() {
         <SafeAreaView style={ps.safeArea} edges={['bottom']}>
           <ScrollView style={ps.scroll} contentContainerStyle={ps.scrollContent}>
             <PlaceCard place={canonicalPlace} />
+            {/* Supplemental section: full opening hours + provisional disclaimer.
+                PlaceCard already shows phone, website, and address. */}
+            <PlaceInfoSection place={canonicalPlace} supplemental />
             <View style={ps.actionRowWrap}>
               <MapEntityActionRow entity={entity} />
             </View>
