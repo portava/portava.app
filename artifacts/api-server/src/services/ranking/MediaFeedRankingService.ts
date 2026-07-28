@@ -1003,6 +1003,52 @@ export async function loadBucketMap(
 }
 
 /**
+ * Build a place-affinity map for a viewer from their recent place_view events.
+ *
+ * Queries `rank_events` for rows where:
+ *   - event_type = 'place_view'
+ *   - user_id    = userId
+ *   - served_at  > now() - 30 days
+ *
+ * Returns a Record mapping place_id → view count so `scoreCandidate` can
+ * apply the ×1.15 PLACE_ENGAGEMENT_BOOST when the viewer has visited the
+ * candidate's canonical place ≥ PLACE_ENGAGEMENT_BOOST_THRESHOLD times.
+ *
+ * Non-fatal: returns an empty object on any DB error so ranking degrades
+ * gracefully to no-boost rather than failing the feed request.
+ *
+ * @param sc      Supabase service client (null → returns {}).
+ * @param userId  Authenticated viewer's user ID.
+ * @param nowMs   Epoch ms "now" (injectable for tests; defaults to Date.now()).
+ */
+export async function buildPlaceAffinities(
+  sc: SupabaseClient | null,
+  userId: string,
+  nowMs: number = Date.now(),
+): Promise<Record<string, number>> {
+  if (!sc || !userId) return {};
+  try {
+    const thirtyDaysAgo = new Date(nowMs - 30 * 24 * 60 * 60 * 1_000).toISOString();
+    const { data, error } = await sc
+      .from("rank_events")
+      .select("item_id")
+      .eq("event_type", "place_view")
+      .eq("user_id", userId)
+      .gte("served_at", thirtyDaysAgo);
+    if (error || !data) return {};
+    const counts: Record<string, number> = {};
+    for (const row of (data as { item_id: string }[])) {
+      if (row.item_id) {
+        counts[row.item_id] = (counts[row.item_id] ?? 0) + 1;
+      }
+    }
+    return counts;
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Load creator-level signals for a batch of creator IDs.
  * Returns a map of creatorId → partial MediaFeedItem signals.
  *

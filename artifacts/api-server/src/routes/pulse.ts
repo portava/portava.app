@@ -8,6 +8,7 @@ import {
   emitCreatorCapAnalytics,
 } from '../services/ranking/CreatorCapEnforcer.js';
 import { getCreatorCaps } from '../services/ranking/rankingConfig.js';
+import { buildPlaceAffinities } from '../services/ranking/MediaFeedRankingService.js';
 import { getCompassProfile } from "../compass/CompassProfileService";
 import { rankItems as drsRankItems } from '../services/ranking/DiscoveryRankingService.js';
 import type { RankingInput, RankingViewerContext } from '../services/ranking/DiscoveryRankingService.js';
@@ -69,7 +70,7 @@ const pulseQuerySchema = z.object({
 // Safe columns — exact GPS is never projected
 const POST_SAFE_COLUMNS =
   "id, author_id, trip_id, content, media_urls, visibility, status, created_at, " +
-  "location_name, location_city, location_country, location_source";
+  "location_name, location_city, location_country, location_source, canonical_place_id";
 
 const GEO_TAG_COLUMNS =
   "location_visibility, city, district, country, country_code, venue_name, hotel_blur_applied";
@@ -348,6 +349,9 @@ router.get("/pulse", async (req, res) => {
       savedByMe: savedSet.has(row.id as string),
       // Featured-by-Portava badge category — null when post has not been featured
       featuredByPortava: featuredPulseMap.get(row.id as string) ?? null,
+      // Canonical place ID — used by the place-affinity boost in scoreCandidate
+      // (placeId on the ranking candidate); carried from DB via POST_SAFE_COLUMNS.
+      canonical_place_id: (row.canonical_place_id as string | null) ?? null,
     };
   });
 
@@ -547,6 +551,9 @@ router.get("/pulse", async (req, res) => {
               .map((h) => (h.slug ?? "").toLowerCase())
               .filter(Boolean)
           : [],
+        // placeId drives the ×1.15 place-affinity boost in portavaRank.scoreCandidate.
+        // canonical_place_id is now included in POST_SAFE_COLUMNS.
+        placeId: (p.canonical_place_id as string | null) ?? null,
         __post: p,
       }));
 
@@ -611,6 +618,11 @@ router.get("/pulse", async (req, res) => {
         ...buddyCandidates,
       ];
 
+      // Build place-affinity map from the viewer's recent place_view events so
+      // scoreCandidate can apply the ×1.15 boost for familiar destinations.
+      // Fire-and-forget pattern: non-fatal, falls back to no boost on error.
+      const placeAffinities = await buildPlaceAffinities(sc, user.id, nowMs);
+
       let ranked = rankCandidates(
         allCandidates,
         {
@@ -618,6 +630,7 @@ router.get("/pulse", async (req, res) => {
           city: viewerCity,
           followedIds,
           interestTags,
+          placeAffinities,
         },
         { publisherBoost: publisherBoostEnabled },
       );

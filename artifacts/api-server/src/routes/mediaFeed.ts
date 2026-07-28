@@ -57,6 +57,7 @@ import {
   loadMediaSignals,
   loadCreatorSignals,
   loadBucketMap,
+  buildPlaceAffinities,
   storeRankingSnapshots,
   type MediaFeedItem as RankingMediaFeedItem,
   type MediaSessionState,
@@ -1099,10 +1100,13 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   } catch { /* non-fatal */ }
 
   // ── Load media ranking flags + signals ────────────────────────────────────
-  const [mediaFlags, mediaSignalsMap, creatorSignalsMap] = await Promise.all([
+  const [mediaFlags, mediaSignalsMap, creatorSignalsMap, placeAffinities] = await Promise.all([
     loadMediaRankingFlags(sc),
     loadMediaSignals(sc, eligible.map((c) => c.id)),
     loadCreatorSignals(sc, [...new Set(eligible.map((c) => c.author_id).filter(Boolean))]),
+    // Build place-affinity map so scoreCandidate can fire the ×1.15 boost for
+    // places the viewer has visited ≥ PLACE_ENGAGEMENT_BOOST_THRESHOLD times.
+    buildPlaceAffinities(sc, user.id, nowMs),
   ]);
 
   // ── Load featured-by-Portava status for ranking boost ────────────────────
@@ -1169,6 +1173,9 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
       featuredByPortava: featuredEntry?.category ?? null,
       // Novelty / coverage bucket signals
       canonicalPlaceId: (c as any).canonical_place_id ?? null,
+      // placeId drives the ×1.15 place-affinity boost in portavaRank.scoreCandidate;
+      // use the same canonical_place_id so affinity signals route to the same key.
+      placeId: (c as any).canonical_place_id ?? null,
       postBuckets: Array.isArray(rawBuckets) ? rawBuckets : null,
       ...mediaSig,
       ...creatorSig,
@@ -1210,6 +1217,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
       followedIds:  followedCreatorIds,
       interestTags,
       seenIds,
+      placeAffinities,
     },
     mode:         feedType === "for_you" ? "for_you" : "following",
     sessionState: mediaSession,
