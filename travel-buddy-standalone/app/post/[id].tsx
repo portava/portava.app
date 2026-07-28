@@ -14,6 +14,7 @@ import {
 } from 'lucide-react-native';
 import { AppHeader } from '../../src/components/ui/AppHeader';
 import { ReportSheet } from '../../src/components/ReportSheet';
+import { PostWrongPlaceSheet } from '../../src/components/PostWrongPlaceSheet';
 import { CommentsSection } from '../../src/components/CommentsSheet';
 import { MediaStampOverlay } from '../../src/components/StampOverlayBadge';
 import { SharedVideoPlayer } from '../../src/components/ui/SharedVideoPlayer';
@@ -34,12 +35,14 @@ function PostOverflowSheet({
   onShare,
   onReport,
   onEdit,
+  onWrongPlace,
 }: {
   visible: boolean;
   onClose: () => void;
   onShare: () => void;
   onReport?: () => void;
   onEdit?: () => void;
+  onWrongPlace?: () => void;
 }) {
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -60,6 +63,15 @@ function PostOverflowSheet({
             <Share2 size={20} color={color.ink} />
             <Text style={ov.rowLabel}>Share post</Text>
           </Pressable>
+          {onWrongPlace && (
+            <>
+              <View style={ov.divider} />
+              <Pressable style={ov.row} onPress={() => { onClose(); onWrongPlace(); }} testID="overflow-wrong-place">
+                <MapPin size={20} color={color.mute} />
+                <Text style={ov.rowLabel}>Wrong place?</Text>
+              </Pressable>
+            </>
+          )}
           {onReport && (
             <>
               <View style={ov.divider} />
@@ -199,6 +211,7 @@ export default function PostDetail() {
 
   const [overflowOpen, setOverflowOpen]   = useState(false);
   const [reportOpen, setReportOpen]       = useState(false);
+  const [wrongPlaceOpen, setWrongPlaceOpen] = useState(false);
   const [reported, setReported]           = useState(false);
   const [undoAvailable, setUndoAvailable] = useState(false);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -337,6 +350,7 @@ export default function PostDetail() {
             onShare={handleShare}
             onEdit={isOwnPost ? () => router.push(`/post/edit/${post.id}` as any) : undefined}
             onReport={!isOwnPost ? () => setReportOpen(true) : undefined}
+            onWrongPlace={!isOwnPost && !!post.locationName ? () => setWrongPlaceOpen(true) : undefined}
           />
           {!isOwnPost && (
             <ReportSheet
@@ -346,6 +360,13 @@ export default function PostDetail() {
               subjectId={post.id}
               subjectUserId={post.author?.id ?? undefined}
               onReported={handleReported}
+            />
+          )}
+          {!isOwnPost && (
+            <PostWrongPlaceSheet
+              postId={post.id}
+              visible={wrongPlaceOpen}
+              onClose={() => setWrongPlaceOpen(false)}
             />
           )}
         </>

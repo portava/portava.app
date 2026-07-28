@@ -35,6 +35,7 @@ import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { navigateToProfile } from '../lib/navigateToProfile.ts';
 import { PostCard as SharedPostCard } from './cards/PostCard.tsx';
 import { PlaceQuickActions } from './PlaceQuickActions.tsx';
+import { PostWrongPlaceSheet } from './PostWrongPlaceSheet.tsx';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -226,9 +227,11 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
   const chipSublabel = item.locationDistrict ?? (item.neighborhood ? item.city : undefined);
   const [dismissed, setDismissed] = useState(false);
   const [mediaFailed, setMediaFailed] = useState(false);
+  const [wrongPlaceOpen, setWrongPlaceOpen] = useState(false);
   const dismiss = () => setDismissed(true);
   const undismiss = () => setDismissed(false);
   const handleDeleted = () => { dismiss(); onDeleteSuccess?.(); };
+  const { userId: currentUserIdForPlace } = useSession();
 
   // Batch-sign the main media URL so list renders share a single POST
   // /api/media/sign call (45-min cache) rather than one redirect per image.
@@ -319,13 +322,26 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
         ) : null}
         <TagRow tags={item.tags} fallbackFirst={item.categoryFallback} />
         {chipVariant !== 'no_location' && (
-          <LocationChip
-            variant={chipVariant}
-            label={chipLabel}
-            sublabel={chipSublabel}
-            size="sm"
-            muted
-          />
+          <View style={s.locationChipRow}>
+            <LocationChip
+              variant={chipVariant}
+              label={chipLabel}
+              sublabel={chipSublabel}
+              size="sm"
+              muted
+            />
+            {/* "Wrong place?" — only shown to non-authors when post has a location */}
+            {currentUserIdForPlace && currentUserIdForPlace !== item.author?.id && (
+              <Pressable
+                style={s.wrongPlaceBtn}
+                onPress={() => setWrongPlaceOpen(true)}
+                hitSlop={8}
+                testID={`wrong-place-btn-${item.id}`}
+              >
+                <Text style={s.wrongPlaceBtnText}>Wrong place?</Text>
+              </Pressable>
+            )}
+          </View>
         )}
         <View style={s.actions}>
           <View style={{ flex: 1 }}>
@@ -355,6 +371,12 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
           />
         </View>
       </View>
+
+      <PostWrongPlaceSheet
+        postId={item.id}
+        visible={wrongPlaceOpen}
+        onClose={() => setWrongPlaceOpen(false)}
+      />
     </Pressable>
   );
 }
@@ -784,6 +806,9 @@ const s = StyleSheet.create({
   line: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   lineText: { ...t.small, color: color.mute },
   locationRow: { flexDirection: 'row', alignItems: 'center', marginTop: -2 },
+  locationChipRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' },
+  wrongPlaceBtn: { paddingVertical: 2 },
+  wrongPlaceBtnText: { ...t.small, color: color.faint, fontSize: 11, textDecorationLine: 'underline' },
 
   tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   tag: { backgroundColor: color.paper, borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: 3 },

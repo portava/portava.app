@@ -613,6 +613,34 @@ export async function unsavePost(postId: string): Promise<{ ok: boolean; savedBy
 }
 
 /**
+ * Report that a post's canonical place tag is incorrect.
+ * Any authenticated user (except the post author) can submit a report.
+ * Reason should be one of: 'wrong_location' | 'not_the_same_place' | 'duplicate'.
+ */
+export async function reportWrongPlace(
+  postId: string,
+  reason: string,
+): Promise<{ ok: boolean; message?: string }> {
+  const token = await freshToken();
+  if (!token) return { ok: false, message: 'Please sign in' };
+  try {
+    const res = await fetch(`${apiBase()}/api/posts/${encodeURIComponent(postId)}/wrong-place`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ reason }),
+    });
+    if (res.status === 409) return { ok: false, message: 'You have already reported this place' };
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, message: (body as any).message ?? 'Could not submit report' };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, message: 'Network error — please try again' };
+  }
+}
+
+/**
  * Hide a post from the caller's feeds. Idempotent — hiding a post twice is safe.
  * Returns true on success (the post was hidden), false on any error.
  */
