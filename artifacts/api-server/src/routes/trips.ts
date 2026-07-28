@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady } from "../lib/supabase";
+import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { requireUser, isAcceptedTripMember, requireTripMember, sendError, canEditPlanItem, canEditPlan, type PlanEditPermission } from "../lib/http.js";
 import { toCamel } from "./plan.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
@@ -282,6 +283,16 @@ router.post("/trips", async (req, res) => {
   }
 
   res.status(201).json(data);
+
+  // Language detection — fire-and-forget; sets trips.original_language for translation.
+  const newTripIdForLang = (data as any)?.id;
+  if (newTripIdForLang && (title ?? '').trim()) {
+    const _sc = getServiceClient();
+    if (_sc) {
+      const textToDetect = tripNotes ? `${title} ${tripNotes}` : title;
+      detectAndStoreLanguage(_sc, 'trip', newTripIdForLang, textToDetect, req.log).catch(() => {});
+    }
+  }
 
   // Wire chat sync: ensure trip chat thread exists with the owner as first member.
   const newTripId = (data as any)?.id;
@@ -752,6 +763,19 @@ router.patch("/trips/:tripId", async (req, res) => {
 
     // Passport stamp awards — fire-and-forget, fully idempotent
     void awardTripCompletionStamps(sc, tripId, user.id, updated as Record<string, any>, req.log).catch(() => {});
+  }
+
+  // Translation: invalidate + re-detect when title/trip_notes change.
+  if (b.title !== undefined || b.tripNotes !== undefined) {
+    const scTx = getServiceClient();
+    if (scTx) {
+      invalidateContentTranslations(scTx, 'trip', tripId).catch(() => {});
+      const textForDetect = [b.title ?? t.title, b.tripNotes ?? t.trip_notes]
+        .filter(Boolean).join(' ');
+      if (textForDetect.trim()) {
+        detectAndStoreLanguage(scTx, 'trip', tripId, textForDetect, req.log).catch(() => {});
+      }
+    }
   }
 
   res.json(updated);

@@ -115,6 +115,7 @@ import adminFeaturedRouter from "./adminFeatured";
 import adminPlaceMismatchRouter from "./adminPlaceMismatch.js";
 import featuredRouter from "./featured.js";
 import placeLivingRouter from "./placeLiving.js";
+import contentTranslationRouter from "./contentTranslation.js";
 
 const router: IRouter = Router();
 
@@ -241,5 +242,6 @@ router.use(adminPortavaPostsRouter);
 router.use(adminFeaturedRouter);
 router.use(featuredRouter);
 router.use(placeLivingRouter);
+router.use(contentTranslationRouter);
 
 export default router;

@@ -186,6 +186,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
@@ -621,6 +622,15 @@ router.post("/events", async (req, res) => {
   // Create Telegraph group chat if enabled
   if (b.chatEnabled !== false && b.publishNow) {
     await createEventChatThread(sc, (ev as any).id, b.title, user.id);
+  }
+
+  // Language detection — fire-and-forget; sets events.original_language for translation.
+  if (b.title?.trim()) {
+    const _sc = getServiceClient();
+    if (_sc) {
+      const textToDetect = b.description ? `${b.title} ${b.description}` : b.title;
+      detectAndStoreLanguage(_sc, 'event', (ev as any).id, textToDetect, req.log).catch(() => {});
+    }
   }
 
   // Creator is always the host → participant view
@@ -1719,6 +1729,12 @@ router.post("/events/drafts/:draftId/publish", async (req, res) => {
   // Delete the draft now that it's published
   await sc.from("event_drafts").delete().eq("id", draftId);
 
+  // Language detection — fire-and-forget; sets events.original_language for translation.
+  if (b.title?.trim()) {
+    const textToDetect = b.description ? `${b.title} ${b.description}` : b.title;
+    detectAndStoreLanguage(sc, 'event', (ev as any).id, textToDetect, req.log).catch(() => {});
+  }
+
   // Publisher is always the host → participant view
   res.status(201).json(formatEvent(ev as any, user.id, { goingRsvp: true }));
 });
@@ -2178,6 +2194,19 @@ router.patch("/events/:id", async (req, res) => {
         }
       } catch {}
     })();
+  }
+
+  // Translation: invalidate + re-detect when title/description change.
+  if (b.title !== undefined || b.description !== undefined) {
+    const scTx = getServiceClient();
+    if (scTx) {
+      invalidateContentTranslations(scTx, 'event', id).catch(() => {});
+      const textForDetect = [b.title ?? (current as any).title, b.description ?? (current as any).description]
+        .filter(Boolean).join(' ');
+      if (textForDetect.trim()) {
+        detectAndStoreLanguage(scTx, 'event', id, textForDetect, req.log).catch(() => {});
+      }
+    }
   }
 
   // Caller is host/cohost (only they can PATCH) → participant view

@@ -45,6 +45,7 @@ import { sniffMedia, processImage, makeThumbnail, computePHash } from "../lib/me
 import { recordMediaAsset } from "../lib/mediaAssets.js";
 import { resolvePostPlace } from "../lib/places/placeResolve.js";
 import { classifyBuckets, incrementBucketCounts } from "../lib/places/bucketClassifier.js";
+import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 
 const router = Router();
 
@@ -223,7 +224,7 @@ const POST_COLUMNS =
   "location_privacy_mode, post_status, " +
   "public_lat, public_lng, public_location_label, geofence_radius_meters, " +
   "publish_after_exit, publish_after_time, publish_eligible_at, published_at, location_sensitivity_level, " +
-  "category, save_count, media_count, has_video, primary_media_type";
+  "category, save_count, media_count, has_video, primary_media_type, original_language";
 
 const POST_MEDIA_FEED_COLUMNS =
   "post_id, id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status";
@@ -465,6 +466,14 @@ router.post("/posts", async (req, res) => {
     "post_published",
     { city: locationCity ?? undefined },
   );
+
+  // Language detection — fire-and-forget; sets posts.original_language for translation.
+  if ((content ?? '').trim()) {
+    const _sc = getServiceClient();
+    if (_sc) {
+      detectAndStoreLanguage(_sc, 'post', (data as any).id, content ?? '', req.log).catch(() => {});
+    }
+  }
 
   // Auto-create a passport postcard when eligible (media + add_to_passport +
   // active). Best-effort: a postcard failure must NOT corrupt the post. The
@@ -1893,6 +1902,18 @@ router.patch("/posts/:postId", async (req, res) => {
     }
   }
 
+  // Content translation: when caption changes, invalidate stale cache and
+  // re-detect source language — fire-and-forget.
+  if (parsed.data.content !== undefined && parsed.data.content !== (existing as any).content) {
+    const scTx = getServiceClient();
+    if (scTx) {
+      invalidateContentTranslations(scTx, 'post', postId).catch(() => {});
+      if (parsed.data.content.trim()) {
+        detectAndStoreLanguage(scTx, 'post', postId, parsed.data.content, req.log).catch(() => {});
+      }
+    }
+  }
+
   res.status(200).json(data);
 });
 
@@ -2202,7 +2223,7 @@ router.get("/posts/:postId/comments", async (req, res) => {
 
   const { data: rows, error: listErr } = await sc
     .from("posts_comments")
-    .select("id, post_id, user_id, body, created_at, updated_at")
+    .select("id, post_id, user_id, body, created_at, updated_at, original_language")
     .eq("post_id", postId)
     .is("parent_comment_id", null)
     .is("deleted_at", null)
@@ -2248,6 +2269,7 @@ router.get("/posts/:postId/comments", async (req, res) => {
       canDelete: c.user_id === user.id || isPostAuthor,
       likeCount: likeCountMap[c.id] ?? 0,
       likedByMe: likedByMeSet.has(c.id),
+      originalLanguage: (c.original_language as string | null) ?? null,
       tags: spans.tags,
       hashtagUsages: spans.hashtagUsages,
       author: pr
@@ -2394,6 +2416,14 @@ router.post("/posts/:postId/comments", async (req, res) => {
     },
     commentCount: count ?? 0,
   });
+
+  // Language detection for comment — fire-and-forget.
+  if (body.trim()) {
+    const _sc = getServiceClient();
+    if (_sc) {
+      detectAndStoreLanguage(_sc, 'comment', (comment as any).id, body, req.log).catch(() => {});
+    }
+  }
 });
 
 router.delete("/posts/:postId/comments/:commentId", async (req, res) => {
@@ -3003,6 +3033,12 @@ router.post("/posts/:postId/comments/:commentId/replies", async (req, res) => {
     user.id,
   ).catch(() => ({} as Record<string, any>));
   const spans = replySpans[(reply as any).id] ?? { tags: [], hashtagUsages: [] };
+
+  // Language detection for reply body — fire-and-forget.
+  const replyBodyTrimmed = (reply as any).body as string;
+  if (replyBodyTrimmed.trim()) {
+    detectAndStoreLanguage(sc, 'comment', (reply as any).id, replyBodyTrimmed, req.log).catch(() => {});
+  }
 
   res.status(201).json({
     ok: true,

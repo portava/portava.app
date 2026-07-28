@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { retranslateForUser } from "../services/messageTranslation";
+import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { isFlagEnabled } from "../lib/featureFlags";
 import { invalidateCompassHomeCache } from "./compassHome";
 import { sniffMedia, processImage, type ProcessedImage, type SniffResult } from "../lib/mediaProcessing";
@@ -837,6 +838,19 @@ router.patch("/me/profile", async (req, res) => {
     const sc = getServiceClient();
     if (sc) {
       retranslateForUser(sc, user.id, p.preferredLanguage, req.log).catch(() => {});
+    }
+  }
+
+  // Bio language detection — fire-and-forget; bio is stored with entity_type='bio',
+  // entity_id=profile.id. Invalidate cached bio translations when bio changes.
+  if (p.bio !== undefined) {
+    const sc = getServiceClient();
+    if (sc) {
+      if (p.bio && p.bio.trim()) {
+        detectAndStoreLanguage(sc, 'bio', user.id, p.bio, req.log).catch(() => {});
+      }
+      // Bio changed — purge stale cached translations.
+      invalidateContentTranslations(sc, 'bio', user.id).catch(() => {});
     }
   }
 
