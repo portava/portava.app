@@ -66,6 +66,8 @@ import { useVisualStatusChannel } from '../../src/hooks/useVisualStatusChannel.t
 import { AiRepresentationLabel } from '../../src/components/visuals/AiRepresentationLabel.tsx';
 import { resolveHeaderImage } from '../../src/lib/visuals/resolveHeaderImage';
 import { fallbackUriFor } from '../../src/lib/visuals/fallbackAssets';
+import { PlaceInfoSection } from '../../src/components/place/PlaceInfoSection';
+import { getVenueInfoByCoords, type VenueContactInfo } from '../../src/services/places';
 
 const STATE_BADGE: Record<string, { label: string; bg: string; fg: string }> = {
   draft:     { label: 'Draft',          bg: color.haze, fg: color.mute },
@@ -158,6 +160,8 @@ export default function EventDetailScreen() {
   // transitions to ready, so the hero crossfades in without a full reload.
   const [localAiCoverUrl, setLocalAiCoverUrl] = useState<string | null>(null);
   const aiCoverOpacity = useRef(new Animated.Value(0)).current;
+  // Venue contact info enriched from FSQ via coordinates — null = loading/unavailable.
+  const [venueInfo, setVenueInfo] = useState<VenueContactInfo | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -297,6 +301,18 @@ export default function EventDetailScreen() {
       });
     return () => { cancelled = true; };
   }, [buddyCityAvailable, event?.city]);
+
+  // ── Venue contact info enrichment (FSQ nearby lookup) ─────────────────────
+  useEffect(() => {
+    const lat = event?.locationLat;
+    const lng = event?.locationLng;
+    if (lat == null || lng == null) { setVenueInfo(null); return; }
+    let cancelled = false;
+    getVenueInfoByCoords(lat, lng, event?.locationName ?? undefined).then((info) => {
+      if (!cancelled) setVenueInfo(info);
+    }).catch(() => { /* non-fatal; PlaceInfoSection falls back to event description */ });
+    return () => { cancelled = true; };
+  }, [event?.locationLat, event?.locationLng, event?.locationName]);
 
   // ── Add to itinerary (when arriving from Trip Detail with tripId param) ────
   async function handleAddToItinerary() {
@@ -787,12 +803,14 @@ export default function EventDetailScreen() {
               </View>
             )}
 
-            {/* Description */}
-            {event.description ? (
-              <View style={styles.descBox}>
-                <Text style={styles.descText}>{event.description}</Text>
-              </View>
-            ) : null}
+            {/* Venue info — FSQ-enriched phone/website/hours when coordinates
+                available; falls back to event description text only. */}
+            <PlaceInfoSection
+              description={event.description}
+              phone={venueInfo?.phone}
+              website={venueInfo?.website}
+              openingHours={venueInfo?.openingHours}
+            />
 
             {/* Safety notes */}
             {(event as any).safetyNotes ? (

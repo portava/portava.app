@@ -1,18 +1,74 @@
 /**
  * Canonical Place service client
  *
- * Wraps GET /api/places/canonical/:id.
+ * Wraps GET /api/places/canonical/:id and GET /api/places/nearby-venue.
  *
- * The server route is gated behind the `external_places_enabled` feature flag.
- * When the flag is OFF the server returns 403; this client returns null so
- * callers never need to handle the flag explicitly.
+ * The canonical route is gated behind the `external_places_enabled` feature
+ * flag. When the flag is OFF the server returns 403; this client returns null
+ * so callers never need to handle the flag explicitly.
  *
  * All failures (flag off, 404, network error, parse error) resolve to null —
  * this function never throws.
  */
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
-import type { CanonicalPlace } from '../types/canonicalPlace.ts';
+import type { CanonicalPlace, NormalizedOpeningHours } from '../types/canonicalPlace.ts';
+
+// ── Venue contact info (nearby-venue endpoint) ────────────────────────────────
+
+export interface VenueContactInfo {
+  name: string;
+  phone: string | null;
+  website: string | null;
+  openingHours: NormalizedOpeningHours | null;
+}
+
+/**
+ * Fetch contact info (phone, website, opening hours) for a venue near the
+ * given coordinates via GET /api/places/nearby-venue.
+ *
+ * Pass the venue name as `name` when available — it is used as a search hint
+ * to improve match accuracy. Returns null on any failure (no key, timeout,
+ * not found, unauthenticated).
+ */
+export async function getVenueInfoByCoords(
+  lat: number,
+  lng: number,
+  name?: string | null,
+): Promise<VenueContactInfo | null> {
+  if (!isSupabaseConfigured || !apiBase()) return null;
+
+  const token = await freshToken();
+  if (!token) return null;
+
+  try {
+    const params = new URLSearchParams({ lat: String(lat), lng: String(lng) });
+    if (name) params.set('name', name);
+
+    const res = await fetch(
+      `${apiBase()}/api/places/nearby-venue?${params}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!res.ok) return null;
+
+    const json = await res.json().catch(() => null);
+    if (!json || typeof json !== 'object') return null;
+
+    const venue = (json as any).venue;
+    if (!venue || typeof venue !== 'object' || typeof venue.name !== 'string') return null;
+
+    return {
+      name:    venue.name,
+      phone:   typeof venue.phone === 'string' && venue.phone ? venue.phone : null,
+      website: typeof venue.website === 'string' && venue.website ? venue.website : null,
+      openingHours: Array.isArray(venue.openingHours) && venue.openingHours.length > 0
+        ? venue.openingHours as NormalizedOpeningHours
+        : null,
+    };
+  } catch {
+    return null;
+  }
+}
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';

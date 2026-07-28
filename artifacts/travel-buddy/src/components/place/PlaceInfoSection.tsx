@@ -105,19 +105,26 @@ export interface PlaceInfoSectionProps {
    * Defaults to false (renders all available fields).
    */
   supplemental?: boolean;
+  /**
+   * Individual enrichment overrides — take priority over `place` fields.
+   * Use when you have FSQ contact data without a full CanonicalPlace (e.g.
+   * event venue enrichment via /api/places/nearby-venue).
+   */
+  phone?: string | null;
+  website?: string | null;
+  openingHours?: NormalizedOpeningHours | null;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function PlaceInfoSection({ place, description, category, supplemental = false }: PlaceInfoSectionProps) {
+export function PlaceInfoSection({ place, description, category, supplemental = false, phone: phoneProp, website: websiteProp, openingHours: openingHoursProp }: PlaceInfoSectionProps) {
   const desc    = description ?? place?.description ?? null;
   const cat     = category ?? (place?.category ? String(place.category).replace(/_/g, ' ') : null);
-  const phone   = place?.phone ?? null;
-  const website = place?.website ?? null;
+  const phone   = phoneProp ?? place?.phone ?? null;
+  const website = websiteProp ?? place?.website ?? null;
   const address = place?.formattedAddress ?? place?.address ?? null;
-  const hours   = (place?.openingHours && place.openingHours.length > 0)
-    ? place.openingHours
-    : null;
+  const placeHours = place?.openingHours && place.openingHours.length > 0 ? place.openingHours : null;
+  const hours   = (openingHoursProp && openingHoursProp.length > 0) ? openingHoursProp : placeHours;
 
   // Supplemental mode: only full hours (PlaceCard handles the rest of the fields)
   if (supplemental) {

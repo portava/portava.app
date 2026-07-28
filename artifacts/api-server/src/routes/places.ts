@@ -2,6 +2,7 @@
  * /api/places — place search, reverse geocode, and recent places.
  *
  * GET  /api/places/search?q=&type=&countryCode=&lat=&lng=
+ * GET  /api/places/nearby-venue?lat=&lng=&name=  (auth required)
  * GET  /api/places/reverse?lat=&lng=
  * GET  /api/me/recent-places          (auth required)
  * POST /api/me/recent-places          (auth required)
@@ -450,6 +451,133 @@ router.get("/places/live-status", async (req, res) => {
         confidence: makeConfidence("historical", CANT_VERIFY_NOTE),
       };
   res.json({ liveStatus });
+});
+
+// ── GET /api/places/nearby-venue ─────────────────────────────────────────────
+//
+// Returns contact info (phone, website, opening hours) for the venue nearest
+// the given coordinates, resolved via Foursquare Places API.
+//
+// Query params:
+//   lat    — required, numeric latitude  (-90..90)
+//   lng    — required, numeric longitude (-180..180)
+//   name   — optional venue name hint; used as search query when provided
+//
+// Response:
+//   { venue: { name, phone, website, openingHours } | null }
+//
+// Graceful degradation: null on any error (no key, timeout, not found).
+// Auth required — prevents unauthenticated scraping of FSQ quota.
+// In-memory cache: 30-minute TTL per coordinate bucket (~110 m resolution).
+
+const NEARBY_VENUE_CACHE_TTL_MS = 30 * 60 * 1_000;
+const nearbyVenueCache = new Map<string, { venue: NearbyVenueInfo | null; cachedAt: number }>();
+
+interface NearbyVenueInfo {
+  name: string;
+  phone: string | null;
+  website: string | null;
+  openingHours: Array<{ dayOfWeek: number; open: string; close: string }> | null;
+}
+
+/** Convert FSQ "HHMM" to "HH:MM". */
+function fmtFsqTime(t: string): string {
+  return `${t.slice(0, 2)}:${t.slice(2)}`;
+}
+
+/**
+ * Convert FSQ hours.regular (day 1=Mon…7=Sun) to NormalizedOpeningHours
+ * (dayOfWeek 0=Sun…6=Sat, JS Date convention).
+ */
+function normalizeFsqHours(
+  regular: Array<{ day: number; open: string; close: string }> | undefined,
+): NearbyVenueInfo["openingHours"] {
+  if (!Array.isArray(regular) || regular.length === 0) return null;
+  return regular
+    .filter((h) => h.day >= 1 && h.day <= 7 && h.open && h.close)
+    .map((h) => ({
+      dayOfWeek: h.day % 7, // 1→1 Mon, …, 6→6 Sat, 7→0 Sun
+      open:  fmtFsqTime(String(h.open)),
+      close: fmtFsqTime(String(h.close)),
+    }));
+}
+
+router.get("/places/nearby-venue", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+
+  const lat = parseFloat(String(req.query.lat ?? ""));
+  const lng = parseFloat(String(req.query.lng ?? ""));
+
+  if (isNaN(lat) || lat < -90 || lat > 90) {
+    res.status(400).json({ error: "invalid_payload", message: "Valid lat is required" });
+    return;
+  }
+  if (isNaN(lng) || lng < -180 || lng > 180) {
+    res.status(400).json({ error: "invalid_payload", message: "Valid lng is required" });
+    return;
+  }
+
+  const nameHint = typeof req.query.name === "string" ? req.query.name.trim().slice(0, 200) : "";
+
+  // Cache key: coordinate bucket (~110 m) + name hint
+  const cacheKey = `${lat.toFixed(3)},${lng.toFixed(3)}:${nameHint.toLowerCase()}`;
+  const nowMs = Date.now();
+  const cached = nearbyVenueCache.get(cacheKey);
+  if (cached && nowMs - cached.cachedAt < NEARBY_VENUE_CACHE_TTL_MS) {
+    res.json({ venue: cached.venue });
+    return;
+  }
+
+  const apiKey = process.env.FOURSQUARE_API_KEY;
+  if (!apiKey) {
+    res.json({ venue: null });
+    return;
+  }
+
+  try {
+    const params = new URLSearchParams({
+      limit: "1",
+      ll: `${lat},${lng}`,
+      fields: "fsq_id,name,tel,website,hours",
+    });
+    if (nameHint) params.set("query", nameHint);
+
+    const fsqRes = await fetch(`https://api.foursquare.com/v3/places/search?${params}`, {
+      headers: { Authorization: apiKey, Accept: "application/json" },
+      signal: AbortSignal.timeout(3_000),
+    });
+
+    if (!fsqRes.ok) {
+      logger.warn({ status: fsqRes.status, lat, lng }, "nearby-venue FSQ lookup failed");
+      nearbyVenueCache.set(cacheKey, { venue: null, cachedAt: nowMs });
+      res.json({ venue: null });
+      return;
+    }
+
+    const body: any = await fsqRes.json();
+    const r = Array.isArray(body?.results) ? body.results[0] : null;
+
+    if (!r?.fsq_id) {
+      nearbyVenueCache.set(cacheKey, { venue: null, cachedAt: nowMs });
+      res.json({ venue: null });
+      return;
+    }
+
+    const venue: NearbyVenueInfo = {
+      name:    String(r.name ?? ""),
+      phone:   typeof r.tel === "string" && r.tel ? r.tel : null,
+      website: typeof r.website === "string" && r.website ? r.website : null,
+      openingHours: normalizeFsqHours(r.hours?.regular),
+    };
+
+    nearbyVenueCache.set(cacheKey, { venue, cachedAt: nowMs });
+    res.json({ venue });
+  } catch (err) {
+    logger.warn({ err, lat, lng }, "nearby-venue lookup error");
+    nearbyVenueCache.set(cacheKey, { venue: null, cachedAt: nowMs });
+    res.json({ venue: null });
+  }
 });
 
 // ── GET /api/places/reverse ───────────────────────────────────────────────────
