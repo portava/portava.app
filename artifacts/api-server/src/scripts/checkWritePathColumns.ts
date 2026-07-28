@@ -189,6 +189,9 @@ const SKIP_TABLES = new Set<string>([
   // Unified content stamp table — migration 2047_content_stamps.sql
   // pending live apply. Remove once the table exists in the live DB schema.
   "content_stamps",
+  // Stamp milestone tracking — migration 2051_stamp_milestones.sql
+  // pending live apply. Remove once the table exists in the live DB schema.
+  "stamp_milestones",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────

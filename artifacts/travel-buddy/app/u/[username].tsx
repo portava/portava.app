@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet,
-  Alert, Modal, TextInput, Platform,
+  Alert, Modal, TextInput, Platform, Animated,
 } from 'react-native';
 import PassportDocumentScreen from '../passport/[username]';
 import { useLocalSearchParams, useFocusEffect, router } from 'expo-router';
@@ -43,6 +43,8 @@ import { PROFILE_NOT_FOUND_TITLE, PROFILE_NOT_FOUND_SUB } from '../../src/consta
 import { resolveDisplayName, formatHandle, truncateDisplayName } from '../../src/utils/identity';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
+import { useMilestoneCelebration } from '../../src/hooks/useMilestoneCelebration';
+import { TenKStampsBadge } from '../../src/components/TenKStampsBadge';
 
 type Tab = 'postcards' | 'stamps' | 'map' | 'about';
 const TABS: { key: Tab; label: string; Icon: LucideIcon }[] = [
@@ -743,6 +745,26 @@ function PublicPassportScreenNative() {
   const navBarScrollHandler = useNavBarScrollHandler();
 
   const isOwn = social?.isOwnProfile ?? profile?.isOwnProfile ?? (profile?.id === currentUserId);
+
+  // Stamps Earned count — sourced from the public passport response.
+  const stampsEarned: number = (profile as any)?.stampsEarned ?? 0;
+
+  // Milestone celebration hook — only fires for the profile owner.
+  const {
+    activeMilestone,
+    sparkle: milestoneSparkle,
+    inkRing: milestoneInkRing,
+    confetti: milestoneConfetti,
+    onDismiss: onMilestoneDismiss,
+  } = useMilestoneCelebration(profile !== null ? stampsEarned : null, isOwn);
+
+  // Auto-dismiss the celebration banner after 4 s so users don't have to tap.
+  useEffect(() => {
+    if (activeMilestone === null) return;
+    const timer = setTimeout(onMilestoneDismiss, 4000);
+    return () => clearTimeout(timer);
+  }, [activeMilestone, onMilestoneDismiss]);
+
   // About tab is only accessible once social checks have resolved and the viewer
   // is neither blocked nor viewing a private profile they don't follow.
   const canViewAbout = isOwn || (!socialLoading && !social?.isPrivate && !isBlockedRelation);
@@ -974,6 +996,7 @@ function PublicPassportScreenNative() {
             { n: countries, label: 'Countries' },
             { n: cities, label: 'Cities' },
             { n: follow.followersCount, label: 'Followers' },
+            { n: stampsEarned, label: 'Stamps Earned' },
           ].map((item, i) => (
             <React.Fragment key={item.label}>
               {i > 0 && <View style={styles.statsDivider} />}
@@ -986,6 +1009,38 @@ function PublicPassportScreenNative() {
             </React.Fragment>
           ))}
         </View>
+
+        {/* Milestone celebration banner — shown once per crossing, auto-dismissed */}
+        {activeMilestone !== null && (() => {
+          const celebAnim = activeMilestone >= 10000 ? milestoneConfetti
+            : activeMilestone >= 1000 ? milestoneInkRing
+            : milestoneSparkle;
+          return (
+            <Animated.View style={[styles.milestoneBanner, {
+              opacity: celebAnim,
+              transform: [{ scale: celebAnim.interpolate({ inputRange: [0, 1], outputRange: [0.88, 1] }) }],
+            }]}>
+              <Text style={styles.milestoneBannerEmoji}>
+                {activeMilestone >= 10000 ? '🌏' : activeMilestone >= 1000 ? '🎉' : '✨'}
+              </Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.milestoneBannerTitle}>
+                  {activeMilestone.toLocaleString()} Stamps Earned!
+                </Text>
+                <Text style={styles.milestoneBannerSub}>
+                  {activeMilestone >= 10000
+                    ? "You're a Portava legend!"
+                    : activeMilestone >= 1000
+                    ? 'An incredible milestone!'
+                    : 'Keep exploring!'}
+                </Text>
+              </View>
+              <Pressable onPress={onMilestoneDismiss} hitSlop={12}>
+                <X size={16} color="#92400E" />
+              </Pressable>
+            </Animated.View>
+          );
+        })()}
 
         {/* Featured by Portava trophy row */}
         {(profile as any)?.featuredCount != null && (profile as any).featuredCount > 0 && (
@@ -1002,6 +1057,9 @@ function PublicPassportScreenNative() {
             </Pressable>
           </View>
         )}
+
+        {/* 10K Stamps badge — permanent once threshold is reached */}
+        <TenKStampsBadge stampsEarned={stampsEarned} />
 
         {/* Following pill */}
         {follow.followingCount > 0 && (
@@ -1170,6 +1228,17 @@ const styles = StyleSheet.create({
   statsDivider: { width: 1, height: 28, backgroundColor: color.haze },
   statsN: { ...t.heading, color: color.ink, fontSize: 18 },
   statsL: { fontFamily: 'Courier', fontSize: 9, color: color.mute, fontWeight: '700' },
+
+  milestoneBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    marginHorizontal: space.lg, marginTop: space.sm,
+    padding: space.md,
+    backgroundColor: '#FEF3C7', borderRadius: radius.md,
+    borderWidth: 1, borderColor: '#FCD34D',
+  },
+  milestoneBannerEmoji: { fontSize: 26 },
+  milestoneBannerTitle: { ...(t.bodyStrong as object), color: '#B45309', fontSize: 14 },
+  milestoneBannerSub: { ...(t.small as object), color: '#92400E', fontSize: 12 },
 
   reasonBadge: {
     flexDirection: 'row', alignItems: 'center',

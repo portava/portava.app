@@ -1110,6 +1110,35 @@ export const TEMPLATES: NotificationTemplate[] = [
     actionUrl: ({ bookingId }) => `/rent-a-buddy/bookings/${bookingId}`,
   }),
 
+  // ── Stamp milestones ───────────────────────────────────────────────────────
+  tpl({
+    eventType: 'stamp.milestone_100',
+    category: 'passport',
+    defaultPriority: 'important',
+    defaultChannels: ['in_app', 'push'],
+    title: () => "100 Stamps! ✨",
+    body: () => "You've earned 100 Stamps on Portava. Keep exploring!",
+    actionUrl: () => '/passport',
+  }),
+  tpl({
+    eventType: 'stamp.milestone_1000',
+    category: 'passport',
+    defaultPriority: 'important',
+    defaultChannels: ['in_app', 'push'],
+    title: () => "1,000 Stamps! 🎉",
+    body: () => "Incredible — you've earned 1,000 Stamps on Portava!",
+    actionUrl: () => '/passport',
+  }),
+  tpl({
+    eventType: 'stamp.milestone_10000',
+    category: 'passport',
+    defaultPriority: 'important',
+    defaultChannels: ['in_app', 'push'],
+    title: () => "10,000 Stamps! 🌏",
+    body: () => "You're a legend — 10,000 Stamps earned on Portava!",
+    actionUrl: () => '/passport',
+  }),
+
   // ── Featured by Portava ─────────────────────────────────────────────────────
   tpl({
     eventType: 'featured.permission_request',

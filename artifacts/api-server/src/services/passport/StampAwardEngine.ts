@@ -461,6 +461,70 @@ async function _awardStampCore(
     }).catch(() => {});
   }
 
+  // 9. Fire-and-forget: check stamp milestones (100 / 1,000 / 10,000).
+  // Inserts a stamp_milestones row and sends a push notification when a new
+  // threshold is crossed.  Never blocks the award — all errors are swallowed.
+  Promise.resolve().then(async () => {
+    try {
+      const MILESTONE_LEVELS = [10000, 1000, 100] as const;
+
+      const { count: totalCount } = await sc
+        .from("user_stamps")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("is_revoked", false);
+
+      const total = totalCount ?? 0;
+
+      for (const level of MILESTONE_LEVELS) {
+        if (total < level) continue;
+
+        // Check if this milestone was already recorded
+        const { data: existing } = await sc
+          .from("stamp_milestones")
+          .select("user_id")
+          .eq("user_id", userId)
+          .eq("milestone_level", level)
+          .maybeSingle();
+
+        if (existing) break; // highest already-recorded milestone — nothing new
+
+        // Insert new milestone row (ON CONFLICT DO NOTHING for safety)
+        const { error: insertErr } = await sc
+          .from("stamp_milestones")
+          .insert({ user_id: userId, milestone_level: level });
+
+        // If the insert failed for ANY reason — including 23505 (unique violation from a
+        // concurrent award that raced past our select check) — do not send a push.  The
+        // concurrent winner is responsible for delivering the notification.
+        if (insertErr) break;
+
+        // Fire push notification — only reached when we were the first to insert this milestone row.
+        const { data: profileRow } = await sc
+          .from("profiles")
+          .select("expo_push_token")
+          .eq("id", userId)
+          .maybeSingle();
+
+        const token = (profileRow as any)?.expo_push_token as string | null | undefined;
+        if (token) {
+          const milestoneLabel =
+            level >= 10000 ? "10,000" : level >= 1000 ? "1,000" : "100";
+          const { sendPushNotification } = await import("../../lib/push.js");
+          await sendPushNotification([token], {
+            title: `${milestoneLabel} Stamps! ✨`,
+            body: `You've earned ${milestoneLabel} Stamps on Portava. Keep exploring!`,
+            data: { type: "stamp_milestone", level: String(level) },
+          }).catch(() => {});
+        }
+
+        break; // only process the highest newly-crossed milestone per award
+      }
+    } catch {
+      // non-fatal: never block the award result
+    }
+  }).catch(() => {});
+
   return {
     awarded: true,
     reason: "awarded",

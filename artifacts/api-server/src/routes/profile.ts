@@ -315,13 +315,16 @@ router.get("/me/profile", async (req, res) => {
     return;
   }
 
-  // Completeness score + trust score: parallel queries (all fail-open)
-  const [stampRes, tripRes, followersRes, followingRes, trustRes] = await Promise.allSettled([
+  // Completeness score + trust score + stamp count: parallel queries (all fail-open)
+  const [stampRes, tripRes, followersRes, followingRes, trustRes, stampsEarnedRes] = await Promise.allSettled([
     sc ? sc.from("passport_stamps").select("user_id", { count: "exact", head: true }).eq("user_id", user.id).limit(1) : Promise.resolve({ count: 0 }),
     sc ? sc.from("trips").select("id", { count: "exact", head: true }).eq("owner_id", user.id) : Promise.resolve({ count: 0 }),
     sc ? sc.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("following_id", user.id) : Promise.resolve({ count: 0 }),
     sc ? sc.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("follower_id", user.id) : Promise.resolve({ count: 0 }),
     sc ? computeTrustScore(user.id, sc, data as Record<string, any>) : Promise.resolve(null),
+    // Lifetime stamps earned (all entity types, excluding revoked). Fails silently if
+    // user_stamps table is absent (schema-drift safe).
+    sc ? sc.from("user_stamps").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("is_revoked", false) : Promise.resolve({ count: 0 }),
   ]);
   const hasStamp     = stampRes.status === "fulfilled" && ((stampRes.value as any).count ?? 0) > 0;
   const tripCount    = tripRes.status === "fulfilled" ? ((tripRes.value as any).count ?? 0) : 0;
@@ -329,6 +332,7 @@ router.get("/me/profile", async (req, res) => {
   const followersCount = followersRes.status === "fulfilled" ? ((followersRes.value as any).count ?? 0) : 0;
   const followingCount = followingRes.status === "fulfilled" ? ((followingRes.value as any).count ?? 0) : 0;
   const trustResult  = trustRes.status === "fulfilled" ? trustRes.value : null;
+  const stampsEarned = stampsEarnedRes.status === "fulfilled" ? ((stampsEarnedRes.value as any).count ?? 0) : 0;
 
   const completeness = computeCompleteness(data, hasStamp, hasTrip);
 
@@ -353,6 +357,7 @@ router.get("/me/profile", async (req, res) => {
     trustScore: trustResult?.score ?? null,
     trustLabel: trustResult?.label ?? null,
     trustScoreBreakdown: trustResult?.breakdown ?? null,
+    stampsEarned,
   });
 });
 

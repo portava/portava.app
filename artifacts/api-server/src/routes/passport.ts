@@ -304,22 +304,43 @@ router.get("/users/:username/passport", async (req, res) => {
       ? toFullProfileView(data, { showRealName })
       : toPublicProfilePreview(data, { showRealName });
 
-  // Compute trust score from live DB inputs (fail-open: null on any error).
+  // Compute trust score + stamps earned count (both fail-open).
   let trustScore: number | null = null;
   let trustLabel: string | null = null;
   let trustScoreBreakdown: import("../lib/trustScore.js").TrustScoreBreakdown | null = null;
-  try {
-    const ts = await computeTrustScore(targetId, sc);
-    trustScore = ts.score;
-    trustLabel = ts.label;
-    // Only include the breakdown for the profile owner — it contains improvement hints
-    // that would be meaningless (or confusing) on a public profile view.
-    if (isMe) {
-      trustScoreBreakdown = ts.breakdown;
-    }
-  } catch {
-    /* non-critical — passport still served without trust score */
-  }
+  let stampsEarned = 0;
+
+  await Promise.allSettled([
+    (async () => {
+      try {
+        const ts = await computeTrustScore(targetId, sc);
+        trustScore = ts.score;
+        trustLabel = ts.label;
+        // Only include the breakdown for the profile owner — it contains improvement hints
+        // that would be meaningless (or confusing) on a public profile view.
+        if (isMe) {
+          trustScoreBreakdown = ts.breakdown;
+        }
+      } catch {
+        /* non-critical — passport still served without trust score */
+      }
+    })(),
+    (async () => {
+      try {
+        // Lifetime total across all entity types, excluding revoked stamps.
+        // Fails silently: stamps_earned defaults to 0 if user_stamps table is
+        // absent or the query errors (schema-drift safe).
+        const { count } = await sc
+          .from("user_stamps")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", targetId)
+          .eq("is_revoked", false);
+        stampsEarned = count ?? 0;
+      } catch {
+        /* non-critical */
+      }
+    })(),
+  ]);
 
   res.status(200).json({
     ...profilePayload,
@@ -328,6 +349,7 @@ router.get("/users/:username/passport", async (req, res) => {
     trustScore,
     trustLabel,
     trustScoreBreakdown,
+    stampsEarned,
   });
 });
 
