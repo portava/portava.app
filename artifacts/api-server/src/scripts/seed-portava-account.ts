@@ -41,7 +41,7 @@ const PORTAVA_EMAIL = process.env.PORTAVA_ACCOUNT_EMAIL ?? "portava@internal.por
 const PORTAVA_HANDLE = "portava";
 const PORTAVA_DISPLAY_NAME = "Portava";
 const PORTAVA_BIO = "Your travel community. Curated places, stories, and inspiration from around the world. 🌍✈️";
-const PORTAVA_AVATAR_URL = "https://picsum.photos/seed/portava-official/400/400";
+const PORTAVA_AVATAR_URL = "https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?w=400&h=400&fit=crop&crop=center";
 
 // ── Step 1: Resolve or create the auth user ────────────────────────────────────
 
