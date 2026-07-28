@@ -20,7 +20,7 @@ jest.mock('../apiToken.ts', () => ({ freshToken: jest.fn().mockResolvedValue('te
 // on import which fails without env vars in the test environment.
 jest.mock('../../lib/supabase.ts', () => ({ isSupabaseConfigured: true }));
 
-import { getVenueInfoByCoords } from '../places.ts';
+import { getVenueInfoByCoords, clearVenueInfoCache } from '../places.ts';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -126,6 +126,49 @@ describe('getVenueInfoByCoords() — cache hit on re-navigation', () => {
 
     expect(result!.name).toBe('Nameless');
     expect(fetchAfterFirst).toBe(1);
+    expect((global.fetch as jest.Mock).mock.calls).toHaveLength(0);
+  });
+});
+
+describe('clearVenueInfoCache() — cache eviction', () => {
+  test('evicts the matching entry so the next call re-fetches', async () => {
+    // Seed the cache at a fresh coord pair.
+    mockFetch(venueBody({ name: 'Original Venue' }));
+    const first = await getVenueInfoByCoords(11.1, 21.1, 'Evict Bar');
+    expect(first!.name).toBe('Original Venue');
+    expect((global.fetch as jest.Mock).mock.calls).toHaveLength(1);
+
+    // Evict the entry.
+    clearVenueInfoCache(11.1, 21.1, 'Evict Bar');
+
+    // Replace fetch with fresh data — the eviction should force a new fetch.
+    mockFetch(venueBody({ name: 'Fresh Venue' }));
+    const second = await getVenueInfoByCoords(11.1, 21.1, 'Evict Bar');
+    expect(second!.name).toBe('Fresh Venue');
+    // One call for the seed, one call after eviction.
+    expect((global.fetch as jest.Mock).mock.calls).toHaveLength(1);
+  });
+
+  test('calling with coords that were never cached is a no-op — no error thrown', () => {
+    // Coordinates that have never been requested — should not throw.
+    expect(() => clearVenueInfoCache(99.9, 99.9, 'Nonexistent Venue')).not.toThrow();
+    expect(() => clearVenueInfoCache(99.9, 99.9, null)).not.toThrow();
+    expect(() => clearVenueInfoCache(99.9, 99.9, undefined)).not.toThrow();
+  });
+
+  test('different name for the same coords does not evict an unrelated entry', async () => {
+    // Seed the cache with one specific name.
+    mockFetch(venueBody({ name: 'Keeper Venue' }));
+    await getVenueInfoByCoords(11.2, 21.2, 'Keeper Bar');
+    expect((global.fetch as jest.Mock).mock.calls).toHaveLength(1);
+
+    // Evict a DIFFERENT name at the same coordinates.
+    clearVenueInfoCache(11.2, 21.2, 'Other Bar');
+
+    // 'Keeper Bar' entry must still be in the cache — second call should NOT fetch.
+    (global.fetch as jest.Mock) = jest.fn().mockRejectedValue(new Error('should not be called'));
+    const result = await getVenueInfoByCoords(11.2, 21.2, 'Keeper Bar');
+    expect(result!.name).toBe('Keeper Venue');
     expect((global.fetch as jest.Mock).mock.calls).toHaveLength(0);
   });
 });
