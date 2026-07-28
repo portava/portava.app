@@ -133,17 +133,16 @@ function buildOgHtml(opts: {
   let imgMeta = "";
   if (imageUrl) {
     const isHttps = imageUrl.startsWith("https://");
-    // Only emit dimension tags when the caller has supplied real values.
-    // Emitting hardcoded guesses causes iMessage / WhatsApp to crop or
-    // letterbox images whose actual pixel size differs from the hint.
-    const widthTag =
-      imageWidth != null
-        ? `<meta property="og:image:width" content="${imageWidth}" />`
-        : "";
-    const heightTag =
-      imageHeight != null
-        ? `<meta property="og:image:height" content="${imageHeight}" />`
-        : "";
+    // Use stored pixel dimensions when available; fall back to layout-based
+    // defaults so iMessage / WhatsApp always receive valid dimension hints.
+    // "banner" covers (events, trips) → standard 16:9 OG card (1200×630).
+    // "square" avatars → 800×800 square crop.
+    const defaultWidth  = imageLayout === "banner" ? 1200 : 800;
+    const defaultHeight = imageLayout === "banner" ? 630  : 800;
+    const finalWidth  = imageWidth  != null ? imageWidth  : defaultWidth;
+    const finalHeight = imageHeight != null ? imageHeight : defaultHeight;
+    const widthTag  = `<meta property="og:image:width" content="${finalWidth}" />`;
+    const heightTag = `<meta property="og:image:height" content="${finalHeight}" />`;
     imgMeta = [
       `<meta property="og:image" content="${escXml(imageUrl)}" />`,
       isHttps

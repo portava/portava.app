@@ -200,7 +200,7 @@ export default function BuddyProfileScreen() {
               <ArrowLeft size={18} color={color.onInk} />
             </Pressable>
             <StampButton
-              entityType="rent_a_buddy_profile"
+              entityType="buddy_profile"
               entityId={buddy.userId}
               initialCount={0}
               initialIsStamped={false}

@@ -23,6 +23,8 @@ export const STAMPABLE_TYPES = [
   "hotel",
   "restaurant",
   "destination",
+  "memory",
+  "place",
 ] as const;
 
 export type StampableEntityType = (typeof STAMPABLE_TYPES)[number];

@@ -582,7 +582,7 @@ async function searchPlaces(
     const pat = sqlPattern(q);
     const { data, error } = await sc
       .from("discovery_places")
-      .select("id, name, city, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, category, primary_category, lat, lng, created_at")
+      .select("id, name, city, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, category, primary_category, lat, lng, canonical_location_id, created_at")
       .or(`name.ilike.${pat},city.ilike.${pat},blurb.ilike.${pat}`)
       .eq("status", "active")
       .order("saved_count", { ascending: false })
@@ -617,6 +617,10 @@ async function searchPlaces(
           : p.image_accuracy_status === 'rejected'
             ? 'This image may not show the actual location.'
             : null,
+        // livingPageId: canonical places.id when this discovery_place has been
+        // linked to the Living Destination Page.  Absent when no link exists —
+        // mobile falls back to the existing Discovery sheet.
+        ...(p.canonical_location_id ? { livingPageId: p.canonical_location_id as string } : {}),
       },
       createdAt: (p.created_at as string | null) ?? null,
       startsAt: null,

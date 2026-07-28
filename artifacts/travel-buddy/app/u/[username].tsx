@@ -787,7 +787,7 @@ function PublicPassportScreenNative() {
       {!isOwn && profile?.id && social ? (
         <View style={styles.headerActions}>
           <StampButton
-            entityType="user_profile"
+            entityType="profile"
             entityId={profile.id}
             initialCount={0}
             initialIsStamped={false}

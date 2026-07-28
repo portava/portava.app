@@ -13,6 +13,7 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import express from "express";
+import sharp from "sharp";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import profileRouter from "../routes/profile.js";
@@ -118,8 +119,12 @@ function makeClient(profiles: ProfileRow[]) {
 
 let base: string;
 let server: ReturnType<typeof createServer>;
+// Real minimal JPEG that passes sharp preprocessing — used for storage-rejection tests.
+let realJpeg: Buffer;
 
 before(async () => {
+  realJpeg = await sharp({ create: { width: 8, height: 8, channels: 3, background: "#abc" } })
+    .jpeg().toBuffer();
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -745,16 +750,15 @@ describe("PATCH → GET /api/me/profile round-trip", () => {
     _setTestClient(failClient, true);
     _setTestServiceClient(failClient);
 
-    // Send a minimal valid JPEG header so the route passes the size and type checks
-    const fakeJpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
-
+    // Use a real sharp-generated JPEG so the route passes image preprocessing
+    // and reaches the storage upload step (where the injected error fires → 500).
     const uploadRes = await fetch(`${base}/me/avatar/upload`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${ME_TOK}`,
         "Content-Type": "image/jpeg",
       },
-      body: fakeJpeg,
+      body: realJpeg,
     });
 
     assert.equal(uploadRes.status, 500,
@@ -841,15 +845,15 @@ describe("PATCH → GET /api/me/profile round-trip", () => {
     _setTestClient(coverFailClient, true);
     _setTestServiceClient(coverFailClient);
 
-    const fakeJpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
-
+    // Use a real sharp-generated JPEG so the route passes image preprocessing
+    // and reaches the storage upload step (where the injected error fires → 500).
     const uploadRes = await fetch(`${base}/me/cover/upload`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${ME_TOK}`,
         "Content-Type": "image/jpeg",
       },
-      body: fakeJpeg,
+      body: realJpeg,
     });
 
     assert.equal(uploadRes.status, 500,

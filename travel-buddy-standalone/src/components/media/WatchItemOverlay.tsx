@@ -174,7 +174,7 @@ export function WatchItemOverlay({
   // ── Stamp state + frame ink overlay ──────────────────────────────────────
 
   const { count: stampCount, isStamped, isLoading: stampLoading, toggle: toggleStamp } = useStamp({
-    entityType: 'media_post',
+    entityType: 'media',
     entityId: item.id,
     initialCount: item.stampCount ?? item.likeCount ?? 0,
     initialIsStamped: item.isStampedByViewer ?? item.likedByMe ?? false,

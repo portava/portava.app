@@ -62,6 +62,11 @@ export interface RankCandidate {
    * Discovery and exempts the item from per-creator frequency caps.
    */
   isOfficialPublisher?: boolean | null;
+  /**
+   * Canonical places.id for this item — used by the place engagement boost
+   * when the viewer has affinity signals (place_view events) for this place.
+   */
+  placeId?: string | null;
 }
 
 export interface ViewerContext {
@@ -86,6 +91,12 @@ export interface ViewerContext {
   seenIds?: Set<string>;
   /** Epoch ms "now" — injectable for tests. */
   nowMs?: number;
+  /**
+   * place_id → count of place_view rank_events in the last 30 days.
+   * Built by callers from the rank_events table; drives the place engagement
+   * boost in scoreCandidate — a ×1.15 multiplier for affinity-positive places.
+   */
+  placeAffinities?: Record<string, number>;
 }
 
 export interface RankWeights {
@@ -118,6 +129,18 @@ export interface RankWeights {
  * relevance signals (a completely off-topic post still ranks low).
  */
 export const PUBLISHER_BOOST = 1.2;
+
+/**
+ * Place engagement boost — applied when the viewer has visited the candidate's
+ * canonical place page ≥ PLACE_ENGAGEMENT_BOOST_THRESHOLD times in the last
+ * 30 days (recorded as rank_events rows with event_type='place_view').
+ *
+ * 1.15× lift: meaningful but never overwhelming — a familiar place rises
+ * gently above equal-signal strangers without locking the feed into a
+ * single destination loop.
+ */
+export const PLACE_ENGAGEMENT_BOOST_THRESHOLD = 2;
+export const PLACE_ENGAGEMENT_BOOST = 1.15;
 
 /**
  * v1 hand-tuned weights. Sum-scale is arbitrary; relative magnitude is what
@@ -280,6 +303,18 @@ export function scoreCandidate<T extends RankCandidate>(
   if (applyPublisherBoost && c.isOfficialPublisher) {
     f.officialPublisher = score * (PUBLISHER_BOOST - 1); // record the additive delta
     score *= PUBLISHER_BOOST;
+  }
+
+  // Place engagement boost: ×1.15 when the viewer has ≥2 place_view events
+  // for this candidate's canonical place in the last 30 days.  Only fires
+  // when both candidate.placeId and ctx.placeAffinities are supplied by the
+  // caller — surfaces that don't track place views contribute 0 cleanly.
+  if (c.placeId && ctx.placeAffinities) {
+    const placeViews = ctx.placeAffinities[c.placeId] ?? 0;
+    if (placeViews >= PLACE_ENGAGEMENT_BOOST_THRESHOLD) {
+      f.placeEngagement = score * (PLACE_ENGAGEMENT_BOOST - 1);
+      score *= PLACE_ENGAGEMENT_BOOST;
+    }
   }
 
   return { candidate: c, score, features: f };

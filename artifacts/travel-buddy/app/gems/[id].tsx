@@ -8,7 +8,7 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { RouteBuilderSheet } from '../../src/components/RouteBuilderSheet';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, Pressable,
   ActivityIndicator, Alert, Modal, TextInput, FlatList, Image,
 } from 'react-native';
 import { CachedImage } from '../../src/components/CachedImage';
@@ -388,6 +388,22 @@ export default function GemDetailScreen() {
           />
         </View>
 
+        {/* "See destination" — tappable link to the canonical Living Destination
+            Page when this gem has been linked to a canonical place. */}
+        {canonicalPlace ? (
+          <Pressable
+            style={styles.seeDestinationRow}
+            onPress={() => router.push(`/place/${gem.canonicalPlaceId}` as any)}
+            accessibilityRole="button"
+            accessibilityLabel={`See ${canonicalPlace.name} destination page`}
+          >
+            <Ionicons name="location-sharp" size={15} color="#4C8BF5" />
+            <Text style={styles.seeDestinationText}>
+              {canonicalPlace.name} — See destination →
+            </Text>
+          </Pressable>
+        ) : null}
+
         {/* About — canonical place (FSQ phone/hours/address) when available,
             falling back to user-entered description and category only. */}
         {(canonicalPlace || gem.description || gem.category) ? (
@@ -505,7 +521,7 @@ export default function GemDetailScreen() {
           {gem?.id ? (
             <View style={styles.actionBtn}>
               <StampButton
-                entityType="hidden_gem"
+                entityType="gem"
                 entityId={gem.id}
                 initialCount={0}
                 initialIsStamped={false}
@@ -634,6 +650,21 @@ const styles = StyleSheet.create({
 
   verificationRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   verificationText: { color: '#4CAF7D', fontWeight: '600', fontSize: 13 },
+
+  seeDestinationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    backgroundColor: '#13213A',
+    borderRadius: 12,
+    marginHorizontal: 20,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#1E2D45',
+  },
+  seeDestinationText: { color: '#4C8BF5', fontSize: 14, fontWeight: '600' },
 
   bodyText: { color: '#B0C4DE', fontSize: 15, lineHeight: 22 },
 

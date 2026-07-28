@@ -42,6 +42,8 @@ import { getTripMemory, createTripMemory, type Memory } from '../../src/services
 import { getEventsNearTrip, type EventSummary } from '../../src/services/events';
 import { updateTrip, createInviteLink, getTripMemberRole, fetchTripPrivatePreview } from '../../src/services/trips';
 import { PrivateTripCard, type PrivateTripPreview } from '../../src/components/privacy/PrivateTripCard';
+import { getCanonicalPlace } from '../../src/services/places';
+import type { CanonicalPlace } from '../../src/types/canonicalPlace';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
@@ -67,11 +69,28 @@ function TripDetailScreen() {
   useEffect(() => {
     if (realTrip) markFirstContent();
   }, [epoch, !!realTrip]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Canonical place linked to this trip's destination ─────────────────────
+  // Loads the place name for the "See destination" link row.  Fail-soft: a
+  // missing or erroring fetch leaves canonicalTripPlace as null and omits the
+  // link — the rest of the trip screen is unaffected.
+  useEffect(() => {
+    const placeId = (realTrip as any)?.canonicalPlaceId as string | undefined;
+    if (!placeId) { setCanonicalTripPlace(null); return; }
+    let cancelled = false;
+    getCanonicalPlace(placeId)
+      .then((place) => { if (!cancelled) setCanonicalTripPlace(place); })
+      .catch(() => { if (!cancelled) setCanonicalTripPlace(null); });
+    return () => { cancelled = true; };
+  }, [(realTrip as any)?.canonicalPlaceId]);
   const { invites } = usePendingTripInvites();
   const isPendingInvite = live ? invites.some((inv) => inv.tripId === id) : false;
   const pageScrollRef    = useRef<ScrollView>(null);
   const commandBarRef    = useRef<ConciergeCommandBarHandle>(null);
   const commandBarY      = useRef<number>(0);
+  // Canonical place linked to this trip's destination — loaded when
+  // realTrip.canonicalPlaceId is set.
+  const [canonicalTripPlace, setCanonicalTripPlace] = useState<CanonicalPlace | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
   const [inviteSheetOpen, setInviteSheetOpen] = useState(false);
   const [linksSheetOpen, setLinksSheetOpen] = useState(false);
@@ -417,6 +436,22 @@ function TripDetailScreen() {
         {/* Destination city overview card — shows city/country heading + any
             trip notes as a city description; tappable to open in maps */}
         <TripDestinationInfoCard trip={trip} />
+
+        {/* "See destination" — shown when the trip's destination has been linked
+            to a canonical place; taps through to the Living Destination Page. */}
+        {canonicalTripPlace ? (
+          <Pressable
+            style={styles.seeDestinationRow}
+            onPress={() => router.push(`/place/${(realTrip as any).canonicalPlaceId}` as any)}
+            accessibilityRole="link"
+            accessibilityLabel={`See ${canonicalTripPlace.name} destination page`}
+          >
+            <MapPin size={16} color={color.signal} />
+            <Text style={styles.seeDestinationText}>
+              📍 {canonicalTripPlace.name} — See destination →
+            </Text>
+          </Pressable>
+        ) : null}
 
         {/* ── Before you go — entry/visa + country essentials, always visible ── */}
         {live && trip.id ? (
@@ -785,6 +820,8 @@ const styles = StyleSheet.create({
   markCompleteBtnText: { ...t.body, color: color.success, fontWeight: '700' },
   tripNotesCard: { marginHorizontal: space.lg, marginBottom: space.lg, backgroundColor: color.paperRaised, borderRadius: radius.md, padding: space.lg, borderWidth: 1, borderColor: color.haze },
   tripNotesText: { ...t.small, color: color.ink, lineHeight: 20 },
+  seeDestinationRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginHorizontal: space.lg, marginTop: space.sm, marginBottom: space.xs, backgroundColor: color.paperRaised, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.sm, borderWidth: 1, borderColor: color.haze },
+  seeDestinationText: { ...t.small, color: color.signal, fontWeight: '600', flex: 1 },
 });
 
 const srStyles = StyleSheet.create({

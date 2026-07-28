@@ -30,6 +30,7 @@ import { MapEntityActionRow } from '../../src/components/map/MapEntityActionRow'
 import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 import { TripWishlistPicker } from '../../src/components/discovery/TripWishlistPicker';
 import { checkSaved, toggleSave } from '../../src/services/collections';
+import { freshToken as freshApiToken } from '../../src/services/apiToken';
 import { getPlaceLiveStatus } from '../../src/services/discovery';
 import { categoryColor } from '../../src/components/discovery/PlaceCard';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
@@ -331,6 +332,32 @@ export default function PlaceDetailScreen() {
       setLiving(livingData);
     });
   }, [id, isFlagEnabled]);
+
+  // ── Place engagement signal — write a place_view rank event on mount ─────────
+  // Fire-and-forget: failures are non-fatal. A missed signal never blocks the UI.
+  // Only fires when the viewer is authenticated and the route param is a
+  // UUID-style canonical place id (non-canonical discovery IDs are OSM slugs).
+  useEffect(() => {
+    if (!isAuthed || !id) return;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    if (!isUuid) return;
+    const write = async () => {
+      try {
+        const base = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+        if (!base) return;
+        const token = await freshApiToken();
+        if (!token) return;
+        await fetch(`${base}/api/rank-events`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ event_type: 'place_view', entity_type: 'place', entity_id: id }),
+        });
+      } catch {
+        /* non-fatal — signal missed, screen unaffected */
+      }
+    };
+    void write();
+  }, [isAuthed, id]);
 
   const placeName = canonicalPlace?.name ?? discoveryPlace?.name ?? 'Place';
 

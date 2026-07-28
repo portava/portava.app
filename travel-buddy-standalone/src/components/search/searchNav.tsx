@@ -53,12 +53,21 @@ export function resolveRoute(result: UnifiedSearchResult): string | null {
     return `/(rent-a-buddy)/buddy/${id}`;
   }
 
-  // Places and hidden gems both land on /gems/:id
+  // Places and hidden gems both land on /gems/:id, UNLESS the result carries a
+  // livingPageId in its metadata — then it routes to the canonical Living
+  // Destination Page at /place/:livingPageId instead.
   const hiddenGemMatch = destinationRoute.match(/^\/hidden-gem\/(.+)$/);
   if (hiddenGemMatch) return `/gems/${hiddenGemMatch[1]}`;
 
   const placeMatch = destinationRoute.match(/^\/place\/(.+)$/);
-  if (placeMatch) return `/gems/${placeMatch[1]}`;
+  if (placeMatch) {
+    // livingPageId is set when the discovery_place has been linked to a
+    // canonical places row.  Route to the Living Destination Page in that
+    // case; fall back to the existing /gems sheet for unlinked places.
+    const livingPageId = result.metadata?.livingPageId as string | undefined;
+    if (livingPageId) return `/place/${livingPageId}`;
+    return `/gems/${placeMatch[1]}`;
+  }
 
   // Cities and countries share /destination/:slug
   // For city results the subtitle carries the country name (or "Region, Country"

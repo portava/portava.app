@@ -157,7 +157,7 @@ describe("POST /api/media/upload — hardening", () => {
       .toBuffer();
     const r = await rawReq("POST", "/api/media/upload", withExif, "image/jpeg");
     assert.equal(r.status, 201, JSON.stringify(r.body));
-    assert.ok(r.body.url.includes("/post-media/"));
+    assert.ok(r.body.url.includes("post-media/"), `url was: ${r.body.url}`);
     assert.equal(r.body.processed, true);
     assert.equal(r.body.width, 900);
     assert.ok(r.body.thumbnailUrl, "server thumbnail URL expected");

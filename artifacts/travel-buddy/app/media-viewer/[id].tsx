@@ -295,7 +295,7 @@ function ViewerOverlay({
           {post ? (
             <StampButton
               key={post.id}
-              entityType="media_post"
+              entityType="media"
               entityId={post.id}
               initialCount={post.likeCount}
               initialIsStamped={post.likedByMe}

@@ -140,7 +140,7 @@ export function GemsItemOverlay({
       {/* ── Right action column ───────────────────────────────────────────── */}
       <View style={styles.actionColumn}>
         <StampButton
-          entityType="hidden_gem"
+          entityType="gem"
           entityId={item.id}
           initialCount={item.stats.likeCount ?? 0}
           initialIsStamped={item.viewerState?.hasLiked ?? false}

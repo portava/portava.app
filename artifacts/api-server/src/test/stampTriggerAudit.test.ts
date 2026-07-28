@@ -38,7 +38,7 @@ const STAMP_ID = "dddddddd-0000-0000-0000-000000000001";
 
 // ── SUITE 1: Static slug audit ─────────────────────────────────────────────────
 
-describe("Stamp trigger audit — all 17 slugs from 0093", () => {
+describe("Stamp trigger audit — all 16 active slugs from 0093", () => {
 
   const ROUTE_FILES = [
     resolve("src/routes/posts.ts"),
@@ -51,8 +51,8 @@ describe("Stamp trigger audit — all 17 slugs from 0093", () => {
   const ACTIVATED_SLUGS = [
     // Post & social stamps (posts.ts)
     "first_post", "storyteller", "photographer",
-    // Location milestone stamps (posts.ts)
-    "city_explorer", "globe_trotter", "world_citizen",
+    // Location milestone stamps (posts.ts — globe_trotter retired; globe_trotter_5/10 via criteria-engine)
+    "city_explorer", "world_citizen",
     // Social follow-count stamps (follows.ts)
     "community_connector", "popular_traveler", "travel_influencer",
     // Trip outcome stamps (trips.ts)
@@ -75,7 +75,7 @@ describe("Stamp trigger audit — all 17 slugs from 0093", () => {
     return ACTIVATED_SLUGS.filter((slug) => !codeSource.includes(`"${slug}"`));
   }
 
-  it("all 17 activated slugs appear as string literals in the route files", () => {
+  it("all 16 active slugs appear as string literals in the route files", () => {
     const unwired = computeRollbackList();
     assert.deepEqual(
       unwired, [],
@@ -86,7 +86,7 @@ describe("Stamp trigger audit — all 17 slugs from 0093", () => {
     );
   });
 
-  it("rollback list is empty — zero slugs need is_active=false", () => {
+  it("rollback list is empty — zero active slugs need is_active=false", () => {
     const needsRollback = computeRollbackList();
     assert.equal(
       needsRollback.length, 0,
@@ -96,7 +96,8 @@ describe("Stamp trigger audit — all 17 slugs from 0093", () => {
 
   it("each slug string appears in its expected route file", () => {
     const byFile: Record<string, string[]> = {
-      "posts.ts":       ["first_post", "storyteller", "photographer", "city_explorer", "globe_trotter", "world_citizen"],
+      // globe_trotter retired from direct trigger; globe_trotter_5/10 now via criteria-engine
+      "posts.ts":       ["first_post", "storyteller", "photographer", "city_explorer", "world_citizen"],
       "follows.ts":     ["community_connector", "popular_traveler", "travel_influencer"],
       "trips.ts":       ["trip_planner", "good_host"],
       "rentABuddy.ts":  ["buddy_veteran", "nightlife_guide", "food_guide", "top_rated_buddy"],

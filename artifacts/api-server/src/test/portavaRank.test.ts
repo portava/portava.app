@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import {
   rankCandidates, scoreCandidate, recencyScore, actionabilityScore,
   availabilityFitScore, socialProofScore, diversify, DEFAULT_WEIGHTS,
+  PLACE_ENGAGEMENT_BOOST, PLACE_ENGAGEMENT_BOOST_THRESHOLD,
   type RankCandidate, type ViewerContext,
 } from '../lib/portavaRank';
 
@@ -117,6 +118,66 @@ describe('diversity + exploration', () => {
     const s = scoreCandidate({ id: 'x', kind: 'event', startsAt: iso(HOUR) }, ctx());
     assert.ok('actionability' in s.features);
     assert.ok(Object.values(s.features).every((v) => Number.isFinite(v)));
+  });
+});
+
+describe('place engagement boost', () => {
+  const PLACE_ID = 'place-cebu-01';
+
+  it(`applies ×${PLACE_ENGAGEMENT_BOOST} when viewer has ≥${PLACE_ENGAGEMENT_BOOST_THRESHOLD} place_view events`, () => {
+    const postWithPlace: RankCandidate = {
+      id: 'p-with-place', kind: 'post', createdAt: iso(0), placeId: PLACE_ID,
+    };
+    const postNoPlace: RankCandidate = {
+      id: 'p-no-place', kind: 'post', createdAt: iso(0),
+    };
+
+    const withAffinity = ctx({ placeAffinities: { [PLACE_ID]: PLACE_ENGAGEMENT_BOOST_THRESHOLD } });
+    const sBoost  = scoreCandidate(postWithPlace, withAffinity);
+    const sBaseline = scoreCandidate(postNoPlace, withAffinity);
+
+    // The boosted post must score above a baseline (no-placeId) equivalent.
+    assert.ok(sBoost.score > sBaseline.score,
+      'post linked to a place with sufficient affinity must outscore a baseline equal post');
+
+    // The delta recorded in features must equal score * (boost - 1) before boost.
+    assert.ok('placeEngagement' in sBoost.features,
+      'placeEngagement feature must be recorded in the feature vector');
+
+    // Verify ratio ≈ PLACE_ENGAGEMENT_BOOST (allowing floating-point rounding).
+    const expectedDelta = (sBoost.score - sBoost.features.placeEngagement) * (PLACE_ENGAGEMENT_BOOST - 1);
+    assert.ok(
+      Math.abs(sBoost.features.placeEngagement - expectedDelta) < 1e-9,
+      'placeEngagement feature must equal score-before-boost × (BOOST - 1)',
+    );
+  });
+
+  it('does NOT apply boost when viewer has fewer than the threshold place_view events', () => {
+    const postWithPlace: RankCandidate = {
+      id: 'p-low', kind: 'post', createdAt: iso(0), placeId: PLACE_ID,
+    };
+    const lowAffinity = ctx({ placeAffinities: { [PLACE_ID]: PLACE_ENGAGEMENT_BOOST_THRESHOLD - 1 } });
+    const s = scoreCandidate(postWithPlace, lowAffinity);
+    assert.ok(!('placeEngagement' in s.features),
+      'placeEngagement feature must be absent when view count is below threshold');
+  });
+
+  it('does NOT apply boost when placeAffinities is absent from ViewerContext', () => {
+    const postWithPlace: RankCandidate = {
+      id: 'p-no-ctx', kind: 'post', createdAt: iso(0), placeId: PLACE_ID,
+    };
+    const noAff = ctx(); // placeAffinities omitted
+    const s = scoreCandidate(postWithPlace, noAff);
+    assert.ok(!('placeEngagement' in s.features),
+      'placeEngagement feature must be absent when placeAffinities is not provided');
+  });
+
+  it('does NOT apply boost when candidate has no placeId', () => {
+    const postNoId: RankCandidate = { id: 'p-no-id', kind: 'post', createdAt: iso(0) };
+    const withAff = ctx({ placeAffinities: { [PLACE_ID]: 99 } });
+    const s = scoreCandidate(postNoId, withAff);
+    assert.ok(!('placeEngagement' in s.features),
+      'placeEngagement feature must be absent when candidate has no placeId');
   });
 });
 

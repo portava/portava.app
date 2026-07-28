@@ -1086,6 +1086,87 @@ describe("GET /api/discovery/search — plans: deleted/cancelled/banned trip exc
   });
 });
 
+// ── Places — livingPageId enrichment ─────────────────────────────────────────
+//
+// When a discovery_places row has a canonical_location_id, the corresponding
+// search result must carry livingPageId in its metadata.  When the field is
+// absent (or null), metadata must NOT include livingPageId at all.
+
+const PLACE_A_ID  = "11100000-0000-4000-a000-000000000001"; // has canonical_location_id
+const PLACE_B_ID  = "22200000-0000-4000-a000-000000000002"; // no canonical_location_id
+const LIVING_UUID = "33300000-0000-4000-a000-000000000003"; // the canonical places.id
+
+describe("GET /api/discovery/search — places: livingPageId enrichment", () => {
+  beforeEach(() => {
+    setup({
+      discovery_places: [
+        {
+          id: PLACE_A_ID,
+          name: "Kawasan Falls",
+          city: "Badian",
+          blurb: "Stunning tiered waterfall",
+          image_url: null,
+          header_image_source: null,
+          image_source_type: null,
+          image_accuracy_status: null,
+          category: "nature",
+          primary_category: "nature",
+          lat: 9.8,
+          lng: 123.4,
+          canonical_location_id: LIVING_UUID,
+          status: "active",
+          saved_count: 50,
+          created_at: "2025-01-01T00:00:00Z",
+        },
+        {
+          id: PLACE_B_ID,
+          name: "Bantayan Beach",
+          city: "Bantayan",
+          blurb: "White sand beach getaway",
+          image_url: null,
+          header_image_source: null,
+          image_source_type: null,
+          image_accuracy_status: null,
+          category: "beach",
+          primary_category: "beach",
+          lat: 11.2,
+          lng: 123.7,
+          canonical_location_id: null,
+          status: "active",
+          saved_count: 30,
+          created_at: "2025-01-02T00:00:00Z",
+        },
+      ],
+    });
+  });
+
+  it("place result with canonical_location_id carries livingPageId in metadata", async () => {
+    const r = await get("/discovery/search?q=kawasan&type=places");
+    assert.equal(r.status, 200);
+    const { results } = await r.json() as any;
+    const place = (results as any[]).find((p: any) => p.id === PLACE_A_ID);
+    assert.ok(place, "Kawasan Falls should appear");
+    assert.equal(
+      (place.metadata as any)?.livingPageId,
+      LIVING_UUID,
+      "livingPageId must equal the canonical_location_id from the DB row",
+    );
+  });
+
+  it("place result without canonical_location_id does NOT carry livingPageId", async () => {
+    const r = await get("/discovery/search?q=bantayan&type=places");
+    assert.equal(r.status, 200);
+    const { results } = await r.json() as any;
+    const place = (results as any[]).find((p: any) => p.id === PLACE_B_ID);
+    assert.ok(place, "Bantayan Beach should appear");
+    assert.equal(
+      (place.metadata as any)?.livingPageId,
+      undefined,
+      "livingPageId must be absent when canonical_location_id is null",
+    );
+  });
+});
+
 // ── Cities — discovery opt-out exclusion ──────────────────────────────────────
 
 describe("GET /api/discovery/search — cities: discovery opt-out exclusion", () => {

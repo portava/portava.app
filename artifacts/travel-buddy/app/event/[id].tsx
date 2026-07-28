@@ -68,7 +68,8 @@ import { AiRepresentationLabel } from '../../src/components/visuals/AiRepresenta
 import { resolveHeaderImage } from '../../src/lib/visuals/resolveHeaderImage';
 import { fallbackUriFor } from '../../src/lib/visuals/fallbackAssets';
 import { PlaceInfoSection } from '../../src/components/place/PlaceInfoSection';
-import { getVenueInfoByCoords, clearVenueInfoCache, type VenueContactInfo } from '../../src/services/places';
+import { getVenueInfoByCoords, clearVenueInfoCache, getCanonicalPlace, type VenueContactInfo } from '../../src/services/places';
+import type { CanonicalPlace } from '../../src/types/canonicalPlace';
 
 const STATE_BADGE: Record<string, { label: string; bg: string; fg: string }> = {
   draft:     { label: 'Draft',          bg: color.haze, fg: color.mute },
@@ -153,6 +154,8 @@ export default function EventDetailScreen() {
   // when the viewer sends a request in this session.
   const [hasPendingRequest, setHasPendingRequest] = useState(false);
   const [reportSheetVisible, setReportSheetVisible] = useState(false);
+  // Canonical place linked to this event — loaded when event.canonicalPlaceId is set.
+  const [canonicalEventPlace, setCanonicalEventPlace] = useState<CanonicalPlace | null>(null);
   // Set when the API returns { locked: true } — the event exists but the viewer
   // is not authorized.  Renders a private-wall screen rather than an empty
   // full-detail layout with undefined fields.
@@ -330,6 +333,20 @@ export default function EventDetailScreen() {
     }).catch(() => { /* non-fatal; PlaceInfoSection falls back to event description */ });
     return () => { cancelled = true; };
   }, [event?.locationLat, event?.locationLng, event?.locationName]);
+
+  // ── Canonical place linked to this event ─────────────────────────────────
+  // Loads the place name for the "See destination" link row.  Fail-soft: a
+  // missing or erroring fetch simply leaves canonicalEventPlace as null and
+  // the link is omitted — the rest of the screen is unaffected.
+  useEffect(() => {
+    const placeId = (event as any)?.canonicalPlaceId as string | undefined;
+    if (!placeId) { setCanonicalEventPlace(null); return; }
+    let cancelled = false;
+    getCanonicalPlace(placeId)
+      .then((place) => { if (!cancelled) setCanonicalEventPlace(place); })
+      .catch(() => { if (!cancelled) setCanonicalEventPlace(null); });
+    return () => { cancelled = true; };
+  }, [(event as any)?.canonicalPlaceId]);
 
   // ── Add to itinerary (when arriving from Trip Detail with tripId param) ────
   async function handleAddToItinerary() {
@@ -838,6 +855,22 @@ export default function EventDetailScreen() {
               openingHours={venueInfo?.openingHours}
             />
 
+            {/* "See destination" — shown when the event is linked to a canonical
+                place; taps through to the Living Destination Page. */}
+            {canonicalEventPlace ? (
+              <Pressable
+                style={styles.seeDestinationRow}
+                onPress={() => router.push(`/place/${(event as any).canonicalPlaceId}` as any)}
+                accessibilityRole="link"
+                accessibilityLabel={`See ${canonicalEventPlace.name} destination page`}
+              >
+                <MapPin size={14} color={color.signal} />
+                <Text style={styles.seeDestinationText}>
+                  📍 {canonicalEventPlace.name} — See destination →
+                </Text>
+              </Pressable>
+            ) : null}
+
             {/* Safety notes */}
             {(event as any).safetyNotes ? (
               <View style={styles.safetyBox}>
@@ -1186,6 +1219,9 @@ const styles = StyleSheet.create({
   title:              { ...t.title, color: color.ink, fontWeight: '800', fontSize: 22 },
   metaRow:            { flexDirection: 'row', alignItems: 'center', gap: 6 },
   meta:               { ...t.body, color: color.mute },
+
+  seeDestinationRow:  { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: color.paperRaised, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.sm, borderWidth: 1, borderColor: color.haze },
+  seeDestinationText: { ...t.small, color: color.signal, fontWeight: '600', flex: 1 },
 
   mapTile:            { borderRadius: radius.lg, overflow: 'hidden', borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
   mapTileInner:       { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md },

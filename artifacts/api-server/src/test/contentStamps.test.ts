@@ -85,19 +85,41 @@ function makeApp(router: any): Express {
 // return empty arrays so fire-and-forget Compass calls never throw.
 
 interface FakeState {
-  users?:          Record<string, { id: string }>;
-  posts?:          any[];
-  blocks?:         any[];
-  trip_members?:   any[];
-  content_stamps?: any[];
+  users?:               Record<string, { id: string }>;
+  posts?:               any[];
+  blocks?:              any[];
+  trip_members?:        any[];
+  content_stamps?:      any[];
+  rent_buddy_profiles?: any[];
+  memories?:            any[];
+  events?:              any[];
+  trips?:               any[];
+  user_follows?:        any[];
+  user_friendships?:    any[];
+  event_invites?:       any[];
+  event_rsvps?:         any[];
+  event_roles?:         any[];
+  circle_memberships?:  any[];
+  profiles?:            any[];
 }
 
 function makeClient(state: FakeState = {}) {
   const db: Record<string, any[]> = {
-    posts:          state.posts          ?? [],
-    blocks:         state.blocks         ?? [],
-    trip_members:   state.trip_members   ?? [],
-    content_stamps: state.content_stamps ?? [],
+    posts:               state.posts               ?? [],
+    blocks:              state.blocks              ?? [],
+    trip_members:        state.trip_members        ?? [],
+    content_stamps:      state.content_stamps      ?? [],
+    rent_buddy_profiles: state.rent_buddy_profiles ?? [],
+    memories:            state.memories            ?? [],
+    events:              state.events              ?? [],
+    trips:               state.trips               ?? [],
+    user_follows:        state.user_follows        ?? [],
+    user_friendships:    state.user_friendships    ?? [],
+    event_invites:       state.event_invites       ?? [],
+    event_rsvps:         state.event_rsvps         ?? [],
+    event_roles:         state.event_roles         ?? [],
+    circle_memberships:  state.circle_memberships  ?? [],
+    profiles:            state.profiles            ?? [],
   };
 
   function from(table: string) {
@@ -472,6 +494,462 @@ describe("E — POST /stamps: media — blocked and trip_only non-member", () =>
       headers: bearer("alice-tok"),
       body: JSON.stringify({ entityType: "media", entityId: MEDIA_TRIP }),
     });
+    assert.equal(r.status, 404);
+  });
+});
+
+// =============================================================================
+// G — POST /stamps: buddy_profile access control
+//
+// entityId for buddy_profile = the buddy's user UUID (buddy.userId in UI),
+// NOT the rent_buddy_profiles.id surrogate key.  The guard must look up by
+// user_id and run a block check using that same UUID as the owner identity.
+// =============================================================================
+
+const BUDDY_USER_ID = "11111111-bbbb-0000-0000-000000000001"; // BOB's buddy profile user_id
+
+describe("G — POST /stamps: buddy_profile access control", () => {
+  let url: string;
+  let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: router } = await import("../routes/contentStamps.js");
+    _setTestClient(
+      makeClient({
+        users: { "alice-tok": { id: ALICE_ID } },
+        rent_buddy_profiles: [
+          { id: "bp-row-id-001", user_id: BUDDY_USER_ID },
+        ],
+        blocks:         [],
+        content_stamps: [],
+      }),
+      true,
+    );
+    const srv = await startServer(makeApp(router));
+    url = srv.url;
+    close = srv.close;
+  });
+  after(() => close());
+
+  it("valid buddy_profile stamp (entityId = buddy userId) → 200", async () => {
+    const r = await fetch(`${url}/api/stamps`, {
+      method: "POST",
+      headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "buddy_profile", entityId: BUDDY_USER_ID }),
+    });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.ok("stampCount" in body, "stampCount field present");
+    assert.equal(body.isStamped, true);
+  });
+
+  it("buddy_profile not found → 404", async () => {
+    const r = await fetch(`${url}/api/stamps`, {
+      method: "POST",
+      headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "buddy_profile", entityId: MISSING_ID }),
+    });
+    assert.equal(r.status, 404);
+  });
+});
+
+describe("G2 — POST /stamps: buddy_profile blocked", () => {
+  let url: string;
+  let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: router } = await import("../routes/contentStamps.js");
+    _setTestClient(
+      makeClient({
+        users: { "alice-tok": { id: ALICE_ID } },
+        rent_buddy_profiles: [
+          { id: "bp-row-id-002", user_id: BUDDY_USER_ID },
+        ],
+        blocks: [
+          // BUDDY blocked ALICE — block in either direction must deny
+          { blocker_id: BUDDY_USER_ID, blocked_id: ALICE_ID },
+        ],
+        content_stamps: [],
+      }),
+      true,
+    );
+    const srv = await startServer(makeApp(router));
+    url = srv.url;
+    close = srv.close;
+  });
+  after(() => close());
+
+  it("blocked buddy_profile (buddy blocked viewer) → 404", async () => {
+    const r = await fetch(`${url}/api/stamps`, {
+      method: "POST",
+      headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "buddy_profile", entityId: BUDDY_USER_ID }),
+    });
+    assert.equal(r.status, 404);
+  });
+});
+
+// =============================================================================
+// H — POST /stamps: memory visibility enforcement
+// =============================================================================
+
+const MEM_PUBLIC       = "aa100000-0000-0000-0000-000000000001"; // public, published
+const MEM_ONLY_ME      = "aa100000-0000-0000-0000-000000000002"; // only_me
+const MEM_UNPUBLISHED  = "aa100000-0000-0000-0000-000000000003"; // draft (not published)
+const MEM_FRIENDS      = "aa100000-0000-0000-0000-000000000004"; // friends_only
+const MEM_TRIP_CREW    = "aa100000-0000-0000-0000-000000000005"; // trip_crew
+const MEM_TRIP_ID      = "aa200000-0000-0000-0000-000000000001";
+
+describe("H — POST /stamps: memory — public allowed, only_me denied", () => {
+  let url: string; let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: router } = await import("../routes/contentStamps.js");
+    _setTestClient(
+      makeClient({
+        users: { "alice-tok": { id: ALICE_ID } },
+        memories: [
+          { id: MEM_PUBLIC,      owner_id: BOB_ID,   state: "published", visibility: "public",   trip_id: null, allowed_user_ids: null, hidden_user_ids: null },
+          { id: MEM_ONLY_ME,     owner_id: BOB_ID,   state: "published", visibility: "only_me",  trip_id: null, allowed_user_ids: null, hidden_user_ids: null },
+          { id: MEM_UNPUBLISHED, owner_id: BOB_ID,   state: "draft",     visibility: "public",   trip_id: null, allowed_user_ids: null, hidden_user_ids: null },
+        ],
+        blocks: [], user_follows: [], content_stamps: [],
+      }),
+      true,
+    );
+    const srv = await startServer(makeApp(router));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("public memory, valid caller → 200", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "memory", entityId: MEM_PUBLIC }) });
+    assert.equal(r.status, 200);
+    assert.equal((await r.json() as any).isStamped, true);
+  });
+
+  it("only_me memory → 404", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "memory", entityId: MEM_ONLY_ME }) });
+    assert.equal(r.status, 404);
+  });
+
+  it("unpublished (draft) memory → 404", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "memory", entityId: MEM_UNPUBLISHED }) });
+    assert.equal(r.status, 404);
+  });
+});
+
+describe("H2 — POST /stamps: memory — friends_only requires mutual follow", () => {
+  let url: string; let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: router } = await import("../routes/contentStamps.js");
+    _setTestClient(
+      makeClient({
+        users: { "alice-tok": { id: ALICE_ID } },
+        memories: [
+          { id: MEM_FRIENDS, owner_id: BOB_ID, state: "published", visibility: "friends_only", trip_id: null, allowed_user_ids: null, hidden_user_ids: null },
+        ],
+        blocks: [], user_follows: [], content_stamps: [],
+      }),
+      true,
+    );
+    const srv = await startServer(makeApp(router));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("friends_only memory, no mutual follow → 404", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "memory", entityId: MEM_FRIENDS }) });
+    assert.equal(r.status, 404);
+  });
+});
+
+describe("H3 — POST /stamps: memory — trip_crew non-member denied", () => {
+  let url: string; let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: router } = await import("../routes/contentStamps.js");
+    _setTestClient(
+      makeClient({
+        users: { "alice-tok": { id: ALICE_ID } },
+        memories: [
+          { id: MEM_TRIP_CREW, owner_id: BOB_ID, state: "published", visibility: "trip_crew", trip_id: MEM_TRIP_ID, allowed_user_ids: null, hidden_user_ids: null },
+        ],
+        blocks: [], trip_members: [], user_follows: [], content_stamps: [],
+      }),
+      true,
+    );
+    const srv = await startServer(makeApp(router));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("trip_crew memory, non-member → 404", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "memory", entityId: MEM_TRIP_CREW }) });
+    assert.equal(r.status, 404);
+  });
+});
+
+// =============================================================================
+// I — POST /stamps: trip visibility enforcement
+// =============================================================================
+
+const TRIP_PUBLIC  = "bb100000-0000-0000-0000-000000000001";
+const TRIP_PRIVATE = "bb100000-0000-0000-0000-000000000002";
+
+describe("I — POST /stamps: trip — public allowed, private non-member denied", () => {
+  let url: string; let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: router } = await import("../routes/contentStamps.js");
+    _setTestClient(
+      makeClient({
+        users: { "alice-tok": { id: ALICE_ID } },
+        trips: [
+          { id: TRIP_PUBLIC,  owner_id: BOB_ID, visibility: "public"  },
+          { id: TRIP_PRIVATE, owner_id: BOB_ID, visibility: "private" },
+        ],
+        blocks: [], trip_members: [], content_stamps: [],
+      }),
+      true,
+    );
+    const srv = await startServer(makeApp(router));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("public trip, valid caller → 200", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "trip", entityId: TRIP_PUBLIC }) });
+    assert.equal(r.status, 200);
+    assert.equal((await r.json() as any).isStamped, true);
+  });
+
+  it("private trip, non-member → 404", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "trip", entityId: TRIP_PRIVATE }) });
+    assert.equal(r.status, 404);
+  });
+});
+
+// =============================================================================
+// J — POST /stamps: event visibility enforcement
+// =============================================================================
+
+const EVT_PUBLIC      = "cc100000-0000-0000-0000-000000000001";
+const EVT_FRIENDS     = "cc100000-0000-0000-0000-000000000002";
+const EVT_INVITE_ONLY = "cc100000-0000-0000-0000-000000000003";
+const EVT_CIRCLE      = "cc100000-0000-0000-0000-000000000004";
+const EVT_TRIP        = "cc100000-0000-0000-0000-000000000005";
+const EVT_CIRCLE_ID   = "cc200000-0000-0000-0000-000000000001"; // circle that owns the circle event
+const EVT_TRIP_ID     = "cc200000-0000-0000-0000-000000000002"; // trip that owns the trip event
+
+describe("J — POST /stamps: event — public allowed, restricted denied without membership", () => {
+  let url: string; let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: router } = await import("../routes/contentStamps.js");
+    _setTestClient(
+      makeClient({
+        users: { "alice-tok": { id: ALICE_ID } },
+        events: [
+          { id: EVT_PUBLIC,      host_id: BOB_ID, state: "active", visibility: "public",       circle_id: null, trip_id: null },
+          { id: EVT_FRIENDS,     host_id: BOB_ID, state: "active", visibility: "friends_only", circle_id: null, trip_id: null },
+          { id: EVT_INVITE_ONLY, host_id: BOB_ID, state: "active", visibility: "invite_only",  circle_id: null, trip_id: null },
+          { id: EVT_CIRCLE,      host_id: BOB_ID, state: "active", visibility: "circle",       circle_id: EVT_CIRCLE_ID, trip_id: null },
+          { id: EVT_TRIP,        host_id: BOB_ID, state: "active", visibility: "trip",         circle_id: null, trip_id: EVT_TRIP_ID },
+        ],
+        blocks: [],
+        user_friendships: [],  // ALICE and BOB are NOT friends
+        event_rsvps: [], event_roles: [], event_invites: [],
+        circle_memberships: [], trip_members: [],
+        content_stamps: [],
+      }),
+      true,
+    );
+    const srv = await startServer(makeApp(router));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("public event, valid caller → 200", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "event", entityId: EVT_PUBLIC }) });
+    assert.equal(r.status, 200);
+    assert.equal((await r.json() as any).isStamped, true);
+  });
+
+  it("friends_only event, viewer has no friendship or rsvp → 404", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "event", entityId: EVT_FRIENDS }) });
+    assert.equal(r.status, 404);
+  });
+
+  it("invite_only event, viewer has no rsvp or role → 404", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "event", entityId: EVT_INVITE_ONLY }) });
+    assert.equal(r.status, 404);
+  });
+
+  it("circle event, viewer not in circle → 404", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "event", entityId: EVT_CIRCLE }) });
+    assert.equal(r.status, 404);
+  });
+
+  it("trip event, viewer not a trip member → 404", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "event", entityId: EVT_TRIP }) });
+    assert.equal(r.status, 404);
+  });
+});
+
+describe("J2 — POST /stamps: event — all restricted visibility types, authorized member allowed", () => {
+  let url: string; let close: () => Promise<void>;
+
+  const EVT_FRIENDS2 = "cc100000-0000-0000-0000-000000000006"; // friends_only with ALICE as friend
+  const EVT_INVITE2  = "cc100000-0000-0000-0000-000000000007"; // invite_only with ALICE having RSVP
+  const EVT_TRIP_NULL_STATUS = "cc100000-0000-0000-0000-000000000008"; // trip with null-status member (legacy)
+
+  before(async () => {
+    const { default: router } = await import("../routes/contentStamps.js");
+    _setTestClient(
+      makeClient({
+        users: { "alice-tok": { id: ALICE_ID } },
+        events: [
+          { id: EVT_CIRCLE,     host_id: BOB_ID, state: "active", visibility: "circle",       circle_id: EVT_CIRCLE_ID, trip_id: null },
+          { id: EVT_TRIP,       host_id: BOB_ID, state: "active", visibility: "trip",         circle_id: null, trip_id: EVT_TRIP_ID },
+          { id: EVT_FRIENDS2,   host_id: BOB_ID, state: "active", visibility: "friends_only", circle_id: null, trip_id: null },
+          { id: EVT_INVITE2,    host_id: BOB_ID, state: "active", visibility: "invite_only",  circle_id: null, trip_id: null },
+          { id: EVT_TRIP_NULL_STATUS, host_id: BOB_ID, state: "active", visibility: "trip", circle_id: null, trip_id: EVT_TRIP_ID },
+        ],
+        blocks: [],
+        // ALICE is friends with BOB, has an RSVP, and is a circle+trip member
+        user_friendships: [{ user_a: ALICE_ID, user_b: BOB_ID }],
+        event_rsvps:      [{ event_id: EVT_INVITE2, user_id: ALICE_ID, status: "going" }],
+        event_roles:      [],
+        event_invites:    [],
+        circle_memberships: [{ user_id: EVT_CIRCLE_ID, other_id: ALICE_ID }],
+        // Trip with accepted-status member
+        trip_members: [
+          { trip_id: EVT_TRIP_ID, user_id: ALICE_ID, role: "member", status: "accepted" },
+        ],
+        content_stamps: [],
+      }),
+      true,
+    );
+    const srv = await startServer(makeApp(router));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("circle event, viewer is circle member → 200", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "event", entityId: EVT_CIRCLE }) });
+    assert.equal(r.status, 200);
+    assert.equal((await r.json() as any).isStamped, true);
+  });
+
+  it("trip event, viewer is accepted trip member → 200", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "event", entityId: EVT_TRIP }) });
+    assert.equal(r.status, 200);
+    assert.equal((await r.json() as any).isStamped, true);
+  });
+
+  it("friends_only event, viewer has user_friendships row → 200", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "event", entityId: EVT_FRIENDS2 }) });
+    assert.equal(r.status, 200);
+    assert.equal((await r.json() as any).isStamped, true);
+  });
+
+  it("invite_only event, viewer has an RSVP → 200", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "event", entityId: EVT_INVITE2 }) });
+    assert.equal(r.status, 200);
+    assert.equal((await r.json() as any).isStamped, true);
+  });
+});
+
+describe("J3 — POST /stamps: event — trip with null-status member (legacy compat)", () => {
+  let url: string; let close: () => Promise<void>;
+  const EVT_TRIP_LEGACY = "cc100000-0000-0000-0000-000000000009";
+  const TRIP_LEGACY_ID  = "cc200000-0000-0000-0000-000000000003";
+
+  before(async () => {
+    const { default: router } = await import("../routes/contentStamps.js");
+    _setTestClient(
+      makeClient({
+        users: { "alice-tok": { id: ALICE_ID } },
+        events: [
+          { id: EVT_TRIP_LEGACY, host_id: BOB_ID, state: "active", visibility: "trip", circle_id: null, trip_id: TRIP_LEGACY_ID },
+        ],
+        blocks: [],
+        user_friendships: [], event_rsvps: [], event_roles: [], event_invites: [], circle_memberships: [],
+        // Legacy row: status is null (treated as accepted per isTripEventMember semantics)
+        trip_members: [{ trip_id: TRIP_LEGACY_ID, user_id: ALICE_ID, role: "member", status: null }],
+        content_stamps: [],
+      }),
+      true,
+    );
+    const srv = await startServer(makeApp(router));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("trip event, viewer has null-status trip_member row (legacy) → 200", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "event", entityId: EVT_TRIP_LEGACY }) });
+    assert.equal(r.status, 200);
+    assert.equal((await r.json() as any).isStamped, true);
+  });
+});
+
+// =============================================================================
+// K — POST /stamps: profile privacy enforcement
+// =============================================================================
+
+const PUBLIC_PROFILE_ID  = "dd100000-0000-0000-0000-000000000001";
+const PRIVATE_PROFILE_ID = "dd100000-0000-0000-0000-000000000002";
+
+describe("K — POST /stamps: profile — public allowed, private without follow denied", () => {
+  let url: string; let close: () => Promise<void>;
+
+  before(async () => {
+    const { default: router } = await import("../routes/contentStamps.js");
+    _setTestClient(
+      makeClient({
+        users: { "alice-tok": { id: ALICE_ID } },
+        profiles: [
+          { id: PUBLIC_PROFILE_ID,  is_private: false },
+          { id: PRIVATE_PROFILE_ID, is_private: true  },
+        ],
+        blocks: [], user_follows: [], content_stamps: [],
+      }),
+      true,
+    );
+    const srv = await startServer(makeApp(router));
+    url = srv.url; close = srv.close;
+  });
+  after(() => close());
+
+  it("public profile → 200", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "profile", entityId: PUBLIC_PROFILE_ID }) });
+    assert.equal(r.status, 200);
+    assert.equal((await r.json() as any).isStamped, true);
+  });
+
+  it("private profile, viewer not following → 404", async () => {
+    const r = await fetch(`${url}/api/stamps`, { method: "POST", headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "profile", entityId: PRIVATE_PROFILE_ID }) });
     assert.equal(r.status, 404);
   });
 });

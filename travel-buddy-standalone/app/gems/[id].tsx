@@ -505,7 +505,7 @@ export default function GemDetailScreen() {
           {gem?.id ? (
             <View style={styles.actionBtn}>
               <StampButton
-                entityType="hidden_gem"
+                entityType="gem"
                 entityId={gem.id}
                 initialCount={0}
                 initialIsStamped={false}

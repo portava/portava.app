@@ -123,3 +123,23 @@ status filters also created.
 
 Adds `canonical_place_id`, `source_type`, and `moderation_status` columns to `hidden_gems`.
 Required by the Gems feed endpoint (`/api/media/gems-feed`) for eligibility filtering and AI-provenance labeling.
+
+## 2053 — discovery_places.canonical_location_id
+
+| File | Status |
+|------|--------|
+| `src/migrations/2053_discovery_places_canonical_location_id.sql` | applied 2026-07-28 |
+
+Adds `canonical_location_id UUID REFERENCES places(id)` to `discovery_places`.
+Allows search results to carry a direct link to the canonical Living Destination Page
+(`/place/:id`) without a separate join at query time. NULL = no canonical page yet.
+
+## 2052 — content_stamps: extend entity_type CHECK for memory + place
+
+| File | Status |
+|------|--------|
+| `src/migrations/2052_content_stamps_memory_type.sql` | pending — apply after 2049 (content_stamps table creation) |
+
+Extends the `content_stamps_entity_type_check` constraint to include `'memory'` and `'place'`.
+Required because Task #3049 wired StampButton to memory detail screens using `entityType="memory"`,
+and the place detail screen uses `entityType="place"`. Apply immediately after 2049 lands.

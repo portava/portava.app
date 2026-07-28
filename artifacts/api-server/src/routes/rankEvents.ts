@@ -21,6 +21,61 @@ import { RankingEvent, OUTCOME_TO_ANALYTICS_EVENT } from "../services/ranking/ra
 
 const router = Router();
 
+// ── POST /rank-events — direct impression write ───────────────────────────────
+//
+// Allows clients to write a rank_event row for surfaces that generate their
+// own impression signals (e.g. Living Destination Page views).  Distinct from
+// /rank-events/outcome which upgrades an existing impression row.
+//
+// Supported event_types:
+//   place_view — viewer opened the Living Destination Page for a canonical place.
+
+const DIRECT_EVENT_TYPES = ["place_view"] as const;
+type DirectEventType = typeof DIRECT_EVENT_TYPES[number];
+
+const directEventSchema = z.object({
+  event_type:  z.enum(DIRECT_EVENT_TYPES),
+  entity_type: z.string().min(1).max(50),
+  entity_id:   z.string().min(1).max(200),
+});
+
+router.post("/rank-events", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const parsed = directEventSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+
+  const { event_type, entity_id } = parsed.data;
+
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not available");
+    return;
+  }
+
+  // Fire-and-forget: failures are non-fatal — a missed signal is better than
+  // a broken Living Page load.
+  const { error } = await sc.from("rank_events").insert({
+    event_type,
+    item_id:    entity_id,
+    surface:    "living_page",
+    user_id:    user.id,
+    served_at:  new Date().toISOString(),
+    outcome:    "impression",
+  });
+
+  if (error) {
+    req.log.warn({ err: error, event_type, entity_id }, "rank-events: direct insert failed (non-fatal)");
+  }
+
+  res.json({ ok: true });
+}));
+
 // Existing outcome values — kept for backward compatibility with clients
 // sending the legacy string values.  New outcome event types are emitted
 // as additional analytics rows using the typed RankingEvent constants.
