@@ -21,9 +21,11 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
+import { Video, type AVPlaybackStatus } from 'expo-av';
 import { Play, Volume2, VolumeX } from 'lucide-react-native';
 import { color, radius } from '../../theme/tokens.ts';
+import { useSmartVideoFit } from '../../hooks/useSmartVideoFit.ts';
+import { VideoBlurBackdrop } from './VideoBlurBackdrop.tsx';
 
 export interface SharedVideoPlayerProps {
   uri: string;
@@ -50,6 +52,11 @@ export function SharedVideoPlayer({
   const [isPlaying, setIsPlaying] = useState(autoplay);
   const [isMuted, setIsMuted] = useState(mutedProp);
   const [hasError, setHasError] = useState(false);
+  const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
+  const { resizeMode, needsLetterbox, onReadyForDisplay } = useSmartVideoFit(
+    containerSize.w,
+    containerSize.h,
+  );
 
   const handlePlaybackStatus = useCallback(
     (status: AVPlaybackStatus) => {
@@ -92,17 +99,24 @@ export function SharedVideoPlayer({
   }
 
   return (
-    <View style={[s.container, style]}>
+    <View
+      style={[s.container, style]}
+      onLayout={(e) =>
+        setContainerSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })
+      }
+    >
+      {needsLetterbox ? <VideoBlurBackdrop uri={poster} /> : null}
       <Video
         ref={videoRef}
         source={{ uri }}
         style={StyleSheet.absoluteFill}
-        resizeMode={ResizeMode.COVER}
+        resizeMode={resizeMode}
         shouldPlay={autoplay}
         isLooping={loop}
         isMuted={isMuted}
         useNativeControls={false}
         onPlaybackStatusUpdate={handlePlaybackStatus}
+        onReadyForDisplay={onReadyForDisplay}
       />
 
       {/* Poster shown while paused and poster uri is provided */}

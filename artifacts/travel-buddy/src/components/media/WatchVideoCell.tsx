@@ -26,19 +26,22 @@ import {
   Dimensions,
   ActivityIndicator,
 } from 'react-native';
-import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
+import { Video, type AVPlaybackStatus } from 'expo-av';
 import { WifiOff, PlayCircle } from 'lucide-react-native';
 import { color, type as t } from '../../theme/tokens.ts';
+import { useSmartVideoFit } from '../../hooks/useSmartVideoFit.ts';
+import { VideoBlurBackdrop } from '../ui/VideoBlurBackdrop.tsx';
 
-// Web: inject a stylesheet rule with !important so expo-av's inline-style overrides
-// (which run on every React render) can never win. CSS !important in an author
-// stylesheet beats inline styles per the cascade spec — RAF patching cannot.
+// Web: inject stylesheet rules with !important so expo-av's inline-style overrides
+// (which run on every React render) can never win. We target by ID suffix so
+// cover/contain can switch dynamically as video metadata loads.
 if (typeof document !== 'undefined') {
   const _s = document.createElement('style');
   _s.textContent =
-    '[id^="watch-cell-"] video{' +
-    'position:absolute!important;inset:0!important;' +
-    'width:100%!important;height:100%!important;object-fit:cover!important;}';
+    '[id$="-cover"] video{position:absolute!important;inset:0!important;' +
+    'width:100%!important;height:100%!important;object-fit:cover!important;}' +
+    '[id$="-contain"] video{position:absolute!important;inset:0!important;' +
+    'width:100%!important;height:100%!important;object-fit:contain!important;}';
   document.head.appendChild(_s);
 }
 
@@ -72,6 +75,7 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
     const [failureCount, setFailureCount] = useState(0);
     const [hasHardFailed, setHasHardFailed] = useState(false);
     const mountedRef = useRef(true);
+    const { resizeMode, needsLetterbox, onReadyForDisplay } = useSmartVideoFit(SCREEN_W, SCREEN_H);
 
     // Expose videoRef to parent via imperative handle.
     useImperativeHandle(ref, () => ({ videoRef }), []);
@@ -144,17 +148,19 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
     }
 
     return (
-      <View nativeID={`watch-cell-${id}`} style={s.cell}>
+      <View nativeID={`watch-cell-${id}-${needsLetterbox ? 'contain' : 'cover'}`} style={s.cell}>
+        {needsLetterbox ? <VideoBlurBackdrop uri={posterUrl} /> : null}
         <Video
           ref={videoRef}
           source={{ uri: videoUrl }}
           style={{ position: 'absolute', top: 0, left: 0, width: SCREEN_W, height: SCREEN_H }}
-          resizeMode={ResizeMode.COVER}
+          resizeMode={resizeMode}
           shouldPlay={isActive}
           isLooping
           isMuted={isMuted}
           useNativeControls={false}
           onPlaybackStatusUpdate={handleStatus}
+          onReadyForDisplay={onReadyForDisplay}
         />
 
         {/* Poster: shown while buffering (avoids black flash during seek). */}

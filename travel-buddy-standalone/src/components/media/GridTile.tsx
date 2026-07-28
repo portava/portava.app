@@ -23,12 +23,14 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from 'react-native';
-import { Video, ResizeMode } from 'expo-av';
+import { Video } from 'expo-av';
 import { Video as VideoIcon, MapPin } from 'lucide-react-native';
 import { DisplayMediaImage } from '../ui/DisplayMediaImage.tsx';
 import { useInViewAutoplay } from '../../hooks/useInViewAutoplay.ts';
 import type { MediaGridItem } from '../../types/media.ts';
 import { color, type as t, space, radius } from '../../theme/tokens.ts';
+import { useSmartVideoFit } from '../../hooks/useSmartVideoFit.ts';
+import { VideoBlurBackdrop } from '../ui/VideoBlurBackdrop.tsx';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -70,6 +72,7 @@ function GridTileInner({ item, index, cellWidth, cellHeight, onPress, isVisible 
   // Video ref for imperative play/pause control
   const videoRef = useRef<InstanceType<typeof Video>>(null);
   useInViewAutoplay(videoRef, hasVideoUrl ? isVisible : false);
+  const { resizeMode, needsLetterbox, onReadyForDisplay } = useSmartVideoFit(cellWidth, cellHeight);
 
   return (
     <Pressable
@@ -93,17 +96,21 @@ function GridTileInner({ item, index, cellWidth, cellHeight, onPress, isVisible 
 
       {/* ── Muted looping video (only for video items with a URL) ── */}
       {hasVideoUrl ? (
-        <Video
-          ref={videoRef}
-          source={{ uri: item.videoUrl! }}
-          style={StyleSheet.absoluteFill}
-          resizeMode={ResizeMode.COVER}
-          shouldPlay={false}   // imperative control via useInViewAutoplay
-          isLooping
-          isMuted
-          useNativeControls={false}
-          onError={() => {}}   // silent — poster already visible
-        />
+        <>
+          {needsLetterbox ? <VideoBlurBackdrop uri={posterUri} /> : null}
+          <Video
+            ref={videoRef}
+            source={{ uri: item.videoUrl! }}
+            style={StyleSheet.absoluteFill}
+            resizeMode={resizeMode}
+            shouldPlay={false}   // imperative control via useInViewAutoplay
+            isLooping
+            isMuted
+            useNativeControls={false}
+            onError={() => {}}   // silent — poster already visible
+            onReadyForDisplay={onReadyForDisplay}
+          />
+        </>
       ) : null}
 
       {/* ── Processing overlay (owner's uploading items) ─────────── */}
