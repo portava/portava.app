@@ -35,6 +35,7 @@ export interface LivingTimelinePost {
   createdAt: string | null;
   mediaType?: string | null;
   buckets?: string[];
+  like_count?: number | null;
 }
 
 export interface LivingTimeline {

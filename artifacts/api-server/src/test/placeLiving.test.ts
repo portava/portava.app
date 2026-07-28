@@ -520,6 +520,45 @@ describe("GET /places/:id/living/timeline", () => {
     server.close();
   });
 
+  it("week slice: posts include like_count so client engagement sort works", async () => {
+    const posts = [
+      {
+        id: "high-likes", canonical_place_id: PLACE_ID, status: "active",
+        content: "popular", media_urls: ["https://cdn.example.com/a.jpg"],
+        media_type: "photo", media_thumbnail_url: null, author_id: USER_ID,
+        created_at: hoursAgo(120), like_count: 42, post_buckets: [],
+      },
+      {
+        id: "low-likes", canonical_place_id: PLACE_ID, status: "active",
+        content: "recent but unpopular", media_urls: ["https://cdn.example.com/b.jpg"],
+        media_type: "photo", media_thumbnail_url: null, author_id: USER_ID,
+        created_at: hoursAgo(1), like_count: 1, post_buckets: [],
+      },
+    ];
+
+    const sc  = makeFakeSc({ posts });
+    const app = makeApp(sc);
+    server = http.createServer(app);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+
+    const res = await request(server, "GET", `/places/${PLACE_ID}/living/timeline?slice=week`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.slice, "week");
+
+    // like_count must be present on every returned post so the client can sort
+    const allHaveLikeCount = (res.body.posts as any[]).every(
+      (p: any) => typeof p.like_count === "number",
+    );
+    assert.ok(allHaveLikeCount, `some posts missing like_count: ${JSON.stringify(res.body.posts)}`);
+
+    // Verify the counts actually match the source data (not zeroed out)
+    const highPost = res.body.posts.find((p: any) => p.id === "high-likes");
+    assert.ok(highPost, "high-likes post not found in week response");
+    assert.equal(highPost.like_count, 42, "like_count should be 42 for high-likes post");
+
+    server.close();
+  });
+
   it("returns 400 for an invalid slice value", async () => {
     const sc  = makeFakeSc({});
     const app = makeApp(sc);

@@ -304,6 +304,7 @@ async function assembleLivingPayload(sc: any, placeId: string): Promise<any> {
       caption:      p.content ?? null,
       authorId:     p.author_id ?? null,
       createdAt:    p.created_at ?? null,
+      like_count:   typeof p.like_count === 'number' ? p.like_count : 0,
     }));
 
   const timeline = {
@@ -529,6 +530,7 @@ router.get("/places/:id/living/timeline", asyncHandler(async (req, res) => {
     createdAt:    p.created_at ?? null,
     mediaType:    p.media_type ?? null,
     buckets:      p.post_buckets ?? [],
+    like_count:   typeof p.like_count === 'number' ? p.like_count : 0,
   }));
 
   // Inject current crowdLevel + weather brief in response

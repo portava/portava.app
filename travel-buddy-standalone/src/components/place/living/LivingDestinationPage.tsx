@@ -987,10 +987,33 @@ type ContentTab =
 interface PlaceBucketTabsProps {
   living: PlaceLivingResponse;
   placeName: string;
+  placeId: string;
 }
 
-function PlaceBucketTabs({ living, placeName }: PlaceBucketTabsProps) {
+function PlaceBucketTabs({ living, placeName, placeId }: PlaceBucketTabsProps) {
   const [activeTab, setActiveTab] = useState<ContentTab>({ type: 'featured' });
+  const [weekPosts, setWeekPosts] = useState<LivingTimelinePost[] | null>(null);
+  const [weekLoading, setWeekLoading] = useState(false);
+
+  // Fetch week-slice timeline whenever the top_week tab becomes active
+  useEffect(() => {
+    if (activeTab.type !== 'top_week') return;
+    if (weekPosts !== null) return; // already fetched
+    let cancelled = false;
+    setWeekLoading(true);
+    getPlaceTimeline(placeId, 'week')
+      .then((result) => {
+        if (cancelled) return;
+        setWeekPosts(result?.posts ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setWeekPosts([]);
+      })
+      .finally(() => {
+        if (!cancelled) setWeekLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [activeTab.type, placeId, weekPosts]);
 
   const tabs: ContentTab[] = [
     { type: 'featured' },
@@ -1032,9 +1055,10 @@ function PlaceBucketTabs({ living, placeName }: PlaceBucketTabsProps) {
       return living.timeline.posts;
     }
     if (activeTab.type === 'top_week') {
-      // Reuse timeline posts sorted by like count (approximation until
-      // a separate top-week fetch is wired up)
-      return [...living.timeline.posts].sort((a, b) => 0); // keep order for now
+      const posts = weekPosts ?? [];
+      return [...posts].sort(
+        (a, b) => (b.like_count ?? 0) - (a.like_count ?? 0),
+      );
     }
     if (activeTab.type === 'bucket') {
       const bucket = living.buckets.find((b) => b.bucket === activeTab.bucket);
@@ -1049,6 +1073,7 @@ function PlaceBucketTabs({ living, placeName }: PlaceBucketTabsProps) {
       : null;
 
   const activePosts = getActivePosts();
+  const showWeekLoader = activeTab.type === 'top_week' && weekLoading;
 
   return (
     <View>
@@ -1075,34 +1100,43 @@ function PlaceBucketTabs({ living, placeName }: PlaceBucketTabsProps) {
         })}
       </ScrollView>
 
-      {/* Grid */}
-      <PlacePostGrid
-        posts={activePosts}
-        dedupGroups={living.dedupGroups}
-      />
-
-      {/* Be-first card for thin buckets */}
-      {activeBucket?.isThin && (
-        <PlaceBeFirstCard
-          placeName={placeName}
-          bucketLabel={BUCKET_LABELS[activeBucket.bucket] ?? capitalize(activeBucket.bucket.replace(/_/g, ' '))}
-          onPress={() =>
-            router.push({
-              pathname: '/create',
-              params: {
-                placeId: living.placeId,
-                placeName,
-                bucket: activeBucket.bucket,
-              },
-            } as any)
-          }
-        />
-      )}
-
-      {activePosts.length === 0 && !activeBucket?.isThin && (
-        <View style={bt.emptyWrap}>
-          <Text style={bt.emptyText}>No posts yet.</Text>
+      {/* Loading indicator for week fetch */}
+      {showWeekLoader ? (
+        <View style={bt.loadingWrap}>
+          <ActivityIndicator size="small" color={color.mute} />
         </View>
+      ) : (
+        <>
+          {/* Grid */}
+          <PlacePostGrid
+            posts={activePosts}
+            dedupGroups={living.dedupGroups}
+          />
+
+          {/* Be-first card for thin buckets */}
+          {activeBucket?.isThin && (
+            <PlaceBeFirstCard
+              placeName={placeName}
+              bucketLabel={BUCKET_LABELS[activeBucket.bucket] ?? capitalize(activeBucket.bucket.replace(/_/g, ' '))}
+              onPress={() =>
+                router.push({
+                  pathname: '/create',
+                  params: {
+                    placeId: living.placeId,
+                    placeName,
+                    bucket: activeBucket.bucket,
+                  },
+                } as any)
+              }
+            />
+          )}
+
+          {activePosts.length === 0 && !activeBucket?.isThin && (
+            <View style={bt.emptyWrap}>
+              <Text style={bt.emptyText}>No posts yet.</Text>
+            </View>
+          )}
+        </>
       )}
     </View>
   );
@@ -1147,6 +1181,10 @@ const bt = StyleSheet.create({
   emptyText: {
     ...typography.body,
     color: color.mute,
+  },
+  loadingWrap: {
+    paddingVertical: space.xl,
+    alignItems: 'center',
   },
 });
 
@@ -1582,7 +1620,7 @@ export function LivingDestinationPage({ place, living }: LivingDestinationPagePr
             <View style={ld.sectionHeader}>
               <Text style={ld.sectionTitle}>Community</Text>
             </View>
-            <PlaceBucketTabs living={living} placeName={place.name} />
+            <PlaceBucketTabs living={living} placeName={place.name} placeId={living.placeId} />
 
             {/* ── Timeline ── */}
             <PlaceTimelinePicker
