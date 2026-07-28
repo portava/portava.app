@@ -1237,13 +1237,30 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   // API base URL for relay URLs (relative when empty — works in all environments).
   const apiBaseUrl = process.env.API_BASE_URL ?? "";
 
+  // ── Stamp-it counts (batch COUNT on media_stamp_reactions) ─────────────────
+  // Counted in-memory after fetching matching rows — PostgREST does not support
+  // per-row GROUP BY aggregates in the JS client.
+  const stampCountMap = new Map<string, number>();
+  if (pageIds.length > 0) {
+    try {
+      const { data: stampRows } = await sc
+        .from("media_stamp_reactions")
+        .select("post_id")
+        .in("post_id", pageIds);
+      for (const r of (stampRows as any[]) ?? []) {
+        const pid = r.post_id as string;
+        stampCountMap.set(pid, (stampCountMap.get(pid) ?? 0) + 1);
+      }
+    } catch { /* non-fatal: stamp count defaults to 0 */ }
+  }
+
   // ── Linked entity resolution ───────────────────────────────────────────────
   const linkedEntityMap = await resolveLinkedEntities(page, user.id, sc);
 
   const items: MediaFeedItem[] = page.map((c) => {
     const postMedia = Array.isArray(c.post_media) ? c.post_media : [];
     return hydrateMediaFeedItem({
-      row: c,
+      row: { ...c, stamp_it_count: stampCountMap.get(c.id) ?? 0 },
       sourceType: "post",
       viewerUserId: user.id,
       allowedRealNameIds,
@@ -1412,11 +1429,21 @@ router.get("/media/:id", asyncHandler(async (req, res) => {
 
   const postMedia = Array.isArray((row as any).post_media) ? (row as any).post_media : [];
 
+  // Fetch stamp-it count for this single item
+  let singleStampCount = 0;
+  try {
+    const { data: stampRows } = await sc
+      .from("media_stamp_reactions")
+      .select("post_id")
+      .eq("post_id", id);
+    singleStampCount = ((stampRows as any[]) ?? []).length;
+  } catch { /* non-fatal */ }
+
   // Resolve linked entity (event or trip) for the single item
   const singleLinkedEntityMap = await resolveLinkedEntities([row as any], user.id, sc);
 
   const item = hydrateMediaFeedItem({
-    row: row as any,
+    row: { ...(row as any), stamp_it_count: singleStampCount },
     sourceType: "post",
     viewerUserId: user.id,
     allowedRealNameIds,

@@ -76,6 +76,8 @@ export interface MediaFeedStats {
   likeCount: number;
   saveCount: number;
   commentCount: number;
+  /** Number of distinct viewers who triggered a Stamp It reaction on this post. */
+  stampItCount: number;
 }
 
 /**
@@ -348,6 +350,7 @@ export function hydrateGemFeedItem(input: HydrateGemInput): MediaFeedItem {
     likeCount: 0,
     saveCount: gem.save_count ?? 0,
     commentCount: 0,
+    stampItCount: 0,
   };
 
   const location: MediaFeedLocation = {
@@ -629,6 +632,7 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
     likeCount: row.like_count ?? row.reaction_count ?? 0,
     saveCount: row.save_count ?? 0,
     commentCount: row.comment_count ?? 0,
+    stampItCount: row.stamp_it_count ?? 0,
   };
 
   // ── Location — coordinates NEVER included ─────────────────────────────────
