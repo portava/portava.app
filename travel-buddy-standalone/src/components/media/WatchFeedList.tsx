@@ -4,11 +4,13 @@
  * - One item per viewport, snapToInterval = screen height.
  * - Viewability tracking drives isActive prop on each cell.
  * - Gesture layer: single-tap → toggle play/pause, double-tap → like,
- *   press-and-hold → pause while held.
+ *   press-and-hold → pause while held + open radial quick-menu.
+ * - Swipe right (≥60 px) → Route It place sheet.
  * - HeartBurst animation on double-tap (multi-particle).
  * - Progress bar at the bottom with scrubbing (pan to seek).
  * - Mute/unmute button with AsyncStorage persistence.
  * - Poster prefetch for upcoming items on active-index change.
+ * - Swipe-right hint arrow shown after the first 3 videos.
  */
 
 import React, {
@@ -26,6 +28,7 @@ import {
   Dimensions,
   Text,
   Image,
+  Animated,
   type ViewToken,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -33,12 +36,17 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Volume2, VolumeX } from 'lucide-react-native';
 import type { Video } from 'expo-av';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
 import { WatchVideoCell, type WatchVideoCellHandle } from './WatchVideoCell.tsx';
 import { WatchItemOverlay } from './WatchItemOverlay.tsx';
 import { HeartBurst, type HeartBurstHandle } from './HeartBurst.tsx';
+import { RouteItPlaceSheet } from './RouteItPlaceSheet.tsx';
+import { WatchRadialMenu } from './WatchRadialMenu.tsx';
 import { useWatchPlayback } from '../../hooks/useWatchPlayback.ts';
 import type { MediaFeedItem } from '../../types/media.ts';
 import { color, radius } from '../../theme/tokens.ts';
+import { usePlanPicker } from '../PlanPickerController.tsx';
+import { Share } from 'react-native';
 
 const { height: SCREEN_H, width: SCREEN_W } = Dimensions.get('window');
 const MUTE_KEY = 'media:muted';
@@ -66,6 +74,8 @@ interface CellWrapperProps {
   isLiked: boolean;
   isSaved: boolean;
   likeCount: number;
+  /** Show a faint swipe-right hint arrow (after user has seen ≥3 videos). */
+  showSwipeHint?: boolean;
 }
 
 const CellWrapper = React.memo(function CellWrapper({
@@ -82,6 +92,7 @@ const CellWrapper = React.memo(function CellWrapper({
   isLiked,
   isSaved,
   likeCount,
+  showSwipeHint = false,
 }: CellWrapperProps) {
   // ── Playback state ─────────────────────────────────────────────────────────
   const [progress, setProgress] = useState(0);
@@ -99,6 +110,31 @@ const CellWrapper = React.memo(function CellWrapper({
   const cellVideoHandle = useRef<WatchVideoCellHandle>(null);
   const heartBurstRef = useRef<HeartBurstHandle>(null);
 
+  // ── Route It state ────────────────────────────────────────────────────────
+  const [showRouteIt, setShowRouteIt] = useState(false);
+  const routeItTriggeredRef = useRef(false);
+
+  // Swipe hint arrow opacity — fades in after showSwipeHint becomes true,
+  // then fades out once the Route It gesture fires.
+  const swipeHintOpacity = useRef(new Animated.Value(0)).current;
+  const swipeHintShownRef = useRef(false);
+
+  useEffect(() => {
+    if (showSwipeHint && isActive && !swipeHintShownRef.current) {
+      swipeHintShownRef.current = true;
+      Animated.sequence([
+        Animated.delay(800),
+        Animated.timing(swipeHintOpacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+        Animated.delay(2000),
+        Animated.timing(swipeHintOpacity, { toValue: 0, duration: 400, useNativeDriver: true }),
+      ]).start();
+    }
+  }, [showSwipeHint, isActive, swipeHintOpacity]);
+
+  // ── Radial menu state ────────────────────────────────────────────────────
+  const [showRadialMenu, setShowRadialMenu] = useState(false);
+  const { open: openPlanPicker } = usePlanPicker();
+
   // Reset user-pause and scrub when the cell becomes active/inactive.
   useEffect(() => {
     if (!isActive) {
@@ -107,6 +143,7 @@ const CellWrapper = React.memo(function CellWrapper({
       setScrubProgress(0);
       isScrubbingRef.current = false;
       setIsScrubbing(false);
+      setShowRadialMenu(false);
     }
   }, [isActive]);
 
@@ -137,6 +174,41 @@ const CellWrapper = React.memo(function CellWrapper({
     heartBurstRef.current?.trigger();
   }, [item.id, isLiked, onLike]);
 
+  // ── Radial menu action callbacks ──────────────────────────────────────────
+
+  const handleSaveGem = useCallback(() => {
+    router.push('/media/add-gem' as any);
+  }, []);
+
+  const handleAddToTrip = useCallback(() => {
+    const locationParts = [item.place?.name, item.place?.city].filter(Boolean);
+    openPlanPicker({
+      id: item.place?.id ?? item.id,
+      type: 'place',
+      title: item.place?.name ?? (item.caption.slice(0, 60) || 'Video'),
+      city: item.place?.city ?? undefined,
+      locationName: locationParts.join(', ') || undefined,
+    });
+  }, [item, openPlanPicker]);
+
+  const handleShareTelegraph = useCallback(() => {
+    Share.share({
+      message: item.caption
+        ? `${item.caption} — via Portava`
+        : 'Check this out on Portava!',
+    }).catch(() => {});
+  }, [item.caption]);
+
+  const handleFindHere = useCallback(() => {
+    const query = item.place?.name ?? item.place?.city ?? '';
+    router.push((`/discover?q=${encodeURIComponent(query)}`) as any);
+  }, [item.place]);
+
+  const handleRadialDismiss = useCallback(() => {
+    setShowRadialMenu(false);
+    setUserPaused(false);
+  }, []);
+
   // ── Main gesture (full-screen layer) ──────────────────────────────────────
 
   const doubleTap = Gesture.Tap()
@@ -155,14 +227,51 @@ const CellWrapper = React.memo(function CellWrapper({
       setUserPaused((p) => !p);
     });
 
+  // Long-press: pause video AND open radial quick-menu.
   const longPress = Gesture.LongPress()
     .minDuration(400)
     .runOnJS(true)
-    .onStart(() => { setUserPaused(true); })
+    .onStart(() => {
+      setUserPaused(true);
+      setShowRadialMenu(true);
+    })
     .onEnd(() => { setUserPaused(false); })
     .onFinalize(() => { setUserPaused(false); });
 
-  const composed = Gesture.Exclusive(doubleTap, singleTap, longPress);
+  // ── Route It pan gesture (swipe right ≥60 px, horizontal-only) ────────────
+
+  const routeItPan = useMemo(
+    () =>
+      Gesture.Pan()
+        // Only activate after 60+ px of rightward horizontal movement
+        .activeOffsetX([60, 99999])
+        // Fail if vertical drift exceeds ±15 px — keeps vertical scroll intact
+        .failOffsetY([-15, 15])
+        .runOnJS(true)
+        .onStart(() => {
+          if (!routeItTriggeredRef.current) {
+            routeItTriggeredRef.current = true;
+            setShowRouteIt(true);
+            // Fade out hint once gesture fires
+            Animated.timing(swipeHintOpacity, {
+              toValue: 0,
+              duration: 200,
+              useNativeDriver: true,
+            }).start();
+          }
+        })
+        .onFinalize(() => {
+          routeItTriggeredRef.current = false;
+        }),
+    // swipeHintOpacity is a ref — safe to omit from deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  const composed = Gesture.Simultaneous(
+    Gesture.Exclusive(doubleTap, singleTap, longPress),
+    routeItPan,
+  );
 
   // ── Scrub gesture (progress bar area) ─────────────────────────────────────
 
@@ -230,7 +339,7 @@ const CellWrapper = React.memo(function CellWrapper({
         onVideoUnmount={onVideoUnmount}
       />
 
-      {/* Full-screen gesture layer (tap / double-tap / long press) */}
+      {/* Full-screen gesture layer (tap / double-tap / long press / swipe right) */}
       <GestureDetector gesture={composed}>
         <View style={StyleSheet.absoluteFill} />
       </GestureDetector>
@@ -283,6 +392,34 @@ const CellWrapper = React.memo(function CellWrapper({
           </View>
         </View>
       ) : null}
+
+      {/* ── Swipe-right hint arrow ─────────────────────────────── */}
+      <Animated.View
+        style={[s.swipeHint, { opacity: swipeHintOpacity }]}
+        pointerEvents="none"
+      >
+        <Text style={s.swipeHintArrow}>›</Text>
+        <Text style={s.swipeHintLabel}>Route It</Text>
+      </Animated.View>
+
+      {/* ── Route It place sheet ───────────────────────────────── */}
+      <RouteItPlaceSheet
+        visible={showRouteIt}
+        place={item.place}
+        mediaId={item.id}
+        mediaTitle={item.place?.name}
+        onClose={() => setShowRouteIt(false)}
+      />
+
+      {/* ── Radial quick-menu ──────────────────────────────────── */}
+      <WatchRadialMenu
+        visible={showRadialMenu}
+        onDismiss={handleRadialDismiss}
+        onSaveGem={handleSaveGem}
+        onAddToTrip={handleAddToTrip}
+        onShareTelegraph={handleShareTelegraph}
+        onFindHere={handleFindHere}
+      />
     </View>
   );
 });
@@ -343,6 +480,10 @@ export function WatchFeedList({
     });
   }, []);
 
+  // Track how many unique videos have been seen to trigger the swipe hint.
+  const videoSeenCountRef = useRef(0);
+  const [showSwipeHint, setShowSwipeHint] = useState(false);
+
   // ── Poster prefetch — preload upcoming items so they start fast ────────────
 
   useEffect(() => {
@@ -370,6 +511,12 @@ export function WatchFeedList({
       onActiveIndexChangeRef.current(idx);
       const item = first.item as MediaFeedItem;
       playback.setActiveId(item.id);
+
+      // Increment seen-video counter for swipe hint discovery
+      videoSeenCountRef.current += 1;
+      if (videoSeenCountRef.current >= 3) {
+        setShowSwipeHint(true);
+      }
     },
   ).current;
 
@@ -391,10 +538,12 @@ export function WatchFeedList({
         isLiked={likedSet[item.id] ?? item.likedByMe}
         isSaved={savedSet[item.id] ?? item.savedByMe}
         likeCount={likeCounts[item.id] ?? item.likeCount}
+        showSwipeHint={showSwipeHint}
       />
     ),
     [activeIndex, isMuted, currentUserId, onLike, onComment, onSave, onMore,
-      playback.registerRef, playback.unregisterRef, likedSet, savedSet, likeCounts],
+      playback.registerRef, playback.unregisterRef, likedSet, savedSet, likeCounts,
+      showSwipeHint],
   );
 
   const keyExtractor = useCallback((item: MediaFeedItem) => item.id, []);
@@ -534,5 +683,30 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 20,
+  },
+
+  // ── Swipe-right hint arrow ────────────────────────────────────────────────
+  swipeHint: {
+    position: 'absolute',
+    right: 68,   // just left of the right-rail action buttons
+    top: '50%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  swipeHintArrow: {
+    fontSize: 20,
+    color: 'rgba(255,255,255,0.85)',
+    fontWeight: '300',
+    lineHeight: 22,
+  },
+  swipeHintLabel: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.85)',
+    fontWeight: '600',
   },
 });

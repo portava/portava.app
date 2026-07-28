@@ -87,7 +87,7 @@ jest.mock('react-native-gesture-handler', () => {
   const { View } = require('react-native');
   class GestureClass {
     numberOfTaps = () => this; maxDuration = () => this; minDuration = () => this;
-    minDistance = () => this;
+    minDistance = () => this; activeOffsetX = () => this; failOffsetY = () => this;
     requireExternalGestureToFail = () => this; runOnJS = () => this;
     onBegin = () => this; onChange = () => this;
     onEnd = () => this; onStart = () => this; onFinalize = () => this;
@@ -99,6 +99,7 @@ jest.mock('react-native-gesture-handler', () => {
       LongPress: () => new GestureClass(),
       Pan: () => new GestureClass(),
       Exclusive: (..._: any[]) => ({}),
+      Simultaneous: (..._: any[]) => ({}),
     },
   };
 });

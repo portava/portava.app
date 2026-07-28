@@ -7,11 +7,12 @@
  *   - Caption with "Show more" expand toggle
  *   - Hashtags
  *   - Place chip (→ place screen)
+ *   - Take Me Here chip (→ AddToPlan) — shown when item.place is populated
  *   - Linked entity chip (event / trip / place / plan)
  *   - Audio label row
  *
  * Right column (bottom-right):
- *   - Like button + count
+ *   - Like button + count (long-press → Stamp It animation)
  *   - Comment button + count
  *   - Save button + count
  *   - Share button
@@ -20,7 +21,7 @@
  * Cinematic gradient scrim behind the content for readability.
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -35,6 +36,7 @@ import { recordMediaShare } from '../../services/mediaInteractions.ts';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import {
   Heart,
   MessageCircle,
@@ -50,10 +52,14 @@ import {
   Map,
   Compass,
   Camera,
+  Navigation,
 } from 'lucide-react-native';
 import { color, space, type as t, radius } from '../../theme/tokens.ts';
 import { useFollow } from '../../hooks/useFollow.ts';
 import type { MediaFeedItem } from '../../types/media.ts';
+import { admireStamp } from '../../services/stampAdmire.ts';
+import { usePlanPicker } from '../PlanPickerController.tsx';
+import { StampItBurst, type StampItBurstHandle } from './StampItBurst.tsx';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -109,15 +115,18 @@ interface ActionBtnProps {
   icon: React.ReactNode;
   count?: number;
   onPress: () => void;
+  onLongPress?: () => void;
   active?: boolean;
   activeColor?: string;
   label: string;
 }
 
-function ActionBtn({ icon, count, onPress, label }: ActionBtnProps) {
+function ActionBtn({ icon, count, onPress, onLongPress, label }: ActionBtnProps) {
   return (
     <Pressable
       onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={500}
       style={s.actionBtn}
       accessibilityRole="button"
       accessibilityLabel={label}
@@ -163,6 +172,57 @@ export function WatchItemOverlay({
 }: WatchItemOverlayProps) {
   const insets = useSafeAreaInsets();
   const [captionExpanded, setCaptionExpanded] = useState(false);
+  const stampBurstRef = useRef<StampItBurstHandle>(null);
+  const { open: openPlanPicker } = usePlanPicker();
+
+  // Guard: prevents the like Pressable's onPress from also firing after a
+  // long-press — React Native can invoke onPress on finger-up even when
+  // onLongPress already fired. Reset synchronously inside handleLikePress.
+  const longPressJustFiredRef = useRef(false);
+
+  // ── Stamp It (long-press heart) ───────────────────────────────────────────
+
+  const handleStampIt = useCallback(() => {
+    // Mark that long-press fired; handleLikePress will see this flag and bail.
+    longPressJustFiredRef.current = true;
+    // 1. Only like when not already liked — onLike is a toggle; Stamp It is
+    //    a positive idempotent action and must never accidentally unlike.
+    if (!isLiked) {
+      onLike();
+    }
+    // 2. Trigger stamp burst animation (always — even for already-liked items)
+    stampBurstRef.current?.trigger();
+    // 3. Haptic feedback — heavy impact on "stamp contact"
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+    // 4. Record admire reaction in background (fail-soft)
+    admireStamp(item.id).catch(() => {});
+  }, [item.id, isLiked, onLike]);
+
+  // ── Short-press heart (normal like/unlike toggle) ─────────────────────────
+
+  const handleLikePress = useCallback(() => {
+    // If a long-press just fired in the same touch, consume the flag and skip
+    // so we don't double-like or accidentally unlike after a Stamp It.
+    if (longPressJustFiredRef.current) {
+      longPressJustFiredRef.current = false;
+      return;
+    }
+    onLike();
+  }, [onLike]);
+
+  // ── Take Me Here chip ─────────────────────────────────────────────────────
+
+  const handleTakeMeHere = useCallback(() => {
+    if (!item.place) return;
+    const locationParts = [item.place.name, item.place.city].filter(Boolean);
+    openPlanPicker({
+      id: item.place.id ?? item.id,
+      type: 'place',
+      title: item.place.name,
+      city: item.place.city ?? undefined,
+      locationName: locationParts.join(', ') || undefined,
+    });
+  }, [item.id, item.place, openPlanPicker]);
 
   const handleCreate = useCallback(() => {
     if (isGemsMode) {
@@ -319,6 +379,20 @@ export function WatchItemOverlay({
             )
           ) : null}
 
+          {/* Take Me Here chip — shown when place is present */}
+          {item.place ? (
+            <Pressable
+              onPress={handleTakeMeHere}
+              style={s.takeMeHereChip}
+              hitSlop={4}
+              accessibilityRole="button"
+              accessibilityLabel="Take me here"
+            >
+              <Navigation size={10} color="rgba(255,255,255,0.95)" />
+              <Text style={s.takeMeHereText}>Take me here</Text>
+            </Pressable>
+          ) : null}
+
           {/* Linked entity chip */}
           {item.linkedEntity ? (
             <Pressable onPress={goEntity} style={s.chip} hitSlop={4}>
@@ -342,6 +416,7 @@ export function WatchItemOverlay({
 
         {/* ── Right action column ──────────────────────────────────────── */}
         <View style={s.rightCol} pointerEvents="box-none">
+          {/* Like button — long-press triggers Stamp It */}
           <ActionBtn
             icon={
               <Heart
@@ -352,7 +427,8 @@ export function WatchItemOverlay({
               />
             }
             count={likeCount}
-            onPress={onLike}
+            onPress={handleLikePress}
+            onLongPress={handleStampIt}
             label={isLiked ? 'Unlike' : 'Like'}
           />
 
@@ -390,6 +466,9 @@ export function WatchItemOverlay({
           />
         </View>
       </View>
+
+      {/* Stamp It burst animation — absolutely positioned over everything */}
+      <StampItBurst ref={stampBurstRef} />
     </View>
   );
 }
@@ -514,6 +593,25 @@ const s = StyleSheet.create({
     ...t.stamp,
     color: 'rgba(255,255,255,0.9)',
     flexShrink: 1,
+  },
+  // Take Me Here pill chip
+  takeMeHereChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,100,60,0.22)',
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: 'rgba(255,100,60,0.5)',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  takeMeHereText: {
+    ...t.stamp,
+    color: 'rgba(255,255,255,0.95)',
+    fontWeight: '700',
+    fontSize: 11,
   },
   audioRow: {
     flexDirection: 'row',
