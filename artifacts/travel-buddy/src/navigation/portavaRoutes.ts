@@ -408,6 +408,15 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     ownerOnly: true,
   },
   {
+    key: 'profile-edit-content-language',
+    path: 'profile/edit/content-language',
+    title: 'Content Language',
+    parent: 'profile-edit',
+    icon: null,
+    requiresAuth: true,
+    ownerOnly: true,
+  },
+  {
     key: 'profile-edit-emergency-contacts',
     path: 'profile/edit/emergency-contacts',
     title: 'Emergency Contacts',
