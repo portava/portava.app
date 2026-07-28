@@ -53,10 +53,12 @@ const ageVerifiedKey = (uid: string) => `@travel_buddy/age_verified:${uid}`;
 /**
  * In development builds only: auto-satisfy the gate so the preview opens
  * directly. Metro replaces __DEV__ with `false` in every production bundle,
- * so this constant — and any branch guarded by it — is dead-code-eliminated
- * before shipping.
+ * so any branch guarded by it is dead-code-eliminated before shipping.
+ *
+ * NOTE: __DEV__ is checked inline inside the effect (not captured as a
+ * module-level const) so that test environments can override global.__DEV__
+ * in beforeEach/afterEach without needing to reload the module.
  */
-const DEV_BYPASS_GATE: boolean = __DEV__;
 
 type GateState = 'loading' | 'clear' | 'blocked' | 'error';
 
@@ -94,8 +96,10 @@ export function AgeGate({ children }: PropsWithChildren) {
     // ── DEV/preview bypass ────────────────────────────────────────────────
     // Auto-satisfy the gate in development so the preview app opens without
     // asking for DOB. Persisted to AsyncStorage so subsequent reloads in dev
-    // are instant too.  This entire block is eliminated by Metro in prod.
-    if (DEV_BYPASS_GATE) {
+    // are instant too.  Metro inlines __DEV__ = false in every production
+    // bundle, so this entire block is dead-code-eliminated before shipping.
+    // eslint-disable-next-line no-undef
+    if (__DEV__) {
       verifiedUserIdRef.current = userId;
       AsyncStorage.setItem(ageVerifiedKey(userId), '1').catch(() => {});
       setGateState('clear');

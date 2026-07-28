@@ -41,6 +41,11 @@ jest.mock('../ReactionPicker', () => ({
 jest.mock('../EngagementUserListSheet', () => ({
   EngagementUserListSheet: () => null,
 }));
+// NOTE: PostSaversSheet calls useSafeAreaInsets(), which requires SafeAreaProvider.
+// Stub the whole module so the test tree stays shallow and provider-free.
+jest.mock('../PostSaversSheet', () => ({
+  PostSaversSheet: () => null,
+}));
 // NOTE: intentionally an exhaustive stub — requiring the actual StampButton module
 // would pull in useStamp, useStampAnimation, PortavaInkStamp, and the Reanimated
 // worklet chain, all of which require native bridging unavailable under jest-expo.

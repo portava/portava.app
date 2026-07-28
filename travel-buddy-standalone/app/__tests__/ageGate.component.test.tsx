@@ -18,6 +18,12 @@
  * - updateMyProfile is stubbed for the save path.
  * - DatePickerField, SafeAreaView, Alert, and native modules are stubbed to
  *   avoid native bridge dependencies under Jest.
+ * - global.__DEV__ is set to false in beforeEach so the inline DEV bypass
+ *   in AgeGate's effect does not auto-satisfy the gate during tests.
+ *   AgeGate.tsx checks __DEV__ at runtime (not as a module-level const) so
+ *   overriding the global takes effect without needing to reload the module.
+ * - AsyncStorage is mocked to return null (no persisted eligibility) so every
+ *   test exercises the network-check path.
  */
 
 import React from 'react';
@@ -60,6 +66,18 @@ jest.mock('react-native-safe-area-context', () => {
   };
 });
 
+// NOTE: intentionally exhaustive — AsyncStorage imports platform internals
+// that are unavailable under Jest. We stub only the methods AgeGate uses
+// (getItem/setItem) and return null so each test exercises the network-check
+// path with no cached eligibility leaking from a prior test or hot-reload.
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  getItem:    jest.fn().mockResolvedValue(null),
+  setItem:    jest.fn().mockResolvedValue(undefined),
+  removeItem: jest.fn().mockResolvedValue(undefined),
+  multiGet:   jest.fn().mockResolvedValue([]),
+  multiSet:   jest.fn().mockResolvedValue(undefined),
+}));
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 import { useSession } from '../../src/context/SessionContext';
@@ -90,6 +108,18 @@ function unauthSession() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // Disable the DEV bypass so the real gate logic runs in tests.
+  // AgeGate.tsx checks __DEV__ inline inside the effect (not as a module-level
+  // const), so overriding the global here takes effect before each render.
+  (global as any).__DEV__ = false;
+  // Ensure no persisted eligibility leaks between tests.
+  (require('@react-native-async-storage/async-storage').getItem as jest.Mock)
+    .mockResolvedValue(null);
+});
+
+afterEach(() => {
+  // Restore __DEV__ so other test files in the same Jest worker are unaffected.
+  (global as any).__DEV__ = true;
 });
 
 describe("AgeGate — blocks when ageGateRequired is true", () => {
