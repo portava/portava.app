@@ -60,6 +60,8 @@ export function PlaceQuickActions({
       title: place.name,
       city: place.city ?? undefined,
       locationName: locationParts.join(', ') || undefined,
+      lat: place.lat ?? null,
+      lng: place.lng ?? null,
     });
   }, [place, resolvedSourceId, openPlanPicker]);
 

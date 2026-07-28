@@ -35,6 +35,10 @@ export interface PlanPickerSource {
   locationName?: string;
   /** ISO datetime string — pre-fills date + time pickers on the confirm step */
   confirmedTime?: string;
+  /** Latitude for itinerary map pin placement. Null when coordinates are unavailable. */
+  lat?: number | null;
+  /** Longitude for itinerary map pin placement. Null when coordinates are unavailable. */
+  lng?: number | null;
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────

@@ -23,6 +23,10 @@ export interface MediaFeedPlace {
   name: string;
   city?: string | null;
   country?: string | null;
+  /** Latitude — null when the media row has no stored coordinates. */
+  lat?: number | null;
+  /** Longitude — null when the media row has no stored coordinates. */
+  lng?: number | null;
 }
 
 /** Linked structured entity attached to the media item. */

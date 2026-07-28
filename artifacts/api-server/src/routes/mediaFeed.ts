@@ -116,11 +116,12 @@ const GRID_MEDIA_COLUMNS =
   "id, media_type, public_url, thumbnail_url, " +
   "duration_seconds, width, height, sort_order, processing_status, moderation_status";
 
-/** Columns projected from posts for media feed (never include exact GPS). */
+/** Columns projected from posts for the Watch-mode feed. */
 const FEED_POST_COLUMNS =
   "id, author_id, trip_id, content, visibility, status, post_status, " +
   "created_at, category, " +
   "location_name, location_city, location_country, location_source, location_verified, " +
+  "location_lat, location_lng, " +
   "save_count, like_count, comment_count";
 
 const POST_MEDIA_COLUMNS =

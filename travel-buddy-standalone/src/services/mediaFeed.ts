@@ -63,6 +63,8 @@ interface ServerLocation {
   name: string | null;
   city: string | null;
   country: string | null;
+  lat?: number | null;
+  lng?: number | null;
 }
 
 interface ServerViewerState {
@@ -118,6 +120,8 @@ function adaptLocation(loc: ServerLocation | null): MediaFeedPlace | null {
     name,
     city: loc.city,
     country: loc.country,
+    lat: loc.lat ?? null,
+    lng: loc.lng ?? null,
   };
 }
 

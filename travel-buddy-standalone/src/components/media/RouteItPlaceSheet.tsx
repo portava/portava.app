@@ -13,6 +13,7 @@ import {
   Modal,
   StyleSheet,
   Dimensions,
+  Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MapPin, X, Navigation } from 'lucide-react-native';
@@ -21,6 +22,8 @@ import { usePlanPicker } from '../PlanPickerController.tsx';
 import type { MediaFeedPlace } from '../../types/media.ts';
 
 const { width: SCREEN_W } = Dimensions.get('window');
+
+const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '';
 
 export interface RouteItPlaceSheetProps {
   visible: boolean;
@@ -48,6 +51,8 @@ export function RouteItPlaceSheet({
       title: mediaTitle ?? place?.name ?? 'Video location',
       city: place?.city ?? undefined,
       locationName: locationParts.join(', ') || undefined,
+      lat: place?.lat ?? null,
+      lng: place?.lng ?? null,
     });
     onClose();
   }, [place, mediaId, mediaTitle, openPlanPicker, onClose]);
@@ -92,13 +97,24 @@ export function RouteItPlaceSheet({
               </View>
             </View>
 
-            {/* Map thumbnail placeholder */}
-            <View style={s.mapThumb}>
-              <MapPin size={28} color={color.signal} />
-              <Text style={s.mapThumbLabel}>
-                {place.city ?? place.name}
-              </Text>
-            </View>
+            {/* Map thumbnail — real MapTiler static map when coordinates are available */}
+            {place.lat != null && place.lng != null && MAPTILER_KEY ? (
+              <Image
+                source={{
+                  uri: `https://api.maptiler.com/maps/streets-v2/static/${place.lng},${place.lat},13/320x120.png?key=${MAPTILER_KEY}`,
+                }}
+                style={s.mapThumb}
+                resizeMode="cover"
+                accessibilityLabel={`Map showing ${place.name}`}
+              />
+            ) : (
+              <View style={s.mapThumb}>
+                <MapPin size={28} color={color.signal} />
+                <Text style={s.mapThumbLabel}>
+                  {place.city ?? place.name}
+                </Text>
+              </View>
+            )}
 
             {/* Add to Trip button */}
             <Pressable

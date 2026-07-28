@@ -380,6 +380,8 @@ export function WatchItemOverlay({
                 id: item.place.id,
                 name: item.place.name,
                 city: item.place.city ?? null,
+                lat: item.place.lat ?? null,
+                lng: item.place.lng ?? null,
               }}
               sourceId={item.id}
               variant="dark"
