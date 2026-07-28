@@ -2,7 +2,8 @@
  * stampMilestoneDedupPush.test.ts
  *
  * Verifies that the milestone push notification in `_awardStampCore` is
- * never sent twice for the same (user_id, milestone_level) pair.
+ * never sent twice for the same (user_id, milestone_level) pair, and that
+ * the correct threshold fires when a user skips across multiple levels.
  *
  * Scenarios covered:
  *   A. First award that crosses the 100-stamp threshold:
@@ -18,6 +19,20 @@
  *      - milestone row is absent on SELECT (both racers past the check)
  *      - INSERT returns error code 23505 (unique-violation on primary key)
  *      - `if (insertErr) break` fires → push is NOT sent by the loser
+ *
+ *   D. ON CONFLICT (user_id, milestone_level) PK is the only constraint:
+ *      - a second insert with the same composite key is rejected by the PK
+ *
+ *   E. Leap to 1,001 stamps with no prior milestone rows:
+ *      - loop iterates [10000, 1000, 100]; 10000 is skipped (count < 10000)
+ *      - 1,000-level is the first un-recorded threshold crossed → INSERT 1000
+ *      - 100-level is never reached (break fires after 1000)
+ *
+ *   F. Skip-up: 1,001 stamps with only the 100-level row already recorded:
+ *      - 10000 skipped (count < 10000); 1000 checked → not present → INSERT 1000
+ *      - 100-level check is never reached (break fires after 1000)
+ *      - verifies the engine advances to the next un-recorded threshold even
+ *        when a lower threshold was already recorded
  *
  * Pattern: node:test, fake SupabaseClient injected directly into awardStamp().
  * No HTTP server, no live network calls.
@@ -378,5 +393,64 @@ describe("Stamp milestone dedup: no duplicate push notification", () => {
 
     // Only one row ever lives in the milestones table.
     assert.equal(db.stamp_milestones.length, 1, "only one milestone row exists");
+  });
+
+  it("Scenario E — leap to 1,001 stamps with no prior milestone rows: 1,000-level fires, 100-level never reached", async () => {
+    // The loop iterates [10000, 1000, 100].
+    // With 1,001 stamps: 10000 is skipped (count < 10000), 1000 is the first
+    // un-recorded threshold crossed → INSERT 1000 → break.
+    // The 100-level check is never executed.
+    const db = makeDB({}, 1001);
+    const sc = makeFakeClient(db) as any;
+
+    const result = await awardStamp(sc, makeInput("src-006"));
+    assert.equal(result.awarded, true, "stamp should be awarded");
+
+    await flushAsync();
+
+    const milestoneInserts = sc._insertLog.filter((r: InsertRecord) => r.table === "stamp_milestones");
+    assert.equal(milestoneInserts.length, 1, "exactly one INSERT into stamp_milestones");
+    assert.equal(
+      milestoneInserts[0].row.milestone_level,
+      1000,
+      "the 1,000-level milestone fires — not the 100-level",
+    );
+    assert.equal(milestoneInserts[0].error, undefined, "insert succeeds");
+
+    // Verify the correct row persisted and 100-level was never inserted.
+    assert.equal(db.stamp_milestones.length, 1, "exactly one milestone row in DB");
+    assert.equal(db.stamp_milestones[0].milestone_level, 1000, "persisted row is the 1,000-level");
+  });
+
+  it("Scenario F — skip-up: 1,001 stamps with 100-level already recorded: 1,000-level fires, 100-level skipped", async () => {
+    // The 100-level milestone was previously recorded (e.g. when the user first
+    // earned 100 stamps).  Now the user has jumped to 1,001 stamps.
+    // Loop: 10000 skipped (count < 10000); 1000 checked → not present → INSERT 1000 → break.
+    // The engine must advance past the already-recorded 100-level and fire the
+    // next un-recorded threshold rather than silently stopping.
+    const db = makeDB(
+      { stamp_milestones: [{ user_id: USER_ID, milestone_level: 100 }] },
+      1001,
+    );
+    const sc = makeFakeClient(db) as any;
+
+    const result = await awardStamp(sc, makeInput("src-007"));
+    assert.equal(result.awarded, true, "stamp should be awarded");
+
+    await flushAsync();
+
+    const milestoneInserts = sc._insertLog.filter((r: InsertRecord) => r.table === "stamp_milestones");
+    assert.equal(milestoneInserts.length, 1, "exactly one INSERT into stamp_milestones");
+    assert.equal(
+      milestoneInserts[0].row.milestone_level,
+      1000,
+      "the 1,000-level milestone fires — 100-level is skipped because it was already recorded",
+    );
+    assert.equal(milestoneInserts[0].error, undefined, "insert succeeds");
+
+    // Two rows now: the pre-seeded 100-level and the newly inserted 1,000-level.
+    assert.equal(db.stamp_milestones.length, 2, "both the 100-level and 1,000-level rows are present");
+    const levels = db.stamp_milestones.map((r: any) => r.milestone_level).sort((a: number, b: number) => a - b);
+    assert.deepEqual(levels, [100, 1000], "milestone table contains exactly the 100 and 1,000 levels");
   });
 });
