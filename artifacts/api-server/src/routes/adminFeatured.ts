@@ -392,7 +392,17 @@ router.post("/admin/featured/approve/:postId", asyncHandler(async (req, res) => 
 
 // ── POST /admin/featured/accept-permission/:postId ────────────────────────────
 // Called when the creator taps "Accept" on the permission notification.
-// In production this would be invoked via a notification action handler.
+// Accepts optional `featuredId` or `category` in the body to disambiguate when
+// the same post has multiple pending_permission rows (one per category).
+// The notification metadata always carries both fields, so the mobile CTA can
+// include them without any extra work.
+
+const PermissionActionSchema = z.object({
+  /** Primary-key disambiguation — most precise, preferred when available. */
+  featuredId: z.string().uuid().optional(),
+  /** Category disambiguation — used when featuredId is absent. */
+  category:   z.enum(PORTAVA_FEATURED_CATEGORY).optional(),
+}).optional();
 
 router.post("/admin/featured/accept-permission/:postId", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
@@ -403,9 +413,13 @@ router.post("/admin/featured/accept-permission/:postId", asyncHandler(async (req
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   const { postId } = req.params;
-  // category is NOT required in the body — we look it up from the pending record.
-  // This lets the mobile notification CTA call this endpoint with just the postId
-  // (which is already in the actionUrl) without needing extra metadata in the body.
+
+  const parsed = PermissionActionSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+  const { featuredId, category } = parsed.data ?? {};
 
   // Verify that the requesting user is the post author
   const { data: post } = await sc
@@ -422,18 +436,29 @@ router.post("/admin/featured/accept-permission/:postId", asyncHandler(async (req
 
   const now = new Date().toISOString();
 
-  // Look up the pending record by post_id only — no category needed from caller.
-  const { data: featured, error: updateErr } = await sc
+  // Build the update query, adding disambiguation when provided.
+  // A post may have multiple pending_permission rows (one per category), so we
+  // must narrow to exactly one row to avoid maybeSingle() conflicts.
+  let updateQ = (sc as any)
     .from("portava_featured")
     .update({
       status:                        "live",
       creator_permission_granted_at: now,
       updated_at:                    now,
-    })
-    .eq("post_id", postId)
-    .eq("status", "pending_permission")
-    .select()
-    .maybeSingle();
+    });
+
+  if (featuredId) {
+    // Exact row by primary key — most precise path.
+    updateQ = updateQ.eq("id", featuredId).eq("post_id", postId).eq("status", "pending_permission");
+  } else if (category) {
+    updateQ = updateQ.eq("post_id", postId).eq("category", category).eq("status", "pending_permission");
+  } else {
+    // Fallback: post_id + status only. Safe when there is exactly one pending row;
+    // returns an error via maybeSingle() when multiple rows match.
+    updateQ = updateQ.eq("post_id", postId).eq("status", "pending_permission");
+  }
+
+  const { data: featured, error: updateErr } = await updateQ.select().maybeSingle();
 
   if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
   if (!featured) { sendError(res, "not_found", "Featured record not found or not pending permission"); return; }
@@ -452,7 +477,7 @@ router.post("/admin/featured/accept-permission/:postId", asyncHandler(async (req
 
 // ── POST /admin/featured/decline-permission/:postId ──────────────────────────
 // Called when the creator taps "Decline" on the permission notification.
-// Sets the featured record to 'declined'; no body required — category looked up from DB.
+// Accepts optional `featuredId` or `category` to disambiguate multi-category rows.
 
 router.post("/admin/featured/decline-permission/:postId", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
@@ -463,6 +488,13 @@ router.post("/admin/featured/decline-permission/:postId", asyncHandler(async (re
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   const { postId } = req.params;
+
+  const parsed = PermissionActionSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+  const { featuredId, category } = parsed.data ?? {};
 
   // Verify that the requesting user is the post author
   const { data: post } = await sc
@@ -478,16 +510,19 @@ router.post("/admin/featured/decline-permission/:postId", asyncHandler(async (re
 
   const now = new Date().toISOString();
 
-  const { data: declined, error: updateErr } = await sc
+  let updateQ = (sc as any)
     .from("portava_featured")
-    .update({
-      status:     "declined",
-      updated_at: now,
-    })
-    .eq("post_id", postId)
-    .eq("status", "pending_permission")
-    .select()
-    .maybeSingle();
+    .update({ status: "declined", updated_at: now });
+
+  if (featuredId) {
+    updateQ = updateQ.eq("id", featuredId).eq("post_id", postId).eq("status", "pending_permission");
+  } else if (category) {
+    updateQ = updateQ.eq("post_id", postId).eq("category", category).eq("status", "pending_permission");
+  } else {
+    updateQ = updateQ.eq("post_id", postId).eq("status", "pending_permission");
+  }
+
+  const { data: declined, error: updateErr } = await updateQ.select().maybeSingle();
 
   if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
   if (!declined) { sendError(res, "not_found", "Featured record not found or not pending permission"); return; }

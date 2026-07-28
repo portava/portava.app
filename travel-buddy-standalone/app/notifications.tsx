@@ -88,10 +88,16 @@ function getPostIdFromActionUrl(actionUrl?: string | null): string | null {
 async function respondToFeaturedPermission(
   postId: string,
   action: 'accept' | 'decline',
+  disambiguator?: { featuredId?: string; category?: string },
 ): Promise<{ ok: boolean; message?: string }> {
   try {
     const token = await freshToken();
     const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+    // Pass featuredId (preferred) or category in the body so the server can
+    // disambiguate when the same post has multiple pending_permission rows.
+    const body: Record<string, string> = {};
+    if (disambiguator?.featuredId) body.featuredId = disambiguator.featuredId;
+    else if (disambiguator?.category) body.category = disambiguator.category;
     const res = await fetch(
       `${apiBase}/api/admin/featured/${action === 'accept' ? 'accept-permission' : 'decline-permission'}/${postId}`,
       {
@@ -100,11 +106,12 @@ async function respondToFeaturedPermission(
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
+        body: JSON.stringify(body),
       },
     );
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return { ok: false, message: (body as any)?.message ?? `API ${res.status}` };
+      const resBody = await res.json().catch(() => ({}));
+      return { ok: false, message: (resBody as any)?.message ?? `API ${res.status}` };
     }
     return { ok: true };
   } catch (e) {
@@ -166,8 +173,16 @@ function ActivityCard({
       Alert.alert('Error', 'Could not find post ID for this request.');
       return;
     }
+    // Pass featuredId (preferred) or category from notification metadata so the
+    // server can resolve the exact pending_permission row when a post has been
+    // nominated in multiple categories simultaneously.
+    const meta = (notification as any).metadata as Record<string, unknown> | undefined;
+    const disambiguator = {
+      featuredId: (meta?.featuredId as string | undefined) || undefined,
+      category:   (meta?.category   as string | undefined) || undefined,
+    };
     setPermBusy(action);
-    const result = await respondToFeaturedPermission(postId, action);
+    const result = await respondToFeaturedPermission(postId, action, disambiguator);
     setPermBusy(null);
     if (result.ok) {
       setPermDone(action === 'accept' ? 'accepted' : 'declined');
