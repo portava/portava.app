@@ -1,19 +1,21 @@
 /**
- * GridTile — static poster cell for the three-column Grid feed.
+ * GridTile — grid cell for the two-column masonry Grid feed.
  *
  * Shows:
- *   - Static thumbnail / poster image (no autoplay)
- *   - Video badge (play icon) for video items
+ *   - Static poster image (always present as fallback / for images)
+ *   - Muted looping video autoplay when isVisible=true and item is a video
  *   - Duration (bottom-left) and qualified view count (bottom-right) when present
  *   - Content-type badge (top-left) when the item has a category
  *   - Place / area label (top-right) when available
  *   - Processing overlay (spinner + status text) for in-progress uploads
  *
+ * No play-button badge is rendered — video items autoplay while in view.
+ *
  * Tapping calls onPress(item, index) — the parent decides how to navigate.
- * Memoized so FlatList recycling does not re-render unchanged cells.
+ * Memoized so scroll recycling does not re-render unchanged cells.
  */
 
-import React, { memo } from 'react';
+import React, { memo, useRef } from 'react';
 import {
   View,
   Text,
@@ -21,8 +23,10 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from 'react-native';
-import { Video, Play, MapPin } from 'lucide-react-native';
+import { Video, ResizeMode } from 'expo-av';
+import { Video as VideoIcon, MapPin } from 'lucide-react-native';
 import { DisplayMediaImage } from '../ui/DisplayMediaImage.tsx';
+import { useInViewAutoplay } from '../../hooks/useInViewAutoplay.ts';
 import type { MediaGridItem } from '../../types/media.ts';
 import { color, type as t, space, radius } from '../../theme/tokens.ts';
 
@@ -49,16 +53,23 @@ export interface GridTileProps {
   cellWidth: number;
   cellHeight: number;
   onPress: (item: MediaGridItem, index: number) => void;
+  /** True when ≥50 % of the tile is within the visible scroll viewport. */
+  isVisible?: boolean;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-function GridTileInner({ item, index, cellWidth, cellHeight, onPress }: GridTileProps) {
+function GridTileInner({ item, index, cellWidth, cellHeight, onPress, isVisible = false }: GridTileProps) {
   const isVideo = item.mediaType === 'video';
   const isProcessing = item.processingStatus != null;
+  const hasVideoUrl = isVideo && !!item.videoUrl && !isProcessing;
 
   const posterUri = item.posterUrl ?? item.thumbnailUrl;
   const qualifiedViews = item.qualifiedViewCount > 0 ? item.qualifiedViewCount : item.viewCount;
+
+  // Video ref for imperative play/pause control
+  const videoRef = useRef<InstanceType<typeof Video>>(null);
+  useInViewAutoplay(videoRef, hasVideoUrl ? isVisible : false);
 
   return (
     <Pressable
@@ -71,7 +82,7 @@ function GridTileInner({ item, index, cellWidth, cellHeight, onPress }: GridTile
           : `Photo${item.locationLabel ? ` from ${item.locationLabel}` : ''}`
       }
     >
-      {/* ── Poster image ────────────────────────────────────────────── */}
+      {/* ── Poster image (always rendered as fallback) ───────────── */}
       <DisplayMediaImage
         uri={posterUri}
         width={cellWidth}
@@ -80,7 +91,22 @@ function GridTileInner({ item, index, cellWidth, cellHeight, onPress }: GridTile
         style={StyleSheet.absoluteFill}
       />
 
-      {/* ── Processing overlay (owner's uploading items) ─────────────── */}
+      {/* ── Muted looping video (only for video items with a URL) ── */}
+      {hasVideoUrl ? (
+        <Video
+          ref={videoRef}
+          source={{ uri: item.videoUrl! }}
+          style={StyleSheet.absoluteFill}
+          resizeMode={ResizeMode.COVER}
+          shouldPlay={false}   // imperative control via useInViewAutoplay
+          isLooping
+          isMuted
+          useNativeControls={false}
+          onError={() => {}}   // silent — poster already visible
+        />
+      ) : null}
+
+      {/* ── Processing overlay (owner's uploading items) ─────────── */}
       {isProcessing && (
         <View style={styles.processingOverlay}>
           <ActivityIndicator size="small" color={color.onInk} />
@@ -90,7 +116,7 @@ function GridTileInner({ item, index, cellWidth, cellHeight, onPress }: GridTile
         </View>
       )}
 
-      {/* ── Top row: content-type badge (left) + place label (right) ─── */}
+      {/* ── Top row: content-type badge (left) + place label (right) */}
       <View style={styles.topRow} pointerEvents="none">
         {item.contentType ? (
           <View style={styles.badge}>
@@ -109,23 +135,14 @@ function GridTileInner({ item, index, cellWidth, cellHeight, onPress }: GridTile
         ) : null}
       </View>
 
-      {/* ── Video badge (center) ─────────────────────────────────────── */}
-      {isVideo && !isProcessing && (
-        <View style={styles.videoCenter} pointerEvents="none">
-          <View style={styles.playBadge}>
-            <Play size={14} color="#fff" fill="#fff" strokeWidth={0} />
-          </View>
-        </View>
-      )}
-
-      {/* ── Bottom row: duration (left) + view count (right) ─────────── */}
+      {/* ── Bottom row: duration (left) + view count (right) ──────── */}
       <View style={styles.bottomRow} pointerEvents="none">
         {isVideo && item.durationMs != null ? (
           <Text style={styles.metaText}>{formatDuration(item.durationMs)}</Text>
         ) : null}
         {qualifiedViews > 0 ? (
           <View style={styles.viewCount}>
-            <Video size={8} color={color.onInk} strokeWidth={2.5} />
+            <VideoIcon size={8} color={color.onInk} strokeWidth={2.5} />
             <Text style={styles.metaText}>{formatViewCount(qualifiedViews)}</Text>
           </View>
         ) : null}
@@ -138,7 +155,6 @@ export const GridTile = memo(GridTileInner);
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const SCRIM_TOP = 'rgba(0,0,0,0.30)';
 const SCRIM_BOTTOM = 'rgba(0,0,0,0.48)';
 
 const styles = StyleSheet.create({
@@ -194,22 +210,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: color.onInk,
     letterSpacing: 0.2,
-  },
-
-  // ── Center video badge ──────────────────────────────────────────────
-  videoCenter: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 2,
-  },
-  playBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(0,0,0,0.50)',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 
   // ── Bottom meta row ─────────────────────────────────────────────────

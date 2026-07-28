@@ -90,6 +90,11 @@ export interface MediaGridItem {
   qualifiedViewCount: number;
   /** Non-null only for in-progress uploads (processing overlay). */
   processingStatus: string | null;
+  /**
+   * Direct URL to the video asset. Null for image items or when the asset
+   * URL is not yet resolved. Used by the grid tile for muted autoplay.
+   */
+  videoUrl: string | null;
 }
 
 export interface GridFeedPage {

@@ -20,6 +20,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View,
   Image,
@@ -559,8 +560,16 @@ export default function MediaViewer() {
   const likeHook = useMediaLike();
   const saveHook = useMediaSave();
 
-  // ── Mute state ─────────────────────────────────────────────────────────────
+  // ── Mute state — shared with WatchFeedList via AsyncStorage ───────────────
+  const MUTE_KEY = 'media:muted';
   const [isMuted, setIsMuted] = useState(false);
+
+  // Load persisted mute preference on mount (same key as WatchFeedList).
+  useEffect(() => {
+    AsyncStorage.getItem(MUTE_KEY).then((val) => {
+      if (val !== null) setIsMuted(val === 'true');
+    }).catch(() => {});
+  }, []);
 
   // ── Full post data per item ────────────────────────────────────────────────
   const [postDataMap, setPostDataMap] = useState<Record<string, ViewerPost>>({});
@@ -627,7 +636,11 @@ export default function MediaViewer() {
   }, [activeIndex, items]);
 
   const handleMuteToggle = useCallback(() => {
-    setIsMuted((m) => !m);
+    setIsMuted((m) => {
+      const next = !m;
+      AsyncStorage.setItem(MUTE_KEY, String(next)).catch(() => {});
+      return next;
+    });
   }, []);
 
   const handleClose = useCallback(() => {

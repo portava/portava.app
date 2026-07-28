@@ -441,6 +441,11 @@ export interface MediaGridItem {
    * so the owner's client can show a processing overlay.
    */
   processingStatus: string | null;
+  /**
+   * Direct URL to the video asset. Null for image items or when the asset
+   * URL is not yet resolved. Used by the grid tile for muted autoplay.
+   */
+  videoUrl: string | null;
 }
 
 /**
@@ -493,6 +498,8 @@ export function hydrateMediaGridItem(row: any, postMedia: any[]): MediaGridItem 
   const processingStatus: string | null =
     rawStatus && rawStatus !== "ready" ? rawStatus : null;
 
+  const videoUrl: string | null = primaryVideo?.public_url ?? null;
+
   return {
     id: row.id as string,
     mediaType,
@@ -508,6 +515,7 @@ export function hydrateMediaGridItem(row: any, postMedia: any[]): MediaGridItem 
     viewCount: (row.view_count as number | null | undefined) ?? 0,
     qualifiedViewCount: (row.qualified_view_count as number | null | undefined) ?? 0,
     processingStatus,
+    videoUrl,
   };
 }
 

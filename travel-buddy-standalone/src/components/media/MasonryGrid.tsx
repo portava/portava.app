@@ -13,6 +13,11 @@
  *
  * Scroll restoration: exposed via the MasonryGridHandle ref — callers can
  * call scrollToOffset(y) after items load.
+ *
+ * Video autoplay: each tile's y offset within the ScrollView is computed
+ * deterministically from the layout algorithm. Combined with the current
+ * scroll offset and screen height, isVisible is derived per-tile (≥50 %
+ * in viewport) and passed down so video tiles autoplay while in view.
  */
 
 import React, {
@@ -20,6 +25,7 @@ import React, {
   useImperativeHandle,
   useCallback,
   useRef,
+  useState,
 } from 'react';
 import {
   ScrollView,
@@ -69,6 +75,14 @@ function tileHeight(item: MediaGridItem, colWidth: number): number {
   return Math.round(Math.max(MIN_TILE_H, Math.min(MAX_TILE_H, colWidth * 1.25)));
 }
 
+/** Returns true when at least 50 % of the tile is within the visible viewport. */
+function isTileVisible(tileY: number, tileH: number, scrollY: number, viewportH: number): boolean {
+  const visibleTop = Math.max(tileY, scrollY);
+  const visibleBottom = Math.min(tileY + tileH, scrollY + viewportH);
+  const visiblePx = Math.max(0, visibleBottom - visibleTop);
+  return visiblePx >= tileH * 0.5;
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export const MasonryGrid = forwardRef<MasonryGridHandle, MasonryGridProps>(
@@ -76,12 +90,15 @@ export const MasonryGrid = forwardRef<MasonryGridHandle, MasonryGridProps>(
     { items, refreshing, onRefresh, onLoadMore, onTilePress, onScrollOffsetChange },
     ref,
   ) {
-    const { width: screenWidth } = useWindowDimensions();
+    const { width: screenWidth, height: screenHeight } = useWindowDimensions();
     const colWidth = Math.floor(
       (screenWidth - GUTTER * (NUM_COLS + 1)) / NUM_COLS,
     );
 
     const scrollViewRef = useRef<ScrollView>(null);
+
+    // ── Current scroll position (updated on every scroll event) ──────────────
+    const [scrollY, setScrollY] = useState(0);
 
     useImperativeHandle(
       ref,
@@ -94,10 +111,18 @@ export const MasonryGrid = forwardRef<MasonryGridHandle, MasonryGridProps>(
     );
 
     // ── Distribute items into columns (shortest-column-next algorithm) ────────
+    //
+    // We also track each tile's absolute y offset within the ScrollView so we
+    // can compute visibility without any onLayout calls.
 
-    const columns: { item: MediaGridItem; globalIndex: number; h: number }[][] =
-      Array.from({ length: NUM_COLS }, () => []);
-    const colHeights = new Array<number>(NUM_COLS).fill(0);
+    const columns: {
+      item: MediaGridItem;
+      globalIndex: number;
+      h: number;
+      /** Absolute y offset of this tile within the ScrollView content. */
+      tileY: number;
+    }[][] = Array.from({ length: NUM_COLS }, () => []);
+    const colHeights = new Array<number>(NUM_COLS).fill(GUTTER); // start at top gutter
 
     items.forEach((item, i) => {
       const h = tileHeight(item, colWidth);
@@ -106,7 +131,7 @@ export const MasonryGrid = forwardRef<MasonryGridHandle, MasonryGridProps>(
       for (let c = 1; c < NUM_COLS; c++) {
         if (colHeights[c] < colHeights[shortest]) shortest = c;
       }
-      columns[shortest].push({ item, globalIndex: i, h });
+      columns[shortest].push({ item, globalIndex: i, h, tileY: colHeights[shortest] });
       colHeights[shortest] += h + GUTTER;
     });
 
@@ -117,17 +142,20 @@ export const MasonryGrid = forwardRef<MasonryGridHandle, MasonryGridProps>(
     const handleScroll = useCallback(
       (e: NativeSyntheticEvent<NativeScrollEvent>) => {
         const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+        const y = contentOffset.y;
+
+        setScrollY(y);
 
         // Offset save (throttled to 200 ms)
         const now = Date.now();
         if (now - lastSaveRef.current >= 200) {
           lastSaveRef.current = now;
-          onScrollOffsetChange?.(contentOffset.y);
+          onScrollOffsetChange?.(y);
         }
 
         // Infinite scroll trigger
         if (
-          contentOffset.y + layoutMeasurement.height >=
+          y + layoutMeasurement.height >=
           contentSize.height - LOAD_MORE_THRESHOLD
         ) {
           onLoadMore();
@@ -164,7 +192,7 @@ export const MasonryGrid = forwardRef<MasonryGridHandle, MasonryGridProps>(
               key={colIdx}
               style={[st.col, { width: colWidth }]}
             >
-              {col.map(({ item, globalIndex, h }) => (
+              {col.map(({ item, globalIndex, h, tileY }) => (
                 <View key={item.id} style={[st.tileWrap, { marginBottom: GUTTER }]}>
                   <GridTile
                     item={item}
@@ -172,6 +200,7 @@ export const MasonryGrid = forwardRef<MasonryGridHandle, MasonryGridProps>(
                     cellWidth={colWidth}
                     cellHeight={h}
                     onPress={onTilePress}
+                    isVisible={isTileVisible(tileY, h, scrollY, screenHeight)}
                   />
                 </View>
               ))}
