@@ -115,6 +115,50 @@ const ALIASES: Record<string, string> = {
   "curaçao": "CW", "réunion": "RE",
   "trinidad & tobago": "TT", "antigua & barbuda": "AG",
   "bosnia & herzegovina": "BA", "bosnia": "BA",
+  // ── Popular regional / island names stored as destination_country in Portava ──
+  // Indonesia
+  "bali": "ID", "lombok": "ID", "java": "ID", "sumatra": "ID",
+  "sulawesi": "ID", "kalimantan": "ID", "komodo": "ID", "flores": "ID",
+  "gili islands": "ID", "nusa penida": "ID", "labuan bajo": "ID",
+  // Thailand
+  "phuket": "TH", "koh samui": "TH", "ko samui": "TH",
+  "koh phangan": "TH", "ko phangan": "TH", "koh tao": "TH", "ko tao": "TH",
+  "chiang mai": "TH", "chiang rai": "TH", "pattaya": "TH",
+  "krabi": "TH", "koh lanta": "TH", "ko lanta": "TH", "hua hin": "TH",
+  // Vietnam
+  "ha long bay": "VN", "halong bay": "VN", "hoi an": "VN", "da nang": "VN",
+  "hue": "VN", "nha trang": "VN", "phu quoc": "VN", "sapa": "VN",
+  // Cambodia
+  "siem reap": "KH", "angkor": "KH", "kampot": "KH", "koh rong": "KH",
+  // Laos
+  "luang prabang": "LA", "vang vieng": "LA",
+  // Philippines
+  "boracay": "PH", "palawan": "PH", "cebu": "PH", "siargao": "PH",
+  "el nido": "PH", "coron": "PH",
+  // Malaysia
+  "penang": "MY", "langkawi": "MY", "kota kinabalu": "MY", "borneo": "MY",
+  "sabah": "MY", "sarawak": "MY",
+  // Japan (cities/regions sometimes entered as country)
+  "okinawa": "JP", "hokkaido": "JP",
+  // India
+  "goa": "IN", "kerala": "IN", "rajasthan": "IN", "kashmir": "IN",
+  // UAE
+  "abu dhabi": "AE", "dubai": "AE", "sharjah": "AE",
+  // Spain (regions often stored as country)
+  "catalonia": "ES", "cataluña": "ES", "basque country": "ES", "andalusia": "ES",
+  "canary islands": "ES", "mallorca": "ES", "ibiza": "ES", "tenerife": "ES",
+  "gran canaria": "ES",
+  // Italy
+  "sicily": "IT", "sardinia": "IT", "tuscany": "IT",
+  // Greece
+  "santorini": "GR", "mykonos": "GR", "crete": "GR", "corfu": "GR",
+  "rhodes": "GR",
+  // Portugal
+  "algarve": "PT", "azores": "PT", "madeira": "PT",
+  // Morocco
+  "marrakech": "MA", "marrakesh": "MA",
+  // Egypt
+  "sharm el sheikh": "EG", "hurghada": "EG",
 };
 
 /** Normalize for lookup: lowercase, strip diacritics, collapse whitespace. */

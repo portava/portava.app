@@ -19,7 +19,7 @@ export function useSmartVideoFit(containerW: number, containerH: number) {
   const onReadyForDisplay = useCallback((event: VideoReadyForDisplayEvent) => {
     // react-native-web does not populate event.naturalSize — guard before destructuring.
     const { width, height } = event?.naturalSize ?? {};
-    if (width > 0 && height > 0) setNaturalSize({ w: width, h: height });
+    if (width && height && width > 0 && height > 0) setNaturalSize({ w: width, h: height });
   }, []);
 
   let needsLetterbox = false;

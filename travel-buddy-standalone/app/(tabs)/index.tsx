@@ -366,8 +366,13 @@ function Pulse() {
 
       {/* Layover Mode entry point */}
       <Pressable style={styles.layoverBanner} onPress={() => setLayoverSheetOpen(true)}>
-        <Plane size={16} color="#1565C0" />
-        <Text style={styles.layoverBannerText}>Got a layover? Get activities, safety tips & more →</Text>
+        <View style={styles.layoverBannerIcon}>
+          <Plane size={18} color="#1565C0" />
+        </View>
+        <View style={styles.layoverBannerBody}>
+          <Text style={styles.layoverBannerTitle}>Layover Mode</Text>
+          <Text style={styles.layoverBannerSubText}>Plan your time, stay safe, find things to do →</Text>
+        </View>
       </Pressable>
 
       {/* Available Buddies in [City] — city-level buddy module shown below Layover banner */}
@@ -582,8 +587,11 @@ const styles = StyleSheet.create({
   exploreBtnText: { ...t.bodyStrong, color: '#fff', fontSize: 14 },
   loadingWrap: { paddingVertical: space.xxl, alignItems: 'center' },
   loadMoreWrap: { paddingVertical: space.lg, alignItems: 'center' },
-  layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: space.lg, marginTop: space.lg, marginBottom: space.sm, backgroundColor: '#E3F2FD', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
-  layoverBannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: '#1565C0' },
+  layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: space.lg, marginTop: space.lg, marginBottom: space.sm, backgroundColor: '#E3F2FD', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: '#BBDEFB' },
+  layoverBannerIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#BBDEFB' },
+  layoverBannerBody: { flex: 1, gap: 1 },
+  layoverBannerTitle: { fontSize: 14, fontWeight: '700', color: '#0D47A1' },
+  layoverBannerSubText: { fontSize: 12, fontWeight: '400', color: '#1565C0', opacity: 0.85 },
   /* Available Buddies in [City] module */
   buddyModule: { marginHorizontal: space.lg, marginTop: space.lg, backgroundColor: '#FFF5F5', borderRadius: 14, borderWidth: 1, borderColor: '#E5393530', padding: space.md, gap: space.sm },
   buddyModuleHead: { flexDirection: 'row', alignItems: 'flex-start' },

@@ -18,10 +18,6 @@ import { Info, Zap, Car, Phone } from 'lucide-react-native';
 import { getTripEssentials, type TripEssentialsItem, type CountryEssentials } from '../../services/countryEssentials.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
-interface Props {
-  tripId: string;
-}
-
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function plugHint(plugTypes: string[]): string {
@@ -115,16 +111,26 @@ function EssentialsCard({ item }: { item: TripEssentialsItem }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function TripCountryEssentialsSection({ tripId }: Props) {
+interface Props {
+  tripId: string;
+  /** Called once after the fetch resolves — true when at least one country has coverage. */
+  onLoad?: (hasContent: boolean) => void;
+}
+
+export function TripCountryEssentialsSection({ tripId, onLoad }: Props) {
   const [items, setItems] = useState<TripEssentialsItem[] | null | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
     getTripEssentials(tripId).then((res) => {
-      if (!cancelled) setItems(res);
+      if (!cancelled) {
+        setItems(res);
+        const covered = Array.isArray(res) ? res.filter((i) => i.essentials != null) : [];
+        onLoad?.(covered.length > 0);
+      }
     });
     return () => { cancelled = true; };
-  }, [tripId]);
+  }, [tripId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Loading or flag off
   if (items == null) return null;

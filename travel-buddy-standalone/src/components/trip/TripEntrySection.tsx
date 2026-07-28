@@ -244,9 +244,11 @@ function OtherTravelerRow({ traveler }: { traveler: TripEntryTraveler }) {
 
 interface TripEntrySectionProps {
   tripId: string;
+  /** Called once after the first fetch resolves — true when data is available. */
+  onLoad?: (hasContent: boolean) => void;
 }
 
-export function TripEntrySection({ tripId }: TripEntrySectionProps) {
+export function TripEntrySection({ tripId, onLoad }: TripEntrySectionProps) {
   const [entryData, setEntryData] = useState<{
     destinationCountry: string | null;
     disclaimer: string;
@@ -254,11 +256,16 @@ export function TripEntrySection({ tripId }: TripEntrySectionProps) {
   } | null | undefined>(undefined); // undefined = not yet loaded
   const [pickerOpen, setPickerOpen] = useState(false);
   const [settingPassport, setSettingPassport] = useState(false);
+  const reportedRef = React.useRef(false);
 
   const load = useCallback(async () => {
     const data = await fetchTripEntryRequirements(tripId);
     setEntryData(data); // null = feature off; object = have data
-  }, [tripId]);
+    if (!reportedRef.current) {
+      reportedRef.current = true;
+      onLoad?.(data !== null && data !== undefined);
+    }
+  }, [tripId, onLoad]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     load();

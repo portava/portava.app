@@ -34,6 +34,7 @@ import {
   cancelScheduledNotification,
   scheduleLocalNotificationAt,
 } from '../../src/lib/safeNotifications';
+import { AirportEssentialsCard } from '../../src/components/layover/AirportEssentialsCard';
 import { LayoverHero } from '../../src/components/layover/LayoverHero';
 import { CanILeaveCard } from '../../src/components/layover/CanILeaveCard';
 import { LayoverPlanSection } from '../../src/components/layover/LayoverPlanSection';
@@ -288,6 +289,7 @@ export default function LayoverDashboardScreen() {
 
         <LayoverHero airport={airport} session={session} window={win} localTimes={localTimes} nowMs={nowMs} />
         <CanILeaveCard advice={advice} window={win} airport={airport} />
+        <AirportEssentialsCard countryCode={airport.countryCode} countryName={airport.country !== 'Unknown' ? airport.country : undefined} />
         <LayoverPlanSection
           sessionId={session.id}
           stops={stops}

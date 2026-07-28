@@ -26,8 +26,7 @@ import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { TripBudgetSection } from '../../src/components/trip/TripBudgetSection';
 import { DailyBriefCard } from '../../src/components/DailyBriefCard';
 import { TripReadinessCard } from '../../src/components/trip/TripReadinessCard';
-import { TripEntrySection } from '../../src/components/trip/TripEntrySection';
-import { TripCountryEssentialsSection } from '../../src/components/trip/TripCountryEssentialsSection';
+import { BeforeYouGoSection } from '../../src/components/trip/BeforeYouGoSection';
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
 import { toFsqCityKey } from '../../src/utils/fsqCityKey';
 import { ConciergeCommandBar, type ConciergeCommandBarHandle } from '../../src/components/ConciergeCommandBar';
@@ -414,6 +413,11 @@ function TripDetailScreen() {
         </View>
         <TripHero trip={trip} />
 
+        {/* ── Before you go — entry/visa + country essentials, always visible ── */}
+        {live && trip.id ? (
+          <BeforeYouGoSection tripId={trip.id} />
+        ) : null}
+
         {/* ── Trip notes ── */}
         {trip.tripNotes ? (
           <View style={styles.tripNotesCard}>
@@ -429,16 +433,6 @@ function TripDetailScreen() {
         {/* ── Trip Readiness — renders nothing when flag is off (null response) ── */}
         {live && trip.id ? (
           <TripReadinessCard tripId={trip.id} refresh={readinessRefresh} />
-        ) : null}
-
-        {/* ── Entry & visas — renders nothing when flag is off (null response) ── */}
-        {live && trip.id ? (
-          <TripEntrySection tripId={trip.id} />
-        ) : null}
-
-        {/* ── Country essentials ("Good to know") — fail-soft null when flag off ── */}
-        {live && trip.id ? (
-          <TripCountryEssentialsSection tripId={trip.id} />
         ) : null}
 
         {/* ── FSQ places — renders nothing until city is ingested server-side ── */}
@@ -546,8 +540,13 @@ function TripDetailScreen() {
 
         {/* Layover Mode entry — shown between TripCircle and CompassTripBrief */}
         <Pressable style={styles.layoverBanner} onPress={() => setLayoverOpen(true)}>
-          <Plane size={16} color="#1565C0" />
-          <Text style={styles.layoverBannerText}>Got a layover at this destination? Plan it →</Text>
+          <View style={styles.layoverBannerIcon}>
+            <Plane size={18} color="#1565C0" />
+          </View>
+          <View style={styles.layoverBannerBody}>
+            <Text style={styles.layoverBannerTitle}>Layover at this destination?</Text>
+            <Text style={styles.layoverBannerSub}>Plan your time, transit tips, stay safe →</Text>
+          </View>
         </Pressable>
 
         {/* Need someone local? — Rent a Buddy entry (flag-gated) */}
@@ -766,8 +765,11 @@ const styles = StyleSheet.create({
   topBtnText: { ...t.small, fontWeight: '700', color: color.ink },
   topIcon: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
   unreadDot: { position: 'absolute', top: -3, right: -3, width: 7, height: 7, borderRadius: 4, backgroundColor: color.signal },
-  layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: space.lg, marginTop: space.lg, backgroundColor: '#E3F2FD', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
-  layoverBannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: '#1565C0' },
+  layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: space.lg, marginTop: space.lg, backgroundColor: '#E3F2FD', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: '#BBDEFB' },
+  layoverBannerIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#BBDEFB' },
+  layoverBannerBody: { flex: 1, gap: 1 },
+  layoverBannerTitle: { fontSize: 14, fontWeight: '700', color: '#0D47A1' },
+  layoverBannerSub: { fontSize: 12, fontWeight: '400', color: '#1565C0', opacity: 0.85 },
   circleFindBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: space.lg, marginTop: space.md, backgroundColor: '#E8F5E9', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
   circleFindBannerText: { flex: 1, fontSize: 13, fontWeight: '600', color: '#2E7D32' },
   circleShareBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: space.lg, marginTop: space.md, backgroundColor: '#EAF2F4', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },

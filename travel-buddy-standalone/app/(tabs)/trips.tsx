@@ -369,8 +369,13 @@ function TripsScreen() {
 
               {/* Layover Mode quick-access banner */}
               <Pressable style={styles.layoverBanner} onPress={() => setLayoverOpen(true)}>
-                <Plane size={16} color="#1565C0" />
-                <Text style={styles.layoverBannerText}>Got a layover? Plan activities, check safety & more →</Text>
+                <View style={styles.layoverBannerIcon}>
+                  <Plane size={18} color="#1565C0" />
+                </View>
+                <View style={styles.layoverBannerBody}>
+                  <Text style={styles.layoverBannerTitle}>Layover Mode</Text>
+                  <Text style={styles.layoverBannerSub}>Plan your time, stay safe, find things to do →</Text>
+                </View>
               </Pressable>
 
               {live && <PendingInvitesSection onAccepted={reload} />}
@@ -657,8 +662,11 @@ const styles = StyleSheet.create({
     backgroundColor: color.ink,
   },
   inviteBtnAcceptText: { ...t.small, color: color.onInk, fontWeight: '700' },
-  layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#E3F2FD', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
-  layoverBannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: '#1565C0' },
+  layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#E3F2FD', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: '#BBDEFB' },
+  layoverBannerIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#BBDEFB' },
+  layoverBannerBody: { flex: 1, gap: 1 },
+  layoverBannerTitle: { fontSize: 14, fontWeight: '700', color: '#0D47A1' },
+  layoverBannerSub: { fontSize: 12, fontWeight: '400', color: '#1565C0', opacity: 0.85 },
 
   segControl: {
     flexDirection: 'row',
