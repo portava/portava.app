@@ -15,6 +15,10 @@ export interface ViewerContextItem {
   posterUrl: string | null;
   thumbnailUrl: string | null;
   mediaType: 'image' | 'video';
+  /** True when the post was GPS-verified at the tagged location at upload time. */
+  locationVerified?: boolean;
+  /** Human-readable location name for the verified stamp overlay. */
+  locationName?: string | null;
 }
 
 interface ViewerContextState {

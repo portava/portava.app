@@ -61,6 +61,7 @@ import type { MediaFeedItem } from '../../types/media.ts';
 import { reactToMediaStampIt } from '../../services/mediaInteractions.ts';
 import { usePlanPicker } from '../PlanPickerController.tsx';
 import { StampItBurst, type StampItBurstHandle } from './StampItBurst.tsx';
+import { VerifiedLocationStamp } from './VerifiedLocationStamp.tsx';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -358,6 +359,11 @@ export function WatchItemOverlay({
                 {item.hashtags.map((h) => (h.startsWith('#') ? h : `#${h}`)).join(' ')}
               </Text>
             </View>
+          ) : null}
+
+          {/* Verified location stamp — shown when post was GPS-verified at the tagged place */}
+          {item.locationVerified && item.place?.name ? (
+            <VerifiedLocationStamp locationName={item.place.name} />
           ) : null}
 
           {/* Place chip — tappable only when a canonical place ID is available.

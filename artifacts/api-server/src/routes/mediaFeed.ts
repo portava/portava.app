@@ -103,7 +103,7 @@ function pruneViewDedup(): void {
  */
 const GRID_POST_COLUMNS =
   "id, author_id, " +
-  "location_name, location_city, location_country, " +
+  "location_name, location_city, location_country, location_verified, " +
   "location_lat, location_lng, " +
   "created_at, category, " +
   "status, post_status, visibility";
@@ -120,7 +120,7 @@ const GRID_MEDIA_COLUMNS =
 const FEED_POST_COLUMNS =
   "id, author_id, trip_id, content, visibility, status, post_status, " +
   "created_at, category, " +
-  "location_name, location_city, location_country, location_source, " +
+  "location_name, location_city, location_country, location_source, location_verified, " +
   "save_count, like_count, comment_count";
 
 const POST_MEDIA_COLUMNS =

@@ -146,6 +146,8 @@ export interface MediaFeedItem {
   privacy: MediaFeedPrivacy;
   moderation: MediaFeedModeration;
   linkedEntity: MediaFeedLinkedEntity | null;
+  /** True when the post was GPS-verified at the tagged location at upload time. */
+  locationVerified: boolean;
 }
 
 // ── Hydration input ───────────────────────────────────────────────────────────
@@ -390,6 +392,8 @@ export function hydrateGemFeedItem(input: HydrateGemInput): MediaFeedItem {
     privacy,
     moderation,
     linkedEntity: null,
+    // Gems use their own isVerified flag via location.isVerified; never GPS-verified.
+    locationVerified: false,
   };
 }
 
@@ -449,6 +453,8 @@ export interface MediaGridItem {
    * URL is not yet resolved. Used by the grid tile for muted autoplay.
    */
   videoUrl: string | null;
+  /** True when the post was GPS-verified at the tagged location at upload time. */
+  locationVerified: boolean;
 }
 
 /**
@@ -530,6 +536,7 @@ export function hydrateMediaGridItem(row: any, postMedia: any[], apiBaseUrl: str
     qualifiedViewCount: (row.qualified_view_count as number | null | undefined) ?? 0,
     processingStatus,
     videoUrl,
+    locationVerified: Boolean(row.location_verified),
   };
 }
 
@@ -687,5 +694,6 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
     privacy,
     moderation,
     linkedEntity: input.linkedEntity ?? null,
+    locationVerified: Boolean(row.location_verified),
   };
 }

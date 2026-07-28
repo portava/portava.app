@@ -165,6 +165,8 @@ export function GridFeed() {
           posterUrl: i.posterUrl,
           thumbnailUrl: i.thumbnailUrl,
           mediaType: i.mediaType,
+          locationVerified: i.locationVerified,
+          locationName: i.locationLabel,
         })),
         item.id,
       );

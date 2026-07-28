@@ -55,6 +55,8 @@ export interface MediaFeedItem {
   savedByMe: boolean;
   /** Number of distinct viewers who stamped this video. Absent on legacy items. */
   stampItCount?: number;
+  /** True when the post was GPS-verified at the tagged location at upload time. */
+  locationVerified?: boolean;
 }
 
 /** Page cursor returned by the feed API. */
@@ -97,6 +99,8 @@ export interface MediaGridItem {
    * URL is not yet resolved. Used by the grid tile for muted autoplay.
    */
   videoUrl: string | null;
+  /** True when the post was GPS-verified at the tagged location at upload time. */
+  locationVerified?: boolean;
 }
 
 export interface GridFeedPage {

@@ -97,6 +97,8 @@ interface ServerFeedItem {
   privacy: { isPrivate: boolean };
   moderation: { status: string };
   linkedEntity: ServerLinkedEntity | null;
+  /** Set when the post was GPS-verified at the tagged place at upload time. */
+  locationVerified?: boolean;
 }
 
 interface ServerFeedPage {
@@ -168,6 +170,7 @@ export function mapServerFeedItem(raw: ServerFeedItem): MediaFeedItem {
     likedByMe: raw.viewerState.hasLiked,
     savedByMe: raw.viewerState.hasSaved,
     stampItCount: raw.stats.stampItCount ?? 0,
+    locationVerified: raw.locationVerified ?? false,
   };
 }
 

@@ -50,6 +50,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { getPostById, type PostRow } from '../../src/services/posts.ts';
+import { VerifiedLocationStamp } from '../../src/components/media/VerifiedLocationStamp.tsx';
 import { useMediaLike } from '../../src/hooks/useMediaLike.ts';
 import { useMediaSave } from '../../src/hooks/useMediaSave.ts';
 import { recordMediaShare } from '../../src/services/mediaInteractions.ts';
@@ -142,6 +143,10 @@ interface OverlayProps {
   onSave: () => void;
   onShare: () => void;
   onMuteToggle: () => void;
+  /** True when the media was GPS-verified at the tagged place at upload time. */
+  locationVerified?: boolean;
+  /** Location name for the verified stamp — sourced from viewer context. */
+  locationName?: string | null;
 }
 
 function ViewerOverlay({
@@ -159,6 +164,8 @@ function ViewerOverlay({
   onSave,
   onShare,
   onMuteToggle,
+  locationVerified,
+  locationName,
 }: OverlayProps) {
   const insets = useSafeAreaInsets();
 
@@ -241,6 +248,11 @@ function ViewerOverlay({
               {/* Caption */}
               {post.caption ? (
                 <Text style={ov.caption} numberOfLines={3}>{post.caption}</Text>
+              ) : null}
+
+              {/* Verified location stamp */}
+              {locationVerified && locationName ? (
+                <VerifiedLocationStamp locationName={locationName} />
               ) : null}
 
               {/* Place chip */}
@@ -730,6 +742,8 @@ export default function MediaViewer() {
         onSave={handleSave}
         onShare={handleShare}
         onMuteToggle={handleMuteToggle}
+        locationVerified={activeItem?.locationVerified}
+        locationName={activeItem?.locationName}
       />
 
       {/* ── Comment sheet ─────────────────────────────────────────── */}

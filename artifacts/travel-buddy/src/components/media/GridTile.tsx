@@ -31,6 +31,7 @@ import type { MediaGridItem } from '../../types/media.ts';
 import { color, type as t, space, radius } from '../../theme/tokens.ts';
 import { useSmartVideoFit } from '../../hooks/useSmartVideoFit.ts';
 import { VideoBlurBackdrop } from '../ui/VideoBlurBackdrop.tsx';
+import { VerifiedLocationStamp } from './VerifiedLocationStamp.tsx';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -142,6 +143,14 @@ function GridTileInner({ item, index, cellWidth, cellHeight, onPress, isVisible 
         ) : null}
       </View>
 
+      {/* ── Verified location stamp — bottom-left overlay ────────── */}
+      {item.locationVerified && item.locationLabel ? (
+        <VerifiedLocationStamp
+          locationName={item.locationLabel}
+          style={styles.verifiedStamp}
+        />
+      ) : null}
+
       {/* ── Bottom row: duration (left) + view count (right) ──────── */}
       <View style={styles.bottomRow} pointerEvents="none">
         {isVideo && item.durationMs != null ? (
@@ -217,6 +226,14 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: color.onInk,
     letterSpacing: 0.2,
+  },
+
+  // ── Verified location stamp ─────────────────────────────────────────
+  verifiedStamp: {
+    position: 'absolute',
+    bottom: 28, // sit above the bottom meta row
+    left: 6,
+    zIndex: 4,
   },
 
   // ── Bottom meta row ─────────────────────────────────────────────────
