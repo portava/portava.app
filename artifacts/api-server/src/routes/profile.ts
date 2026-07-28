@@ -7,6 +7,7 @@ import { isFlagEnabled } from "../lib/featureFlags";
 import { invalidateCompassHomeCache } from "./compassHome";
 import { sniffMedia, processImage, type ProcessedImage, type SniffResult } from "../lib/mediaProcessing";
 import { appMediaRef } from "../lib/postSchemas";
+import { computeTrustScore } from "../lib/trustScore.js";
 
 /**
  * Sniff + strip-EXIF/auto-orient an avatar/cover image. Returns the processed
@@ -308,18 +309,20 @@ router.get("/me/profile", async (req, res) => {
     return;
   }
 
-  // Completeness score: parallel stamp + trip existence checks (fail-open)
-  const [stampRes, tripRes, followersRes, followingRes] = await Promise.allSettled([
+  // Completeness score + trust score: parallel queries (all fail-open)
+  const [stampRes, tripRes, followersRes, followingRes, trustRes] = await Promise.allSettled([
     sc ? sc.from("passport_stamps").select("user_id", { count: "exact", head: true }).eq("user_id", user.id).limit(1) : Promise.resolve({ count: 0 }),
     sc ? sc.from("trips").select("id", { count: "exact", head: true }).eq("owner_id", user.id) : Promise.resolve({ count: 0 }),
     sc ? sc.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("following_id", user.id) : Promise.resolve({ count: 0 }),
     sc ? sc.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("follower_id", user.id) : Promise.resolve({ count: 0 }),
+    sc ? computeTrustScore(user.id, sc, data as Record<string, any>) : Promise.resolve(null),
   ]);
   const hasStamp     = stampRes.status === "fulfilled" && ((stampRes.value as any).count ?? 0) > 0;
   const tripCount    = tripRes.status === "fulfilled" ? ((tripRes.value as any).count ?? 0) : 0;
   const hasTrip      = tripCount > 0;
   const followersCount = followersRes.status === "fulfilled" ? ((followersRes.value as any).count ?? 0) : 0;
   const followingCount = followingRes.status === "fulfilled" ? ((followingRes.value as any).count ?? 0) : 0;
+  const trustResult  = trustRes.status === "fulfilled" ? trustRes.value : null;
 
   const completeness = computeCompleteness(data, hasStamp, hasTrip);
 
@@ -334,7 +337,16 @@ router.get("/me/profile", async (req, res) => {
     if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age--;
     return age < 18;
   })();
-  res.status(200).json({ ...mapProfile(data), ageGateRequired, completeness, tripCount, followersCount, followingCount });
+  res.status(200).json({
+    ...mapProfile(data),
+    ageGateRequired,
+    completeness,
+    tripCount,
+    followersCount,
+    followingCount,
+    trustScore: trustResult?.score ?? null,
+    trustLabel: trustResult?.label ?? null,
+  });
 });
 
 /* ---------------------------------------------------------------------------

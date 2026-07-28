@@ -12,6 +12,7 @@ import {
   toPublicProfilePreview,
   toFullProfileView,
 } from "../lib/privacy/profileSerializers.js";
+import { computeTrustScore } from "../lib/trustScore.js";
 
 const router = Router();
 
@@ -303,10 +304,23 @@ router.get("/users/:username/passport", async (req, res) => {
       ? toFullProfileView(data, { showRealName })
       : toPublicProfilePreview(data, { showRealName });
 
+  // Compute trust score from live DB inputs (fail-open: null on any error).
+  let trustScore: number | null = null;
+  let trustLabel: string | null = null;
+  try {
+    const ts = await computeTrustScore(targetId, sc);
+    trustScore = ts.score;
+    trustLabel = ts.label;
+  } catch {
+    /* non-critical — passport still served without trust score */
+  }
+
   res.status(200).json({
     ...profilePayload,
     viewer,
     buddyProvider,
+    trustScore,
+    trustLabel,
   });
 });
 
