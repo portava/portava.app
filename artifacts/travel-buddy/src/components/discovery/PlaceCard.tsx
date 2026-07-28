@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
-import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation, Route, ListPlus } from 'lucide-react-native';
+import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation, Route, ListPlus, ThumbsUp } from 'lucide-react-native';
 import type { DiscoveryPlace, PlaceLiveStatus } from '../../services/discovery.ts';
 import { getPlaceLiveStatusCached } from '../../services/discovery.ts';
 import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
@@ -260,6 +260,30 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
                   <Text style={styles.tagText}>{tag}</Text>
                 </View>
               ))}
+            </View>
+          )}
+
+          {/* Community vote / review counts */}
+          {((place.worthItCount != null && place.worthItCount > 0) ||
+            (place.avgRating != null && place.avgRating > 0)) && (
+            <View style={styles.voteRow}>
+              {place.avgRating != null && place.avgRating > 0 && (
+                <View style={styles.voteBadge}>
+                  <Text style={styles.voteStar}>★</Text>
+                  <Text style={styles.voteText}>
+                    {place.avgRating.toFixed(1)}
+                    {place.reviewCount != null && place.reviewCount > 0
+                      ? ` (${place.reviewCount})`
+                      : ''}
+                  </Text>
+                </View>
+              )}
+              {place.worthItCount != null && place.worthItCount > 0 && (
+                <View style={styles.voteBadge}>
+                  <ThumbsUp size={10} color={color.signal} />
+                  <Text style={styles.voteText}>{place.worthItCount} worth it</Text>
+                </View>
+              )}
             </View>
           )}
 
@@ -613,6 +637,33 @@ const styles = StyleSheet.create({
     color: color.faint,
     fontSize: 9,
     marginTop: 2,
+  },
+  voteRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 4,
+  },
+  voteBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    backgroundColor: color.signal + '14',
+  },
+  voteStar: {
+    fontSize: 10,
+    color: color.signal,
+    lineHeight: 12,
+  },
+  voteText: {
+    ...t.stamp,
+    color: color.signal,
+    fontSize: 10,
+    fontWeight: '600',
   },
   savedBadge: {
     flexDirection: 'row',

@@ -44,6 +44,9 @@ function toDiscoveryItem(item: CommunityPlaceItem): DiscoveryItem {
     source:       (item.source ?? 'traveler') as DiscoveryItem['source'],
     status:       (item.status ?? 'provisional') as DiscoveryItem['status'],
     verified:     item.verified,
+    worthItCount: item.worthItCount ?? null,
+    avgRating:    item.avgRating ?? null,
+    reviewCount:  item.reviewCount ?? null,
   };
 }
 

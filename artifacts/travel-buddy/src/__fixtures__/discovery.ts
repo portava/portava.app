@@ -32,6 +32,12 @@ export interface DiscoveryItem {
   source: DiscoverySource;
   status: DiscoveryStatus;
   verified: boolean;
+  /** Community "Worth It" vote count — populated by the listing API. */
+  worthItCount?: number | null;
+  /** Average community review rating — populated by the listing API. */
+  avgRating?: number | null;
+  /** Number of community reviews — populated by the listing API. */
+  reviewCount?: number | null;
 }
 
 const SEED = { source: 'seed' as const, status: 'provisional' as const, verified: false };

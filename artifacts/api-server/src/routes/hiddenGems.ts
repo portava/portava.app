@@ -189,6 +189,54 @@ const checkinSchema = z.object({
 
 // ── Helper: resolve caller ID from bearer token (optional auth) ───────────────
 
+// ── Vote + review aggregate batch enrichment (gems) ──────────────────────────
+
+type GemAgg = { worthItCount: number; avgRating: number | null; reviewCount: number };
+
+async function batchFetchGemAggregates(
+  sc: ReturnType<typeof getServiceClient>,
+  gemIds: string[],
+): Promise<Map<string, GemAgg>> {
+  const result = new Map<string, GemAgg>();
+  if (!sc || gemIds.length === 0) return result;
+  try {
+    const [votesRes, reviewsRes] = await Promise.all([
+      sc
+        .from("place_votes")
+        .select("entity_id, vote")
+        .eq("entity_type", "gem")
+        .in("entity_id", gemIds),
+      sc
+        .from("reviews")
+        .select("entity_id, rating")
+        .eq("entity_type", "place")
+        .in("entity_id", gemIds)
+        .eq("state", "published"),
+    ]);
+    for (const row of (votesRes.data ?? []) as any[]) {
+      const id = row.entity_id as string;
+      if (!result.has(id)) result.set(id, { worthItCount: 0, avgRating: null, reviewCount: 0 });
+      if (row.vote === "worth_it") result.get(id)!.worthItCount++;
+    }
+    const reviewsByGem = new Map<string, number[]>();
+    for (const row of (reviewsRes.data ?? []) as any[]) {
+      const id = row.entity_id as string;
+      if (!reviewsByGem.has(id)) reviewsByGem.set(id, []);
+      if (row.rating != null) reviewsByGem.get(id)!.push(parseFloat(String(row.rating)));
+    }
+    for (const [id, ratings] of reviewsByGem) {
+      if (!result.has(id)) result.set(id, { worthItCount: 0, avgRating: null, reviewCount: 0 });
+      const entry = result.get(id)!;
+      entry.reviewCount = ratings.length;
+      if (ratings.length > 0) {
+        entry.avgRating =
+          Math.round((ratings.reduce((s, r) => s + r, 0) / ratings.length) * 10) / 10;
+      }
+    }
+  } catch { /* non-fatal */ }
+  return result;
+}
+
 async function resolveCallerId(req: any, sc: any): Promise<string | null> {
   const authHeader = req.headers.authorization ?? "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
@@ -408,7 +456,13 @@ router.get("/hidden-gems", async (req, res) => {
         .order("created_at", { ascending: false })
         .limit(opts.limit);
       const safe = await applyGemPrivacyBatch(tripGems ?? [], sc, user.id, callerTripId);
-      return res.json({ gems: safe, total: safe.length });
+      const gemIds = (safe as any[]).map((g: any) => g.id as string);
+      const agg = await batchFetchGemAggregates(sc, gemIds);
+      const enriched = (safe as any[]).map((g: any) => {
+        const a = agg.get(g.id);
+        return a ? { ...g, worthItCount: a.worthItCount, avgRating: a.avgRating, reviewCount: a.reviewCount } : g;
+      });
+      return res.json({ gems: enriched, total: enriched.length });
     } catch (err: any) {
       return sendError(res, "db_error", err.message);
     }
@@ -425,7 +479,13 @@ router.get("/hidden-gems", async (req, res) => {
         .order("created_at", { ascending: false })
         .limit(opts.limit);
       const safe = await applyGemPrivacyBatch(userGems ?? [], sc, callerId, callerTripId);
-      return res.json({ gems: safe, total: safe.length });
+      const gemIds2 = (safe as any[]).map((g: any) => g.id as string);
+      const agg2 = await batchFetchGemAggregates(sc, gemIds2);
+      const enriched2 = (safe as any[]).map((g: any) => {
+        const a = agg2.get(g.id);
+        return a ? { ...g, worthItCount: a.worthItCount, avgRating: a.avgRating, reviewCount: a.reviewCount } : g;
+      });
+      return res.json({ gems: enriched2, total: enriched2.length });
     } catch (err: any) {
       return sendError(res, "db_error", err.message);
     }
@@ -444,7 +504,13 @@ router.get("/hidden-gems", async (req, res) => {
     });
     const rawGems = ranked.map((r) => r.gem);
     const safe = await applyGemPrivacyBatch(rawGems, sc, callerId, callerTripId);
-    res.json({ gems: safe, total: safe.length });
+    const gemIds3 = (safe as any[]).map((g: any) => g.id as string);
+    const agg3 = await batchFetchGemAggregates(sc, gemIds3);
+    const enriched3 = (safe as any[]).map((g: any) => {
+      const a = agg3.get(g.id);
+      return a ? { ...g, worthItCount: a.worthItCount, avgRating: a.avgRating, reviewCount: a.reviewCount } : g;
+    });
+    res.json({ gems: enriched3, total: enriched3.length });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }

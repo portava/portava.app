@@ -43,6 +43,12 @@ export interface DiscoveryPlace {
   openingHours: string | null;
   rating: number | null;
   isOpenNow: boolean | null;
+  /** Community "Worth It" vote count — populated by the discovery listing API. */
+  worthItCount?: number | null;
+  /** Average community review rating — populated by the discovery listing API. */
+  avgRating?: number | null;
+  /** Number of community reviews — populated by the discovery listing API. */
+  reviewCount?: number | null;
   /**
    * Primary cover image URL. Null / absent means no image is available;
    * UI falls back to category artwork via PlaceCategoryFallback.
@@ -225,6 +231,12 @@ export interface CommunityPlaceItem {
   createdAt: string;
   lat: number | null;
   lng: number | null;
+  /** Community "Worth It" vote count — populated by the listing API. */
+  worthItCount?: number | null;
+  /** Average community review rating — populated by the listing API. */
+  avgRating?: number | null;
+  /** Number of community reviews — populated by the listing API. */
+  reviewCount?: number | null;
 }
 
 export interface CommunityDiscoveryResult {

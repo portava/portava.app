@@ -549,7 +549,7 @@ async function queryDbPlaces(
 
     if (error || !data) return [];
 
-    return (data as any[])
+    const dbPlaces = (data as any[])
       .filter((row: any) => {
         if (category === "for_you") return true;
         // Prefer primary_category (post-migration 0083); fall back to the
@@ -602,6 +602,15 @@ async function queryDbPlaces(
             : null,
         };
       });
+
+    // Enrich DB places with vote counts and review aggregates (best-effort, cached alongside places)
+    const rawIds = dbPlaces.map((p) => p.id.slice(3)); // strip 'db/' prefix
+    const agg = await batchFetchVoteAndRatingAggregates(sc, rawIds, "place");
+    if (agg.size === 0) return dbPlaces;
+    return dbPlaces.map((p) => {
+      const a = agg.get(p.id.slice(3));
+      return a ? { ...p, worthItCount: a.worthItCount, avgRating: a.avgRating, reviewCount: a.reviewCount } : p;
+    });
   } catch {
     return [];
   }
@@ -644,6 +653,64 @@ async function enrichOsmSavedCounts(places: DiscoveryPlace[]): Promise<Discovery
   } catch {
     return places;
   }
+}
+
+// ── Vote + review aggregate batch enrichment ──────────────────────────────────
+//
+// Batch-fetches worth-it vote counts and published-review aggregates for a
+// list of entity IDs.  entityType is 'place' for community/DB discovery places
+// and 'gem' for hidden gems.  Both lookups run in parallel; any failure is
+// swallowed so tiles degrade gracefully (no counts rather than an error).
+
+type VoteRatingAgg = { worthItCount: number; avgRating: number | null; reviewCount: number };
+
+async function batchFetchVoteAndRatingAggregates(
+  sc: ReturnType<typeof getServiceClient>,
+  entityIds: string[],
+  entityType: "place" | "gem",
+): Promise<Map<string, VoteRatingAgg>> {
+  const result = new Map<string, VoteRatingAgg>();
+  if (!sc || entityIds.length === 0) return result;
+
+  try {
+    const [votesRes, reviewsRes] = await Promise.all([
+      sc
+        .from("place_votes")
+        .select("entity_id, vote")
+        .eq("entity_type", entityType)
+        .in("entity_id", entityIds),
+      sc
+        .from("reviews")
+        .select("entity_id, rating")
+        .eq("entity_type", "place")
+        .in("entity_id", entityIds)
+        .eq("state", "published"),
+    ]);
+
+    for (const row of (votesRes.data ?? []) as any[]) {
+      const id = row.entity_id as string;
+      if (!result.has(id)) result.set(id, { worthItCount: 0, avgRating: null, reviewCount: 0 });
+      if (row.vote === "worth_it") result.get(id)!.worthItCount++;
+    }
+
+    const reviewsByEntity = new Map<string, number[]>();
+    for (const row of (reviewsRes.data ?? []) as any[]) {
+      const id = row.entity_id as string;
+      if (!reviewsByEntity.has(id)) reviewsByEntity.set(id, []);
+      if (row.rating != null) reviewsByEntity.get(id)!.push(parseFloat(String(row.rating)));
+    }
+    for (const [id, ratings] of reviewsByEntity) {
+      if (!result.has(id)) result.set(id, { worthItCount: 0, avgRating: null, reviewCount: 0 });
+      const entry = result.get(id)!;
+      entry.reviewCount = ratings.length;
+      if (ratings.length > 0) {
+        entry.avgRating =
+          Math.round((ratings.reduce((s, r) => s + r, 0) / ratings.length) * 10) / 10;
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  return result;
 }
 
 // ── Merge + deduplicate ────────────────────────────────────────────────────────
@@ -1607,6 +1674,12 @@ export interface CommunityDiscoveryItem {
   createdAt: string;
   lat: number | null;
   lng: number | null;
+  /** Community "Worth It" vote count — populated by the listing API. */
+  worthItCount?: number | null;
+  /** Average community review rating — populated by the listing API. */
+  avgRating?: number | null;
+  /** Number of community reviews — populated by the listing API. */
+  reviewCount?: number | null;
 }
 
 const VALID_PLACE_TYPES = new Set(["hidden_gem", "traveler_pick", "all"]);
@@ -1789,35 +1862,47 @@ router.get("/discovery/community", async (req, res) => {
       };
     });
 
-    // Batch-fetch saved state (optional auth — non-fatal when unauthenticated)
+    // Batch-fetch saved state and vote/review aggregates in parallel (both non-fatal)
     const placeIds = items.map((i) => i.id);
     const savedPlaceIds = new Set<string>();
-    try {
-      const authHeaderComm = req.headers.authorization;
-      const commSc = getServiceClient();
-      if (authHeaderComm?.startsWith("Bearer ") && commSc && placeIds.length > 0) {
-        const { data: authDataComm } = await commSc.auth.getUser(authHeaderComm.slice(7).trim());
-        if (authDataComm?.user) {
-          const { data: userCols } = await commSc
-            .from("collections")
-            .select("id")
-            .eq("owner_id", authDataComm.user.id);
-          const colIds = ((userCols ?? []) as any[]).map((c) => c.id as string);
-          if (colIds.length > 0) {
-            const { data: savedItems } = await commSc
-              .from("collection_items")
-              .select("entity_id")
-              .eq("entity_type", "place")
-              .in("collection_id", colIds)
-              .in("entity_id", placeIds);
-            for (const s of (savedItems ?? []) as any[]) savedPlaceIds.add((s as any).entity_id as string);
+    const [, voteAgg] = await Promise.all([
+      (async () => {
+        try {
+          const authHeaderComm = req.headers.authorization;
+          const commSc = getServiceClient();
+          if (authHeaderComm?.startsWith("Bearer ") && commSc && placeIds.length > 0) {
+            const { data: authDataComm } = await commSc.auth.getUser(authHeaderComm.slice(7).trim());
+            if (authDataComm?.user) {
+              const { data: userCols } = await commSc
+                .from("collections")
+                .select("id")
+                .eq("owner_id", authDataComm.user.id);
+              const colIds = ((userCols ?? []) as any[]).map((c) => c.id as string);
+              if (colIds.length > 0) {
+                const { data: savedItems } = await commSc
+                  .from("collection_items")
+                  .select("entity_id")
+                  .eq("entity_type", "place")
+                  .in("collection_id", colIds)
+                  .in("entity_id", placeIds);
+                for (const s of (savedItems ?? []) as any[]) savedPlaceIds.add((s as any).entity_id as string);
+              }
+            }
           }
-        }
-      }
-    } catch { /* non-fatal */ }
+        } catch { /* non-fatal */ }
+      })(),
+      batchFetchVoteAndRatingAggregates(getServiceClient(), placeIds, "place"),
+    ]);
 
     res.json({
-      items: items.map((i) => ({ ...i, isSaved: savedPlaceIds.has(i.id) })),
+      items: items.map((i) => {
+        const a = voteAgg.get(i.id);
+        return {
+          ...i,
+          isSaved: savedPlaceIds.has(i.id),
+          ...(a ? { worthItCount: a.worthItCount, avgRating: a.avgRating, reviewCount: a.reviewCount } : {}),
+        };
+      }),
       city,
       total: items.length,
       ageFilterMeta: {
