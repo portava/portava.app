@@ -1,6 +1,7 @@
 import { useCallback, useEffect, type PropsWithChildren } from 'react';
 import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import * as Sentry from '@sentry/react-native';
 // Register the geofence background task at module root — must be imported
 // before any call to Location.startGeofencingAsync.
 import '../src/tasks/geofenceExitTask';
@@ -8,6 +9,18 @@ import '../src/tasks/checkpointArrivalTask';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Platform } from 'react-native';
+
+// Initialize Sentry as early as possible — before any component tree mounts —
+// so that native crashes and JS errors during startup are captured.
+// EXPO_PUBLIC_SENTRY_DSN must be set in the EAS / Replit environment secrets.
+// When the DSN is absent (e.g. local dev without the secret) Sentry is a no-op.
+Sentry.init({
+  dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
+  // Disable Sentry in dev mode to keep the local console clean.
+  enabled: !__DEV__,
+  // Performance tracing — 10 % sample rate; adjust once baseline is known.
+  tracesSampleRate: 0.1,
+});
 import { PlanPickerControllerProvider } from '../src/components/PlanPickerController';
 import { AvailabilityProvider } from '../src/context/AvailabilityStore';
 import { SessionProvider, useSession } from '../src/context/SessionContext';

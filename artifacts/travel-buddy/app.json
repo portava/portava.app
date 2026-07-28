@@ -121,7 +121,8 @@
       "expo-apple-authentication",
       "@maplibre/maplibre-react-native",
       "@livekit/react-native-expo-plugin",
-      "./plugins/withPortavaNSE"
+      "./plugins/withPortavaNSE",
+      "@sentry/react-native"
     ],
     "experiments": {
       "typedRoutes": true,

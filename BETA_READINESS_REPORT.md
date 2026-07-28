@@ -19,7 +19,7 @@ _Signed off: 2026-07-28_
 - [x] App-level `ErrorBoundary` present in `_layout.tsx` — `RootCrashHandler` wraps all children inside `SessionProvider` so `userId` can be attached to reports without exposing PII.
 - [x] Screen-level `SectionErrorBoundary` present on discovery/map screens — see `src/components/discovery/SectionErrorBoundary.tsx`.
 - [x] `crashReporter.ts` sends structured report to `POST /api/crash-report` in production; dev-only path logs to `console.error` and returns early.
-- [ ] **Sentry: NOT YET** — `crashReporter.ts` includes inline instructions for adding `@sentry/react-native`. Deferred — not a blocker for the initial beta invite; the `/api/crash-report` pipeline already surfaces crashes in server logs and any connected log aggregator.
+- [x] **Sentry: integrated** — `@sentry/react-native` installed; `Sentry.init` called at the top of `_layout.tsx` (disabled in `__DEV__`, reads `EXPO_PUBLIC_SENTRY_DSN`); `crashReporter.ts` calls `Sentry.captureException` with userId and componentStack in production; EAS `hooks.post-build` uploads source maps for readable stack traces.
 
 ## Environment variables
 - [x] `EXPO_PUBLIC_*` vars are client-safe — only `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`, and `EXPO_PUBLIC_API_BASE_URL` are exposed to the bundle; all are designed for public consumption.
@@ -41,5 +41,4 @@ _Signed off: 2026-07-28_
 **Beta invite blocker resolved:** The password-reset deep-link flow was the only P0 gap. It is now fully implemented — the `update-password` screen is registered, reachable via deep link, and wired to `supabase.auth.updateUser`.
 
 **Non-blocking deferred items:**
-- Sentry integration — the existing `/api/crash-report` pipeline is sufficient for initial beta; Sentry should be added before public launch.
 - `ALLOWED_ORIGINS` env var should be explicitly set in the production deployment config to eliminate the fallback-domain warning on every server start.

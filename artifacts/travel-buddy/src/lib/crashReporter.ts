@@ -5,17 +5,12 @@
  * where they are written to the structured server log (visible in EAS device
  * logs and any log aggregator connected to the API server).
  *
- * HOW TO ADD SENTRY (optional enhancement):
- *   1. `pnpm --filter @workspace/travel-buddy add @sentry/react-native`
- *   2. Initialize Sentry once in app/_layout.tsx with EXPO_PUBLIC_SENTRY_DSN.
- *   3. Add alongside the fetch call below:
- *        import * as Sentry from '@sentry/react-native';
- *        Sentry.withScope(scope => {
- *          if (context.userId) scope.setUser({ id: context.userId });
- *          scope.setExtra('componentStack', componentStack);
- *          Sentry.captureException(error);
- *        });
+ * Crashes are also forwarded to Sentry via Sentry.captureException so that
+ * stack traces (with source maps uploaded during EAS builds) are available in
+ * the Sentry dashboard without tailing server logs.
  */
+
+import * as Sentry from '@sentry/react-native';
 
 export interface CrashContext {
   userId?: string;
@@ -34,7 +29,8 @@ export interface CrashReport {
  *
  * - In development: logs a detailed object to console.error only.
  * - In production: POSTs to POST /api/crash-report so the error appears in
- *   the API server log, then also writes to console.error for device logs.
+ *   the API server log, then also writes to console.error for device logs,
+ *   and forwards to Sentry with userId and componentStack attached.
  *
  * PRIVACY: only userId (not email, name, or any other PII) is included.
  */
@@ -58,6 +54,14 @@ export function reportCrash(
 
   // Production: write to device log stream.
   console.error('[CrashReporter]', JSON.stringify(report));
+
+  // Production: forward to Sentry so readable stack traces appear in the
+  // Sentry dashboard (source maps uploaded via @sentry/react-native EAS hook).
+  Sentry.withScope(scope => {
+    if (context.userId) scope.setUser({ id: context.userId });
+    scope.setExtra('componentStack', componentStack);
+    Sentry.captureException(error);
+  });
 
   // Production: also POST to the API server so crashes appear in server logs
   // and any log aggregator / alerting pipeline connected to the API.

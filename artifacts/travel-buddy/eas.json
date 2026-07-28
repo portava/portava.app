@@ -22,6 +22,14 @@
       "autoIncrement": true
     }
   },
+  "hooks": {
+    "post-build": [
+      {
+        "command": "npx sentry-expo-upload-sourcemaps dist",
+        "filter": ["production"]
+      }
+    ]
+  },
   "submit": {
     "production": {}
   }
