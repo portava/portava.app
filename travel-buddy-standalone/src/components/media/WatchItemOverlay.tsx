@@ -56,6 +56,7 @@ import {
 } from 'lucide-react-native';
 import { color, space, type as t, radius } from '../../theme/tokens.ts';
 import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
+import { FeaturedBadge } from '../FeaturedBadge.tsx';
 import { useFollow } from '../../hooks/useFollow.ts';
 import type { MediaFeedItem } from '../../types/media.ts';
 import { reactToMediaStampIt } from '../../services/mediaInteractions.ts';
@@ -318,6 +319,11 @@ export function WatchItemOverlay({
 
             <FollowButton userId={item.creator.id} currentUserId={currentUserId} />
           </View>
+
+          {/* Featured by Portava badge */}
+          {item.featuredByPortava ? (
+            <FeaturedBadge category={item.featuredByPortava} size="sm" dark />
+          ) : null}
 
           {/* Caption */}
           {item.caption ? (

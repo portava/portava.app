@@ -12,7 +12,7 @@
 import React, { useCallback, useRef, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, FlatList, ActivityIndicator,
-  RefreshControl, ScrollView, Alert,
+  RefreshControl, ScrollView, Alert, Linking,
 } from 'react-native';
 import { UserAvatarButton } from '../src/components/interaction/UserAvatarButton';
 import { UserNameButton } from '../src/components/interaction/UserNameButton';
@@ -24,6 +24,7 @@ import { X, CheckCheck, UserCheck, UserMinus } from 'lucide-react-native';
 import { color, space, type as t, radius, shadow } from '../src/theme/tokens';
 import { useNotifications } from '../src/hooks/useNotifications';
 import type { AppNotification, NotificationCategory } from '../src/services/notifications';
+import { freshToken } from '../src/services/apiToken';
 import { useRequests } from '../src/hooks/useRequests';
 import { acceptRequest, declineRequest } from '../src/services/requests';
 import type { InboxItem } from '../src/services/requests';
@@ -69,7 +70,47 @@ const CATEGORY_ICONS: Record<string, string> = {
   trust:       '⭐',
   airport:     '🏔️',
   admin:       '⚠️',
+  media:       '🏆',
 };
+
+// ── Featured permission helper ────────────────────────────────────────────────
+
+function isFeaturedPermissionRequest(notification: AppNotification): boolean {
+  return (notification as any).eventType === 'featured.permission_request';
+}
+
+function getPostIdFromActionUrl(actionUrl?: string | null): string | null {
+  if (!actionUrl) return null;
+  const match = actionUrl.match(/\/post\/([^/?]+)/);
+  return match?.[1] ?? null;
+}
+
+async function respondToFeaturedPermission(
+  postId: string,
+  action: 'accept' | 'decline',
+): Promise<{ ok: boolean; message?: string }> {
+  try {
+    const token = await freshToken();
+    const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+    const res = await fetch(
+      `${apiBase}/api/admin/featured/${action === 'accept' ? 'accept-permission' : 'decline-permission'}/${postId}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      },
+    );
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, message: (body as any)?.message ?? `API ${res.status}` };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
+  }
+}
 
 const PRIORITY_BADGE: Record<string, { bg: string; text: string; label: string } | null> = {
   urgent:    { bg: '#FEE2E2', text: '#DC2626', label: 'Urgent' },
@@ -104,17 +145,40 @@ function ActivityCard({
   const isUnread = !notification.readAt;
   const badge = PRIORITY_BADGE[notification.priority];
   const icon = CATEGORY_ICONS[notification.category] ?? '🔔';
+  const isFeaturedReq = isFeaturedPermissionRequest(notification);
+  const [permBusy, setPermBusy] = useState<'accept' | 'decline' | null>(null);
+  const [permDone, setPermDone] = useState<'accepted' | 'declined' | null>(null);
 
   const handlePress = useCallback(() => {
     if (isUnread) onMarkRead(notification.id);
-    if (notification.actionUrl) {
+    if (notification.actionUrl && !isFeaturedReq) {
       try {
         router.push(notification.actionUrl as any);
       } catch {
         Alert.alert('Content unavailable', 'This content is no longer available.', [{ text: 'OK' }]);
       }
     }
-  }, [notification, isUnread, onMarkRead]);
+  }, [notification, isUnread, onMarkRead, isFeaturedReq]);
+
+  const handleFeaturedPermission = useCallback(async (action: 'accept' | 'decline') => {
+    const postId = getPostIdFromActionUrl(notification.actionUrl);
+    if (!postId) {
+      Alert.alert('Error', 'Could not find post ID for this request.');
+      return;
+    }
+    setPermBusy(action);
+    const result = await respondToFeaturedPermission(postId, action);
+    setPermBusy(null);
+    if (result.ok) {
+      setPermDone(action === 'accept' ? 'accepted' : 'declined');
+      onMarkRead(notification.id);
+    } else {
+      Alert.alert(
+        action === 'accept' ? 'Could not accept' : 'Could not decline',
+        result.message ?? 'Please try again.',
+      );
+    }
+  }, [notification.actionUrl, notification.id, onMarkRead]);
 
   return (
     <Pressable
@@ -126,7 +190,7 @@ function ActivityCard({
 
       {/* Category icon */}
       <View style={[styles.iconWrap, notification.category === 'safe_return' && styles.iconWrapSafety]}>
-        <Text style={styles.catIcon}>{icon}</Text>
+        <Text style={styles.catIcon}>{isFeaturedReq ? '🏆' : icon}</Text>
       </View>
 
       {/* Content */}
@@ -150,15 +214,45 @@ function ActivityCard({
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
           <Text style={styles.cardTime}>{relativeTime(notification.createdAt)}</Text>
 
-          {/* Action button */}
-          {notification.actionUrl && (
-            <Pressable
-              style={styles.actionBtn}
-              onPress={handlePress}
-              hitSlop={4}
-            >
-              <Text style={styles.actionBtnText}>View ›</Text>
-            </Pressable>
+          {/* Featured permission: Accept / Decline action sheet */}
+          {isFeaturedReq && !permDone ? (
+            <View style={styles.permActionsRow}>
+              <Pressable
+                style={[styles.permBtn, styles.permBtnDecline]}
+                onPress={() => handleFeaturedPermission('decline')}
+                disabled={permBusy !== null}
+                hitSlop={4}
+              >
+                <Text style={styles.permBtnDeclineText}>
+                  {permBusy === 'decline' ? '…' : 'Decline'}
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.permBtn, styles.permBtnAccept]}
+                onPress={() => handleFeaturedPermission('accept')}
+                disabled={permBusy !== null}
+                hitSlop={4}
+              >
+                <Text style={styles.permBtnAcceptText}>
+                  {permBusy === 'accept' ? '…' : 'Accept'}
+                </Text>
+              </Pressable>
+            </View>
+          ) : isFeaturedReq && permDone ? (
+            <Text style={styles.permDoneText}>
+              {permDone === 'accepted' ? '✓ Accepted' : 'Declined'}
+            </Text>
+          ) : (
+            /* Standard action button */
+            notification.actionUrl ? (
+              <Pressable
+                style={styles.actionBtn}
+                onPress={handlePress}
+                hitSlop={4}
+              >
+                <Text style={styles.actionBtnText}>View ›</Text>
+              </Pressable>
+            ) : null
           )}
         </View>
       </View>
@@ -675,6 +769,28 @@ const styles = StyleSheet.create({
     ...t.stamp,
     color: color.deep,
     fontWeight: '700',
+  },
+  permActionsRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+  },
+  permBtn: {
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: radius.pill, borderWidth: 1,
+  },
+  permBtnAccept: {
+    backgroundColor: '#D97706', borderColor: '#D97706',
+  },
+  permBtnAcceptText: {
+    ...t.stamp, color: '#fff', fontWeight: '700',
+  },
+  permBtnDecline: {
+    backgroundColor: color.paper, borderColor: color.haze,
+  },
+  permBtnDeclineText: {
+    ...t.stamp, color: color.mute, fontWeight: '700',
+  },
+  permDoneText: {
+    ...t.stamp, color: color.success, fontWeight: '700',
   },
   dismissBtn: {
     padding: space.xs,

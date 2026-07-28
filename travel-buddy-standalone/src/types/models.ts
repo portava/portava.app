@@ -543,6 +543,11 @@ export interface PublicProfile {
   quickStatus?: string | null;
   /** True when this profile is an @Portava Official account. */
   isOfficial?: boolean;
+  /**
+   * Number of posts this creator has had featured by Portava (status = 'live').
+   * Absent/0 means no featured posts — trophy row should be hidden.
+   */
+  featuredCount?: number | null;
 }
 
 /* ───────────────────────────────────────────────────────────────────────
@@ -888,6 +893,12 @@ export interface PulseFeedItem {
   placeId?: string | null;
   /** Trip name label surfaced when the post is attached to a trip — displayed as a badge on the media frame. */
   tripLabel?: string | null;
+  /**
+   * Non-null when this post has been featured by Portava (portava_featured.status = 'live').
+   * The string value is the feature category (e.g. "best_hidden_gem").
+   * Absent/null when the post has not been featured.
+   */
+  featuredByPortava?: string | null;
 }
 
 export const PULSE_FILTERS = [

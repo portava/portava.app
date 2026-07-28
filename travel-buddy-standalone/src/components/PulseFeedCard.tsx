@@ -35,6 +35,7 @@ import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { navigateToProfile } from '../lib/navigateToProfile.ts';
 import { PostCard as SharedPostCard } from './cards/PostCard.tsx';
+import { FeaturedBadge } from './FeaturedBadge.tsx';
 import { PlaceQuickActions } from './PlaceQuickActions.tsx';
 import { PostWrongPlaceSheet } from './PostWrongPlaceSheet.tsx';
 
@@ -297,6 +298,12 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
           style={s.postScrim}
           pointerEvents="none"
         />
+        {/* Featured by Portava badge — dark mode on media frame */}
+        {item.featuredByPortava ? (
+          <View style={{ position: 'absolute', top: 10, left: 10, zIndex: 10 }}>
+            <FeaturedBadge category={item.featuredByPortava} size="sm" dark />
+          </View>
+        ) : null}
         {/* Passport-stamp label — city name top-left */}
         <View style={s.postcardLabel}>
           <MapPin size={9} color={color.onInk} />
@@ -398,6 +405,7 @@ function QuestionCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedIt
       title={item.question ?? item.title ?? null}
       city={item.city ?? null}
       tags={item.tags}
+      featuredByPortava={item.featuredByPortava ?? null}
       cardStyle={{ marginBottom: 0 }}
       onPress={() => router.push(`/post/${item.id}` as any)}
       authorRow={
@@ -449,6 +457,7 @@ function PlanCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; 
       title={item.title ?? null}
       city={item.city ?? null}
       tags={item.tags}
+      featuredByPortava={item.featuredByPortava ?? null}
       cardStyle={{ marginBottom: 0 }}
       onPress={() => router.push((item.relatedTripId ? `/trip/${item.relatedTripId}` : '/(tabs)/trips') as any)}
       authorRow={
@@ -498,6 +507,7 @@ function GemCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Pulse
     <SharedPostCard
       id={item.id}
       type="hidden_gem"
+      featuredByPortava={item.featuredByPortava ?? null}
       title={item.title ?? null}
       captionNode={item.blurb ? (
         <RichText
@@ -553,6 +563,7 @@ function ItineraryCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item:
       title={item.title ?? null}
       city={item.city ?? null}
       tags={item.tags}
+      featuredByPortava={item.featuredByPortava ?? null}
       savedByMe={item.savedByMe ?? false}
       cardStyle={{ marginBottom: 0 }}
       onPress={() => router.push(`/post/${item.id}` as any)}
