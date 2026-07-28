@@ -941,6 +941,84 @@ describe("GET /media/feed?mode=grid", () => {
     assert.equal(status, 200);
     assert.equal(body.items.length, 0, "post with only flagged media must be excluded");
   });
+
+  // ── H. Relay poster URL — grid endpoint ───────────────────────────────────
+  //
+  // When post_media rows carry only storage_path/storage_bucket (no public_url),
+  // GRID_MEDIA_COLUMNS must project those fields so hydrateMediaGridItem can
+  // resolve posterUrl via the relay. This prevents relay-bucket thumbnails from
+  // silently returning null for grid tiles.
+
+  it("returns relay posterUrl when the video asset has only storage_path (no public_url)", async () => {
+    const client = makeClient({
+      posts: [
+        makePost({
+          id: POST_1,
+          author_id: CREATOR_A,
+          has_video: true,
+          post_media: [
+            makeMedia({
+              id: "vid-relay-poster",
+              media_type: "video",
+              storage_bucket: "relay-videos",
+              storage_path: "uploads/user1/clip.mp4",
+              thumbnail_path: "uploads/user1/clip_thumb.jpg",
+              public_url: null,
+              thumbnail_url: null,
+            }),
+          ],
+        }),
+      ],
+      featureFlags: gridFlags,
+      profiles: [makeProfile({ id: CREATOR_A })],
+      userFollows: [],
+    });
+    _setTestClient(client, true);
+    const { status, body } = await jsonFetch(base, "/media/feed?mode=grid&filter=all&limit=10");
+    assert.equal(status, 200);
+    assert.equal(body.items.length, 1);
+    const item = body.items[0];
+    assert.match(
+      item.posterUrl,
+      /\/api\/media\/file\/relay-videos\/uploads\/user1\/clip_thumb\.jpg/,
+      "posterUrl must be a relay URL when the video only has storage_path+thumbnail_path",
+    );
+  });
+
+  it("returns relay posterUrl when an image asset has only storage_path (no public_url)", async () => {
+    const client = makeClient({
+      posts: [
+        makePost({
+          id: POST_2,
+          author_id: CREATOR_A,
+          has_video: false,
+          post_media: [
+            makeMedia({
+              id: "img-relay-poster",
+              media_type: "image",
+              storage_bucket: "relay-images",
+              storage_path: "uploads/user2/photo.jpg",
+              public_url: null,
+              thumbnail_url: null,
+            }),
+          ],
+        }),
+      ],
+      featureFlags: gridFlags,
+      profiles: [makeProfile({ id: CREATOR_A })],
+      userFollows: [],
+    });
+    _setTestClient(client, true);
+    const { status, body } = await jsonFetch(base, "/media/feed?mode=grid&filter=all&limit=10");
+    assert.equal(status, 200);
+    assert.equal(body.items.length, 1);
+    const item = body.items[0];
+    assert.match(
+      item.posterUrl,
+      /\/api\/media\/file\/relay-images\/uploads\/user2\/photo\.jpg/,
+      "posterUrl must be a relay URL when the image only has storage_path",
+    );
+  });
 });
 
 describe("POST /media/:id/view", () => {
@@ -1319,5 +1397,153 @@ describe("hydrateMediaGridItem — relay URL resolution for video assets", () =>
 
     assert.equal(item.videoUrl, null, "videoUrl must be null for image-only posts");
     assert.equal(item.mediaType, "image");
+  });
+});
+
+// ── K. hydrateMediaGridItem — relay URL for poster images ─────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// posterUrl must be resolved via relayUrlFor() when the underlying asset has a
+// storage_path (or thumbnail_path for video thumbnails) — matching the videoUrl
+// relay pattern so relay-bucket thumbnails are visible even when public_url is
+// absent or inaccessible.
+
+describe("hydrateMediaGridItem — relay URL resolution for poster images", () => {
+  const API_BASE = "https://api.example.test";
+
+  it("uses relay URL for posterUrl when video has thumbnail_path", () => {
+    const postMedia = [
+      {
+        id: "vid-thumb-relay-1",
+        media_type: "video",
+        storage_bucket: "relay-videos",
+        storage_path: "uploads/user1/clip.mp4",
+        thumbnail_path: "uploads/user1/clip_thumb.jpg",
+        public_url: null,
+        thumbnail_url: null,
+        duration_seconds: 20,
+        width: 1080,
+        height: 1920,
+        sort_order: 0,
+        processing_status: "ready",
+        moderation_status: "approved",
+      },
+    ];
+    const row = {
+      id: POST_1,
+      author_id: CREATOR_A,
+      view_count: 0,
+      qualified_view_count: 0,
+    };
+
+    const item = hydrateMediaGridItem(row, postMedia, API_BASE);
+
+    assert.equal(
+      item.posterUrl,
+      `${API_BASE}/api/media/file/relay-videos/uploads/user1/clip_thumb.jpg`,
+      "posterUrl must use relay path for relay-stored video thumbnail",
+    );
+  });
+
+  it("falls back to thumbnail_url for posterUrl when video has no thumbnail_path", () => {
+    const THUMB_URL = "https://sb.example.test/storage/v1/object/public/post-media/thumb.jpg";
+    const postMedia = [
+      {
+        id: "vid-thumb-pub-1",
+        media_type: "video",
+        storage_bucket: "post-media",
+        storage_path: "uploads/user2/clip.mp4",
+        // no thumbnail_path
+        thumbnail_url: THUMB_URL,
+        public_url: null,
+        duration_seconds: 15,
+        width: 1080,
+        height: 1920,
+        sort_order: 0,
+        processing_status: "ready",
+        moderation_status: "approved",
+      },
+    ];
+    const row = {
+      id: POST_1,
+      author_id: CREATOR_A,
+      view_count: 0,
+      qualified_view_count: 0,
+    };
+
+    const item = hydrateMediaGridItem(row, postMedia, API_BASE);
+
+    assert.equal(
+      item.posterUrl,
+      THUMB_URL,
+      "posterUrl must fall back to thumbnail_url when thumbnail_path is absent",
+    );
+  });
+
+  it("uses relay URL for posterUrl when image asset has storage_path", () => {
+    const postMedia = [
+      {
+        id: "img-relay-1",
+        media_type: "image",
+        storage_bucket: "relay-images",
+        storage_path: "uploads/user3/photo.jpg",
+        public_url: null,
+        thumbnail_url: null,
+        duration_seconds: null,
+        width: 1080,
+        height: 1080,
+        sort_order: 0,
+        processing_status: "ready",
+        moderation_status: "approved",
+      },
+    ];
+    const row = {
+      id: POST_1,
+      author_id: CREATOR_A,
+      view_count: 0,
+      qualified_view_count: 0,
+    };
+
+    const item = hydrateMediaGridItem(row, postMedia, API_BASE);
+
+    assert.equal(
+      item.posterUrl,
+      `${API_BASE}/api/media/file/relay-images/uploads/user3/photo.jpg`,
+      "posterUrl must use relay path for relay-stored image asset",
+    );
+  });
+
+  it("falls back to public_url for posterUrl when image has no storage_path", () => {
+    const PUBLIC_URL = `${SB_URL}/storage/v1/object/public/post-media/photo.jpg`;
+    const postMedia = [
+      {
+        id: "img-pub-1",
+        media_type: "image",
+        storage_bucket: "post-media",
+        // no storage_path
+        public_url: PUBLIC_URL,
+        thumbnail_url: null,
+        duration_seconds: null,
+        width: 1080,
+        height: 1080,
+        sort_order: 0,
+        processing_status: "ready",
+        moderation_status: "approved",
+      },
+    ];
+    const row = {
+      id: POST_1,
+      author_id: CREATOR_A,
+      view_count: 0,
+      qualified_view_count: 0,
+    };
+
+    const item = hydrateMediaGridItem(row, postMedia, API_BASE);
+
+    assert.equal(
+      item.posterUrl,
+      PUBLIC_URL,
+      "posterUrl must fall back to public_url when storage_path is absent",
+    );
   });
 });

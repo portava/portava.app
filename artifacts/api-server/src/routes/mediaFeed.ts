@@ -109,12 +109,14 @@ const GRID_POST_COLUMNS =
   "status, post_status, visibility";
 
 /**
- * Grid-mode post_media columns — minimal set for static tile rendering.
- * No storage_path / storage_bucket (private-relay not needed for grid tiles).
+ * Grid-mode post_media columns — includes relay fields so posterUrl and
+ * videoUrl can be resolved through the private relay when storage_path is
+ * present (relay-bucket assets have no accessible public_url).
  */
 const GRID_MEDIA_COLUMNS =
-  "id, media_type, public_url, thumbnail_url, " +
-  "duration_seconds, width, height, sort_order, processing_status, moderation_status";
+  "id, media_type, public_url, thumbnail_url, thumbnail_path, " +
+  "duration_seconds, width, height, sort_order, processing_status, moderation_status, " +
+  "storage_path, storage_bucket";
 
 /** Columns projected from posts for the Watch-mode feed. */
 const FEED_POST_COLUMNS =
@@ -125,7 +127,7 @@ const FEED_POST_COLUMNS =
   "save_count, like_count, comment_count";
 
 const POST_MEDIA_COLUMNS =
-  "id, media_type, public_url, thumbnail_url, duration_seconds, " +
+  "id, media_type, public_url, thumbnail_url, thumbnail_path, duration_seconds, " +
   "width, height, sort_order, processing_status, moderation_status, storage_path, storage_bucket";
 
 const PROFILE_COLUMNS =

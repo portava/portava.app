@@ -488,11 +488,36 @@ export function hydrateMediaGridItem(row: any, postMedia: any[], apiBaseUrl: str
   const thumbnailUrl: string | null = primary?.thumbnail_url ?? null;
 
   // Poster: video thumbnail → first image public_url → first asset public_url.
-  const posterUrl: string | null =
-    primaryVideo?.thumbnail_url ??
-    primaryImage?.public_url ??
-    primary?.public_url ??
-    null;
+  // Resolve via the relay when a storage_path (or thumbnail_path for video
+  // thumbnails) is present — matching the videoUrl relay pattern so that
+  // relay-bucket assets are accessible even when public_url is absent.
+  const posterUrl: string | null = (() => {
+    if (primaryVideo) {
+      const thumbPath: string | null = primaryVideo.thumbnail_path ?? null;
+      if (thumbPath) {
+        const bucket: string = primaryVideo.storage_bucket ?? "post-media";
+        return relayUrlFor(bucket, thumbPath, apiBaseUrl);
+      }
+      if (primaryVideo.thumbnail_url) return primaryVideo.thumbnail_url;
+    }
+    if (primaryImage) {
+      const storagePath: string | null = primaryImage.storage_path ?? null;
+      if (storagePath) {
+        const bucket: string = primaryImage.storage_bucket ?? "post-media";
+        return relayUrlFor(bucket, storagePath, apiBaseUrl);
+      }
+      return primaryImage.public_url ?? null;
+    }
+    if (primary) {
+      const storagePath: string | null = primary.storage_path ?? null;
+      if (storagePath) {
+        const bucket: string = primary.storage_bucket ?? "post-media";
+        return relayUrlFor(bucket, storagePath, apiBaseUrl);
+      }
+      return primary.public_url ?? null;
+    }
+    return null;
+  })();
 
   const width: number | null = primary?.width ?? null;
   const height: number | null = primary?.height ?? null;
