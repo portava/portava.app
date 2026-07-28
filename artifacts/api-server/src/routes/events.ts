@@ -119,6 +119,9 @@
  * POST   /api/events/:id/chat/join                — join event chat (Going RSVPs)
  * POST   /api/events/:id/updates                  — post host update / pin
  *
+ * ── Agenda items ─────────────────────────────────────────────────────────────
+ * POST   /api/events/:id/agenda-items             — attach a place/note to an event (host/cohost/attendee)
+ *
  * ── Cross-system integrations ────────────────────────────────────────────────
  * POST   /api/events/:id/add-to-trip              — add event as trip plan item (member only)
  * POST   /api/events/:id/link-circle              — link event to a circle (host only)
@@ -174,6 +177,7 @@
  *                                | checkDuplicateEvent                         |                                          |               |   duplicate detection
  * Cross-system integrations      | events.ts /add-to-trip, /link-circle,       | trip_plan_items, events, messages         | complete      | add-to-trip inserts plan item; link-circle
  *                                |   /telegraph-thread                         |                                          |               |   updates circle_id; telegraph-thread wires chat
+ * Agenda items                   | events.ts POST /events/:id/agenda-items     | event_agenda_items                       | complete      | Host/cohost or RSVP'd attendee; migration 2043
  */
 
 import { randomUUID } from "node:crypto";
