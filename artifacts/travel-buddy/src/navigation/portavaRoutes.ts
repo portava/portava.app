@@ -1367,6 +1367,15 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
   // ── Platform Admin ────────────────────────────────────────────────────────
 
   {
+    key: 'admin-place-mismatch-reports',
+    path: 'admin/place-mismatch-reports',
+    title: 'Place Mismatch Reports',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    adminOnly: true,
+  },
+  {
     key: 'admin-content-reports',
     path: 'admin/content-reports',
     title: 'Content Reports',

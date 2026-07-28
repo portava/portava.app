@@ -259,6 +259,12 @@ export default function ConnectedFeaturesScreen() {
             subtitle="Create and schedule curated travel content"
             onPress={() => router.push('/admin/portava-posts' as any)}
           />
+          <SettingsDivider />
+          <SettingsRow
+            title="Place Mismatch Reports"
+            subtitle="Review and action wrong-place reports"
+            onPress={() => router.push('/admin/place-mismatch-reports' as any)}
+          />
           {rentBuddyEnabled && (
             <>
               <SettingsDivider />
