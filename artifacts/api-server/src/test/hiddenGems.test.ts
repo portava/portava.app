@@ -450,7 +450,9 @@ describe("Hidden Gems — submission", () => {
     assert.ok(!insertedTables.includes("hidden_gems"), "should not insert gem when confirmation is bypassed");
   });
 
-  it("POST /hidden-gems rejects sourceConfirmation=true without canonicalPlaceId with 422", async () => {
+  it("POST /hidden-gems with sourceConfirmation=true and no canonicalPlaceId creates a freehand gem (201)", async () => {
+    // canonicalPlaceId is now optional — freehand gems without a linked place
+    // should be accepted as long as sourceConfirmation is true.
     const client = makeFakeClient(
       { featureFlags: { hidden_gems_enabled: true }, gems: [] },
       USER_ID,
@@ -461,15 +463,11 @@ describe("Hidden Gems — submission", () => {
     const r = await req("POST", "/api/hidden-gems", {
       ...BASE_GEM_PAYLOAD,
       sourceConfirmation: true,
-      // canonicalPlaceId intentionally omitted
+      // canonicalPlaceId intentionally omitted — freehand gem
     });
 
-    assert.equal(r.status, 422, `expected 422 but got ${r.status}`);
-    assert.equal(r.body.error, "invalid_payload");
-    assert.ok(
-      r.body.message?.toLowerCase().includes("verified place"),
-      `message should mention verified place; got: ${r.body.message}`,
-    );
+    assert.equal(r.status, 201, `expected 201 but got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.ok, true);
   });
 
   it("POST /hidden-gems rejects canonicalPlaceId that does not exist in places table with 422", async () => {

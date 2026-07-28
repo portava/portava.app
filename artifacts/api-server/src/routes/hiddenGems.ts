@@ -296,39 +296,42 @@ router.post("/hidden-gems", async (req, res) => {
       return;
     }
 
+    // canonicalPlaceId is optional — a freehand gem (no linked place) may omit
+    // it and still submit. Only validate when the caller actually supplies one.
     const cpid = parsed.data.canonicalPlaceId;
-    if (!cpid || !UUID_RE.test(cpid)) {
-      res.status(422).json({
-        error: "invalid_payload",
-        message:
-          "A verified place selection is required. " +
-          "Free-text place names, raw coordinates, and hashtags are not accepted — " +
-          "please select a place from the autocomplete list.",
-      });
-      return;
-    }
+    if (cpid !== null && cpid !== undefined) {
+      if (!UUID_RE.test(cpid)) {
+        res.status(422).json({
+          error: "invalid_payload",
+          message:
+            "The linked place ID is not a valid UUID. " +
+            "Please select a place from the autocomplete list.",
+        });
+        return;
+      }
 
-    // Verify the canonicalPlaceId actually exists in the places table.
-    const { data: placeRow } = await sc
-      .from("places")
-      .select("id, status")
-      .eq("id", cpid)
-      .maybeSingle();
+      // Verify the canonicalPlaceId actually exists in the places table.
+      const { data: placeRow } = await sc
+        .from("places")
+        .select("id, status")
+        .eq("id", cpid)
+        .maybeSingle();
 
-    if (!placeRow) {
-      res.status(422).json({
-        error: "invalid_payload",
-        message: "The selected place could not be verified. Please search and select the location again.",
-      });
-      return;
-    }
+      if (!placeRow) {
+        res.status(422).json({
+          error: "invalid_payload",
+          message: "The selected place could not be verified. Please search and select the location again.",
+        });
+        return;
+      }
 
-    if ((placeRow as any).status === "duplicate") {
-      res.status(422).json({
-        error: "invalid_payload",
-        message: "The selected place has been merged into another record. Please search and select the location again.",
-      });
-      return;
+      if ((placeRow as any).status === "duplicate") {
+        res.status(422).json({
+          error: "invalid_payload",
+          message: "The selected place has been merged into another record. Please search and select the location again.",
+        });
+        return;
+      }
     }
   }
 

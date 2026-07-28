@@ -196,9 +196,8 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
     if (composer.items.length === 0) {
       errs.media = 'Add a photo or video of the location.';
     }
-    if (!canonicalPlaceId) {
-      errs.place = 'Select a verified place from the list — free-text names are not accepted.';
-    }
+    // canonicalPlaceId is optional — users can submit freehand gems without a
+    // linked canonical place. When provided it is validated on the backend.
     if (!placeName.trim()) {
       errs.placeName = 'Place name is required.';
     }
@@ -257,8 +256,10 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
         priceRange: priceLevel ?? undefined,
         bestTimeToGo: bestTimeToVisit.trim() || undefined,
         imageUrl: firstResult.url,
-        // Dedicated "Add a Gem" creation flow fields (typed — no cast needed)
-        canonicalPlaceId: canonicalPlaceId!,
+        // Dedicated "Add a Gem" creation flow fields.
+        // canonicalPlaceId is optional — omit it when the user left the place
+        // picker blank so the backend doesn't trigger the UUID-required gate.
+        ...(canonicalPlaceId ? { canonicalPlaceId } : {}),
         sourceConfirmation: true,
         accessibility: accessibility.trim() || undefined,
         crowdLevel: crowdLevel ?? undefined,
@@ -453,16 +454,16 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
       >
         {/* ── Required fields ─────────────────────────────────────────── */}
 
-        {/* Place picker */}
+        {/* Place picker — optional canonical link */}
         <View style={styles.field}>
           <Text style={styles.label}>
-            Verified place <Text style={styles.required}>*</Text>
+            Link a known place{' '}
+            <Text style={styles.optionalBadge}>(optional)</Text>
           </Text>
           <Pressable
             style={[
               styles.placeBtn,
               selectedPlace && styles.placeBtnActive,
-              errors.place && styles.inputError,
             ]}
             onPress={() => setPlacePickerOpen(true)}
           >
@@ -475,15 +476,26 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
                 ? `${selectedPlace.name}${selectedPlace.city ? `, ${selectedPlace.city}` : ''}`
                 : 'Search for a place…'}
             </Text>
-            <ChevronDown size={14} color={color.mute} />
+            {selectedPlace ? (
+              <Pressable
+                hitSlop={8}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  setSelectedPlace(null);
+                  setCanonicalPlaceId(null);
+                }}
+              >
+                <X size={14} color={color.mute} />
+              </Pressable>
+            ) : (
+              <ChevronDown size={14} color={color.mute} />
+            )}
           </Pressable>
-          {errors.place ? (
-            <Text style={styles.fieldError}>{errors.place}</Text>
-          ) : (
-            <Text style={styles.hint}>
-              Must resolve to a verified location — raw coordinates or hashtags not accepted.
-            </Text>
-          )}
+          <Text style={styles.hint}>
+            {selectedPlace
+              ? 'Linked — contact info, hours, and enriched details will appear on the gem.'
+              : "Can't find it? Skip this — you can still publish your gem without a link."}
+          </Text>
         </View>
 
         {/* Place name */}
@@ -1019,6 +1031,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
+  },
+  optionalBadge: {
+    ...t.small,
+    color: color.faint,
+    fontWeight: '400',
+    textTransform: 'none',
+    letterSpacing: 0,
   },
 
   // Error box
