@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet, Alert, Modal,
   TextInput,
@@ -382,10 +382,12 @@ const disputeStyles = StyleSheet.create({
 export default function BookingDetail() {
   const insets = useSafeAreaInsets();
   const plainInset = usePlainBottomInset();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, fromCheckout } = useLocalSearchParams<{ id: string; fromCheckout?: string }>();
   const [booking, setBooking] = useState<BuddyBooking | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [confirmBannerVisible, setConfirmBannerVisible] = useState(fromCheckout === '1');
+  const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [safetyOpen, setSafetyOpen] = useState(false);
   const [cancelVisible, setCancelVisible] = useState(false);
   const [addTimeVisible, setAddTimeVisible] = useState(false);
@@ -404,6 +406,13 @@ export default function BookingDetail() {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Auto-dismiss the post-checkout confirmation banner after 4 seconds.
+  useEffect(() => {
+    if (!confirmBannerVisible) return;
+    bannerTimerRef.current = setTimeout(() => setConfirmBannerVisible(false), 4000);
+    return () => { if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current); };
+  }, [confirmBannerVisible]);
 
   // Load the buddy's blocked/vacation dates so reschedule pickers grey them out.
   useEffect(() => {
@@ -472,7 +481,21 @@ export default function BookingDetail() {
         <StatusBadge status={booking.status} />
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: plainInset }} showsVerticalScrollIndicator={false}>
+      {confirmBannerVisible && (
+        <View style={styles.confirmBanner}>
+          <CheckCircle size={16} color={color.success} />
+          <Text style={styles.confirmBannerText}>Request sent! Waiting for your Buddy to confirm.</Text>
+          <Pressable onPress={() => setConfirmBannerVisible(false)} hitSlop={8}>
+            <X size={14} color={color.success} />
+          </Pressable>
+        </View>
+      )}
+
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: plainInset }}
+        showsVerticalScrollIndicator={false}
+        onScrollBeginDrag={() => { if (confirmBannerVisible) setConfirmBannerVisible(false); }}
+      >
         {/* Buddy profile summary */}
         <BuddySummaryRow buddyId={booking.buddyId} city={booking.city} />
 
@@ -791,6 +814,12 @@ const styles = StyleSheet.create({
   actionBtnTextPrimary: { ...t.bodyStrong, color: color.onInk },
   actionBtnPending: { backgroundColor: color.haze, borderColor: color.haze, opacity: 0.7 },
   actionBtnTextMuted: { ...t.bodyStrong, color: color.mute },
+  confirmBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    backgroundColor: '#EDF7F0', borderBottomWidth: 1, borderBottomColor: color.success,
+    paddingHorizontal: space.lg, paddingVertical: space.md,
+  },
+  confirmBannerText: { ...t.body, color: color.success, flex: 1, fontWeight: '600' },
 });
 
 const buddy = StyleSheet.create({
