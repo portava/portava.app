@@ -43,6 +43,7 @@ import {
   type ScoredCandidate,
   type DiversityOptions,
 } from "../../lib/portavaRank.js";
+import type { BucketType } from "../../lib/places/bucketClassifier.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -101,6 +102,12 @@ export interface MediaFeedItem extends RankCandidate {
   featuredAt?: string | null;
   /** Feature category (e.g. "best_hidden_gem"). Non-null when featuredAt is set. */
   featuredByPortava?: string | null;
+
+  // ── Novelty / coverage bucket fields ─────────────────────────────────────
+  /** Canonical place this post is tagged to (used for bucket lookup). */
+  canonicalPlaceId?: string | null;
+  /** Bucket types this post has been classified into. */
+  postBuckets?: BucketType[] | null;
 
   // ── Creator / account metadata ────────────────────────────────────────────
   /** How many days since the creator's account was created. */
@@ -201,7 +208,8 @@ export type MediaRankingReasonCode =
   | "not_interested_penalty"
   | "wrong_place_penalty"
   | "session_fatigue_penalty"
-  | "featured_by_portava";
+  | "featured_by_portava"
+  | "novelty_boost";
 
 export interface MediaRankedItem<T extends MediaFeedItem = MediaFeedItem> {
   item: T;
@@ -221,6 +229,12 @@ export interface MediaRankingInput<T extends MediaFeedItem = MediaFeedItem> {
   flags: MediaRankingFlags;
   config?: Partial<MediaRankingConfig>;
   nowMs?: number;
+  /**
+   * Pre-loaded bucket counts map: key = `${canonicalPlaceId}:${bucket}`,
+   * value = current post_count for that bucket.
+   * Built once before scoring via loadBucketMap(); never fetched per-post.
+   */
+  bucketCounts?: Map<string, number>;
 }
 
 // ── Boost functions with diminishing returns ──────────────────────────────────
@@ -375,6 +389,42 @@ export function sessionFatiguePenalty(
   return Math.min(cap, excess * penaltyPerImpression);
 }
 
+// ── Novelty / coverage-bucket multiplier ─────────────────────────────────────
+
+/**
+ * Compute the novelty multiplier for a post based on its matched buckets and
+ * the current post_count for each bucket at the tagged place.
+ *
+ * Rules (applied to the minimum count across matched buckets):
+ *   post_count < 5  → ×1.4  (very thin — strong novelty signal)
+ *   post_count < 20 → ×1.2  (sparse — mild novelty signal)
+ *   otherwise       → ×1.0  (saturated — no boost)
+ *
+ * A post that matches multiple buckets uses the minimum bucket count so that
+ * filling ANY thin bucket earns the boost.
+ *
+ * @param postBuckets   Buckets the post was classified into.
+ * @param placeId       Canonical place ID for bucket map lookup.
+ * @param bucketCounts  Pre-loaded map keyed by `${placeId}:${bucket}`.
+ */
+export function noveltyMultiplier(
+  postBuckets: BucketType[] | null | undefined,
+  placeId: string | null | undefined,
+  bucketCounts: Map<string, number> | null | undefined,
+): number {
+  if (!postBuckets || postBuckets.length === 0 || !placeId || !bucketCounts) return 1.0;
+
+  let minCount = Infinity;
+  for (const bucket of postBuckets) {
+    const count = bucketCounts.get(`${placeId}:${bucket}`) ?? 0;
+    if (count < minCount) minCount = count;
+  }
+
+  if (minCount < 5)  return 1.4;
+  if (minCount < 20) return 1.2;
+  return 1.0;
+}
+
 // ── Diversity re-ranking (city + category + creator) ─────────────────────────
 
 export interface MediaDiversifyOptions extends DiversityOptions {
@@ -525,6 +575,7 @@ function topReasonCodes(
     wrongPlacePenalty:    "wrong_place_penalty",
     sessionFatigue:       "session_fatigue_penalty",
     featuredByPortava:    "featured_by_portava",
+    noveltyBoost:         "novelty_boost",
   };
 
   for (const [key] of ranked) {
@@ -726,7 +777,23 @@ export function rankMediaFeed<T extends MediaFeedItem>(
       }
     }
 
-    // ── 6. Gems-specific signals ──────────────────────────────────────────
+    // ── 6. Novelty / coverage-bucket multiplier ───────────────────────────
+    // Applied to the quality component before Gems-specific signals.
+    // Uses the pre-loaded bucketCounts map — zero per-post DB lookups.
+    if (input.bucketCounts) {
+      const novMult = noveltyMultiplier(
+        item.postBuckets,
+        item.canonicalPlaceId,
+        input.bucketCounts,
+      );
+      if (novMult > 1.0) {
+        const boost = score * (novMult - 1.0);
+        features.noveltyBoost = boost;
+        score += boost;
+      }
+    }
+
+    // ── 7. Gems-specific signals ──────────────────────────────────────────
     if (isGems) {
       // Place accuracy multiplier
       const accMult = placeAccuracyMultiplier(item.placeAccuracyScore);
@@ -900,6 +967,39 @@ export async function loadMediaSignals(
   } catch { /* non-fatal: returns empty map; ranking falls back to 1.0× multipliers */ }
 
   return result;
+}
+
+/**
+ * Load bucket counts for a batch of canonical place IDs.
+ *
+ * Returns a Map keyed by `${placeId}:${bucket}` → post_count.
+ * Missing keys (no rows yet) should be treated as count=0 by callers.
+ * Non-fatal: returns an empty Map on any DB error.
+ *
+ * Call this ONCE before scoring a candidate batch; pass the result into
+ * MediaRankingInput.bucketCounts so per-post lookups hit the in-memory Map.
+ */
+export async function loadBucketMap(
+  db: SupabaseClient | null,
+  placeIds: string[],
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  if (!db || placeIds.length === 0) return map;
+
+  try {
+    const { data, error } = await db
+      .from("place_coverage_buckets")
+      .select("canonical_place_id, bucket, post_count")
+      .in("canonical_place_id", placeIds);
+
+    if (error || !data) return map;
+
+    for (const row of (data as { canonical_place_id: string; bucket: string; post_count: number }[])) {
+      map.set(`${row.canonical_place_id}:${row.bucket}`, row.post_count ?? 0);
+    }
+  } catch { /* non-fatal */ }
+
+  return map;
 }
 
 /**

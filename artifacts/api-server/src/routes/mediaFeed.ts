@@ -54,6 +54,7 @@ import {
   loadMediaRankingFlags,
   loadMediaSignals,
   loadCreatorSignals,
+  loadBucketMap,
   storeRankingSnapshots,
   type MediaFeedItem as RankingMediaFeedItem,
   type MediaSessionState,
@@ -124,7 +125,8 @@ const FEED_POST_COLUMNS =
   "created_at, category, " +
   "location_name, location_city, location_country, location_source, location_verified, " +
   "location_lat, location_lng, " +
-  "save_count, like_count, comment_count";
+  "save_count, like_count, comment_count, " +
+  "canonical_place_id, post_buckets";
 
 const POST_MEDIA_COLUMNS =
   "id, media_type, public_url, thumbnail_url, thumbnail_path, duration_seconds, " +
@@ -1119,11 +1121,18 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     } catch { /* non-fatal: ranking boost skipped */ }
   }
 
+  // ── Pre-load bucket counts for novelty ranking (no per-post DB lookups) ─────
+  const uniquePlaceIds = [...new Set(
+    eligible.map((c) => (c as any).canonical_place_id as string | null).filter(Boolean) as string[],
+  )];
+  const bucketCountsMap = await loadBucketMap(sc, uniquePlaceIds);
+
   // ── Build ranking candidates (merge DB signals into candidate shape) ────────
   const rankCandidates: RankingMediaFeedItem[] = eligible.map((c) => {
     const mediaSig   = mediaSignalsMap.get(c.id) ?? {};
     const creatorSig = creatorSignalsMap.get(c.author_id) ?? {};
     const featuredEntry = featuredMap.get(c.id);
+    const rawBuckets = (c as any).post_buckets;
     return {
       id:       c.id,
       kind:     "post" as const,
@@ -1136,6 +1145,9 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
       joinCount:  0,
       featuredAt: featuredEntry?.featuredAt ?? null,
       featuredByPortava: featuredEntry?.category ?? null,
+      // Novelty / coverage bucket signals
+      canonicalPlaceId: (c as any).canonical_place_id ?? null,
+      postBuckets: Array.isArray(rawBuckets) ? rawBuckets : null,
       ...mediaSig,
       ...creatorSig,
     };
@@ -1180,6 +1192,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     mode:         feedType === "for_you" ? "for_you" : "following",
     sessionState: mediaSession,
     flags:        mediaFlags,
+    bucketCounts: bucketCountsMap,
   });
 
   // Map ranked IDs back to candidate rows

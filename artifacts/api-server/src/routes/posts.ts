@@ -43,6 +43,7 @@ import { isFlagEnabled } from "../lib/featureFlags.js";
 import { sniffMedia, processImage, makeThumbnail, computePHash } from "../lib/mediaProcessing.js";
 import { recordMediaAsset } from "../lib/mediaAssets.js";
 import { resolvePostPlace } from "../lib/places/placeResolve.js";
+import { classifyBuckets, incrementBucketCounts } from "../lib/places/bucketClassifier.js";
 
 const router = Router();
 
@@ -738,6 +739,40 @@ router.post("/posts", async (req, res) => {
             .update({ canonical_place_id: result.placeId })
             .eq("id", (data as any).id)
             .is("canonical_place_id", null); // guard against race
+
+          // Bucket classification — fail-soft, never blocks post creation.
+          try {
+            const postId = (data as any).id as string;
+            const buckets = classifyBuckets({
+              tags: Array.isArray((data as any).tags) ? (data as any).tags : [],
+              caption: content ?? null,
+              category: category ?? null,
+            });
+            const postedAt = (data as any).created_at ?? new Date().toISOString();
+
+            // Attempt to increment bucket counts in place_coverage_buckets.
+            const upsertOk = buckets.length === 0
+              ? true // nothing to upsert
+              : await incrementBucketCounts(placeSc, postId, result.placeId, buckets, postedAt);
+
+            if (!upsertOk) {
+              postsLogger.warn({ postId, placeId: result.placeId }, "bucket upsert failed (non-fatal)");
+            }
+
+            // Store classified buckets on the post row and mark as done.
+            // bucket_classified is set true only when there are no matches (genuinely empty)
+            // OR when the count upsert succeeded — so a transient DB failure leaves the
+            // post available for retry by the Phase-2 backfill worker.
+            await placeSc
+              .from("posts")
+              .update({
+                post_buckets:       buckets,
+                bucket_classified:  buckets.length === 0 || upsertOk,
+              })
+              .eq("id", postId);
+          } catch (bucketErr) {
+            postsLogger.warn({ err: bucketErr, postId: (data as any).id }, "bucket classification failed (non-fatal)");
+          }
         }
       }).catch((err) => {
         postsLogger.warn({ err, postId: (data as any).id }, "canonical place resolve failed (non-fatal)");

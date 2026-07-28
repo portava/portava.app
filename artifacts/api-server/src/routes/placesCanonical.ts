@@ -156,4 +156,53 @@ router.post("/admin/places/:id/unmerge", asyncHandler(async (req, res) => {
   res.json({ ok: true, restoredId: id });
 }));
 
+// ── GET /api/places/:id/thin-buckets ─────────────────────────────────────────
+/**
+ * Returns coverage buckets for a place that have fewer than 5 posts, sorted by
+ * scarcity (lowest post_count first).  Used by the Living Page UI to show
+ * "Be the first" content prompts.
+ *
+ * Cached 30 min per place (in-process, LRU-style Map).
+ */
+
+const THIN_BUCKET_THRESHOLD = 5;
+const THIN_BUCKET_CACHE_TTL_MS = 30 * 60 * 1_000; // 30 min
+const thinBucketCache = new Map<string, { data: any; expiresAt: number }>();
+
+router.get("/places/:id/thin-buckets", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const { id } = req.params;
+  if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid place id"); return; }
+
+  // In-process cache
+  const cached = thinBucketCache.get(id);
+  if (cached && cached.expiresAt > Date.now()) {
+    res.json(cached.data);
+    return;
+  }
+
+  const { data, error } = await sc
+    .from("place_coverage_buckets")
+    .select("bucket, post_count")
+    .eq("canonical_place_id", id)
+    .lt("post_count", THIN_BUCKET_THRESHOLD)
+    .order("post_count", { ascending: true });
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+
+  const buckets = ((data as any[]) ?? []).map((row) => ({
+    bucket:     row.bucket as string,
+    post_count: row.post_count as number,
+  }));
+
+  const response = { buckets };
+  thinBucketCache.set(id, { data: response, expiresAt: Date.now() + THIN_BUCKET_CACHE_TTL_MS });
+
+  res.json(response);
+}));
+
 export default router;

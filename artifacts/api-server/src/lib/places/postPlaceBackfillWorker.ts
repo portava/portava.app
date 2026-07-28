@@ -15,6 +15,7 @@
 
 import { getServiceClient } from "../supabase.js";
 import { resolvePostPlace } from "./placeResolve.js";
+import { classifyBuckets, incrementBucketCounts } from "./bucketClassifier.js";
 
 const TICK_INTERVAL_MS = 10 * 60 * 1_000; // 10 minutes
 const BATCH_SIZE = 200;
@@ -134,6 +135,98 @@ export async function runBackfillTick(scOverride?: any): Promise<{
 }
 
 /**
+ * Phase 2: classify posts that have canonical_place_id but haven't been
+ * bucket-classified yet, then increment place_coverage_buckets counts.
+ *
+ * Processes up to BATCH_SIZE posts per tick.
+ * Returns { processed, classified } — processed = rows examined,
+ * classified = rows that matched at least one bucket.
+ * Never throws.
+ */
+export async function runBucketClassificationTick(scOverride?: any): Promise<{
+  processed: number;
+  classified: number;
+}> {
+  const sc = scOverride ?? getServiceClient();
+  if (!sc) return { processed: 0, classified: 0 };
+
+  const { data: rows, error } = await sc
+    .from("posts")
+    .select("id, canonical_place_id, content, category, created_at")
+    .eq("bucket_classified", false)
+    .not("canonical_place_id", "is", null)
+    .order("created_at", { ascending: true })
+    .limit(BATCH_SIZE);
+
+  if (error) {
+    console.error(JSON.stringify({
+      event: "post_bucket_backfill.select_error",
+      error: error.message,
+    }));
+    return { processed: 0, classified: 0 };
+  }
+
+  const batch = (rows ?? []) as Array<{
+    id: string;
+    canonical_place_id: string;
+    content: string | null;
+    category: string | null;
+    created_at: string;
+  }>;
+
+  if (batch.length === 0) {
+    console.log(JSON.stringify({ event: "post_bucket_backfill.backlog_empty" }));
+    return { processed: 0, classified: 0 };
+  }
+
+  let classified = 0;
+
+  for (const row of batch) {
+    try {
+      const buckets = classifyBuckets({
+        caption:  row.content ?? null,
+        category: row.category ?? null,
+      });
+
+      const postedAt = row.created_at ?? new Date().toISOString();
+
+      // Attempt to increment bucket counts in place_coverage_buckets.
+      const upsertOk = buckets.length === 0
+        ? true // nothing to upsert
+        : await incrementBucketCounts(sc, row.id, row.canonical_place_id, buckets, postedAt);
+
+      if (upsertOk && buckets.length > 0) classified++;
+
+      // Store classified buckets on the post row.
+      // bucket_classified is set true only when there are no matches (genuinely empty)
+      // OR when the count upsert succeeded — so a transient DB failure leaves the
+      // post available for retry on the next tick.
+      await sc
+        .from("posts")
+        .update({
+          post_buckets:      buckets,
+          bucket_classified: buckets.length === 0 || upsertOk,
+        })
+        .eq("id", row.id);
+    } catch (err) {
+      console.warn(JSON.stringify({
+        event: "post_bucket_backfill.classify_error",
+        post_id: row.id,
+        error: err instanceof Error ? err.message : String(err),
+      }));
+    }
+  }
+
+  console.log(JSON.stringify({
+    event: "post_bucket_backfill.tick_complete",
+    processed: batch.length,
+    classified,
+  }));
+
+  return { processed: batch.length, classified };
+}
+
+/**
  * Start the periodic backfill sweep. Safe to call multiple times — a second
  * call while a timer is already running is a no-op.
  */
@@ -142,9 +235,11 @@ export function startPostPlaceBackfillWorker(): void {
 
   // Run an initial tick immediately, then every TICK_INTERVAL_MS.
   void runBackfillTick().catch(() => {});
+  void runBucketClassificationTick().catch(() => {});
 
   _timer = setInterval(() => {
     void runBackfillTick().catch(() => {});
+    void runBucketClassificationTick().catch(() => {});
   }, TICK_INTERVAL_MS);
 
   console.log(JSON.stringify({
