@@ -105,6 +105,12 @@ export interface UpdateProfileInput {
   passportTabOrder?: string[] | null;
   /** Hidden section keys for the owner's passport; null clears all hidden sections. */
   passportHiddenSections?: string[] | null;
+  /**
+   * Set to true by the onboarding flow after the user completes all steps.
+   * Triggers a server-side silent auto-follow of @Portava so the new user's
+   * feed is non-empty from day one.
+   */
+  onboardingComplete?: boolean;
 }
 
 export async function updateMyProfile(patch: UpdateProfileInput): Promise<ProfileResult<OwnProfile>> {
