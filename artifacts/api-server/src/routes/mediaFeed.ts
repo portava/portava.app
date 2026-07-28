@@ -18,7 +18,7 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http.js";
+import { requireUser, sendError, isAcceptedTripMember } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import {
@@ -49,6 +49,8 @@ import {
   applyCursorFilter,
 } from "../lib/mediaCursor.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { stampEntity, unstampEntity } from "../services/stamps/ContentStampService.js";
+import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
 import {
   rankMediaFeed,
   loadMediaRankingFlags,
@@ -1127,6 +1129,26 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   )];
   const bucketCountsMap = await loadBucketMap(sc, uniquePlaceIds);
 
+  // ── Batch stamp counts for ranking likeCount signal ──────────────────────
+  // posts.like_count is no longer updated by the unified stamp write path;
+  // derive likeCount from content_stamps (entity_type='media') instead so
+  // ranking signals stay in sync with the actual stamp table.
+  const rankingStampCountMap = new Map<string, number>();
+  if (eligible.length > 0) {
+    try {
+      const eligibleIds = eligible.map((c) => c.id);
+      const { data: rankStampRows } = await sc
+        .from("content_stamps")
+        .select("entity_id")
+        .eq("entity_type", "media")
+        .in("entity_id", eligibleIds);
+      for (const r of (rankStampRows as any[]) ?? []) {
+        const eid = r.entity_id as string;
+        rankingStampCountMap.set(eid, (rankingStampCountMap.get(eid) ?? 0) + 1);
+      }
+    } catch { /* non-fatal: falls back to posts.like_count */ }
+  }
+
   // ── Build ranking candidates (merge DB signals into candidate shape) ────────
   const rankCandidates: RankingMediaFeedItem[] = eligible.map((c) => {
     const mediaSig   = mediaSignalsMap.get(c.id) ?? {};
@@ -1141,7 +1163,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
       city:     (c as any).location_city ?? null,
       category: (c as any).category ?? null,
       tags:     Array.isArray(c.tags) ? c.tags.map((t: string) => t.toLowerCase()) : [],
-      likeCount:  Number((c as any).like_count ?? 0),
+      likeCount:  rankingStampCountMap.get(c.id) ?? Number((c as any).like_count ?? 0),
       joinCount:  0,
       featuredAt: featuredEntry?.featuredAt ?? null,
       featuredByPortava: featuredEntry?.category ?? null,
@@ -1241,15 +1263,17 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
         return s;
       })(),
       (async () => {
+        // Read stamp state from content_stamps (unified write path since Task 3047).
         const s = new Set<string>();
         if (pageIds.length === 0) return s;
         try {
           const { data } = await sc
-            .from("post_reactions")
-            .select("post_id")
+            .from("content_stamps")
+            .select("entity_id")
             .eq("user_id", user.id)
-            .in("post_id", pageIds);
-          for (const r of (data as any[]) ?? []) s.add(r.post_id as string);
+            .eq("entity_type", "media")
+            .in("entity_id", pageIds);
+          for (const r of (data as any[]) ?? []) s.add(r.entity_id as string);
         } catch { /* non-fatal */ }
         return s;
       })(),
@@ -1291,6 +1315,23 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     } catch { /* non-fatal: stamp count defaults to 0 */ }
   }
 
+  // ── Like counts from content_stamps (entity_type='media') ─────────────────
+  // posts.like_count is not updated by compat like writes; derive from stamps.
+  const mediaLikeCountMap = new Map<string, number>();
+  if (pageIds.length > 0) {
+    try {
+      const { data: likeCountRows } = await sc
+        .from("content_stamps")
+        .select("entity_id")
+        .eq("entity_type", "media")
+        .in("entity_id", pageIds);
+      for (const r of (likeCountRows as any[]) ?? []) {
+        const eid = r.entity_id as string;
+        mediaLikeCountMap.set(eid, (mediaLikeCountMap.get(eid) ?? 0) + 1);
+      }
+    } catch { /* non-fatal: falls back to posts.like_count */ }
+  }
+
   // ── Linked entity resolution ───────────────────────────────────────────────
   const linkedEntityMap = await resolveLinkedEntities(page, user.id, sc);
 
@@ -1314,7 +1355,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     const postMedia = Array.isArray(c.post_media) ? c.post_media : [];
     const featuredCategory = pageFeaturedMap.get(c.id) ?? null;
     return hydrateMediaFeedItem({
-      row: { ...c, stamp_it_count: stampCountMap.get(c.id) ?? 0, featured_by_portava: featuredCategory },
+      row: { ...c, stamp_it_count: stampCountMap.get(c.id) ?? 0, stamp_like_count: mediaLikeCountMap.get(c.id) ?? 0, featured_by_portava: featuredCategory },
       sourceType: "post",
       viewerUserId: user.id,
       allowedRealNameIds,
@@ -1441,9 +1482,10 @@ router.get("/media/:id", asyncHandler(async (req, res) => {
         return s;
       })(),
       (async () => {
+        // Read stamp state from content_stamps (unified write path since Task 3047).
         const s = new Set<string>();
         try {
-          const { data } = await sc.from("post_reactions").select("post_id").eq("user_id", user.id).eq("post_id", id);
+          const { data } = await sc.from("content_stamps").select("entity_id").eq("user_id", user.id).eq("entity_type", "media").eq("entity_id", id);
           if ((data as any[])?.length) s.add(id);
         } catch { /* non-fatal */ }
         return s;
@@ -1483,21 +1525,23 @@ router.get("/media/:id", asyncHandler(async (req, res) => {
 
   const postMedia = Array.isArray((row as any).post_media) ? (row as any).post_media : [];
 
-  // Fetch stamp-it count for this single item
+  // Fetch stamp-it count and like count (content_stamps) for this single item
   let singleStampCount = 0;
+  let singleLikeCount = 0;
   try {
-    const { data: stampRows } = await sc
-      .from("media_stamp_reactions")
-      .select("post_id")
-      .eq("post_id", id);
+    const [{ data: stampRows }, { data: likeRows }] = await Promise.all([
+      sc.from("media_stamp_reactions").select("post_id").eq("post_id", id),
+      sc.from("content_stamps").select("entity_id").eq("entity_type", "media").eq("entity_id", id),
+    ]);
     singleStampCount = ((stampRows as any[]) ?? []).length;
+    singleLikeCount = ((likeRows as any[]) ?? []).length;
   } catch { /* non-fatal */ }
 
   // Resolve linked entity (event or trip) for the single item
   const singleLinkedEntityMap = await resolveLinkedEntities([row as any], user.id, sc);
 
   const item = hydrateMediaFeedItem({
-    row: { ...(row as any), stamp_it_count: singleStampCount },
+    row: { ...(row as any), stamp_it_count: singleStampCount, stamp_like_count: singleLikeCount },
     sourceType: "post",
     viewerUserId: user.id,
     allowedRealNameIds,
@@ -1682,13 +1726,14 @@ async function verifyMediaAccess(
   // ── Try posts first (most common path) ────────────────────────────────────
   const { data: postRow } = await sc
     .from("posts")
-    .select("id, author_id, status, visibility")
+    .select("id, author_id, status, visibility, trip_id")
     .eq("id", id)
     .maybeSingle();
 
   if (postRow && (postRow as any).status === "active") {
     const authorId: string = (postRow as any).author_id;
     const visibility: string = (postRow as any).visibility ?? "public";
+    const tripId: string | null = (postRow as any).trip_id ?? null;
 
     // Block check (both directions) — use count to stay cardinality-safe; treat any error as blocked (fail-closed).
     const { count: blockCount, error: blockError } = await sc
@@ -1706,6 +1751,11 @@ async function verifyMediaAccess(
         .eq("following_id", authorId)
         .maybeSingle();
       if (!followRow) return null;
+    }
+
+    // trip_only posts require accepted trip membership (viewer or author)
+    if (visibility === "trip_only" && authorId !== viewerUserId) {
+      if (!tripId || !(await isAcceptedTripMember(sc, tripId, viewerUserId))) return null;
     }
 
     return { kind: "post", authorId };
@@ -1738,42 +1788,27 @@ async function verifyMediaAccess(
 
 // ── POST /api/media/:id/like ──────────────────────────────────────────────────
 
+// Compat wrapper — proxies to content_stamps until mobile clients are migrated.
+// New code should use POST /stamps { entityType: 'media', entityId }.
+// Preserves verifyMediaAccess (existence + block) and Compass outcome signal parity.
 router.post("/media/:id/like", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
-
   const { id } = req.params;
   if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid media id"); return; }
-
   const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
-
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
   const mediaAccess = await verifyMediaAccess(sc, id, user.id);
   if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; }
-
-  if (mediaAccess.kind === "post") {
-    // Self-like guard
-    if (mediaAccess.authorId === user.id) {
-      sendError(res, "invalid_payload", "Cannot like your own post");
-      return;
-    }
-    // Upsert like — post_reactions uses (post_id, user_id) unique constraint.
-    // Column is `emoji` (not reaction_type). Use heart emoji for a like.
-    const { error } = await sc
-      .from("post_reactions")
-      .upsert(
-        { user_id: user.id, post_id: id, emoji: "\u2764\ufe0f" },
-        { onConflict: "post_id,user_id", ignoreDuplicates: true },
-      );
-    if (error) { req.log.error({ err: error }, "post_reactions upsert failed"); sendError(res, "db_error", error.message); return; }
-
-    // Best-effort like_count increment
-    await sc.rpc("increment_post_like_count", { post_id: id }).then(() => {}, () => {});
+  // Self-like guard: preserve legacy behavior (authors cannot stamp their own media).
+  if (mediaAccess.kind === "post" && (mediaAccess as any).authorId === user.id) {
+    sendError(res, "forbidden", "Cannot like your own content");
+    return;
   }
-  // Gems: no dedicated like table in live schema — acknowledge the action client-side only.
-
-  res.json({ liked: true, mediaId: id });
+  const { stampCount } = await stampEntity(sc, user.id, "media", id);
+  void linkOutcomeSignal(sc, user.id, id, "liked", "route:media_like");
+  res.json({ ok: true, stampCount });
 }));
 
 // ── POST /api/media/:id/react ─────────────────────────────────────────────────
@@ -1817,34 +1852,21 @@ router.post("/media/:id/react", asyncHandler(async (req, res) => {
 
 // ── DELETE /api/media/:id/like ────────────────────────────────────────────────
 
+// Compat wrapper — proxies to content_stamps until mobile clients are migrated.
+// New code should use DELETE /stamps/media/:entityId.
+// Preserves verifyMediaAccess (existence + block) parity with the original unlike path.
 router.delete("/media/:id/like", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
-
   const { id } = req.params;
   if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid media id"); return; }
-
   const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
-
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
   const mediaAccess = await verifyMediaAccess(sc, id, user.id);
   if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; }
-
-  if (mediaAccess.kind === "post") {
-    const { error } = await sc
-      .from("post_reactions")
-      .delete()
-      .eq("user_id", user.id)
-      .eq("post_id", id);
-    if (error) { req.log.error({ err: error }, "post_reactions delete failed"); sendError(res, "db_error", error.message); return; }
-
-    // Best-effort like_count decrement
-    await sc.rpc("decrement_post_like_count", { post_id: id }).then(() => {}, () => {});
-  }
-  // Gems: no dedicated like table in live schema — acknowledge the action client-side only.
-
-  res.json({ liked: false, mediaId: id });
+  const { stampCount } = await unstampEntity(sc, user.id, "media", id);
+  res.json({ ok: true, stampCount });
 }));
 
 // ── POST /api/media/:id/save ──────────────────────────────────────────────────

@@ -6,7 +6,7 @@
  * Query params:
  *   targetType  post_like | post_reaction | comment_like | highlight_like | memory_like
  *   targetId    UUID of the target entity
- *   reactionType  (optional) emoji string — filter post_reaction to a specific emoji
+ *   reactionType  (optional, ignored for post_like/post_reaction — stamps are emoji-agnostic)
  *   cursor      (optional) ISO timestamp — exclusive lower bound for cursor pagination
  *   limit       (optional) 1-50, default 20
  *   q           (optional) search string — filters by display_name or username
@@ -19,7 +19,7 @@
  * already hold from the parent entity (e.g. post.like_count).
  *
  * Access control per targetType:
- *   post_like / post_reaction  — post must be public OR viewer is the author
+ *   post_like / post_reaction  — reads content_stamps; post must be public OR viewer is the author
  *                                (trip_only: viewer must be a trip member)
  *   comment_like               — same as the comment's parent post
  *   highlight_like             — viewer must be the highlight owner OR highlight is public
@@ -135,9 +135,12 @@ async function getLikerIds(
   let q: any;
   switch (targetType) {
     case "post_like":
-      q = sc.from("posts_likes").select("user_id, created_at").eq("post_id", targetId);
+      // Reads content_stamps (unified write path since Task 3047 — posts_likes no longer updated).
+      q = sc.from("content_stamps").select("user_id, created_at")
+        .eq("entity_type", "post").eq("entity_id", targetId);
       break;
     case "post_reaction":
+      // post_reactions stores per-emoji reactions (distinct from stamp likes) — preserved as-is.
       q = sc.from("post_reactions").select("user_id, created_at").eq("post_id", targetId);
       if (reactionType) q = q.eq("emoji", reactionType);
       break;

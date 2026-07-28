@@ -669,7 +669,9 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
   // ── Stats ──────────────────────────────────────────────────────────────────
   const stats: MediaFeedStats = {
     viewCount: row.view_count ?? row.qualified_view_count ?? 0,
-    likeCount: row.like_count ?? row.reaction_count ?? 0,
+    // stamp_like_count is derived from content_stamps (unified write path since Task 3047).
+    // Falls back to posts.like_count only if the stamp count field is absent.
+    likeCount: row.stamp_like_count ?? row.like_count ?? row.reaction_count ?? 0,
     saveCount: row.save_count ?? 0,
     commentCount: row.comment_count ?? 0,
     stampItCount: row.stamp_it_count ?? 0,

@@ -240,7 +240,7 @@ export interface EntityStampResult {
 }
 
 /**
- * POST /stamps/entity/:entityType/:entityId
+ * POST /stamps  { entityType, entityId }
  * Stamp a piece of content (post, place, event, gem, …).
  * Returns the updated stamp count and confirmed stamped state.
  */
@@ -251,26 +251,24 @@ export async function stampEntity(
   const token = await freshToken();
   if (!token) return { ok: false, message: 'Not authenticated' };
   try {
-    const res = await fetch(
-      `${apiBase()}/api/stamps/entity/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`,
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      },
-    );
+    const res = await fetch(`${apiBase()}/api/stamps`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entityType, entityId }),
+    });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       return { ok: false, message: (body as any)?.message ?? `API ${res.status}` };
     }
     const data = await res.json().catch(() => ({}));
-    return { ok: true, data: { count: (data as any).count ?? 0, isStamped: true } };
+    return { ok: true, data: { count: (data as any).stampCount ?? 0, isStamped: true } };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
   }
 }
 
 /**
- * DELETE /stamps/entity/:entityType/:entityId
+ * DELETE /stamps/:entityType/:entityId
  * Remove a stamp from a piece of content.
  * Returns the updated stamp count and confirmed un-stamped state.
  */
@@ -282,7 +280,7 @@ export async function unstampEntity(
   if (!token) return { ok: false, message: 'Not authenticated' };
   try {
     const res = await fetch(
-      `${apiBase()}/api/stamps/entity/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`,
+      `${apiBase()}/api/stamps/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`,
       {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
@@ -293,7 +291,7 @@ export async function unstampEntity(
       return { ok: false, message: (body as any)?.message ?? `API ${res.status}` };
     }
     const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
-    return { ok: true, data: { count: (data as any).count ?? 0, isStamped: false } };
+    return { ok: true, data: { count: (data as any).stampCount ?? 0, isStamped: false } };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
   }

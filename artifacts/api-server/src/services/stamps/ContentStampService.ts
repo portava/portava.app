@@ -1,0 +1,155 @@
+/**
+ * ContentStampService — unified stamp interactions for all stampable entity types.
+ *
+ * Stamps are Portava's primary positive signal: "worth experiencing,
+ * remembering, recommending." This service replaces the fragmented post_likes /
+ * media_likes model with a single polymorphic table (content_stamps).
+ *
+ * Functions are intentionally stateless — callers supply the db client so
+ * the service works in both user-RLS and service-role contexts.
+ */
+
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+export const STAMPABLE_TYPES = [
+  "post",
+  "media",
+  "gem",
+  "event",
+  "trip",
+  "guide",
+  "profile",
+  "buddy_profile",
+  "hotel",
+  "restaurant",
+  "destination",
+] as const;
+
+export type StampableEntityType = (typeof STAMPABLE_TYPES)[number];
+
+export interface StampResult {
+  stampCount: number;
+  isStamped: boolean;
+}
+
+/**
+ * Record a stamp for the given entity. Idempotent — duplicate stamps on the
+ * same (user, type, entity) triple are silently collapsed.
+ */
+export async function stampEntity(
+  db: SupabaseClient,
+  userId: string,
+  entityType: StampableEntityType,
+  entityId: string,
+): Promise<StampResult> {
+  const { error } = await db
+    .from("content_stamps")
+    .upsert(
+      { user_id: userId, entity_type: entityType, entity_id: entityId },
+      { onConflict: "user_id,entity_type,entity_id", ignoreDuplicates: true },
+    );
+  if (error) throw error;
+
+  const { count } = await db
+    .from("content_stamps")
+    .select("id", { count: "exact", head: true })
+    .eq("entity_type", entityType)
+    .eq("entity_id", entityId);
+
+  return { stampCount: count ?? 0, isStamped: true };
+}
+
+/**
+ * Remove a stamp. Idempotent — removing a stamp that doesn't exist is a
+ * silent no-op.
+ */
+export async function unstampEntity(
+  db: SupabaseClient,
+  userId: string,
+  entityType: StampableEntityType,
+  entityId: string,
+): Promise<StampResult> {
+  const { error } = await db
+    .from("content_stamps")
+    .delete()
+    .eq("user_id", userId)
+    .eq("entity_type", entityType)
+    .eq("entity_id", entityId);
+  if (error) throw error;
+
+  const { count } = await db
+    .from("content_stamps")
+    .select("id", { count: "exact", head: true })
+    .eq("entity_type", entityType)
+    .eq("entity_id", entityId);
+
+  return { stampCount: count ?? 0, isStamped: false };
+}
+
+/**
+ * Fetch current stamp count + viewer state for a single entity.
+ */
+export async function getStampState(
+  db: SupabaseClient,
+  userId: string,
+  entityType: StampableEntityType,
+  entityId: string,
+): Promise<StampResult> {
+  const [{ count }, { data: mine }] = await Promise.all([
+    db
+      .from("content_stamps")
+      .select("id", { count: "exact", head: true })
+      .eq("entity_type", entityType)
+      .eq("entity_id", entityId),
+    db
+      .from("content_stamps")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("entity_type", entityType)
+      .eq("entity_id", entityId)
+      .maybeSingle(),
+  ]);
+  return { stampCount: count ?? 0, isStamped: !!mine };
+}
+
+/**
+ * Batch-fetch stamp counts and viewer stamp state for a list of entity IDs
+ * of the same entity_type. Returns a map of entityId → StampResult.
+ *
+ * Used by feed serializers to enrich multiple posts/items in one pair of
+ * queries rather than N+1 individual lookups.
+ */
+export async function batchGetStampState(
+  db: SupabaseClient,
+  userId: string,
+  entityType: StampableEntityType,
+  entityIds: string[],
+): Promise<Record<string, StampResult>> {
+  if (entityIds.length === 0) return {};
+
+  const [{ data: allStamps }, { data: myStamps }] = await Promise.all([
+    db
+      .from("content_stamps")
+      .select("entity_id")
+      .eq("entity_type", entityType)
+      .in("entity_id", entityIds),
+    db
+      .from("content_stamps")
+      .select("entity_id")
+      .eq("user_id", userId)
+      .eq("entity_type", entityType)
+      .in("entity_id", entityIds),
+  ]);
+
+  const mySet = new Set<string>((myStamps ?? []).map((r: any) => r.entity_id as string));
+  const countMap: Record<string, number> = {};
+  for (const r of (allStamps ?? []) as any[]) {
+    countMap[r.entity_id] = (countMap[r.entity_id] ?? 0) + 1;
+  }
+
+  const result: Record<string, StampResult> = {};
+  for (const id of entityIds) {
+    result[id] = { stampCount: countMap[id] ?? 0, isStamped: mySet.has(id) };
+  }
+  return result;
+}

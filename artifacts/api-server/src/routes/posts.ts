@@ -31,6 +31,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { awardStamp } from "../services/passport/StampAwardEngine.js";
 import { evaluateAndAwardCriteria } from "../lib/stamps/criteria/index.js";
 import { getServiceClient } from "../lib/supabase";
+import { stampEntity, unstampEntity } from "../services/stamps/ContentStampService.js";
 import { stampOverlayCol } from "../lib/postMediaOverlay";
 import { checkRateLimit } from "../lib/rateLimit";
 import { writePulseGeoTag } from "../services/location/PulseGeoTagService";
@@ -992,24 +993,32 @@ router.get("/posts", async (req, res) => {
       for (const p of profiles ?? []) profileMap[p.id] = sanitizeIdentity(p as any, allowedNames, user.id);
     }
 
-    // Step 4: batch-fetch engagement counts + likedByMe + savedByMe.
+    // Step 4: batch-fetch engagement counts + likedByMe + savedByMe + stampCount + isStampedByViewer.
     const postIds = posts.map((p) => p.id);
-    const engMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean; saveCount: number; savedByMe: boolean }> = {};
+    const engMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean; saveCount: number; savedByMe: boolean; stampCount: number; isStampedByViewer: boolean }> = {};
     if (postIds.length > 0) {
-      const [{ data: engData }, { data: likedData }, { data: savedData }] = await Promise.all([
+      const [{ data: engData }, { data: savedData }, { data: allStampData }, { data: myStampData }] = await Promise.all([
         sc.from("posts").select("id, like_count, comment_count, save_count").in("id", postIds),
-        sc.from("posts_likes").select("post_id").eq("user_id", user.id).in("post_id", postIds),
         sc.from("post_saves").select("post_id").eq("user_id", user.id).in("post_id", postIds),
+        sc.from("content_stamps").select("entity_id").eq("entity_type", "post").in("entity_id", postIds),
+        sc.from("content_stamps").select("entity_id").eq("user_id", user.id).eq("entity_type", "post").in("entity_id", postIds),
       ]);
-      const likedSet = new Set<string>((likedData ?? []).map((r: any) => r.post_id));
       const savedSet = new Set<string>((savedData ?? []).map((r: any) => r.post_id));
+      const stampCountMap: Record<string, number> = {};
+      for (const r of (allStampData ?? []) as any[]) stampCountMap[r.entity_id] = (stampCountMap[r.entity_id] ?? 0) + 1;
+      // likedByMe derives from content_stamps (unified write path since Task 3047).
+      const myStampSet = new Set<string>((myStampData ?? []).map((r: any) => r.entity_id as string));
       for (const r of engData ?? []) {
         engMap[r.id] = {
-          likeCount: r.like_count ?? 0,
+          // likeCount derives from content_stamps so it stays consistent with
+          // compat like writes — posts.like_count is no longer updated.
+          likeCount: stampCountMap[r.id] ?? 0,
           commentCount: r.comment_count ?? 0,
-          likedByMe: likedSet.has(r.id),
+          likedByMe: myStampSet.has(r.id),
           saveCount: r.save_count ?? 0,
           savedByMe: savedSet.has(r.id),
+          stampCount: stampCountMap[r.id] ?? 0,
+          isStampedByViewer: myStampSet.has(r.id),
         };
       }
     }
@@ -1040,7 +1049,7 @@ router.get("/posts", async (req, res) => {
     const merged = posts.map((p) => {
       const safe = mapPublicPost(p);
       const pr = profileMap[p.author_id];
-      const eng = engMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false, saveCount: 0, savedByMe: false };
+      const eng = engMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false, saveCount: 0, savedByMe: false, stampCount: 0, isStampedByViewer: false };
       const spans = (followingSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
       return {
         ...safe,
@@ -1052,6 +1061,8 @@ router.get("/posts", async (req, res) => {
         likedByMe: eng.likedByMe,
         saveCount: eng.saveCount,
         savedByMe: eng.savedByMe,
+        stampCount: eng.stampCount,
+        isStampedByViewer: eng.isStampedByViewer,
         canLike: true,
         canComment: true,
         canShare: true,
@@ -1132,23 +1143,31 @@ router.get("/posts", async (req, res) => {
     for (const p of profiles ?? []) globalProfileMap[p.id] = sanitizeIdentity(p as any, allowedNames, user.id);
   }
 
-  // Batch-fetch engagement + likedByMe + savedByMe
-  const globalEngMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean; saveCount: number; savedByMe: boolean }> = {};
+  // Batch-fetch engagement + likedByMe + savedByMe + stampCount + isStampedByViewer
+  const globalEngMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean; saveCount: number; savedByMe: boolean; stampCount: number; isStampedByViewer: boolean }> = {};
   if (globalPostIds.length > 0) {
-    const [{ data: engData }, { data: likedData }, { data: savedData }] = await Promise.all([
+    const [{ data: engData }, { data: savedData }, { data: allStampData }, { data: myStampData }] = await Promise.all([
       svc.from("posts").select("id, like_count, comment_count, save_count").in("id", globalPostIds),
-      svc.from("posts_likes").select("post_id").eq("user_id", user.id).in("post_id", globalPostIds),
       svc.from("post_saves").select("post_id").eq("user_id", user.id).in("post_id", globalPostIds),
+      svc.from("content_stamps").select("entity_id").eq("entity_type", "post").in("entity_id", globalPostIds),
+      svc.from("content_stamps").select("entity_id").eq("user_id", user.id).eq("entity_type", "post").in("entity_id", globalPostIds),
     ]);
-    const likedSet = new Set<string>((likedData ?? []).map((r: any) => r.post_id));
     const savedSet = new Set<string>((savedData ?? []).map((r: any) => r.post_id));
+    const stampCountMap: Record<string, number> = {};
+    for (const r of (allStampData ?? []) as any[]) stampCountMap[r.entity_id] = (stampCountMap[r.entity_id] ?? 0) + 1;
+    // likedByMe derives from content_stamps (unified write path since Task 3047).
+    const myStampSet = new Set<string>((myStampData ?? []).map((r: any) => r.entity_id as string));
     for (const r of engData ?? []) {
       globalEngMap[r.id] = {
-        likeCount: r.like_count ?? 0,
+        // likeCount derives from content_stamps so it stays consistent with
+        // compat like writes — posts.like_count is no longer updated.
+        likeCount: stampCountMap[r.id] ?? 0,
         commentCount: r.comment_count ?? 0,
-        likedByMe: likedSet.has(r.id),
+        likedByMe: myStampSet.has(r.id),
         saveCount: r.save_count ?? 0,
         savedByMe: savedSet.has(r.id),
+        stampCount: stampCountMap[r.id] ?? 0,
+        isStampedByViewer: myStampSet.has(r.id),
       };
     }
   }
@@ -1178,7 +1197,7 @@ router.get("/posts", async (req, res) => {
   const mergedGlobal = globalPosts.map((p) => {
     const safe = mapPublicPost(p);
     const pr = globalProfileMap[p.author_id];
-    const eng = globalEngMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false, saveCount: 0, savedByMe: false };
+    const eng = globalEngMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false, saveCount: 0, savedByMe: false, stampCount: 0, isStampedByViewer: false };
     const spans = (globalSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
     return {
       ...safe,
@@ -1188,6 +1207,8 @@ router.get("/posts", async (req, res) => {
       likedByMe: eng.likedByMe,
       saveCount: eng.saveCount,
       savedByMe: eng.savedByMe,
+      stampCount: eng.stampCount,
+      isStampedByViewer: eng.isStampedByViewer,
       canLike: true,
       canComment: true,
       canShare: true,
@@ -1295,17 +1316,22 @@ router.get("/trips/:tripId/posts", async (req, res) => {
     for (const p of profiles ?? []) tripProfileMap[p.id] = sanitizeIdentity(p as any, allowedNames, user.id);
   }
 
-  const tripEngMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean; saveCount: number; savedByMe: boolean }> = {};
+  const tripEngMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean; saveCount: number; savedByMe: boolean; stampCount: number; isStampedByViewer: boolean }> = {};
   if (tripSvc && tripPostIds.length > 0) {
-    const [{ data: engData }, { data: likedData }, { data: savedData }] = await Promise.all([
+    const [{ data: engData }, { data: savedData }, { data: allStampData }, { data: myStampData }] = await Promise.all([
       tripSvc.from("posts").select("id, like_count, comment_count, save_count").in("id", tripPostIds),
-      tripSvc.from("posts_likes").select("post_id").eq("user_id", user.id).in("post_id", tripPostIds),
       tripSvc.from("post_saves").select("post_id").eq("user_id", user.id).in("post_id", tripPostIds),
+      tripSvc.from("content_stamps").select("entity_id").eq("entity_type", "post").in("entity_id", tripPostIds),
+      tripSvc.from("content_stamps").select("entity_id").eq("user_id", user.id).eq("entity_type", "post").in("entity_id", tripPostIds),
     ]);
-    const likedSet = new Set<string>((likedData ?? []).map((r: any) => r.post_id));
     const savedSet = new Set<string>((savedData ?? []).map((r: any) => r.post_id));
+    const stampCountMap: Record<string, number> = {};
+    for (const r of (allStampData ?? []) as any[]) stampCountMap[r.entity_id] = (stampCountMap[r.entity_id] ?? 0) + 1;
+    // likedByMe derives from content_stamps (unified write path since Task 3047).
+    const myStampSet = new Set<string>((myStampData ?? []).map((r: any) => r.entity_id as string));
     for (const r of engData ?? []) {
-      tripEngMap[r.id] = { likeCount: r.like_count ?? 0, commentCount: r.comment_count ?? 0, likedByMe: likedSet.has(r.id), saveCount: r.save_count ?? 0, savedByMe: savedSet.has(r.id) };
+      // likeCount derives from content_stamps — posts.like_count no longer updated by compat writes.
+      tripEngMap[r.id] = { likeCount: stampCountMap[r.id] ?? 0, commentCount: r.comment_count ?? 0, likedByMe: myStampSet.has(r.id), saveCount: r.save_count ?? 0, savedByMe: savedSet.has(r.id), stampCount: stampCountMap[r.id] ?? 0, isStampedByViewer: myStampSet.has(r.id) };
     }
   }
 
@@ -1333,7 +1359,7 @@ router.get("/trips/:tripId/posts", async (req, res) => {
 
   const mergedTrip = tripPosts.map((p) => {
     const pr = tripProfileMap[p.author_id];
-    const eng = tripEngMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false, saveCount: 0, savedByMe: false };
+    const eng = tripEngMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false, saveCount: 0, savedByMe: false, stampCount: 0, isStampedByViewer: false };
     const spans = (tripSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
     // public: any authenticated user; trip_only: accepted members only; private: no public engagement
     const canEngage = p.visibility === "public" || (p.visibility === "trip_only" && accepted);
@@ -1345,6 +1371,8 @@ router.get("/trips/:tripId/posts", async (req, res) => {
       likedByMe: eng.likedByMe,
       saveCount: eng.saveCount,
       savedByMe: eng.savedByMe,
+      stampCount: eng.stampCount,
+      isStampedByViewer: eng.isStampedByViewer,
       canLike: canEngage,
       canComment: canEngage,
       canShare: canEngage,
@@ -1388,13 +1416,13 @@ router.get("/posts/pending", async (req, res) => {
 });
 
 /* ===========================================================================
- * GET /posts/liked-by-me  — compact list of the current user's liked post IDs
+ * GET /posts/liked-by-me  — compact list of the current user's stamped post IDs
  *
  * Used by the client-side liked-posts cache to pre-warm on auth so 'liked by
  * me' heart indicators are correct from the first feed paint.
  *
- * Uses idx_posts_likes_user_created (user_id, created_at DESC) for a fast
- * user-scoped index scan instead of a sequential scan on posts_likes.
+ * Reads from content_stamps (unified write path since Task 3047) so the result
+ * is always consistent with POST /posts/:postId/like and POST /stamps.
  *
  * Query params:
  *   limit  — max rows to return (default 500, capped at 500)
@@ -1414,9 +1442,10 @@ router.get("/posts/liked-by-me", async (req, res) => {
   const limit = isNaN(rawLimit) || rawLimit < 1 ? 500 : Math.min(rawLimit, 500);
 
   const { data, error } = await sc
-    .from("posts_likes")
-    .select("post_id")
+    .from("content_stamps")
+    .select("entity_id")
     .eq("user_id", user.id)
+    .eq("entity_type", "post")
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -1426,7 +1455,7 @@ router.get("/posts/liked-by-me", async (req, res) => {
     return;
   }
 
-  res.status(200).json({ postIds: (data ?? []).map((r: { post_id: string }) => r.post_id) });
+  res.status(200).json({ postIds: (data ?? []).map((r: { entity_id: string }) => r.entity_id) });
 });
 
 /* ===========================================================================
@@ -1505,14 +1534,15 @@ router.get("/posts/:postId", async (req, res) => {
     return;
   }
 
-  const [{ data: likedRow }, { data: savedRow }, { data: rawMedia }, { data: featuredRow }, { data: authorProfile }, allowedNames] = await Promise.all([
-    sc.from("posts_likes").select("post_id").eq("post_id", postId).eq("user_id", user.id).maybeSingle(),
+  const [{ data: savedRow }, { data: rawMedia }, { count: postStampCount }, { data: myStampRow }, { data: featuredRow }, { data: authorProfile }, allowedNames] = await Promise.all([
     sc.from("post_saves").select("post_id").eq("post_id", postId).eq("user_id", user.id).maybeSingle(),
     sc.from("post_media")
       .select("id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status" + (await stampOverlayCol(sc)))
       .eq("post_id", postId)
       .eq("processing_status", "ready")
       .order("sort_order", { ascending: true }),
+    sc.from("content_stamps").select("id", { count: "exact", head: true }).eq("entity_type", "post").eq("entity_id", postId),
+    sc.from("content_stamps").select("id").eq("user_id", user.id).eq("entity_type", "post").eq("entity_id", postId).maybeSingle(),
     sc.from("portava_featured")
       .select("category, featured_at")
       .eq("post_id", postId)
@@ -1556,11 +1586,15 @@ router.get("/posts/:postId", async (req, res) => {
   res.status(200).json({
     ...base,
     author,
-    likeCount: post.like_count ?? 0,
+    // likeCount derives from content_stamps so it stays consistent with compat
+    // like writes — posts.like_count is no longer updated in this write path.
+    likeCount: postStampCount ?? 0,
     commentCount: post.comment_count ?? 0,
     saveCount: post.save_count ?? 0,
-    likedByMe: !!likedRow,
+    likedByMe: !!myStampRow,
     savedByMe: !!savedRow,
+    stampCount: postStampCount ?? 0,
+    isStampedByViewer: !!myStampRow,
     media,
     canLike: true,
     canComment: true,
@@ -1940,62 +1974,56 @@ async function checkEngagePermission(
   return true;
 }
 
+// Compat wrapper — proxies to content_stamps until mobile clients are migrated.
+// New code should use POST /stamps { entityType: 'post', entityId }.
 router.post("/posts/:postId/like", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user, client } = auth;
   const { postId } = req.params;
   if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
-
   const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
 
   const { data: post, error: postErr } = await sc
-    .from("posts").select("id, visibility, trip_id").eq("id", postId).eq("status", "active").maybeSingle();
-  if (postErr) { sendError(res, "db_error", postErr.message); return; }
-  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+    .from("posts")
+    .select("id, author_id, visibility, trip_id")
+    .eq("id", postId)
+    .eq("status", "active")
+    .maybeSingle();
+  if (postErr || !post) { sendError(res, "not_found", "Post not found"); return; }
 
-  if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
+  // Bidirectional block check — matches /stamps access control.
+  const authorId: string = (post as any).author_id;
+  if (authorId !== user.id) {
+    const { count: blockCount, error: blockErr } = await sc
+      .from("blocks")
+      .select("blocker_id", { count: "exact", head: true })
+      .or(`and(blocker_id.eq.${user.id},blocked_id.eq.${authorId}),and(blocker_id.eq.${authorId},blocked_id.eq.${user.id})`);
+    if (blockErr || (blockCount ?? 0) > 0) { sendError(res, "not_found", "Post not found"); return; }
+  }
 
-  // Upsert (ignoreDuplicates = no-op if already liked)
-  const { error: upsertErr } = await sc
-    .from("posts_likes")
-    .upsert({ post_id: postId, user_id: user.id }, { onConflict: "post_id,user_id", ignoreDuplicates: true });
-  if (upsertErr) { sendError(res, "db_error", upsertErr.message); return; }
+  const allowed = await checkEngagePermission(res, post as any, user.id, client);
+  if (!allowed) return;
 
-  // Accurate count + sync
-  const { count } = await sc.from("posts_likes").select("id", { count: "exact", head: true }).eq("post_id", postId);
-  await sc.from("posts").update({ like_count: count ?? 0 }).eq("id", postId);
-
-  // Phase 14 — link like back to the originating Compass recommendation.
+  const { stampCount } = await stampEntity(sc, user.id, "post", postId);
   void linkOutcomeSignal(sc, user.id, postId, "liked", "route:post_like");
-
-  res.status(200).json({ likedByMe: true, likeCount: count ?? 0 });
+  res.json({ likedByMe: true, likeCount: stampCount });
 });
 
+// Compat wrapper — proxies to content_stamps until mobile clients are migrated.
+// New code should use DELETE /stamps/post/:entityId.
 router.delete("/posts/:postId/like", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user, client } = auth;
+  const { user } = auth;
   const { postId } = req.params;
   if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
-
   const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
 
-  // Allow unlike even if currently inaccessible (idempotent removal)
-  const { data: post } = await sc
-    .from("posts").select("id, visibility, trip_id").eq("id", postId).maybeSingle();
-  if (post && !(await checkEngagePermission(res, post as any, user.id, client))) return;
-
-  const { error: delErr } = await sc
-    .from("posts_likes").delete().eq("post_id", postId).eq("user_id", user.id);
-  if (delErr) { sendError(res, "db_error", delErr.message); return; }
-
-  const { count } = await sc.from("posts_likes").select("id", { count: "exact", head: true }).eq("post_id", postId);
-  await sc.from("posts").update({ like_count: count ?? 0 }).eq("id", postId);
-
-  res.status(200).json({ likedByMe: false, likeCount: count ?? 0 });
+  const { stampCount } = await unstampEntity(sc, user.id, "post", postId);
+  res.json({ likedByMe: false, likeCount: stampCount });
 });
 
 /* ============================================================================

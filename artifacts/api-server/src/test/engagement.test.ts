@@ -64,7 +64,8 @@ function resetDb() {
     { id: PRIVATE_POST_ID, author_id: AUTHOR_ID, visibility: 'private', status: 'active', trip_id: null },
   ];
 
-  // LIKER1 liked the public post at T=2, VIEWER liked at T=1 (so viewer appears in raw list)
+  // LIKER1 liked the public post at T=2, VIEWER liked at T=1 (so viewer appears in raw list).
+  // content_stamps is derived lazily from postLikes in makeBuilder so test mutations stay in sync.
   postLikes = [
     { user_id: LIKER1_ID, post_id: POST_ID, created_at: '2025-01-02T00:00:00Z' },
     { user_id: VIEWER_ID, post_id: POST_ID, created_at: '2025-01-01T00:00:00Z' },
@@ -107,6 +108,10 @@ function makeBuilder(table: string): any {
   switch (table) {
     case 'posts':          rows = posts.map((r) => ({ ...r })); break;
     case 'posts_likes':    rows = postLikes.map((r) => ({ ...r })); break;
+    // content_stamps is derived from postLikes at query time so direct postLikes mutations stay in sync.
+    case 'content_stamps': rows = postLikes.map((r) => ({
+      user_id: r.user_id, entity_type: 'post', entity_id: r.post_id, created_at: r.created_at,
+    })); break;
     case 'post_reactions': rows = postReactions.map((r) => ({ ...r })); break;
     case 'comment_likes':  rows = commentLikes.map((r) => ({ ...r })); break;
     case 'highlight_likes':rows = []; break;

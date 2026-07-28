@@ -100,6 +100,7 @@ import adminPlaceImagesRouter from "./adminPlaceImages.js";
 import neighborhoodsRouter from "./neighborhoods";
 import stampShowcaseRouter from "./stampShowcase";
 import stampAdmireRouter from "./stampAdmire";
+import contentStampsRouter from "./contentStamps";
 import countryEssentialsRouter from "./countryEssentials";
 import mapSearchRouter from "./mapSearch";
 import mediaFileRouter from "./mediaFile";
@@ -196,6 +197,9 @@ router.use(postcardsRouter);
 // is enforced inside each handler (isFlagEnabled), not by router ordering.
 router.use(stampShowcaseRouter);
 router.use(stampAdmireRouter);
+// contentStampsRouter must be after stampAdmireRouter so /stamps/:id/admire
+// routes win before the polymorphic /stamps/:entityType/:entityId DELETE.
+router.use(contentStampsRouter);
 router.use(stampsRouter);
 router.use(adminStampsRouter);
 router.use(adminGeocodeRouter);

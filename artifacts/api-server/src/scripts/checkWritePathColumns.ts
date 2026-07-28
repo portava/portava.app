@@ -186,6 +186,9 @@ const SKIP_TABLES = new Set<string>([
   "place_top_contributors",
   "place_ai_summaries",
   "place_cache_invalidation_queue",
+  // Unified content stamp table — migration 2047_content_stamps.sql
+  // pending live apply. Remove once the table exists in the live DB schema.
+  "content_stamps",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────
