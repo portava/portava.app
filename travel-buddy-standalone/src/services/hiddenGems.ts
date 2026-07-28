@@ -49,6 +49,8 @@ export interface HiddenGem {
   status: GemStatus;
   submittedBy: string | null;
   imageUrl: string | null;
+  /** UUID of the linked canonical place (from the places table), if set. */
+  canonicalPlaceId: string | null;
   saveCount: number;
   visitCount: number;
   createdAt: string;
@@ -128,6 +130,7 @@ function mapGem(r: any): HiddenGem {
     status:                r.status ?? 'active',
     submittedBy:           r.submitted_by ?? r.submittedBy ?? null,
     imageUrl:              r.image_url ?? r.imageUrl ?? null,
+    canonicalPlaceId:      r.canonical_place_id ?? r.canonicalPlaceId ?? null,
     saveCount:             r.save_count ?? r.saveCount ?? 0,
     visitCount:            r.visit_count ?? r.visitCount ?? 0,
     createdAt:             r.created_at ?? r.createdAt ?? '',

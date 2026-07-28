@@ -5,7 +5,7 @@
  * Shows full gem info, GPS check-in, save/unsave, share to Telegraph,
  * add to trip plan, and report.
  */
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { RouteBuilderSheet } from '../../src/components/RouteBuilderSheet';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
@@ -24,6 +24,8 @@ import { TripWishlistPicker, type AddToTripPayload } from '../../src/components/
 import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { WorthItVoteRow } from '../../src/components/WorthItVoteRow';
 import { PlaceInfoSection } from '../../src/components/place/PlaceInfoSection';
+import { getCanonicalPlace } from '../../src/services/places';
+import type { CanonicalPlace } from '../../src/types/canonicalPlace';
 import { GemMapPreview } from '../../src/components/discovery/GemMapPreview';
 import { useSession } from '../../src/context/SessionContext';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
@@ -240,6 +242,22 @@ export default function GemDetailScreen() {
   const [sharing,         setSharing]         = useState(false);
   const [builderVisible,  setBuilderVisible]  = useState(false);
   const [pickerVisible,   setPickerVisible]   = useState(false);
+  const [canonicalPlace,  setCanonicalPlace]  = useState<CanonicalPlace | null>(null);
+
+  // Fetch the canonical place (FSQ-enriched phone, hours, address) whenever the
+  // gem carries a canonicalPlaceId.  Failures are silent — falls back to
+  // user-entered description/category only.
+  useEffect(() => {
+    if (!gem?.canonicalPlaceId) {
+      setCanonicalPlace(null);
+      return;
+    }
+    let cancelled = false;
+    getCanonicalPlace(gem.canonicalPlaceId).then((place) => {
+      if (!cancelled) setCanonicalPlace(place);
+    });
+    return () => { cancelled = true; };
+  }, [gem?.canonicalPlaceId]);
 
   const gemPickerPayload: AddToTripPayload | null = gem ? {
     id:       gem.id,
@@ -369,13 +387,13 @@ export default function GemDetailScreen() {
           />
         </View>
 
-        {/* Description — shows user-entered description and category.
-            Pass place={canonicalPlace} here once gem records store a
-            canonical_place_id to surface FSQ-enriched phone/hours/address. */}
-        {(gem.description || gem.category) ? (
+        {/* About — canonical place (FSQ phone/hours/address) when available,
+            falling back to user-entered description and category only. */}
+        {(canonicalPlace || gem.description || gem.category) ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>About</Text>
             <PlaceInfoSection
+              place={canonicalPlace}
               description={gem.description}
               category={gem.category}
             />
