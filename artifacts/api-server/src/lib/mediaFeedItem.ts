@@ -82,8 +82,10 @@ export interface MediaFeedStats {
 
 /**
  * Location shape returned in the feed response.
- * Only human-readable place labels and canonical IDs are included.
- * Raw coordinates are never exposed in the feed — they stay server-side only.
+ * Human-readable place labels and canonical IDs are always included.
+ * Raw coordinates (lat/lng) are NEVER exposed in the feed response — only
+ * name/city/country.  Callers that need precise coordinates must use a
+ * dedicated detail endpoint that enforces its own access-control policy.
  */
 export interface MediaFeedLocation {
   name: string | null;
@@ -668,8 +670,10 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
   };
 
   // ── Location ───────────────────────────────────────────────────────────────
-  // Only human-readable labels are included. Raw coordinates are never
-  // emitted in feed responses — precise GPS data stays server-side only.
+  // Privacy rule: raw coordinates are NEVER included in the feed response.
+  // Only human-readable labels (name/city/country) are returned.
+  // Callers that need precise coordinates must use a dedicated detail endpoint
+  // that enforces its own access-control policy.
   const hasLocation = row.location_city || row.location_name || row.location_country;
   const location: MediaFeedLocation | null = hasLocation
     ? {
