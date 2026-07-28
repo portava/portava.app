@@ -240,7 +240,7 @@ export default function RentABuddyCheckout() {
     if (!res.ok) { Alert.alert('Booking failed', res.error); return; }
     const bookingId = res.data.booking?.id;
     if (bookingId) {
-      router.replace({ pathname: '/(rent-a-buddy)/booking/[id]' as any, params: { id: bookingId } });
+      router.replace({ pathname: '/(rent-a-buddy)/booking/[id]' as any, params: { id: bookingId, fromCheckout: '1' } });
     }
   };
 
