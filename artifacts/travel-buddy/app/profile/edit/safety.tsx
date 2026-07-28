@@ -21,6 +21,7 @@ import { PP } from '../../../src/theme/passportTokens';
 import { space, radius, type as t } from '../../../src/theme/tokens';
 import { getMyProfile } from '../../../src/services/profile';
 import type { OwnProfile } from '../../../src/types/models';
+import { TrustScoreInfoSheet } from '../../../src/components/passport/TrustScoreInfoSheet';
 
 const VERIF_STATUS_LABEL: Record<OwnProfile['verificationStatus'], { label: string; tone: 'ok' | 'pending' | 'off' }> = {
   unverified: { label: 'Not verified', tone: 'off' },
@@ -51,6 +52,7 @@ export default function SafetyVerificationScreen() {
   const [profile, setProfile] = useState<OwnProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [trustSheetVisible, setTrustSheetVisible] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -73,7 +75,7 @@ export default function SafetyVerificationScreen() {
         ) : loadError ? (
           <View style={sx.loading}><Text style={sx.errorText}>{loadError}</Text></View>
         ) : profile ? (
-          <VerificationCards profile={profile} />
+          <VerificationCards profile={profile} onTrustRowPress={() => setTrustSheetVisible(true)} />
         ) : null}
       </SettingsSection>
 
@@ -81,6 +83,16 @@ export default function SafetyVerificationScreen() {
         <Text style={sx.note}>
           Verification is reviewed by our safety team. Statuses shown here reflect your latest review.
         </Text>
+      )}
+
+      {profile && (
+        <TrustScoreInfoSheet
+          visible={trustSheetVisible}
+          onClose={() => setTrustSheetVisible(false)}
+          score={profile.trustScore ?? null}
+          label={profile.trustLabel ?? null}
+          breakdown={profile.trustScoreBreakdown ?? null}
+        />
       )}
 
       {/* People controls — existing screens */}
@@ -137,7 +149,7 @@ export default function SafetyVerificationScreen() {
   );
 }
 
-function VerificationCards({ profile }: { profile: OwnProfile }) {
+function VerificationCards({ profile, onTrustRowPress }: { profile: OwnProfile; onTrustRowPress: () => void }) {
   const status = VERIF_STATUS_LABEL[profile.verificationStatus] ?? VERIF_STATUS_LABEL.unverified;
   const StatusIcon = status.tone === 'ok' ? ShieldCheck : status.tone === 'pending' ? Clock : ShieldOff;
   const statusColor = status.tone === 'ok' ? PP.inkLight : status.tone === 'pending' ? PP.gold : PP.inkMuted;
@@ -178,7 +190,7 @@ function VerificationCards({ profile }: { profile: OwnProfile }) {
                 ? `${profile.trustLabel} · Score ${profile.trustScore}`
                 : profile.trustLabel
             }
-            chevron={false}
+            onPress={onTrustRowPress}
           />
         </>
       ) : null}
