@@ -20,7 +20,7 @@
  */
 
 import { renderHook, waitFor } from '@testing-library/react-native';
-import { Alert, Platform } from 'react-native';
+import { Alert, Linking, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useMediaPicker } from '../useMediaPicker.ts';
 
@@ -101,6 +101,27 @@ describe('useMediaPicker — camera permanently blocked (canAskAgain=false)', ()
         expect.objectContaining({ text: 'Cancel' }),
       ]),
     );
+  });
+
+  it('pressing "Open Settings" calls Linking.openSettings()', async () => {
+    const linkingSpy = jest
+      .spyOn(Linking, 'openSettings')
+      .mockResolvedValue(undefined);
+
+    const { result } = await renderHook(() => useMediaPicker());
+
+    result.current.pickMedia();
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+
+    pressAlertButton(alertSpy, 0, 'Take Photo');
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(2));
+
+    // Press "Open Settings" bare — no act() per TESTING.md rule 2.
+    pressAlertButton(alertSpy, 1, 'Open Settings');
+
+    expect(linkingSpy).toHaveBeenCalledTimes(1);
+    linkingSpy.mockRestore();
   });
 });
 
@@ -183,6 +204,27 @@ describe('useMediaPicker — library permanently blocked (canAskAgain=false)', (
         expect.objectContaining({ text: 'Cancel' }),
       ]),
     );
+  });
+
+  it('pressing "Open Settings" calls Linking.openSettings()', async () => {
+    const linkingSpy = jest
+      .spyOn(Linking, 'openSettings')
+      .mockResolvedValue(undefined);
+
+    const { result } = await renderHook(() => useMediaPicker());
+
+    result.current.pickMedia();
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+
+    pressAlertButton(alertSpy, 0, 'Choose from Library');
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(2));
+
+    // Press "Open Settings" bare — no act() per TESTING.md rule 2.
+    pressAlertButton(alertSpy, 1, 'Open Settings');
+
+    expect(linkingSpy).toHaveBeenCalledTimes(1);
+    linkingSpy.mockRestore();
   });
 });
 
