@@ -943,3 +943,115 @@ describe("isSamePlace: landmark relaxed heuristics", () => {
     );
   });
 });
+
+// ── LANDMARK_DESCRIPTOR_TOKENS blocklist addition invariants ──────────────────
+//
+// Each pair below is a real-world landmark expressed with two name variants
+// that MUST still merge whenever LANDMARK_DESCRIPTOR_TOKENS is changed.
+//
+// These tests are the regression guard called out in the checklist comment
+// above LANDMARK_DESCRIPTOR_TOKENS in placeResolve.ts.  If a proposed new
+// blocklist token causes any case here to fail, do NOT add the token.
+//
+// Table columns: [nameA, nameB, category, lat, description]
+// Both variants are placed at the same coordinates so only name-matching is
+// under test; distance is always 0 km (well within any threshold).
+
+describe("LANDMARK_DESCRIPTOR_TOKENS blocklist addition invariants", () => {
+  interface MustMergeCase {
+    nameA: string;
+    nameB: string;
+    category: string;
+    lat: number;
+    lng: number;
+    note: string;
+  }
+
+  const MUST_MERGE: MustMergeCase[] = [
+    // Type-noun variants
+    {
+      nameA: "Kawasan Falls", nameB: "Kawasan Waterfalls",
+      category: "waterfall", lat: 9.8697, lng: 123.3966,
+      note: "type noun variant: falls / waterfalls",
+    },
+    {
+      nameA: "Kawasan Main Falls", nameB: "Kawasan Falls",
+      category: "waterfall", lat: 9.8697, lng: 123.3966,
+      note: "positional modifier stripped",
+    },
+    {
+      nameA: "Tumalog Falls", nameB: "Tumalog Waterfall",
+      category: "waterfall", lat: 9.9203, lng: 123.2867,
+      note: "singular vs plural type noun",
+    },
+    {
+      nameA: "Mount Apo", nameB: "Apo Mountain",
+      category: "mountain", lat: 6.9888, lng: 125.2701,
+      note: "mount / mountain type noun variants",
+    },
+    {
+      nameA: "Mount Pulag", nameB: "Mt Pulag",
+      category: "mountain", lat: 16.5858, lng: 120.8889,
+      note: "mount / mt abbreviation",
+    },
+    {
+      nameA: "Mount Kitanglad", nameB: "Kitanglad Peak",
+      category: "mountain", lat: 8.1800, lng: 124.8800,
+      note: "mount stripped, peak stripped — core token 'kitanglad' shared",
+    },
+    // Geographic-qualifier variants
+    {
+      nameA: "Kawasan Falls", nameB: "Kawasan Falls Cebu",
+      category: "waterfall", lat: 9.8697, lng: 123.3966,
+      note: "'cebu' geographic qualifier stripped",
+    },
+    {
+      nameA: "White Beach", nameB: "White Beach Boracay",
+      category: "beach", lat: 11.9674, lng: 121.9209,
+      note: "'boracay' geographic qualifier stripped",
+    },
+    {
+      nameA: "Boracay Puka Beach", nameB: "Puka Beach",
+      category: "beach", lat: 11.9925, lng: 121.9440,
+      note: "'boracay' prefix qualifier stripped",
+    },
+    {
+      nameA: "Chocolate Hills Bohol", nameB: "Chocolate Hills",
+      category: "viewpoint", lat: 9.9019, lng: 124.1708,
+      note: "'bohol' province qualifier stripped",
+    },
+    {
+      nameA: "Palawan Underground River", nameB: "Underground River",
+      category: "cave", lat: 10.1780, lng: 118.9117,
+      note: "'palawan' province qualifier stripped",
+    },
+    // Zero-token fallback: both sides reduce to [] — identical normalised names must still merge
+    {
+      nameA: "Boracay Beach", nameB: "Boracáy Beach",
+      category: "beach", lat: 11.9674, lng: 121.9248,
+      note: "zero-token fallback — diacritic variant, both reduce to []",
+    },
+  ];
+
+  for (const c of MUST_MERGE) {
+    it(`merges "${c.nameA}" ↔ "${c.nameB}" [${c.note}]`, () => {
+      const placeA: PlaceLike = {
+        name: c.nameA,
+        latitude: c.lat,
+        longitude: c.lng,
+        primary_category: c.category,
+      };
+      const placeB: PlaceLike = {
+        name: c.nameB,
+        latitude: c.lat,      // identical coordinates — distance = 0
+        longitude: c.lng,
+        primary_category: c.category,
+      };
+      assert.equal(
+        isSamePlace(placeA, placeB),
+        true,
+        `"${c.nameA}" and "${c.nameB}" must still merge — check LANDMARK_DESCRIPTOR_TOKENS`,
+      );
+    });
+  }
+});

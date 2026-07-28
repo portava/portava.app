@@ -80,6 +80,37 @@ export function isLandmark(raw: string | null | undefined): boolean {
  * Includes type nouns (so "Kawasan Falls" and "Kawasan Waterfalls" share the
  * core token "kawasan"), positional modifiers ("Upper", "Main"), ordinals,
  * and a small geographic-qualifier blocklist.
+ *
+ * ── CHECKLIST: adding a new token ────────────────────────────────────────────
+ * Before adding any token here, verify ALL four conditions:
+ *
+ *   1. GENERIC, NOT DISTINCTIVE — The token must be a generic qualifier that
+ *      commonly appears alongside many different landmark names, never the
+ *      sole distinctive identifier of a specific landmark.
+ *      ✓ Safe:   "cebu" (appears with Kawasan, Tumalog, Moalboal, …)
+ *      ✗ Unsafe: "kawasan" (IS the landmark — stripping it leaves nothing)
+ *      ✗ Unsafe: "apo" (Mount Apo — stripping it makes "Mount Apo"
+ *                       un-mergeable with itself via the normal path)
+ *
+ *   2. ZERO-TOKEN FALLBACK CHECK — When the token is the ONLY remaining token
+ *      in an important landmark name (e.g., "Apo" in "Mount Apo"), stripping
+ *      it reduces that name to [].  The zero-token fallback (below, ~line 213)
+ *      saves identical-name pairs: both sides must reduce to [] AND their
+ *      normalizeLocationName() results must be equal.  Verify this will hold
+ *      for every affected landmark before adding the token.
+ *
+ *   3. ASYMMETRIC REDUCTION — If one provider spells the name "Mount Apo" and
+ *      another "Apo Volcano", stripping "apo" from the first leaves [] while
+ *      the second retains ["volcano"].  Asymmetric zero-token cases are
+ *      intentionally NOT merged (you can't confirm identity without a shared
+ *      core token).  Run the invariant tests to confirm no known pair breaks.
+ *
+ *   4. RUN THE INVARIANT TESTS — After adding a token, run the test suite and
+ *      verify the "LANDMARK_DESCRIPTOR_TOKENS blocklist addition invariants"
+ *      describe block still passes in full.  Those cases are the regression
+ *      guard; a new token that breaks any of them must not be added.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 const LANDMARK_DESCRIPTOR_TOKENS = new Set([
   // Type nouns
