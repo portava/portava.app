@@ -42,6 +42,7 @@ import { NotificationRouter } from "../services/notifications/NotificationRouter
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { sniffMedia, processImage, makeThumbnail } from "../lib/mediaProcessing.js";
 import { recordMediaAsset } from "../lib/mediaAssets.js";
+import { resolvePostPlace } from "../lib/places/placeResolve.js";
 
 const router = Router();
 
@@ -710,6 +711,32 @@ router.post("/posts", async (req, res) => {
   }
 
   res.status(201).json({ ...(data as any), postcard });
+
+  // Fire-and-forget: resolve the post's tagged location to a canonical venue-level
+  // place record. Fail-soft — a resolution failure must never affect the post.
+  if (locationName && locationLat != null && locationLng != null) {
+    const placeSc = getServiceClient();
+    if (placeSc) {
+      void resolvePostPlace(placeSc, {
+        postId: (data as any).id,
+        locationName,
+        latitude: locationLat,
+        longitude: locationLng,
+        city: locationCity ?? null,
+        countryCode: locationCountry ?? null,
+      }).then(async (result) => {
+        if (result?.placeId) {
+          await placeSc
+            .from("posts")
+            .update({ canonical_place_id: result.placeId })
+            .eq("id", (data as any).id)
+            .is("canonical_place_id", null); // guard against race
+        }
+      }).catch((err) => {
+        postsLogger.warn({ err, postId: (data as any).id }, "canonical place resolve failed (non-fatal)");
+      });
+    }
+  }
 
   // Feed Pulse post creation into Trust Engine (fire-and-forget; flag-gated internally)
   void recordTrustEvent(client, {
@@ -2842,6 +2869,80 @@ router.post("/posts/:postId/comments/:commentId/replies", async (req, res) => {
         : { id: user.id, handle: "traveler", name: "Traveler", avatarUrl: null },
     },
   });
+});
+
+/* ===========================================================================
+ * POST /posts/:id/wrong-place  — report a bad canonical place attachment
+ * ===========================================================================
+ * Any authenticated user (except the post author) can report that the
+ * canonical place attached to a post is incorrect.  One pending report per
+ * (post, reporter) is enforced by the unique index in the migration.
+ */
+router.post("/posts/:id/wrong-place", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const postId = req.params["id"];
+  if (!postId) {
+    sendError(res, "invalid_payload", "Post ID is required");
+    return;
+  }
+
+  const reasonSchema = z.object({
+    reason: z.string().max(500).optional(),
+  });
+  const parsed = reasonSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+  const { reason } = parsed.data;
+
+  // Verify post exists and has a canonical place set
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: post, error: postErr } = await sc
+    .from("posts")
+    .select("id, author_id, canonical_place_id")
+    .eq("id", postId)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (postErr || !post) {
+    sendError(res, "not_found", "Post not found");
+    return;
+  }
+
+  // Authors cannot report their own posts
+  if ((post as any).author_id === user.id) {
+    res.status(403).json({ error: "forbidden", message: "You cannot report your own post" });
+    return;
+  }
+
+  const { error: insertErr } = await sc
+    .from("place_mismatch_reports")
+    .insert({
+      post_id:           postId,
+      reporter_id:       user.id,
+      reported_place_id: (post as any).canonical_place_id ?? null,
+      reason:            reason ?? null,
+      status:            "pending",
+    });
+
+  if (insertErr) {
+    // Unique constraint violation → already reported
+    if (insertErr.code === "23505") {
+      res.status(409).json({ error: "already_reported", message: "You have already reported this place" });
+      return;
+    }
+    postsLogger.error({ err: insertErr, postId }, "place_mismatch_reports insert failed");
+    sendError(res, "db_error", insertErr.message);
+    return;
+  }
+
+  res.status(201).json({ ok: true });
 });
 
 export default router;

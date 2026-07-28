@@ -589,3 +589,39 @@ export async function resolveExternalPlace(
 
   return { placeId: placeId as string, created };
 }
+
+// ── Post-place thin wrapper ───────────────────────────────────────────────────
+
+export interface PostPlaceInput {
+  postId: string;
+  locationName: string;
+  latitude: number | null;
+  longitude: number | null;
+  city?: string | null;
+  countryCode?: string | null;
+}
+
+/**
+ * Thin wrapper over resolveExternalPlace for a user-created post.
+ * Uses provider='user' and providerPlaceId=postId so each post's
+ * location attempt is unique and idempotent.
+ *
+ * Fail-soft: returns null when the feature flag is off or resolution fails.
+ */
+export async function resolvePostPlace(
+  db: SupabaseClient,
+  input: PostPlaceInput,
+): Promise<{ placeId: string; created: boolean } | null> {
+  if (!input.locationName || input.latitude == null || input.longitude == null) {
+    return null;
+  }
+  return resolveExternalPlace(db, {
+    provider: "user",
+    providerPlaceId: `post:${input.postId}`,
+    name: input.locationName,
+    latitude: input.latitude,
+    longitude: input.longitude,
+    city: input.city ?? null,
+    countryCode: input.countryCode ?? null,
+  });
+}

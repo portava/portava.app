@@ -109,6 +109,9 @@ const ALLOWLIST = new Set<string>([
   // 20260804_creator_fatigue_expires.sql, pending live apply.
   // Remove once the column is present in the live DB schema.
   "viewer_creator_fatigue.expires_at",
+  // Canonical venue-level place FK on posts — migration 2045_posts_canonical_place_id.sql
+  // pending live apply. Remove once the column exists in the live posts table.
+  "posts.canonical_place_id",
   // Add-a-Gem creation flow columns — migration pending live apply.
   // Remove once the columns exist in the live hidden_gems table.
   "hidden_gems.accessibility",
@@ -150,6 +153,9 @@ const SKIP_TABLES = new Set<string>([
   // Featured by Portava — migration 0106_portava_featured.sql
   // pending live apply. Remove once the table exists in the live DB schema.
   "portava_featured",
+  // Wrong-place mismatch reports — migration 2045_posts_canonical_place_id.sql
+  // pending live apply. Remove once the table exists in the live DB schema.
+  "place_mismatch_reports",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────
