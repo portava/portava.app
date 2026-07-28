@@ -80,7 +80,7 @@ function validateUsername(u: string): { valid: boolean; reason?: string } {
 }
 
 const PROFILE_COLUMNS =
-  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language, verification_level, id_verified_at, selfie_verified_at, home_country_verified_at, safety_flags_count, host_verified_at, buddy_verified_at, passport_section_order, passport_tab_order, passport_hidden_sections, date_of_birth, is_official";
+  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language, verification_level, id_verified_at, selfie_verified_at, home_country_verified_at, safety_flags_count, host_verified_at, buddy_verified_at, passport_section_order, passport_tab_order, passport_hidden_sections, date_of_birth, is_official, featured_count";
 
 /**
  * Fallback column list for older DB schemas that may not have the full set of columns
@@ -156,6 +156,7 @@ function mapProfile(r: any) {
     hostVerifiedAt: r.host_verified_at ?? null,
     buddyVerifiedAt: r.buddy_verified_at ?? null,
     isOfficial: r.is_official ?? false,
+    featuredCount: (r.featured_count as number) ?? 0,
   };
 }
 

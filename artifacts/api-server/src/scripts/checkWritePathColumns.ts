@@ -87,6 +87,9 @@ const ALLOWLIST = new Set<string>([
   "events.show_header_publicly",
   "trips.show_header_publicly",
   "profiles.show_profile_picture_publicly", // column pending live DB migration — allowlisted until applied
+  // Featured by Portava — migration 0106_portava_featured.sql
+  // pending live apply. Remove once the column exists in the live DB schema.
+  "profiles.featured_count",
   // Place-image accuracy/provenance columns — Task 1 migration (20260809_place_image_accuracy.sql)
   // pending live apply. Remove once the columns are present in the live DB schema.
   "generated_visuals.accuracy_status",
@@ -144,6 +147,9 @@ const SKIP_TABLES = new Set<string>([
   // Worth-It / Skip-It votes for places and gems — migration 20260808_place_votes.sql
   // pending live apply. Remove once the table exists in the live DB schema.
   "place_votes",
+  // Featured by Portava — migration 0106_portava_featured.sql
+  // pending live apply. Remove once the table exists in the live DB schema.
+  "portava_featured",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────
@@ -209,6 +215,9 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   // PENDING_SELECT and HISTORY_SELECT are const string variables — the script cannot
   // follow variable references. All columns are verified against the generated_visuals
   // migration (0194_generated_visuals.sql).
+  // adminFeatured: two multi-line string-concatenation selects (posts shortlist
+  // query + portava_featured join). Columns verified against live schema / migration.
+  ["src/routes/adminFeatured.ts|select|select list not statically resolvable", 2],
   ["src/routes/adminVisuals.ts|select|select list not statically resolvable", 2],
   ["src/routes/stampCatalog.ts|select|select list not statically resolvable", 4],
   ["src/routes/stampShowcase.ts|insert|payload not statically resolvable", 1],

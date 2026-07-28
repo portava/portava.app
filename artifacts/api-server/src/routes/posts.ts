@@ -1436,7 +1436,7 @@ router.get("/posts/:postId", async (req, res) => {
     return;
   }
 
-  const [{ data: likedRow }, { data: savedRow }, { data: rawMedia }] = await Promise.all([
+  const [{ data: likedRow }, { data: savedRow }, { data: rawMedia }, { data: featuredRow }] = await Promise.all([
     sc.from("posts_likes").select("post_id").eq("post_id", postId).eq("user_id", user.id).maybeSingle(),
     sc.from("post_saves").select("post_id").eq("post_id", postId).eq("user_id", user.id).maybeSingle(),
     sc.from("post_media")
@@ -1444,6 +1444,13 @@ router.get("/posts/:postId", async (req, res) => {
       .eq("post_id", postId)
       .eq("processing_status", "ready")
       .order("sort_order", { ascending: true }),
+    sc.from("portava_featured")
+      .select("category, featured_at")
+      .eq("post_id", postId)
+      .eq("status", "live")
+      .order("featured_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
   ]);
 
   // Filter out moderated items; preserve backward-compat mediaUrls field on the base object
@@ -1463,6 +1470,9 @@ router.get("/posts/:postId", async (req, res) => {
     }));
 
   const base = isAuthor ? post : mapPublicPost(post);
+  const featuredByPortava = featuredRow
+    ? { category: (featuredRow as any).category, featuredAt: (featuredRow as any).featured_at }
+    : null;
   res.status(200).json({
     ...base,
     likeCount: post.like_count ?? 0,
@@ -1474,6 +1484,7 @@ router.get("/posts/:postId", async (req, res) => {
     canLike: true,
     canComment: true,
     canShare: true,
+    featuredByPortava,
   });
 });
 

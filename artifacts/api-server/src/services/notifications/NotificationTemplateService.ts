@@ -1109,6 +1109,39 @@ export const TEMPLATES: NotificationTemplate[] = [
     body: () => 'Your proposed booking change was not accepted.',
     actionUrl: ({ bookingId }) => `/rent-a-buddy/bookings/${bookingId}`,
   }),
+
+  // ── Featured by Portava ─────────────────────────────────────────────────────
+  tpl({
+    eventType: 'featured.permission_request',
+    category: 'admin',
+    defaultPriority: 'important',
+    defaultChannels: ['in_app', 'push'],
+    title: () => '🌟 Your post was selected as Featured by Portava!',
+    body: ({ categoryLabel }) => categoryLabel
+      ? `Your post has been selected for "${categoryLabel}". Tap to grant permission to go live.`
+      : 'Your post has been selected to be featured. Tap to grant permission.',
+    actionUrl: ({ postId }) => postId ? `/post/${postId}?featured_permission=1` : '/',
+  }),
+  tpl({
+    eventType: 'featured.permission_accepted',
+    category: 'admin',
+    defaultPriority: 'normal',
+    defaultChannels: ['in_app', 'push'],
+    title: () => '🎉 Your featured post is now live!',
+    body: ({ categoryLabel }) => categoryLabel
+      ? `Your post is now live as "${categoryLabel}" on the Featured by Portava hub.`
+      : 'Your featured post is now live on the Featured by Portava hub.',
+    actionUrl: ({ postId }) => postId ? `/post/${postId}` : '/featured',
+  }),
+  tpl({
+    eventType: 'featured.permission_declined',
+    category: 'admin',
+    defaultPriority: 'low',
+    defaultChannels: ['in_app'],
+    title: () => 'Featured selection declined',
+    body: () => 'You declined to feature this post. No worries — your content is still great!',
+    actionUrl: ({ postId }) => postId ? `/post/${postId}` : '/',
+  }),
 ];
 
 const TEMPLATE_MAP = new Map<string, NotificationTemplate>(
