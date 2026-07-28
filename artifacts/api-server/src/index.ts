@@ -1,3 +1,7 @@
+// Sentry must be the very first import so it can instrument the process before
+// any other module loads.  The module is a no-op when SENTRY_DSN is not set.
+import "./lib/sentry.js";
+
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startDailyBriefCleanup, queryCleanupHealth } from "./lib/dailyBriefCleanup";

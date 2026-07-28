@@ -4,6 +4,7 @@ import helmet from "helmet";
 import pinoHttp from "pino-http";
 import path from "path";
 import { fileURLToPath } from "url";
+import * as Sentry from "@sentry/node";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { specAliasRewrite } from "./lib/specAliasRewrite";
@@ -150,6 +151,13 @@ app.use("/api/static", express.static(path.join(__dirname, "../static"), {
 }));
 
 app.use("/api", router);
+
+// ── Sentry error handler ──────────────────────────────────────────────────────
+// Must be registered AFTER all routes but BEFORE the custom global error handler
+// so that Sentry captures the error context (request, user, transaction) before
+// the error is consumed and a response is sent.
+// setupExpressErrorHandler is a no-op when Sentry was not initialized (no DSN).
+Sentry.setupExpressErrorHandler(app);
 
 // ── Global error handler ─────────────────────────────────────────────────────
 // Must be the LAST middleware registered (4-argument signature is required by
