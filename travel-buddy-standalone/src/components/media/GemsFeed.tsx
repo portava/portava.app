@@ -223,7 +223,7 @@ export function GemsFeed({
         />
       </View>
     );
-  }, [screenWidth, screenHeight, onViewPlace, onAddToTrip, onDirections, onViewCreator, handleLike, handleSave, handleComment, handleShare, handleMore]);
+  }, [screenWidth, screenHeight, onViewPlace, onAddToTrip, onDirections, onViewCreator, handleLike, handleSave, handleShare, handleMore]);
 
   const keyExtractor = useCallback((item: GemsFeedItem) => item.id, []);
 
@@ -338,7 +338,7 @@ export function GemsFeed({
       {/* ── Why This? sheet ──────────────────────────────────────────────── */}
       <WhyThisSheet
         visible={whyThisItemId !== null}
-        explanation={null}
+        explanation={(whyThisItem as any)?.compassExplanation ?? null}
         onClose={() => setWhyThisItemId(null)}
       />
     </View>
