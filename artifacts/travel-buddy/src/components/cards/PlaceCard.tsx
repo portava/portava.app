@@ -1,11 +1,15 @@
 /**
  * PlaceCard — shared card for place discovery surfaces.
  * Header image, name, place type, address/area, open status, primary action.
+ *
+ * Image priority: imageUrl → category fallback asset (restaurant, cafe,
+ * hotel, beach, landmark, shopping, …). The card is NEVER a blank grey rectangle.
  */
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { MapPin, Clock } from 'lucide-react-native';
 import { CachedImage } from '../CachedImage.tsx';
+import { useEntityHeaderImage } from '../../hooks/useEntityHeaderImage.ts';
 import { color, space, radius, shadow, typography, layout } from '../../theme/tokens.ts';
 
 export interface PlaceCardProps {
@@ -30,6 +34,14 @@ export function PlaceCard({
   const [imgFailed, setImgFailed] = useState(false);
   const subtitle = address ?? area ?? null;
 
+  // Resolves: imageUrl → category fallback (restaurant, cafe, hotel, …)
+  // → generic-place. Never returns null.
+  const resolvedImageUrl = useEntityHeaderImage({
+    url: imageUrl,
+    entityType: 'place',
+    category,
+  });
+
   return (
     <Pressable
       style={({ pressed }) => [styles.card, pressed && { opacity: layout.pressedOpacity }]}
@@ -37,10 +49,10 @@ export function PlaceCard({
       accessibilityRole="button"
       accessibilityLabel={`${name}, ${category}${subtitle ? `, ${subtitle}` : ''}`}
     >
-      {/* Cover image */}
-      {imageUrl && !imgFailed ? (
+      {/* Cover image — always shown; falls through to bundled fallback asset */}
+      {resolvedImageUrl && !imgFailed ? (
         <CachedImage
-          source={{ uri: imageUrl }}
+          source={{ uri: resolvedImageUrl }}
           style={styles.image}
           resizeMode="cover"
           onError={() => setImgFailed(true)}

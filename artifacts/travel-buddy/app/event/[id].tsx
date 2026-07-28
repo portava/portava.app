@@ -64,6 +64,8 @@ import { FOCUS_REFETCH_TTL_MS } from '../../src/hooks/usePosts';
 import { PrivateEventCard, type PrivateEventPreview } from '../../src/components/privacy/PrivateEventCard';
 import { useVisualStatusChannel } from '../../src/hooks/useVisualStatusChannel.ts';
 import { AiRepresentationLabel } from '../../src/components/visuals/AiRepresentationLabel.tsx';
+import { resolveHeaderImage } from '../../src/lib/visuals/resolveHeaderImage';
+import { fallbackUriFor } from '../../src/lib/visuals/fallbackAssets';
 
 const STATE_BADGE: Record<string, { label: string; bg: string; fg: string }> = {
   draft:     { label: 'Draft',          bg: color.haze, fg: color.mute },
@@ -579,9 +581,24 @@ export default function EventDetailScreen() {
               {event.coverUrl ? (
                 <Image source={{ uri: event.coverUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
               ) : (
-                <View style={[StyleSheet.absoluteFill, styles.coverPlaceholder]}>
-                  <CalendarClock size={48} color={color.faint} />
-                </View>
+                (() => {
+                  // Category-keyed fallback so the hero is never blank grey.
+                  const resolved = resolveHeaderImage([], {
+                    entityType: 'event',
+                    category: event.category ?? undefined,
+                    fallbackUrlFor: fallbackUriFor,
+                  });
+                  return resolved?.url ? (
+                    <>
+                      <Image source={{ uri: resolved.url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                      <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(17,17,15,0.3)' }]} />
+                    </>
+                  ) : (
+                    <View style={[StyleSheet.absoluteFill, styles.coverPlaceholder]}>
+                      <CalendarClock size={48} color={color.faint} />
+                    </View>
+                  );
+                })()
               )}
               {/* AI cover crossfade layer — fades in when generated_visuals row transitions to ready */}
               {localAiCoverUrl && (

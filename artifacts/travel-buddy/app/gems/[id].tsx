@@ -5,12 +5,15 @@
  * Shows full gem info, GPS check-in, save/unsave, share to Telegraph,
  * add to trip plan, and report.
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { RouteBuilderSheet } from '../../src/components/RouteBuilderSheet';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, Alert, Modal, TextInput, FlatList, Image,
 } from 'react-native';
+import { CachedImage } from '../../src/components/CachedImage';
+import { resolveHeaderImage } from '../../src/lib/visuals/resolveHeaderImage';
+import { fallbackUriFor } from '../../src/lib/visuals/fallbackAssets';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -315,10 +318,19 @@ export default function GemDetailScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Cover photo */}
-        {gem.imageUrl ? (
-          <Image source={{ uri: gem.imageUrl }} style={styles.coverImage} resizeMode="cover" />
-        ) : null}
+        {/* Cover photo — always shown; falls through to category fallback asset */}
+        {(() => {
+          const resolved = resolveHeaderImage(
+            gem.imageUrl ? [{ url: gem.imageUrl, source: 'provider' }] : [],
+            { entityType: 'hidden_gem', category: gem.category ?? undefined, fallbackUrlFor: fallbackUriFor },
+          );
+          if (!resolved?.url) return null;
+          return gem.imageUrl ? (
+            <Image source={{ uri: resolved.url }} style={styles.coverImage} resizeMode="cover" />
+          ) : (
+            <CachedImage source={{ uri: resolved.url }} style={styles.coverImage} resizeMode="cover" />
+          );
+        })()}
 
         {/* Name + meta */}
         <View style={styles.section}>

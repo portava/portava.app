@@ -1,5 +1,6 @@
 import React, { useState, useEffect, Component, type ErrorInfo, type ReactNode } from 'react';
 import { View, Text, Image, Pressable, ScrollView, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import { fallbackUriFor } from '../lib/visuals/fallbackAssets.ts';
 import { SharedVideoPlayer } from './ui/SharedVideoPlayer.tsx';
 import { router } from 'expo-router';
 import Svg, { Path } from 'react-native-svg';
@@ -60,7 +61,15 @@ export function TripHero({ trip }: { trip: TripDetail }) {
           <Image source={{ uri: trip.coverUrl }} style={hero.imageBg} resizeMode="cover" />
         ) : (
           <View style={hero.imageBg}>
-            <View style={hero.stampMark}><Plane size={16} color={color.onInk} /><Text style={hero.stampText}>CEBU</Text></View>
+            {/* Category fallback image — landmark gives an attractive travel backdrop */}
+            {(() => {
+              const fb = fallbackUriFor('landmark');
+              return fb ? (
+                <Image source={{ uri: fb }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+              ) : null;
+            })()}
+            <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(17,17,15,0.35)' }]} />
+            <View style={hero.stampMark}><Plane size={16} color={color.onInk} /><Text style={hero.stampText}>{(trip.destinationCity ?? 'Trip').toUpperCase()}</Text></View>
           </View>
         )}
         <View style={hero.identity}>

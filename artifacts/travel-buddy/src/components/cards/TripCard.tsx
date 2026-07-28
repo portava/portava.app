@@ -1,11 +1,15 @@
 /**
  * TripCard — shared card for the trips list.
  * Cover image, title, date range, crew count, status badge.
+ *
+ * Image priority: coverUrl (user/provider) → landmark category fallback asset.
+ * The card is NEVER a blank grey rectangle.
  */
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { MapPin, CalendarDays, Users } from 'lucide-react-native';
 import { CachedImage } from '../CachedImage.tsx';
+import { useEntityHeaderImage } from '../../hooks/useEntityHeaderImage.ts';
 import { color, space, radius, shadow, typography, layout } from '../../theme/tokens.ts';
 
 export interface TripCardProps {
@@ -49,6 +53,15 @@ export function TripCard({
     ? endDate ? `${startDate} – ${endDate}` : startDate
     : 'Dates TBD';
 
+  // Resolves: coverUrl → landmark category fallback (bundled asset).
+  // Never returns null — the category fallback ensures an image is always shown.
+  const resolvedImageUrl = useEntityHeaderImage({
+    url: coverUrl,
+    entityType: 'trip',
+    // Trips have no semantic category — 'landmark' gives an attractive travel image.
+    category: 'landmark',
+  });
+
   return (
     <Pressable
       style={({ pressed }) => [styles.card, pressed && { opacity: layout.pressedOpacity }]}
@@ -56,10 +69,10 @@ export function TripCard({
       accessibilityRole="button"
       accessibilityLabel={`${title}, ${destination}`}
     >
-      {/* Cover image */}
-      {coverUrl && !imgFailed ? (
+      {/* Cover image — always shown; falls through to bundled fallback asset */}
+      {resolvedImageUrl && !imgFailed ? (
         <CachedImage
-          source={{ uri: coverUrl }}
+          source={{ uri: resolvedImageUrl }}
           style={styles.cover}
           resizeMode="cover"
           onError={() => setImgFailed(true)}

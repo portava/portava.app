@@ -1,11 +1,16 @@
 /**
  * EventCard — shared card for event discovery surfaces.
  * Cover image, title, date, location, RSVP count, primary CTA.
+ *
+ * Image priority: coverUrl → event-category fallback asset (concert, meetup,
+ * festival, food-event, sports-event, generic-event, …).
+ * The card is NEVER a blank grey rectangle.
  */
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { CalendarClock, MapPin, Users } from 'lucide-react-native';
 import { CachedImage } from '../CachedImage.tsx';
+import { useEntityHeaderImage } from '../../hooks/useEntityHeaderImage.ts';
 import { color, space, radius, shadow, typography, layout } from '../../theme/tokens.ts';
 
 export interface EventCardProps {
@@ -52,6 +57,14 @@ export function EventCard({
   const isOpen = state === 'open' || state === 'started';
   const location = locationName ?? city ?? null;
 
+  // Resolves: coverUrl → event-category fallback (concert, meetup, festival, …)
+  // → generic-event. Never returns null.
+  const resolvedImageUrl = useEntityHeaderImage({
+    url: coverUrl,
+    entityType: 'event',
+    category: category ?? undefined,
+  });
+
   return (
     <Pressable
       style={({ pressed }) => [styles.card, pressed && { opacity: layout.pressedOpacity }]}
@@ -62,10 +75,10 @@ export function EventCard({
       {/* Left accent stripe */}
       <View style={[styles.stripe, { backgroundColor: stateColor }]} />
 
-      {/* Cover thumbnail */}
-      {coverUrl && !imgFailed ? (
+      {/* Cover thumbnail — always shown; falls through to bundled fallback asset */}
+      {resolvedImageUrl && !imgFailed ? (
         <CachedImage
-          source={{ uri: coverUrl }}
+          source={{ uri: resolvedImageUrl }}
           style={styles.thumb}
           resizeMode="cover"
           onError={() => setImgFailed(true)}

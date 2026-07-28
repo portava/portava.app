@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, Image, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
+import { CachedImage } from './CachedImage.tsx';
+import { useEntityHeaderImage } from '../hooks/useEntityHeaderImage.ts';
 import { router } from 'expo-router';
 import {
   Compass, Search, SlidersHorizontal, Bookmark, MapPin, Plus, Sparkles, Info, ChevronRight,
@@ -320,7 +322,15 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
   const [saving, setSaving] = useState(false);
   const [reported, setReported] = useState(false);
   const [displayCount, setDisplayCount] = useState(gem.savedCount ?? 0);
+  const [imgFailed, setImgFailed] = useState(false);
   const liveOpenNow = useLiveOpenNow(gem.name, gem.city ?? gem.neighborhood);
+
+  // Resolves: gem.imageUrl → category fallback asset. Never null.
+  const resolvedImageUrl = useEntityHeaderImage({
+    url: gem.imageUrl,
+    entityType: 'hidden_gem',
+    category: gem.category ?? undefined,
+  });
   // Re-sync when prefillSavedPlaceIds() fires after this card has already mounted.
   useEffect(() => subscribeToSavedIds(() => {
     if (!saved) setSaved(savedPlaceIds.has(gem.id));
@@ -337,11 +347,12 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
     <>
       <View style={g.card}>
         <View style={g.media}>
-          {gem.imageUrl ? (
-            <Image
-              source={{ uri: gem.imageUrl }}
+          {resolvedImageUrl && !imgFailed ? (
+            <CachedImage
+              source={{ uri: resolvedImageUrl }}
               style={StyleSheet.absoluteFillObject}
               resizeMode="cover"
+              onError={() => setImgFailed(true)}
             />
           ) : null}
           <View style={g.gemBadge}><Gem size={14} color={color.onInk} /></View>
