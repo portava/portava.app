@@ -501,6 +501,77 @@ describe("wrong-place: different branch of the same chain rejected when canonica
   });
 });
 
+// ── isSamePlace: zero-token fallback ─────────────────────────────────────────
+
+describe("isSamePlace — zero-token landmark name fallback", () => {
+  // "Boracay Beach" → normalizeLandmarkName → [] (both tokens are descriptors/qualifiers)
+  const boracayBeachA: PlaceLike = {
+    name: "Boracáy Beach",
+    latitude: 11.9674,
+    longitude: 121.9248,
+    primary_category: "beach",
+  };
+  const boracayBeachB: PlaceLike = {
+    name: "Boracay Beach",   // no diacritic — same place, slightly different spelling
+    latitude: 11.9675,       // within 300 m
+    longitude: 121.9249,
+    primary_category: "beach",
+  };
+  const differentBeach: PlaceLike = {
+    name: "White Beach",     // normalizes to ['white'] — non-empty
+    latitude: 11.9676,
+    longitude: 121.9250,
+    primary_category: "beach",
+  };
+  const farBeach: PlaceLike = {
+    name: "Boracay Beach",
+    latitude: 11.9800,       // > 300 m away
+    longitude: 121.9400,
+    primary_category: "beach",
+  };
+
+  it("merges two nearby zero-token names that are identical after normalization", () => {
+    assert.equal(
+      isSamePlace(boracayBeachA, boracayBeachB),
+      true,
+      "'Boracáy Beach' and 'Boracay Beach' within 300 m must merge via zero-token fallback",
+    );
+  });
+
+  it("does NOT merge when distance exceeds 300 m even with identical zero-token names", () => {
+    assert.equal(
+      isSamePlace(boracayBeachA, farBeach),
+      false,
+      "Zero-token match must still respect the 300 m distance threshold",
+    );
+  });
+
+  it("does NOT merge when one side has tokens and the other does not", () => {
+    // boracayBeachA → [], differentBeach → ['white']: asymmetric → no merge
+    assert.equal(
+      isSamePlace(boracayBeachA, differentBeach),
+      false,
+      "Asymmetric zero-token case (one side empty, other non-empty) must not merge",
+    );
+  });
+
+  it("does NOT merge two different beaches that both reduce to zero tokens", () => {
+    // Two different all-qualifier names that happen to be near each other but aren't the same
+    const otherAllQualifierBeach: PlaceLike = {
+      name: "Palawan Beach",   // 'palawan'=qualifier, 'beach'=descriptor → []
+      latitude: 11.9675,
+      longitude: 121.9249,
+      primary_category: "beach",
+    };
+    // normalizeLocationName("Boracay Beach") !== normalizeLocationName("Palawan Beach")
+    assert.equal(
+      isSamePlace(boracayBeachA, otherAllQualifierBeach),
+      false,
+      "Two differently-named zero-token beaches at the same coords must not merge",
+    );
+  });
+});
+
 // ── normalizeLandmarkName ─────────────────────────────────────────────────────
 
 describe("normalizeLandmarkName", () => {

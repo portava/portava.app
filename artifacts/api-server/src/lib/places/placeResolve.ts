@@ -205,6 +205,16 @@ export function isSamePlace(candidate: PlaceLike, existing: PlaceLike): boolean 
     if (dist > LANDMARK_MERGE_DISTANCE_KM) return false;
     const normA = normalizeLandmarkName(candidate.name);
     const normB = normalizeLandmarkName(existing.name);
+    // Zero-token fallback: when descriptor-stripping reduces BOTH names to []
+    // (e.g. "Boracay Beach" → [] after adding "boracay" to the qualifier
+    // blocklist), fall back to normalised full-name equality so legitimately
+    // identical-name landmarks within range are still merged.
+    // If only one side is empty we cannot reliably confirm identity → no merge.
+    if (normA.length === 0 && normB.length === 0) {
+      const na = normalizeLocationName(candidate.name);
+      const nb = normalizeLocationName(existing.name);
+      return na.length > 0 && na === nb;
+    }
     if (normA.length === 0 || normB.length === 0) return false;
     const setA = new Set(normA);
     const setB = new Set(normB);
