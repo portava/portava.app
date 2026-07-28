@@ -41,6 +41,7 @@
 - [MapLibre web splits](maplibre-web-splits.md) — any route-reachable maplibre import needs a .web.tsx sibling or the whole web app crashes at startup; full typecheck includes the import-extension guard, bare tsc doesn't.
 - [Fake-client builder drift](fake-client-builder-drift.md) — new route builder calls (maybeSingle/gte/order) silently break hand-written test fakes; grep fakes when touching shared query paths.
 - Background `&`/nohup processes die when a ShellExec call ends — run server + client probes inside ONE grouped command `{ ...; }`.
+- [Sentry OpenTelemetry deps not hoisted](sentry-otel-deps.md) — @sentry/node's @opentelemetry/* transitive deps must be explicitly installed in api-server; pnpm won't hoist them.
 - [Web-renderer Jest escape hatch](webrender-jest-escape-hatch.md) — `*.webrender.test.tsx` under jest.web.config.js (jest-expo/web + react-dom) asserts visual commits the native renderer wall blocks.
 - [RNTL React 19 renderer budget](rntl-react19-renderer-budget.md) — per-file press budget, one press-commit, post-press-flush poison, prop-capture escape hatch; structure component tests around it.
 - [Compass dual-score ranking](compass-dual-score-ranking.md) — Compass Match must have zero popularity inputs, Community Score zero viewer inputs; /why reads the stored delivery-time factor snapshot, never recomputes.
