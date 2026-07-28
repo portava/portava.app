@@ -824,6 +824,21 @@ interface CatalogArtwork {
   thumb: string | null;
 }
 
+const STAMP_ARTWORK_BUCKET = "stamp-artwork";
+// Short-lived signed URLs so private-bucket artwork renders in expo-image without
+// requiring a public bucket.  1-hour expiry is fine given the mobile HTTP cache.
+const SIGNED_URL_EXPIRY_SECS = 3600;
+
+/** True for a raw Supabase storage path that must be signed before serving. */
+function isStoragePath(u: string | null | undefined): u is string {
+  return Boolean(
+    u &&
+      !u.startsWith("https://") &&
+      !u.startsWith("http://") &&
+      !u.startsWith("data:"),
+  );
+}
+
 async function buildCatalogArtworkMap(
   sc: ReturnType<typeof getServiceClient>,
   rows: any[],
@@ -836,6 +851,12 @@ async function buildCatalogArtworkMap(
   )];
   if (catalogIds.length === 0) return artworkMap;
 
+  // FIX: use the FK constraint name fk_catalog_active_version rather than the
+  // column name active_version_id — PostgREST resolves the relationship
+  // unambiguously only when the constraint name is supplied.  The column-name
+  // hint was silently returning null for every catalog row because PostgREST
+  // could not find a unique FK to stamp_artwork_versions via that hint.
+  //
   // thumbnail_url is added by migration 0177; older DBs lack the column, so on
   // a 42703 (undefined_column) we retry selecting only public_url.
   const runQuery = (withThumb: boolean) =>
@@ -843,8 +864,8 @@ async function buildCatalogArtworkMap(
       .from("universal_stamp_catalog")
       .select(
         withThumb
-          ? "id, stamp_artwork_versions!active_version_id(public_url, thumbnail_url)"
-          : "id, stamp_artwork_versions!active_version_id(public_url)",
+          ? "id, stamp_artwork_versions!fk_catalog_active_version(public_url, thumbnail_url)"
+          : "id, stamp_artwork_versions!fk_catalog_active_version(public_url)",
       )
       .in("id", catalogIds)
       .eq("status", "approved");
@@ -856,11 +877,54 @@ async function buildCatalogArtworkMap(
     }
     if (error) return artworkMap; // tables may not exist yet — degrade silently
 
+    // Collect raw paths before signing so full + thumb can be batched.
+    const rawEntries: Array<{ catalogId: string; full: string | null; thumb: string | null }> = [];
     for (const row of (data ?? []) as any[]) {
       const v = row.stamp_artwork_versions ?? null;
-      artworkMap.set(row.id, {
+      rawEntries.push({
+        catalogId: row.id,
         full: v?.public_url ?? null,
         thumb: v?.thumbnail_url ?? null,
+      });
+    }
+
+    // stamp-artwork bucket is private; generate short-lived signed URLs so the
+    // client can render artwork without exposing bucket credentials.
+    // Paths already starting with https:// (CDN or previously signed) or
+    // data: (dev PlaceholderProvider SVGs) pass through unchanged.
+    const toSign = [
+      ...new Set(
+        rawEntries
+          .flatMap((e) => [e.full, e.thumb])
+          .filter(isStoragePath),
+      ),
+    ] as string[];
+
+    const signedMap = new Map<string, string>();
+    if (toSign.length > 0) {
+      try {
+        const { data: signedUrls } = await sc.storage
+          .from(STAMP_ARTWORK_BUCKET)
+          .createSignedUrls(toSign, SIGNED_URL_EXPIRY_SECS);
+        for (const s of (signedUrls ?? []) as any[]) {
+          if (s.signedUrl && s.path) signedMap.set(s.path, s.signedUrl);
+        }
+      } catch {
+        // Signing failed (bucket not configured or network error) — storage
+        // paths are returned as-is; expo-image calls onError and falls back
+        // to the procedural placeholder icon.
+      }
+    }
+
+    const resolve = (p: string | null): string | null => {
+      if (!p) return null;
+      return signedMap.get(p) ?? p;
+    };
+
+    for (const e of rawEntries) {
+      artworkMap.set(e.catalogId, {
+        full: resolve(e.full),
+        thumb: resolve(e.thumb),
       });
     }
   } catch {

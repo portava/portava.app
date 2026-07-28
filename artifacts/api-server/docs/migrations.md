@@ -102,6 +102,18 @@ applied live as `0164_write_path_drift_columns_2.sql` (see table above).
 
 Earlier migrations (`0001`–`0154`) predate this record and are live; see the
 legacy migration reconciliation notes for the history of the legacy directory.
+## 20260728 — generated_visuals retry/lock columns
+
+| File | Status |
+|------|--------|
+| `src/migrations/2034_generated_visuals_retry_cols.sql` | applied 2026-07-28 |
+
+Adds `retry_after`, `locked_until`, and `locked_by` to `generated_visuals`.
+Required by `VisualGenerationWorker` (pessimistic lock + exponential-backoff retry).
+Without these columns the worker crashed on every poll cycle producing repeated
+WARN logs.  Applied via Supabase Management API; indexes for the queued/generating
+status filters also created.
+
 ## 20260807 — hidden_gems feed columns
 
 | File | Status |

@@ -9,6 +9,27 @@
  * worker instances can run without producing duplicates.
  *
  * Start via startWorkerLoop() from index.ts — only when STAMP_WORKER_ENABLED=true.
+ *
+ * ── Root cause fixed (2026-07-28) ───────────────────────────────────────────
+ * The worker was crashing on every poll cycle because two related fixes were
+ * applied at different layers:
+ *
+ * 1. Missing columns on `generated_visuals` (separate table used by the
+ *    VisualGenerationWorker): `locked_until`, `retry_after`, and `locked_by`
+ *    were absent until migration 2034_generated_visuals_retry_cols.sql was
+ *    applied.  The VisualGenerationWorker polls the same queue infrastructure
+ *    and its WARN logs on every cycle indicated these columns were missing —
+ *    confirmed via live information_schema query, applied via Supabase
+ *    Management API.
+ *
+ * 2. Artwork never surfaced in `GET /api/stamps/me` even after admin approval:
+ *    `buildCatalogArtworkMap` (routes/stamps.ts) used the wrong PostgREST FK
+ *    hint (`stamp_artwork_versions!active_version_id`) which PostgREST could
+ *    not resolve, returning null for every catalog row.  Fix: use the FK
+ *    constraint name `stamp_artwork_versions!fk_catalog_active_version`.
+ *    Additionally, `public_url` was a raw Supabase storage path, not an HTTPS
+ *    URL; the hydrator now generates short-lived signed URLs so expo-image can
+ *    render the artwork without making the stamp-artwork bucket public.
  */
 
 import { randomUUID } from "crypto";
