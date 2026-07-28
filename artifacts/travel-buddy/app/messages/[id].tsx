@@ -652,6 +652,7 @@ function MessageBubble({
   isGroupThread,
   onLongPress,
   receiptState,
+  readerAvatars,
   dismissedAiMsgIds,
   onDismissAiCard,
   deliveryStatus,
@@ -670,6 +671,8 @@ function MessageBubble({
   isGroupThread: boolean;
   onLongPress?: () => void;
   receiptState?: 'sent' | 'delivered' | 'read' | null;
+  /** Up to 3 avatar URIs of group members who've read past this message. */
+  readerAvatars?: string[];
   dismissedAiMsgIds?: Set<string>;
   onDismissAiCard?: (msgId: string) => void;
   deliveryStatus?: 'sending' | 'sent' | 'failed' | null;
@@ -936,7 +939,7 @@ function MessageBubble({
         </Pressable>
       )}
 
-      {/* Read receipt — shown on the last confirmed own message only */}
+      {/* Read receipt — shown on every confirmed own message */}
       {mine && receiptState && deliveryStatus !== 'sending' && deliveryStatus !== 'failed' && (
         <View style={styles.receiptRow}>
           {receiptState === 'read' ? (
@@ -955,6 +958,15 @@ function MessageBubble({
               <Text style={styles.receiptSent}>Sent</Text>
             </>
           )}
+        </View>
+      )}
+
+      {/* Group reader avatar chips — up to 3 members who've read past this message */}
+      {mine && readerAvatars && readerAvatars.length > 0 && deliveryStatus !== 'sending' && deliveryStatus !== 'failed' && (
+        <View style={styles.readerAvatarRow}>
+          {readerAvatars.map((uri, i) => (
+            <Image key={i} source={{ uri }} style={styles.readerAvatar} />
+          ))}
         </View>
       )}
     </View>
@@ -1406,27 +1418,60 @@ export default function TelegraphThread() {
     }).start();
   }, [hasInput, sendAnim]);
 
-  // ID of the last message sent by the current user (for read receipts)
-  const lastOwnMsgId = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].senderId === userId) return messages[i].id;
-    }
-    return null;
-  }, [messages, userId]);
-
-  // Compute receipt state for the last own message: 'sent' | 'delivered' | 'read'
-  const receiptState = useMemo((): 'sent' | 'delivered' | 'read' | null => {
-    if (!lastOwnMsgId) return null;
-    const lastMsg = messages.find(m => m.id === lastOwnMsgId);
-    if (!lastMsg) return null;
-    // DM: check if the other party has read past this message
+  // Per-message receipt state.
+  // DM: cross-checks the other party's last_read_at — 'read' > 'delivered' > 'sent'.
+  // Group: always 'delivered' for confirmed messages; readerAvatarsForMsg shows WHO read.
+  const receiptForMsg = useCallback((msg: Message): 'sent' | 'delivered' | 'read' | null => {
     if (isDirect && dmOtherLastRead) {
-      if (new Date(dmOtherLastRead) >= new Date(lastMsg.createdAt)) return 'read';
+      return new Date(dmOtherLastRead) >= new Date(msg.createdAt) ? 'read' : 'delivered';
     }
-    // Delivered heuristic: message is older than 3 seconds (broadcast confirmed)
-    const ageSecs = (Date.now() - new Date(lastMsg.createdAt).getTime()) / 1000;
+    const ageSecs = (Date.now() - new Date(msg.createdAt).getTime()) / 1000;
     return ageSecs > 3 ? 'delivered' : 'sent';
-  }, [lastOwnMsgId, messages, threadType, dmOtherLastRead]);
+  }, [isDirect, dmOtherLastRead]);
+
+  // Group-thread member reads — fetched once per thread to drive reader avatar chips.
+  const [groupMemberReads, setGroupMemberReads] = useState<
+    { userId: string; lastReadAt: string | null; avatarUrl: string | null }[]
+  >([]);
+
+  useEffect(() => {
+    if (isDirect || !id) { setGroupMemberReads([]); return; }
+    let active = true;
+    (async () => {
+      const { data: members } = await supabase
+        .from('message_thread_members')
+        .select('user_id, last_read_at')
+        .eq('thread_id', id)
+        .is('left_at', null)
+        .neq('user_id', userId ?? '');
+      if (!active || !members || members.length === 0) return;
+      const ids = (members as any[]).map((m) => m.user_id as string);
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('id, avatar_url')
+        .in('id', ids);
+      if (!active) return;
+      const avatarMap = new Map(((profs ?? []) as any[]).map((p) => [p.id as string, p.avatar_url as string | null]));
+      setGroupMemberReads(
+        (members as any[]).map((m) => ({
+          userId: m.user_id as string,
+          lastReadAt: (m.last_read_at as string | null) ?? null,
+          avatarUrl: avatarMap.get(m.user_id as string) ?? null,
+        })),
+      );
+    })();
+    return () => { active = false; };
+  }, [id, isDirect, userId]);
+
+  // Derive up to 3 reader avatar URIs for a given message (group threads only).
+  const readerAvatarsForMsg = useCallback((msg: Message): string[] => {
+    if (isDirect || !msg.createdAt) return [];
+    return groupMemberReads
+      .filter((m) => m.lastReadAt !== null && new Date(m.lastReadAt) >= new Date(msg.createdAt))
+      .slice(0, 3)
+      .map((m) => m.avatarUrl)
+      .filter((u): u is string => !!u);
+  }, [isDirect, groupMemberReads]);
 
   // Handle delete for me from the action sheet
   const handleDeleteForMe = useCallback(async (msgId: string) => {
@@ -1876,7 +1921,8 @@ export default function TelegraphThread() {
                   setActionMsg(m);
                   setActionMsgMine(mine);
                 }}
-                receiptState={m.id === lastOwnMsgId ? receiptState : null}
+                receiptState={mine ? receiptForMsg(m) : null}
+                readerAvatars={mine ? readerAvatarsForMsg(m) : undefined}
                 dismissedAiMsgIds={dismissedAiMsgIds}
                 onDismissAiCard={(msgId) => setDismissedAiMsgIds((prev) => new Set([...prev, msgId]))}
                 deliveryStatus={mine ? (m.deliveryStatus ?? null) : null}
@@ -2492,6 +2538,8 @@ const styles = StyleSheet.create({
 
   // Read receipt
   receiptRow: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
+  readerAvatarRow: { flexDirection: 'row', alignItems: 'center', gap: 2, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
+  readerAvatar: { width: 14, height: 14, borderRadius: 7, backgroundColor: color.haze },
   receiptSent: { fontSize: 10, color: color.signal, fontFamily: 'Courier' },
   receiptFailRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   receiptFail: { fontSize: 10, color: '#EF4444', fontFamily: 'Courier' },

@@ -302,6 +302,75 @@ router.get("/me/profile/analytics", async (req, res) => {
 });
 
 /* ---------------------------------------------------------------------------
+ * GET /me/profile/viewers — paginated list of users who viewed the caller's
+ * profile in the last 7 days. Privacy-filtered: viewers with
+ * allow_profile_discovery = false are omitted.
+ * ---------------------------------------------------------------------------
+ */
+router.get("/me/profile/viewers", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const limit = Math.min(Number((req.query as any).limit ?? 50), 100);
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1_000).toISOString();
+
+  // Fetch recent profile views, most-recent first, excluding self-views.
+  const { data: viewRows, error: viewErr } = await sc
+    .from("profile_views")
+    .select("viewer_id, viewed_at")
+    .eq("target_id", user.id)
+    .neq("viewer_id", user.id)
+    .gte("viewed_at", since)
+    .order("viewed_at", { ascending: false })
+    .limit(limit * 3); // over-fetch: dedupe + privacy filter will reduce count
+  if (viewErr) { sendError(res, "db_error", viewErr.message); return; }
+  if (!viewRows || viewRows.length === 0) { res.json({ viewers: [] }); return; }
+
+  // Deduplicate by viewer_id — keep only the most recent view per user.
+  const seen = new Set<string>();
+  const unique: any[] = [];
+  for (const r of viewRows as any[]) {
+    if (!seen.has(r.viewer_id as string)) {
+      seen.add(r.viewer_id as string);
+      unique.push(r);
+      if (unique.length >= limit * 2) break;
+    }
+  }
+
+  const viewerIds = unique.map((r) => r.viewer_id as string);
+
+  const [profilesRes, privacyRes] = await Promise.all([
+    sc.from("profiles").select("id, username, full_name, avatar_url, is_official").in("id", viewerIds),
+    sc.from("profile_privacy_settings").select("user_id, allow_profile_discovery").in("user_id", viewerIds),
+  ]);
+
+  const profileMap = new Map(((profilesRes.data ?? []) as any[]).map((p) => [p.id as string, p]));
+  const privacyMap = new Map(((privacyRes.data ?? []) as any[]).map((p) => [p.user_id as string, p.allow_profile_discovery as boolean]));
+
+  const viewers = unique
+    .filter((r) => privacyMap.get(r.viewer_id as string) !== false)
+    .slice(0, limit)
+    .map((r) => {
+      const p = profileMap.get(r.viewer_id as string);
+      return {
+        userId: r.viewer_id,
+        handle: (p as any)?.username ?? null,
+        name: (p as any)?.full_name ?? null,
+        avatarUrl: (p as any)?.avatar_url ?? null,
+        isOfficial: (p as any)?.is_official ?? false,
+        viewedAt: r.viewed_at,
+      };
+    })
+    .filter((v) => v.handle !== null);
+
+  res.json({ viewers });
+});
+
+/* ---------------------------------------------------------------------------
  * GET /me/profile — full own profile (with completeness score)
  * ---------------------------------------------------------------------------
  */

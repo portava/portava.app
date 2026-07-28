@@ -30,6 +30,7 @@ const mockGetUserStampsByUsername = jest.fn();
 jest.mock('../../services/passportStamps', () => ({
   getMyPassportStamps: (...args: unknown[]) => mockGetMyPassportStamps(...args),
   getUserStampsByUsername: (...args: unknown[]) => mockGetUserStampsByUsername(...args),
+  getPassportStats: jest.fn().mockResolvedValue({ ok: true, data: { stampsEarned: 0, milestones: [] } }),
 }));
 
 // NOTE: intentionally exhaustive — services/stamps imports Supabase;

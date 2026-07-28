@@ -8,6 +8,15 @@
  * Fail-closed: if the profile fetch fails for any reason, the user is shown a
  * blocking retry screen — protected app content is never rendered until
  * eligibility is confirmed.
+ *
+ * Persistence: once a userId passes the gate, the result is written to
+ * AsyncStorage so subsequent reloads/rebuilds skip the network round-trip and
+ * never re-show the DOB screen for that user.
+ *
+ * DEV/preview bypass: in development builds (__DEV__ === true) the gate is
+ * auto-satisfied for the currently signed-in account so the preview app opens
+ * without asking for DOB each time. __DEV__ is stripped to `false` by Metro in
+ * every production build — this bypass is never present in production.
  */
 import React, { useEffect, useState, useRef, type PropsWithChildren } from 'react';
 import {
@@ -19,6 +28,7 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { color, space, type as typeTokens } from '../theme/tokens.ts';
 import { useSession } from '../context/SessionContext.tsx';
@@ -37,6 +47,17 @@ function computeAge(dob: string | null | undefined): number | null {
   return age;
 }
 
+/** AsyncStorage key that persists a verified userId across reloads. */
+const ageVerifiedKey = (uid: string) => `@travel_buddy/age_verified:${uid}`;
+
+/**
+ * In development builds only: auto-satisfy the gate so the preview opens
+ * directly. Metro replaces __DEV__ with `false` in every production bundle,
+ * so this constant — and any branch guarded by it — is dead-code-eliminated
+ * before shipping.
+ */
+const DEV_BYPASS_GATE: boolean = __DEV__;
+
 type GateState = 'loading' | 'clear' | 'blocked' | 'error';
 
 export function AgeGate({ children }: PropsWithChildren) {
@@ -45,13 +66,13 @@ export function AgeGate({ children }: PropsWithChildren) {
   // Track the latest check so stale responses from a prior auth state are ignored.
   const checkSeqRef = useRef(0);
   /**
-   * Once a userId is confirmed eligible (ageGateRequired === false) — either by
-   * the initial profile fetch or by the user successfully submitting the DOB form
-   * — store it here so that subsequent effect re-runs triggered by token refreshes
-   * or other auth events don't reset the gate and ask again.
+   * Once a userId is confirmed eligible — either by the persisted AsyncStorage
+   * value, the initial profile fetch, or by the user successfully submitting
+   * the DOB form — store it here so that subsequent effect re-runs triggered
+   * by token refreshes or other auth events don't re-trigger the gate.
    *
-   * Stored per-userId so a sign-out → sign-in as a different user forces a fresh
-   * check for the new account.
+   * Stored per-userId so a sign-out → sign-in as a different user forces a
+   * fresh check for the new account.
    */
   const verifiedUserIdRef = useRef<string | null>(null);
 
@@ -63,9 +84,20 @@ export function AgeGate({ children }: PropsWithChildren) {
       return;
     }
 
-    // Already confirmed eligible for this user in this session — skip the
-    // network round-trip and stay clear without flashing a loading spinner.
+    // Already confirmed eligible for this user in this JS session — skip
+    // everything and stay clear without flashing a loading spinner.
     if (verifiedUserIdRef.current === userId) {
+      setGateState('clear');
+      return;
+    }
+
+    // ── DEV/preview bypass ────────────────────────────────────────────────
+    // Auto-satisfy the gate in development so the preview app opens without
+    // asking for DOB. Persisted to AsyncStorage so subsequent reloads in dev
+    // are instant too.  This entire block is eliminated by Metro in prod.
+    if (DEV_BYPASS_GATE) {
+      verifiedUserIdRef.current = userId;
+      AsyncStorage.setItem(ageVerifiedKey(userId), '1').catch(() => {});
       setGateState('clear');
       return;
     }
@@ -77,6 +109,23 @@ export function AgeGate({ children }: PropsWithChildren) {
     let alive = true;
 
     (async () => {
+      // ── 1. Persisted check (survives reloads and hot rebuilds) ─────────
+      // If we've previously confirmed this userId is eligible, skip the
+      // network round-trip entirely.
+      try {
+        const persisted = await AsyncStorage.getItem(ageVerifiedKey(userId));
+        if (!alive || checkSeqRef.current !== seq) return;
+        if (persisted === '1') {
+          verifiedUserIdRef.current = userId;
+          setGateState('clear');
+          return;
+        }
+      } catch {
+        // Non-fatal — AsyncStorage unavailable (e.g. first install, storage
+        // cleared). Fall through to network check.
+      }
+
+      // ── 2. Network check (first load for this userId) ──────────────────
       try {
         const res = await getMyProfile();
         if (!alive || checkSeqRef.current !== seq) return;
@@ -89,7 +138,11 @@ export function AgeGate({ children }: PropsWithChildren) {
 
         // Only explicit false clears the gate — undefined/null/true all block (fail closed).
         const eligible = (res.data as any).ageGateRequired === false;
-        if (eligible) verifiedUserIdRef.current = userId;
+        if (eligible) {
+          verifiedUserIdRef.current = userId;
+          // Persist so future reloads skip the network call.
+          AsyncStorage.setItem(ageVerifiedKey(userId), '1').catch(() => {});
+        }
         setGateState(eligible ? 'clear' : 'blocked');
       } catch {
         if (!alive || checkSeqRef.current !== seq) return;
@@ -119,7 +172,10 @@ export function AgeGate({ children }: PropsWithChildren) {
           if (checkSeqRef.current !== seq) return;
           if (!res.ok || !res.data) { setGateState('error'); return; }
           const eligible = (res.data as any).ageGateRequired === false;
-          if (eligible) verifiedUserIdRef.current = userId;
+          if (eligible) {
+            verifiedUserIdRef.current = userId;
+            AsyncStorage.setItem(ageVerifiedKey(userId!), '1').catch(() => {});
+          }
           setGateState(eligible ? 'clear' : 'blocked');
         })();
       }} />
@@ -131,8 +187,10 @@ export function AgeGate({ children }: PropsWithChildren) {
       <AgeGateScreen
         onVerified={() => {
           // Mark this user as verified so any subsequent effect re-runs caused
-          // by token refreshes or auth events don't re-block them.
+          // by token refreshes or auth events don't re-block them, and so
+          // future reloads skip the network check entirely.
           verifiedUserIdRef.current = userId;
+          AsyncStorage.setItem(ageVerifiedKey(userId!), '1').catch(() => {});
           setGateState('clear');
         }}
       />

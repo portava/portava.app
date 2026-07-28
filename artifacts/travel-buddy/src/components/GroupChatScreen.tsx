@@ -12,6 +12,7 @@ import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react'
 import {
   View,
   Text,
+  Image,
   FlatList,
   Pressable,
   StyleSheet,
@@ -23,6 +24,7 @@ import {
   TextInput,
   Animated,
 } from 'react-native';
+import { supabase } from '../lib/supabase.ts';
 import { AvatarImage } from './ui/DisplayMediaImage.tsx';
 import { MentionInput, type MentionInputHandle } from './MentionInput.tsx';
 import { MentionSuggestionList } from './MentionSuggestionList.tsx';
@@ -287,6 +289,7 @@ function GroupMessageBubble({
   mine,
   onLongPress,
   receiptState,
+  readerAvatars,
   autoTranslate,
   defaultShowOriginal,
   deliveryStatus,
@@ -296,6 +299,8 @@ function GroupMessageBubble({
   mine: boolean;
   onLongPress?: () => void;
   receiptState?: 'sent' | 'delivered' | 'read' | null;
+  /** Up to 3 avatar URIs of members who've read past this message. */
+  readerAvatars?: string[];
   autoTranslate: boolean;
   defaultShowOriginal: boolean;
   deliveryStatus?: 'sending' | 'sent' | 'failed' | null;
@@ -404,7 +409,7 @@ function GroupMessageBubble({
         </Pressable>
       )}
 
-      {/* Read receipt — shown on the last confirmed own message only */}
+      {/* Read receipt — shown on every confirmed own message */}
       {mine && receiptState && deliveryStatus !== 'sending' && deliveryStatus !== 'failed' && (
         <View style={styles.receiptRow}>
           {receiptState === 'read' ? (
@@ -423,6 +428,15 @@ function GroupMessageBubble({
               <Text style={styles.receiptSent}>Sent</Text>
             </>
           )}
+        </View>
+      )}
+
+      {/* Group reader avatar chips — up to 3 members who've read past this message */}
+      {mine && readerAvatars && readerAvatars.length > 0 && deliveryStatus !== 'sending' && deliveryStatus !== 'failed' && (
+        <View style={styles.readerAvatarRow}>
+          {readerAvatars.map((uri, i) => (
+            <Image key={i} source={{ uri }} style={styles.readerAvatar} />
+          ))}
         </View>
       )}
     </View>
@@ -537,21 +551,56 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
     return items;
   }, [messages]);
 
-  const lastOwnMsgId = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].senderId === userId) return messages[i].id;
-    }
-    return null;
-  }, [messages, userId]);
-
-  // Compute receipt state: 'sent' while fresh, 'delivered' once confirmed (>3 s)
-  const receiptState = useMemo((): 'sent' | 'delivered' | 'read' | null => {
-    if (!lastOwnMsgId) return null;
-    const lastMsg = messages.find(m => m.id === lastOwnMsgId);
-    if (!lastMsg) return null;
-    const ageSecs = (Date.now() - new Date(lastMsg.createdAt).getTime()) / 1000;
+  // Per-message receipt: 'delivered' once confirmed (>3 s), 'sent' while fresh.
+  // Reader avatar chips (readerAvatarsForMsg) surface WHO read, complementing the state label.
+  const receiptForMsg = useCallback((msg: Message): 'sent' | 'delivered' | null => {
+    const ageSecs = (Date.now() - new Date(msg.createdAt).getTime()) / 1000;
     return ageSecs > 3 ? 'delivered' : 'sent';
-  }, [lastOwnMsgId, messages]);
+  }, []);
+
+  // Group-thread member reads — fetched once per thread to drive per-message reader chips.
+  const [groupMemberReads, setGroupMemberReads] = useState<
+    { userId: string; lastReadAt: string | null; avatarUrl: string | null }[]
+  >([]);
+
+  useEffect(() => {
+    if (!thread?.id) return;
+    let active = true;
+    (async () => {
+      const { data: members } = await supabase
+        .from('message_thread_members')
+        .select('user_id, last_read_at')
+        .eq('thread_id', thread.id)
+        .is('left_at', null)
+        .neq('user_id', userId ?? '');
+      if (!active || !members || members.length === 0) return;
+      const ids = (members as any[]).map((m) => m.user_id as string);
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('id, avatar_url')
+        .in('id', ids);
+      if (!active) return;
+      const avatarMap = new Map(((profs ?? []) as any[]).map((p) => [p.id as string, p.avatar_url as string | null]));
+      setGroupMemberReads(
+        (members as any[]).map((m) => ({
+          userId: m.user_id as string,
+          lastReadAt: (m.last_read_at as string | null) ?? null,
+          avatarUrl: avatarMap.get(m.user_id as string) ?? null,
+        })),
+      );
+    })();
+    return () => { active = false; };
+  }, [thread?.id, userId]);
+
+  // Derive up to 3 reader avatar URIs for a given message.
+  const readerAvatarsForMsg = useCallback((msg: Message): string[] => {
+    if (!msg.createdAt) return [];
+    return groupMemberReads
+      .filter((m) => m.lastReadAt !== null && new Date(m.lastReadAt) >= new Date(msg.createdAt))
+      .slice(0, 3)
+      .map((m) => m.avatarUrl)
+      .filter((u): u is string => !!u);
+  }, [groupMemberReads]);
 
   const handleDeleteForMe = useCallback(async (msgId: string) => {
     await deleteMessage(msgId);
@@ -818,7 +867,8 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
                   setActionMsg(m);
                   setActionMsgMine(mine);
                 }}
-                receiptState={m.id === lastOwnMsgId ? receiptState : null}
+                receiptState={mine ? receiptForMsg(m) : null}
+                readerAvatars={mine ? readerAvatarsForMsg(m) : undefined}
                 autoTranslate={autoTranslate}
                 defaultShowOriginal={defaultShowOriginal}
                 deliveryStatus={mine ? (m.deliveryStatus ?? null) : null}
@@ -1241,6 +1291,8 @@ const styles = StyleSheet.create({
     borderColor: '#FECACA',
   },
   failedRetryText: { ...t.stamp, color: '#EF4444', fontSize: 10, fontWeight: '600' },
+  readerAvatarRow: { flexDirection: 'row', alignItems: 'center', gap: 2, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
+  readerAvatar: { width: 14, height: 14, borderRadius: 7, backgroundColor: color.haze },
 
   replyBar: {
     flexDirection: 'row',

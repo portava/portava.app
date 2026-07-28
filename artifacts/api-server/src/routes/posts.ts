@@ -2085,6 +2085,77 @@ router.delete("/posts/:postId/save", async (req, res) => {
 });
 
 /* ============================================================================
+ * GET /posts/:postId/savers — owner-only list of users who saved this post.
+ * Privacy-filtered: users with allow_profile_discovery = false are omitted.
+ * ============================================================================
+ */
+router.get("/posts/:postId/savers", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Verify caller is the post author.
+  const { data: post } = await sc
+    .from("posts")
+    .select("author_id")
+    .eq("id", postId)
+    .maybeSingle();
+  if (!post) { sendError(res, "not_found", "Post not found"); return; }
+  if ((post as any).author_id !== user.id) {
+    sendError(res, "forbidden", "Only the post author can view savers");
+    return;
+  }
+
+  const limit = Math.min(Number((req.query as any).limit ?? 50), 100);
+
+  // Fetch savers, most-recent first, excluding the author themselves.
+  const { data: saveRows, error: saveErr } = await sc
+    .from("post_saves")
+    .select("user_id, created_at")
+    .eq("post_id", postId)
+    .neq("user_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(limit * 2); // over-fetch to absorb privacy filter
+  if (saveErr) { sendError(res, "db_error", saveErr.message); return; }
+  if (!saveRows || saveRows.length === 0) { res.json({ savers: [] }); return; }
+
+  const saverIds = (saveRows as any[]).map((r) => r.user_id as string);
+
+  // Parallel: profiles + privacy settings.
+  const [profilesRes, privacyRes] = await Promise.all([
+    sc.from("profiles").select("id, username, full_name, avatar_url, is_official").in("id", saverIds),
+    sc.from("profile_privacy_settings").select("user_id, allow_profile_discovery").in("user_id", saverIds),
+  ]);
+
+  const profileMap = new Map(((profilesRes.data ?? []) as any[]).map((p) => [p.id as string, p]));
+  // No row in profile_privacy_settings means allow_profile_discovery defaults to true.
+  const privacyMap = new Map(((privacyRes.data ?? []) as any[]).map((p) => [p.user_id as string, p.allow_profile_discovery as boolean]));
+
+  const savers = (saveRows as any[])
+    .filter((r) => privacyMap.get(r.user_id as string) !== false)
+    .slice(0, limit)
+    .map((r) => {
+      const p = profileMap.get(r.user_id as string);
+      return {
+        userId: r.user_id,
+        handle: (p as any)?.username ?? null,
+        name: (p as any)?.full_name ?? null,
+        avatarUrl: (p as any)?.avatar_url ?? null,
+        isOfficial: (p as any)?.is_official ?? false,
+        savedAt: r.created_at,
+      };
+    })
+    .filter((s) => s.handle !== null);
+
+  res.json({ savers });
+});
+
+/* ============================================================================
  * POST /posts/:postId/hide  — hide a post from the caller's feeds (idempotent)
  * ============================================================================
  */

@@ -1,3 +1,5 @@
+- [radius token values](radius-token-values.md) — only sm/md/lg/pill exist; radius.xl throws TS2339. Use hardcoded 24 for sheet corner radii.
+- [Per-message receipts pattern](per-message-receipts.md) — receiptForMsg callback (not useMemo on lastOwnMsgId); groupMemberReads fetch for reader avatar chips; readerAvatars prop on both bubble types.
 - [Media feed column drift](media-feed-column-drift.md) — posts/profiles columns assumed in FEED/GRID/PROFILE constants that don't exist live; verified fix + safe-fallback pattern.
 - [FlatList test contamination](flatlist-test-contamination.md) — fireEvent on FlatList items zeros tiles in subsequent renders; combine all interactions into one it(); restoreAllMocks() breaks jest.mock() factories.
 - [Reanimated test mock gaps](reanimated-test-mock-gaps.md) — default mock omits useReducedMotion; per-file mocks miss useAnimatedReaction/runOnJS/useReducedMotion; makeMutable(0) returns 0 (identity), not undefined — ?? fallback misses it.

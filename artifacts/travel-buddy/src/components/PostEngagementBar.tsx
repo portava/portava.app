@@ -6,10 +6,11 @@
  *
  * Tapping the stamp count opens the stampers sheet (who stamped this post).
  * Tapping a reaction emoji chip opens the reaction likers sheet (filtered by emoji).
+ * Tapping the save count (owner-only) opens PostSaversSheet showing who saved.
  */
 import React, { useState, useCallback, useEffect } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
-import { MessageCircle, Smile } from 'lucide-react-native';
+import { MessageCircle, Smile, Bookmark } from 'lucide-react-native';
 import { TelegraphSendIcon } from './icons/TelegraphSendIcon.tsx';
 import { color, space, layout } from '../theme/tokens.ts';
 import {
@@ -25,13 +26,18 @@ import { ShareSheet, type ShareTarget } from './ShareSheet.tsx';
 import { ReactionPicker, ReactionSummary } from './ReactionPicker.tsx';
 import { EngagementUserListSheet } from './EngagementUserListSheet.tsx';
 import { StampButton } from './stamps/StampButton.tsx';
+import { PostSaversSheet } from './PostSaversSheet.tsx';
 
 interface Props {
   postId: string;
   stampCount: number;
   commentCount: number;
   shareCount?: number;
+  /** Displayed as a tappable chip when isOwner — opens who-saved list. */
+  saveCount?: number;
   isStampedByViewer: boolean;
+  /** When true the save-count chip is tappable (opens PostSaversSheet). */
+  isOwner?: boolean;
   canStamp?: boolean;
   canComment?: boolean;
   canShare?: boolean;
@@ -44,6 +50,8 @@ export function PostEngagementBar({
   stampCount,
   commentCount,
   isStampedByViewer,
+  saveCount = 0,
+  isOwner = false,
   canStamp = true,
   canComment = true,
   canShare = true,
@@ -56,6 +64,7 @@ export function PostEngagementBar({
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [saversOpen, setSaversOpen] = useState(false);
 
   const [reactions, setReactions] = useState<ReactionCount[]>([]);
   const [myReaction, setMyReaction] = useState<string | null>(null);
@@ -217,6 +226,19 @@ export function PostEngagementBar({
               <TelegraphSendIcon size={17} color={sharingDisabled ? color.haze : color.mute} />
             </Pressable>
           )}
+
+          {/* Save count chip — visible to everyone; tappable (opens who-saved) for owner only */}
+          {saveCount > 0 && (
+            <Pressable
+              style={s.action}
+              onPress={isOwner ? () => setSaversOpen(true) : undefined}
+              hitSlop={layout.hitSlop}
+              disabled={!isOwner}
+            >
+              <Bookmark size={17} color={color.mute} />
+              <Text style={s.count}>{saveCount}</Text>
+            </Pressable>
+          )}
         </View>
 
         {reactions.length > 0 && (
@@ -259,6 +281,12 @@ export function PostEngagementBar({
           onClose={() => setReactionLikerSheet(null)}
         />
       )}
+
+      <PostSaversSheet
+        visible={saversOpen}
+        postId={postId}
+        onClose={() => setSaversOpen(false)}
+      />
     </>
   );
 }
