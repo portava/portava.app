@@ -17,7 +17,8 @@ export function useSmartVideoFit(containerW: number, containerH: number) {
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
 
   const onReadyForDisplay = useCallback((event: VideoReadyForDisplayEvent) => {
-    const { width, height } = event.naturalSize;
+    // react-native-web does not populate event.naturalSize — guard before destructuring.
+    const { width, height } = event?.naturalSize ?? {};
     if (width > 0 && height > 0) setNaturalSize({ w: width, h: height });
   }, []);
 
