@@ -547,6 +547,24 @@ export interface PublicProfile {
  * Own full profile (returned by GET /me/profile).
  * ─────────────────────────────────────────────────────────────────────── */
 
+/** One factor contributing to (or deducting from) the trust score. */
+export interface TrustScoreFactor {
+  key: string;
+  label: string;
+  /** Points actually awarded/deducted for this user. */
+  points: number;
+  /** Maximum possible contribution (positive) or maximum deduction (negative). */
+  maxPoints: number;
+  /** Whether this factor is currently at its maximum positive contribution. */
+  maxed: boolean;
+  /** Actionable improvement hint; null when maxed or a penalty. */
+  hint: string | null;
+}
+
+export interface TrustScoreBreakdown {
+  factors: TrustScoreFactor[];
+}
+
 export interface OwnProfile {
   id: ID;
   handle: string | null;
@@ -586,6 +604,8 @@ export interface OwnProfile {
   ageGateRequired?: boolean;
   trustScore?: number | null;
   trustLabel?: string | null;
+  /** Itemized breakdown of trust score factors — only present on the owner's own passport view. */
+  trustScoreBreakdown?: TrustScoreBreakdown | null;
   verificationLevel?: 'none' | 'basic_verified' | 'trusted_traveler' | 'host_verified' | 'buddy_verified' | null;
   idVerifiedAt?: ISODate | null;
   selfieVerifiedAt?: ISODate | null;

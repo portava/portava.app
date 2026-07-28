@@ -53,6 +53,7 @@ import { AppHeader } from '../../src/components/ui/AppHeader';
 import { PassportSectionReorderSheet } from '../../src/components/passport/PassportSectionReorderSheet';
 import { resolveSectionOrder, resolveHiddenSections, type PassportSectionKey } from '../../src/components/passport/passportSections';
 import { PassportTabReorderSheet } from '../../src/components/passport/PassportTabReorderSheet';
+import { TrustScoreInfoSheet } from '../../src/components/passport/TrustScoreInfoSheet';
 import { resolveTabOrder, type PassportTabKey, TAB_LABELS } from '../../src/components/passport/passportTabs';
 import { MapTab } from '../../src/components/MapTab';
 import { DestinationsTab } from '../../src/components/passport/DestinationsTab';
@@ -419,7 +420,7 @@ function PassportContent({
   const [pendingCount, setPendingCount] = useState(0);
   const [coverUploading, setCoverUploading] = useState(false);
   const [buddyProfile, setBuddyProfile] = useState<BuddyProfile | null | undefined>(undefined);
-  const [, setTrustSheetOpen] = useState(false);
+  const [trustSheetOpen, setTrustSheetOpen] = useState(false);
   // Owner passport stats reported up from PassportStatsRow (single fetch) —
   // powers the World Traveler stamp on the identity card.
   const [passportStats, setPassportStats] = useState<PassportStats | null>(null);
@@ -832,6 +833,15 @@ function PassportContent({
       <CreateHubSheet
         visible={createHubOpen}
         onClose={() => setCreateHubOpen(false)}
+      />
+
+      {/* Trust Score info sheet — itemized breakdown for the owner */}
+      <TrustScoreInfoSheet
+        visible={trustSheetOpen}
+        onClose={() => setTrustSheetOpen(false)}
+        score={profile.trustScore ?? null}
+        label={profile.trustLabel ?? null}
+        breakdown={profile.trustScoreBreakdown ?? null}
       />
     </View>
   );

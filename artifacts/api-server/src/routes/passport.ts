@@ -307,10 +307,16 @@ router.get("/users/:username/passport", async (req, res) => {
   // Compute trust score from live DB inputs (fail-open: null on any error).
   let trustScore: number | null = null;
   let trustLabel: string | null = null;
+  let trustScoreBreakdown: import("../lib/trustScore.js").TrustScoreBreakdown | null = null;
   try {
     const ts = await computeTrustScore(targetId, sc);
     trustScore = ts.score;
     trustLabel = ts.label;
+    // Only include the breakdown for the profile owner — it contains improvement hints
+    // that would be meaningless (or confusing) on a public profile view.
+    if (isMe) {
+      trustScoreBreakdown = ts.breakdown;
+    }
   } catch {
     /* non-critical — passport still served without trust score */
   }
@@ -321,6 +327,7 @@ router.get("/users/:username/passport", async (req, res) => {
     buddyProvider,
     trustScore,
     trustLabel,
+    trustScoreBreakdown,
   });
 });
 

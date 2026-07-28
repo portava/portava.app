@@ -346,6 +346,7 @@ router.get("/me/profile", async (req, res) => {
     followingCount,
     trustScore: trustResult?.score ?? null,
     trustLabel: trustResult?.label ?? null,
+    trustScoreBreakdown: trustResult?.breakdown ?? null,
   });
 });
 
