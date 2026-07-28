@@ -53,6 +53,7 @@ import {
   Compass,
   Camera,
   Navigation,
+  Zap,
 } from 'lucide-react-native';
 import { color, space, type as t, radius } from '../../theme/tokens.ts';
 import { useFollow } from '../../hooks/useFollow.ts';
@@ -420,20 +421,29 @@ export function WatchItemOverlay({
         {/* ── Right action column ──────────────────────────────────────── */}
         <View style={s.rightCol} pointerEvents="box-none">
           {/* Like button — long-press triggers Stamp It */}
-          <ActionBtn
-            icon={
-              <Heart
-                size={28}
-                color={isLiked ? color.signal : '#fff'}
-                fill={isLiked ? color.signal : 'transparent'}
-                strokeWidth={isLiked ? 0 : 1.8}
-              />
-            }
-            count={likeCount}
-            onPress={handleLikePress}
-            onLongPress={handleStampIt}
-            label={isLiked ? 'Unlike' : 'Like'}
-          />
+          <View style={s.heartGroup}>
+            <ActionBtn
+              icon={
+                <Heart
+                  size={28}
+                  color={isLiked ? color.signal : '#fff'}
+                  fill={isLiked ? color.signal : 'transparent'}
+                  strokeWidth={isLiked ? 0 : 1.8}
+                />
+              }
+              count={likeCount}
+              onPress={handleLikePress}
+              onLongPress={handleStampIt}
+              label={isLiked ? 'Unlike' : 'Like'}
+            />
+            {/* Stamp-it count — shown when at least one viewer has stamped */}
+            {(item.stampItCount ?? 0) > 0 ? (
+              <View style={s.stampRow} pointerEvents="none">
+                <Zap size={9} color="rgba(255,220,80,0.9)" fill="rgba(255,220,80,0.9)" />
+                <Text style={s.stampCount}>{fmtCount(item.stampItCount!)}</Text>
+              </View>
+            ) : null}
+          </View>
 
           <ActionBtn
             icon={<MessageCircle size={28} color="#fff" strokeWidth={1.8} />}
@@ -661,5 +671,23 @@ const s = StyleSheet.create({
     textShadowColor: 'rgba(0,0,0,0.5)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
+  },
+  // Stamp-it count group (heart + stamp count stacked)
+  heartGroup: {
+    alignItems: 'center',
+    gap: 3,
+  },
+  stampRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  stampCount: {
+    fontSize: 10,
+    fontWeight: '700' as const,
+    color: 'rgba(255,220,80,0.9)',
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
 });

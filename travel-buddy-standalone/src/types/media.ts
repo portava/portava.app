@@ -53,6 +53,8 @@ export interface MediaFeedItem {
   saveCount: number;
   likedByMe: boolean;
   savedByMe: boolean;
+  /** Number of distinct viewers who stamped this video. Absent on legacy items. */
+  stampItCount?: number;
 }
 
 /** Page cursor returned by the feed API. */

@@ -56,6 +56,7 @@ interface ServerStats {
   likeCount: number;
   saveCount: number;
   commentCount: number;
+  stampItCount?: number;
 }
 
 interface ServerLocation {
@@ -166,6 +167,7 @@ export function mapServerFeedItem(raw: ServerFeedItem): MediaFeedItem {
     saveCount: raw.stats.saveCount,
     likedByMe: raw.viewerState.hasLiked,
     savedByMe: raw.viewerState.hasSaved,
+    stampItCount: raw.stats.stampItCount ?? 0,
   };
 }
 

@@ -250,7 +250,7 @@ export default function TabLayout() {
   const [pendingRequests, setPendingRequests] = useState(0);
   const [pendingTripInvites, setPendingTripInvites] = useState(0);
   const { isAuthed, loading, configured } = useSession();
-  const { locationState } = useLocationContext();
+  const { resolvedLocation } = useLocationContext();
   const pathname = usePathname();
   const pathnameRef = useRef(pathname);
   useEffect(() => { pathnameRef.current = pathname; }, [pathname]);
@@ -310,9 +310,9 @@ export default function TabLayout() {
   );
   // Prefetch Discovery data when the user is on an adjacent tab (Pulse or Trips).
   // Warms the client-side in-memory cache so the Discovery tab paints instantly
-  // from cache when the user navigates there. 300 ms delay avoids competing with
-  // the active tab's own requests.
-  const prefetchCity = locationState.place.city ?? null;
+  // from cache when the user navigates there. Fires once per city change, after a
+  // 300 ms delay so it doesn't compete with the active tab's own data fetches.
+  const prefetchCity = resolvedLocation.place.city ?? null;
   useEffect(() => {
     if (!prefetchCity) return;
     const onAdjacentTab =
@@ -320,7 +320,9 @@ export default function TabLayout() {
       pathname.startsWith('/(tabs)/trips');
     if (!onAdjacentTab) return;
     const timer = setTimeout(() => {
+      // Warm the batch counts endpoint (1 request covers all 7 category tabs)
       getDiscoveryCategoryCountsBatch(prefetchCity, 10).catch(() => {});
+      // Warm the For You OSM baseline (populates the client result cache)
       getDiscoveryPlaces(
         prefetchCity, 'for_you',
         { radiusKm: 25, openNow: false, minRating: null },
