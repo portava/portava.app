@@ -283,6 +283,23 @@ router.get("/pulse", async (req, res) => {
     } catch { /* non-fatal — savedByMe defaults to false */ }
   }
 
+  // Batch-fetch featured-by-Portava status so the badge renders without a
+  // per-post query.  Non-fatal: if portava_featured is unreachable every post
+  // gets null (badge hidden) — feed is still fully functional.
+  const featuredPulseMap = new Map<string, string>();
+  if (postIds.length > 0) {
+    try {
+      const { data: featuredRows } = await sc
+        .from("portava_featured")
+        .select("post_id, category")
+        .eq("status", "live")
+        .in("post_id", postIds);
+      for (const r of (featuredRows as any[]) ?? []) {
+        featuredPulseMap.set(r.post_id as string, r.category as string);
+      }
+    } catch { /* non-fatal: featured badge omitted */ }
+  }
+
   // Universal display-name rule: authors show @handle unless they opted in.
   const allowedAuthorNames = await nameVisibilitySet(sc, rows.map((r: any) => r.author_id));
 
@@ -329,6 +346,8 @@ router.get("/pulse", async (req, res) => {
       spanHashtags:     spans.hashtagUsages,
       // Bookmark state for the authenticated viewer
       savedByMe: savedSet.has(row.id as string),
+      // Featured-by-Portava badge category — null when post has not been featured
+      featuredByPortava: featuredPulseMap.get(row.id as string) ?? null,
     };
   });
 

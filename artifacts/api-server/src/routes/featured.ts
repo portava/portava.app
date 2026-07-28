@@ -1,0 +1,164 @@
+/**
+ * Public Featured by Portava endpoint.
+ *
+ * No auth required — returns all live featured posts for consumer-facing
+ * surfaces (Featured Hub screen, profile trophy deep-link).
+ *
+ * GET /featured
+ *   Query params:
+ *     creatorId  — optional UUID; filter to a specific creator's featured posts
+ *
+ * Response:
+ *   {
+ *     groups:          FeaturedGroup[]   — per-category arrays
+ *     thisWeeksWinners: FeaturedPost[]   — posts featured in the last 7 days
+ *     total:           number
+ *   }
+ */
+
+import { Router } from "express";
+import { asyncHandler } from "../lib/asyncHandler.js";
+import { sendError } from "../lib/http.js";
+import { getServiceClient } from "../lib/supabase.js";
+
+const router = Router();
+
+/** Human-readable labels for each category. */
+const CATEGORY_LABELS: Record<string, string> = {
+  best_video:       "Best Video",
+  best_hidden_gem:  "Best Hidden Gem",
+  best_nightlife:   "Best Nightlife",
+  best_restaurant:  "Best Restaurant",
+  best_adventure:   "Best Adventure",
+  best_photo:       "Best Photo",
+};
+
+/** Preferred display order for category groups. */
+const CATEGORY_ORDER = [
+  "best_video",
+  "best_hidden_gem",
+  "best_adventure",
+  "best_restaurant",
+  "best_nightlife",
+  "best_photo",
+];
+
+function categoryLabel(cat: string): string {
+  return CATEGORY_LABELS[cat] ?? cat.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// ── GET /featured ─────────────────────────────────────────────────────────────
+
+router.get("/featured", asyncHandler(async (req, res) => {
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not available");
+    return;
+  }
+
+  const creatorId = typeof req.query.creatorId === "string" ? req.query.creatorId : undefined;
+
+  // Fetch all live featured entries with post + author data.
+  // String must be a literal directly in .select() so the column-drift checker can parse it.
+  let query = sc
+    .from("portava_featured")
+    .select("id, post_id, category, featured_at, posts!post_id(id, content, location_city, location_country, author_id, post_media(id, media_type, public_url, thumbnail_url, thumbnail_path, sort_order, processing_status, storage_path, storage_bucket), profiles!author_id(id, username, full_name, avatar_url, verified))")
+    .eq("status", "live")
+    .order("featured_at", { ascending: false })
+    .limit(200);
+
+  if (creatorId) {
+    // Filter by author — use a sub-join approach via posts.author_id
+    // We filter post-fetch since Supabase doesn't support nested eq on joined tables easily
+  }
+
+  const { data: rows, error } = await query;
+  if (error) {
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  const allRows = (rows ?? []) as any[];
+
+  // Apply creatorId filter in-memory if requested
+  const filtered = creatorId
+    ? allRows.filter((r: any) => (r.posts as any)?.profiles?.id === creatorId || (r.posts as any)?.author_id === creatorId)
+    : allRows;
+
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Map rows to FeaturedPost objects
+  function mapRow(r: any): any {
+    const post = r.posts ?? {};
+    const profile = post.profiles ?? {};
+    const postMedia: any[] = Array.isArray(post.post_media) ? post.post_media : [];
+    const sortedMedia = postMedia
+      .filter((m: any) => m.processing_status === "ready" || !m.processing_status)
+      .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    const primaryMedia = sortedMedia[0];
+
+    // Resolve thumbnail URL — prefer public_url, fall back to thumbnail_url
+    const thumbnailUrl: string | null = primaryMedia?.thumbnail_url ?? primaryMedia?.public_url ?? null;
+    const mediaType: "image" | "video" = (primaryMedia?.media_type as any) ?? "image";
+
+    const username = profile.username ?? null;
+    const displayName = profile.full_name ?? profile.username ?? null;
+
+    return {
+      id: r.id as string,
+      postId: r.post_id as string,
+      category: r.category as string,
+      categoryLabel: categoryLabel(r.category as string),
+      featuredAt: r.featured_at as string,
+      caption: post.content ?? null,
+      thumbnailUrl,
+      mediaType,
+      author: {
+        id: (profile.id ?? post.author_id ?? "") as string,
+        username: username ?? "",
+        displayName: displayName ?? username ?? "",
+        avatarUrl: (profile.avatar_url ?? null) as string | null,
+        verified: Boolean(profile.verified),
+      },
+      locationCity: (post.location_city ?? null) as string | null,
+      locationCountry: (post.location_country ?? null) as string | null,
+    };
+  }
+
+  const posts = filtered.map(mapRow);
+
+  // This week's winners (featured within last 7 days)
+  const thisWeeksWinners = posts.filter((p: any) => p.featuredAt >= sevenDaysAgo);
+
+  // Group by category
+  const groupMap = new Map<string, any[]>();
+  for (const post of posts) {
+    const cat = post.category as string;
+    const group = groupMap.get(cat) ?? [];
+    group.push(post);
+    groupMap.set(cat, group);
+  }
+
+  // Build ordered groups
+  const orderedGroups: any[] = [];
+  // First, add known categories in order
+  for (const cat of CATEGORY_ORDER) {
+    const group = groupMap.get(cat);
+    if (group && group.length > 0) {
+      orderedGroups.push({ category: cat, categoryLabel: categoryLabel(cat), posts: group });
+      groupMap.delete(cat);
+    }
+  }
+  // Then add any remaining categories not in the known order
+  for (const [cat, groupPosts] of groupMap) {
+    orderedGroups.push({ category: cat, categoryLabel: categoryLabel(cat), posts: groupPosts });
+  }
+
+  res.json({
+    groups: orderedGroups,
+    thisWeeksWinners,
+    total: posts.length,
+  });
+}));
+
+export default router;

@@ -63,6 +63,11 @@ export interface MediaFeedItem {
   stampItCount?: number;
   /** True when the post was GPS-verified at the tagged location at upload time. */
   locationVerified?: boolean;
+  /**
+   * Non-null when this post has been featured by Portava.
+   * The string value is the feature category (e.g. "best_hidden_gem").
+   */
+  featuredByPortava?: string | null;
 }
 
 /** Page cursor returned by the feed API. */
@@ -107,6 +112,11 @@ export interface MediaGridItem {
   videoUrl: string | null;
   /** True when the post was GPS-verified at the tagged location at upload time. */
   locationVerified?: boolean;
+  /**
+   * Non-null when this grid tile has been featured by Portava.
+   * The string value is the feature category (e.g. "best_hidden_gem").
+   */
+  featuredByPortava?: string | null;
 }
 
 export interface GridFeedPage {

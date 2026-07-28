@@ -227,6 +227,14 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     ownerOnly: true,
   },
   {
+    key: 'featured',
+    path: 'featured',
+    title: 'Featured by Portava',
+    parent: null,
+    icon: 'Trophy',
+    requiresAuth: false,
+  },
+  {
     key: 'compass-preferences',
     path: 'compass-preferences',
     title: 'Compass Preferences',

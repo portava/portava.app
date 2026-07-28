@@ -48,6 +48,11 @@ import {
 
 export type MediaFeedMode = "for_you" | "following" | "grid" | "gems";
 
+/** Default featured boost multiplier (1.4×). */
+export const FEATURED_BOOST_MULTIPLIER = 1.4;
+/** Window (ms) during which the featured boost applies after featuring. */
+export const FEATURED_BOOST_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
 /** Extended candidate carrying media-specific signals. */
 export interface MediaFeedItem extends RankCandidate {
   /** 0–1 fraction of total duration the average viewer watched. */
@@ -88,6 +93,15 @@ export interface MediaFeedItem extends RankCandidate {
    */
   isOfficialPublisher?: boolean | null;
 
+  /**
+   * ISO timestamp of when this post was featured by Portava.
+   * Null/absent when the post has not been featured.
+   * Used to apply the FEATURED_BOOST within the 7-day window.
+   */
+  featuredAt?: string | null;
+  /** Feature category (e.g. "best_hidden_gem"). Non-null when featuredAt is set. */
+  featuredByPortava?: string | null;
+
   // ── Creator / account metadata ────────────────────────────────────────────
   /** How many days since the creator's account was created. */
   creatorAccountAgeDays?: number | null;
@@ -115,6 +129,8 @@ export interface MediaRankingFlags {
   creatorFatigueEnabled: boolean;
   /** When true, official-publisher posts receive PUBLISHER_BOOST and are exempt from per-creator caps. */
   publisherBoostEnabled: boolean;
+  /** When true, featured posts receive a 1.4× score multiplier for 7 days after featuring. */
+  featuredBoostEnabled: boolean;
 }
 
 /** Config thresholds (loaded from rankingConfig or defaulted). */
@@ -184,7 +200,8 @@ export type MediaRankingReasonCode =
   | "recency"
   | "not_interested_penalty"
   | "wrong_place_penalty"
-  | "session_fatigue_penalty";
+  | "session_fatigue_penalty"
+  | "featured_by_portava";
 
 export interface MediaRankedItem<T extends MediaFeedItem = MediaFeedItem> {
   item: T;
@@ -507,6 +524,7 @@ function topReasonCodes(
     notInterestedPenalty: "not_interested_penalty",
     wrongPlacePenalty:    "wrong_place_penalty",
     sessionFatigue:       "session_fatigue_penalty",
+    featuredByPortava:    "featured_by_portava",
   };
 
   for (const [key] of ranked) {
@@ -683,6 +701,18 @@ export function rankMediaFeed<T extends MediaFeedItem>(
       }
     }
 
+    // Featured-by-Portava boost (1.4× for 7 days post-featuring)
+    if (flags.featuredBoostEnabled && item.featuredAt) {
+      const featuredAgeMs = nowMs - new Date(item.featuredAt).getTime();
+      if (featuredAgeMs >= 0 && featuredAgeMs <= FEATURED_BOOST_WINDOW_MS) {
+        const boost = (FEATURED_BOOST_MULTIPLIER - 1) * score;
+        if (boost > 0) {
+          features.featuredByPortava = boost;
+          score += boost;
+        }
+      }
+    }
+
     // Underexposed-content boost
     if (flags.underexposedBoostEnabled) {
       const ageHours = item.createdAt
@@ -781,6 +811,7 @@ export async function loadMediaRankingFlags(
     underexposedBoostEnabled:     false,
     creatorFatigueEnabled:        false,
     publisherBoostEnabled:        false,
+    featuredBoostEnabled:         false,
   };
   if (!db) return defaults;
   try {
@@ -795,6 +826,7 @@ export async function loadMediaRankingFlags(
         "MEDIA_UNDEREXPOSED_BOOST_ENABLED",
         "MEDIA_CREATOR_FATIGUE_ENABLED",
         "PORTAVA_PUBLISHER_BOOST_ENABLED",
+        "PORTAVA_FEATURED_BOOST_ENABLED",
       ]);
     for (const row of (data as any[]) ?? []) {
       const flag = row.flag as string;
@@ -806,6 +838,7 @@ export async function loadMediaRankingFlags(
       if (flag === "MEDIA_UNDEREXPOSED_BOOST_ENABLED")    defaults.underexposedBoostEnabled     = val;
       if (flag === "MEDIA_CREATOR_FATIGUE_ENABLED")       defaults.creatorFatigueEnabled        = val;
       if (flag === "PORTAVA_PUBLISHER_BOOST_ENABLED")     defaults.publisherBoostEnabled        = val;
+      if (flag === "PORTAVA_FEATURED_BOOST_ENABLED")      defaults.featuredBoostEnabled         = val;
     }
   } catch { /* return defaults */ }
   return defaults;

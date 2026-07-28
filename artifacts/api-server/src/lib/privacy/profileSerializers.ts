@@ -90,6 +90,7 @@ export function toPublicProfilePreview(
     passportTabOrder: (r.passport_tab_order as string[] | null) ?? null,
     openToMeet: Boolean(r.open_to_meet),
     isOfficial: Boolean(r.is_official),
+    featuredCount: (r.featured_count as number | null | undefined) ?? 0,
   };
 }
 

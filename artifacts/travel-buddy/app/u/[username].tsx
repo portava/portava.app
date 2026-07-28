@@ -10,7 +10,7 @@ import {
   ArrowLeft, Users, UserCheck, UserPlus, UserMinus, Clock,
   MessageCircle, X, MoreVertical, ShieldAlert,
   Image as ImageIcon, Tag, Map as MapIcon, Info,
-  Bookmark, BookmarkCheck, BellOff, Bell, Flag,
+  Bookmark, BookmarkCheck, BellOff, Bell, Flag, Trophy,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { usePublicPassport } from '../../src/hooks/usePublicPassport';
@@ -977,6 +977,22 @@ function PublicPassportScreenNative() {
           ))}
         </View>
 
+        {/* Featured by Portava trophy row */}
+        {(profile as any)?.featuredCount != null && (profile as any).featuredCount > 0 && (
+          <View style={styles.trophyRow}>
+            <Trophy size={13} color="#D97706" />
+            <Text style={styles.trophyText}>
+              Featured by Portava · {(profile as any).featuredCount} {(profile as any).featuredCount === 1 ? 'time' : 'times'}
+            </Text>
+            <Pressable
+              onPress={() => router.push('/featured' as any)}
+              hitSlop={6}
+            >
+              <Text style={styles.trophyLink}>View Featured ›</Text>
+            </Pressable>
+          </View>
+        )}
+
         {/* Following pill */}
         {follow.followingCount > 0 && (
           <View style={styles.followingPill}>
@@ -1152,6 +1168,16 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: color.haze, alignSelf: 'flex-start',
   },
   reasonText: { ...t.small, color: color.deep, fontWeight: '700', fontSize: 12 },
+
+  trophyRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    marginHorizontal: space.lg, marginTop: space.sm,
+    paddingVertical: 7, paddingHorizontal: space.md,
+    backgroundColor: '#FFFBEB', borderRadius: radius.pill,
+    borderWidth: 1, borderColor: '#FCD34D', alignSelf: 'flex-start',
+  },
+  trophyText: { ...t.small, color: '#92400E', fontWeight: '600', fontSize: 12 },
+  trophyLink: { ...t.small, color: '#D97706', fontWeight: '700', fontSize: 12 },
 
   followingPill: {
     flexDirection: 'row', alignItems: 'center', gap: 5,

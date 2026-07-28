@@ -60,6 +60,8 @@ export interface PublicProfilePreview {
   openToMeet: boolean;
   /** True only for the @Portava official publisher account. Cannot be self-set. */
   isOfficial: boolean;
+  /** Number of times this creator has been featured by Portava. 0 when never featured. */
+  featuredCount: number;
 }
 
 /**

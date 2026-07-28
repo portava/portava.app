@@ -193,6 +193,7 @@ export function mapServerFeedItem(raw: ServerFeedItem): MediaFeedItem {
     savedByMe: raw.viewerState.hasSaved,
     stampItCount: raw.stats.stampItCount ?? 0,
     locationVerified: raw.locationVerified ?? false,
+    featuredByPortava: (raw as any).featuredByPortava ?? null,
   };
 }
 

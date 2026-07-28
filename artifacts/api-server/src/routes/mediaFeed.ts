@@ -1101,10 +1101,29 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     loadCreatorSignals(sc, [...new Set(eligible.map((c) => c.author_id).filter(Boolean))]),
   ]);
 
+  // ── Load featured-by-Portava status for ranking boost ────────────────────
+  // Non-fatal: if the table doesn't exist or query fails, all items get null.
+  const featuredMap = new Map<string, { featuredAt: string; category: string }>();
+  if (mediaFlags.featuredBoostEnabled && eligible.length > 0) {
+    try {
+      const sevenDaysAgo = new Date(nowMs - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const { data: featuredRows } = await sc
+        .from("portava_featured")
+        .select("post_id, category, featured_at")
+        .eq("status", "live")
+        .in("post_id", eligible.map((c) => c.id))
+        .gte("featured_at", sevenDaysAgo);
+      for (const r of (featuredRows as any[]) ?? []) {
+        featuredMap.set(r.post_id as string, { featuredAt: r.featured_at as string, category: r.category as string });
+      }
+    } catch { /* non-fatal: ranking boost skipped */ }
+  }
+
   // ── Build ranking candidates (merge DB signals into candidate shape) ────────
   const rankCandidates: RankingMediaFeedItem[] = eligible.map((c) => {
     const mediaSig   = mediaSignalsMap.get(c.id) ?? {};
     const creatorSig = creatorSignalsMap.get(c.author_id) ?? {};
+    const featuredEntry = featuredMap.get(c.id);
     return {
       id:       c.id,
       kind:     "post" as const,
@@ -1115,6 +1134,8 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
       tags:     Array.isArray(c.tags) ? c.tags.map((t: string) => t.toLowerCase()) : [],
       likeCount:  Number((c as any).like_count ?? 0),
       joinCount:  0,
+      featuredAt: featuredEntry?.featuredAt ?? null,
+      featuredByPortava: featuredEntry?.category ?? null,
       ...mediaSig,
       ...creatorSig,
     };
@@ -1260,10 +1281,27 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   // ── Linked entity resolution ───────────────────────────────────────────────
   const linkedEntityMap = await resolveLinkedEntities(page, user.id, sc);
 
+  // Re-fetch featured map for the final page (may differ from ranking-time map)
+  // so the hydrated items carry featuredByPortava for client-side badge display.
+  const pageFeaturedMap = new Map<string, string>();
+  if (pageIds.length > 0) {
+    try {
+      const { data: pfRows } = await sc
+        .from("portava_featured")
+        .select("post_id, category")
+        .eq("status", "live")
+        .in("post_id", pageIds);
+      for (const r of (pfRows as any[]) ?? []) {
+        pageFeaturedMap.set(r.post_id as string, r.category as string);
+      }
+    } catch { /* non-fatal: badge omitted */ }
+  }
+
   const items: MediaFeedItem[] = page.map((c) => {
     const postMedia = Array.isArray(c.post_media) ? c.post_media : [];
+    const featuredCategory = pageFeaturedMap.get(c.id) ?? null;
     return hydrateMediaFeedItem({
-      row: { ...c, stamp_it_count: stampCountMap.get(c.id) ?? 0 },
+      row: { ...c, stamp_it_count: stampCountMap.get(c.id) ?? 0, featured_by_portava: featuredCategory },
       sourceType: "post",
       viewerUserId: user.id,
       allowedRealNameIds,

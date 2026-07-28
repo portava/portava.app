@@ -155,6 +155,7 @@ export function pulsePostToFeedItem(p: PulsePost): PulseFeedItem {
     spanTags: p.spanTags ?? [],
     spanHashtags: p.spanHashtags ?? [],
     savedByMe: p.savedByMe ?? false,
+    featuredByPortava: (p as any).featuredByPortava ?? null,
   };
 }
 

@@ -10,6 +10,7 @@ import { CachedImage } from '../CachedImage.tsx';
 import { color, space, radius, shadow, typography, layout } from '../../theme/tokens.ts';
 import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
 import { OfficialBadge } from '../OfficialBadge.tsx';
+import { FeaturedBadge } from '../FeaturedBadge.tsx';
 
 export type PostCardType = 'post' | 'question' | 'hidden_gem' | 'itinerary' | 'plan' | 'discovery_message';
 
@@ -60,6 +61,12 @@ export interface PostCardProps {
    * (delete, share, report, hide-from-feed) and highlight/avatar interactions.
    */
   authorRow?: React.ReactNode;
+  /**
+   * Non-null when this post has been featured by Portava.
+   * The string value is the feature category (e.g. "best_hidden_gem").
+   * Renders a gold FeaturedBadge above the type badge.
+   */
+  featuredByPortava?: string | null;
 }
 
 const TYPE_BADGE: Record<PostCardType, { label: string; bg: string; fg: string } | null> = {
@@ -74,7 +81,7 @@ const TYPE_BADGE: Record<PostCardType, { label: string; bg: string; fg: string }
 export function PostCard({
   type, title, caption, captionNode, city, imageUrl, authorName, authorHandle, timeAgo,
   likeCount, commentCount, likedByMe, savedByMe, tags, authorVerified, authorIsOfficial,
-  onPress, onLike, onSave, onComment, actionsSlot, cardStyle, authorRow,
+  onPress, onLike, onSave, onComment, actionsSlot, cardStyle, authorRow, featuredByPortava,
 }: PostCardProps) {
   const [imgFailed, setImgFailed] = useState(false);
   const badge = TYPE_BADGE[type];
@@ -99,6 +106,11 @@ export function PostCard({
       ) : null}
 
       <View style={styles.body}>
+        {/* Featured by Portava badge — rendered above the type badge */}
+        {featuredByPortava ? (
+          <FeaturedBadge category={featuredByPortava} size="sm" />
+        ) : null}
+
         {/* Type badge */}
         {badge ? (
           <View style={[styles.badge, { backgroundColor: badge.bg }]}>

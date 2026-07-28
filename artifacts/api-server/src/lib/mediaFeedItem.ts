@@ -150,6 +150,12 @@ export interface MediaFeedItem {
   linkedEntity: MediaFeedLinkedEntity | null;
   /** True when the post was GPS-verified at the tagged location at upload time. */
   locationVerified: boolean;
+  /**
+   * Non-null when this post has been featured by Portava (portava_featured.status = 'live').
+   * The string value is the feature category (e.g. "best_hidden_gem").
+   * Absent/null when the post has not been featured.
+   */
+  featuredByPortava?: string | null;
 }
 
 // ── Hydration input ───────────────────────────────────────────────────────────
@@ -723,5 +729,6 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
     moderation,
     linkedEntity: input.linkedEntity ?? null,
     locationVerified: Boolean(row.location_verified),
+    featuredByPortava: (row.featured_by_portava as string | null | undefined) ?? null,
   };
 }

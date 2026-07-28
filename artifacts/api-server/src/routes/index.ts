@@ -112,6 +112,7 @@ import ogRouter from "./og";
 import adminPortavaPostsRouter from "./adminPortavaPosts.js";
 import adminFeaturedRouter from "./adminFeatured";
 import adminPlaceMismatchRouter from "./adminPlaceMismatch.js";
+import featuredRouter from "./featured.js";
 
 const router: IRouter = Router();
 
@@ -233,5 +234,6 @@ router.use(adminPlaceMismatchRouter);
 router.use(ogRouter);
 router.use(adminPortavaPostsRouter);
 router.use(adminFeaturedRouter);
+router.use(featuredRouter);
 
 export default router;
