@@ -37,7 +37,7 @@ async function fetchPosts(
 
     let query = db
       .from("posts")
-      .select("id, author_id, content, created_at, location_city, location_country, status, visibility")
+      .select("id, author_id, content, created_at, location_city, location_country, status, visibility, canonical_place_id")
       .eq("visibility", "public")
       .eq("status", "active")
       .gt("created_at", since)
@@ -49,7 +49,7 @@ async function fetchPosts(
       // Fetch city posts first, then fill remainder from global
       const cityRes = await db
         .from("posts")
-        .select("id, author_id, content, created_at, location_city, location_country, status, visibility")
+        .select("id, author_id, content, created_at, location_city, location_country, status, visibility, canonical_place_id")
         .eq("visibility", "public")
         .eq("status", "active")
         .ilike("location_city", profile.currentCity)
@@ -90,6 +90,9 @@ function postToItem(post: any): CompassItem {
     country:         post.location_country ?? null,
     visibilityScope: "public",
     qualityScore:    5,
+    // Place-affinity boost: carry the canonical place so scoreItem can apply
+    // the ×1.15 multiplier when the viewer has recently visited this place.
+    placeId:         (post.canonical_place_id as string | null) ?? null,
     data:            { title },
   };
 }
@@ -252,6 +255,9 @@ async function fetchPlaces(
       qualityScore:    place.rating ? Math.min(10, (place.rating as number) * 2) : 5,
       visibilityScope: "public",
       createdAt:       place.created_at,
+      // Place-affinity boost: the raw DB UUID (not the prefixed CompassItem id)
+      // is what rank_events records as item_id for place_view events.
+      placeId:         String(place.id),
       // Raw DB id stored in data so frontend can build the correct navigation path
       data: { id: String(place.id), name: place.name, category: place.category, city: place.city },
     }));
@@ -289,6 +295,9 @@ async function fetchHiddenGems(
       qualityScore:    7,
       visibilityScope: "public",
       createdAt:       gem.created_at,
+      // Place-affinity boost: the raw DB UUID drives the ×1.15 boost when the
+      // viewer has recently viewed this gem's place page.
+      placeId:         String(gem.id),
       // Raw DB id stored in data so frontend routes to /gems/:id correctly
       data: { id: String(gem.id), name: gem.name, category: gem.category, city: gem.city, country: gem.country },
     }));

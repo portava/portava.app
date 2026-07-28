@@ -62,6 +62,14 @@ export interface CompassContext {
   signals: CompassSignals;
   /** ISO timestamp when this context was computed. */
   computedAt: string;
+  /**
+   * place_id → count of place_view rank_events in the last 30 days for the
+   * viewing user.  Injected by CompassFeedBuilder before the pipeline runs;
+   * drives the ×1.15 place-affinity boost in CompassScoringEngine.
+   * Optional so existing callers that build CompassContext directly (tests,
+   * context-resolver) do not need to change.
+   */
+  placeAffinities?: Record<string, number>;
 }
 
 // ── User profile ──────────────────────────────────────────────────────────────
@@ -339,6 +347,14 @@ export interface CompassItem {
   // ── Content body (may be stripped for unpublished items) ──────────────────
   contentBody?: string;
   contentUrl?: string;
+
+  /**
+   * Canonical place ID for this item (e.g. the place page UUID for a stamp,
+   * post, or event tied to a specific venue).  Used by the place-affinity
+   * boost in CompassScoringEngine: a ×1.15 multiplier fires when the viewer
+   * has ≥2 place_view events for this place in the last 30 days.
+   */
+  placeId?: string | null;
 
   // ── Catch-all for domain-specific fields carried through the pipeline ──────
   [key: string]: unknown;

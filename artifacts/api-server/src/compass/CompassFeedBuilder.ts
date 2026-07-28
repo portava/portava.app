@@ -44,6 +44,7 @@ import {
 import { enforceCreatorCaps } from "../services/ranking/CreatorCapEnforcer.js";
 import { getFeedShares, getCreatorCaps } from "../services/ranking/rankingConfig.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import { buildPlaceAffinities } from "../services/ranking/MediaFeedRankingService.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -110,6 +111,8 @@ export interface FeedBuilderTestOverrides extends PipelineTestOverrides {
   authorScores?:      Map<string, ActiveUserScoreResult>;
   /** Pre-loaded appearance counts (item.id → count) — skip DB load in tests */
   appearanceCounts?:  Map<string, number>;
+  /** Pre-built place affinities (placeId → view count) — skips the DB call in tests */
+  placeAffinities?:   Record<string, number>;
   /** Pre-loaded author cooldown set — skip DB load in tests */
   cooldownSet?:       Set<string>;
 }
@@ -308,9 +311,20 @@ async function runFeedPipeline(
   db:         SupabaseClient | null,
   _overrides: FeedBuilderTestOverrides,
 ): Promise<FeedPipelineOutput> {
+  // ── Place-affinity enrichment ─────────────────────────────────────────────
+  // Build place affinities once per feed/section build and inject them into
+  // the context so scoreItem can apply the ×1.15 boost for items whose
+  // canonical place the viewer has recently viewed.  Fail-soft: an empty map
+  // simply means no boost fires, which is identical to the pre-change
+  // behaviour for all callers.  Tests may inject pre-built affinities via
+  // _overrides.placeAffinities to skip the DB call.
+  const placeAffinities =
+    _overrides.placeAffinities ?? await buildPlaceAffinities(db, profile.userId);
+  const enrichedContext: CompassContext = { ...context, placeAffinities };
+
   // ── Phase 2 pipeline ────────────────────────────────────────────────────────
   const { results, inputCount, blockedCount, rejectedCount, passedCount } =
-    await runPipeline(items, profile, context, db, _overrides);
+    await runPipeline(items, profile, enrichedContext, db, _overrides);
 
   // ── Active-user reward boosts ──────────────────────────────────────────────
   // Each author's own trust/safety data is fetched from DB — NEVER the viewer's.

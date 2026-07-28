@@ -497,6 +497,11 @@ function logScore(
  * @param context   Current Compass context
  * @param db        Optional Supabase client for logging
  */
+/** Minimum place_view count required to earn the place-affinity boost. */
+const PLACE_AFFINITY_THRESHOLD = 2;
+/** Multiplier applied to finalScore when the viewer has place affinity. */
+const PLACE_AFFINITY_BOOST = 1.15;
+
 export function scoreItem(
   item: CompassItem,
   profile: CompassProfile,
@@ -505,7 +510,20 @@ export function scoreItem(
 ): ScoreResult {
   try {
     const components = computeComponents(item, profile, context);
-    const finalScore = finalizeScore(components);
+    let finalScore = finalizeScore(components);
+
+    // Place-affinity boost: ×1.15 when the viewer has ≥2 place_view events for
+    // this item's canonical place in the last 30 days.  Only fires when both
+    // item.placeId and context.placeAffinities are present — surfaces that do
+    // not build placeAffinities contribute 0 boost cleanly.
+    const placeId = item.placeId as string | null | undefined;
+    if (placeId && context.placeAffinities) {
+      const views = context.placeAffinities[placeId] ?? 0;
+      if (views >= PLACE_AFFINITY_THRESHOLD) {
+        finalScore = finalScore * PLACE_AFFINITY_BOOST;
+      }
+    }
+
     const result: ScoreResult = { finalScore, components };
     logScore(db, profile.userId, item, result, context.contextState);
     return result;
