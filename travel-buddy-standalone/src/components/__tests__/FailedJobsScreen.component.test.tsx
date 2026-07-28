@@ -594,7 +594,7 @@ describe('FailedJobsScreen — orphaned-files badge', () => {
     };
     mockGetQueue.mockResolvedValue(queueOk([jobWithOnePath]));
 
-    await render(<FailedJobsScreen />);
+    render(<FailedJobsScreen />);
     await waitFor(() => screen.getByText('Rome Colosseum'));
 
     expect(screen.getByText('1 orphaned file need manual removal')).toBeTruthy();
