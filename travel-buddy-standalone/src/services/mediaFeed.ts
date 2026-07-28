@@ -8,7 +8,26 @@
  * type (videoUrl / posterUrl / likeCount / likedByMe / etc.).
  */
 
-import { freshToken } from './apiToken.ts';
+import { freshToken as _freshTokenReal } from './apiToken.ts';
+
+// ── Token seam (test isolation) ───────────────────────────────────────────────
+// apiToken.ts imports @supabase/supabase-js which chains to react-native; that
+// prevents the file from loading under `node --import tsx/esm`. Use a lazy
+// dynamic import so node:test runs never trigger that chain.
+
+let _testToken: string | null = null;
+
+/** Inject a static token for node:test runs. Bypasses Supabase entirely. */
+export function _setTestFreshToken(token: string): void { _testToken = token; }
+/** Remove the injected token. Always call in afterEach. */
+export function _clearTestFreshToken(): void { _testToken = null; }
+
+async function freshToken(): Promise<string | null> {
+  if (_testToken !== null) return _testToken;
+  // Lazy import so react-native is never required when a test token is set.
+  const { freshToken: _real } = await import('./apiToken.ts');
+  return _real();
+}
 import type {
   MediaFeedItem,
   WatchFeedPage,
@@ -298,6 +317,57 @@ export interface FetchFeedParams {
  * Fetch one page of the Watch fullscreen feed.
  * Returns a typed result; never throws.
  */
+// ── Single-item result type ───────────────────────────────────────────────────
+
+export type FetchItemResult =
+  | { ok: true; data: MediaFeedItem; errorKind?: undefined }
+  | { ok: false; data?: undefined; errorKind: 'auth' | 'not_found' | 'server' | 'network' | 'unknown'; message?: string };
+
+/**
+ * Fetch a single media item by ID from GET /api/media/:id.
+ * Returns a typed result; never throws.
+ * Used by the media-viewer to obtain stampItCount and full post stats.
+ */
+export async function fetchMediaFeedItemById(id: string): Promise<FetchItemResult> {
+  const token = await freshToken();
+  if (!token) {
+    return { ok: false, errorKind: 'auth', message: 'Not authenticated' };
+  }
+
+  try {
+    const res = await fetch(`${apiBase()}/api/media/${encodeURIComponent(id)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, errorKind: 'auth', message: 'Unauthorized' };
+    }
+    if (res.status === 404) {
+      return { ok: false, errorKind: 'not_found', message: 'Not found' };
+    }
+    if (!res.ok) {
+      return { ok: false, errorKind: 'server', message: `HTTP ${res.status}` };
+    }
+
+    const body = await res.json();
+    if (!body || typeof body !== 'object' || !('item' in body)) {
+      return { ok: false, errorKind: 'server', message: 'Unexpected response shape' };
+    }
+
+    const item = mapServerFeedItem(body.item as ServerFeedItem);
+    return { ok: true, data: item };
+  } catch (err) {
+    if (isNetworkError(err)) {
+      return { ok: false, errorKind: 'network', message: 'Network error' };
+    }
+    return {
+      ok: false,
+      errorKind: 'unknown',
+      message: err instanceof Error ? err.message : 'Unknown error',
+    };
+  }
+}
+
 export async function fetchWatchFeed(params: FetchFeedParams): Promise<FeedServiceResult> {
   const token = await freshToken();
   if (!token) {

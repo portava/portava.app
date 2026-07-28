@@ -46,10 +46,11 @@ import {
   Volume2,
   VolumeX,
   ChevronLeft,
+  Zap,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { getPostById, type PostRow } from '../../src/services/posts.ts';
+import { fetchMediaFeedItemById } from '../../src/services/mediaFeed.ts';
 import { VerifiedLocationStamp } from '../../src/components/media/VerifiedLocationStamp.tsx';
 import { useMediaLike } from '../../src/hooks/useMediaLike.ts';
 import { useMediaSave } from '../../src/hooks/useMediaSave.ts';
@@ -95,27 +96,29 @@ interface ViewerPost {
   saveCount: number;
   likedByMe: boolean;
   savedByMe: boolean;
+  /** Number of distinct viewers who stamped this post. From MediaFeedStats.stampItCount. */
+  stampItCount: number;
 }
 
-function mapPostRow(r: PostRow): ViewerPost {
-  const firstMedia = r.media?.[0] ?? null;
+function mapMediaFeedItem(item: import('../../src/types/media.ts').MediaFeedItem): ViewerPost {
   return {
-    id: r.id,
-    mediaUrl: firstMedia?.url ?? r.mediaUrls[0] ?? null,
-    isVideo: (firstMedia as any)?.media_type === 'video',
-    posterUrl: (firstMedia as any)?.thumbnail_url ?? r.mediaThumbnailUrl ?? null,
-    caption: r.content ?? '',
-    authorId: r.author?.id ?? r.authorId ?? null,
-    authorHandle: r.author?.handle ?? null,
-    authorName: r.author?.name ?? null,
-    authorAvatarUrl: r.author?.avatarUrl ?? null,
-    locationName: r.locationName ?? null,
-    locationCity: r.locationCity ?? null,
-    likeCount: r.likeCount,
-    commentCount: r.commentCount,
-    saveCount: r.saveCount,
-    likedByMe: r.likedByMe,
-    savedByMe: r.savedByMe,
+    id: item.id,
+    mediaUrl: item.videoUrl || null,
+    isVideo: Boolean(item.videoUrl),
+    posterUrl: item.posterUrl,
+    caption: item.caption ?? '',
+    authorId: item.creator.id,
+    authorHandle: item.creator.username,
+    authorName: item.creator.displayName,
+    authorAvatarUrl: item.creator.avatarUrl,
+    locationName: item.place?.name ?? null,
+    locationCity: item.place?.city ?? null,
+    likeCount: item.likeCount,
+    commentCount: item.commentCount,
+    saveCount: item.saveCount,
+    likedByMe: item.likedByMe,
+    savedByMe: item.savedByMe,
+    stampItCount: item.stampItCount ?? 0,
   };
 }
 
@@ -148,6 +151,10 @@ interface OverlayProps {
   locationVerified?: boolean;
   /** Location name for the verified stamp — sourced from viewer context. */
   locationName?: string | null;
+  /** True when the viewing user is the post's creator. */
+  isOwner: boolean;
+  /** Number of distinct viewers who stamped this post. Shown only to the creator. */
+  stampItCount: number;
 }
 
 function ViewerOverlay({
@@ -167,6 +174,8 @@ function ViewerOverlay({
   onMuteToggle,
   locationVerified,
   locationName,
+  isOwner,
+  stampItCount,
 }: OverlayProps) {
   const insets = useSafeAreaInsets();
 
@@ -306,6 +315,14 @@ function ViewerOverlay({
             <Bookmark size={28} color={isSaved ? color.signal : '#fff'} fill={isSaved ? color.signal : 'transparent'} strokeWidth={isSaved ? 0 : 1.8} />
             {saveCount > 0 ? <Text style={ov.actionCount}>{fmtCount(saveCount)}</Text> : null}
           </Pressable>
+
+          {/* Stamp count — creator-only analytics signal */}
+          {isOwner && stampItCount > 0 ? (
+            <View style={ov.actionBtn} pointerEvents="none" accessibilityLabel={`${stampItCount} stamps`}>
+              <Zap size={26} color="rgba(255,220,80,0.9)" fill="rgba(255,220,80,0.9)" strokeWidth={0} />
+              <Text style={ov.actionCount}>{fmtCount(stampItCount)}</Text>
+            </View>
+          ) : null}
 
           {/* Share */}
           <Pressable style={ov.actionBtn} onPress={onShare} hitSlop={6} accessibilityRole="button" accessibilityLabel="Share">
@@ -605,10 +622,10 @@ export default function MediaViewer() {
       if (!item || fetchingRef.current.has(item.id) || postDataMap[item.id]) return;
       fetchingRef.current.add(item.id);
 
-      getPostById(item.id)
+      fetchMediaFeedItemById(item.id)
         .then((result) => {
           if (result.ok && result.data) {
-            const vp = mapPostRow(result.data);
+            const vp = mapMediaFeedItem(result.data);
             setPostDataMap((prev) => ({ ...prev, [item.id]: vp }));
             // Seed like/save state from server data
             likeHook.seed([{ id: item.id, likedByMe: vp.likedByMe, likeCount: vp.likeCount }]);
@@ -700,6 +717,8 @@ export default function MediaViewer() {
   const activeLikeCount    = activeItem ? (likeHook.likeCounts[activeItem.id] ?? activePost?.likeCount ?? 0) : 0;
   const activeSaveCount    = activePost?.saveCount ?? 0;
   const activeCommentCount = activePost?.commentCount ?? 0;
+  const activeStampItCount = activePost?.stampItCount ?? 0;
+  const activeIsOwner      = Boolean(activePost && currentUserId && activePost.authorId === currentUserId);
 
   return (
     <View style={ms.screen}>
@@ -757,6 +776,8 @@ export default function MediaViewer() {
         onMuteToggle={handleMuteToggle}
         locationVerified={activeItem?.locationVerified}
         locationName={activeItem?.locationName}
+        isOwner={activeIsOwner}
+        stampItCount={activeStampItCount}
       />
 
       {/* ── Comment sheet ─────────────────────────────────────────── */}

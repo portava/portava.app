@@ -8,7 +8,24 @@
  * type (videoUrl / posterUrl / likeCount / likedByMe / etc.).
  */
 
-import { freshToken } from './apiToken.ts';
+// ── Token seam (test isolation) ───────────────────────────────────────────────
+// apiToken.ts imports @supabase/supabase-js which chains to react-native; that
+// prevents the file from loading under `node --import tsx/esm`. Use a lazy
+// dynamic import so node:test runs never trigger that chain.
+
+let _testToken: string | null = null;
+
+/** Inject a static token for node:test runs. Bypasses Supabase entirely. */
+export function _setTestFreshToken(token: string): void { _testToken = token; }
+/** Remove the injected token. Always call in afterEach. */
+export function _clearTestFreshToken(): void { _testToken = null; }
+
+async function freshToken(): Promise<string | null> {
+  if (_testToken !== null) return _testToken;
+  // Lazy import so react-native is never required when a test token is set.
+  const { freshToken: _freshTokenReal } = await import('./apiToken.ts');
+  return _freshTokenReal();
+}
 import type {
   MediaFeedItem,
   WatchFeedPage,
@@ -274,6 +291,62 @@ export async function fetchGridFeed(params: FetchGridFeedParams): Promise<GridFe
     };
 
     return { ok: true, data: page };
+  } catch (err) {
+    if (isNetworkError(err)) {
+      return { ok: false, data: null, errorKind: 'network', message: 'Network error' };
+    }
+    return {
+      ok: false,
+      data: null,
+      errorKind: 'unknown',
+      message: err instanceof Error ? err.message : 'Unknown error',
+    };
+  }
+}
+
+// ── Single-item fetch ─────────────────────────────────────────────────────────
+
+export interface MediaFeedItemResult {
+  ok: boolean;
+  data: MediaFeedItem | null;
+  errorKind?: 'network' | 'auth' | 'server' | 'not_found' | 'unknown';
+  message?: string;
+}
+
+/**
+ * Fetch a single Watch-feed item by post ID.
+ *
+ * Calls GET /api/media/:id and adapts the server shape (including
+ * stats.stampItCount) to the UI MediaFeedItem type.
+ */
+export async function fetchMediaFeedItemById(
+  id: string,
+): Promise<MediaFeedItemResult> {
+  const token = await freshToken();
+  if (!token) {
+    return { ok: false, data: null, errorKind: 'auth', message: 'Not authenticated' };
+  }
+
+  try {
+    const res = await fetch(`${apiBase()}/api/media/${encodeURIComponent(id)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, data: null, errorKind: 'auth', message: 'Unauthorized' };
+    }
+    if (res.status === 404) {
+      return { ok: false, data: null, errorKind: 'not_found', message: 'Not found' };
+    }
+    if (!res.ok) {
+      return { ok: false, data: null, errorKind: 'server', message: `HTTP ${res.status}` };
+    }
+
+    const body: { item?: ServerFeedItem } = await res.json();
+    if (!body.item) {
+      return { ok: false, data: null, errorKind: 'server', message: 'Malformed response' };
+    }
+    return { ok: true, data: mapServerFeedItem(body.item) };
   } catch (err) {
     if (isNetworkError(err)) {
       return { ok: false, data: null, errorKind: 'network', message: 'Network error' };
