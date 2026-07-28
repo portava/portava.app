@@ -463,8 +463,10 @@ async function _awardStampCore(
 
   // 9. Fire-and-forget: check stamp milestones (100 / 1,000 / 10,000).
   // Inserts a stamp_milestones row and sends a push notification when a new
-  // threshold is crossed.  Never blocks the award — all errors are swallowed.
+  // threshold is crossed.  Never blocks the award — all errors are logged then
+  // swallowed so a DB hiccup never prevents the stamp from being recorded.
   Promise.resolve().then(async () => {
+    let activeLevel: number | undefined;
     try {
       const MILESTONE_LEVELS = [10000, 1000, 100] as const;
 
@@ -477,6 +479,7 @@ async function _awardStampCore(
       const total = totalCount ?? 0;
 
       for (const level of MILESTONE_LEVELS) {
+        activeLevel = level;
         if (total < level) continue;
 
         // Check if this milestone was already recorded
@@ -520,8 +523,15 @@ async function _awardStampCore(
 
         break; // only process the highest newly-crossed milestone per award
       }
-    } catch {
-      // non-fatal: never block the award result
+    } catch (e: any) {
+      // non-fatal: never block the award result, but surface the failure so it
+      // appears in API-server workflow logs rather than disappearing silently.
+      console.error(JSON.stringify({
+        event:           "stamp.award.milestone_failed",
+        user_id:         userId,
+        milestone_level: activeLevel ?? null,
+        error:           e?.message ?? String(e),
+      }));
     }
   }).catch(() => {});
 

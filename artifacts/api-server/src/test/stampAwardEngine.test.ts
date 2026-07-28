@@ -48,6 +48,8 @@ interface FakeDB {
   stamp_award_events: any[];
   stamp_progress:    any[];
   trips:             any[];
+  stamp_milestones?: any[];
+  profiles?:         any[];
 }
 
 function makeFakeClient(db: FakeDB): SupabaseClient {
@@ -499,5 +501,95 @@ describe("U. awardStamp — log.warn emitted for specified skip reasons", () => 
 
     assert.equal(result.awarded, true);
     assert.equal(warnings.length, 0, "Successful award must NOT trigger log.warn");
+  });
+});
+
+// ── U. Milestone error logging ─────────────────────────────────────────────────
+
+describe("U. awardStamp — milestone block emits console.error when DB throws", () => {
+  it("logs stamp.award.milestone_failed to console.error when the user_stamps count query throws", async () => {
+    // Build a client where every table works normally EXCEPT user_stamps, which
+    // throws synchronously inside .then() to simulate a network/DB failure.
+    const db: FakeDB = {
+      feature_flags:     [V2_FLAG_ENABLED],
+      stamp_definitions: [BASE_DEFINITION],
+      user_stamps:       [],
+      stamp_award_events: [],
+      stamp_progress:    [],
+      trips:             [{ id: TRIP_ID, status: "completed" }],
+      stamp_milestones:  [],
+      profiles:          [],
+    };
+
+    const normalClient = makeFakeClient(db);
+
+    // The main award path queries user_stamps twice before the milestone block:
+    //   1. select … maybeSingle()  — existing-stamp idempotency check
+    //   2. insert …                — the actual stamp insert
+    // The milestone block is the 3rd user_stamps access (count query).
+    // Let the first two succeed normally; throw on the third so only the
+    // milestone catch fires while the award itself succeeds.
+    let userStampsCallCount = 0;
+    const throwingClient = {
+      from(table: string) {
+        if (table === "user_stamps") {
+          userStampsCallCount += 1;
+          const callIndex = userStampsCallCount;
+          if (callIndex <= 2) {
+            // Normal behaviour for the award path queries.
+            return normalClient.from(table);
+          }
+          // Third call is from the milestone count — make it throw.
+          const chain: any = {
+            select()     { return chain; },
+            eq()         { return chain; },
+            neq()        { return chain; },
+            is()         { return chain; },
+            in()         { return chain; },
+            gte()        { return chain; },
+            lte()        { return chain; },
+            order()      { return chain; },
+            range()      { return chain; },
+            limit()      { return chain; },
+            single()     { return chain; },
+            maybeSingle(){ return chain; },
+            head()       { return chain; },
+            insert()     { return chain; },
+            update()     { return chain; },
+            upsert()     { return chain; },
+            delete()     { return chain; },
+            then(resolve: any, reject: any) {
+              return Promise.reject(new Error("simulated DB failure")).then(resolve, reject);
+            },
+          };
+          return chain;
+        }
+        return normalClient.from(table);
+      },
+      rpc: async () => ({ data: null, error: null }),
+    } as unknown as import("@supabase/supabase-js").SupabaseClient;
+
+    const errors: string[] = [];
+    const origError = console.error;
+    console.error = (...args: unknown[]) => { errors.push(String(args[0])); };
+
+    try {
+      const result = await awardStamp(throwingClient, makeInput());
+      assert.equal(result.awarded, true, "Award must still succeed despite milestone failure");
+
+      // The milestone block is fire-and-forget; drain the microtask queue.
+      await new Promise((r) => setTimeout(r, 20));
+    } finally {
+      console.error = origError;
+    }
+
+    const milestoneErrors = errors
+      .map((s) => { try { return JSON.parse(s); } catch { return null; } })
+      .filter((o) => o?.event === "stamp.award.milestone_failed");
+
+    assert.equal(milestoneErrors.length, 1, "Expected exactly one stamp.award.milestone_failed log");
+    const logged = milestoneErrors[0];
+    assert.equal(logged.user_id, ALICE_ID);
+    assert.ok("error" in logged, "Logged object must include an error field");
   });
 });
