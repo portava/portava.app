@@ -509,6 +509,118 @@ async function uploadToStorage(
 // ── Premium composition support (Stamp Wave 1) ───────────────────────────────
 
 /**
+ * True when the auto-approve artwork flag is enabled. Defensive: any error
+ * (flag table missing, pre-2042 DB) → false, review_required path runs.
+ */
+async function autoApproveArtworkEnabled(sc: any): Promise<boolean> {
+  try {
+    const { data, error } = await sc
+      .from("feature_flags")
+      .select("enabled")
+      .eq("flag", "stamp_auto_approve_artwork")
+      .maybeSingle();
+    if (error) return false;
+    return (data as any)?.enabled === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Promote the first candidate in `versionInserts` to approved status, set it
+ * as the catalog's active version, and archive all other candidates for this
+ * catalog entry.
+ *
+ * Mirrors the activate-version admin endpoint logic (stampCatalog.ts ~523-635)
+ * but runs inside the worker without an admin actor. Non-fatal: any DB error
+ * is logged and the caller falls through to the normal review_required path.
+ *
+ * Returns true when the approval succeeded, false on any error.
+ */
+async function autoApproveFirstCandidate(
+  sc: any,
+  jobId: string,
+  catalogId: string,
+  canonicalLocationKey: string,
+  stampType: string,
+  versionInserts: any[],
+): Promise<boolean> {
+  const first = versionInserts[0];
+  if (!first) return false;
+
+  const versionId: string = first.id;
+  const nowIso = new Date().toISOString();
+
+  // 1. Approve the version row.
+  const { error: vErr } = await sc
+    .from("stamp_artwork_versions")
+    .update({
+      status:      "approved",
+      reviewed_at: nowIso,
+      // reviewed_by_admin_id left null — auto-approved by worker, not an admin.
+    })
+    .eq("id", versionId)
+    .eq("catalog_id", catalogId)
+    .eq("status", "candidate");
+
+  if (vErr) {
+    console.error(JSON.stringify({
+      event:      "stamp.generation.auto_approve_version_error",
+      job_id:     jobId,
+      catalog_id: catalogId,
+      version_id: versionId,
+      error:      vErr.message,
+    }));
+    return false;
+  }
+
+  // 2. Point the catalog at the new active version and set status to approved.
+  const { error: catErr } = await sc
+    .from("universal_stamp_catalog")
+    .update({
+      active_version_id: versionId,
+      status:            "approved",
+      updated_at:        nowIso,
+    })
+    .eq("id", catalogId);
+
+  if (catErr) {
+    console.error(JSON.stringify({
+      event:      "stamp.generation.auto_approve_catalog_error",
+      job_id:     jobId,
+      catalog_id: catalogId,
+      version_id: versionId,
+      error:      catErr.message,
+    }));
+    return false;
+  }
+
+  // 3. Archive any other candidates for this catalog entry.
+  if (versionInserts.length > 1) {
+    const otherIds = versionInserts.slice(1).map((v: any) => v.id);
+    await sc
+      .from("stamp_artwork_versions")
+      .update({ status: "archived" })
+      .eq("catalog_id", catalogId)
+      .eq("status", "candidate")
+      .in("id", otherIds);
+    // Best-effort: log but don't fail the auto-approve on archive errors.
+  }
+
+  // 4. Invalidate catalog cache so the next /api/stamps/me poll sees the artwork.
+  invalidateCatalogCache(canonicalLocationKey, stampType);
+
+  console.log(JSON.stringify({
+    event:      "stamp.generation.auto_approved",
+    job_id:     jobId,
+    catalog_id: catalogId,
+    version_id: versionId,
+  }));
+
+  return true;
+}
+
+/**
  * True when the premium composition pipeline is enabled. Defensive: any error
  * (flag table missing, pre-0177 DB) → false, legacy path runs.
  */
@@ -749,7 +861,10 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
     // Premium composition path (Stamp Wave 1): AI paints hero art only; the
     // composition engine owns typography/borders/rarity. Flag-gated — when
     // off, the legacy full-stamp prompt + flat-raster path runs unchanged.
-    const premium = await premiumRenderingEnabled(sc);
+    const [premium, autoApprove] = await Promise.all([
+      premiumRenderingEnabled(sc),
+      autoApproveArtworkEnabled(sc),
+    ]);
     const identity = premium ? await resolveIdentity(sc, { ...(catalogRow as any) }) : null;
     const prompt = premium && identity
       ? buildHeroArtPrompt(entry, identity)
@@ -895,9 +1010,28 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
 
     if (insertErr) throw new Error(`version_insert_failed: ${insertErr.message}`);
 
+    // Auto-approve: when the feature flag is on, promote the first passing
+    // candidate immediately so earned stamps show artwork without waiting for
+    // manual admin review.  Non-fatal: any DB error is logged and the cycle
+    // continues to the normal review_required queue update below so the admin
+    // still sees the job and can approve a different candidate if desired.
+    if (autoApprove) {
+      await autoApproveFirstCandidate(
+        sc,
+        jobId,
+        catalogId,
+        entry.canonical_location_key,
+        entry.stamp_type,
+        versionInserts,
+      );
+    }
+
     // Mark queue job as review_required. A degraded run records the shortfall
     // in last_error so the admin review screen can surface it; a full run
     // clears any stale error from a previous attempt.
+    // When auto-approve ran successfully the catalog is already approved, but
+    // the queue row stays review_required so admins can see the generation and
+    // optionally switch to a different candidate via the activate-version endpoint.
     await sc
       .from("stamp_generation_queue")
       .update({
