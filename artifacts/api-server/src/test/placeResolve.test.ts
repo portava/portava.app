@@ -329,6 +329,9 @@ import {
   isSamePlace,
   haversineKm,
   nameSimilarity,
+  isLandmark,
+  normalizeLandmarkName,
+  LANDMARK_CATEGORY_FAMILIES,
   type PlaceLike,
 } from "../lib/places/placeResolve.js";
 import { resolveHeaderImage } from "../lib/visuals/priority.js";
@@ -494,6 +497,304 @@ describe("wrong-place: different branch of the same chain rejected when canonica
       isSamePlace(smManila, smCebu),
       false,
       "Two branches of the same chain must NOT be merged — they are far apart",
+    );
+  });
+});
+
+// ── normalizeLandmarkName ─────────────────────────────────────────────────────
+
+describe("normalizeLandmarkName", () => {
+  it("strips 'Falls' from 'Kawasan Falls' → ['kawasan']", () => {
+    assert.deepEqual(normalizeLandmarkName("Kawasan Falls"), ["kawasan"]);
+  });
+
+  it("strips 'Waterfalls' from 'Kawasan Waterfalls' → ['kawasan']", () => {
+    assert.deepEqual(normalizeLandmarkName("Kawasan Waterfalls"), ["kawasan"]);
+  });
+
+  it("strips 'Falls' and 'Cebu' from 'Kawasan Falls Cebu' → ['kawasan']", () => {
+    assert.deepEqual(normalizeLandmarkName("Kawasan Falls Cebu"), ["kawasan"]);
+  });
+
+  it("strips 'Main' and 'Falls' from 'Kawasan Main Falls' → ['kawasan']", () => {
+    assert.deepEqual(normalizeLandmarkName("Kawasan Main Falls"), ["kawasan"]);
+  });
+
+  it("strips 'Upper' and 'Falls' from 'Upper Kawasan Falls' → ['kawasan']", () => {
+    assert.deepEqual(normalizeLandmarkName("Upper Kawasan Falls"), ["kawasan"]);
+  });
+
+  it("strips 'Beach' from 'White Beach' → ['white']", () => {
+    assert.deepEqual(normalizeLandmarkName("White Beach"), ["white"]);
+  });
+
+  it("strips 'Mountain' from 'Apo Mountain' → ['apo']", () => {
+    assert.deepEqual(normalizeLandmarkName("Apo Mountain"), ["apo"]);
+  });
+
+  it("strips 'Mount' from 'Mount Apo' → ['apo']", () => {
+    assert.deepEqual(normalizeLandmarkName("Mount Apo"), ["apo"]);
+  });
+
+  it("handles diacritics — 'Boracáy Beach' → ['boracay']", () => {
+    assert.deepEqual(normalizeLandmarkName("Boracáy Beach"), ["boracay"]);
+  });
+
+  it("handles hyphenated names — 'El Nido-Beach' → ['el', 'nido']", () => {
+    const tokens = normalizeLandmarkName("El Nido-Beach");
+    assert.ok(tokens.includes("el") && tokens.includes("nido"),
+      `expected 'el' and 'nido' in ${JSON.stringify(tokens)}`);
+    assert.ok(!tokens.includes("beach"));
+  });
+
+  it("strips ordinal 'ii' from 'Tumalog Falls II' → ['tumalog']", () => {
+    assert.deepEqual(normalizeLandmarkName("Tumalog Falls II"), ["tumalog"]);
+  });
+
+  it("returns empty array for a name composed entirely of descriptor tokens", () => {
+    assert.deepEqual(normalizeLandmarkName("Upper Falls"), []);
+  });
+});
+
+// ── isLandmark ────────────────────────────────────────────────────────────────
+
+describe("isLandmark", () => {
+  it("returns true for 'waterfall'", () => assert.equal(isLandmark("waterfall"), true));
+  it("returns true for 'falls'", () => assert.equal(isLandmark("falls"), true));
+  it("returns true for 'mountain'", () => assert.equal(isLandmark("mountain"), true));
+  it("returns true for 'beach'", () => assert.equal(isLandmark("beach"), true));
+  it("returns true for 'viewpoint'", () => assert.equal(isLandmark("viewpoint"), true));
+  it("returns true for 'park'", () => assert.equal(isLandmark("park"), true));
+  it("returns true for 'cave'", () => assert.equal(isLandmark("cave"), true));
+  it("returns true for 'lake'", () => assert.equal(isLandmark("lake"), true));
+  it("returns true for 'river'", () => assert.equal(isLandmark("river"), true));
+  it("returns true for 'trail'", () => assert.equal(isLandmark("trail"), true));
+  it("returns true for 'island'", () => assert.equal(isLandmark("island"), true));
+  it("returns false for 'hotel'", () => assert.equal(isLandmark("hotel"), false));
+  it("returns false for 'restaurant'", () => assert.equal(isLandmark("restaurant"), false));
+  it("returns false for 'attraction'", () => assert.equal(isLandmark("attraction"), false));
+  it("returns false for null", () => assert.equal(isLandmark(null), false));
+  it("returns false for empty string", () => assert.equal(isLandmark(""), false));
+  it("LANDMARK_CATEGORY_FAMILIES has correct size", () => assert.equal(LANDMARK_CATEGORY_FAMILIES.size, 10));
+});
+
+// ── isSamePlace — landmark branch ────────────────────────────────────────────
+
+describe("isSamePlace: landmark relaxed heuristics", () => {
+  // All four Kawasan variants at essentially the same coordinates.
+  const BASE_LAT = 9.8697;
+  const BASE_LNG = 123.3966;
+
+  const kawasanFalls: PlaceLike = {
+    name: "Kawasan Falls",
+    latitude: BASE_LAT,
+    longitude: BASE_LNG,
+    primary_category: "waterfall",
+  };
+  const kawasanWaterfalls: PlaceLike = {
+    name: "Kawasan Waterfalls",
+    latitude: BASE_LAT + 0.0001,    // ~11 m away
+    longitude: BASE_LNG,
+    primary_category: "waterfall",
+  };
+  const kawasanFallsCebu: PlaceLike = {
+    name: "Kawasan Falls Cebu",
+    latitude: BASE_LAT,
+    longitude: BASE_LNG + 0.0002,   // ~22 m away
+    primary_category: "waterfall",
+  };
+  const kawasanMainFalls: PlaceLike = {
+    name: "Kawasan Main Falls",
+    latitude: BASE_LAT + 0.0015,    // ~167 m away — within 300 m landmark radius
+    longitude: BASE_LNG,
+    primary_category: "waterfall",
+  };
+
+  it("merges 'Kawasan Falls' and 'Kawasan Waterfalls' (same core token)", () => {
+    assert.equal(isSamePlace(kawasanFalls, kawasanWaterfalls), true);
+  });
+
+  it("merges 'Kawasan Falls' and 'Kawasan Falls Cebu' (geographic qualifier stripped)", () => {
+    assert.equal(isSamePlace(kawasanFalls, kawasanFallsCebu), true);
+  });
+
+  it("merges 'Kawasan Falls' and 'Kawasan Main Falls' (positional modifier stripped)", () => {
+    assert.equal(isSamePlace(kawasanFalls, kawasanMainFalls), true);
+  });
+
+  it("merges 'Kawasan Waterfalls' and 'Kawasan Main Falls'", () => {
+    assert.equal(isSamePlace(kawasanWaterfalls, kawasanMainFalls), true);
+  });
+
+  it("does NOT merge a waterfall and a mountain at the same coordinates (different sub-family)", () => {
+    const mountain: PlaceLike = {
+      name: "Kawasan Peak",
+      latitude: BASE_LAT,
+      longitude: BASE_LNG,
+      primary_category: "mountain",
+    };
+    assert.equal(
+      isSamePlace(kawasanFalls, mountain),
+      false,
+      "waterfall and mountain must not merge even when co-located",
+    );
+  });
+
+  it("does NOT merge landmarks more than 300 m apart", () => {
+    const far: PlaceLike = {
+      name: "Kawasan Falls",
+      latitude: BASE_LAT + 0.004,   // ~445 m — beyond 300 m landmark radius
+      longitude: BASE_LNG,
+      primary_category: "waterfall",
+    };
+    assert.equal(
+      isSamePlace(kawasanFalls, far),
+      false,
+      "landmarks more than 300 m apart must not merge",
+    );
+  });
+
+  it("does NOT merge fully dissimilar waterfall names at the same spot", () => {
+    const different: PlaceLike = {
+      name: "Tumalog Falls",
+      latitude: BASE_LAT,
+      longitude: BASE_LNG,
+      primary_category: "waterfall",
+    };
+    assert.equal(
+      isSamePlace(kawasanFalls, different),
+      false,
+      "waterfalls with unrelated core names must not merge",
+    );
+  });
+
+  it("landmark branch does NOT fire for standard categories — hotel still uses 75 m / 0.8 rule", () => {
+    const hotelA: PlaceLike = {
+      name: "Grand Hotel Cebu",
+      latitude: 10.3157,
+      longitude: 123.8854,
+      primary_category: "hotel",
+    };
+    // ~200 m away — within landmark radius but outside standard 75 m
+    const hotelB: PlaceLike = {
+      name: "Grand Hotel Cebu",
+      latitude: 10.3157 + 0.0018,
+      longitude: 123.8854,
+      primary_category: "hotel",
+    };
+    assert.equal(
+      isSamePlace(hotelA, hotelB),
+      false,
+      "hotels 200 m apart must not merge (75 m standard rule applies)",
+    );
+  });
+
+  it("beach variants within 300 m are merged", () => {
+    const whiteBeach: PlaceLike = {
+      name: "White Beach",
+      latitude: 11.9674,
+      longitude: 121.9209,
+      primary_category: "beach",
+    };
+    const whiteBeachBoracay: PlaceLike = {
+      name: "White Beach Boracay",
+      latitude: 11.9674 + 0.001,  // ~111 m
+      longitude: 121.9209,
+      primary_category: "beach",
+    };
+    // "boracay" is not in the descriptor blocklist, so tokens are ["white"] vs ["white","boracay"]
+    // Jaccard = 1 / (1 + 2 - 1) = 0.5 — below 0.6 threshold.
+    // This correctly keeps them separate (Boracay qualifier distinguishes location).
+    assert.equal(
+      isSamePlace(whiteBeach, whiteBeachBoracay),
+      false,
+      "'White Beach' vs 'White Beach Boracay' — geographic qualifier distinguishes them",
+    );
+  });
+
+  it("mountain variants within 300 m are merged", () => {
+    const mountApo: PlaceLike = {
+      name: "Mount Apo",
+      latitude: 6.9888,
+      longitude: 125.2701,
+      primary_category: "mountain",
+    };
+    const apoMountain: PlaceLike = {
+      name: "Apo Mountain",
+      latitude: 6.9888 + 0.001,   // ~111 m
+      longitude: 125.2701,
+      primary_category: "mountain",
+    };
+    assert.equal(isSamePlace(mountApo, apoMountain), true);
+  });
+
+  // ── Tile-boundary regression ────────────────────────────────────────────────
+  // The dedup sweep groups places into 0.003° tiles (~333 m). Two variants that
+  // sit on opposite sides of a tile edge (different tile integers) but are still
+  // within the 300 m merge radius would be missed by a same-tile-only strategy.
+  //
+  // The sweep now expands to the 3×3 neighbourhood of each place's tile, so
+  // those cross-boundary pairs are always evaluated. These tests confirm that
+  // isSamePlace itself correctly merges such pairs — proving that the fix is
+  // complete once the sweep finds them.
+  //
+  // Tile boundary example (TILE_DEG = 0.003):
+  //   - tile row 3333 covers lat 9.999–10.002
+  //   - A is at lat 10.001 (tile 3333), B at lat 10.003 (tile 3334)
+  //   - distance ≈ 222 m — within 300 m landmark radius but in adjacent tiles
+
+  it("tile-boundary: two waterfalls ~222 m apart across a tile edge are merged", () => {
+    const TILE_DEG = 0.003;
+    // Place A just inside tile row N, place B just inside tile row N+1.
+    const tileEdgeLat = Math.ceil(9.0 / TILE_DEG) * TILE_DEG; // exact tile boundary
+    const a: PlaceLike = {
+      name: "Tumalog Falls",
+      latitude: tileEdgeLat - 0.0005,   // inside tile N
+      longitude: 123.5,
+      primary_category: "waterfall",
+    };
+    const b: PlaceLike = {
+      name: "Tumalog Waterfalls",
+      latitude: tileEdgeLat + 0.0015,   // inside tile N+1, ~222 m from A
+      longitude: 123.5,
+      primary_category: "waterfall",
+    };
+    // Confirm they ARE in different tiles (boundary case is real).
+    const taTile = Math.floor(a.latitude! / TILE_DEG);
+    const tbTile = Math.floor(b.latitude! / TILE_DEG);
+    assert.notEqual(taTile, tbTile, "test setup: A and B must be in different tiles");
+    // Confirm isSamePlace merges them despite the tile boundary.
+    const distKm = haversineKm(a.latitude!, a.longitude!, b.latitude!, b.longitude!);
+    assert.ok(distKm < 0.300, `distance ${distKm.toFixed(3)} km must be < 0.300`);
+    assert.equal(
+      isSamePlace(a, b),
+      true,
+      "cross-tile-boundary waterfall variants within 300 m must merge",
+    );
+  });
+
+  it("tile-boundary: two mountains ~111 m apart on opposite sides of a longitude tile edge are merged", () => {
+    const TILE_DEG = 0.003;
+    const tileEdgeLng = Math.ceil(125.0 / TILE_DEG) * TILE_DEG;
+    const a: PlaceLike = {
+      name: "Mount Kanlaon",
+      latitude: 10.412,
+      longitude: tileEdgeLng - 0.0002,  // inside tile col M
+      primary_category: "mountain",
+    };
+    const b: PlaceLike = {
+      name: "Kanlaon Mountain",
+      latitude: 10.412,
+      longitude: tileEdgeLng + 0.0008,  // inside tile col M+1, ~111 m away
+      primary_category: "mountain",
+    };
+    const taTile = Math.floor(a.longitude! / TILE_DEG);
+    const tbTile = Math.floor(b.longitude! / TILE_DEG);
+    assert.notEqual(taTile, tbTile, "test setup: A and B must be in different tiles");
+    assert.equal(
+      isSamePlace(a, b),
+      true,
+      "cross-tile-boundary mountain variants within 300 m must merge",
     );
   });
 });

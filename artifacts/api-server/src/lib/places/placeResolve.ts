@@ -21,7 +21,9 @@ import { isFlagEnabled } from "../featureFlags.js";
 
 // ── Category families (the don't-merge-across-family guard) ───────────────────
 export type PlaceCategory =
-  | "accommodation" | "food" | "nightlife" | "culture" | "shopping" | "attraction" | "other";
+  | "accommodation" | "food" | "nightlife" | "culture" | "shopping" | "attraction"
+  | "waterfall" | "mountain" | "beach" | "viewpoint" | "park" | "cave" | "lake" | "river" | "trail" | "island"
+  | "other";
 
 const CATEGORY_ALIASES: Record<string, PlaceCategory> = {
   hotel: "accommodation", hostel: "accommodation", resort: "accommodation", lodging: "accommodation",
@@ -30,7 +32,18 @@ const CATEGORY_ALIASES: Record<string, PlaceCategory> = {
   bar: "nightlife", club: "nightlife", nightlife: "nightlife", lounge: "nightlife", pub: "nightlife",
   museum: "culture", gallery: "culture", culture: "culture", theatre: "culture", theater: "culture",
   mall: "shopping", shop: "shopping", store: "shopping", shopping: "shopping", market: "shopping",
-  attraction: "attraction", landmark: "attraction", park: "attraction", viewpoint: "attraction",
+  attraction: "attraction", landmark: "attraction",
+  // Natural landmark sub-families (stored verbatim; never collapsed to "attraction")
+  waterfall: "waterfall", falls: "waterfall", waterfalls: "waterfall",
+  mountain: "mountain", mount: "mountain", peak: "mountain", hill: "mountain", summit: "mountain",
+  beach: "beach", beaches: "beach", shore: "beach",
+  viewpoint: "viewpoint", lookout: "viewpoint", overlook: "viewpoint",
+  park: "park", "national park": "park", reserve: "park",
+  cave: "cave", cavern: "cave", grotto: "cave",
+  lake: "lake", lagoon: "lake", pond: "lake",
+  river: "river", stream: "river", creek: "river",
+  trail: "trail", hiking: "trail",
+  island: "island", isle: "island",
 };
 
 export function categoryFamily(raw: string | null | undefined): PlaceCategory {
@@ -41,6 +54,73 @@ export function categoryFamily(raw: string | null | undefined): PlaceCategory {
     if (k.includes(needle)) return fam;
   }
   return "other";
+}
+
+// ── Landmark category families ────────────────────────────────────────────────
+
+/**
+ * The set of PlaceCategory values that represent natural landmarks.
+ * These trigger the relaxed merge heuristics (300 m radius, Jaccard ≥ 0.6
+ * on normalised token sets) in `isSamePlace`.
+ */
+export const LANDMARK_CATEGORY_FAMILIES = new Set<PlaceCategory>([
+  "waterfall", "mountain", "beach", "viewpoint", "park",
+  "cave", "lake", "river", "trail", "island",
+]);
+
+/** Returns true when `raw` resolves to a natural-landmark category family. */
+export function isLandmark(raw: string | null | undefined): boolean {
+  return LANDMARK_CATEGORY_FAMILIES.has(categoryFamily(raw));
+}
+
+// ── Landmark name normalisation ───────────────────────────────────────────────
+
+/**
+ * Descriptor tokens stripped before landmark Jaccard comparison.
+ * Includes type nouns (so "Kawasan Falls" and "Kawasan Waterfalls" share the
+ * core token "kawasan"), positional modifiers ("Upper", "Main"), ordinals,
+ * and a small geographic-qualifier blocklist.
+ */
+const LANDMARK_DESCRIPTOR_TOKENS = new Set([
+  // Type nouns
+  "falls", "waterfall", "waterfalls",
+  "beach", "beaches",
+  "mountain", "mount", "mt", "peak", "summit", "ridge",
+  "viewpoint", "lookout", "overlook",
+  "park", "national", "reserve",
+  "cave", "caves", "cavern",
+  "lake", "river", "stream", "creek",
+  "trail", "path", "track",
+  "island", "isle",
+  // Positional / ordinal modifiers
+  "main", "upper", "lower",
+  "north", "south", "east", "west",
+  "central", "big", "little", "great", "grand", "new", "old",
+  // Ordinal numbers
+  "1st", "2nd", "3rd", "4th", "5th", "i", "ii", "iii", "iv", "v",
+  // Geographic qualifiers (blocklist — extend as needed)
+  "cebu",
+]);
+
+/** Strip Unicode combining diacritical marks. */
+function stripDiacritics(s: string): string {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+/**
+ * Normalise a landmark name for fuzzy dedup comparison.
+ * Lowercases, strips diacritics, tokenises, then removes descriptor tokens
+ * (type nouns, positional modifiers, geographic qualifiers) leaving the
+ * distinctive core tokens that uniquely identify the landmark.
+ *
+ * "Kawasan Main Falls"   → ["kawasan"]
+ * "Kawasan Waterfalls"   → ["kawasan"]
+ * "White Beach Boracay"  → ["white"]  (if "boracay" is added to blocklist)
+ */
+export function normalizeLandmarkName(name: string): string[] {
+  const lower = stripDiacritics(name.toLowerCase());
+  const tokens = lower.split(/[\s\-–—,./()[\]]+/).filter((t) => t.length > 0);
+  return tokens.filter((t) => !LANDMARK_DESCRIPTOR_TOKENS.has(t));
 }
 
 // ── Name similarity (token-set) ───────────────────────────────────────────────
@@ -80,17 +160,52 @@ export interface PlaceLike {
 export const MERGE_DISTANCE_KM = 0.075; // ~75 m — same building/address
 const MERGE_NAME_SIM = 0.8;
 
+/** Relaxed distance for natural landmarks (larger footprint, variant names). */
+export const LANDMARK_MERGE_DISTANCE_KM = 0.300; // ~300 m
+const LANDMARK_MERGE_NAME_SIM = 0.6;
+
 /**
  * Should `candidate` be considered the SAME real-world place as `existing`?
- * Requires: close proximity AND name-equivalence AND same category family.
+ *
+ * Standard branch — built venues (hotels, restaurants, bars, …):
+ *   • Distance ≤ 75 m (same building/address)
+ *   • Same category family (hotel ≠ its rooftop bar)
+ *   • Jaccard token overlap ≥ 0.8
+ *
+ * Landmark branch — natural landmarks (waterfalls, mountains, beaches, …):
+ *   • Both candidates resolve to a landmark category family
+ *   • Same landmark sub-family (waterfall ≠ mountain even at same coords)
+ *   • Distance ≤ 300 m (wider footprint; name variants common)
+ *   • Jaccard overlap ≥ 0.6 on *normalised* token sets (descriptor-stripped)
+ *
  * Any missing coordinate → not mergeable (can't verify proximity → keep apart).
  */
 export function isSamePlace(candidate: PlaceLike, existing: PlaceLike): boolean {
   if (candidate.latitude == null || candidate.longitude == null ||
       existing.latitude == null || existing.longitude == null) return false;
+
   const dist = haversineKm(candidate.latitude, candidate.longitude, existing.latitude, existing.longitude);
+
+  // ── Landmark branch ───────────────────────────────────────────────────────
+  const candFam = categoryFamily(candidate.primary_category);
+  const exisFam = categoryFamily(existing.primary_category);
+  if (LANDMARK_CATEGORY_FAMILIES.has(candFam) && LANDMARK_CATEGORY_FAMILIES.has(exisFam)) {
+    if (candFam !== exisFam) return false;                             // waterfall ≠ mountain
+    if (dist > LANDMARK_MERGE_DISTANCE_KM) return false;
+    const normA = normalizeLandmarkName(candidate.name);
+    const normB = normalizeLandmarkName(existing.name);
+    if (normA.length === 0 || normB.length === 0) return false;
+    const setA = new Set(normA);
+    const setB = new Set(normB);
+    let inter = 0;
+    for (const t of setA) if (setB.has(t)) inter++;
+    const jaccard = inter / (setA.size + setB.size - inter);
+    return jaccard >= LANDMARK_MERGE_NAME_SIM;
+  }
+
+  // ── Standard branch ───────────────────────────────────────────────────────
   if (dist > MERGE_DISTANCE_KM) return false;                         // two chain branches stay apart
-  if (categoryFamily(candidate.primary_category) !== categoryFamily(existing.primary_category)) return false; // hotel≠its bar
+  if (candFam !== exisFam) return false;                              // hotel ≠ its bar
   return nameSimilarity(candidate.name, existing.name) >= MERGE_NAME_SIM;
 }
 
@@ -407,10 +522,13 @@ export async function resolveExternalPlace(
   }
 
   // 2. Dedup against nearby places (bbox ~ 2× merge distance for safety), then
-  //    apply the strict isSamePlace guard in JS.
+  //    apply the isSamePlace guard in JS.
+  //    Use the landmark radius for landmark categories so the wider 300 m
+  //    threshold has candidates to compare against.
   let matchId: string | null = null;
   if (rec.latitude != null && rec.longitude != null) {
-    const d = (MERGE_DISTANCE_KM * 2) / 111.32;
+    const bboxRadius = isLandmark(rec.primaryCategory) ? LANDMARK_MERGE_DISTANCE_KM : MERGE_DISTANCE_KM;
+    const d = (bboxRadius * 2) / 111.32;
     const { data: near } = await db
       .from("places")
       .select("id, name, latitude, longitude, primary_category, merged_into_place_id")
