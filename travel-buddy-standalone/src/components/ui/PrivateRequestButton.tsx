@@ -46,8 +46,11 @@ export function PrivateRequestButton({
     try {
       const res = await followUser(userId);
       if (res.ok) {
-        onRequestSent?.();
+        // Flip local state first so the UI commits before any parent re-render
+        // (e.g. a socialVersion bump that briefly unmounts the wall) can race
+        // against the state update and leave the button stuck on "Send Request".
         setPending(true);
+        onRequestSent?.();
       } else {
         Alert.alert('Could not send request', res.message ?? 'Please try again.');
       }

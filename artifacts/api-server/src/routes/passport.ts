@@ -199,13 +199,28 @@ router.get("/users/:username/passport", async (req, res) => {
     // "Send Request" vs "Request sent" vs (future) "View profile" without
     // a second round-trip.  Fail-open: both flags stay false on any error.
     // NOTE: pending requests grant NO additional content access.
+    //
+    // Use direct targeted queries instead of resolveInteractionPermissions —
+    // the full resolver is overkill here and its broad catch silently swallows
+    // any DB hiccup, leaving friend_request_pending=false even when a pending
+    // row exists.  The search endpoint uses the same direct pattern (follows.ts).
     let relationshipStatus: "none" | "friend" | "outgoing_request" = "none";
     if (viewerId) {
       try {
-        const perms = await resolveInteractionPermissions(sc, viewerId, targetId);
-        const label = perms.relationshipLabel;
-        if (label === "friend") relationshipStatus = "friend";
-        else if (label === "outgoing_request") relationshipStatus = "outgoing_request";
+        const [pendingReqRow, friendshipRow] = await Promise.all([
+          sc.from("friend_requests")
+            .select("id")
+            .eq("requester_id", viewerId)
+            .eq("recipient_id", targetId)
+            .eq("status", "pending")
+            .maybeSingle(),
+          sc.from("user_friendships")
+            .select("user_a")
+            .or(`and(user_a.eq.${viewerId},user_b.eq.${targetId}),and(user_a.eq.${targetId},user_b.eq.${viewerId})`)
+            .maybeSingle(),
+        ]);
+        if (friendshipRow.data) relationshipStatus = "friend";
+        else if (pendingReqRow.data) relationshipStatus = "outgoing_request";
       } catch {
         // non-fatal — leave "none"
       }

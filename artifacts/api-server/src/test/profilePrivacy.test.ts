@@ -11,6 +11,7 @@
  *   6. toFullProfileView includes bio, homeCity, homeCountry, currentCity, etc.
  *   7. Blocked user receives blocked sentinel from GET /users/:username/passport
  *   8. Unauthorized viewer of private profile receives limited_preview from GET /users/:username/passport
+ *   9. Viewer with an existing pending friend_request receives friend_request_pending=true in the sentinel
  *
  * Run: node --import tsx/esm --test src/test/profilePrivacy.test.ts
  *
@@ -287,15 +288,36 @@ describe("Profile Privacy — passport route integration", () => {
     assert.equal(body.blocked, true, "blocked viewer should receive { blocked: true }");
     assert(!("bio" in body), "bio must not leak through blocked sentinel");
   });
+
+  it("viewer with a pending friend request receives friend_request_pending=true in sentinel", async () => {
+    // The fix: the passport limited_preview path now queries friend_requests directly
+    // instead of relying on resolveInteractionPermissions (which could throw silently).
+    // Seed a pending friend_requests row for the viewer→target direction.
+    _setTestClient(makePassportFakeClient({ withPendingRequest: true }), true);
+    const { status, body } = await apiReq("GET", "/api/users/travelerj/passport", VIEWER_TOKEN);
+    assert.equal(status, 200);
+    assert.equal(body.visibility, "private", "still limited_preview — pending request grants no access");
+    assert.equal(body.friend_request_pending, true, "pending request must be reflected in the sentinel");
+    assert.equal(body.relationshipStatus, "outgoing_request");
+    assert(!("bio" in body), "bio must not leak even with a pending request");
+  });
 });
 
 // ── Fake client for passport route ───────────────────────────────────────────
 
-function makePassportFakeClient({ withBlock = false }: { withBlock?: boolean } = {}) {
+function makePassportFakeClient({
+  withBlock = false,
+  withPendingRequest = false,
+}: { withBlock?: boolean; withPendingRequest?: boolean } = {}) {
   const db: Record<string, any[]> = {
     profiles: [{ ...PRIVATE_PROFILE_ROW }],
     user_follows: [],
     user_friendships: [],
+    // Seed a pending friend_requests row when withPendingRequest is true.
+    // This exercises the new direct-query path in the passport limited_preview branch.
+    friend_requests: withPendingRequest
+      ? [{ id: "req-001", requester_id: VIEWER_ID, recipient_id: TARGET_ID, status: "pending" }]
+      : [],
     // The .or() helper in the chain below is a no-op (returns all rows) so we
     // must scope the blocks table to only the rows that apply to THIS scenario.
     // An empty table means no block; a populated table means the viewer is blocked.
