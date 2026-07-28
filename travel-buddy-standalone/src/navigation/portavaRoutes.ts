@@ -1242,6 +1242,26 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     featureFlag: 'rent_buddy_enabled',
   },
 
+  // @Portava curation admin
+  {
+    key: 'admin-portava-posts',
+    path: 'admin/portava-posts',
+    title: '@Portava Posts',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    adminOnly: true,
+  },
+  {
+    key: 'admin-portava-post-new',
+    path: 'admin/portava-post',
+    title: 'New @Portava Post',
+    parent: 'admin-portava-posts',
+    icon: null,
+    requiresAuth: true,
+    adminOnly: true,
+  },
+
   // RAB Admin
   {
     key: 'rab-admin',
