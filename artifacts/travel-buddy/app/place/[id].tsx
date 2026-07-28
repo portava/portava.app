@@ -21,7 +21,7 @@ import { useLocalSearchParams, Stack } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Flag, MapPin, Globe, Phone, Tag, Bookmark, Navigation, Clock, Star, ListPlus } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
-import { getCanonicalPlace } from '../../src/services/places';
+import { getCanonicalPlace, getPlaceLiving } from '../../src/services/places';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 import { PlaceCard } from '../../src/components/place/PlaceCard';
 import { PlaceInfoSection } from '../../src/components/place/PlaceInfoSection';
@@ -35,9 +35,11 @@ import { categoryColor } from '../../src/components/discovery/PlaceCard';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { WorthItVoteRow } from '../../src/components/WorthItVoteRow';
 import { useSession } from '../../src/context/SessionContext';
+import { LivingDestinationPage } from '../../src/components/place/living/LivingDestinationPage';
 import type { CanonicalPlace } from '../../src/types/canonicalPlace';
 import type { MapEntity } from '../../src/types/mapTypes';
 import type { DiscoveryPlace, PlaceLiveStatus } from '../../src/services/discovery';
+import type { PlaceLivingResponse } from '../../src/types/placeLiving';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -303,7 +305,10 @@ export default function PlaceDetailScreen() {
   const { isEnabled: isFlagEnabled } = useFeatureFlags();
   const { isAuthed } = useSession();
 
+  // undefined = loading, null = not found / flag off
   const [canonicalPlace, setCanonicalPlace] = useState<CanonicalPlace | null | undefined>(undefined);
+  // undefined = loading, null = not available (living endpoint not accessible)
+  const [living, setLiving] = useState<PlaceLivingResponse | null | undefined>(undefined);
   const [reportOpen, setReportOpen] = useState(false);
 
   // Parse discovery-place fallback from URL param (set by map/index.tsx placeEntities).
@@ -314,15 +319,23 @@ export default function PlaceDetailScreen() {
     // and fall through to the discovery fallback — fail-soft, no crash.
     if (!id || !isFlagEnabled('external_places_enabled')) {
       setCanonicalPlace(null);
+      setLiving(null);
       return;
     }
-    void getCanonicalPlace(id).then(setCanonicalPlace);
+    // Fetch canonical place and living page data in parallel.
+    void Promise.all([
+      getCanonicalPlace(id),
+      getPlaceLiving(id),
+    ]).then(([place, livingData]) => {
+      setCanonicalPlace(place);
+      setLiving(livingData);
+    });
   }, [id, isFlagEnabled]);
 
   const placeName = canonicalPlace?.name ?? discoveryPlace?.name ?? 'Place';
 
   // ── Loading ─────────────────────────────────────────────────────────────────
-  if (canonicalPlace === undefined) {
+  if (canonicalPlace === undefined || living === undefined) {
     return (
       <>
         <Stack.Screen options={{ title: 'Place' }} />
@@ -333,7 +346,29 @@ export default function PlaceDetailScreen() {
     );
   }
 
-  // ── Canonical place ─────────────────────────────────────────────────────────
+  // ── Canonical place — Living Destination Page ────────────────────────────────
+  // When the living endpoint returns data, render the full LivingDestinationPage.
+  // Falls back to the classic PlaceCard layout when living is null (e.g. network
+  // error, endpoint unavailable, or non-UUID place ID).
+  if (canonicalPlace !== null && living !== null) {
+    return (
+      <>
+        <Stack.Screen options={{ title: canonicalPlace.name, headerTransparent: true }} />
+        <SafeAreaView style={ps.safeArea} edges={['bottom']}>
+          <LivingDestinationPage place={canonicalPlace} living={living} />
+        </SafeAreaView>
+        <PlaceReportSheet
+          visible={reportOpen}
+          onClose={() => setReportOpen(false)}
+          placeId={canonicalPlace.id}
+          placeName={canonicalPlace.name}
+        />
+      </>
+    );
+  }
+
+  // ── Canonical place — classic fallback layout ────────────────────────────────
+  // Living endpoint unavailable (null): render existing PlaceCard view.
   if (canonicalPlace !== null) {
     const entity = buildMapEntity(canonicalPlace);
     return (

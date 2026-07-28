@@ -1,7 +1,8 @@
 /**
  * Canonical Place service client
  *
- * Wraps GET /api/places/canonical/:id and GET /api/places/nearby-venue.
+ * Wraps GET /api/places/canonical/:id, GET /api/places/nearby-venue,
+ * GET /api/places/:id/living, and GET /api/places/:id/living/timeline.
  *
  * The canonical route is gated behind the `external_places_enabled` feature
  * flag. When the flag is OFF the server returns 403; this client returns null
@@ -13,6 +14,11 @@
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 import type { CanonicalPlace, NormalizedOpeningHours } from '../types/canonicalPlace.ts';
+import type {
+  PlaceLivingResponse,
+  PlaceTimelineResponse,
+  TimelineSlice,
+} from '../types/placeLiving.ts';
 
 // ── Venue contact info (nearby-venue endpoint) ────────────────────────────────
 
@@ -150,6 +156,67 @@ export async function getCanonicalPlace(id: string): Promise<CanonicalPlace | nu
     if (!json || typeof json !== 'object') return null;
     const place = (json as any).place;
     return isValidCanonicalPlace(place) ? place : null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Living Destination Page ───────────────────────────────────────────────────
+
+/**
+ * Fetch the Living Destination Page payload for a place.
+ *
+ * Server route: GET /api/places/:id/living
+ *
+ * Returns the full page payload on success, null on any failure.
+ */
+export async function getPlaceLiving(placeId: string): Promise<PlaceLivingResponse | null> {
+  if (!isSupabaseConfigured || !apiBase()) return null;
+  const token = await freshToken();
+  if (!token) return null;
+
+  try {
+    const res = await fetch(
+      `${apiBase()}/api/places/${encodeURIComponent(placeId)}/living`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!res.ok) return null;
+    const json = await res.json().catch(() => null);
+    if (!json || typeof json !== 'object') return null;
+    // Minimal guard — server always returns placeId
+    if (typeof (json as any).placeId !== 'string') return null;
+    return json as PlaceLivingResponse;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch the time-sliced post feed for a place's timeline.
+ *
+ * Server route: GET /api/places/:id/living/timeline?slice=...
+ *
+ * Returns the timeline payload on success, null on any failure.
+ */
+export async function getPlaceTimeline(
+  placeId: string,
+  slice: TimelineSlice,
+): Promise<PlaceTimelineResponse | null> {
+  if (!isSupabaseConfigured || !apiBase()) return null;
+  const token = await freshToken();
+  if (!token) return null;
+
+  try {
+    const params = new URLSearchParams({ slice });
+    const res = await fetch(
+      `${apiBase()}/api/places/${encodeURIComponent(placeId)}/living/timeline?${params}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!res.ok) return null;
+    const json = await res.json().catch(() => null);
+    if (!json || typeof json !== 'object') return null;
+    if (typeof (json as any).placeId !== 'string') return null;
+    return json as PlaceTimelineResponse;
   } catch {
     return null;
   }
