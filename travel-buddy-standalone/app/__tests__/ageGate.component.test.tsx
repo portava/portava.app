@@ -80,6 +80,7 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSession } from '../../src/context/SessionContext';
 import { getMyProfile } from '../../src/services/profile';
 

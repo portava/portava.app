@@ -2426,6 +2426,48 @@ router.post("/posts/:postId/comments", async (req, res) => {
   }
 });
 
+router.patch("/posts/:postId/comments/:commentId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { postId, commentId } = req.params;
+  if (!isValidUuid(postId) || !isValidUuid(commentId)) {
+    sendError(res, "invalid_payload", "Invalid id"); return;
+  }
+
+  const body = String(req.body?.body ?? "").trim();
+  if (!body) { sendError(res, "invalid_payload", "Comment body is required"); return; }
+  if (body.length > 1000) { sendError(res, "invalid_payload", "Comment must be 1000 characters or fewer"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Author-only: fetch the comment and verify ownership.
+  const { data: existing } = await sc
+    .from("posts_comments").select("id, user_id, body")
+    .eq("id", commentId).eq("post_id", postId).is("deleted_at", null).maybeSingle();
+  if (!existing) { sendError(res, "not_found", "Comment not found"); return; }
+  if ((existing as any).user_id !== user.id) {
+    sendError(res, "forbidden", "Cannot edit someone else's comment"); return;
+  }
+
+  const { data: updated, error: updateErr } = await sc
+    .from("posts_comments")
+    .update({ body, updated_at: new Date().toISOString() })
+    .eq("id", commentId)
+    .select("id, post_id, user_id, body, created_at, updated_at")
+    .single();
+  if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
+
+  res.status(200).json({ ok: true, comment: updated });
+
+  // Invalidate stale translation cache and re-detect language — fire-and-forget.
+  void invalidateContentTranslations(sc, 'comment', commentId);
+  if (body.trim()) {
+    detectAndStoreLanguage(sc, 'comment', commentId, body, req.log).catch(() => {});
+  }
+});
+
 router.delete("/posts/:postId/comments/:commentId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
