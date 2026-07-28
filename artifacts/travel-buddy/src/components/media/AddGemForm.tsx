@@ -174,10 +174,14 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
 
   // ── Place picker callback ────────────────────────────────────────────────────
   const handlePlaceSelect = useCallback((place: Place) => {
+    const incomingName = place.name ?? '';
+    const incomingCity = place.city ?? place.displayName ?? '';
+    const hasCustomName = placeName.trim().length > 0;
+    const hasCustomCity = cityArea.trim().length > 0;
+
+    // Always commit the canonical link and close the picker
     setSelectedPlace(place);
     setCanonicalPlaceId(place.canonicalId ?? place.id ?? null);
-    setPlaceName(place.name ?? '');
-    setCityArea(place.city ?? place.displayName ?? '');
     setPlacePickerOpen(false);
     // Clear place-related errors
     setErrors((prev) => {
@@ -187,7 +191,29 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
       delete next.cityArea;
       return next;
     });
-  }, []);
+
+    if (hasCustomName || hasCustomCity) {
+      // User already typed something — ask before overwriting
+      Alert.alert(
+        'Update place details?',
+        `"${incomingName}" is now linked. Replace your text with the linked place's name and city?`,
+        [
+          { text: 'Keep mine', style: 'cancel' },
+          {
+            text: 'Use place name',
+            onPress: () => {
+              setPlaceName(incomingName);
+              setCityArea(incomingCity);
+            },
+          },
+        ],
+      );
+    } else {
+      // Fields are blank — pre-fill silently
+      setPlaceName(incomingName);
+      setCityArea(incomingCity);
+    }
+  }, [placeName, cityArea]);
 
   // ── Client validation ────────────────────────────────────────────────────────
   function validate(): boolean {
