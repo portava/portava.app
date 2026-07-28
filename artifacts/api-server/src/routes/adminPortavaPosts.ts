@@ -1,17 +1,18 @@
 /**
  * Admin endpoints for @Portava curated-content post authoring.
  *
- * POST /admin/portava/posts  — create a post authored by the @portava account,
- *                              with optional scheduled_at and category.
- * GET  /admin/portava/posts  — list all @portava posts with schedule status.
+ * POST   /admin/portava/posts      — create a post authored by the @portava account,
+ *                                    with optional scheduledAt and category.
+ * GET    /admin/portava/posts      — list all @portava posts with schedule status.
+ * PATCH  /admin/portava/posts/:id  — edit body / scheduledAt / category before publish.
+ * DELETE /admin/portava/posts/:id  — cancel a scheduled post or unpublish an active post.
  *
- * Both routes are gated behind the existing admin-auth check (profiles.role = 'admin').
- * Posts are inserted with author_id = @portava's profile id, sourced from the
- * profiles table by handle = 'portava'.
+ * All routes are gated behind the existing admin-auth check (profiles.role = 'admin').
+ * Author-ID is always the @portava service account — never client-supplied.
  *
  * Scheduled posts use the existing delayed-publish pipeline:
- *   scheduled_at → publish_after_time + post_status = 'pending_delay'
- *   (no scheduled_at) → post_status = 'published'
+ *   scheduledAt → publish_after_time + post_status = 'pending_delay'
+ *   (no scheduledAt) → post_status = 'published' immediately
  */
 
 import { Router } from "express";
@@ -21,6 +22,28 @@ import { getServiceClient } from "../lib/supabase.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 
 const router = Router();
+
+// ── Category enum ─────────────────────────────────────────────────────────────
+
+export const PORTAVA_POST_CATEGORIES = [
+  "hidden_gem",
+  "inspiration",
+  "festival",
+  "restaurant",
+  "beach_resort",
+  "nightlife",
+  "neighborhood",
+  "trending_destination",
+  "travel_tip",
+  "hotel",
+  "featured_creator",
+  "destination_of_week",
+  "community_spotlight",
+] as const;
+
+export type PortavaPostCategory = (typeof PORTAVA_POST_CATEGORIES)[number];
+
+const portavaPostCategory = z.enum(PORTAVA_POST_CATEGORIES);
 
 // ── Admin guard (mirrors admin.ts) ────────────────────────────────────────────
 
@@ -62,18 +85,37 @@ async function resolvePortavaId(sc: any): Promise<string | null> {
 
 // ── Column lists (static strings required by check:write-path-columns) ────────
 
-const PORTAVA_POST_INSERT_COLUMNS =
-  "id, author_id, content, category, post_status, publish_after_time, published_at, visibility, media_urls, media_type, location_city, location_country, created_at";
+const PORTAVA_POST_SELECT_COLUMNS =
+  "id, author_id, content, category, post_status, publish_after_time, published_at, visibility, media_urls, media_type, location_city, location_country, status, created_at, updated_at";
 
-const PORTAVA_POST_LIST_COLUMNS =
-  "id, content, category, post_status, publish_after_time, published_at, visibility, media_urls, media_type, location_city, location_country, status, created_at, updated_at";
+// ── Shared response mapper ────────────────────────────────────────────────────
+
+function mapPost(row: any): Record<string, unknown> {
+  return {
+    id:              row.id,
+    authorId:        row.author_id,
+    content:         row.content,
+    category:        row.category ?? null,
+    postStatus:      row.post_status,
+    scheduledAt:     row.publish_after_time ?? null,
+    publishedAt:     row.published_at ?? null,
+    visibility:      row.visibility,
+    mediaUrls:       row.media_urls ?? [],
+    mediaType:       row.media_type ?? null,
+    locationCity:    row.location_city ?? null,
+    locationCountry: row.location_country ?? null,
+    status:          row.status,
+    createdAt:       row.created_at,
+    updatedAt:       row.updated_at ?? null,
+  };
+}
 
 // ── POST /admin/portava/posts ─────────────────────────────────────────────────
 
 const createPortavaPostSchema = z.object({
-  content: z.string().min(1).max(3000),
-  category: z.string().max(100).nullish(),
-  mediaUrls: z.array(z.string().url()).max(10).optional(),
+  content: z.string().min(1, "Post body is required").max(3000),
+  category: portavaPostCategory.nullish(),
+  mediaUrls: z.array(z.string().min(1)).max(10).optional(),
   mediaType: z.enum(["image", "video", "mixed"]).nullish(),
   locationName: z.string().max(200).nullish(),
   locationCity: z.string().max(100).nullish(),
@@ -82,7 +124,7 @@ const createPortavaPostSchema = z.object({
   locationLng: z.number().min(-180).max(180).nullish(),
   /** ISO-8601 datetime string: if provided the post is scheduled via the delayed-publish pipeline. */
   scheduledAt: z.string().datetime().nullish(),
-  visibility: z.enum(["public", "followers_only", "private"]).optional().default("public"),
+  visibility: z.enum(["public", "private"]).optional().default("public"),
 });
 
 router.post("/admin/portava/posts", asyncHandler(async (req, res) => {
@@ -97,25 +139,30 @@ router.post("/admin/portava/posts", asyncHandler(async (req, res) => {
   }
   const p = parsed.data;
 
-  const portavaId = await resolvePortavaId(sc);
-  if (!portavaId) {
-    sendError(res, "not_found", "@portava account not found — run seed-portava-account.ts first");
-    return;
-  }
-
-  // Determine delayed-publish status.
-  let postStatus: string;
-  let publishAfterTime: string | null = null;
-  let publishedAt: string | null = null;
-
+  // Validate scheduling is in the future
   if (p.scheduledAt) {
     const schedDate = new Date(p.scheduledAt);
     if (schedDate <= new Date()) {
       sendError(res, "invalid_payload", "scheduledAt must be in the future");
       return;
     }
+  }
+
+  const portavaId = await resolvePortavaId(sc);
+  if (!portavaId) {
+    sendError(res, "not_found", "@portava account not found — run seed-portava-account.ts first");
+    return;
+  }
+
+  let postStatus: string;
+  let publishAfterTime: string | null = null;
+  let publishEligibleAt: string | null = null;
+  let publishedAt: string | null = null;
+
+  if (p.scheduledAt) {
     postStatus = "pending_delay";
-    publishAfterTime = schedDate.toISOString();
+    publishAfterTime = new Date(p.scheduledAt).toISOString();
+    publishEligibleAt = publishAfterTime;
   } else {
     postStatus = "published";
     publishedAt = new Date().toISOString();
@@ -124,38 +171,39 @@ router.post("/admin/portava/posts", asyncHandler(async (req, res) => {
   const { data, error } = await sc
     .from("posts")
     .insert({
-      author_id: portavaId,
-      created_by: portavaId,
-      updated_by: admin.userId,
-      content: p.content,
-      category: p.category ?? null,
-      media_urls: p.mediaUrls ?? [],
-      media_type: p.mediaType ?? null,
-      visibility: p.visibility,
-      status: "active",
-      source: "admin_portava",
-      post_status: postStatus,
-      publish_after_time: publishAfterTime,
-      published_at: publishedAt,
+      author_id:               portavaId,
+      created_by:              portavaId,
+      updated_by:              admin.userId,
+      content:                 p.content,
+      category:                p.category ?? null,
+      media_urls:              p.mediaUrls ?? [],
+      media_type:              p.mediaType ?? null,
+      visibility:              p.visibility,
+      status:                  "active",
+      source:                  "admin_portava",
+      post_status:             postStatus,
+      publish_after_time:      publishAfterTime,
+      publish_eligible_at:     publishEligibleAt,
+      published_at:            publishedAt,
       // Location fields
-      location_name: p.locationName ?? null,
-      location_city: p.locationCity ?? null,
-      location_country: p.locationCountry ?? null,
-      location_lat: p.locationLat ?? null,
-      location_lng: p.locationLng ?? null,
-      public_location_label: p.locationCity ?? p.locationName ?? null,
-      location_source: "manual",
-      location_verified: !!(p.locationLat && p.locationLng),
-      location_verified_at: (p.locationLat && p.locationLng) ? new Date().toISOString() : null,
-      location_privacy_mode: "city_only",
-      location_sensitivity_level: "standard",
-      add_to_passport: false,
-      geofence_radius_meters: 150,
-      publish_after_exit: false,
-      geotag_verified: !!(p.locationLat && p.locationLng),
-      geotag_credit_awarded: false,
+      location_name:           p.locationName ?? null,
+      location_city:           p.locationCity ?? null,
+      location_country:        p.locationCountry ?? null,
+      location_lat:            p.locationLat ?? null,
+      location_lng:            p.locationLng ?? null,
+      public_location_label:   p.locationCity ?? p.locationName ?? null,
+      location_source:         "manual",
+      location_verified:       !!(p.locationLat && p.locationLng),
+      location_verified_at:    (p.locationLat && p.locationLng) ? new Date().toISOString() : null,
+      location_privacy_mode:   "city_only",
+      location_sensitivity_level: "low",
+      add_to_passport:         false,
+      geofence_radius_meters:  150,
+      publish_after_exit:      false,
+      geotag_verified:         !!(p.locationLat && p.locationLng),
+      geotag_credit_awarded:   false,
     })
-    .select("id, author_id, content, category, post_status, publish_after_time, published_at, visibility, media_urls, media_type, location_city, location_country, created_at")
+    .select("id, author_id, content, category, post_status, publish_after_time, published_at, visibility, media_urls, media_type, location_city, location_country, status, created_at, updated_at")
     .single();
 
   if (error) {
@@ -164,23 +212,7 @@ router.post("/admin/portava/posts", asyncHandler(async (req, res) => {
     return;
   }
 
-  res.status(201).json({
-    post: {
-      id: (data as any).id,
-      authorId: (data as any).author_id,
-      content: (data as any).content,
-      category: (data as any).category,
-      postStatus: (data as any).post_status,
-      scheduledAt: (data as any).publish_after_time ?? null,
-      publishedAt: (data as any).published_at ?? null,
-      visibility: (data as any).visibility,
-      mediaUrls: (data as any).media_urls ?? [],
-      mediaType: (data as any).media_type ?? null,
-      locationCity: (data as any).location_city ?? null,
-      locationCountry: (data as any).location_country ?? null,
-      createdAt: (data as any).created_at,
-    },
-  });
+  res.status(201).json({ post: mapPost(data as any) });
 }));
 
 // ── GET /admin/portava/posts ──────────────────────────────────────────────────
@@ -199,12 +231,13 @@ router.get("/admin/portava/posts", asyncHandler(async (req, res) => {
   const page  = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.min(100, Number(req.query.limit) || 50);
 
-  // Optional filter by schedule status: "published" | "scheduled" | "all" (default)
-  const statusFilter = (req.query.status as string | undefined) ?? "all";
+  // Optional filters
+  const statusFilter   = (req.query.status as string | undefined) ?? "all";
+  const categoryFilter = req.query.category as string | undefined;
 
   let query = sc
     .from("posts")
-    .select("id, content, category, post_status, publish_after_time, published_at, visibility, media_urls, media_type, location_city, location_country, status, created_at, updated_at", { count: "exact" })
+    .select("id, author_id, content, category, post_status, publish_after_time, published_at, visibility, media_urls, media_type, location_city, location_country, status, created_at, updated_at", { count: "exact" })
     .eq("author_id", portavaId)
     .neq("status", "deleted")
     .order("created_at", { ascending: false })
@@ -214,6 +247,12 @@ router.get("/admin/portava/posts", asyncHandler(async (req, res) => {
     query = query.eq("post_status", "pending_delay");
   } else if (statusFilter === "published") {
     query = query.eq("post_status", "published");
+  } else if (statusFilter === "cancelled") {
+    query = query.eq("post_status", "canceled");
+  }
+
+  if (categoryFilter && PORTAVA_POST_CATEGORIES.includes(categoryFilter as PortavaPostCategory)) {
+    query = query.eq("category", categoryFilter);
   }
 
   const { data, error, count } = await query;
@@ -222,24 +261,167 @@ router.get("/admin/portava/posts", asyncHandler(async (req, res) => {
     return;
   }
 
-  const posts = (data ?? []).map((row: any) => ({
-    id: row.id,
-    content: row.content,
-    category: row.category ?? null,
-    postStatus: row.post_status,
-    scheduledAt: row.publish_after_time ?? null,
-    publishedAt: row.published_at ?? null,
-    visibility: row.visibility,
-    mediaUrls: row.media_urls ?? [],
-    mediaType: row.media_type ?? null,
-    locationCity: row.location_city ?? null,
-    locationCountry: row.location_country ?? null,
-    status: row.status,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }));
-
+  const posts = (data ?? []).map(mapPost);
   res.json({ posts, total: count ?? 0, page, portavaId });
+}));
+
+// ── PATCH /admin/portava/posts/:id ────────────────────────────────────────────
+
+const patchPortavaPostSchema = z.object({
+  content:     z.string().min(1).max(3000).optional(),
+  category:    portavaPostCategory.nullish(),
+  scheduledAt: z.string().datetime().nullish(),
+  visibility:  z.enum(["public", "private"]).optional(),
+  mediaUrls:   z.array(z.string().min(1)).max(10).optional(),
+});
+
+router.patch("/admin/portava/posts/:id", asyncHandler(async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const { id } = req.params;
+  if (!id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    sendError(res, "not_found", "Post not found"); return;
+  }
+
+  const parsed = patchPortavaPostSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+  if (Object.keys(parsed.data).length === 0) {
+    sendError(res, "invalid_payload", "At least one field must be provided");
+    return;
+  }
+  const p = parsed.data;
+
+  // Verify post belongs to @portava and is editable (not yet published)
+  const portavaId = await resolvePortavaId(sc);
+  if (!portavaId) {
+    sendError(res, "not_found", "@portava account not found");
+    return;
+  }
+
+  const { data: existing, error: fetchErr } = await sc
+    .from("posts")
+    .select("id, post_status, author_id")
+    .eq("id", id)
+    .eq("author_id", portavaId)
+    .neq("status", "deleted")
+    .maybeSingle();
+
+  if (fetchErr || !existing) {
+    sendError(res, "not_found", "Post not found"); return;
+  }
+
+  // Validate future scheduling if provided
+  if (p.scheduledAt !== undefined) {
+    if (p.scheduledAt !== null) {
+      const schedDate = new Date(p.scheduledAt);
+      if (schedDate <= new Date()) {
+        sendError(res, "invalid_payload", "scheduledAt must be in the future");
+        return;
+      }
+    }
+  }
+
+  const patch: Record<string, unknown> = { updated_by: admin.userId, updated_at: new Date().toISOString() };
+  if (p.content    !== undefined) patch.content    = p.content;
+  if (p.category   !== undefined) patch.category   = p.category ?? null;
+  if (p.visibility !== undefined) patch.visibility  = p.visibility;
+  if (p.mediaUrls  !== undefined) patch.media_urls  = p.mediaUrls;
+
+  // Scheduling update: re-enter pipeline or publish immediately
+  if (p.scheduledAt !== undefined) {
+    if (p.scheduledAt) {
+      const iso = new Date(p.scheduledAt).toISOString();
+      patch.publish_after_time  = iso;
+      patch.publish_eligible_at = iso;
+      patch.post_status         = "pending_delay";
+      patch.published_at        = null;
+    } else {
+      // Clear schedule → publish immediately
+      patch.publish_after_time  = null;
+      patch.publish_eligible_at = null;
+      patch.post_status         = "published";
+      patch.published_at        = new Date().toISOString();
+    }
+  }
+
+  const { data, error } = await sc
+    .from("posts")
+    .update(patch)
+    .eq("id", id)
+    .select("id, author_id, content, category, post_status, publish_after_time, published_at, visibility, media_urls, media_type, location_city, location_country, status, created_at, updated_at")
+    .single();
+
+  if (error) {
+    req.log.error({ err: error }, "Failed to update @portava post");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  res.json({ post: mapPost(data as any) });
+}));
+
+// ── DELETE /admin/portava/posts/:id ──────────────────────────────────────────
+
+router.delete("/admin/portava/posts/:id", asyncHandler(async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const { id } = req.params;
+  if (!id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    sendError(res, "not_found", "Post not found"); return;
+  }
+
+  const portavaId = await resolvePortavaId(sc);
+  if (!portavaId) {
+    sendError(res, "not_found", "@portava account not found");
+    return;
+  }
+
+  // Verify post belongs to @portava before touching it
+  const { data: existing, error: fetchErr } = await sc
+    .from("posts")
+    .select("id, post_status, status")
+    .eq("id", id)
+    .eq("author_id", portavaId)
+    .neq("status", "deleted")
+    .maybeSingle();
+
+  if (fetchErr || !existing) {
+    sendError(res, "not_found", "Post not found"); return;
+  }
+
+  // Scheduled → cancel; published → soft-delete (status=deleted)
+  const isScheduled = (existing as any).post_status === "pending_delay";
+  const patch: Record<string, unknown> = {
+    updated_by: admin.userId,
+    updated_at: new Date().toISOString(),
+  };
+  if (isScheduled) {
+    patch.post_status        = "canceled";
+    patch.publish_after_time = null;
+    patch.publish_eligible_at = null;
+  } else {
+    patch.status = "deleted";
+  }
+
+  const { error } = await sc
+    .from("posts")
+    .update(patch)
+    .eq("id", id);
+
+  if (error) {
+    req.log.error({ err: error }, "Failed to delete @portava post");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  res.status(204).end();
 }));
 
 export default router;

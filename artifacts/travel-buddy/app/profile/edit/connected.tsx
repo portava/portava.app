@@ -253,6 +253,12 @@ export default function ConnectedFeaturesScreen() {
               ) : undefined
             }
           />
+          <SettingsDivider />
+          <SettingsRow
+            title="@Portava Posts"
+            subtitle="Create and schedule curated travel content"
+            onPress={() => router.push('/admin/portava-posts' as any)}
+          />
           {rentBuddyEnabled && (
             <>
               <SettingsDivider />
