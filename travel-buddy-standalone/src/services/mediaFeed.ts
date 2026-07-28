@@ -8,8 +8,6 @@
  * type (videoUrl / posterUrl / likeCount / likedByMe / etc.).
  */
 
-import { freshToken as _freshTokenReal } from './apiToken.ts';
-
 // ── Token seam (test isolation) ───────────────────────────────────────────────
 // apiToken.ts imports @supabase/supabase-js which chains to react-native; that
 // prevents the file from loading under `node --import tsx/esm`. Use a lazy
@@ -25,8 +23,8 @@ export function _clearTestFreshToken(): void { _testToken = null; }
 async function freshToken(): Promise<string | null> {
   if (_testToken !== null) return _testToken;
   // Lazy import so react-native is never required when a test token is set.
-  const { freshToken: _real } = await import('./apiToken.ts');
-  return _real();
+  const { freshToken: _freshTokenReal } = await import('./apiToken.ts');
+  return _freshTokenReal();
 }
 import type {
   MediaFeedItem,
@@ -306,6 +304,62 @@ export async function fetchGridFeed(params: FetchGridFeedParams): Promise<GridFe
   }
 }
 
+// ── Single-item fetch ─────────────────────────────────────────────────────────
+
+export interface MediaFeedItemResult {
+  ok: boolean;
+  data: MediaFeedItem | null;
+  errorKind?: 'network' | 'auth' | 'server' | 'not_found' | 'unknown';
+  message?: string;
+}
+
+/**
+ * Fetch a single Watch-feed item by post ID.
+ *
+ * Calls GET /api/media/:id and adapts the server shape (including
+ * stats.stampItCount) to the UI MediaFeedItem type.
+ */
+export async function fetchMediaFeedItemById(
+  id: string,
+): Promise<MediaFeedItemResult> {
+  const token = await freshToken();
+  if (!token) {
+    return { ok: false, data: null, errorKind: 'auth', message: 'Not authenticated' };
+  }
+
+  try {
+    const res = await fetch(`${apiBase()}/api/media/${encodeURIComponent(id)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, data: null, errorKind: 'auth', message: 'Unauthorized' };
+    }
+    if (res.status === 404) {
+      return { ok: false, data: null, errorKind: 'not_found', message: 'Not found' };
+    }
+    if (!res.ok) {
+      return { ok: false, data: null, errorKind: 'server', message: `HTTP ${res.status}` };
+    }
+
+    const body: { item?: ServerFeedItem } = await res.json();
+    if (!body.item) {
+      return { ok: false, data: null, errorKind: 'server', message: 'Malformed response' };
+    }
+    return { ok: true, data: mapServerFeedItem(body.item) };
+  } catch (err) {
+    if (isNetworkError(err)) {
+      return { ok: false, data: null, errorKind: 'network', message: 'Network error' };
+    }
+    return {
+      ok: false,
+      data: null,
+      errorKind: 'unknown',
+      message: err instanceof Error ? err.message : 'Unknown error',
+    };
+  }
+}
+
 export interface FetchFeedParams {
   feedType: WatchFeedType;
   cursor?: string | null;
@@ -317,57 +371,6 @@ export interface FetchFeedParams {
  * Fetch one page of the Watch fullscreen feed.
  * Returns a typed result; never throws.
  */
-// ── Single-item result type ───────────────────────────────────────────────────
-
-export type FetchItemResult =
-  | { ok: true; data: MediaFeedItem; errorKind?: undefined }
-  | { ok: false; data?: undefined; errorKind: 'auth' | 'not_found' | 'server' | 'network' | 'unknown'; message?: string };
-
-/**
- * Fetch a single media item by ID from GET /api/media/:id.
- * Returns a typed result; never throws.
- * Used by the media-viewer to obtain stampItCount and full post stats.
- */
-export async function fetchMediaFeedItemById(id: string): Promise<FetchItemResult> {
-  const token = await freshToken();
-  if (!token) {
-    return { ok: false, errorKind: 'auth', message: 'Not authenticated' };
-  }
-
-  try {
-    const res = await fetch(`${apiBase()}/api/media/${encodeURIComponent(id)}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    if (res.status === 401 || res.status === 403) {
-      return { ok: false, errorKind: 'auth', message: 'Unauthorized' };
-    }
-    if (res.status === 404) {
-      return { ok: false, errorKind: 'not_found', message: 'Not found' };
-    }
-    if (!res.ok) {
-      return { ok: false, errorKind: 'server', message: `HTTP ${res.status}` };
-    }
-
-    const body = await res.json();
-    if (!body || typeof body !== 'object' || !('item' in body)) {
-      return { ok: false, errorKind: 'server', message: 'Unexpected response shape' };
-    }
-
-    const item = mapServerFeedItem(body.item as ServerFeedItem);
-    return { ok: true, data: item };
-  } catch (err) {
-    if (isNetworkError(err)) {
-      return { ok: false, errorKind: 'network', message: 'Network error' };
-    }
-    return {
-      ok: false,
-      errorKind: 'unknown',
-      message: err instanceof Error ? err.message : 'Unknown error',
-    };
-  }
-}
-
 export async function fetchWatchFeed(params: FetchFeedParams): Promise<FeedServiceResult> {
   const token = await freshToken();
   if (!token) {

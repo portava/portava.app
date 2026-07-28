@@ -51,7 +51,6 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { fetchMediaFeedItemById } from '../../src/services/mediaFeed.ts';
-import type { MediaFeedItem } from '../../src/types/media.ts';
 import { VerifiedLocationStamp } from '../../src/components/media/VerifiedLocationStamp.tsx';
 import { useMediaLike } from '../../src/hooks/useMediaLike.ts';
 import { useMediaSave } from '../../src/hooks/useMediaSave.ts';
@@ -101,17 +100,17 @@ interface ViewerPost {
   stampItCount: number;
 }
 
-function mapMediaFeedItem(item: MediaFeedItem): ViewerPost {
+function mapMediaFeedItem(item: import('../../src/types/media.ts').MediaFeedItem): ViewerPost {
   return {
     id: item.id,
     mediaUrl: item.videoUrl || null,
     isVideo: Boolean(item.videoUrl),
-    posterUrl: item.posterUrl ?? null,
+    posterUrl: item.posterUrl,
     caption: item.caption ?? '',
-    authorId: item.creator?.id ?? null,
-    authorHandle: item.creator?.username ?? null,
-    authorName: item.creator?.displayName ?? null,
-    authorAvatarUrl: item.creator?.avatarUrl ?? null,
+    authorId: item.creator.id,
+    authorHandle: item.creator.username,
+    authorName: item.creator.displayName,
+    authorAvatarUrl: item.creator.avatarUrl,
     locationName: item.place?.name ?? null,
     locationCity: item.place?.city ?? null,
     likeCount: item.likeCount,
@@ -152,9 +151,9 @@ interface OverlayProps {
   locationVerified?: boolean;
   /** Location name for the verified stamp — sourced from viewer context. */
   locationName?: string | null;
-  /** True when the viewer is the post's author — shows analytics badges. */
+  /** True when the viewing user is the post's creator. */
   isOwner: boolean;
-  /** Total distinct stamp-it reactions. Only shown when isOwner is true. */
+  /** Number of distinct viewers who stamped this post. Shown only to the creator. */
   stampItCount: number;
 }
 
@@ -317,18 +316,18 @@ function ViewerOverlay({
             {saveCount > 0 ? <Text style={ov.actionCount}>{fmtCount(saveCount)}</Text> : null}
           </Pressable>
 
-          {/* Share */}
-          <Pressable style={ov.actionBtn} onPress={onShare} hitSlop={6} accessibilityRole="button" accessibilityLabel="Share">
-            <Share2 size={26} color="#fff" strokeWidth={1.8} />
-          </Pressable>
-
-          {/* Stamp count — creator analytics, non-interactive */}
+          {/* Stamp count — creator-only analytics signal */}
           {isOwner && stampItCount > 0 ? (
             <View style={ov.actionBtn} pointerEvents="none" accessibilityLabel={`${stampItCount} stamps`}>
               <Zap size={26} color="rgba(255,220,80,0.9)" fill="rgba(255,220,80,0.9)" strokeWidth={0} />
               <Text style={ov.actionCount}>{fmtCount(stampItCount)}</Text>
             </View>
           ) : null}
+
+          {/* Share */}
+          <Pressable style={ov.actionBtn} onPress={onShare} hitSlop={6} accessibilityRole="button" accessibilityLabel="Share">
+            <Share2 size={26} color="#fff" strokeWidth={1.8} />
+          </Pressable>
         </View>
       </View>
     </View>
