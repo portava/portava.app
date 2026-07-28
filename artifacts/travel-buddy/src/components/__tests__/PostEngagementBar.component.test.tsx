@@ -86,10 +86,11 @@ async function renderBar(
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('PostEngagementBar — lucide Proxy mock coverage', () => {
-  it('renders all four lucide icons when all actions are enabled', async () => {
-    // PostEngagementBar imports { Heart, Smile, MessageCircle, Share2 } from
-    // 'lucide-react-native'.  This test confirms the Proxy's get trap resolves
-    // every named export to <View testID="icon-<Name>" /> — not just the first
+  it('renders the three lucide icons when all actions are enabled', async () => {
+    // PostEngagementBar imports { Heart, Smile, MessageCircle } from
+    // 'lucide-react-native'.  The share button uses TelegraphSendIcon (react-native-svg),
+    // not a lucide icon.  This test confirms the Proxy's get trap resolves every
+    // lucide named export to <View testID="icon-<Name>" /> — not just the first
     // one it sees.  A regression in the cache or get trap would cause one or
     // more of these to be missing.
     const { getByTestId } = await renderBar({
@@ -101,7 +102,6 @@ describe('PostEngagementBar — lucide Proxy mock coverage', () => {
       expect(getByTestId('icon-Heart')).toBeTruthy();
       expect(getByTestId('icon-Smile')).toBeTruthy();
       expect(getByTestId('icon-MessageCircle')).toBeTruthy();
-      expect(getByTestId('icon-Share2')).toBeTruthy();
     });
   });
 

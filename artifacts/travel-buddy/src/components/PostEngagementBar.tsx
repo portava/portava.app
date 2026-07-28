@@ -9,7 +9,8 @@
  */
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
-import { Heart, MessageCircle, Share2, Smile } from 'lucide-react-native';
+import { Heart, MessageCircle, Smile } from 'lucide-react-native';
+import { TelegraphSendIcon } from './icons/TelegraphSendIcon.tsx';
 import { color, space, layout } from '../theme/tokens.ts';
 import {
   likePost,
@@ -291,7 +292,7 @@ export function PostEngagementBar({
               onPress={handleShare}
               hitSlop={layout.hitSlop}
             >
-              <Share2 size={17} color={sharingDisabled ? color.haze : color.mute} />
+              <TelegraphSendIcon size={17} color={sharingDisabled ? color.haze : color.mute} />
             </Pressable>
           )}
         </View>

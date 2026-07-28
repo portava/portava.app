@@ -9,7 +9,8 @@ import {
   View, Text, FlatList, StyleSheet, RefreshControl, Pressable,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { Sparkles, Info, Share2 } from 'lucide-react-native';
+import { Sparkles, Info } from 'lucide-react-native';
+import { TelegraphSendIcon } from '../icons/TelegraphSendIcon.tsx';
 import { DiscoveryShareSheet } from '../DiscoveryShareSheet.tsx';
 import type { DiscoverySharePayload } from '../DiscoveryShareSheet.tsx';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
@@ -335,7 +336,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
         {/* Bottom row: Send to Telegraph + non-compass feedback menu */}
         <View style={styles.shareRow}>
           <Pressable style={styles.shareBtn} onPress={() => setShareItem(item)}>
-            <Share2 size={12} color={color.mute} />
+            <TelegraphSendIcon size={12} color={color.mute} />
             <Text style={styles.shareLabel}>Send to Telegraph</Text>
           </Pressable>
           {item.kind !== 'compass' && isAuthed && (

@@ -5,8 +5,9 @@ import { useEntityHeaderImage } from '../hooks/useEntityHeaderImage.ts';
 import { router } from 'expo-router';
 import {
   Compass, Search, SlidersHorizontal, Bookmark, MapPin, Plus, Sparkles, Info, ChevronRight,
-  Gem, Share2, Route, Flag, ThumbsUp,
+  Gem, Route, Flag, ThumbsUp,
 } from 'lucide-react-native';
+import { TelegraphSendIcon } from './icons/TelegraphSendIcon.tsx';
 import type { RouteStopDraft } from './RouteBuilderSheet.tsx';
 import type { DiscoveryItem } from '../data/discovery.ts';
 import type { NeighborhoodVibe, TravelerPick, SavedDiscoveryItem } from '../data/discovery.ts';
@@ -430,7 +431,7 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
               hitSlop={layout.hitSlop}
               onPress={() => setShareVisible(true)}
             >
-              <Share2 size={13} color={color.mute} />
+              <TelegraphSendIcon size={13} color={color.mute} />
             </Pressable>
             <Pressable
               style={({ pressed }) => [g.reportBtn, pressed && { opacity: layout.pressedOpacity }]}
