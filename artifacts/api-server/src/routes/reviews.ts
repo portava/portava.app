@@ -22,8 +22,38 @@ import { getServiceClient } from "../lib/supabase.js";
 import { isUuid } from "../lib/followDecisions.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
+import { invalidateDiscoveryCacheForOsmId } from "../lib/discoveryPersistentCache.js";
 
 const router = Router();
+
+// ── Discovery cache invalidation helper ───────────────────────────────────────
+//
+// When a vote or place review is written/removed, the discovery feed tile for
+// the affected OSM place will show a stale worthItCount / avgRating until the
+// 2-hour L2 TTL expires.  Look up the osm_id for a discovery_places UUID and
+// fire-and-forget invalidateDiscoveryCacheForOsmId so the next feed request
+// re-enriches from the live DB.  Only OSM places (source="osm") have an
+// osm_id; canonical / community places are not cached in discovery_cache.
+//
+async function maybeInvalidateDiscoveryVoteCacheForPlace(
+  sc: NonNullable<ReturnType<typeof getServiceClient>>,
+  placeId: string,
+): Promise<void> {
+  try {
+    const { data } = await sc
+      .from("discovery_places")
+      .select("osm_id")
+      .eq("id", placeId)
+      .eq("source", "osm")
+      .maybeSingle();
+    const osmId = (data as any)?.osm_id as string | null | undefined;
+    if (osmId) {
+      void invalidateDiscoveryCacheForOsmId(osmId);
+    }
+  } catch {
+    // Fire-and-forget: cache invalidation failures must never break the caller.
+  }
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -237,6 +267,11 @@ router.post("/reviews", asyncHandler(async (req, res) => {
     sourceType: "review",
     sourceId:   (review as any).id,
   }).catch(() => {});
+
+  // Invalidate discovery cache so the new review's avgRating is visible immediately.
+  if (entityType === "place") {
+    void maybeInvalidateDiscoveryVoteCacheForPlace(sc, entityId);
+  }
 
   res.status(201).json({
     id:         (review as any).id,
@@ -561,10 +596,11 @@ router.patch("/reviews/:id", asyncHandler(async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // Verify the review exists and belongs to the caller
+  // Verify the review exists and belongs to the caller.
+  // Also fetch entity fields so we can invalidate the discovery cache if needed.
   const { data: existing, error: fetchError } = await sc
     .from("reviews")
-    .select("id, reviewer_id, state")
+    .select("id, reviewer_id, state, entity_type, entity_id")
     .eq("id", id)
     .maybeSingle();
 
@@ -596,6 +632,11 @@ router.patch("/reviews/:id", asyncHandler(async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "patch review"); sendError(res, "db_error", error.message); return; }
 
+  // Invalidate discovery cache so the edited review's avgRating is not served stale.
+  if ((existing as any).entity_type === "place" && (existing as any).entity_id) {
+    void maybeInvalidateDiscoveryVoteCacheForPlace(sc, (existing as any).entity_id as string);
+  }
+
   res.json({
     id:        (updated as any).id,
     rating:    (updated as any).rating,
@@ -620,10 +661,10 @@ router.delete("/reviews/:id", asyncHandler(async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // Fetch review to check ownership
+  // Fetch review to check ownership — also select entity fields for cache invalidation.
   const { data: review, error: fetchError } = await sc
     .from("reviews")
-    .select("id, reviewer_id, state")
+    .select("id, reviewer_id, state, entity_type, entity_id")
     .eq("id", id)
     .maybeSingle();
 
@@ -652,6 +693,11 @@ router.delete("/reviews/:id", asyncHandler(async (req, res) => {
     .eq("id", id);
 
   if (error) { req.log.error({ err: error }, "delete review"); sendError(res, "db_error", error.message); return; }
+
+  // Invalidate discovery cache so the removed review's avgRating is no longer served stale.
+  if ((review as any).entity_type === "place" && (review as any).entity_id) {
+    void maybeInvalidateDiscoveryVoteCacheForPlace(sc, (review as any).entity_id as string);
+  }
 
   res.json({ ok: true, state: newState });
 }));
@@ -799,6 +845,12 @@ router.post("/places/:id/votes", asyncHandler(async (req, res) => {
       sendError(res, "db_error", error.message);
       return;
     }
+  }
+
+  // Invalidate the discovery feed cache for OSM places so the next tile
+  // request reflects the new vote count rather than waiting for the 2-hour TTL.
+  if (entityType === "place") {
+    void maybeInvalidateDiscoveryVoteCacheForPlace(sc, id);
   }
 
   // Re-fetch tallies
