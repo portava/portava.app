@@ -35,6 +35,7 @@ import { startCreatorActivityScoreScheduler } from "./lib/creatorActivityScoreSc
 import { startRankingFatigueSweeper } from "./lib/rankingFatigueSweeper";
 import { startPostPlaceBackfillWorker } from "./lib/places/postPlaceBackfillWorker";
 import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js";
+import { startPlaceCollectionsWorker } from "./lib/places/placeCollectionsWorker.js";
 
 assertRequiredEnv(logger);
 
@@ -133,6 +134,12 @@ app.listen(port, (err) => {
   // images at the same canonical place using 64-bit pHash difference hashing.
   // Runs every 20 minutes; fail-soft (never affects uploads or post creation).
   startMediaDedupWorker();
+
+  // Place collections precompute worker — maintains place_best_of,
+  // place_top_contributors, and place_living_cache so popular destination
+  // pages are served from precomputed rows in milliseconds.
+  // Gated by PLACE_COLLECTIONS_WORKER_ENABLED=true.
+  startPlaceCollectionsWorker();
 
   // Viewer-creator fatigue row cleanup — deletes rows older than 30 days so
   // the viewer_creator_fatigue table doesn't grow unbounded.

@@ -17,6 +17,37 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getServiceClient } from "../supabase.js";
 
+// ── Engagement score formula ──────────────────────────────────────────────────
+
+/**
+ * Composite engagement score for a post row.
+ *
+ * Weights:
+ *   like_count           × 0.35
+ *   save_count           × 0.30
+ *   share_count          × 0.20
+ *   view_count           × 0.10
+ *   qualified_view_count × 0.05
+ *
+ * Used by the precompute worker (placeCollectionsWorker) for best-of ranking.
+ * Pure — exported for tests.
+ */
+export function placePostScore(post: {
+  like_count?: number | null;
+  save_count?: number | null;
+  share_count?: number | null;
+  view_count?: number | null;
+  qualified_view_count?: number | null;
+}): number {
+  return (
+    (post.like_count           ?? 0) * 0.35 +
+    (post.save_count           ?? 0) * 0.30 +
+    (post.share_count          ?? 0) * 0.20 +
+    (post.view_count           ?? 0) * 0.10 +
+    (post.qualified_view_count ?? 0) * 0.05
+  );
+}
+
 export interface BestOfItem {
   postId: string;
   mediaUrl: string | null;
@@ -144,7 +175,7 @@ export async function enqueueLivingCacheInvalidation(
     await client
       .from("place_cache_invalidation_queue")
       .upsert(
-        { place_id: placeId, queued_at: new Date().toISOString() },
+        { place_id: placeId, queued_at: new Date().toISOString(), status: "pending" },
         { onConflict: "place_id" },
       );
   } catch {
