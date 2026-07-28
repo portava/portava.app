@@ -22,6 +22,7 @@ import { useGemDetail, useGemCheckin, useGemReport } from '../../src/hooks/useHi
 import { verificationBadge, sensitivityLabel, shareGemToTelegraph } from '../../src/services/hiddenGems';
 import { TripWishlistPicker, type AddToTripPayload } from '../../src/components/discovery/TripWishlistPicker';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
+import { PlaceInfoSection } from '../../src/components/place/PlaceInfoSection';
 import { GemMapPreview } from '../../src/components/discovery/GemMapPreview';
 import { useSession } from '../../src/context/SessionContext';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
@@ -367,13 +368,18 @@ export default function GemDetailScreen() {
           />
         </View>
 
-        {/* Description */}
-        {gem.description && (
+        {/* Description — shows user-entered description and category.
+            Pass place={canonicalPlace} here once gem records store a
+            canonical_place_id to surface FSQ-enriched phone/hours/address. */}
+        {(gem.description || gem.category) ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>About</Text>
-            <Text style={styles.bodyText}>{gem.description}</Text>
+            <PlaceInfoSection
+              description={gem.description}
+              category={gem.category}
+            />
           </View>
-        )}
+        ) : null}
 
         {/* Quick facts */}
         <View style={styles.section}>

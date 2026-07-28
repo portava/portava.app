@@ -1,9 +1,9 @@
 /**
- * PlaceCard (detail) — "Phone not available" fallback
+ * PlaceCard (detail) — phone field visibility
  *
  * Confirms that:
- *   1. When phone is null, renders "Phone not available" text (not blank).
- *   2. When phone is set, renders the tappable phone number.
+ *   1. When phone is null, the phone row is hidden entirely (no "N/A" text).
+ *   2. When phone is set, the tappable phone row is rendered.
  *
  * Run with: pnpm test:component
  *
@@ -58,40 +58,34 @@ function makePlace(overrides: Partial<CanonicalPlace> = {}): CanonicalPlace {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('PlaceCard (detail) — phone field', () => {
-  it('renders "Phone not available" when phone is null', async () => {
+  it('hides the phone row entirely when phone is null', async () => {
     const place = makePlace({ phone: null });
-    const { getByText } = await render(<PlaceCard place={place} />);
+    const { queryByTestId, queryByText } = await render(<PlaceCard place={place} />);
 
     await waitFor(() => {
-      expect(getByText('Phone not available')).toBeTruthy();
-    });
-  });
-
-  it('renders "Phone not available" when phone is undefined', async () => {
-    const place = makePlace({ phone: undefined });
-    const { getByText } = await render(<PlaceCard place={place} />);
-
-    await waitFor(() => {
-      expect(getByText('Phone not available')).toBeTruthy();
-    });
-  });
-
-  it('renders the phone number when phone is set', async () => {
-    const place = makePlace({ phone: '+63 2 8888 8888' });
-    const { getByText, queryByText } = await render(<PlaceCard place={place} />);
-
-    await waitFor(() => {
-      expect(getByText('+63 2 8888 8888')).toBeTruthy();
+      // Row should be completely absent — no testID, no fallback text
+      expect(queryByTestId('place-card-phone')).toBeNull();
       expect(queryByText('Phone not available')).toBeNull();
     });
   });
 
-  it('renders the phone row element regardless of phone value', async () => {
-    const place = makePlace({ phone: null });
-    const { getByTestId } = await render(<PlaceCard place={place} />);
+  it('hides the phone row entirely when phone is undefined', async () => {
+    const place = makePlace({ phone: undefined });
+    const { queryByTestId, queryByText } = await render(<PlaceCard place={place} />);
+
+    await waitFor(() => {
+      expect(queryByTestId('place-card-phone')).toBeNull();
+      expect(queryByText('Phone not available')).toBeNull();
+    });
+  });
+
+  it('renders the tappable phone row when phone is set', async () => {
+    const place = makePlace({ phone: '+63 2 8888 8888' });
+    const { getByTestId, getByText } = await render(<PlaceCard place={place} />);
 
     await waitFor(() => {
       expect(getByTestId('place-card-phone')).toBeTruthy();
+      expect(getByText('+63 2 8888 8888')).toBeTruthy();
     });
   });
 });

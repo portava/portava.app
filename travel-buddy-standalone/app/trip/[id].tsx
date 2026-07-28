@@ -28,6 +28,7 @@ import { DailyBriefCard } from '../../src/components/DailyBriefCard';
 import { TripReadinessCard } from '../../src/components/trip/TripReadinessCard';
 import { BeforeYouGoSection } from '../../src/components/trip/BeforeYouGoSection';
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
+import { TripDestinationInfoCard } from '../../src/components/trip/TripDestinationInfoCard';
 import { toFsqCityKey } from '../../src/utils/fsqCityKey';
 import { ConciergeCommandBar, type ConciergeCommandBarHandle } from '../../src/components/ConciergeCommandBar';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
@@ -412,6 +413,10 @@ function TripDetailScreen() {
           )}
         </View>
         <TripHero trip={trip} />
+
+        {/* Destination city overview card — shows city/country heading + any
+            trip notes as a city description; tappable to open in maps */}
+        <TripDestinationInfoCard trip={trip} />
 
         {/* ── Before you go — entry/visa + country essentials, always visible ── */}
         {live && trip.id ? (

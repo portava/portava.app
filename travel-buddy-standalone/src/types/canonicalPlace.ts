@@ -126,6 +126,10 @@ export interface CanonicalPlace {
   /** Legacy cover image — superseded by headerImageUrl; kept for back-compat. */
   imageUrl?: string | null;
 
+  // ── Description ───────────────────────────────────────────────────────────
+  /** Long-form description sourced from FSQ / Google Places. */
+  description?: string | null;
+
   // ── Contact ───────────────────────────────────────────────────────────────
   phone?: string | null;
   internationalPhone?: string | null;
