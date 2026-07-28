@@ -458,7 +458,7 @@ export interface MediaGridItem {
  *   - processingStatus is returned for all items so the owner's client can
  *     render a progress overlay; it is a status enum, not sensitive content.
  */
-export function hydrateMediaGridItem(row: any, postMedia: any[]): MediaGridItem {
+export function hydrateMediaGridItem(row: any, postMedia: any[], apiBaseUrl: string = ""): MediaGridItem {
   const sorted = [...postMedia].sort(
     (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
   );
@@ -498,7 +498,18 @@ export function hydrateMediaGridItem(row: any, postMedia: any[]): MediaGridItem 
   const processingStatus: string | null =
     rawStatus && rawStatus !== "ready" ? rawStatus : null;
 
-  const videoUrl: string | null = primaryVideo?.public_url ?? null;
+  // Resolve videoUrl via the relay when a storage_path is present (matching
+  // the Watch-feed hydrator pattern). This ensures relay-stored videos are
+  // accessible even when public_url is absent or inaccessible.
+  const videoUrl: string | null = (() => {
+    if (!primaryVideo) return null;
+    const bucket: string = primaryVideo.storage_bucket ?? "post-media";
+    const storagePath: string | null = primaryVideo.storage_path ?? null;
+    if (storagePath) {
+      return relayUrlFor(bucket, storagePath, apiBaseUrl);
+    }
+    return primaryVideo.public_url ?? null;
+  })();
 
   return {
     id: row.id as string,

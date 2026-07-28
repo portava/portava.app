@@ -29,7 +29,7 @@ import {
   filterEligibleMediaCandidates,
   type MediaCandidate,
 } from "../lib/mediaEligibility.js";
-import { hydrateMediaFeedItem } from "../lib/mediaFeedItem.js";
+import { hydrateMediaFeedItem, hydrateMediaGridItem } from "../lib/mediaFeedItem.js";
 import {
   enforceCreatorCapsGeneric,
 } from "../services/ranking/CreatorCapEnforcer.js";
@@ -1176,5 +1176,148 @@ describe("GET /media/feed — freshness after upload (write→read cycle)", () =
       `New post ${NEW_POST} must appear in follower's following feed immediately after creator uploads; ` +
         `got: [${ids.join(", ")}]`,
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ── J. hydrateMediaGridItem — relay URL for relay-stored videos ───────────────
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// When a video asset has a storage_path the hydrator must resolve videoUrl via
+// relayUrlFor (matching the Watch-feed hydrator pattern).  A raw public_url
+// that may be inaccessible for relay-bucket assets should never be returned
+// when storage_path is present.
+
+describe("hydrateMediaGridItem — relay URL resolution for video assets", () => {
+  const API_BASE = "https://api.example.test";
+
+  it("uses relay URL when video asset has storage_path and storage_bucket", () => {
+    const postMedia = [
+      {
+        id: "vid-relay-1",
+        media_type: "video",
+        storage_bucket: "relay-videos",
+        storage_path: "uploads/user123/clip.mp4",
+        public_url: "https://sb.example.test/storage/v1/object/public/relay-videos/uploads/user123/clip.mp4",
+        thumbnail_url: null,
+        duration_seconds: 30,
+        width: 1080,
+        height: 1920,
+        sort_order: 0,
+        processing_status: "ready",
+        moderation_status: "approved",
+      },
+    ];
+    const row = {
+      id: POST_1,
+      author_id: CREATOR_A,
+      view_count: 0,
+      qualified_view_count: 0,
+    };
+
+    const item = hydrateMediaGridItem(row, postMedia, API_BASE);
+
+    assert.equal(
+      item.videoUrl,
+      `${API_BASE}/api/media/file/relay-videos/uploads/user123/clip.mp4`,
+      "videoUrl must use the relay path when storage_path is present",
+    );
+  });
+
+  it("falls back to public_url when storage_path is absent", () => {
+    const PUBLIC_URL = `${SB_URL}/storage/v1/object/public/post-media/vid.mp4`;
+    const postMedia = [
+      {
+        id: "vid-pub-1",
+        media_type: "video",
+        public_url: PUBLIC_URL,
+        storage_bucket: "post-media",
+        // no storage_path
+        thumbnail_url: null,
+        duration_seconds: 15,
+        width: 1080,
+        height: 1920,
+        sort_order: 0,
+        processing_status: "ready",
+        moderation_status: "approved",
+      },
+    ];
+    const row = {
+      id: POST_1,
+      author_id: CREATOR_A,
+      view_count: 0,
+      qualified_view_count: 0,
+    };
+
+    const item = hydrateMediaGridItem(row, postMedia, API_BASE);
+
+    assert.equal(
+      item.videoUrl,
+      PUBLIC_URL,
+      "videoUrl must fall back to public_url when storage_path is absent",
+    );
+  });
+
+  it("uses default bucket 'post-media' when storage_bucket is absent", () => {
+    const postMedia = [
+      {
+        id: "vid-nobucket-1",
+        media_type: "video",
+        storage_path: "uploads/user456/vid.mp4",
+        // no storage_bucket
+        public_url: null,
+        thumbnail_url: null,
+        duration_seconds: 10,
+        width: 720,
+        height: 1280,
+        sort_order: 0,
+        processing_status: "ready",
+        moderation_status: "approved",
+      },
+    ];
+    const row = {
+      id: POST_1,
+      author_id: CREATOR_A,
+      view_count: 0,
+      qualified_view_count: 0,
+    };
+
+    const item = hydrateMediaGridItem(row, postMedia, API_BASE);
+
+    assert.equal(
+      item.videoUrl,
+      `${API_BASE}/api/media/file/post-media/uploads/user456/vid.mp4`,
+      "relay URL must use 'post-media' as default bucket when storage_bucket is absent",
+    );
+  });
+
+  it("returns null videoUrl for image-only posts", () => {
+    const postMedia = [
+      {
+        id: "img-1",
+        media_type: "image",
+        storage_path: "uploads/user789/photo.jpg",
+        storage_bucket: "post-images",
+        public_url: `${SB_URL}/storage/v1/object/public/post-images/photo.jpg`,
+        thumbnail_url: null,
+        duration_seconds: null,
+        width: 1080,
+        height: 1080,
+        sort_order: 0,
+        processing_status: "ready",
+        moderation_status: "approved",
+      },
+    ];
+    const row = {
+      id: POST_1,
+      author_id: CREATOR_A,
+      view_count: 0,
+      qualified_view_count: 0,
+    };
+
+    const item = hydrateMediaGridItem(row, postMedia, API_BASE);
+
+    assert.equal(item.videoUrl, null, "videoUrl must be null for image-only posts");
+    assert.equal(item.mediaType, "image");
   });
 });

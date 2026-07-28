@@ -611,7 +611,7 @@ async function handleGridFeed(req: any, res: any): Promise<void> {
   // ── Hydrate into lightweight grid items ─────────────────────────────────────
   const items: MediaGridItem[] = page.map((c) => {
     const postMedia = Array.isArray(c.post_media) ? c.post_media : [];
-    return hydrateMediaGridItem(c, postMedia);
+    return hydrateMediaGridItem(c, postMedia, process.env.API_BASE_URL ?? "");
   });
 
   // ── Analytics (fire-and-forget) ─────────────────────────────────────────────
