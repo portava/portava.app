@@ -5,6 +5,7 @@
  * these return empty so the app still runs on mock screens.
  */
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useSocialVersion } from './useSocialVersion.ts';
 import {
   listGlobalPosts,
   listFollowingFeed,
@@ -135,6 +136,9 @@ export function useFollowingFeed() {
   const lastLoadedAt = useRef(0);
   // Guard against overlapping background refreshes.
   const refreshing = useRef(false);
+  // Skip the first effect run so mounting doesn't double-fetch alongside the
+  // explicit initial reload() that callers invoke on mount/focus.
+  const versionMounted = useRef(false);
 
   const markDeleted = useCallback((id: string) => {
     deletedIds.current.add(id);
@@ -164,6 +168,16 @@ export function useFollowingFeed() {
     }
     setLoading(false);
   }, []);
+
+  // Re-fetch whenever the social-version counter bumps (e.g. after onboarding
+  // completes and the @Portava auto-follow lands), bypassing the focus TTL so
+  // the feed reflects the new follow immediately without a focus event.
+  const socialVersion = useSocialVersion();
+  useEffect(() => {
+    if (!versionMounted.current) { versionMounted.current = true; return; }
+    lastLoadedAt.current = 0; // force TTL bypass so refreshIfStale also picks it up
+    void reload();
+  }, [socialVersion, reload]);
 
   /**
    * Focus-driven refresh: no-op while the data is fresh (TTL); otherwise

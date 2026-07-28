@@ -4,7 +4,8 @@ import { router } from 'expo-router';
 import { Stamp, Chip } from '../../src/components/ui';
 import type { Interest, TravelStyle } from '../../src/types/models';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
-import { updateMyProfile, getMyProfile } from '../../src/services/profile';
+import { getMyProfile } from '../../src/services/profile';
+import { runOnboardingFinish } from '../../src/services/onboardingFinish';
 import { buildOnboardingPatch } from '../../src/services/profilePatchBuilder';
 import { buildOnboardingSaveAlert } from '../../src/services/profileSaveFlow';
 import { getCurrentGps, reverseGeocodeToPlace } from '../../src/services/location';
@@ -12,6 +13,7 @@ import { runFillHomeFromGps } from '../../src/services/fillHomeFromGps.machine';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { DatePickerField } from '../../src/components/DatePickerField';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
+import { bumpSocialVersion } from '../../src/hooks/useSocialVersion'; // for "Continue anyway" path
 
 const INTERESTS: Interest[] = ['nightlife','beach','food','luxury','backpacking','culture','adventure','shopping','photography','business','dating','wellness','events'];
 const STYLES: TravelStyle[] = ['solo','couple','group','business'];
@@ -112,21 +114,26 @@ export default function Onboarding() {
     setSaving(true);
     const patch = buildOnboardingPatch({ displayName: trimmedName, handle, homeCity, homeCountry, travelStyle: style, interests: picked });
     if (dateOfBirth) (patch as any).dateOfBirth = dateOfBirth;
-    const result = await updateMyProfile(patch);
-    setSaving(false);
-    if (!result.ok && result.errorKind !== 'config_error' && result.errorKind !== 'unauthenticated') {
-      const alert = buildOnboardingSaveAlert(result);
-      Alert.alert(
-        alert.title,
-        alert.message,
-        [
-          { text: 'Continue anyway', onPress: () => router.replace('/(tabs)' as any) },
-          { text: 'Retry', onPress: handleFinish },
-        ],
-      );
-      return;
-    }
-    router.replace('/(tabs)' as any);
+    await runOnboardingFinish({
+      patch,
+      onComplete: () => {
+        setSaving(false);
+        router.replace('/(tabs)' as any);
+      },
+      onError: (result) => {
+        setSaving(false);
+        const alert = buildOnboardingSaveAlert(result);
+        Alert.alert(
+          alert.title,
+          alert.message,
+          [
+            // "Continue anyway" also bumps so mounted hooks pick up @Portava.
+            { text: 'Continue anyway', onPress: () => { bumpSocialVersion(); router.replace('/(tabs)' as any); } },
+            { text: 'Retry', onPress: handleFinish },
+          ],
+        );
+      },
+    });
   }
 
   function handleNext() {
@@ -204,6 +211,7 @@ export default function Onboarding() {
                   autoFocus
                   maxLength={DISPLAY_NAME_MAX}
                   returnKeyType="next"
+                  testID="display-name-input"
                 />
                 <Text style={styles.hint}>Maximum 30 characters.</Text>
               </View>
@@ -336,6 +344,7 @@ export default function Onboarding() {
           style={[styles.nextBtn, nextDisabled && styles.nextBtnDisabled]}
           onPress={handleNext}
           disabled={nextDisabled}
+          testID="onboarding-next-btn"
         >
           {saving
             ? <ActivityIndicator color={color.onInk} />

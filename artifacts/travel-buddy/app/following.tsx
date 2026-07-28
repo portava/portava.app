@@ -1,9 +1,10 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import {
   View, Text, FlatList, Pressable, Image, StyleSheet,
   ActivityIndicator,
 } from 'react-native';
 import { useFocusEffect, router } from 'expo-router';
+import { useSocialVersion } from '../src/hooks/useSocialVersion';
 import { UserPlus } from 'lucide-react-native';
 import { AppHeader } from '../src/components/ui/AppHeader';
 import { OfficialBadge } from '../src/components/OfficialBadge';
@@ -27,6 +28,16 @@ export default function FollowingScreen() {
   }, []);
 
   useFocusEffect(useCallback(() => { void load(); }, [load]));
+
+  // Re-fetch whenever the social-version counter bumps (e.g. after onboarding
+  // completes and the server-side @Portava auto-follow has been written), so
+  // @Portava appears in the list without requiring a manual focus/refresh.
+  const socialVersion = useSocialVersion();
+  const versionMounted = useRef(false);
+  useEffect(() => {
+    if (!versionMounted.current) { versionMounted.current = true; return; }
+    void load();
+  }, [socialVersion, load]);
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
