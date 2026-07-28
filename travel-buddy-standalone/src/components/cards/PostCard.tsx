@@ -68,6 +68,12 @@ export interface PostCardProps {
    * Renders a gold FeaturedBadge above the type badge.
    */
   featuredByPortava?: string | null;
+  /**
+   * Rendered below the caption/captionNode when the post is in a different
+   * language than the viewer's preferred language.  Callers compose this from
+   * <TranslationToggle> so the card stays unaware of translation logic.
+   */
+  translationToggleNode?: React.ReactNode;
 }
 
 const TYPE_BADGE: Record<PostCardType, { label: string; bg: string; fg: string } | null> = {
@@ -83,6 +89,7 @@ export function PostCard({
   type, title, caption, captionNode, city, imageUrl, authorName, authorHandle, timeAgo,
   likeCount, commentCount, likedByMe, savedByMe, tags, authorVerified, authorIsOfficial,
   onPress, onLike, onSave, onComment, actionsSlot, cardStyle, authorRow, featuredByPortava,
+  translationToggleNode,
 }: PostCardProps) {
   const [imgFailed, setImgFailed] = useState(false);
   const badge = TYPE_BADGE[type];
@@ -136,6 +143,9 @@ export function PostCard({
         {captionNode ?? (displayText ? (
           <Text style={styles.text} numberOfLines={4}>{displayText}</Text>
         ) : null)}
+
+        {/* Translation toggle — rendered by caller when content language differs from viewer's */}
+        {translationToggleNode ?? null}
 
         {/* Tags */}
         {tags && tags.length > 0 ? (

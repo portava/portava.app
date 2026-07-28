@@ -65,6 +65,8 @@ import { createLikeToggleGuard } from '../lib/likeToggleGuard.ts';
 import { EngagementUserListSheet } from './EngagementUserListSheet.tsx';
 import { primaryIdentityText } from '../lib/displayIdentity.ts';
 import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
+import { TranslationToggle } from './TranslationToggle.tsx';
+import { useContentTranslation } from '../hooks/useContentTranslation.ts';
 
 // ── Shared contexts ───────────────────────────────────────────────────────────
 
@@ -338,6 +340,12 @@ function CommentItem({
   const [likerCommentId, setLikerCommentId] = useState<string | null>(null);
   const isOwner = !!currentUserId && currentUserId === comment.author.id;
 
+  const commentTx = useContentTranslation({
+    entityType: 'comment',
+    entityId: comment.id,
+    originalLanguage: comment.originalLanguage,
+  });
+
   function handleLongPress() {
     if (isOwner) return;
     const authorName = primaryIdentityText({ name: comment.author.name, handle: comment.author.handle });
@@ -404,12 +412,13 @@ function CommentItem({
               <Text style={s.commentTime}>{timeAgo(comment.createdAt)}</Text>
             </View>
             <RichText
-              content={comment.body}
+              content={commentTx.translated && commentTx.translatedFields.body ? commentTx.translatedFields.body : comment.body}
               tags={comment.tags}
               hashtagUsages={comment.hashtagUsages}
               currentUserId={currentUserId ?? undefined}
               style={s.commentText}
             />
+            <TranslationToggle tx={commentTx} />
             <Pressable hitSlop={6} onPress={() => onReply(comment.id, primaryIdentityText({ name: comment.author.name, handle: comment.author.handle }))} style={s.replyBtn}>
               <Text style={s.replyBtnText}>Reply</Text>
             </Pressable>

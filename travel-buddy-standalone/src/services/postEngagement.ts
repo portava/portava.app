@@ -27,6 +27,8 @@ export interface EngagementComment {
   canDelete: boolean;
   likeCount?: number;
   likedByMe?: boolean;
+  /** ISO 639-1 language code detected at write time, e.g. 'es'. Null when unknown. */
+  originalLanguage?: string | null;
   /** Saved @mention annotations — whitelist for RichText. */
   tags?: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number; isBlocked?: boolean; isDeleted?: boolean }>;
   /** Saved #hashtag annotations — whitelist for RichText. */
