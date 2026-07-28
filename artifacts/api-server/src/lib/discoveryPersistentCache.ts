@@ -159,6 +159,43 @@ export async function readGeocodeFromDb(
 }
 
 /**
+ * Invalidate all discovery_cache rows that contain a given OSM place.
+ *
+ * OSM places are stored inside the JSONB `places` array with id equal to the
+ * OSM element string (e.g. "node/12345678", "way/987654").  When a user saves
+ * or un-saves an OSM place the save count changes; any L2 cache row that
+ * holds the stale enriched count must be evicted so the next request
+ * re-enriches from the live discovery_places table.
+ *
+ * Fire-and-forget safe: errors are swallowed — a cache miss is always
+ * preferable to surfacing a DB error to the caller.
+ */
+export async function invalidateDiscoveryCacheForOsmId(osmId: string): Promise<void> {
+  try {
+    const sc = getServiceClient();
+    if (!sc) return;
+
+    // PostgREST "cs" (contains) operator: places @> '[{"id":"node/12345678"}]'
+    const { error } = await sc
+      .from("discovery_cache")
+      .delete()
+      .filter("places", "cs", JSON.stringify([{ id: osmId }]));
+
+    if (error) {
+      logger.debug(
+        { err: error, osmId },
+        "discoveryPersistentCache: invalidateDiscoveryCacheForOsmId error",
+      );
+    }
+  } catch (e) {
+    logger.debug(
+      { err: e, osmId },
+      "discoveryPersistentCache: invalidateDiscoveryCacheForOsmId exception",
+    );
+  }
+}
+
+/**
  * Invalidate all discovery_cache rows that contain a given entity.
  *
  * DB-backed places are stored inside the JSONB `places` array with id

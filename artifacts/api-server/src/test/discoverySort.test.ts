@@ -118,12 +118,15 @@ async function get(server: ReturnType<typeof createServer>, path: string) {
 
 /**
  * Minimal fake service client used by trackOsmPlaceSave / trackOsmPlaceUnsave.
- * Drives only the tables those two functions touch: discovery_places,
- * discovery_place_saves, and wishlist_places.
+ * Drives the tables those two functions touch: discovery_places,
+ * discovery_place_saves, wishlist_places, and discovery_cache (for L2
+ * invalidation verification).
  */
 function makeCacheFakeClient(opts: {
   initialSavedCount: number;
   hasPriorSave: boolean;
+  /** Pre-populate discovery_cache with a row containing the OSM place. */
+  withL2CacheRow?: boolean;
 }) {
   const DP_UUID = "dp-uuid-cache-patch";
   const dp: Record<string, unknown>[]  = [{ id: DP_UUID, osm_id: "node/111999", saved_count: opts.initialSavedCount }];
@@ -131,6 +134,12 @@ function makeCacheFakeClient(opts: {
     ? [{ user_id: "user-cache-patch", place_id: DP_UUID }]
     : [];
   const wl: Record<string, unknown>[]  = [];
+  // Simulated L2 (discovery_cache) row — places column is a JSONB array of
+  // place objects.  We store it as a real JS array so the "cs" filter can
+  // inspect it.
+  const dc: Record<string, unknown>[] = opts.withL2CacheRow
+    ? [{ cache_key: "testpatch:for_you:10", places: [{ id: "node/111999", name: "Patched Place" }] }]
+    : [];
 
   function chain(rows: Record<string, unknown>[]) {
     const filters: Array<(r: Record<string, unknown>) => boolean> = [];
@@ -154,6 +163,27 @@ function makeCacheFakeClient(opts: {
       gt()                          { return obj; },
       order()                       { return obj; },
       limit()                       { return obj; },
+      /**
+       * Simulates the PostgREST `.filter(col, "cs", value)` operator used by
+       * `invalidateDiscoveryCacheForOsmId`.  Only "cs" (JSON array contains)
+       * is supported; the value is expected to be a JSON string of an array
+       * whose first element has an `id` property.
+       */
+      filter(col: string, op: string, value: unknown) {
+        if (op === "cs" && col === "places") {
+          try {
+            const needle = (JSON.parse(value as string) as Array<{ id?: unknown }>)[0];
+            const needleId = needle?.id;
+            if (needleId !== undefined) {
+              filters.push((r) => {
+                const places = r[col] as Array<{ id?: unknown }> | null;
+                return Array.isArray(places) && places.some((p) => p.id === needleId);
+              });
+            }
+          } catch { /* ignore parse errors */ }
+        }
+        return obj;
+      },
       maybeSingle() {
         const matched = rows.filter((r) => filters.every((f) => f(r)));
         return Promise.resolve({ data: matched[0] ?? null, error: null });
@@ -188,10 +218,12 @@ function makeCacheFakeClient(opts: {
   }
 
   return {
+    getDc: () => dc,
     from(table: string) {
       if (table === "discovery_places")      return chain(dp);
       if (table === "discovery_place_saves") return chain(dps);
       if (table === "wishlist_places")       return chain(wl);
+      if (table === "discovery_cache")       return chain(dc);
       return chain([]);
     },
     rpc(fnName: string, args: Record<string, unknown>) {
@@ -557,6 +589,75 @@ describe("patchOsmSavedCount — in-memory cache update after wishlist changes",
       cachePlace.savedCount,
       4,
       "patchOsmSavedCount must update the cached place's savedCount from 5 → 4",
+    );
+  });
+});
+
+// ── Suite 4: L2 cache invalidation after save / unsave ───────────────────────
+//
+// patchOsmSavedCount now fires an async L2 invalidation
+// (invalidateDiscoveryCacheForOsmId) so that discovery_cache rows containing
+// the changed OSM place are evicted.  Without this, a server restart after an
+// unsave would re-serve the old savedCount from the Postgres cache.
+
+describe("patchOsmSavedCount — L2 discovery_cache invalidation", () => {
+  const OSM_ID    = "node/111999";
+  const CACHE_KEY = "testpatch:for_you:10";
+  const USER_ID   = "user-cache-patch";
+  const PLACE_DATA = { name: "Patched Place", category: "for_you" };
+
+  afterEach(() => {
+    _clearTestClient();
+    _clearTestCacheEntry(CACHE_KEY);
+  });
+
+  it("trackOsmPlaceUnsave evicts the L2 discovery_cache row containing the OSM place", async () => {
+    // Pre-populate L2 (discovery_cache) with a row that embeds the OSM place.
+    const fake = makeCacheFakeClient({ initialSavedCount: 3, hasPriorSave: true, withL2CacheRow: true });
+    _setTestClient(fake, true);
+
+    assert.equal(fake.getDc().length, 1, "L2 cache row must be present before unsave");
+
+    await trackOsmPlaceUnsave(USER_ID, OSM_ID);
+
+    // Give the fire-and-forget L2 invalidation a tick to complete.
+    await new Promise<void>((r) => setImmediate(r));
+
+    assert.equal(
+      fake.getDc().length,
+      0,
+      "patchOsmSavedCount must evict the L2 discovery_cache row after unsave",
+    );
+  });
+
+  it("trackOsmPlaceSave evicts the L2 discovery_cache row containing the OSM place", async () => {
+    // L2 invalidation also fires on save so the incremented count is not
+    // shadowed by a stale cached row on the next cold-start request.
+    const fake = makeCacheFakeClient({ initialSavedCount: 2, hasPriorSave: false, withL2CacheRow: true });
+    _setTestClient(fake, true);
+
+    assert.equal(fake.getDc().length, 1, "L2 cache row must be present before save");
+
+    await trackOsmPlaceSave(USER_ID, OSM_ID, PLACE_DATA);
+
+    await new Promise<void>((r) => setImmediate(r));
+
+    assert.equal(
+      fake.getDc().length,
+      0,
+      "patchOsmSavedCount must evict the L2 discovery_cache row after save",
+    );
+  });
+
+  it("L2 invalidation is a no-op when no discovery_cache row contains the OSM place", async () => {
+    // withL2CacheRow omitted — dc is empty.  Calling trackOsmPlaceUnsave must
+    // not throw even when the L2 delete matches nothing.
+    const fake = makeCacheFakeClient({ initialSavedCount: 1, hasPriorSave: true });
+    _setTestClient(fake, true);
+
+    await assert.doesNotReject(
+      () => trackOsmPlaceUnsave(USER_ID, OSM_ID),
+      "trackOsmPlaceUnsave must not reject when no L2 cache row exists for the OSM place",
     );
   });
 });

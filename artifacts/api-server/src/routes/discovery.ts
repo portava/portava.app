@@ -45,6 +45,7 @@ import {
   writePlacesToDb,
   readGeocodeFromDb,
   writeGeocodeToDb,
+  invalidateDiscoveryCacheForOsmId,
 } from "../lib/discoveryPersistentCache";
 import {
   fetchEventPostsForDiscovery,
@@ -193,6 +194,10 @@ export function patchOsmSavedCount(osmId: string, newCount: number): void {
       }
     }
   }
+  // Evict L2 (Postgres discovery_cache) rows that contain this OSM place so
+  // that stale enriched counts are not served after the L1 TTL expires.
+  // Fire-and-forget — a cache miss is always preferable to a stale count.
+  void invalidateDiscoveryCacheForOsmId(osmId);
 }
 
 // ── Fetch helpers ─────────────────────────────────────────────────────────────
