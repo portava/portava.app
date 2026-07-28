@@ -507,6 +507,9 @@ export function _clearTestCacheEntry(key: string): void {
   cache.delete(key);
 }
 
+/** Test hook: expose enrichOsmSavedCounts for unit testing without going through the route. */
+export const _testEnrichOsmSavedCounts = enrichOsmSavedCounts;
+
 /**
  * Evict all L1 in-memory cache entries that contain a DB place with the given
  * entityId (stored as id "db/<entityId>").  Called by admin moderation actions
