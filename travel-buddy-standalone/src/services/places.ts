@@ -23,6 +23,23 @@ export interface VenueContactInfo {
   openingHours: NormalizedOpeningHours | null;
 }
 
+// ── Venue info cache ─────────────────────────────────────────────────────────
+
+/** How long a cached venue result is considered fresh (5 minutes). */
+const VENUE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+interface VenueCacheEntry {
+  value: VenueContactInfo | null;
+  expiresAt: number;
+}
+
+/** Module-level cache — persists across screen mounts for the app's lifetime. */
+const venueCache = new Map<string, VenueCacheEntry>();
+
+function venueInfoCacheKey(lat: number, lng: number, name?: string | null): string {
+  return `${lat},${lng}:${name ?? ''}`;
+}
+
 /**
  * Fetch contact info (phone, website, opening hours) for a venue near the
  * given coordinates via GET /api/places/nearby-venue.
@@ -30,16 +47,32 @@ export interface VenueContactInfo {
  * Pass the venue name as `name` when available — it is used as a search hint
  * to improve match accuracy. Returns null on any failure (no key, timeout,
  * not found, unauthenticated).
+ *
+ * Results (including null/not-found) are cached in memory for
+ * VENUE_CACHE_TTL_MS to avoid redundant FSQ hits when the user navigates
+ * away and back to the same event.
  */
 export async function getVenueInfoByCoords(
   lat: number,
   lng: number,
   name?: string | null,
 ): Promise<VenueContactInfo | null> {
+  const cacheKey = venueInfoCacheKey(lat, lng, name);
+  const cached = venueCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.value;
+  }
+
   if (!isSupabaseConfigured || !apiBase()) return null;
 
   const token = await freshToken();
   if (!token) return null;
+
+  /** Store value in cache and return it — convenience so every exit path is one line. */
+  const cacheAndReturn = (value: VenueContactInfo | null): VenueContactInfo | null => {
+    venueCache.set(cacheKey, { value, expiresAt: Date.now() + VENUE_CACHE_TTL_MS });
+    return value;
+  };
 
   try {
     const params = new URLSearchParams({ lat: String(lat), lng: String(lng) });
@@ -49,22 +82,22 @@ export async function getVenueInfoByCoords(
       `${apiBase()}/api/places/nearby-venue?${params}`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
-    if (!res.ok) return null;
+    if (!res.ok) return cacheAndReturn(null);
 
     const json = await res.json().catch(() => null);
-    if (!json || typeof json !== 'object') return null;
+    if (!json || typeof json !== 'object') return cacheAndReturn(null);
 
     const venue = (json as any).venue;
-    if (!venue || typeof venue !== 'object' || typeof venue.name !== 'string') return null;
+    if (!venue || typeof venue !== 'object' || typeof venue.name !== 'string') return cacheAndReturn(null);
 
-    return {
+    return cacheAndReturn({
       name:    venue.name,
       phone:   typeof venue.phone === 'string' && venue.phone ? venue.phone : null,
       website: typeof venue.website === 'string' && venue.website ? venue.website : null,
       openingHours: Array.isArray(venue.openingHours) && venue.openingHours.length > 0
         ? venue.openingHours as NormalizedOpeningHours
         : null,
-    };
+    });
   } catch {
     return null;
   }
