@@ -45,6 +45,19 @@ const STATUS_COLORS: Record<BookingStatus, string> = {
   no_show_pending: color.signal,
 };
 
+/**
+ * Statuses for which the backend permits thread creation/retrieval.
+ * Mirrors the server's `threadAllowedStatuses` in rentABuddy.ts route handler.
+ * Any status NOT in this list must not call getOrCreateBookingThread — the API
+ * returns an error and the UI would show a confusing dead-end alert.
+ */
+const THREAD_ELIGIBLE_STATUSES: BookingStatus[] = [
+  'scheduled',
+  'in_progress',
+  'completed',
+  'disputed',
+];
+
 function StatusBadge({ status }: { status: BookingStatus }) {
   const col = STATUS_COLORS[status];
   return (
@@ -596,29 +609,40 @@ export default function BookingDetail() {
             </Pressable>
           )}
 
-          <Pressable
-            style={({ pressed }) => [styles.actionBtn, pressed && { opacity: layout.pressedOpacity }]}
-            onPress={async () => {
-              const threadRes = await getOrCreateBookingThread(id as string);
-              if (threadRes.ok && threadRes.data?.threadId) {
-                router.push({
-                  pathname: '/messages/[id]' as any,
-                  params: {
-                    id: threadRes.data.threadId,
-                    threadType: 'rent_buddy_booking',
-                    contextId: id,
-                    title: `Booking with ${booking.city}`,
-                  },
-                });
-              } else {
-                // Never push a user id into /messages/[id] (it expects a THREAD id).
-                Alert.alert('Could not open chat', 'Please try again in a moment.');
-              }
-            }}
-          >
-            <MessageCircle size={16} color={color.ink} />
-            <Text style={styles.actionBtnText}>Message your Buddy</Text>
-          </Pressable>
+          {/* Message button — the backend only allows thread creation for the statuses in
+              THREAD_ELIGIBLE_STATUSES (mirrors the server's threadAllowedStatuses list).
+              Statuses outside that set never reach the API to avoid dead-end error alerts. */}
+          {THREAD_ELIGIBLE_STATUSES.includes(booking.status) ? (
+            <Pressable
+              style={({ pressed }) => [styles.actionBtn, pressed && { opacity: layout.pressedOpacity }]}
+              onPress={async () => {
+                const threadRes = await getOrCreateBookingThread(id as string);
+                if (threadRes.ok && threadRes.data?.threadId) {
+                  router.push({
+                    pathname: '/messages/[id]' as any,
+                    params: {
+                      id: threadRes.data.threadId,
+                      threadType: 'rent_buddy_booking',
+                      contextId: id,
+                      title: `Booking with ${booking.city}`,
+                    },
+                  });
+                } else {
+                  // Never push a user id into /messages/[id] (it expects a THREAD id).
+                  Alert.alert('Could not open chat', 'Please try again in a moment.');
+                }
+              }}
+            >
+              <MessageCircle size={16} color={color.ink} />
+              <Text style={styles.actionBtnText}>Message your Buddy</Text>
+            </Pressable>
+          ) : booking.status === 'requested' ? (
+            // Thread is created server-side only after Buddy accepts — show a clear pending state.
+            <View style={[styles.actionBtn, styles.actionBtnPending]}>
+              <MessageCircle size={16} color={color.mute} />
+              <Text style={styles.actionBtnTextMuted}>Chat available after Buddy accepts</Text>
+            </View>
+          ) : null}
 
           {isCompleted && (
             <>
@@ -765,6 +789,8 @@ const styles = StyleSheet.create({
   actionBtnSignal: { backgroundColor: color.signal, borderColor: color.signal },
   actionBtnText: { ...t.bodyStrong, color: color.ink },
   actionBtnTextPrimary: { ...t.bodyStrong, color: color.onInk },
+  actionBtnPending: { backgroundColor: color.haze, borderColor: color.haze, opacity: 0.7 },
+  actionBtnTextMuted: { ...t.bodyStrong, color: color.mute },
 });
 
 const buddy = StyleSheet.create({
