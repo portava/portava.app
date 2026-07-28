@@ -138,6 +138,9 @@ const SKIP_TABLES = new Set<string>([
   // Stamp-it reactions on media posts — migration 20260814_media_stamp_reactions.sql
   // pending live apply. Remove once the table exists in the live DB schema.
   "media_stamp_reactions",
+  // Event agenda items (places attached to an event) — migration 2043_event_agenda_items.sql
+  // pending live apply. Remove once the table exists in the live DB schema.
+  "event_agenda_items",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────

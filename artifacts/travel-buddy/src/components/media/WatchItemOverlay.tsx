@@ -52,16 +52,15 @@ import {
   Map,
   Compass,
   Camera,
-  Navigation,
   Zap,
 } from 'lucide-react-native';
 import { color, space, type as t, radius } from '../../theme/tokens.ts';
 import { useFollow } from '../../hooks/useFollow.ts';
 import type { MediaFeedItem } from '../../types/media.ts';
 import { reactToMediaStampIt } from '../../services/mediaInteractions.ts';
-import { usePlanPicker } from '../PlanPickerController.tsx';
 import { StampItBurst, type StampItBurstHandle } from './StampItBurst.tsx';
 import { VerifiedLocationStamp } from './VerifiedLocationStamp.tsx';
+import { PlaceQuickActions } from '../PlaceQuickActions.tsx';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -175,7 +174,6 @@ export function WatchItemOverlay({
   const insets = useSafeAreaInsets();
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const stampBurstRef = useRef<StampItBurstHandle>(null);
-  const { open: openPlanPicker } = usePlanPicker();
 
   // Guard: prevents the like Pressable's onPress from also firing after a
   // long-press — React Native can invoke onPress on finger-up even when
@@ -214,20 +212,6 @@ export function WatchItemOverlay({
     }
     onLike();
   }, [onLike]);
-
-  // ── Take Me Here chip ─────────────────────────────────────────────────────
-
-  const handleTakeMeHere = useCallback(() => {
-    if (!item.place) return;
-    const locationParts = [item.place.name, item.place.city].filter(Boolean);
-    openPlanPicker({
-      id: item.place.id ?? item.id,
-      type: 'place',
-      title: item.place.name,
-      city: item.place.city ?? undefined,
-      locationName: locationParts.join(', ') || undefined,
-    });
-  }, [item.id, item.place, openPlanPicker]);
 
   const handleCreate = useCallback(() => {
     if (isGemsMode) {
@@ -389,18 +373,17 @@ export function WatchItemOverlay({
             )
           ) : null}
 
-          {/* Take Me Here chip — shown when place is present */}
+          {/* Quick actions row — shown when place is present */}
           {item.place ? (
-            <Pressable
-              onPress={handleTakeMeHere}
-              style={s.takeMeHereChip}
-              hitSlop={4}
-              accessibilityRole="button"
-              accessibilityLabel="Take me here"
-            >
-              <Navigation size={10} color="rgba(255,255,255,0.95)" />
-              <Text style={s.takeMeHereText}>Take me here</Text>
-            </Pressable>
+            <PlaceQuickActions
+              place={{
+                id: item.place.id,
+                name: item.place.name,
+                city: item.place.city ?? null,
+              }}
+              sourceId={item.id}
+              variant="dark"
+            />
           ) : null}
 
           {/* Linked entity chip */}
@@ -612,25 +595,6 @@ const s = StyleSheet.create({
     ...t.stamp,
     color: 'rgba(255,255,255,0.9)',
     flexShrink: 1,
-  },
-  // Take Me Here pill chip
-  takeMeHereChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(255,100,60,0.22)',
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: 'rgba(255,100,60,0.5)',
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-  },
-  takeMeHereText: {
-    ...t.stamp,
-    color: 'rgba(255,255,255,0.95)',
-    fontWeight: '700',
-    fontSize: 11,
   },
   audioRow: {
     flexDirection: 'row',

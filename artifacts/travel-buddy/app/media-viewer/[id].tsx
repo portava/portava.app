@@ -62,6 +62,7 @@ import {
 } from '../../src/lib/viewerContext.ts';
 import { color, space, type as t, radius } from '../../src/theme/tokens.ts';
 import { useSession } from '../../src/context/SessionContext.tsx';
+import { PlaceQuickActions } from '../../src/components/PlaceQuickActions.tsx';
 
 // ── Web: force expo-av <video> to cover-fill ──────────────────────────────────
 if (typeof document !== 'undefined') {
@@ -264,6 +265,18 @@ function ViewerOverlay({
                     {post.locationCity ? ` · ${post.locationCity}` : ''}
                   </Text>
                 </View>
+              ) : null}
+
+              {/* Quick actions — shown when a location is tagged */}
+              {post.locationName ? (
+                <PlaceQuickActions
+                  place={{
+                    name: post.locationName,
+                    city: post.locationCity ?? null,
+                  }}
+                  sourceId={post.id}
+                  variant="dark"
+                />
               ) : null}
             </>
           ) : (

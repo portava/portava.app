@@ -16,6 +16,7 @@ const TRANSFORM_ALLOW = [
   'unimodules',
   'native-base',
   'lucide-react-native',
+  '@sentry/.*',
 ].join('|');
 
 module.exports = {

@@ -19,6 +19,7 @@ import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
 import { saveCommunityPlace, reportCommunityPlace, getPlaceLiveStatusCached } from '../services/discovery.ts';
 import { removeSaved } from '../services/discoveryBookmarks.ts';
 import type { PlaceReportReason, PlaceLiveStatus } from '../services/discovery.ts';
+import { PlaceQuickActions } from './PlaceQuickActions.tsx';
 
 /**
  * Live open-now status for community place cards. Reuses the shared
@@ -392,10 +393,11 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
             </View>
           ) : null}
           <View style={g.btnRow}>
-            <Pressable style={({ pressed }) => [g.addBtn, pressed && { opacity: layout.pressedOpacity }]}
-              onPress={() => planPicker.open({ id: gem.id, type: 'hidden_gem', title: gem.name, city: gem.city, category: 'Hidden Gem' })}>
-              <Text style={g.addText}>Add to Plan</Text>
-            </Pressable>
+            <PlaceQuickActions
+              place={{ id: gem.id, name: gem.name, city: gem.city ?? null }}
+              sourceId={gem.id}
+              variant="light"
+            />
             {onAddToRoute ? (
               <Pressable
                 style={({ pressed }) => [g.routeBtn, pressed && { opacity: layout.pressedOpacity }]}

@@ -33,6 +33,7 @@ import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { navigateToProfile } from '../lib/navigateToProfile.ts';
 import { PostCard as SharedPostCard } from './cards/PostCard.tsx';
+import { PlaceQuickActions } from './PlaceQuickActions.tsx';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -492,9 +493,11 @@ function GemCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Pulse
       }
       actionsSlot={
         <View style={s.actions}>
-          <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'hidden_gem', title: item.title ?? 'Hidden gem', city: item.city, category: 'Hidden Gem' })}>
-            <Text style={s.outlineText}>Add to Plan</Text>
-          </Pressable>
+          <PlaceQuickActions
+            place={{ name: item.title ?? 'Hidden gem', city: item.city ?? null }}
+            sourceId={item.id}
+            variant="light"
+          />
           <View style={{ flex: 1 }} />
           <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={17} sessionId={sessionId} />
           <CompassFeedbackMenu

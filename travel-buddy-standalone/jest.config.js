@@ -31,7 +31,7 @@ module.exports = {
   // RNTL's act() saves/restores true instead of undefined between tests.
   setupFilesAfterEnv: ['<rootDir>/src/jest.setup.ts'],
   transformIgnorePatterns: [
-    'node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|native-base|lucide-react-native)',
+    'node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|native-base|lucide-react-native|@sentry/.*)',
   ],
   moduleNameMapper: {
     // AsyncStorage's native module is null under jest; map every import to the

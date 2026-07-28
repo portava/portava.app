@@ -31,6 +31,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import type { GemsFeedItem } from '../../hooks/useGemsFeed.ts';
+import { PlaceQuickActions } from '../PlaceQuickActions.tsx';
 
 // ── Helper: place type display label ─────────────────────────────────────────
 
@@ -234,21 +235,17 @@ export function GemsItemOverlay({
                   <Text style={styles.chipText}>View Place</Text>
                 </Pressable>
               )}
-              <Pressable
-                style={({ pressed }) => [styles.chip, pressed && styles.chipPressed]}
-                onPress={() => onAddToTrip?.(item)}
-                accessibilityLabel="Add to trip"
-              >
-                <Text style={styles.chipText}>+ Trip</Text>
-              </Pressable>
-              <Pressable
-                style={({ pressed }) => [styles.chip, pressed && styles.chipPressed]}
-                onPress={() => onDirections?.(item)}
-                accessibilityLabel="Get directions"
-              >
-                <Text style={styles.chipText}>↗ Directions</Text>
-              </Pressable>
             </View>
+            {/* Quick actions: + Trip, + Event, Navigate */}
+            <PlaceQuickActions
+              place={{
+                id: loc.canonicalPlaceId ?? undefined,
+                name: loc.name ?? 'Place',
+                city: loc.city ?? null,
+              }}
+              sourceId={item.id}
+              variant="dark"
+            />
           </View>
         )}
 

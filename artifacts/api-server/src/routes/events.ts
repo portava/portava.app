@@ -5820,6 +5820,68 @@ router.post("/events/:id/telegraph-thread", async (req, res) => {
   res.json({ threadId });
 });
 
+// ── POST /api/events/:id/agenda-items ────────────────────────────────────────
+
+router.post("/events/:id/agenda-items", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { user } = ctx;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: ev } = await sc.from("events").select("state, host_id").eq("id", id).maybeSingle();
+  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  // Allow hosts/co-hosts and any RSVP'd attendee to add agenda items
+  const isStaff = await isHostOrCoHost(sc, id, user.id);
+  if (!isStaff) {
+    const { data: rsvp } = await sc
+      .from("event_rsvps")
+      .select("status")
+      .eq("event_id", id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!rsvp) {
+      sendError(res, "forbidden", "Must be a host or RSVP'd attendee to add agenda items");
+      return;
+    }
+  }
+
+  const parsed = z.object({
+    title:        z.string().min(1).max(200),
+    locationName: z.string().max(300).optional(),
+    locationLat:  z.number().optional(),
+    locationLng:  z.number().optional(),
+    placeId:      z.string().optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
+    return;
+  }
+
+  const { data: item, error } = await sc.from("event_agenda_items").insert({
+    event_id:      id,
+    added_by:      user.id,
+    title:         parsed.data.title,
+    location_name: parsed.data.locationName ?? null,
+    location_lat:  parsed.data.locationLat ?? null,
+    location_lng:  parsed.data.locationLng ?? null,
+    place_id:      parsed.data.placeId ?? null,
+  }).select("*").single();
+
+  if (error) {
+    req.log.error({ err: error }, "create event agenda item");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  res.status(201).json(item);
+});
+
 // ── private helpers ───────────────────────────────────────────────────────────
 
 /**
