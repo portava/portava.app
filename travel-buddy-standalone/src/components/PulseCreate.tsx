@@ -165,11 +165,17 @@ export function UnifiedPostComposer({
   onClose,
   onSuccess,
   openCameraOnMount = false,
+  initialPlace = null,
+  initialBucket = null,
 }: {
   onClose: () => void;
   onSuccess?: () => void;
   /** When true, the camera launches immediately on mount (native only). */
   openCameraOnMount?: boolean;
+  /** Pre-selected place (e.g. when opened from a place page CTA). */
+  initialPlace?: Place | null;
+  /** Bucket hint passed from a place-page bucket CTA (e.g. 'night'). */
+  initialBucket?: string | null;
 }) {
   const insets = useSafeAreaInsets();
   const { create, submitting } = usePostActions();
@@ -195,7 +201,7 @@ export function UnifiedPostComposer({
   const [postTags, setPostTags] = useState<TagSpan[]>([]);
   const [media, setMedia] = useState<PickedMedia | null>(null);
   const [vis, setVis] = useState<PostVisibility>('public');
-  const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
+  const [selectedPlace, setSelectedPlace] = useState<Place | null>(initialPlace ?? null);
   const [locationPickerOpen, setLocationPickerOpen] = useState(false);
   const [addToPassport, setAddToPassport] = useState(false);
   const [error, setError] = useState<string | null>(null);
