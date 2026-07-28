@@ -179,16 +179,20 @@ function VerificationCards({ profile, onTrustRowPress }: { profile: OwnProfile; 
         </>
       )}
 
-      {profile.trustLabel ? (
+      {(profile.trustScore != null || profile.trustScoreBreakdown != null) ? (
         <>
           <SettingsDivider />
           <SettingsRow
             icon={<BadgeCheck size={18} color={PP.inkLight} />}
             title="Trust"
             subtitle={
-              profile.trustScore != null
+              profile.trustLabel && profile.trustScore != null
                 ? `${profile.trustLabel} · Score ${profile.trustScore}`
                 : profile.trustLabel
+                ? profile.trustLabel
+                : profile.trustScore != null
+                ? `Score ${profile.trustScore}`
+                : 'Not yet rated'
             }
             onPress={onTrustRowPress}
           />
