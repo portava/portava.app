@@ -7,7 +7,7 @@ import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarC
 import { postCompassFrontloadEvent } from '../../src/services/compass';
 import {
   View, Text, ScrollView, Pressable,
-  ActivityIndicator, StyleSheet, Alert, RefreshControl,
+  ActivityIndicator, StyleSheet, Alert, RefreshControl, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -245,12 +245,26 @@ function TripsScreen() {
       if (res.ok) {
         const title = addTarget.title || 'Event';
         setAddTarget(null);
-        Alert.alert('Added to trip', `“${title}” is now on this trip's plan.`, [
-          { text: 'View trip', onPress: () => router.push(`/trip/${tripId}` as any) },
-          { text: 'Done', style: 'cancel' },
-        ]);
+        // react-native-web's Alert.alert is a no-op — without this branch the
+        // add silently succeeds with zero visible feedback (looks "broken")
+        // on web. window.confirm gives the same View trip / Done choice.
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          if (window.confirm(`“${title}” is now on this trip's plan.\n\nView trip now?`)) {
+            router.push(`/trip/${tripId}` as any);
+          }
+        } else {
+          Alert.alert('Added to trip', `“${title}” is now on this trip's plan.`, [
+            { text: 'View trip', onPress: () => router.push(`/trip/${tripId}` as any) },
+            { text: 'Done', style: 'cancel' },
+          ]);
+        }
       } else {
-        Alert.alert('Could not add event', res.message ?? 'Please try again.');
+        const msg = res.message ?? 'Please try again.';
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(`Could not add event\n\n${msg}`);
+        } else {
+          Alert.alert('Could not add event', msg);
+        }
       }
     } finally {
       setAddBusy(false);

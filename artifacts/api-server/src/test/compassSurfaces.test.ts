@@ -58,6 +58,7 @@ interface FakeState {
   user_follows:             any[];
   friend_requests:          any[];
   event_rsvps:              any[];
+  rank_events:              any[];
 }
 
 function makeFakeClient(state: FakeState) {
@@ -66,6 +67,13 @@ function makeFakeClient(state: FakeState) {
 
     const b: any = {
       select()                   { return b; },
+      insert(data: any) {
+        if (table === "rank_events") {
+          const rows = Array.isArray(data) ? data : [data];
+          state.rank_events.push(...rows);
+        }
+        return Promise.resolve({ data, error: null });
+      },
       eq(col: string, val: any)  { filters.push((r: any) => r[col] === val); return b; },
       neq(col: string, val: any) { filters.push((r: any) => r[col] !== val); return b; },
       in(col: string, vals: any[]){ filters.push((r: any) => vals.includes(r[col])); return b; },
@@ -133,6 +141,7 @@ function makeState(overrides: Partial<FakeState> = {}): FakeState {
     user_follows:              [],
     friend_requests:           [],
     event_rsvps:               [],
+    rank_events:               [],
     ...overrides,
   };
 }
@@ -982,6 +991,46 @@ describe("GET /api/compass/recommendations?surface=buddy", () => {
     assert.ok(!ids.includes(BUDDY_SUSPENDED_ID), "suspended buddy must be excluded");
     assert.ok(!ids.includes(BUDDY_BANNED_ID), "banned buddy must be excluded");
   });
+
+  it("logs an impression row with a session_id — not silently dropped on this skip-ranking pipeline", async () => {
+    const state = buddyState();
+    const client = makeFakeClient(state);
+    _setTestClient(client as any, true);
+    invalidateFlagsCache();
+    clearCompassProfileCache();
+
+    const { status, body } = await req(server, "GET", "/api/compass/recommendations?surface=buddy&city=Cebu&sessionId=test-session-buddy-1", {
+      token: "alice-tok",
+    });
+    assert.equal(status, 200);
+    assert.equal(body.sessionId, "test-session-buddy-1", "response should echo the client-supplied sessionId");
+
+    const rows = state.rank_events.filter((r: any) => r.surface === "compass");
+    assert.ok(rows.length > 0, "expected at least one rank_events row for the buddy surface");
+    for (const row of rows) {
+      assert.equal(row.session_id, "test-session-buddy-1", "impression row must carry the sessionId — not null");
+    }
+  });
+
+  it("mints a session_id when the client omits one — never writes session_id=null", async () => {
+    const state = buddyState();
+    const client = makeFakeClient(state);
+    _setTestClient(client as any, true);
+    invalidateFlagsCache();
+    clearCompassProfileCache();
+
+    const { body } = await req(server, "GET", "/api/compass/recommendations?surface=buddy&city=Cebu", {
+      token: "alice-tok",
+    });
+    assert.ok(typeof body.sessionId === "string" && body.sessionId.length > 0, "response must include a minted sessionId");
+
+    const rows = state.rank_events.filter((r: any) => r.surface === "compass");
+    assert.ok(rows.length > 0, "expected at least one rank_events row for the buddy surface");
+    for (const row of rows) {
+      assert.equal(row.session_id, body.sessionId, "impression row must use the same minted sessionId as the response");
+      assert.notEqual(row.session_id, null, "impression row session_id must never be null");
+    }
+  });
 });
 
 // ── GET /api/compass/recommendations?surface=traveler ─────────────────────────
@@ -1280,5 +1329,25 @@ describe("GET /api/compass/recommendations?surface=traveler", () => {
       "destination_overlap",
       `TRAV_B is heading to Manila (same as Alice) so reasonCode must be destination_overlap, got: ${travB.data.reasonCode}`,
     );
+  });
+
+  it("logs an impression row with a session_id — not silently dropped on this skip-ranking pipeline", async () => {
+    const state = travelerState();
+    const client = makeFakeClient(state);
+    _setTestClient(client as any, true);
+    invalidateFlagsCache();
+    clearCompassProfileCache();
+
+    const { status, body } = await req(server, "GET", "/api/compass/recommendations?surface=traveler&sessionId=test-session-trav-1", {
+      token: "alice-tok",
+    });
+    assert.equal(status, 200);
+    assert.equal(body.sessionId, "test-session-trav-1", "response should echo the client-supplied sessionId");
+
+    const rows = state.rank_events.filter((r: any) => r.surface === "compass");
+    assert.ok(rows.length > 0, "expected at least one rank_events row for the traveler surface");
+    for (const row of rows) {
+      assert.equal(row.session_id, "test-session-trav-1", "impression row must carry the sessionId — not null");
+    }
   });
 });

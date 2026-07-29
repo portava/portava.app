@@ -137,6 +137,10 @@ export default function CreateEventScreen() {
   const [country, setCountry] = useState('');
   const [locationLat, setLocationLat] = useState<number | undefined>();
   const [locationLng, setLocationLng] = useState<number | undefined>();
+  // Destination timezone (from the selected place, e.g. Asia/Manila for
+  // Cebu) — falls back to the device timezone only until a location has
+  // been picked in Step 3, so Step 2's date/time display isn't misleading.
+  const [locationTimezone, setLocationTimezone] = useState<string | null>(null);
 
   // ── Step 4: Capacity ────────────────────────────────────────────────────────
   const [maxAttendees, setMaxAttendees] = useState('');
@@ -394,6 +398,7 @@ export default function CreateEventScreen() {
       locationName: locationName.trim() || undefined,
       locationLat,
       locationLng,
+      timezone: locationTimezone || undefined,
       city: city.trim() || undefined,
       country: country.trim() || undefined,
       maxAttendees: maxAttendees ? parseInt(maxAttendees) : undefined,
@@ -799,7 +804,8 @@ export default function CreateEventScreen() {
                   <Text style={styles.infoText}>
                     {startDate.toLocaleString(undefined, { weekday: 'long', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                     {endDate ? ` – ${endDate.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : ''}
-                    {` · ${Intl.DateTimeFormat().resolvedOptions().timeZone}`}
+                    {` · ${locationTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone}`}
+                    {!locationTimezone ? ' (device time — pick a location in Step 3 for local time)' : ''}
                   </Text>
                 </View>
               )}
@@ -899,6 +905,7 @@ export default function CreateEventScreen() {
                   if (place.country) setCountry(place.country);
                   if (place.lat != null) setLocationLat(place.lat);
                   if (place.lng != null) setLocationLng(place.lng);
+                  if (place.timezone) setLocationTimezone(place.timezone);
                   setLocationPickerVisible(false);
                   scheduleSave();
                 }}
@@ -1212,7 +1219,7 @@ export default function CreateEventScreen() {
                   <View style={styles.infoBox}>
                     <Ticket size={14} color={color.mute} />
                     <Text style={styles.infoText}>
-                      Travel Buddy does not process payments. Attendees will be directed to your external link for ticket purchase.
+                      Portava does not process payments. Attendees will be directed to your external link for ticket purchase.
                     </Text>
                   </View>
                 </>

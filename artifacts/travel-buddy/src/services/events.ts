@@ -59,7 +59,9 @@ export interface EventSummary {
   id: string;
   hostId: string;
   hostName: string | null;
+  hostHandle: string | null;
   hostAvatarUrl: string | null;
+  // NOTE: EventListItem below mirrors these host fields as well.
   title: string;
   description: string | null;
   locationName: string | null;

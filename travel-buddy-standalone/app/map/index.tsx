@@ -143,7 +143,7 @@ function WebPlaceholder() {
       </View>
       <Text style={p.title}>Full-screen map is not available in the browser</Text>
       <Text style={p.body}>
-        Open the Travel Buddy app on your phone to explore the interactive map.
+        Open the Portava app on your phone to explore the interactive map.
       </Text>
       <Pressable style={p.backBtn} onPress={() => router.back()}>
         <Text style={p.backBtnText}>Go back</Text>

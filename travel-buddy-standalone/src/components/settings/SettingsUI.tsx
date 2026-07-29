@@ -100,8 +100,12 @@ export function SettingsHeader({
   right?: React.ReactNode;
 }) {
   const insets = useSafeAreaInsets();
+  // Floor guards against the dynamic-island cutout on iPhone 14/15 Pro
+  // models — some presentation contexts (modal stacks, re-mounted routes)
+  // report a stale/zero insets.top before the safe-area frame settles,
+  // which otherwise renders the title directly behind the notch.
   return (
-    <View style={[st.header, { paddingTop: insets.top + space.sm }]}>
+    <View style={[st.header, { paddingTop: Math.max(insets.top + space.sm, 54) }]}>
       <Pressable
         style={st.headerBtn}
         onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/passport' as any))}

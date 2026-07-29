@@ -727,6 +727,31 @@ router.get("/events", async (req, res) => {
 
   // Viewer's roles across the listed events (staff bypass / banned)
   const allEventIds = rows.map((e: any) => e.id as string);
+
+  // BUG AY fix: `events.going_count` is a cached counter maintained by the
+  // RSVP write paths, but it can drift from the real event_rsvps rows (e.g.
+  // seeded/demo data, or a write path that updates one but not the other).
+  // The detail endpoint (GET /api/events/:id) always computes its `going`
+  // count live from event_rsvps, so the list/card endpoint must do the same
+  // — otherwise the Pulse card and the detail screen can show two different
+  // numbers for the same event. Overwrite the cached column with a live
+  // per-event count before ranking/formatting.
+  if (allEventIds.length > 0) {
+    const { data: liveGoingRows } = await sc
+      .from("event_rsvps")
+      .select("event_id")
+      .in("event_id", allEventIds)
+      .eq("status", "going");
+    const liveGoingCounts = new Map<string, number>();
+    for (const r of ((liveGoingRows as any[]) ?? [])) {
+      const eid = r.event_id as string;
+      liveGoingCounts.set(eid, (liveGoingCounts.get(eid) ?? 0) + 1);
+    }
+    for (const ev of rows) {
+      (ev as any).going_count = liveGoingCounts.get(ev.id as string) ?? 0;
+    }
+  }
+
   const staffEvents  = new Set<string>();
   const bannedEvents = new Set<string>();
   if (allEventIds.length > 0) {
@@ -825,7 +850,7 @@ router.get("/events", async (req, res) => {
 
   // Batch-fetch host profiles for display on cards
   const hostIds = [...new Set(filtered.map((e: any) => e.host_id as string))];
-  const hostProfileMap: Record<string, { name?: string | null; avatar_url?: string | null }> = {};
+  const hostProfileMap: Record<string, { name?: string | null; handle?: string | null; avatar_url?: string | null }> = {};
 
   // Batch-fetch host trust scores for rankCandidates' authorTrustScore signal.
   // Missing scores contribute 0 to rank — never a crash (portavaRank spec §42).
@@ -833,7 +858,7 @@ router.get("/events", async (req, res) => {
 
   if (hostIds.length > 0) {
     const [hpsResult, trustResult] = await Promise.all([
-      sc.from("profiles").select("id, name, avatar_url").in("id", hostIds),
+      sc.from("profiles").select("id, name, handle, avatar_url").in("id", hostIds),
       (async () => {
         try {
           return await sc
@@ -986,6 +1011,25 @@ router.get("/events/city/:city", async (req, res) => {
     }
     for (const w of ((cityWaitlistResult as any).data as any[]) ?? []) {
       cityWaitlistPositionMap[(w as any).event_id as string] = (w as any).position as number;
+    }
+  }
+
+  // BUG AY fix: same cached-vs-live going_count drift as the main list
+  // endpoint — recompute from event_rsvps so this alias never disagrees
+  // with the detail screen either.
+  if (cityEventIds.length > 0) {
+    const { data: liveGoingRows } = await sc
+      .from("event_rsvps")
+      .select("event_id")
+      .in("event_id", cityEventIds)
+      .eq("status", "going");
+    const liveGoingCounts = new Map<string, number>();
+    for (const r of ((liveGoingRows as any[]) ?? [])) {
+      const eid = (r as any).event_id as string;
+      liveGoingCounts.set(eid, (liveGoingCounts.get(eid) ?? 0) + 1);
+    }
+    for (const ev of filtered) {
+      (ev as any).going_count = liveGoingCounts.get(ev.id as string) ?? 0;
     }
   }
 
@@ -1313,7 +1357,7 @@ router.get("/events/circles", async (req, res) => {
   const hostIdSet = [...new Set(filtered.map((e: any) => e.host_id as string))];
   const hpMap: Record<string, { name?: string | null; avatar_url?: string | null }> = {};
   if (hostIdSet.length > 0) {
-    const { data: hps } = await sc.from("profiles").select("id, name, avatar_url").in("id", hostIdSet);
+    const { data: hps } = await sc.from("profiles").select("id, name, handle, avatar_url").in("id", hostIdSet);
     const allowedNames = await nameVisibilitySet(sc, hostIdSet);
     for (const p of (hps as any[]) ?? []) hpMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
   }
@@ -1906,9 +1950,9 @@ router.get("/events/following", async (req, res) => {
   }
 
   const hostIdSet = [...new Set(filtered.map((e: any) => e.host_id as string))];
-  const hpMap: Record<string, { name?: string | null; avatar_url?: string | null }> = {};
+  const hpMap: Record<string, { name?: string | null; handle?: string | null; avatar_url?: string | null }> = {};
   if (hostIdSet.length > 0) {
-    const { data: hps } = await sc.from("profiles").select("id, name, avatar_url").in("id", hostIdSet);
+    const { data: hps } = await sc.from("profiles").select("id, name, handle, avatar_url").in("id", hostIdSet);
     const allowedNames = await nameVisibilitySet(sc, hostIdSet);
     for (const p of (hps as any[]) ?? []) hpMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
   }
@@ -3577,7 +3621,7 @@ router.post("/events/:id/updates", async (req, res) => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function formatEvent(ev: any, viewerId: string, opts?: { goingRsvp?: boolean; hostProfile?: { name?: string | null; avatar_url?: string | null } }) {
+function formatEvent(ev: any, viewerId: string, opts?: { goingRsvp?: boolean; hostProfile?: { name?: string | null; handle?: string | null; avatar_url?: string | null } }) {
   const isHost = ev.host_id === viewerId;
   const isParticipant = isHost || (opts?.goingRsvp ?? false);
   // Exact coordinates are only visible to: the host, or any viewer who has a
@@ -3588,6 +3632,7 @@ function formatEvent(ev: any, viewerId: string, opts?: { goingRsvp?: boolean; ho
     id:                  ev.id,
     hostId:              ev.host_id,
     hostName:            opts?.hostProfile?.name ?? null,
+    hostHandle:          opts?.hostProfile?.handle ?? null,
     hostAvatarUrl:       opts?.hostProfile?.avatar_url ?? null,
     title:               ev.title,
     description:         ev.description ?? null,

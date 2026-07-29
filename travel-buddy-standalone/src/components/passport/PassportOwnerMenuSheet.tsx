@@ -77,6 +77,20 @@ function close(props: PassportOwnerMenuSheetProps) {
   props.onClose();
 }
 
+// BUG CC fix: navigating in the same tick as onClose() can leave this sheet's
+// native <Modal> (animationType="slide") still dismissing while the newly
+// pushed screen mounts underneath/behind it — on iOS the modal's window stays
+// on top, on web the closing overlay can keep intercepting touches. The
+// symptom is a freshly pushed screen (e.g. Safety & Verification) whose back
+// button never responds until a full reload. Deferring the push until after
+// the slide-close animation has had time to finish avoids the race.
+const MODAL_CLOSE_MS = 320;
+
+function closeThenNavigate(props: PassportOwnerMenuSheetProps, path: string) {
+  props.onClose();
+  setTimeout(() => router.push(path as any), MODAL_CLOSE_MS);
+}
+
 const SECTIONS: Section[] = [
   {
     title: 'Profile',
@@ -111,7 +125,7 @@ const SECTIONS: Section[] = [
         Icon: FileText,
         iconColor: '#059669',
         live: true,
-        action: (p) => { close(p); router.push('/profile/edit/about' as any); },
+        action: (p) => { closeThenNavigate(p, '/profile/edit/about'); },
       },
       {
         key: 'reorder-tabs',
@@ -143,7 +157,7 @@ const SECTIONS: Section[] = [
         Icon: BarChart2,
         iconColor: '#7B5CE5',
         live: true,
-        action: (p) => { close(p); router.push('/profile/analytics' as any); },
+        action: (p) => { closeThenNavigate(p, '/profile/analytics'); },
       },
     ],
   },
@@ -196,7 +210,7 @@ const SECTIONS: Section[] = [
         Icon: Calendar,
         iconColor: '#059669',
         live: true,
-        action: (p) => { close(p); router.push('/availability' as any); },
+        action: (p) => { closeThenNavigate(p, '/availability'); },
       },
       {
         key: 'verification',
@@ -212,7 +226,7 @@ const SECTIONS: Section[] = [
         Icon: Shield,
         iconColor: '#D94040',
         live: true,
-        action: (p) => { close(p); router.push('/profile/edit/safety' as any); },
+        action: (p) => { closeThenNavigate(p, '/profile/edit/safety'); },
       },
     ],
   },
@@ -273,7 +287,7 @@ const SECTIONS: Section[] = [
         Icon: Bookmark,
         iconColor: '#D4A017',
         live: true,
-        action: (p) => { close(p); router.push('/saved' as any); },
+        action: (p) => { closeThenNavigate(p, '/saved'); },
       },
       {
         key: 'drafts',
@@ -294,7 +308,7 @@ const SECTIONS: Section[] = [
         Icon: Users,
         iconColor: '#DB2777',
         live: true,
-        action: (p) => { close(p); router.push('/followers' as any); },
+        action: (p) => { closeThenNavigate(p, '/followers'); },
       },
       {
         key: 'following',
@@ -302,7 +316,7 @@ const SECTIONS: Section[] = [
         Icon: UserPlus,
         iconColor: '#059669',
         live: true,
-        action: (p) => { close(p); router.push('/following' as any); },
+        action: (p) => { closeThenNavigate(p, '/following'); },
       },
       {
         key: 'follow-requests',
@@ -310,7 +324,7 @@ const SECTIONS: Section[] = [
         Icon: UserCheck,
         iconColor: '#2563EB',
         live: true,
-        action: (p) => { close(p); router.push('/follow-requests' as any); },
+        action: (p) => { closeThenNavigate(p, '/follow-requests'); },
       },
       {
         key: 'blocked',
@@ -318,7 +332,7 @@ const SECTIONS: Section[] = [
         Icon: UserX,
         iconColor: '#D94040',
         live: true,
-        action: (p) => { close(p); router.push('/blocked-users' as any); },
+        action: (p) => { closeThenNavigate(p, '/blocked-users'); },
       },
       {
         key: 'muted',
@@ -326,7 +340,7 @@ const SECTIONS: Section[] = [
         Icon: VolumeX,
         iconColor: '#6B6862',
         live: true,
-        action: (p) => { close(p); router.push('/muted-users' as any); },
+        action: (p) => { closeThenNavigate(p, '/muted-users'); },
       },
     ],
   },
@@ -339,7 +353,7 @@ const SECTIONS: Section[] = [
         Icon: Settings,
         iconColor: '#4A4A48',
         live: true,
-        action: (p) => { close(p); router.push('/profile/edit' as any); },
+        action: (p) => { closeThenNavigate(p, '/profile/edit'); },
       },
       {
         key: 'privacy',
@@ -347,7 +361,7 @@ const SECTIONS: Section[] = [
         Icon: Lock,
         iconColor: '#3B7DED',
         live: true,
-        action: (p) => { close(p); router.push('/profile/edit/privacy' as any); },
+        action: (p) => { closeThenNavigate(p, '/profile/edit/privacy'); },
       },
       {
         key: 'notifications',
@@ -371,7 +385,7 @@ const SECTIONS: Section[] = [
         Icon: Compass,
         iconColor: '#3B7DED',
         live: true,
-        action: (p) => { close(p); router.push('/explore-portava' as any); },
+        action: (p) => { closeThenNavigate(p, '/explore-portava'); },
       },
       {
         key: 'sign-out',

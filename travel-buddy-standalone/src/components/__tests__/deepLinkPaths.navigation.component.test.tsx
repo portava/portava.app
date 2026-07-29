@@ -29,7 +29,7 @@
  */
 
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 
 // ── Module mocks (hoisted by babel-jest before imports) ───────────────────────
 
@@ -404,7 +404,9 @@ describe('MapEntityPreviewCard — CTA navigation paths', () => {
 
     fireEvent.press(screen.getByText('View Buddy Profile'));
 
-    expect(mockPush).toHaveBeenCalledTimes(1);
+    // Navigation is deferred until after the sheet's close animation finishes
+    // (BUG CC/CD fix — see closeThenNavigate), so wait for it here.
+    await waitFor(() => expect(mockPush).toHaveBeenCalledTimes(1));
     const pushed = mockPush.mock.calls[0][0] as string;
     expect(pushed).toBe('/(rent-a-buddy)/buddy/buddy-77');
     // Must include the /(rent-a-buddy)/ group prefix — the old bug omitted it.
@@ -434,7 +436,9 @@ describe('MapEntityPreviewCard — CTA navigation paths', () => {
 
     fireEvent.press(screen.getByText('View Event'));
 
-    expect(mockPush).toHaveBeenCalledTimes(1);
+    // Navigation is deferred until after the sheet's close animation finishes
+    // (BUG CC/CD fix — see closeThenNavigate), so wait for it here.
+    await waitFor(() => expect(mockPush).toHaveBeenCalledTimes(1));
     const pushed = mockPush.mock.calls[0][0] as string;
     expect(pushed).toBe('/event/concert-88');
     expect(pushed).not.toMatch(/\/events\//);

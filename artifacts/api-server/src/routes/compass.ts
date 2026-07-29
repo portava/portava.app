@@ -18,6 +18,7 @@
  *   Query params:
  *     cursor   — pagination cursor
  */
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js";
@@ -2620,6 +2621,7 @@ const recommendationsQuerySchema = z.object({
   startDate: z.string().max(30).optional(),
   endDate:   z.string().max(30).optional(),
   tripId:    z.string().uuid().optional(),
+  sessionId: z.string().max(100).optional(),
 });
 
 router.get("/compass/recommendations", async (req, res) => {
@@ -2639,7 +2641,11 @@ router.get("/compass/recommendations", async (req, res) => {
     return;
   }
 
-  const { surface = "for_you", q, city, limit, startDate, endDate, tripId } = parsed.data;
+  const { surface = "for_you", q, city, limit, startDate, endDate, tripId, sessionId } = parsed.data;
+  // Preserve a client-supplied sessionId for funnel grouping; otherwise mint
+  // one for this request batch so every skip-ranking pipeline below still
+  // logs an attributable session_id instead of silently dropping it.
+  const effectiveSessionId = sessionId ?? randomUUID();
   const nowMs = Date.now();
 
   // Feature-flag gate — silently return empty list when Compass is off.
@@ -2695,7 +2701,7 @@ router.get("/compass/recommendations", async (req, res) => {
       // (correctly) says don't exist here. No effectiveCity => no
       // recommendations, matching the directory's "enter a city" state.
       if (!effectiveCity) {
-        res.json({ recommendations: [], surface });
+        res.json({ recommendations: [], surface, sessionId: effectiveSessionId });
         return;
       }
 
@@ -2822,7 +2828,8 @@ router.get("/compass/recommendations", async (req, res) => {
         },
       }));
 
-      res.json({ recommendations: buddyRecommendations, surface });
+      void logCompassImpression(buddyRecommendations, user.id, effectiveSessionId);
+      res.json({ recommendations: buddyRecommendations, surface, sessionId: effectiveSessionId });
       return;
     }
 
@@ -3066,7 +3073,8 @@ router.get("/compass/recommendations", async (req, res) => {
         };
       });
 
-      res.json({ recommendations: travelerRecommendations, surface });
+      void logCompassImpression(travelerRecommendations, user.id, effectiveSessionId);
+      res.json({ recommendations: travelerRecommendations, surface, sessionId: effectiveSessionId });
       return;
     }
 
@@ -3244,8 +3252,8 @@ router.get("/compass/recommendations", async (req, res) => {
       }
     }
 
-    void logCompassImpression(recommendations, user.id);
-    res.json({ recommendations, surface });
+    void logCompassImpression(recommendations, user.id, effectiveSessionId);
+    res.json({ recommendations, surface, sessionId: effectiveSessionId });
   } catch (err) {
     req.log.error({ err }, "compass/recommendations: build failed");
     res.json({ recommendations: [], surface });

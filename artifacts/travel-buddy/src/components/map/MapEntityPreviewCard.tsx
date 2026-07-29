@@ -20,6 +20,7 @@ import { ImageSourceBadge } from '../visuals/ImageSourceBadge.tsx';
 import { usePlaceImage } from '../../hooks/usePlaceImage.ts';
 import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
+import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
 import {
   X,
   ArrowRight,
@@ -86,7 +87,7 @@ function BuddyCard({ entity, onClose }: { entity: MapEntity<BuddyProfile>; onClo
       </View>
       <Pressable
         style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => { onClose(); router.push(`/(rent-a-buddy)/buddy/${buddy.id}` as any); }}
+        onPress={() => closeThenNavigate(onClose, `/(rent-a-buddy)/buddy/${buddy.id}`)}
       >
         <Text style={s.ctaText}>View Buddy Profile</Text>
         <ArrowRight size={15} color="#fff" />
@@ -149,7 +150,7 @@ function EventCard({ entity, onClose }: { entity: MapEntity<EventListItem>; onCl
       </View>
       <Pressable
         style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => { onClose(); router.push(`/event/${ev.id}` as any); }}
+        onPress={() => closeThenNavigate(onClose, `/event/${ev.id}`)}
       >
         <Text style={s.ctaText}>View Event</Text>
         <ArrowRight size={15} color="#fff" />
@@ -193,7 +194,7 @@ function GemCard({ entity, onClose }: { entity: MapEntity<HiddenGem>; onClose: (
       </View>
       <Pressable
         style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => { onClose(); router.push(`/gems/${gem.id}` as any); }}
+        onPress={() => closeThenNavigate(onClose, `/gems/${gem.id}`)}
       >
         <Text style={s.ctaText}>View Hidden Gem</Text>
         <ArrowRight size={15} color="#fff" />
@@ -238,7 +239,7 @@ function TripCard({ entity, onClose }: { entity: MapEntity<TripRow>; onClose: ()
       </View>
       <Pressable
         style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => { onClose(); router.push(`/trip/${trip.id}` as any); }}
+        onPress={() => closeThenNavigate(onClose, `/trip/${trip.id}`)}
       >
         <Text style={s.ctaText}>View Trip</Text>
         <ArrowRight size={15} color="#fff" />
@@ -283,7 +284,8 @@ function FriendCard({ entity, onClose }: { entity: MapEntity<CircleMemberLocatio
           // Resolve the direct thread first — /messages/[id] takes a THREAD id, not a user id.
           const res = await openDirectThread(loc.userId);
           if (res.ok && res.data?.threadId) {
-            router.push(`/messages/${res.data.threadId}?threadType=direct&otherUserId=${encodeURIComponent(loc.userId)}` as any);
+            // Defer past the sheet's close animation — see closeThenNavigate for why.
+            setTimeout(() => router.push(`/messages/${res.data!.threadId}?threadType=direct&otherUserId=${encodeURIComponent(loc.userId)}` as any), 320);
           } else {
             Alert.alert('Could not open conversation', 'Please try again.');
           }
@@ -419,7 +421,7 @@ function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onC
       ) : null}
       <Pressable
         style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => { onClose(); router.push(detailRoute as any); }}
+        onPress={() => closeThenNavigate(onClose, detailRoute)}
       >
         <Text style={s.ctaText}>View details</Text>
         <ArrowRight size={15} color="#fff" />
@@ -471,7 +473,7 @@ function StampCountryCardBody({
       </View>
       <Pressable
         style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => { onClose(); router.push(`/passport/country/${encodeURIComponent(country)}` as any); }}
+        onPress={() => closeThenNavigate(onClose, `/passport/country/${encodeURIComponent(country)}`)}
       >
         <Text style={s.ctaText}>View Stamps</Text>
         <ArrowRight size={15} color="#fff" />

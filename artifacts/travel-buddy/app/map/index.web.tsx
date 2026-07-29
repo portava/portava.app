@@ -19,7 +19,7 @@ export default function FullScreenMapScreenWeb() {
       </View>
       <Text style={s.title}>Full-screen map is not available in the browser</Text>
       <Text style={s.body}>
-        Open the Travel Buddy app on your phone to explore the interactive map.
+        Open the Portava app on your phone to explore the interactive map.
       </Text>
       <Pressable style={s.backBtn} onPress={() => router.back()}>
         <Text style={s.backBtnText}>Go back</Text>

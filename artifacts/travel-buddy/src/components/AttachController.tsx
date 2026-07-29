@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { router } from 'expo-router';
+import { closeThenNavigate } from '../lib/deferredNavigate.ts';
 import { View, Text, Pressable, Modal, ScrollView, ActivityIndicator, StyleSheet, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Check, Plus, Search, MapPin } from 'lucide-react-native';
@@ -124,7 +125,7 @@ export function AttachControllerProvider({ children }: { children: React.ReactNo
             ))}
 
             {/* create new */}
-            <Pressable style={({ pressed }) => [s.createRow, pressed && { opacity: layout.pressedOpacity }]} onPress={() => { setOpen(false); router.push('/trip/new' as any); }}>
+            <Pressable style={({ pressed }) => [s.createRow, pressed && { opacity: layout.pressedOpacity }]} onPress={() => closeThenNavigate(() => setOpen(false), '/trip/new')}>
               <View style={s.createIcon}><Plus size={18} color={color.onInk} /></View>
               <Text style={s.createText}>{kind === 'trip' ? 'Create New Trip' : 'Create New Plan'}</Text>
             </Pressable>

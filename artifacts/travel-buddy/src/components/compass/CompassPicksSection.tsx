@@ -373,8 +373,26 @@ export function CompassPicksSection({
     );
   }
 
-  // Nothing to show — hide silently (no error state)
-  if (displayItems.length === 0) return null;
+  // Nothing to show. Compass is disabled entirely → hide silently (handled
+  // above). Otherwise the fetch completed with no picks for this city (e.g.
+  // a low-confidence/"still learning this city" area) — show a brief empty
+  // state instead of nothing, so the section never reads as stuck loading.
+  if (displayItems.length === 0) {
+    if (compass.loading) return null;
+    return (
+      <View style={s.container}>
+        <SectionHeader city={effectiveCity} onSwitchCity={onSwitchCity} />
+        <View style={s.emptyState}>
+          <Sparkles size={14} color={color.faint} />
+          <Text style={s.emptyText}>
+            {effectiveCity
+              ? `Still building local picks for ${effectiveCity} — check back soon.`
+              : 'No picks yet — check back soon.'}
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <>
@@ -467,6 +485,22 @@ const s = StyleSheet.create({
     paddingHorizontal: space.lg,
     gap: space.sm,
     paddingRight: space.xl,
+  },
+  emptyState: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    marginHorizontal: space.lg,
+    backgroundColor: color.haze,
+    borderRadius: radius.md,
+    paddingVertical: space.md,
+    paddingHorizontal: space.md,
+  },
+  emptyText: {
+    ...t.small,
+    color: color.mute,
+    fontSize: 11,
+    flex: 1,
   },
   // Hero image — shown when the server sends an imageUrl
   heroImage: {

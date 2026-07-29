@@ -18,6 +18,7 @@ import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet'
 import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { CompassHome } from '../../src/components/compass/CompassHome';
 import { CompassLive } from '../../src/components/compass/CompassLive';
+import { useLocationContext } from '../../src/context/LocationContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 
 type ChatEntry =
@@ -36,6 +37,11 @@ export default function AiChat() {
   const router = useRouter();
   const { prefillMessage } = useLocalSearchParams<{ prefillMessage?: string }>();
   const planPicker = usePlanPicker();
+  // Pre-seed Compass with the user's resolved city (GPS → last-known → home)
+  // so it never has to ask "where are you right now?" when the app already
+  // knows — mirrors the "Using home city" notice shown on Discovery.
+  const { resolvedLocation } = useLocationContext();
+  const currentCity = resolvedLocation.place.city ?? undefined;
   const [entries, setEntries]       = useState<ChatEntry[]>([]);
   const [input, setInput]           = useState('');
   const [loading, setLoading]       = useState(false);
@@ -119,7 +125,7 @@ export default function AiChat() {
     // Stream the reply so it types out live; postCompassAskStream falls back
     // to the plain non-streaming request on any SSE failure.
     const streamId = 'stream_' + Date.now();
-    const result = await postCompassAskStream(text, {}, {
+    const result = await postCompassAskStream(text, { city: currentCity }, {
       onDelta: (messageSoFar) => {
         setEntries((prev) => {
           const without = prev.filter((e) => e.id !== typingId && e.id !== streamId);

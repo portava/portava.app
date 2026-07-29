@@ -34,6 +34,7 @@ import {
 } from '../../../src/services/circle';
 import { FindYourCircleConsentSheet } from '../../../src/components/FindYourCircleConsentSheet';
 import { useSession } from '../../../src/context/SessionContext';
+import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 
 // ── Location constants (verbatim from settings/location.tsx) ────────────────
 
@@ -194,6 +195,14 @@ function DefaultPicker({
 // ── Screen ────────────────────────────────────────────────────────────────
 
 export default function LocationAvailabilityScreen() {
+  return (
+    <ScreenErrorBoundary>
+      <LocationAvailabilityScreenInner />
+    </ScreenErrorBoundary>
+  );
+}
+
+function LocationAvailabilityScreenInner() {
   const { prefs, loading: locLoading, saving: locSaving, save } = useLocationPrefs();
 
   // Find Your Circle state (verbatim wiring from settings/find-your-circle.tsx)

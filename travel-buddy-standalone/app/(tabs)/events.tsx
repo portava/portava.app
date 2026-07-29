@@ -640,7 +640,12 @@ function EventsTabScreen() {
                   </View>
                   <Pressable
                     hitSlop={12}
-                    onPress={() =>
+                    onPress={(e) => {
+                      // This button sits inside the draft card's own Pressable
+                      // (which navigates to the editor) — without stopping
+                      // propagation, the tap bubbles up and the card's onPress
+                      // fires instead, so the Alert never opens.
+                      (e as any).stopPropagation?.();
                       Alert.alert('Discard draft?', 'This draft will be permanently deleted.', [
                         { text: 'Cancel', style: 'cancel' },
                         {
@@ -650,8 +655,8 @@ function EventsTabScreen() {
                             setDrafts((prev) => prev.filter((x) => x.id !== d.id));
                           },
                         },
-                      ])
-                    }
+                      ]);
+                    }}
                     style={styles.draftDiscardBtn}
                   >
                     <Text style={styles.draftDiscardText}>Discard</Text>

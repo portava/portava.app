@@ -313,7 +313,10 @@ export function DiscoveryCategoryTab({
       destination, category, currentFilters, nextPage,
       contextMode, ageFilter, customMinAge, customMaxAge,
       lat, lng,
-      undefined, undefined,
+      // User's real GPS position — required so the backend computes distanceKm
+      // from the user's actual location rather than falling back to the
+      // (potentially province-level) destination-search coordinates.
+      userLat, userLng,
       // emitSignal=true only on page 1 so explicit category-tab selections
       // contribute to Compass personalization without double-counting pagination.
       nextPage === 1,

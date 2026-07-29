@@ -298,16 +298,17 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
           style={s.postScrim}
           pointerEvents="none"
         />
-        {/* Featured by Portava badge — dark mode on media frame */}
-        {item.featuredByPortava ? (
-          <View style={{ position: 'absolute', top: 10, left: 10, zIndex: 10 }}>
+        {/* Top-left badge stack — Featured-by-Portava badge stacks ABOVE the
+            passport-stamp label (never overlapping it) when both are present. */}
+        <View style={s.topLeftStack}>
+          {item.featuredByPortava ? (
             <FeaturedBadge category={item.featuredByPortava} size="sm" dark />
+          ) : null}
+          {/* Passport-stamp label — city name */}
+          <View style={s.postcardLabel}>
+            <MapPin size={9} color={color.onInk} />
+            <Text style={s.postcardLabelText}>{item.city?.toUpperCase() ?? 'POSTCARD'}</Text>
           </View>
-        ) : null}
-        {/* Passport-stamp label — city name top-left */}
-        <View style={s.postcardLabel}>
-          <MapPin size={9} color={color.onInk} />
-          <Text style={s.postcardLabelText}>{item.city?.toUpperCase() ?? 'POSTCARD'}</Text>
         </View>
         {/* Date mark top-right */}
         <Text style={s.postcardDate}>{item.timeAgo}</Text>
@@ -879,8 +880,11 @@ const s = StyleSheet.create({
   },
   postScrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '65%' },
   postAuthorOverlay: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: 16, paddingBottom: 14 },
+  topLeftStack: {
+    position: 'absolute', top: 14, left: 14, zIndex: 10,
+    flexDirection: 'column', alignItems: 'flex-start', gap: 7,
+  },
   postcardLabel: {
-    position: 'absolute', top: 14, left: 14,
     flexDirection: 'row', alignItems: 'center', gap: 5,
     backgroundColor: 'rgba(17,17,15,0.48)',
     paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20,

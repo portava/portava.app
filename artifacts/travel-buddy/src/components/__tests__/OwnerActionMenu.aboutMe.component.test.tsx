@@ -12,7 +12,7 @@
  */
 
 import React from 'react';
-import { fireEvent, screen } from '@testing-library/react-native';
+import { fireEvent, screen, waitFor } from '@testing-library/react-native';
 import { router } from 'expo-router';
 
 jest.mock('expo-router', () => ({
@@ -62,7 +62,10 @@ describe('OwnerActionMenu — Edit Bio button', () => {
 
     fireEvent.press(screen.getByRole('button', { name: 'Edit Bio' }));
 
-    expect(mockPush).toHaveBeenCalledWith('/profile/edit/about');
+    // BUG CC fix: navigation is deferred until after the sheet's close
+    // animation finishes (see closeThenNavigate in PassportOwnerMenuSheet),
+    // so it no longer fires synchronously with the press.
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/profile/edit/about'));
   });
 
   it('does NOT navigate to the old dead route /profile/about', async () => {
@@ -70,6 +73,7 @@ describe('OwnerActionMenu — Edit Bio button', () => {
 
     fireEvent.press(screen.getByRole('button', { name: 'Edit Bio' }));
 
+    await waitFor(() => expect(mockPush).toHaveBeenCalled());
     const calledWith = mockPush.mock.calls.map((c) => c[0]);
     expect(calledWith).not.toContain('/profile/about');
   });

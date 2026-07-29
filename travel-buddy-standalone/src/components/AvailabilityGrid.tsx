@@ -14,7 +14,7 @@ import {
   View, Text, ScrollView, Pressable, Modal, StyleSheet, Platform,
 } from 'react-native';
 import { AvatarImage } from './ui/DisplayMediaImage.tsx';
-import { router } from 'expo-router';
+import { closeThenNavigate } from '../lib/deferredNavigate.ts';
 import { CalendarPlus, X } from 'lucide-react-native';
 import { type MemberAvailability, type Weekday } from '../services/availability.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
@@ -130,7 +130,7 @@ function DaySummaryModal({ date, members, mode, onClose, onPlanMeetup }: Summary
               <Pressable
                 key={m.userId}
                 style={ds.memberRow}
-                onPress={m.handle ? () => { onClose(); router.push(`/u/${m.handle}` as any); } : undefined}
+                onPress={m.handle ? () => closeThenNavigate(onClose, `/u/${m.handle}`) : undefined}
               >
                 <MemberAvatar m={m} size={28} />
                 <Text style={ds.memberName}>{m.name ?? m.handle ?? 'Traveler'}</Text>

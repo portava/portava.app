@@ -438,6 +438,18 @@ export default function EventDetailScreen() {
   function handleReminderPress() {
     if (!event || reminderBusy) return;
     if (reminder) {
+      // Alert.alert with a button array is a no-op on react-native-web — it
+      // silently does nothing, which is what made this button look dead on
+      // web. Use window.confirm there instead (same pattern as the "Add to
+      // trip" web fallback).
+      if (Platform.OS === 'web') {
+        if (typeof window !== 'undefined' && window.confirm(
+          `Reminder set for ${new Date(reminder.remindAt).toLocaleString()}. Remove it?`
+        )) {
+          handleCancelReminder();
+        }
+        return;
+      }
       Alert.alert('Reminder set', `We'll remind you at ${new Date(reminder.remindAt).toLocaleString()}.`, [
         { text: 'Keep it', style: 'cancel' },
         { text: 'Remove reminder', style: 'destructive', onPress: handleCancelReminder },
@@ -445,7 +457,20 @@ export default function EventDetailScreen() {
       return;
     }
     if (!event.startsAt) {
+      if (Platform.OS === 'web') {
+        if (typeof window !== 'undefined') window.alert('This event does not have a start time yet.');
+        return;
+      }
       Alert.alert('No date set', 'This event does not have a start time yet.');
+      return;
+    }
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined') {
+        const promptLabel = REMINDER_OFFSETS.map((o, i) => `${i + 1}) ${o.label}`).join('\n');
+        const choice = window.prompt(`Remind me:\n${promptLabel}\n\nEnter a number, or cancel.`);
+        const idx = choice ? parseInt(choice, 10) - 1 : -1;
+        if (idx >= 0 && idx < REMINDER_OFFSETS.length) scheduleReminder(REMINDER_OFFSETS[idx].minutesBefore);
+      }
       return;
     }
     const options = [...REMINDER_OFFSETS.map((o) => o.label), 'Cancel'];
@@ -1095,7 +1120,7 @@ export default function EventDetailScreen() {
                     <Users size={18} color="#0369A1" />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.findBuddyTitle}>Find a Travel Buddy</Text>
+                    <Text style={styles.findBuddyTitle}>Find a Buddy</Text>
                     <Text style={styles.findBuddySub}>Connect with a local buddy in {event.city}</Text>
                   </View>
                   <ChevronDown size={14} color="#0369A1" style={{ transform: [{ rotate: '-90deg' }] }} />
@@ -1179,6 +1204,12 @@ export default function EventDetailScreen() {
               <Shield size={15} color="#B45309" />
               <Text style={styles.blockedText} numberOfLines={2}>{eligibilityBlock}</Text>
             </View>
+          ) : isHost ? (
+            /* ③b Owner — RSVP is meaningless for the host; open the same
+               Host Dashboard the Settings icon opens, instead of showing RSVP. */
+            <Pressable style={styles.rsvpBtn} onPress={() => setShowDashboard(true)}>
+              <Text style={styles.rsvpBtnText}>Manage Event</Text>
+            </Pressable>
           ) : event.rsvpClosed && !event.myRsvp ? (
             /* ④ RSVPs closed — already RSVP'd viewers still see their status above */
             <View style={styles.cancelledNote}>

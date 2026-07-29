@@ -273,17 +273,27 @@ export interface CompassAnswer {
 // ── API calls ─────────────────────────────────────────────────────────────────
 
 export async function searchAirports(query: string): Promise<AirportProfile[]> {
-  const res = await authedFetch(airportUrl(`search?q=${encodeURIComponent(query)}`));
-  if (!res.ok) return [];
-  const json = await res.json();
-  return json.airports ?? [];
+  try {
+    const res = await authedFetch(airportUrl(`search?q=${encodeURIComponent(query)}`));
+    if (!res.ok) return [];
+    const json = await res.json();
+    return json.airports ?? [];
+  } catch (err) {
+    console.warn('[layover] searchAirports failed:', err);
+    return [];
+  }
 }
 
 export async function resolveAirportByIata(iata: string): Promise<AirportProfile | null> {
-  const res = await authedFetch(airportUrl(`search?iata=${encodeURIComponent(iata)}`));
-  if (!res.ok) return null;
-  const json = await res.json();
-  return json.airports?.[0] ?? null;
+  try {
+    const res = await authedFetch(airportUrl(`search?iata=${encodeURIComponent(iata)}`));
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.airports?.[0] ?? null;
+  } catch (err) {
+    console.warn('[layover] resolveAirportByIata failed:', err);
+    return null;
+  }
 }
 
 export async function createLayoverSession(payload: CreateSessionPayload): Promise<{

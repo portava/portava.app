@@ -11,7 +11,7 @@
  */
 
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { router } from 'expo-router';
 import { MapEntityPreviewCard } from '../../../src/components/map/MapEntityPreviewCard.tsx';
 
@@ -91,8 +91,10 @@ describe('MapEntityPreviewCard — stamps "View Stamps" CTA navigation', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
 
     // router.push must navigate to the country-filtered stamp screen.
+    // Navigation is deferred until after the sheet's close animation finishes
+    // (BUG CC/CD fix — see closeThenNavigate), so wait for it here.
     // Cast to jest.Mock — the mock factory sets router.push = jest.fn().
-    expect((router.push as jest.Mock)).toHaveBeenCalledWith('/passport/country/France');
+    await waitFor(() => expect((router.push as jest.Mock)).toHaveBeenCalledWith('/passport/country/France'));
   });
 
   it('shows the country name and stamp count in the card', async () => {

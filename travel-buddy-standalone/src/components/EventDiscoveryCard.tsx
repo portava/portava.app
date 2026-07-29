@@ -21,8 +21,20 @@ import { ImageSourceBadge } from './visuals/ImageSourceBadge.tsx';
 import { usePlaceImage } from '../hooks/usePlaceImage.ts';
 import type { EventListItem, EventRsvpStatus } from '../services/events.ts';
 import { primaryIdentityText } from '../lib/displayIdentity.ts';
-import { openInMaps } from '../lib/openInMaps.ts';
 import { effectiveEventState } from '../lib/eventRoleActions.ts';
+import { formatLocationLabel } from '../lib/formatPlaceLabel.ts';
+
+/**
+ * Formats "[locationName], [city]" without repeating the city when the
+ * location name already ends with it (e.g. locationName "Cebu, Philippines"
+ * + city "Cebu" previously rendered as "Cebu, Philippines, Cebu").
+ */
+// formatEventLocation now delegates to the shared formatLocationLabel util
+// (src/lib/formatPlaceLabel.ts) so every "name + city" display in the app
+// dedupes the same way — see BUG CB for the Roam video chip that duplicated
+// this logic and drifted out of sync.
+const formatEventLocation = (locationName: string | null | undefined, city: string | null | undefined) =>
+  formatLocationLabel(locationName, city, ', ');
 
 interface Props {
   event: EventListItem;
@@ -195,23 +207,17 @@ export function EventDiscoveryCard({ event, onPress, onHostPress, onRsvp, isSave
           <Text style={styles.meta} numberOfLines={1}>{formatDate(event.startsAt)}</Text>
         </View>
 
-        {/* Row 4: location — tappable to open in maps when coordinates are available */}
+        {/* Row 4: location — plain text, not a separate tap target. The
+            whole card navigates to the event detail screen; a map-pin
+            action lives there instead, so this line no longer intercepts
+            taps to open Maps directly from the list. */}
         {(event.locationName || event.city) && (
-          <Pressable
-            style={styles.metaRow}
-            onPress={event.locationLat != null && event.locationLng != null
-              ? (e) => { e.stopPropagation?.(); openInMaps(event.locationLat!, event.locationLng!); }
-              : undefined}
-            hitSlop={4}
-          >
-            <MapPin
-              size={11}
-              color={event.locationLat != null && event.locationLng != null ? color.signal : color.mute}
-            />
+          <View style={styles.metaRow}>
+            <MapPin size={11} color={color.mute} />
             <Text style={styles.meta} numberOfLines={1}>
-              {event.locationName ?? ''}{event.locationName && event.city ? ', ' : ''}{event.city ?? ''}
+              {formatEventLocation(event.locationName, event.city)}
             </Text>
-          </Pressable>
+          </View>
         )}
 
         {/* Row 5: host strip (avatar + name + verified badge) */}
@@ -222,7 +228,9 @@ export function EventDiscoveryCard({ event, onPress, onHostPress, onRsvp, isSave
             accessibilityLabel={`View ${event.hostName ?? 'host'}'s profile`}
           >
             <Avatar uri={event.hostAvatarUrl ?? ''} size={16} />
-            <Text style={styles.hostName} numberOfLines={1}>{event.hostName ? primaryIdentityText({ name: event.hostName }) : 'Host'}</Text>
+            <Text style={styles.hostName} numberOfLines={1}>
+              {primaryIdentityText({ name: event.hostName, handle: event.hostHandle })}
+            </Text>
             {/* Verified host indicator — signalled by verifiedOnly being false but hostName present;
                 we use a simple heuristic: show UserCheck if the event's verifiedOnly is true or
                 hostName is present as a placeholder — real verification comes from profile data */}

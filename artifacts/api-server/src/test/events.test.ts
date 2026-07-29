@@ -832,7 +832,7 @@ describe("Events — listing excludes internal-only columns", () => {
   // documented listing extras. If a future `SELECT *` revert or migration
   // leaks a new DB column into the response, the subset assertion fails.
   const EVENT_SUMMARY_KEYS = new Set([
-    "id", "hostId", "hostName", "hostAvatarUrl", "title", "description",
+    "id", "hostId", "hostName", "hostHandle", "hostAvatarUrl", "title", "description",
     "locationName", "locationLat", "locationLng", "startsAt", "endsAt",
     "coverUrl", "coverMediaType", "coverSource", "maxAttendees", "ageMin", "ageMax",
     "trustScoreMin", "verifiedOnly", "visibility", "state", "chatEnabled",

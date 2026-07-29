@@ -20,6 +20,13 @@ import { TripWishlistPicker } from './TripWishlistPicker.tsx';
 import { DisplayMediaImage, MediaFallback } from '../ui/DisplayMediaImage.tsx';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 
+/** Raw OpenStreetMap node/way/relation IDs (e.g. "osm:node/123") are internal
+ * data and must never be shown to users — filter them out of the tags list.
+ * Mirrors PlaceDetailSheet.tsx's isInternalTag. */
+function isInternalTag(tag: string): boolean {
+  return /^osm[:/]/i.test(tag);
+}
+
 const HEADER_HEIGHT = 140;
 
 interface PlaceCardProps {
@@ -278,10 +285,11 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
             <Text style={styles.desc} numberOfLines={2}>{place.description}</Text>
           ) : null}
 
-          {/* Tags */}
-          {place.tags.length > 0 && (
+          {/* Tags — raw OSM node/way/relation IDs (e.g. "osm:node/123") are
+              internal data and must never be shown to users. */}
+          {place.tags.filter((t) => !isInternalTag(t)).length > 0 && (
             <View style={styles.tagRow}>
-              {place.tags.map((tag) => (
+              {place.tags.filter((t) => !isInternalTag(t)).map((tag) => (
                 <View key={tag} style={styles.tag}>
                   <Text style={styles.tagText}>{tag}</Text>
                 </View>

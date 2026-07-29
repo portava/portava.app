@@ -174,21 +174,30 @@ function normalizeSectionResponse(raw: any): CompassFeedResponse {
   };
 }
 
+// A section fetch normally resolves quickly even for a cold/uncached city;
+// this bounds a stalled request (e.g. a slow live lookup for a low-confidence
+// city) so the caller's loading state always clears instead of leaving a
+// skeleton spinning forever with no feedback.
+const COMPASS_SECTION_TIMEOUT_MS = 15_000;
+
 export async function fetchCompassSection(
   section: string,
   params: { city?: string; cursor?: string } = {},
 ): Promise<{ ok: boolean; data?: CompassFeedResponse; error?: string }> {
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  const { signal, cancel } = timeoutSignal(COMPASS_SECTION_TIMEOUT_MS);
   try {
     const qs = new URLSearchParams();
     if (params.city) qs.set('city', params.city);
     if (params.cursor) qs.set('cursor', params.cursor);
     qs.set('tzOffsetMinutes', String(deviceTzOffsetMinutes()));
-    const r = await authedFetch(`/api/compass/feed/section/${encodeURIComponent(section)}?${qs.toString()}`);
+    const r = await authedFetch(`/api/compass/feed/section/${encodeURIComponent(section)}?${qs.toString()}`, { signal });
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     return { ok: true, data: normalizeSectionResponse(await r.json()) };
-  } catch {
-    return { ok: false, error: 'network_error' };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error && err.name === 'AbortError' ? 'timeout' : 'network_error' };
+  } finally {
+    cancel();
   }
 }
 

@@ -151,7 +151,11 @@ export function useIncomingMessageRequests() {
 // ── Threads list (with inbox polling) ─────────────────────────────────────────
 
 export function useMyThreads() {
-  const { snapshot, save: saveSnapshot, clear: clearSnapshot } = useSnapshotCache<ThreadSummary[]>('messages');
+  // Cache key bumped to v2: pre-fix snapshots could carry threads whose
+  // otherMembers profile join silently failed (BP), painting "Unknown" from
+  // a locally-cached copy even after the server-side fix shipped. The v2 key
+  // makes every client fetch fresh data once instead of trusting old bytes.
+  const { snapshot, save: saveSnapshot, clear: clearSnapshot } = useSnapshotCache<ThreadSummary[]>('messages_v2');
   const [data, setData] = useState<ThreadSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

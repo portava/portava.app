@@ -462,7 +462,7 @@ export function UnifiedPostComposer({
     <View style={uc.page}>
       {/* Full-screen page header — safe-area aware. Dismiss = X button
           (Android hardware back pops the /create route via the router). */}
-      <View style={[uc.head, { paddingTop: insets.top + 8 }]}>
+      <View style={[uc.head, { paddingTop: Math.max(insets.top + 8, 60) }]}>
         <Text style={uc.headTitle}>What are you sharing?</Text>
         <Pressable testID="post-composer-close-btn" onPress={dismiss.onCloseButtonPress} hitSlop={8} style={uc.closeBtn}>
           <X size={18} color={color.ink} />

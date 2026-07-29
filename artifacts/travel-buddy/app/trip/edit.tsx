@@ -9,7 +9,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { CalendarDays, MapPin, X, ImagePlus, Film } from 'lucide-react-native';
 import { AppHeader } from '../../src/components/ui/AppHeader';
 import { useSession } from '../../src/context/SessionContext';
-import { getTrip, updateTrip } from '../../src/services/trips';
+import { getTrip, updateTrip, getTripMemberRole } from '../../src/services/trips';
 import { uploadMedia, type PickedMedia } from '../../src/services/media';
 import { VIDEO_MAX_DURATION_SECONDS } from '../../src/constants/mediaLimits';
 import { GlobalCalendarPicker } from '../../src/components/selectors/GlobalCalendarPicker';
@@ -67,9 +67,14 @@ export default function EditTrip() {
 
   useEffect(() => {
     if (!id || !live) { setLoading(false); return; }
-    getTrip(id).then((tr) => {
+    getTrip(id).then(async (tr) => {
       if (!tr) { setLoadError('Trip not found.'); setLoading(false); return; }
-      if (tr.ownerId !== userId) { setNotOwner(true); setLoading(false); return; }
+      if (tr.ownerId !== userId) {
+        // Co-hosts can manage trip settings too (same permission model as
+        // trip/[id].tsx's isOwnerOrCohost checks) — only block true outsiders.
+        const role = await getTripMemberRole(id).catch(() => null);
+        if (role !== 'co_host') { setNotOwner(true); setLoading(false); return; }
+      }
       setTitle(tr.title ?? '');
       const city = tr.destinationCity ?? '';
       const country = tr.destinationCountry ?? undefined;

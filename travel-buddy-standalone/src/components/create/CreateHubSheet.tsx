@@ -20,7 +20,6 @@ import {
   ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
 import {
   PenLine,
   Camera,
@@ -34,6 +33,7 @@ import {
   X,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
+import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
 
 // ── Entry definitions ──────────────────────────────────────────────────────────
 
@@ -150,9 +150,7 @@ export function CreateHubSheet({ visible, onClose }: CreateHubSheetProps) {
 
   function handleEntry(entry: HubEntry) {
     if (!entry.route) return; // coming soon — row is not tappable
-    onClose();
-    // Small delay so the modal close animation plays before navigating.
-    setTimeout(() => router.push(entry.route as any), 80);
+    closeThenNavigate(onClose, entry.route);
   }
 
   return (

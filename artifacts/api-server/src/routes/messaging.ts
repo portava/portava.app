@@ -1142,16 +1142,30 @@ router.get('/me/threads', async (req, res) => {
 
     sc
       .from('message_thread_members')
-      .select(`user_id, thread_id, profile:profiles!message_thread_members_user_id_fkey(${PROFILE_PUBLIC})`)
+      .select('user_id, thread_id')
       .in('thread_id', threadIds),
   ]);
 
   // Universal display-name rule: member names show only when opted in.
+  // Profiles are fetched as a separate batched query (not an embedded FK
+  // join) so a schema/alias drift on the join can't silently return every
+  // member with no profile at all — it would surface as a hard fetch error
+  // for the offending profile ids instead.
   {
     const memberRows = ((allMembersRes as any).data ?? []) as any[];
-    const allowedMemberNames = await nameVisibilitySet(sc, memberRows.map((m: any) => m.user_id));
+    const memberUserIds = Array.from(new Set(memberRows.map((m: any) => m.user_id).filter(Boolean)));
+    let profilesById: Record<string, any> = {};
+    if (memberUserIds.length > 0) {
+      const { data: profileRows } = await sc
+        .from('profiles')
+        .select(PROFILE_PUBLIC)
+        .in('id', memberUserIds);
+      for (const p of (profileRows ?? []) as any[]) profilesById[p.id] = p;
+    }
+    const allowedMemberNames = await nameVisibilitySet(sc, memberUserIds);
     for (const m of memberRows) {
-      if (m.profile) m.profile = sanitizeIdentity(m.profile, allowedMemberNames, user.id);
+      const p = profilesById[m.user_id];
+      m.profile = p ? sanitizeIdentity(p, allowedMemberNames, user.id) : null;
     }
   }
 

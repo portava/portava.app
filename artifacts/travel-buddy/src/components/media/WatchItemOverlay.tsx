@@ -64,6 +64,7 @@ import type { MediaFeedItem } from '../../types/media.ts';
 import { StampIcon } from '../stamps/StampIcon.tsx';
 import { VerifiedLocationStamp } from './VerifiedLocationStamp.tsx';
 import { PlaceQuickActions } from '../PlaceQuickActions.tsx';
+import { formatLocationLabel } from '../../lib/formatPlaceLabel.ts';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -357,16 +358,14 @@ export function WatchItemOverlay({
               <Pressable onPress={goPlace} style={s.chip} hitSlop={4} accessibilityRole="link" accessibilityLabel={`Go to ${item.place.name}`}>
                 <MapPin size={11} color="rgba(255,255,255,0.85)" />
                 <Text style={s.chipText} numberOfLines={1}>
-                  {item.place.name}
-                  {item.place.city ? ` · ${item.place.city}` : ''}
+                  {formatLocationLabel(item.place.name, item.place.city, ' · ')}
                 </Text>
               </Pressable>
             ) : (
               <View style={s.chip} pointerEvents="none">
                 <MapPin size={11} color="rgba(255,255,255,0.85)" />
                 <Text style={s.chipText} numberOfLines={1}>
-                  {item.place.name}
-                  {item.place.city ? ` · ${item.place.city}` : ''}
+                  {formatLocationLabel(item.place.name, item.place.city, ' · ')}
                 </Text>
               </View>
             )

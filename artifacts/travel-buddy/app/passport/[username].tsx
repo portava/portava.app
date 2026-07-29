@@ -297,8 +297,20 @@ export default function PassportDeepLinkScreen() {
   }
 
   // ── Visitor stats ──────────────────────────────────────────────────────────
-  const countries = new Set(postcards.map((c) => c.locationCountry).filter(Boolean)).size;
-  const cities    = new Set(postcards.map((c) => c.locationCity).filter(Boolean)).size;
+  // Countries/cities must not be derived from postcards alone (BZ): most
+  // postcards never carry a tagged location, so a user with real earned
+  // stamps but zero geotagged postcards showed 0/0 here while the owner's
+  // own passport view (backed by /me/passport/stats, which counts from
+  // stamps) correctly showed 1+. Union in the public stamp showcase's
+  // city/country fields so both views count from the same underlying facts.
+  const countries = new Set([
+    ...postcards.map((c) => c.locationCountry).filter(Boolean),
+    ...(showcaseItems ?? []).map((s) => s.country).filter(Boolean),
+  ]).size;
+  const cities = new Set([
+    ...postcards.map((c) => c.locationCity).filter(Boolean),
+    ...(showcaseItems ?? []).map((s) => s.city).filter(Boolean),
+  ]).size;
 
   const visitorStats = [
     { n: postcards.length, label: 'Postcards' },

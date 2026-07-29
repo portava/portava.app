@@ -120,6 +120,9 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
       setSearching(true);
       try {
         setResults(await searchAirports(q));
+      } catch (err) {
+        console.warn('[LayoverModeSheet] airport search failed:', err);
+        setResults([]);
       } finally {
         setSearching(false);
       }

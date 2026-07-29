@@ -329,7 +329,16 @@ export function CallProvider({
         return false;
       }
       const ok = await connectMedia(res.data, false);
-      if (!ok) return false;
+      if (!ok) {
+        // The backend already created/joined this room row before the local
+        // LiveKit connect failed. Leaving it open orphans an "active" session
+        // that the event page keeps reporting as live (or as having "just
+        // ended" once someone else's poll notices it) even though no one is
+        // actually in it — end it here so a failed start doesn't leave a
+        // stale voice_room behind.
+        await apiEnd(res.data.session.id).catch(() => {});
+        return false;
+      }
       await bridge?.setSpeakerphone(true).catch(() => {});
       patch({ speakerOn: true, myRole: res.data.role ?? 'host', handRaised: false });
       startGroupRosterPoll(res.data.session.id);
@@ -344,7 +353,10 @@ export function CallProvider({
         return false;
       }
       const ok = await connectMedia(res.data, false);
-      if (!ok) return false;
+      if (!ok) {
+        await apiLeave(res.data.session.id).catch(() => {});
+        return false;
+      }
       // Listeners join subscribe-only; keep the local mic state honest.
       const listener = res.data.role === 'listener';
       if (listener) await bridge?.setMicEnabled(false).catch(() => {});

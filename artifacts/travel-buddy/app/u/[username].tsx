@@ -36,6 +36,7 @@ import { saveProfile, unsaveProfile, getSaveStatus } from '../../src/services/sa
 import { submitReport, type ReportReason } from '../../src/services/reports';
 import { ReportSheet } from '../../src/components/ReportSheet';
 import { getUserReviews, type Review } from '../../src/services/reviews';
+import { getPublicShowcase, type ShowcaseStamp } from '../../src/services/stampShowcase';
 import { getBuddyProfileByUserId, type BuddyProfile } from '../../src/services/rentABuddy';
 import type { PublicProfile } from '../../src/types/models';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
@@ -607,6 +608,17 @@ function PublicPassportScreenNative() {
   const [requestSent, setRequestSent] = useState(false);
   // Tracks in-flight follow-request (for the PassportHero badge loading state).
   const [followRequestBusy, setFollowRequestBusy] = useState(false);
+  // Public stamp showcase — used to union with postcards for Countries/Cities
+  // counts (BZ): most postcards never carry a tagged location, so counting
+  // from postcards alone under-reports vs. the owner's own passport view.
+  const [showcaseItems, setShowcaseItems] = useState<ShowcaseStamp[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setShowcaseItems(null);
+    if (!username) return;
+    getPublicShowcase(username).then((items) => { if (!cancelled) setShowcaseItems(items); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [username]);
 
   // Social profile (friend/block/about data) loaded via the friends service
   const [social, setSocial] = useState<SocialProfile | null>(null);
@@ -940,8 +952,14 @@ function PublicPassportScreenNative() {
 
     if (!profile) return null;
 
-    const countries = new Set(postcards.map((c) => c.locationCountry).filter(Boolean)).size;
-    const cities = new Set(postcards.map((c) => c.locationCity).filter(Boolean)).size;
+    const countries = new Set([
+      ...postcards.map((c) => c.locationCountry).filter(Boolean),
+      ...(showcaseItems ?? []).map((s) => s.country).filter(Boolean),
+    ]).size;
+    const cities = new Set([
+      ...postcards.map((c) => c.locationCity).filter(Boolean),
+      ...(showcaseItems ?? []).map((s) => s.city).filter(Boolean),
+    ]).size;
 
     const followContext = !isOwn && !follow.loading
       ? (follow.isFollowing && follow.followsYou)

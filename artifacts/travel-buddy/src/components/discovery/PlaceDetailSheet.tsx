@@ -9,6 +9,7 @@ import { usePlaceImage } from '../../hooks/usePlaceImage.ts';
 import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Linking,
 } from 'react-native';
+import { Platform } from 'react-native';
 import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star, ListPlus, Sparkles } from 'lucide-react-native';
 import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';
 import { useSession } from '../../context/SessionContext.tsx';
@@ -158,7 +159,20 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
 
   const openDirections = () => {
     if (!hasRealCoords) return;
-    Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}`).catch(() => {});
+    if (Platform.OS === 'web') {
+      // Open in a new tab on web — navigating the current tab to
+      // maps.google.com blanks the PWA instead of just launching directions.
+      // Matches the pattern used by the Roam "Navigate" chip (openInMaps.ts).
+      if (typeof window !== 'undefined') {
+        window.open(`https://maps.google.com/?q=${place.lat},${place.lng}`, '_blank');
+      }
+      return;
+    }
+    // Include the place name alongside the coordinates so Google Maps labels
+    // the destination correctly instead of resolving the pin to whatever
+    // business happens to be nearest those coordinates (e.g. "BDO ATM").
+    const destination = `${place.lat},${place.lng}(${encodeURIComponent(place.name)})`;
+    Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${destination}`).catch(() => {});
   };
 
   return (
