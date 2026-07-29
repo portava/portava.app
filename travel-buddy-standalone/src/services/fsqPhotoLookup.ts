@@ -8,7 +8,17 @@
  *
  * ATTRIBUTION: any surface showing FSQ photos must display "Powered by Foursquare".
  */
-import * as Sentry from '@sentry/react-native';
+
+// Lazy Sentry — avoids pulling react-native into node:test / esbuild transforms.
+// @sentry/react-native → react-native contains `typeof` syntax esbuild can't parse.
+function getSentry(): typeof import('@sentry/react-native') | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require('@sentry/react-native') as typeof import('@sentry/react-native');
+  } catch {
+    return null;
+  }
+}
 
 const FSQ_SEARCH = 'https://places-api.foursquare.com/places/search';
 const FSQ_API_VERSION = '2025-06-17';
@@ -58,14 +68,15 @@ export async function lookupFsqPhoto(
 
     if (!res.ok) {
       const isAuthError = res.status === 401 || res.status === 403;
-      Sentry.addBreadcrumb({
+      const sentry = getSentry();
+      sentry?.addBreadcrumb({
         category: 'foursquare',
         message: `FSQ photo lookup failed — HTTP ${res.status}`,
         level: isAuthError ? 'error' : 'warning',
         data: { status: res.status, place: name },
       });
       if (isAuthError) {
-        Sentry.captureMessage('Foursquare photo lookup auth failure — check EXPO_PUBLIC_FOURSQUARE_API_KEY', {
+        sentry?.captureMessage('Foursquare photo lookup auth failure — check EXPO_PUBLIC_FOURSQUARE_API_KEY', {
           level: 'error',
           extra: { status: res.status, place: name },
         });
