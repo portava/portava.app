@@ -699,13 +699,17 @@ export default function MeetupScreen() {
               </View>
             ) : null}
 
-            {(meetup.startsAt ?? meetup.approximateDate) ? (
+            {(meetup.startsAt ?? meetup.approximateDate ?? meetup.timeBlock) ? (
               <View style={s.metaRow}>
                 <CalendarClock size={14} color={color.mute} />
                 <Text style={s.metaText}>
                   {meetup.startsAt
                     ? relDateTime(meetup.startsAt)
-                    : `${relDate(meetup.approximateDate ?? '')}${meetup.timeBlock ? ` · ${BLOCK_LABELS[meetup.timeBlock] ?? meetup.timeBlock}` : ''}`
+                    : meetup.approximateDate
+                    ? `${relDate(meetup.approximateDate)}${meetup.timeBlock ? ` · ${BLOCK_LABELS[meetup.timeBlock] ?? meetup.timeBlock}` : ''}`
+                    // Time-of-day was chosen but no calendar date — still show it
+                    // honestly instead of falling through to "No date set".
+                    : `${BLOCK_LABELS[meetup.timeBlock!] ?? meetup.timeBlock} · date TBD`
                   }
                 </Text>
               </View>

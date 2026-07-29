@@ -528,7 +528,11 @@ router.get("/rent-a-buddy/available-now", async (req, res) => {
     .eq("admin_status", "active")
     .eq("available_now", true);
 
-  if (city) q = q.eq("city", city);
+  // Case/whitespace-insensitive match — must agree with /rent-buddy/launch-status'
+  // availableNowCount, which uses the same ilike-on-trimmed-city comparison. An
+  // exact `.eq` here previously let this list silently disagree with the count
+  // used to decide whether to show a "buddies available" claim elsewhere.
+  if (city) q = q.ilike("city", city.trim());
 
   const { data, error } = await q.limit(20);
   if (error) return sendError(res, 'db_error', error.message);

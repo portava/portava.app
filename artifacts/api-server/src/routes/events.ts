@@ -2351,9 +2351,17 @@ router.post("/events/:id/rsvp", async (req, res) => {
   await sc.from("events").update({ going_count: going }).eq("id", id);
   await syncAttendee(sc, id, user.id, status);
 
-  // Add to event chat thread if going and chat enabled
-  if (status === "going" && (ev as any).chat_thread_id && (ev as any).chat_enabled) {
-    await addUserToChatThread(sc, (ev as any).chat_thread_id, user.id);
+  // Add to event chat thread if going and chat enabled. Lazily create the
+  // thread here if it doesn't exist yet — most events never have their chat
+  // thread created by the host explicitly, so gating this on an existing
+  // chat_thread_id left every attendee's "Event Chat" button permanently
+  // dead for those events (silent 404 downstream in /chat/join).
+  if (status === "going" && (ev as any).chat_enabled) {
+    let threadId: string | null = (ev as any).chat_thread_id ?? null;
+    if (!threadId) {
+      threadId = await createEventChatThread(sc, id, (ev as any).title, user.id);
+    }
+    if (threadId) await addUserToChatThread(sc, threadId, user.id);
   }
 
   // Fire-and-forget: award first_event_joined stamp on a user's very first Going RSVP
@@ -3467,12 +3475,12 @@ router.post("/events/:id/chat/join", async (req, res) => {
 
   const { data: ev } = await sc
     .from("events")
-    .select("chat_thread_id, chat_enabled, state")
+    .select("chat_thread_id, chat_enabled, state, title")
     .eq("id", id)
     .maybeSingle();
 
-  if (!ev || !(ev as any).chat_thread_id) {
-    sendError(res, "not_found", "Event chat not found"); return;
+  if (!ev) {
+    sendError(res, "not_found", "Event not found"); return;
   }
   if (!(ev as any).chat_enabled) {
     sendError(res, "forbidden", "Chat is disabled for this event"); return;
@@ -3491,8 +3499,19 @@ router.post("/events/:id/chat/join", async (req, res) => {
     sendError(res, "forbidden", "You must have a Going RSVP to join the chat"); return;
   }
 
-  await addUserToChatThread(sc, (ev as any).chat_thread_id, user.id);
-  res.json({ threadId: (ev as any).chat_thread_id });
+  // Lazily create the thread on first join rather than 404'ing — most
+  // events never have chat_thread_id set by the host explicitly, which
+  // previously left every eligible attendee's "Event Chat" button dead.
+  let threadId: string | null = (ev as any).chat_thread_id ?? null;
+  if (!threadId) {
+    threadId = await createEventChatThread(sc, id, (ev as any).title, user.id);
+  }
+  if (!threadId) {
+    sendError(res, "not_found", "Event chat not found"); return;
+  }
+
+  await addUserToChatThread(sc, threadId, user.id);
+  res.json({ threadId });
 });
 
 // ── POST /api/events/:id/updates ──────────────────────────────────────────────

@@ -76,6 +76,14 @@ export interface DiscoveryPlace {
   disclaimerRequired?: boolean | null;
   /** Disclaimer copy to show when disclaimerRequired is true. */
   disclaimerText?: string | null;
+  /**
+   * True when this card represents a hosted Compass event (an activity/idea
+   * with a real start time and RSVP flow), not a resolved venue. Detail UI
+   * must never show venue-only affordances (Directions/phone/hours/website)
+   * for these unless real coordinates are present, and should frame it as
+   * an event rather than a place.
+   */
+  isCompassEvent?: boolean;
 }
 
 export interface DiscoveryFilters {

@@ -1180,12 +1180,30 @@ router.get("/rent-buddy/launch-status", asyncHandler(async (req, res) => {
   const status: CityRolloutStatus = rollout ? (rollout as any).status : "disabled";
   const message = statusToMessage(status, city);
 
+  // Single source of truth for "are there real buddies here right now" —
+  // same normalized (trimmed, case-insensitive) city match used by
+  // /rent-a-buddy/available-now, so this field and that list can never
+  // disagree. Callers (Pulse card, landing banner) must use THIS field —
+  // not `available` alone — before claiming buddies exist in a city.
+  // `available: status === "public_mvp"` means "the city has been rolled
+  // out to the public," not "someone is online right now" — those are
+  // different facts and must never be merged into a single claim in the UI.
+  const trimmedCity = city.trim();
+  const { count: availableNowCount } = await sc
+    .from("rent_buddy_profiles")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "active")
+    .eq("admin_status", "active")
+    .eq("available_now", true)
+    .ilike("city", trimmedCity);
+
   return res.json({
     city,
     status,
     message,
     targetLaunchDate: rollout ? (rollout as any).target_launch_date : null,
     available: status === "public_mvp",
+    availableNowCount: availableNowCount ?? 0,
     betaAvailable: status === "beta_testing",
     waitlistOpen: status !== "disabled" && status !== "suspended",
     applicationsOpen: status === "buddy_applications_open" || status === "internal_testing" || status === "beta_testing" || status === "public_mvp",

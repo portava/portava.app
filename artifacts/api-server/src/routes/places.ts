@@ -412,6 +412,87 @@ router.get("/places/google-details", async (req, res) => {
   }
 });
 
+// ── GET /api/places/photo ──────────────────────────────────────────────────────
+//
+// Fallback-chain photo lookup for Discovery place cards (called after the
+// client-side Foursquare lookup — src/services/fsqPhotoLookup.ts — comes up
+// empty). Uses the SAME GOOGLE_MAPS_API_KEY already used above for
+// autocomplete/details, via Places API (New) Text Search + Photo media,
+// which is the only Google endpoint that returns real photo URLs.
+//
+// Degrades honestly: on ANY failure (missing key, SERVICE_DISABLED, no
+// photos found) this returns { photoUrl: null, reason } and NEVER throws —
+// the client falls through to category-appropriate artwork, never a bare
+// icon with no visual treatment. `reason` surfaces machine-readable detail
+// (e.g. "google_places_api_new_disabled") so we can tell exactly which
+// Google Cloud API needs enabling without guessing.
+const GOOGLE_PHOTO_DISABLED_LOGGED = { at: 0 };
+router.get("/places/photo", async (req, res) => {
+  const name = String(req.query.name ?? "").trim();
+  const lat = req.query.lat != null ? Number(req.query.lat) : null;
+  const lng = req.query.lng != null ? Number(req.query.lng) : null;
+
+  if (!name || name.length > 200) {
+    res.status(400).json({ error: "invalid_payload", message: "name is required (max 200 chars)" });
+    return;
+  }
+
+  const key = process.env.GOOGLE_MAPS_API_KEY;
+  if (!key) {
+    res.json({ photoUrl: null, reason: "no_google_maps_key" });
+    return;
+  }
+
+  try {
+    const body: Record<string, unknown> = { textQuery: name };
+    if (lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng)) {
+      body.locationBias = { circle: { center: { latitude: lat, longitude: lng }, radius: 5000 } };
+    }
+
+    const gRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": key,
+        "X-Goog-FieldMask": "places.id,places.photos",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(4000),
+    });
+
+    if (!gRes.ok) {
+      const errBody = await gRes.json().catch(() => null) as any;
+      const reason = errBody?.error?.details?.[0]?.reason as string | undefined;
+      // Log once per process (not per request) to avoid log spam when the
+      // API is disabled project-wide — this fires on every card otherwise.
+      if (reason === "SERVICE_DISABLED" && Date.now() - GOOGLE_PHOTO_DISABLED_LOGGED.at > 10 * 60 * 1000) {
+        GOOGLE_PHOTO_DISABLED_LOGGED.at = Date.now();
+        logger.warn(
+          { reason, activationUrl: errBody?.error?.details?.[0]?.metadata?.activationUrl },
+          "Places API (New) is disabled on this Google Cloud project — enable it to get real Discovery place photos",
+        );
+      }
+      res.json({ photoUrl: null, reason: reason ? `google_places_api_new_${reason.toLowerCase()}` : "google_places_api_new_error" });
+      return;
+    }
+
+    const gBody = (await gRes.json()) as any;
+    const photoName = gBody?.places?.[0]?.photos?.[0]?.name as string | undefined;
+    if (!photoName) {
+      res.json({ photoUrl: null, reason: "no_photo_found" });
+      return;
+    }
+
+    // Photo media endpoint requires its own key param — resolve it here
+    // server-side so the client never needs the key.
+    const photoUrl = `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=800&key=${key}`;
+    res.json({ photoUrl });
+  } catch (err) {
+    logger.warn({ err, name }, "Google Places (New) photo lookup failed");
+    res.json({ photoUrl: null, reason: "request_failed" });
+  }
+});
+
 // ── GET /api/places/live-status ───────────────────────────────────────────────
 //
 // Live open-now lookup for Explore / place detail surfaces. Reuses the same

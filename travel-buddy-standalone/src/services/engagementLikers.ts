@@ -26,6 +26,14 @@ export interface LikerUser {
   likedAt: string;
   /** True when the user holds verified traveler status. */
   verified?: boolean;
+  /**
+   * True when this is a private account the viewer doesn't follow yet.
+   * When true: avatarUrl is null and the card should show a "Request" button.
+   * Matches the locked-preview pattern used across all people-listing surfaces.
+   */
+  isPrivate?: boolean;
+  /** True when the viewer has already sent a follow request to this private account. */
+  isRequestSent?: boolean;
 }
 
 export interface LikersPage {

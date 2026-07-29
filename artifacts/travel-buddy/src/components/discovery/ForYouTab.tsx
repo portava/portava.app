@@ -56,6 +56,17 @@ type ForYouItem =
   | { kind: 'compass'; item: import('../../services/compass').CompassFeedItem; place: DiscoveryPlace };
 
 function compassItemToPlace(item: import('../../services/compass').CompassFeedItem): DiscoveryPlace {
+  // Real coordinates/photo come from discovery_places / events (server-side
+  // hydrator) — surface them instead of fabricating null. Never invent a
+  // fallback location: a card without real lat/lng must render honestly
+  // (no Directions button, no distance claim) rather than defaulting to the
+  // viewer's own position, which produced bogus cross-city directions links.
+  const rawLat = item.data?.lat;
+  const rawLng = item.data?.lng;
+  const lat = typeof rawLat === 'number' ? rawLat : null;
+  const lng = typeof rawLng === 'number' ? rawLng : null;
+  const locationName = (item.data?.locationName as string) ?? null;
+  const isEvent = item.type === 'event';
   return {
     id:           item.id,
     name:         resolveCompassTitle(item),
@@ -63,16 +74,22 @@ function compassItemToPlace(item: import('../../services/compass').CompassFeedIt
     type:         item.category ?? null,
     description:  (item.data?.description as string) ?? null,
     distanceKm:   null,
-    lat:          null,
-    lng:          null,
+    lat,
+    lng,
     tags:         [],
-    address:      (item.data?.city as string) ?? null,
+    address:      locationName ?? (item.data?.city as string) ?? null,
+    // Events are activities hosted by a member, not venues — they never have
+    // a phone/website/hours/rating, so never fabricate those fields.
     website:      null,
     phone:        null,
     openingHours: null,
     rating:       null,
     isOpenNow:    null,
-  };
+    headerImageUrl: (item.data?.headerImageUrl as string) ?? null,
+    // Flag consumed by PlaceCard/PlaceDetailSheet to present this honestly as
+    // an event (RSVP-based activity) rather than a resolved venue.
+    isCompassEvent: isEvent,
+  } as DiscoveryPlace;
 }
 
 export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, sortBy, bottomInset, onScroll, listHeaderComponent }: ForYouTabProps) {

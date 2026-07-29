@@ -45,6 +45,19 @@ async function authedFetch(path: string, opts: RequestInit = {}): Promise<Respon
   });
 }
 
+// A Compass reply normally lands well under this even on a slow multi-tool-call
+// turn; this exists purely so a stalled request (upstream hang, dropped
+// connection, proxy stall) fails soft with a visible retry instead of leaving
+// the "AI BUDDY" bubble spinning forever with no feedback at all.
+const COMPASS_ASK_TIMEOUT_MS = 30_000;
+
+/** Rejects with an Error whose message is 'timeout' after `ms` unless `signal` fires first. */
+function timeoutSignal(ms: number): { signal: AbortSignal; cancel: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return { signal: controller.signal, cancel: () => clearTimeout(timer) };
+}
+
 function notConfigured() {
   return { ok: false as const, error: 'not_configured' };
 }
@@ -678,15 +691,20 @@ export async function postCompassAsk(
   } = {},
 ): Promise<{ ok: boolean; data?: CompassAskResponse; error?: string }> {
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  const { signal, cancel } = timeoutSignal(COMPASS_ASK_TIMEOUT_MS);
   try {
     const r = await authedFetch('/api/compass/ask', {
       method: 'POST',
       body:   JSON.stringify({ prompt, ...opts, tzOffsetMinutes: deviceTzOffsetMinutes() }),
+      signal,
     });
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     return { ok: true, data: await r.json() };
   } catch {
+    if (signal.aborted) return { ok: false, error: 'timeout' };
     return { ok: false, error: 'network_error' };
+  } finally {
+    cancel();
   }
 }
 
@@ -810,6 +828,7 @@ export async function postCompassAskStream(
   handlers: CompassAskStreamHandlers = {},
 ): Promise<{ ok: boolean; data?: CompassAskResponse; error?: string; streamed?: boolean }> {
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  const { signal, cancel } = timeoutSignal(COMPASS_ASK_TIMEOUT_MS);
   try {
     const doFetch = _testStreamFetch !== undefined ? _testStreamFetch : getStreamFetch();
     if (!doFetch) throw new Error('stream_unsupported');
@@ -822,6 +841,7 @@ export async function postCompassAskStream(
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({ prompt, ...opts, stream: true, tzOffsetMinutes: deviceTzOffsetMinutes() }),
+      signal,
     });
     if (!r.ok) return { ok: false, error: `http_${r.status}`, streamed: false };
     const body: any = (r as any).body;
@@ -834,6 +854,11 @@ export async function postCompassAskStream(
     let doneEvent: Record<string, unknown> | null = null;
     let serverError = false;
     for (;;) {
+      // Belt-and-braces alongside the fetch `signal`: some fetch polyfills
+      // (notably expo/fetch) don't reliably unblock a pending reader.read()
+      // when the request signal aborts, which is exactly the "spins forever
+      // with no error" failure mode this timeout exists to prevent.
+      if (signal.aborted) throw new Error('timeout');
       const { value, done: eof } = await reader.read();
       if (value) buffer += decoder.decode(value, { stream: true });
       if (eof) buffer += '\n\n'; // flush a final unterminated event, if any
@@ -867,10 +892,18 @@ export async function postCompassAskStream(
       intent:           (doneEvent['intent'] as CompassAskResponse['intent']) ?? undefined,
     };
     return { ok: true, data, streamed: true };
-  } catch {
+  } catch (err) {
+    // A genuine timeout means the whole request is stuck — don't retry via
+    // the non-streaming fallback, which would just wait the full timeout
+    // again. Surface it immediately so the UI can fail soft with a retry.
+    if (signal.aborted || (err instanceof Error && err.message === 'timeout')) {
+      return { ok: false, error: 'timeout', streamed: false };
+    }
     // Non-streaming fallback — same request minus stream:true.
     const fallback = await postCompassAsk(prompt, opts);
     return { ...fallback, streamed: false };
+  } finally {
+    cancel();
   }
 }
 

@@ -737,7 +737,7 @@ export default function DiscoveryHub() {
       {activeTab === 'for_you' && (
         <SectionErrorBoundary label="CompassPicks">
           <CityConfidenceBadge city={currentCity} />
-          <CompassBuddyRow city={currentCity} />
+          <CompassBuddyRow city={currentCity} headerSuffix={currentCity ? `· near ${currentCity}` : undefined} />
         </SectionErrorBoundary>
       )}
 

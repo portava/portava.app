@@ -1,15 +1,19 @@
 import { useEffect, useState } from 'react';
 import { lookupFsqPhoto } from '../services/fsqPhotoLookup.ts';
+import { lookupGooglePhoto } from '../services/googlePhotoLookup.ts';
 
 /**
- * Deferred Foursquare photo hook for place cards.
+ * Deferred real-photo fallback chain for place cards: Foursquare first, then
+ * Google Places (New) via the server proxy, then null (the card falls back
+ * to category-appropriate artwork — never a bare icon with no treatment).
  *
  * Returns `existingUrl` immediately when one is already present — no network
- * request fires. Otherwise fires a Foursquare Places Search after 500 ms
- * (same pattern as the live-status hook) to skip cards flung past while
- * scrolling without blocking the initial list render.
+ * request fires. Otherwise fires the chain after 500 ms (same pattern as the
+ * live-status hook) to skip cards flung past while scrolling without
+ * blocking the initial list render.
  *
- * Falls back to null on any error; the card then shows its category artwork.
+ * Each link fails silently and falls through to the next; the hook never
+ * throws.
  */
 export function useFsqPhoto(
   name: string,
@@ -29,7 +33,15 @@ export function useFsqPhoto(
     let cancelled = false;
     const timer = setTimeout(() => {
       lookupFsqPhoto(name, lat, lng)
-        .then((url) => { if (!cancelled) setPhotoUrl(url); })
+        .then((url) => {
+          if (cancelled) return null;
+          if (url) { setPhotoUrl(url); return null; }
+          // FSQ came up empty — try the Google fallback before giving up.
+          return lookupGooglePhoto(name, lat, lng);
+        })
+        .then((googleUrl) => {
+          if (!cancelled && googleUrl) setPhotoUrl(googleUrl);
+        })
         .catch(() => {});
     }, 500);
 

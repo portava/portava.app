@@ -25,6 +25,10 @@ type ChatEntry =
   | { kind: 'ai_text'; id: string; text: string }
   | { kind: 'rec';     id: string; rec: CompassAskResponse }
   | { kind: 'typing';  id: string }
+  // Failed request (timeout, network, server error) — always offers a retry
+  // of the exact prompt that failed, so a slow or stalled reply never leaves
+  // the user stuck with no next step.
+  | { kind: 'ai_error'; id: string; text: string; prompt: string }
   // Live-streaming assistant reply — replaced by a 'rec' entry on finalize.
   | { kind: 'stream';  id: string; text: string };
 
@@ -114,12 +118,16 @@ export default function AiChat() {
     setEntries((prev) => {
       const without = prev.filter((e) => e.id !== typingId && e.id !== streamId);
       if (!result.ok || !result.data) {
+        const isTimeout = result.error === 'timeout';
         return [
           ...without,
           {
-            kind: 'ai_text',
+            kind: 'ai_error',
             id: 'err_' + Date.now(),
-            text: "Couldn't reach Compass right now — try again in a moment.",
+            text: isTimeout
+              ? "Compass is unavailable right now — that's taking longer than it should."
+              : "Compass is unavailable right now — couldn't reach it.",
+            prompt: text,
           },
         ];
       }
@@ -299,6 +307,24 @@ export default function AiChat() {
               </View>
             );
           }
+          if (e.kind === 'ai_error') {
+            return (
+              <View key={e.id} style={styles.aiBubble}>
+                <View style={styles.aiHead}>
+                  <Sparkles size={15} color={color.signal} />
+                  <Text style={styles.aiHeadText}>AI BUDDY</Text>
+                </View>
+                <Text style={styles.aiText}>{e.text}</Text>
+                <Pressable
+                  onPress={() => send(e.prompt)}
+                  disabled={loading}
+                  style={({ pressed }) => [styles.retryButton, pressed && { opacity: 0.7 }]}
+                >
+                  <Text style={styles.retryButtonText}>Retry</Text>
+                </Pressable>
+              </View>
+            );
+          }
           return (
             <RecCard
               onAddPlaceToPlan={addPlaceToPlan}
@@ -453,6 +479,8 @@ const styles = StyleSheet.create({
   aiHead:        { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: space.sm },
   aiHeadText:    { ...t.stamp, fontFamily: 'Courier', color: color.signal },
   aiText:        { ...t.body, color: color.ink },
+  retryButton:     { alignSelf: 'flex-start', marginTop: space.md, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill, backgroundColor: color.ink },
+  retryButtonText: { ...t.small, fontWeight: '700', color: color.onInk },
   rec:           { backgroundColor: color.paperRaised, padding: space.lg, borderRadius: radius.lg, borderWidth: 1, borderColor: color.haze, ...shadow.card, gap: 4 },
   recPick:       { ...t.heading, color: color.ink, marginBottom: space.sm },
   recLabel:      { ...t.stamp, fontFamily: 'Courier', color: color.mute, marginTop: space.sm },

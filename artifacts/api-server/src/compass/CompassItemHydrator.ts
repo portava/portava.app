@@ -156,7 +156,10 @@ async function fetchEvents(
     const baseQuery = () =>
       db
         .from("events")
-        .select("id, host_id, title, category, starts_at, ends_at, city, max_attendees, going_count, visibility, state")
+        .select(
+          "id, host_id, title, category, starts_at, ends_at, city, max_attendees, going_count, " +
+          "visibility, state, location_lat, location_lng, location_name, cover_url, show_exact_location",
+        )
         .eq("visibility", "public")
         .in("state", ["open", "full", "waitlist"])
         .gte("starts_at", now)
@@ -170,7 +173,7 @@ async function fetchEvents(
         baseQuery(),
       ]);
       const seen = new Set<string>();
-      for (const ev of [...(cityRes.data ?? []), ...(globalRes.data ?? [])]) {
+      for (const ev of [...(cityRes.data ?? []), ...(globalRes.data ?? [])] as any[]) {
         if (!seen.has(ev.id)) { seen.add(ev.id); rawEvents.push(ev); }
       }
     } else {
@@ -229,6 +232,13 @@ async function fetchEvents(
         endsAt:     event.ends_at,
         city:       event.city,
         visibility: event.visibility,
+        // REAL event location — only surface coordinates when the host has
+        // opted to show the exact location; otherwise city-level only (same
+        // privacy gate the events routes apply elsewhere in the app).
+        lat:            event.show_exact_location !== false ? (event.location_lat ?? null) : null,
+        lng:            event.show_exact_location !== false ? (event.location_lng ?? null) : null,
+        locationName:   event.location_name ?? null,
+        headerImageUrl: event.cover_url ?? null,
       },
     }));
   } catch {
@@ -246,7 +256,10 @@ async function fetchPlaces(
   try {
     const { data } = await db
       .from("discovery_places")
-      .select("id, city, name, category, status, rating, created_at, submitted_by")
+      .select(
+        "id, city, name, category, status, rating, created_at, submitted_by, " +
+        "lat, lng, neighborhood, blurb, header_image_url, image_url",
+      )
       .ilike("city", profile.currentCity)
       .eq("status", "active")
       .limit(MAX_PLACES);
@@ -266,8 +279,20 @@ async function fetchPlaces(
       // Place-affinity boost: the raw DB UUID (not the prefixed CompassItem id)
       // is what rank_events records as item_id for place_view events.
       placeId:         String(place.id),
-      // Raw DB id stored in data so frontend can build the correct navigation path
-      data: { id: String(place.id), name: place.name, category: place.category, city: place.city },
+      // Raw DB id stored in data so frontend can build the correct navigation path.
+      // lat/lng/image/description are REAL venue data from discovery_places —
+      // must be passed through so the client never has to fabricate/null them.
+      data: {
+        id:             String(place.id),
+        name:           place.name,
+        category:       place.category,
+        city:           place.city,
+        lat:            place.lat ?? null,
+        lng:            place.lng ?? null,
+        neighborhood:   place.neighborhood ?? null,
+        description:    place.blurb ?? null,
+        headerImageUrl: place.header_image_url ?? place.image_url ?? null,
+      },
     }));
   } catch {
     return [];

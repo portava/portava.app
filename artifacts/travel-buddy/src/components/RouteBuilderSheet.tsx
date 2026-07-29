@@ -70,14 +70,25 @@ export function RouteBuilderSheet({ visible, onClose, onRouteCreated, initialSto
   const [endPickerOpen, setEndPickerOpen]     = useState(false);
   const [addStopPickerOpen, setAddStopPickerOpen] = useState(false);
 
+  // `initialStops` is passed as a fresh array literal by callers (e.g.
+  // `[routeBuilderDraft]` in discovery.tsx), so its reference changes on
+  // every parent re-render — not just when the sheet opens. Depending on
+  // that reference directly caused this effect to refire on any incidental
+  // parent re-render while the sheet was still open (location polling,
+  // saved-count timers, etc.), silently wiping the user's in-progress stops/
+  // title/style back to the initial draft and re-disabling "Generate Route"
+  // with no visible feedback. Guard with a ref so the reset only happens on
+  // the closed → open transition.
+  const wasVisible = React.useRef(false);
   React.useEffect(() => {
-    if (visible) {
+    if (visible && !wasVisible.current) {
       setStops(initialStops);
       setRouteStyle('custom');
       setTitle('');
       setStartPin(null);
       setEndPin(null);
     }
+    wasVisible.current = visible;
   }, [visible, initialStops]);
 
   const removeStop = useCallback((id: string) => {
