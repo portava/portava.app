@@ -258,7 +258,7 @@ router.get("/engagement/likes", asyncHandler(async (req, res) => {
   // display_name match to survive only when that user opted in (or is viewer).
   const { data: profiles, error: profileErr } = await sc
     .from("profiles")
-    .select("id, username, display_name, avatar_url, account_status, verified")
+    .select("id, username, display_name, avatar_url, account_status, verified, is_private")
     .in("id", filteredIds)
     .not("account_status", "eq", "deleted")
     .not("account_status", "eq", "banned")
@@ -292,36 +292,48 @@ router.get("/engagement/likes", asyncHandler(async (req, res) => {
 
   const profileIds = [...profileMap.keys()];
 
-  // Follow state (both directions)
-  const [{ data: followingRows }, { data: followsYouRows }] = await Promise.all([
+  // Follow state (both directions) + pending follow requests
+  const [{ data: followingRows }, { data: followsYouRows }, { data: pendingRequestRows }] = await Promise.all([
     profileIds.length > 0
       ? sc.from("user_follows").select("following_id").eq("follower_id", user.id).in("following_id", profileIds)
       : Promise.resolve({ data: [] }),
     profileIds.length > 0
       ? sc.from("user_follows").select("follower_id").eq("following_id", user.id).in("follower_id", profileIds)
       : Promise.resolve({ data: [] }),
+    profileIds.length > 0
+      ? sc.from("friend_requests").select("recipient_id").eq("requester_id", user.id).eq("status", "pending").in("recipient_id", profileIds)
+      : Promise.resolve({ data: [] }),
   ]);
 
   const followingSet = new Set<string>((followingRows ?? []).map((r: any) => r.following_id));
   const followsYouSet = new Set<string>((followsYouRows ?? []).map((r: any) => r.follower_id));
+  const pendingRequestSet = new Set<string>((pendingRequestRows ?? []).map((r: any) => r.recipient_id));
 
   // Preserve insertion order from likedAts (most-recent-first)
   const users = filteredIds
     .map((id) => {
       const p = profileMap.get(id);
       if (!p) return null;
-      const shownName = presentedName(
-        { id: p.id, display_name: p.display_name, name: null },
-        p.id === user.id || allowedNames.has(p.id),
-      );
+      // Private accounts the viewer doesn't already follow get a locked preview:
+      // avatar is hidden and name falls back to handle. This matches the locked-
+      // preview pattern used across all other people-listing surfaces.
+      const isPrivate = ((p.is_private as boolean) ?? false) && !followingSet.has(p.id);
+      const shownName = isPrivate
+        ? null
+        : presentedName(
+            { id: p.id, display_name: p.display_name, name: null },
+            p.id === user.id || allowedNames.has(p.id),
+          );
       return {
         id: p.id,
         handle: p.username ?? "",
         displayName: shownName ?? p.username ?? "Traveler",
-        avatarUrl: p.avatar_url ?? null,
+        avatarUrl: isPrivate ? null : (p.avatar_url ?? null),
         verified: (p.verified as boolean) ?? false,
         isFollowing: followingSet.has(p.id),
         followsYou: followsYouSet.has(p.id),
+        isPrivate,
+        isRequestSent: isPrivate ? pendingRequestSet.has(p.id) : undefined,
         likedAt: likedAts.get(id) ?? "",
       };
     })

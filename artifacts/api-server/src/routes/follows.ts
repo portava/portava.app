@@ -1156,6 +1156,25 @@ router.get("/users/suggestions", async (req, res) => {
   const profileById = new Map((profiles ?? []).map((p: any) => [p.id as string, p]));
   // Universal display-name rule: suggestions show @handle unless opted in.
   const allowedSuggestionNames = await nameVisibilitySet(sc, safeIds);
+
+  // Pending follow-requests: fetch once for the whole batch so we can surface
+  // "Requested" state on private-account suggestion cards without an extra
+  // round-trip per row.
+  let pendingSuggestionRequestSet = new Set<string>();
+  if (safeIds.length > 0) {
+    try {
+      const { data: pendingRows } = await sc
+        .from("friend_requests")
+        .select("recipient_id")
+        .eq("requester_id", user.id)
+        .eq("status", "pending")
+        .in("recipient_id", safeIds);
+      for (const r of (pendingRows ?? [])) {
+        pendingSuggestionRequestSet.add((r as any).recipient_id as string);
+      }
+    } catch { /* fail-safe: no pending state shown */ }
+  }
+
   const users = safeIds
     .map((id) => profileById.get(id))
     .filter(Boolean)
@@ -1179,16 +1198,24 @@ router.get("/users/suggestions", async (req, res) => {
       } else if ((interestScores.get(p.id as string) ?? 0) > 0) {
         reason = "Shares your travel style";
       }
+      // Private accounts the viewer hasn't followed yet get a locked preview:
+      // no avatar, no display name. This matches the locked-preview pattern used
+      // in /api/discovery/search and /api/users/search so a private profile is
+      // consistently discoverable everywhere or nowhere.
+      const isPrivate = (p.is_private as boolean) ?? false;
       return {
         id: p.id,
-        displayName: allowedSuggestionNames.has(p.id as string) ? ((p.name as string | null) ?? null) : null,
+        displayName: (!isPrivate && allowedSuggestionNames.has(p.id as string))
+          ? ((p.name as string | null) ?? null)
+          : null,
         username: (p.handle as string | null) ?? null,
-        avatarUrl: (p.avatar_url as string | null) ?? null,
+        avatarUrl: isPrivate ? null : ((p.avatar_url as string | null) ?? null),
         followerCount: followerCounts[p.id as string] ?? 0,
         isFollowing: false,
-        isPrivate: (p.is_private as boolean) ?? false,
+        isPrivate,
+        friendRequestPending: pendingSuggestionRequestSet.has(p.id as string),
         mutualCount: mc,
-        reason,
+        reason: isPrivate ? null : reason,
         verified: (p.verified as boolean) ?? false,
         isOfficial: (p.is_official as boolean) ?? false,
       };
