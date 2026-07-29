@@ -83,6 +83,7 @@ export function UniversalStampArtwork({
           onError={() => setFailCount((c) => c + 1)}
           accessibilityLabel={artLabel}
           accessibilityIgnoresInvertColors
+          testID="stamp-artwork-image"
         />
       </View>
     );

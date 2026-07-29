@@ -10,11 +10,11 @@ import {
   View, ScrollView, Text, Pressable, StyleSheet, Animated,
   AccessibilityInfo,
 } from 'react-native';
-import { Image } from 'expo-image';
-import { Award } from 'lucide-react-native';
 import type { ShowcaseStamp } from '../../services/stampShowcase.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { RARITY_COLORS, normalizeRarity, hasGlowRing } from '../../lib/stampRarity.ts';
+import { UniversalStampArtwork } from './UniversalStampArtwork.tsx';
+import type { PassportStamp } from '../../types/models.ts';
 
 const CARD_SIZE = 72;
 
@@ -24,6 +24,31 @@ interface Props {
   onEdit?: () => void;
 }
 
+/**
+ * Showcase items always render through the same colorful illustrated
+ * UniversalStampArtwork used by the main grid (StampCard) — no separate
+ * "old style" plain icon look is allowed here.
+ */
+function toLegacyShowcase(item: ShowcaseStamp): PassportStamp {
+  const kind = (
+    item.definition?.stampType === 'city'         ? 'city'
+    : item.definition?.stampType === 'plan'       ? 'plan'
+    : item.definition?.stampType === 'hidden_gem' ? 'gem'
+    : item.definition?.stampType === 'safe_return'? 'safe'
+    : item.definition?.stampType === 'host'       ? 'host'
+    : 'city'
+  ) as PassportStamp['kind'];
+  return {
+    id: item.userStampId,
+    kind,
+    label: item.titleOverride ?? item.definition?.name ?? 'Stamp',
+    earnedAt: item.earnedAt,
+    universalArtworkUrl: item.definition?.artworkUrl ?? undefined,
+    city: item.city,
+    rarity: normalizeRarity(item.definition?.rarity),
+  };
+}
+
 function ShowcaseCard({ item, onPress, anim }: {
   item: ShowcaseStamp;
   onPress: () => void;
@@ -31,9 +56,9 @@ function ShowcaseCard({ item, onPress, anim }: {
 }) {
   const rarity = normalizeRarity(item.definition?.rarity);
   const rarityColor = RARITY_COLORS[rarity].ring;
-  const artworkUrl = item.definition?.artworkUrl ?? null;
   const label = item.titleOverride ?? item.definition?.name ?? 'Stamp';
   const showGlow = hasGlowRing(rarity);
+  const legacy = toLegacyShowcase(item);
 
   return (
     <Animated.View style={{ opacity: anim, transform: [{ scale: anim }] }}>
@@ -44,28 +69,18 @@ function ShowcaseCard({ item, onPress, anim }: {
         accessibilityLabel={label}
       >
         <View style={[styles.artFrame, showGlow && { borderWidth: 1.5, borderColor: rarityColor }]}>
-          {artworkUrl ? (
-            <Image
-              source={{ uri: artworkUrl }}
-              style={styles.artImage}
-              contentFit="contain"
-              cachePolicy="memory-disk"
-              accessibilityIgnoresInvertColors
-              accessibilityLabel={`${label} — ${rarity} stamp`}
-            />
-          ) : (
-            <View style={[styles.artPlaceholder, { backgroundColor: rarityColor + '22' }]}>
-              <Award size={22} color={rarityColor} strokeWidth={1.75} />
-              <Text style={styles.artPlaceholderLabel} numberOfLines={2}>{label}</Text>
-            </View>
-          )}
+          <UniversalStampArtwork
+            activeArtworkUrl={item.definition?.artworkUrl ?? null}
+            stamp={legacy}
+            size={CARD_SIZE}
+            showPendingLabel={false}
+          />
           {/* Rarity badge dot */}
           <View
             style={[styles.rarityDot, { backgroundColor: rarityColor }]}
             accessibilityLabel={`${rarity} rarity`}
           />
         </View>
-        <Text style={styles.cardLabel} numberOfLines={1}>{label}</Text>
       </Pressable>
     </Animated.View>
   );

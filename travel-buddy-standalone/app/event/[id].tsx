@@ -39,8 +39,10 @@ import {
   getEvent,
   saveEvent, unsaveEvent, shareEvent, reportEvent, addEventToTrip,
   buildRentBuddyCtaUrl, shouldShowRentBuddyCta,
-  type EventDetail, type EventRsvpStatus,
+  getEventReminders, createEventReminder, deleteEventReminder,
+  type EventDetail, type EventRsvpStatus, type EventReminder,
 } from '../../src/services/events';
+import { scheduleLocalNotificationAt, cancelScheduledNotification } from '../../src/lib/safeNotifications';
 import { checkCityAvailable, getTopInCity, type BuddyProfile } from '../../src/services/rentABuddy';
 import { BuddyCard, BuddyCardSkeleton } from '../../src/components/BuddyCard';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
@@ -58,7 +60,7 @@ import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import { primaryIdentityText } from '../../src/lib/displayIdentity';
 import { getWaitlistUiState } from '../../src/lib/waitlistState';
-import { getAttendeeActionSet, type EventLifecycleState } from '../../src/lib/eventRoleActions';
+import { getAttendeeActionSet, effectiveEventState, type EventLifecycleState } from '../../src/lib/eventRoleActions';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { useStickyBarInset } from '../../src/hooks/useBottomInset';
 import { FOCUS_REFETCH_TTL_MS } from '../../src/hooks/usePosts';
@@ -182,6 +184,10 @@ export default function EventDetailScreen() {
   const aiCoverOpacity = useRef(new Animated.Value(0)).current;
   // Venue contact info enriched from FSQ via coordinates — null = loading/unavailable.
   const [venueInfo, setVenueInfo] = useState<VenueContactInfo | null>(null);
+  // Reminders — the viewer's own upcoming (unsent) reminder for this event, if any.
+  const [reminder, setReminder] = useState<EventReminder | null>(null);
+  const [reminderBusy, setReminderBusy] = useState(false);
+  const reminderNotifIdRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -379,6 +385,98 @@ export default function EventDetailScreen() {
     }
   }
 
+  // ── Reminders ──────────────────────────────────────────────────────────────
+  // Load the viewer's own upcoming reminder (if any) once the event is known,
+  // so the button correctly shows "Reminder set" after navigating back in.
+  useEffect(() => {
+    if (!event) return;
+    let cancelled = false;
+    getEventReminders(event.id).then((res) => {
+      if (cancelled || !res.ok) return;
+      const upcoming = (res.data?.reminders ?? []).find((r) => !r.sent) ?? null;
+      setReminder(upcoming);
+    });
+    return () => { cancelled = true; };
+  }, [event?.id]);
+
+  const REMINDER_OFFSETS: Array<{ label: string; minutesBefore: number }> = [
+    { label: '15 minutes before', minutesBefore: 15 },
+    { label: '1 hour before', minutesBefore: 60 },
+    { label: '1 day before', minutesBefore: 60 * 24 },
+  ];
+
+  async function scheduleReminder(minutesBefore: number) {
+    if (!event?.startsAt) return;
+    const remindAt = new Date(new Date(event.startsAt).getTime() - minutesBefore * 60_000);
+    if (remindAt.getTime() <= Date.now()) {
+      Alert.alert('Too late', 'That reminder time has already passed for this event.');
+      return;
+    }
+    setReminderBusy(true);
+    const res = await createEventReminder(event.id, remindAt.toISOString());
+    setReminderBusy(false);
+    if (!res.ok || !res.data) {
+      Alert.alert('Could not set reminder', res.message ?? 'Something went wrong.');
+      return;
+    }
+    setReminder(res.data);
+    const notifId = await scheduleLocalNotificationAt(remindAt, {
+      title: event.title,
+      body: `Starting soon — ${formatEventLocationLine(event.locationName, event.city)}`.trim(),
+      data: { url: `/event/${event.id}` },
+    });
+    reminderNotifIdRef.current = notifId;
+  }
+
+  async function handleCancelReminder() {
+    if (!event || !reminder) return;
+    setReminderBusy(true);
+    const res = await deleteEventReminder(event.id, reminder.id);
+    setReminderBusy(false);
+    if (!res.ok) {
+      Alert.alert('Could not remove reminder', res.message ?? 'Something went wrong.');
+      return;
+    }
+    await cancelScheduledNotification(reminderNotifIdRef.current);
+    reminderNotifIdRef.current = null;
+    setReminder(null);
+  }
+
+  function handleReminderPress() {
+    if (!event || reminderBusy) return;
+    if (reminder) {
+      Alert.alert('Reminder set', `We'll remind you at ${new Date(reminder.remindAt).toLocaleString()}.`, [
+        { text: 'Keep it', style: 'cancel' },
+        { text: 'Remove reminder', style: 'destructive', onPress: handleCancelReminder },
+      ]);
+      return;
+    }
+    if (!event.startsAt) {
+      Alert.alert('No date set', 'This event does not have a start time yet.');
+      return;
+    }
+    const options = [...REMINDER_OFFSETS.map((o) => o.label), 'Cancel'];
+    const cancelButtonIndex = options.length - 1;
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options, cancelButtonIndex },
+        (index) => {
+          if (index === cancelButtonIndex) return;
+          scheduleReminder(REMINDER_OFFSETS[index].minutesBefore);
+        },
+      );
+    } else {
+      Alert.alert(
+        'Remind me',
+        undefined,
+        [
+          ...REMINDER_OFFSETS.map((o) => ({ text: o.label, onPress: () => scheduleReminder(o.minutesBefore) })),
+          { text: 'Cancel', style: 'cancel' as const },
+        ],
+      );
+    }
+  }
+
   // ── Save ───────────────────────────────────────────────────────────────────
   async function handleSaveToggle() {
     if (!event) return;
@@ -475,10 +573,15 @@ export default function EventDetailScreen() {
     myRsvp: event.myRsvp ?? null,
   }) : 'not_on_waitlist';
 
+  // Correct for events whose date has passed while the server's stored
+  // `state` is still an active one — see effectiveEventState doc comment.
+  const displayState: EventLifecycleState | null = event
+    ? effectiveEventState(event.state as EventLifecycleState, event.startsAt, event.endsAt)
+    : null;
   const attendeeActions = event
-    ? getAttendeeActionSet(event.myRole ?? null, event.state as EventLifecycleState)
+    ? getAttendeeActionSet(event.myRole ?? null, displayState as EventLifecycleState)
     : { canRsvp: false, canLeave: false, canJoinWaitlist: false };
-  const stateBadge = event ? (STATE_BADGE[event.state] ?? STATE_BADGE.open) : null;
+  const stateBadge = event ? (STATE_BADGE[displayState as string] ?? STATE_BADGE.open) : null;
 
   // ── Eligibility gate ───────────────────────────────────────────────────────
   function getEligibilityBlock(): string | null {
@@ -932,10 +1035,18 @@ export default function EventDetailScreen() {
                   <Text style={styles.entryBtnText}>Event chat</Text>
                 </Pressable>
               )}
-              {/* Reminders — not yet built; shown as disabled coming-soon button */}
-              <Pressable style={[styles.entryBtn, styles.entryBtnDisabled]} disabled>
-                <Bell size={16} color={color.faint} />
-                <Text style={[styles.entryBtnText, styles.entryBtnTextDisabled]}>Reminders</Text>
+              {/* Reminders */}
+              <Pressable
+                style={[styles.entryBtn, reminder && { borderColor: '#16A34A' }]}
+                onPress={handleReminderPress}
+                disabled={reminderBusy}
+              >
+                {reminderBusy
+                  ? <ActivityIndicator size="small" color={color.signal} />
+                  : <Bell size={16} color={reminder ? '#16A34A' : color.signal} />}
+                <Text style={[styles.entryBtnText, reminder && { color: '#16A34A' }]}>
+                  {reminder ? 'Reminder set' : 'Reminders'}
+                </Text>
               </Pressable>
               {/* Add to trip / Add to Itinerary */}
               {tripIdParam ? (
@@ -1042,8 +1153,9 @@ export default function EventDetailScreen() {
               </Pressable>
             )}
 
-            {/* Reviews — shown once event is completed */}
-            {event.state === 'completed' && (
+            {/* Reviews — shown once event is completed (including past events whose
+                stored state hasn't been swept to 'completed' server-side yet) */}
+            {displayState === 'completed' && (
               <ReviewsSection
                 entityType="event"
                 entityId={event.id}

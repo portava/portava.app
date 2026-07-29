@@ -128,6 +128,9 @@ jest.mock('../../../src/services/events', () => ({
   addEventToTrip:         jest.fn(),
   buildRentBuddyCtaUrl:   jest.fn().mockReturnValue(''),
   shouldShowRentBuddyCta: jest.fn().mockReturnValue(false),
+  getEventReminders:      jest.fn().mockResolvedValue({ ok: true, data: { reminders: [] } }),
+  createEventReminder:    jest.fn(),
+  deleteEventReminder:    jest.fn(),
 }));
 
 // NOTE: intentional stub — not under test here.
@@ -150,6 +153,7 @@ jest.mock('../../../src/lib/eventRoleActions', () => ({
   getAttendeeActionSet: jest.fn().mockReturnValue({
     canRsvp: false, canLeave: false, canJoinWaitlist: false,
   }),
+  effectiveEventState: jest.fn((state) => state),
 }));
 
 // ── Heavy sub-components — null stubs ─────────────────────────────────────────

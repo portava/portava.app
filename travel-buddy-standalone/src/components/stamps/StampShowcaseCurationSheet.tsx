@@ -8,12 +8,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, Modal, Pressable, StyleSheet, Animated, PanResponder,
-  ScrollView, Image, ActivityIndicator,
+  ScrollView, ActivityIndicator,
 } from 'react-native';
 import { GripVertical, Check } from 'lucide-react-native';
 import type { PassportStampNew } from '../../services/passportStamps.ts';
 import { saveShowcase, MAX_SHOWCASE } from '../../services/stampShowcase.ts';
 import { toLegacyStamp } from '../../services/passportStampMappers.ts';
+import { UniversalStampArtwork } from './UniversalStampArtwork.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
 import { RARITY_COLORS, normalizeRarity } from '../../lib/stampRarity.ts';
@@ -177,16 +178,13 @@ export function StampShowcaseCurationSheet({
                 >
                   {/* Artwork */}
                   <View style={cs.artFrame}>
-                    {artUrl ? (
-                      <Image
-                        source={{ uri: artUrl }}
-                        style={cs.artImg}
-                        resizeMode="cover"
-                        accessibilityIgnoresInvertColors
-                      />
-                    ) : (
-                      <View style={[cs.artImg, { backgroundColor: color.haze }]} />
-                    )}
+                    <UniversalStampArtwork
+                      activeArtworkUrl={artUrl}
+                      thumbnailUrl={stamp.thumbnailUrl}
+                      stamp={legacy}
+                      size={ROW_HEIGHT - 16}
+                      showPendingLabel={false}
+                    />
                     <View style={[cs.rarityDot, { backgroundColor: rarityColor }]} />
                   </View>
 
@@ -247,16 +245,13 @@ export function StampShowcaseCurationSheet({
                     accessibilityState={{ checked: false }}
                   >
                     <View style={cs.artFrame}>
-                      {artUrl ? (
-                        <Image
-                          source={{ uri: artUrl }}
-                          style={cs.artImg}
-                          resizeMode="cover"
-                          accessibilityIgnoresInvertColors
-                        />
-                      ) : (
-                        <View style={[cs.artImg, { backgroundColor: color.haze }]} />
-                      )}
+                      <UniversalStampArtwork
+                        activeArtworkUrl={artUrl}
+                        thumbnailUrl={stamp.thumbnailUrl}
+                        stamp={legacy}
+                        size={ROW_HEIGHT - 16}
+                        showPendingLabel={false}
+                      />
                       <View style={[cs.rarityDot, { backgroundColor: rarityColor }]} />
                     </View>
                     <View style={cs.rowInfo}>

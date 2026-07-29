@@ -61,7 +61,8 @@ jest.mock('../../services/passportStampMappers', () => ({
   toLegacyStamp: (s: any) => ({
     id: s.id,
     label: s.titleOverride ?? s.definition?.name ?? s.id,
-    type: s.stampType,
+    kind: 'city',
+    rarity: s.definition?.rarity ?? 'common',
     locked: false,
   }),
 }));
