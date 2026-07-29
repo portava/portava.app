@@ -1369,6 +1369,13 @@ export interface LaunchStatusResponse {
   waitlistOpen: boolean;
   applicationsOpen: boolean;
   targetLaunchDate: string | null;
+  /** The public_mvp city with the highest real availability when this city
+   * is live but has zero buddies online right now. null when no other live
+   * city has anyone available either. Never implies these buddies are local
+   * to the viewer's city — the UI must label them with this city name. */
+  suggestedCity?: string | null;
+  /** Available-now count in suggestedCity at query time. */
+  suggestedCityAvailableCount?: number;
 }
 
 export interface CityLaunchItem {

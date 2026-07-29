@@ -1197,6 +1197,42 @@ router.get("/rent-buddy/launch-status", asyncHandler(async (req, res) => {
     .eq("available_now", true)
     .ilike("city", trimmedCity);
 
+  // When the viewer's city is live but has nobody online right now, find the
+  // best alternative public_mvp city — the one with the highest
+  // available_now count. This lets the UI surface real buddies from elsewhere
+  // with honest labelling ("available in Miami") instead of a dead end.
+  // Only computed when needed (avoids extra DB work for the common case).
+  let suggestedCity: string | null = null;
+  let suggestedCityAvailableCount = 0;
+
+  if (status === "public_mvp" && (availableNowCount ?? 0) === 0) {
+    const { data: publicCities } = await sc
+      .from("rent_buddy_city_rollouts")
+      .select("city")
+      .eq("status", "public_mvp")
+      .not("city", "ilike", trimmedCity);
+
+    if (publicCities && (publicCities as any[]).length > 0) {
+      const counts = await Promise.all(
+        (publicCities as any[]).map(async (row: any) => {
+          const { count } = await sc
+            .from("rent_buddy_profiles")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "active")
+            .eq("admin_status", "active")
+            .eq("available_now", true)
+            .ilike("city", row.city);
+          return { city: row.city as string, count: count ?? 0 };
+        }),
+      );
+      counts.sort((a, b) => b.count - a.count);
+      if (counts[0]?.count > 0) {
+        suggestedCity = counts[0].city;
+        suggestedCityAvailableCount = counts[0].count;
+      }
+    }
+  }
+
   return res.json({
     city,
     status,
@@ -1207,6 +1243,11 @@ router.get("/rent-buddy/launch-status", asyncHandler(async (req, res) => {
     betaAvailable: status === "beta_testing",
     waitlistOpen: status !== "disabled" && status !== "suspended",
     applicationsOpen: status === "buddy_applications_open" || status === "internal_testing" || status === "beta_testing" || status === "public_mvp",
+    /** Populated only when this city is live but has zero available buddies.
+     *  The public_mvp city with the highest real availability count among all
+     *  other live cities. null when no other city has anyone online either. */
+    suggestedCity,
+    suggestedCityAvailableCount,
   });
 }));
 

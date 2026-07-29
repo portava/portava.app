@@ -15,7 +15,7 @@ import {
 } from '../../src/components/primitives';
 import { Stamp } from '../../src/components/ui';
 import { BuddyCard, BuddyCardSkeleton } from '../../src/components/BuddyCard';
-import { searchBuddies, getLaunchStatus, getAvailableNow, type BuddyProfile } from '../../src/services/rentABuddy';
+import { searchBuddies, getLaunchStatus, getAvailableNow, type BuddyProfile, type LaunchStatusResponse } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
 import type { Place } from '../../src/lib/location/placeTypes';
@@ -72,31 +72,22 @@ function SafetyAccordion() {
 
 // ── City availability banner ──────────────────────────────────────────────────
 
-type LaunchInfo = {
-  status: string;
-  message: string;
-  available: boolean;
-  betaAvailable: boolean;
-  waitlistOpen: boolean;
-};
-
-function CityAvailabilityBanner({ city, availableNowCount }: { city: string; availableNowCount: number | null }) {
-  const [info, setInfo] = useState<LaunchInfo | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (city.trim().length <= 2) { setInfo(null); return; }
-    let cancelled = false;
-    const timer = setTimeout(async () => {
-      setLoading(true);
-      const r = await getLaunchStatus(city.trim());
-      if (cancelled) return;
-      setLoading(false);
-      if (r.ok) setInfo(r.data as LaunchInfo);
-    }, 700);
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [city]);
-
+/**
+ * Receives launch-status data from the parent — the parent owns the fetch so
+ * the same result can drive both the banner text and the suggested-city
+ * buddies strip without two separate network calls.
+ */
+function CityAvailabilityBanner({
+  city,
+  info,
+  loading,
+  availableNowCount,
+}: {
+  city: string;
+  info: LaunchStatusResponse | null;
+  loading: boolean;
+  availableNowCount: number | null;
+}) {
   if (city.trim().length <= 2) return null;
   if (loading) return (
     <View style={bannerStyles.loading}>
@@ -110,7 +101,6 @@ function CityAvailabilityBanner({ city, availableNowCount }: { city: string; ava
   const isBeta      = info.status === 'beta_testing';
   const isPaused    = info.status === 'paused' || info.status === 'suspended';
   const isWaitlist  = info.status === 'waitlist_only' || info.status === 'buddy_applications_open' || info.status === 'internal_testing';
-  const isDisabled  = info.status === 'disabled';
 
   // `isLive` only means the city has been rolled out to public MVP — it does
   // NOT mean a buddy is online right now. Previously this rendered a green
@@ -120,9 +110,17 @@ function CityAvailabilityBanner({ city, availableNowCount }: { city: string; ava
   // same city on the same screen. Fold real availability into THIS banner so
   // there is exactly one message about the city, and it can never lie.
   const hasNoBuddiesRightNow = isLive && availableNowCount != null && availableNowCount === 0;
-  const effectiveMessage = hasNoBuddiesRightNow
-    ? `Rent a Buddy is live in ${city} — no buddies are online right now. Check back soon, or browse other live cities below.`
-    : info.message;
+
+  let effectiveMessage: string;
+  if (hasNoBuddiesRightNow) {
+    if (info.suggestedCity) {
+      effectiveMessage = `No Buddies in ${city} right now — available in ${info.suggestedCity} below.`;
+    } else {
+      effectiveMessage = `Rent a Buddy is live in ${city} — no buddies are online right now. Check back soon.`;
+    }
+  } else {
+    effectiveMessage = info.message;
+  }
 
   const bannerColor = hasNoBuddiesRightNow ? '#F59E0B15'
     : isLive   ? '#10B98115'
@@ -191,6 +189,18 @@ export default function RentABuddyLanding() {
   const [availableNow, setAvailableNow] = useState<BuddyProfile[]>([]);
   const [availableNowCity, setAvailableNowCity] = useState<string | null>(null);
 
+  // Launch-status fetch is owned by the parent so both the city banner and
+  // the suggested-city buddies strip can share the same API result without
+  // a second network call.
+  const [launchInfo, setLaunchInfo] = useState<LaunchStatusResponse | null>(null);
+  const [launchInfoLoading, setLaunchInfoLoading] = useState(false);
+
+  // When the viewer's city is live but has zero available buddies, the API
+  // returns a suggestedCity — the public_mvp city with the most real
+  // availability. We fetch and surface those buddies with an honest label.
+  const [suggestedCityBuddies, setSuggestedCityBuddies] = useState<BuddyProfile[]>([]);
+  const [suggestedCity, setSuggestedCity] = useState<string | null>(null);
+
   const loadTopBuddies = useCallback(async (searchCity: string) => {
     if (!searchCity.trim()) return;
     setLoadingTop(true);
@@ -200,15 +210,64 @@ export default function RentABuddyLanding() {
     else setTopBuddies([]);
   }, []);
 
+  // Available-now buddies for the typed city.
   useEffect(() => {
-    if (city.trim().length < 2) return;
+    if (city.trim().length < 2) {
+      setAvailableNow([]);
+      setAvailableNowCity(null);
+      return;
+    }
+    let cancelled = false;
     getAvailableNow(city).then(res => {
+      if (cancelled) return;
       if (res.ok) {
         setAvailableNow(res.data.buddies.slice(0, 6));
         setAvailableNowCity(city);
       }
     }).catch(() => {});
+    return () => { cancelled = true; };
   }, [city]);
+
+  // Launch-status (debounced) — drives both the city banner and suggestedCity.
+  useEffect(() => {
+    if (city.trim().length <= 2) {
+      setLaunchInfo(null);
+      setSuggestedCity(null);
+      setSuggestedCityBuddies([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setLaunchInfoLoading(true);
+      const r = await getLaunchStatus(city.trim());
+      if (cancelled) return;
+      setLaunchInfoLoading(false);
+      setLaunchInfo(r.ok ? r.data : null);
+    }, 700);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [city]);
+
+  // When we have a suggestedCity and the viewer's city has no one available,
+  // fetch that city's available buddies.  Clear whenever local buddies appear
+  // or the city changes.
+  useEffect(() => {
+    const sc = launchInfo?.suggestedCity ?? null;
+    const noLocalBuddies = availableNowCity === city && availableNow.length === 0;
+    if (!sc || !noLocalBuddies) {
+      setSuggestedCity(null);
+      setSuggestedCityBuddies([]);
+      return;
+    }
+    let cancelled = false;
+    getAvailableNow(sc).then(res => {
+      if (cancelled) return;
+      if (res.ok && res.data.buddies.length > 0) {
+        setSuggestedCity(sc);
+        setSuggestedCityBuddies(res.data.buddies.slice(0, 6));
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [launchInfo?.suggestedCity, availableNow.length, availableNowCity, city]);
 
   useEffect(() => {
     if (city.trim().length > 2) {
@@ -282,11 +341,13 @@ export default function RentABuddyLanding() {
         usedFor="buddy_search"
       />
 
-      {/* City availability banner — shown when city is typed. Fed the same
+      {/* City availability banner — fed the same launch-status data and
           availableNow count used by the list below so the two can never
           disagree (one honest claim per city, not two). */}
       <CityAvailabilityBanner
         city={city}
+        info={launchInfo}
+        loading={launchInfoLoading}
         availableNowCount={availableNowCity === city ? availableNow.length : null}
       />
 
@@ -297,6 +358,7 @@ export default function RentABuddyLanding() {
         onAction={() => router.push('/(rent-a-buddy)/search' as any)}
       />
       {availableNow.length > 0 ? (
+        // Local city has buddies online — show them directly.
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -317,7 +379,46 @@ export default function RentABuddyLanding() {
             </Pressable>
           ))}
         </ScrollView>
+      ) : suggestedCityBuddies.length > 0 && suggestedCity ? (
+        // Viewer's city is live but empty — show real buddies from the nearest
+        // live city that has availability, with an honest label so we never
+        // imply they are local to the viewer's city.
+        <View>
+          <View style={styles.suggestedCityLabel}>
+            <MapPin size={13} color={color.mute} />
+            <Text style={styles.suggestedCityLabelText}>
+              {`No Buddies in ${city} right now — available in ${suggestedCity}`}
+            </Text>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: space.lg, paddingBottom: space.sm, gap: space.md }}
+          >
+            {suggestedCityBuddies.map(b => (
+              <Pressable
+                key={b.id}
+                style={{ width: 140 }}
+                onPress={() => router.push(`/(rent-a-buddy)/buddy/${b.id}` as any)}
+              >
+                <BuddyCard
+                  buddy={b}
+                  compact
+                  availableNow
+                  onBook={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: b.id } })}
+                />
+              </Pressable>
+            ))}
+          </ScrollView>
+          <Pressable
+            style={{ paddingHorizontal: space.lg, paddingTop: space.xs, paddingBottom: space.sm }}
+            onPress={() => router.push({ pathname: '/(rent-a-buddy)/search' as any, params: { city: suggestedCity } })}
+          >
+            <Text style={styles.suggestedCityLink}>{`See all Buddies in ${suggestedCity} →`}</Text>
+          </Pressable>
+        </View>
       ) : (
+        // No local buddies and no suggested city — plain empty state.
         <View style={{ paddingHorizontal: space.lg, paddingVertical: space.sm }}>
           <Text style={{ color: color.mute, fontSize: 14, lineHeight: 20 }}>
             {availableNowCity
@@ -475,6 +576,9 @@ const styles = StyleSheet.create({
   noCity: { padding: space.lg, alignItems: 'center', gap: space.sm },
   noCityText: { ...t.body, color: color.mute, textAlign: 'center' },
   noCityLink: { ...t.bodyStrong, color: color.signal },
+  suggestedCityLabel: { flexDirection: 'row', alignItems: 'center', gap: space.xs, paddingHorizontal: space.lg, paddingBottom: space.xs },
+  suggestedCityLabelText: { ...t.small, color: color.mute, flex: 1, lineHeight: 18 },
+  suggestedCityLink: { ...t.small, fontWeight: '700', color: color.signal },
   categoryGrid: {
     flexDirection: 'row', flexWrap: 'wrap',
     paddingHorizontal: space.lg, gap: space.md, marginTop: space.sm,
