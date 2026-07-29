@@ -1,3 +1,5 @@
+- [Singleton animation lock + stale-ref race](stamp-animation-lock-race.md) — a single app-wide `isAnimatingRef` boolean can get stuck true forever from one interrupted animation, silently no-op'ing every future trigger; always pair with a watchdog timeout.
+- [Duplicate unmigrated stamp tables](stamp-tables-schema-drift.md) — content_stamps/media_stamp_reactions/passport_stamps can all exist as migration files but be missing/stale live; verify with a real query, not just grep.
 - [Private-account feed guard](private-account-feed-guard.md) — post.visibility='public' is not enough; must also filter by author profile.is_private; shared utility in src/lib/privacyFilter.ts.
 - [resolveInteractionPermissions silent catch](resolve-interaction-permissions-catch.md) — has a broad catch that silently leaves flags as false; use direct friend_requests queries (like search endpoint) for critical flag-setting in passport limited_preview.
 - [radius token values](radius-token-values.md) — only sm/md/lg/pill exist; radius.xl throws TS2339. Use hardcoded 24 for sheet corner radii.

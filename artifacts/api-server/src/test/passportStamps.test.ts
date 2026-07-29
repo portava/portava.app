@@ -132,6 +132,15 @@ function makeFakeClient(state: FakeState, userId: string) {
       const tableData: Record<string, any[]> = {
         feature_flags: Object.entries(state.featureFlags ?? {}).map(([key, enabled]) => ({ flag: key, enabled })),
         passport_stamps: state.stamps ?? [],
+        // buildStats (Passport Countries/Cities stat) reads from the live
+        // user_stamps table, not the legacy passport_stamps table it used to
+        // read — mirror the same fixture rows here, with stamp_type synthesized
+        // into a joined stamp_definitions.category shape.
+        user_stamps: (state.stamps ?? []).map((s) => ({
+          ...s,
+          is_revoked: s.is_revoked ?? false,
+          stamp_definitions: { category: s.stamp_type },
+        })),
         passport_memories: state.memories ?? [],
         passport_contribution_events: state.contributions ?? [],
         location_preferences: state.locationPrefs ?? [],

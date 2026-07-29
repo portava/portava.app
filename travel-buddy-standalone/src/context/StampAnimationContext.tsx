@@ -237,9 +237,31 @@ export function StampAnimationProvider({ children }: PropsWithChildren) {
 
   const triggerStamp = useCallback(
     (params: StampTriggerParams) => {
-      if (isAnimatingRef.current) return;
+      if (isAnimatingRef.current) {
+        // This is a SINGLETON lock shared by every cell in the whole app.
+        // If any prior animation's completion callback never fired (e.g. the
+        // cell that launched it was unmounted mid-sequence by FlatList
+        // recycling during a fast scroll), this lock is stuck true FOREVER —
+        // every stamp tap anywhere in the app becomes a silent no-op with no
+        // error. The watchdog below (added 2026-07-28) exists to prevent
+        // that; this log lets us confirm if we're hitting the stuck-lock case
+        // in production.
+        console.log('[STAMP_DEBUG] triggerStamp SKIPPED — isAnimatingRef already true (possible stuck lock from a prior interrupted animation)');
+        return;
+      }
       isAnimatingRef.current = true;
       setIsAnimating(true);
+
+      // Watchdog (2026-07-28 fix): force-unlock if fireComplete never runs
+      // within a safe upper bound, so one interrupted animation can never
+      // permanently disable stamping app-wide.
+      const watchdogId = setTimeout(() => {
+        if (isAnimatingRef.current) {
+          console.log('[STAMP_DEBUG] triggerStamp WATCHDOG fired — force-unlocking stuck isAnimatingRef');
+          isAnimatingRef.current = false;
+          setIsAnimating(false);
+        }
+      }, 2500);
 
       const {
         launchX,
@@ -266,6 +288,7 @@ export function StampAnimationProvider({ children }: PropsWithChildren) {
         onImpact();
       };
       const fireComplete = () => {
+        clearTimeout(watchdogId);
         isAnimatingRef.current = false;
         setIsAnimating(false);
         onComplete?.();

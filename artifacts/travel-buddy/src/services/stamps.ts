@@ -249,20 +249,28 @@ export async function stampEntity(
   entityId: string,
 ): Promise<ApiResult<EntityStampResult>> {
   const token = await freshToken();
-  if (!token) return { ok: false, message: 'Not authenticated' };
+  console.log('[STAMP_DEBUG] stampEntity() called', { entityType, entityId, hasToken: !!token, apiBase: apiBase() });
+  if (!token) {
+    console.log('[STAMP_DEBUG] stampEntity() — no auth token, aborting');
+    return { ok: false, message: 'Not authenticated' };
+  }
   try {
     const res = await fetch(`${apiBase()}/api/stamps`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ entityType, entityId }),
     });
+    console.log('[STAMP_DEBUG] stampEntity() response status', res.status);
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
+      console.log('[STAMP_DEBUG] stampEntity() FAILED', body);
       return { ok: false, message: (body as any)?.message ?? `API ${res.status}` };
     }
     const data = await res.json().catch(() => ({}));
+    console.log('[STAMP_DEBUG] stampEntity() SUCCESS body', data);
     return { ok: true, data: { count: (data as any).stampCount ?? 0, isStamped: true } };
   } catch (e) {
+    console.log('[STAMP_DEBUG] stampEntity() THREW', e);
     return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
   }
 }

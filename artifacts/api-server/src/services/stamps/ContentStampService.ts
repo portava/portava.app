@@ -89,6 +89,36 @@ export async function unstampEntity(
 }
 
 /**
+ * Count content_stamps received on a user's own posts/media (i.e. stamps
+ * *given by other people* on this user's content) — this is the "Stamps
+ * Earned" signal for the Passport/profile STAMPS stat, separate from
+ * passport_stamps/user_stamps (milestone awards like "first trip", "Bohol").
+ *
+ * Bug fix (2026-07-28): profile/passport "Stamps Earned" previously only
+ * counted passport_stamps milestone rows, so stamping someone's Watch post
+ * never moved their STAMPS counter. This closes that gap.
+ */
+export async function countStampsReceived(
+  db: SupabaseClient,
+  userId: string,
+): Promise<number> {
+  const { data: myPosts, error: postsErr } = await db
+    .from("posts")
+    .select("id")
+    .eq("author_id", userId);
+  if (postsErr || !myPosts || myPosts.length === 0) return 0;
+
+  const postIds = myPosts.map((p: any) => p.id);
+  const { count, error } = await db
+    .from("content_stamps")
+    .select("id", { count: "exact", head: true })
+    .in("entity_type", ["post", "media"])
+    .in("entity_id", postIds);
+  if (error) return 0;
+  return count ?? 0;
+}
+
+/**
  * Fetch current stamp count + viewer state for a single entity.
  */
 export async function getStampState(

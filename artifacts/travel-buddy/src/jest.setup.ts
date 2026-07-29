@@ -71,4 +71,21 @@ console.error = (...args: Parameters<typeof console.error>) => {
   _originalConsoleError(...args);
 };
 
+// ── matchMedia polyfill (web renderer only) ────────────────────────────────
+// jsdom doesn't implement matchMedia; react-native-reanimated's web build
+// reads it at import time (ReducedMotion check) so *.webrender.test.tsx
+// files crash on import without this.
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
+  window.matchMedia = ((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+}
+
 export {};

@@ -116,14 +116,21 @@ export async function buildStats(
   safeReturnStamps: number;
   totalStamps: number;
 }> {
+  // Bug fix (2026-07-28): this previously read from `passport_stamps`, a stale
+  // legacy table (last write 2026-05-10) that the live award pipeline
+  // (src/routes/posts.ts trip/location-milestone stamps) never writes to.
+  // Live stamp awards land in `user_stamps` — read from there instead, joined
+  // to stamp_definitions for the plan/host/hidden_gem/safe_return category
+  // breakdown that passport_stamps.stamp_type used to provide.
   const { data, error } = await db
-    .from("passport_stamps")
-    .select("stamp_type, country, city, neighborhood, visibility")
-    .eq("user_id", userId);
+    .from("user_stamps")
+    .select("country, city, visibility, is_revoked, stamp_definitions(category)")
+    .eq("user_id", userId)
+    .eq("is_revoked", false);
 
   if (error || !data) {
     if (error) {
-      logger.error({ table: "passport_stamps", op: "select", message: error.message }, "buildStats failed");
+      logger.error({ table: "user_stamps", op: "select", message: error.message }, "buildStats failed");
     }
     return {
       countries: 0, cities: 0, neighborhoods: 0,
@@ -141,11 +148,11 @@ export async function buildStats(
   for (const r of rows) {
     if (r.country) countries.add(r.country);
     if (r.city) cities.add(r.city);
-    if (r.neighborhood) neighborhoods.add(r.neighborhood);
-    if (r.stamp_type === "plan") planStamps++;
-    if (r.stamp_type === "host") hostStamps++;
-    if (r.stamp_type === "hidden_gem") hiddenGemStamps++;
-    if (r.stamp_type === "safe_return") safeReturnStamps++;
+    const category = r.stamp_definitions?.category;
+    if (category === "plan") planStamps++;
+    if (category === "host") hostStamps++;
+    if (category === "hidden_gem") hiddenGemStamps++;
+    if (category === "safe_return") safeReturnStamps++;
   }
 
   return {

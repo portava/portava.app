@@ -13,6 +13,7 @@ import {
   toFullProfileView,
 } from "../lib/privacy/profileSerializers.js";
 import { computeTrustScore } from "../lib/trustScore.js";
+import { countStampsReceived } from "../services/stamps/ContentStampService.js";
 
 const router = Router();
 
@@ -324,6 +325,8 @@ router.get("/users/:username/passport", async (req, res) => {
   let trustLabel: string | null = null;
   let trustScoreBreakdown: import("../lib/trustScore.js").TrustScoreBreakdown | null = null;
   let stampsEarned = 0;
+  let milestoneStampsEarned = 0;
+  let contentStampsReceivedForTarget = 0;
 
   await Promise.allSettled([
     (async () => {
@@ -350,12 +353,22 @@ router.get("/users/:username/passport", async (req, res) => {
           .select("id", { count: "exact", head: true })
           .eq("user_id", targetId)
           .eq("is_revoked", false);
-        stampsEarned = count ?? 0;
+        milestoneStampsEarned = count ?? 0;
+      } catch {
+        /* non-critical */
+      }
+    })(),
+    (async () => {
+      try {
+        // Stamps received on this user's own posts/media (Roam/Watch stamp
+        // reactions from others), so STAMPS reflects content reactions too.
+        contentStampsReceivedForTarget = await countStampsReceived(sc, targetId);
       } catch {
         /* non-critical */
       }
     })(),
   ]);
+  stampsEarned = milestoneStampsEarned + contentStampsReceivedForTarget;
 
   res.status(200).json({
     ...profilePayload,

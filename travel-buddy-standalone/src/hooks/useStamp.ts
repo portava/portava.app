@@ -21,8 +21,14 @@ export interface UseStampReturn {
   isStamped: boolean;
   /** True while the API call is in-flight (prevents double-taps). */
   isLoading: boolean;
-  /** Toggle stamp state. Resolves after the API call completes (or fails). */
-  toggle: () => Promise<void>;
+  /**
+   * Toggle stamp state. Resolves after the API call completes (or fails)
+   * with the FINAL confirmed { isStamped, count } — callers that need the
+   * authoritative post-toggle state (e.g. an animation's onComplete) should
+   * use this return value rather than re-reading component state via a ref,
+   * which can race ahead of a still-in-flight request.
+   */
+  toggle: () => Promise<{ isStamped: boolean; count: number }>;
 }
 
 export function useStamp({
@@ -36,15 +42,17 @@ export function useStamp({
   const [isLoading, setIsLoading] = useState(false);
 
   const toggle = useCallback(async () => {
-    if (isLoading) return;
+    if (isLoading) return { isStamped, count };
     setIsLoading(true);
 
     const wasStamped = isStamped;
     const prevCount  = count;
+    const optimisticIsStamped = !wasStamped;
+    const optimisticCount = wasStamped ? Math.max(0, prevCount - 1) : prevCount + 1;
 
     // Optimistic update
-    setIsStamped(!wasStamped);
-    setCount(wasStamped ? Math.max(0, prevCount - 1) : prevCount + 1);
+    setIsStamped(optimisticIsStamped);
+    setCount(optimisticCount);
 
     try {
       const result = wasStamped
@@ -54,14 +62,17 @@ export function useStamp({
       if (result.ok) {
         setIsStamped(result.data.isStamped);
         setCount(result.data.count);
+        return result.data;
       } else {
         // Server rejected — roll back silently
         setIsStamped(wasStamped);
         setCount(prevCount);
+        return { isStamped: wasStamped, count: prevCount };
       }
     } catch {
       setIsStamped(wasStamped);
       setCount(prevCount);
+      return { isStamped: wasStamped, count: prevCount };
     } finally {
       setIsLoading(false);
     }

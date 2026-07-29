@@ -21,7 +21,7 @@
  * Cinematic gradient scrim behind the content for readability.
  */
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import Animated from 'react-native-reanimated';
 import {
   View,
@@ -58,9 +58,6 @@ import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
 import { FeaturedBadge } from '../FeaturedBadge.tsx';
 import { useFollow } from '../../hooks/useFollow.ts';
 import type { MediaFeedItem } from '../../types/media.ts';
-import { useStamp } from '../../hooks/useStamp.ts';
-import { useStampAnimation } from '../../hooks/useStampAnimation.ts';
-import { useStampAnimationContext } from '../../context/StampAnimationContext.tsx';
 import { StampIcon } from '../stamps/StampIcon.tsx';
 import { VerifiedLocationStamp } from './VerifiedLocationStamp.tsx';
 import { PlaceQuickActions } from '../PlaceQuickActions.tsx';
@@ -155,6 +152,16 @@ export interface WatchItemOverlayProps {
   onMore: () => void;
   /** When true, the create button routes to /media/add-gem and shows "Add a Gem" label. */
   isGemsMode?: boolean;
+  /**
+   * Stamp state + handlers — owned by the CellWrapper's useWatchStamp() so
+   * the rail button and the double-tap-on-content gesture share ONE source
+   * of truth instead of racing each other. See useWatchStamp.ts.
+   */
+  stampGroupRef: React.RefObject<View | null>;
+  stampVisualIsStamped: boolean;
+  stampVisualCount: number;
+  stampButtonStyle: unknown;
+  onStampPress: () => void;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -167,80 +174,20 @@ export function WatchItemOverlay({
   onSave,
   onMore,
   isGemsMode = false,
+  stampGroupRef,
+  stampVisualIsStamped,
+  stampVisualCount,
+  stampButtonStyle,
+  onStampPress,
 }: WatchItemOverlayProps) {
   const insets = useSafeAreaInsets();
   const [captionExpanded, setCaptionExpanded] = useState(false);
 
-  // ── Stamp state + frame ink overlay ──────────────────────────────────────
-
-  const { count: stampCount, isStamped, isLoading: stampLoading, toggle: toggleStamp } = useStamp({
-    entityType: 'media',
-    entityId: item.id,
-    initialCount: item.stampCount ?? item.likeCount ?? 0,
-    initialIsStamped: item.isStampedByViewer ?? item.likedByMe ?? false,
+  console.log('[STAMP_DEBUG] WatchItemOverlay render', {
+    itemId: item.id,
+    stampVisualIsStamped,
+    stampVisualCount,
   });
-
-  const { buttonStyle, playStamp, playUnstamp } = useStampAnimation();
-  const { triggerStamp, isAnimating } = useStampAnimationContext();
-
-  // ── Delayed visual state (flips at stamp impact, not on press) ───────────
-  const [visualIsStamped, setVisualIsStamped] = useState(
-    item.isStampedByViewer ?? item.likedByMe ?? false,
-  );
-  const [visualCount, setVisualCount] = useState(
-    item.stampCount ?? item.likeCount ?? 0,
-  );
-  const apiStateRef   = useRef({ isStamped, count: stampCount });
-  const animatingRef  = useRef(false);
-  const heartGroupRef = useRef<View>(null);
-
-  useEffect(() => {
-    apiStateRef.current = { isStamped, count: stampCount };
-  }, [isStamped, stampCount]);
-
-  const prevApiIsStamped = useRef(isStamped);
-  const prevApiCount     = useRef(stampCount);
-  useEffect(() => {
-    if (
-      (isStamped !== prevApiIsStamped.current || stampCount !== prevApiCount.current) &&
-      !animatingRef.current
-    ) {
-      setVisualIsStamped(isStamped);
-      setVisualCount(stampCount);
-    }
-    prevApiIsStamped.current = isStamped;
-    prevApiCount.current     = stampCount;
-  }, [isStamped, stampCount]);
-
-  const handleStampPress = useCallback(() => {
-    if (stampLoading || animatingRef.current || isAnimating) return;
-    const wasStamped  = visualIsStamped;
-    const nextStamped = !wasStamped;
-    nextStamped ? playStamp() : playUnstamp();
-    void toggleStamp();
-
-    heartGroupRef.current?.measure((_x, _y, width, height, pageX, pageY) => {
-      animatingRef.current = true;
-      const { width: W, height: H } = Dimensions.get('window');
-      triggerStamp({
-        launchX: pageX + width / 2,
-        launchY: pageY + height / 2,
-        contentX: W / 2,
-        contentY: H / 2,
-        theme: 'Default',
-        onImpact: () => {
-          setVisualIsStamped(nextStamped);
-          setVisualCount(prev => nextStamped ? prev + 1 : Math.max(0, prev - 1));
-        },
-        onComplete: () => {
-          animatingRef.current = false;
-          const { isStamped: srv, count: srvCount } = apiStateRef.current;
-          setVisualIsStamped(srv);
-          setVisualCount(srvCount);
-        },
-      });
-    });
-  }, [stampLoading, isAnimating, visualIsStamped, playStamp, playUnstamp, toggleStamp, triggerStamp]);
 
   const handleCreate = useCallback(() => {
     if (isGemsMode) {
@@ -447,13 +394,13 @@ export function WatchItemOverlay({
         {/* ── Right action column ──────────────────────────────────────── */}
         <View style={s.rightCol} pointerEvents="box-none">
           {/* Stamp button — traveling ink overlay launched from this position */}
-          <View ref={heartGroupRef} style={s.heartGroup}>
-            <Animated.View style={buttonStyle as any}>
+          <View ref={stampGroupRef} style={s.heartGroup}>
+            <Animated.View style={stampButtonStyle as any}>
               <ActionBtn
-                icon={<StampIcon size={28} active={visualIsStamped} />}
-                count={visualCount}
-                onPress={handleStampPress}
-                label={visualIsStamped ? 'Unstamp' : 'Stamp'}
+                icon={<StampIcon size={28} active={stampVisualIsStamped} />}
+                count={stampVisualCount}
+                onPress={onStampPress}
+                label={stampVisualIsStamped ? 'Unstamp' : 'Stamp'}
               />
             </Animated.View>
             {/* Stamp-it count — shown when at least one viewer has Stamp It'd */}

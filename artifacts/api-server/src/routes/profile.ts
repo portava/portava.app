@@ -9,6 +9,7 @@ import { invalidateCompassHomeCache } from "./compassHome";
 import { sniffMedia, processImage, type ProcessedImage, type SniffResult } from "../lib/mediaProcessing";
 import { appMediaRef } from "../lib/postSchemas";
 import { computeTrustScore } from "../lib/trustScore.js";
+import { countStampsReceived } from "../services/stamps/ContentStampService.js";
 
 /**
  * Sniff + strip-EXIF/auto-orient an avatar/cover image. Returns the processed
@@ -417,13 +418,17 @@ router.get("/me/profile", async (req, res) => {
     // user_stamps table is absent (schema-drift safe).
     sc ? sc.from("user_stamps").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("is_revoked", false) : Promise.resolve({ count: 0 }),
   ]);
+  // Stamps received on this user's own posts/media (Roam/Watch stamp reactions
+  // from other people) — separate from the milestone-award count above, added
+  // together so STAMPS reflects both passport milestones and content reactions.
+  const contentStampsReceived = sc ? await countStampsReceived(sc, user.id) : 0;
   const hasStamp     = stampRes.status === "fulfilled" && ((stampRes.value as any).count ?? 0) > 0;
   const tripCount    = tripRes.status === "fulfilled" ? ((tripRes.value as any).count ?? 0) : 0;
   const hasTrip      = tripCount > 0;
   const followersCount = followersRes.status === "fulfilled" ? ((followersRes.value as any).count ?? 0) : 0;
   const followingCount = followingRes.status === "fulfilled" ? ((followingRes.value as any).count ?? 0) : 0;
   const trustResult  = trustRes.status === "fulfilled" ? trustRes.value : null;
-  const stampsEarned = stampsEarnedRes.status === "fulfilled" ? ((stampsEarnedRes.value as any).count ?? 0) : 0;
+  const stampsEarned = (stampsEarnedRes.status === "fulfilled" ? ((stampsEarnedRes.value as any).count ?? 0) : 0) + contentStampsReceived;
 
   const completeness = computeCompleteness(data, hasStamp, hasTrip);
 

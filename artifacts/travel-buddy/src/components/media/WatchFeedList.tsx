@@ -43,6 +43,7 @@ import { HeartBurst, type HeartBurstHandle } from './HeartBurst.tsx';
 import { RouteItPlaceSheet } from './RouteItPlaceSheet.tsx';
 import { WatchRadialMenu } from './WatchRadialMenu.tsx';
 import { useWatchPlayback } from '../../hooks/useWatchPlayback.ts';
+import { useWatchStamp } from '../../hooks/useWatchStamp.ts';
 import type { MediaFeedItem } from '../../types/media.ts';
 import { color, radius } from '../../theme/tokens.ts';
 import { usePlanPicker } from '../PlanPickerController.tsx';
@@ -104,6 +105,11 @@ const CellWrapper = React.memo(function CellWrapper({
   const cellVideoHandle = useRef<WatchVideoCellHandle>(null);
   const heartBurstRef = useRef<HeartBurstHandle>(null);
 
+  // ── Stamp state — single shared controller for the rail button AND the
+  // double-tap-on-content gesture below (bug fix: previously the rail button
+  // and double-tap each had no shared source of truth / no wiring at all).
+  const stamp = useWatchStamp(item);
+
   // ── Route It state ────────────────────────────────────────────────────────
   const [showRouteIt, setShowRouteIt] = useState(false);
   const routeItTriggeredRef = useRef(false);
@@ -152,13 +158,21 @@ const CellWrapper = React.memo(function CellWrapper({
     }
   }, []);
 
-  // ── Double-tap burst ───────────────────────────────────────────────────────
+  // ── Double-tap → Stamp ───────────────────────────────────────────────────
 
-  // Double-tap shows a heart burst animation (visual delight).
-  // Stamp state is managed by the StampButton in the overlay.
-  const handleDoubleTapBurst = useCallback(() => {
-    heartBurstRef.current?.trigger();
-  }, []);
+  // Bug fix (2026-07-28): double-tap used to only fire a heart-burst visual
+  // and had no effect on stamp state. Per the Universal Stamp spec,
+  // double-tapping anywhere on the content must trigger the full stamp
+  // animation launched FROM the tap coordinates, sharing state with the
+  // rail's stamp button via `stamp` (useWatchStamp).
+  const handleDoubleTapStamp = useCallback(
+    (x: number, y: number) => {
+      console.log('[STAMP_DEBUG] handleDoubleTapStamp fired', { x, y });
+      heartBurstRef.current?.trigger();
+      stamp.triggerAt(x, y);
+    },
+    [stamp],
+  );
 
   // ── Radial menu action callbacks ──────────────────────────────────────────
 
@@ -201,7 +215,7 @@ const CellWrapper = React.memo(function CellWrapper({
     .numberOfTaps(2)
     .maxDuration(250)
     .runOnJS(true)
-    .onEnd(() => { handleDoubleTapBurst(); });
+    .onEnd((e) => { handleDoubleTapStamp(e.absoluteX, e.absoluteY); });
 
   const singleTap = Gesture.Tap()
     .numberOfTaps(1)
@@ -254,10 +268,14 @@ const CellWrapper = React.memo(function CellWrapper({
     [],
   );
 
-  const composed = Gesture.Simultaneous(
-    Gesture.Exclusive(doubleTap, singleTap, longPress),
-    routeItPan,
-  );
+  // Bug fix (2026-07-28): these four gestures used to be composed as
+  // Simultaneous(Exclusive(tap gestures), routeItPan). Simultaneous meant the
+  // swipe-right pan could activate independently WHILE a tap/double-tap was
+  // still being recognized — a normal finger's lateral drift during a
+  // double-tap was enough to also satisfy routeItPan's 60px activeOffsetX,
+  // so double-tapping content could spuriously open the Route It sheet.
+  // A single Exclusive group ensures only one gesture ever wins per touch.
+  const composed = Gesture.Exclusive(doubleTap, singleTap, longPress, routeItPan);
 
   // ── Scrub gesture (progress bar area) ─────────────────────────────────────
 
@@ -338,6 +356,11 @@ const CellWrapper = React.memo(function CellWrapper({
         onComment={() => onComment(item.id)}
         onSave={() => onSave(item.id)}
         onMore={() => onMore(item.id)}
+        stampGroupRef={stamp.stampGroupRef}
+        stampVisualIsStamped={stamp.visualIsStamped}
+        stampVisualCount={stamp.visualCount}
+        stampButtonStyle={stamp.buttonStyle}
+        onStampPress={stamp.handleStampPress}
       />
 
       {/* ── Progress bar with scrub gesture ──────────────────────────── */}
