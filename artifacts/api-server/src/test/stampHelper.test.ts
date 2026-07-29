@@ -4,7 +4,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { buildCityStampLabels } from "../lib/stampHelper";
+import { buildCityStampLabels, upsertCityStamp } from "../lib/stampHelper";
 
 const YEAR = new Date().getFullYear();
 
@@ -178,5 +178,111 @@ describe("buildCityStampLabels", () => {
   it('extracts "TH" from "TH-ext" (letters then hyphen+letters)', () => {
     const { sublabel } = buildCityStampLabels("bangkok", "TH-ext");
     assert.equal(sublabel, `TH · ${YEAR}`);
+  });
+});
+
+// ── upsertCityStamp: country resolution ───────────────────────────────────────
+// Verifies that upsertCityStamp derives country from the city name when the
+// caller passes locationCountry=null, so passport_stamps rows are never
+// written with country=null when a well-known city is present.
+
+function makeFakeRpc(
+  captured: { name: string; args: Record<string, unknown> }[],
+  returnError: boolean = false,
+) {
+  return {
+    rpc(name: string, args: Record<string, unknown>) {
+      captured.push({ name, args });
+      return Promise.resolve({ error: returnError ? { message: "rpc error" } : null });
+    },
+  };
+}
+
+describe("upsertCityStamp — country resolution via resolveCountry", () => {
+  it("passes resolved country when locationCountry is null and city is well-known (Bohol → Philippines)", async () => {
+    const calls: { name: string; args: Record<string, unknown> }[] = [];
+    const fakeClient = makeFakeRpc(calls);
+    const fakeLog = { error: () => {} };
+
+    await upsertCityStamp(
+      fakeClient as any,
+      { userId: "u1", locationCity: "Bohol", locationCountry: null, postcardId: null },
+      fakeLog,
+    );
+
+    assert.equal(calls.length, 1);
+    const { args } = calls[0];
+    // Bohol is in the Philippines — resolveCountry should derive it
+    assert.ok(
+      typeof args["p_location_country"] === "string" && (args["p_location_country"] as string).length > 0,
+      `expected non-null country, got ${JSON.stringify(args["p_location_country"])}`,
+    );
+    assert.match(args["p_location_country"] as string, /Philippines/i);
+  });
+
+  it("passes resolved country when locationCountry is null and city is Ubud (→ Indonesia)", async () => {
+    const calls: { name: string; args: Record<string, unknown> }[] = [];
+    const fakeClient = makeFakeRpc(calls);
+    const fakeLog = { error: () => {} };
+
+    await upsertCityStamp(
+      fakeClient as any,
+      { userId: "u2", locationCity: "Ubud", locationCountry: null, postcardId: null },
+      fakeLog,
+    );
+
+    assert.equal(calls.length, 1);
+    const { args } = calls[0];
+    assert.ok(
+      typeof args["p_location_country"] === "string" && (args["p_location_country"] as string).length > 0,
+      `expected non-null country, got ${JSON.stringify(args["p_location_country"])}`,
+    );
+    assert.match(args["p_location_country"] as string, /Indonesia/i);
+  });
+
+  it("prefers the explicit locationCountry over the resolved one when both are present", async () => {
+    const calls: { name: string; args: Record<string, unknown> }[] = [];
+    const fakeClient = makeFakeRpc(calls);
+    const fakeLog = { error: () => {} };
+
+    await upsertCityStamp(
+      fakeClient as any,
+      { userId: "u3", locationCity: "Bohol", locationCountry: "Philippines", postcardId: null },
+      fakeLog,
+    );
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].args["p_location_country"], "Philippines");
+  });
+
+  it("passes null when neither locationCountry nor city-lookup yields a country", async () => {
+    const calls: { name: string; args: Record<string, unknown> }[] = [];
+    const fakeClient = makeFakeRpc(calls);
+    const fakeLog = { error: () => {} };
+
+    await upsertCityStamp(
+      fakeClient as any,
+      { userId: "u4", locationCity: "Smallville", locationCountry: null, postcardId: null },
+      fakeLog,
+    );
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].args["p_location_country"], null);
+  });
+
+  it("logs error and does not throw when RPC fails", async () => {
+    const calls: { name: string; args: Record<string, unknown> }[] = [];
+    const fakeClient = makeFakeRpc(calls, /* returnError= */ true);
+    const errors: unknown[] = [];
+    const fakeLog = { error: (...args: unknown[]) => { errors.push(args); } };
+
+    await assert.doesNotReject(() =>
+      upsertCityStamp(
+        fakeClient as any,
+        { userId: "u5", locationCity: "Bohol", locationCountry: null, postcardId: null },
+        fakeLog,
+      ),
+    );
+    assert.equal(errors.length, 1);
   });
 });

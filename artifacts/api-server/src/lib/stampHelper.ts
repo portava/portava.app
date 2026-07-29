@@ -7,6 +7,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
+import { resolveCountry } from "./stamps/countryLookup.js";
 
 export interface CityStampInput {
   userId: string;
@@ -56,15 +57,27 @@ export async function upsertCityStamp(
   input: CityStampInput,
   log: Pick<Logger, "error">,
 ): Promise<void> {
+  // If the caller did not supply a country, try to derive it from the city
+  // name using the same static lookup that StampAwardEngine uses.  This
+  // prevents passport_stamps rows from being inserted with country=null when
+  // the client omits the field, which would cause buildStats to never count
+  // those rows toward the Countries total.
+  const resolvedCountry = resolveCountry({
+    country: input.locationCountry,
+    city: input.locationCity,
+  });
+  const effectiveCountry: string | null =
+    input.locationCountry ?? resolvedCountry.country ?? null;
+
   const { label, sublabel } = buildCityStampLabels(
     input.locationCity,
-    input.locationCountry,
+    effectiveCountry,
   );
 
   const { error } = await sc.rpc("upsert_city_stamp", {
     p_user_id: input.userId,
     p_location_city: input.locationCity.toLowerCase().trim(),
-    p_location_country: input.locationCountry ?? null,
+    p_location_country: effectiveCountry,
     p_label: label,
     p_sublabel: sublabel,
     p_postcard_id: input.postcardId ?? null,

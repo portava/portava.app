@@ -106,6 +106,8 @@ const CITY_TO_CODE: Record<string, string> = {
   "kuala lumpur": "MY", "penang": "MY", "jakarta": "ID", "bali": "ID",
   "denpasar": "ID", "ubud": "ID", "manila": "PH", "cebu": "PH",
   "cebu city": "PH", "davao": "PH", "boracay": "PH", "palawan": "PH",
+  "bohol": "PH", "tagbilaran": "PH", "siargao": "PH", "iloilo": "PH",
+  "bacolod": "PH", "cagayan de oro": "PH", "zamboanga": "PH",
   "hanoi": "VN", "ho chi minh city": "VN", "saigon": "VN", "da nang": "VN",
   "hoi an": "VN", "phnom penh": "KH", "siem reap": "KH", "vientiane": "LA",
   "luang prabang": "LA", "yangon": "MM", "kathmandu": "NP", "colombo": "LK",
