@@ -1175,10 +1175,16 @@ export default function TelegraphThread() {
   }, [threadType, contextId]);
 
   // Navigate to the Circle presence screen when a circle_status_card is tapped.
-  // Members → opens /circle-presence with full context params.
-  // Non-members (null or false) → informational Alert (fail-closed).
+  // Circle threads → opens /circle (matching the "View Circle" quick action).
+  // Trip/event threads where the viewer is a member → opens /circle-presence.
+  // Trip/event threads where membership is unknown/false → informational Alert (fail-closed).
   // No-op when the thread has no Circle context (direct threads, etc.).
   const onCircleCardPress = useCallback(() => {
+    // Circle-type thread: go straight to the Circle screen (same as QuickActionBar).
+    if (threadType === 'circle') {
+      router.push('/circle' as any);
+      return;
+    }
     const ctxType = threadType === 'trip' ? 'trip' : threadType === 'event' ? 'event' : null;
     if (!ctxType || !contextId) return;
     if (isCircleMember === true) {
