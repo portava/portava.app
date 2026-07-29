@@ -339,3 +339,113 @@ describe("F: posts inside groups carry the expected fields", () => {
     );
   });
 });
+
+// ── G: creatorId filter — only returns that creator's posts ───────────────────
+
+const CREATOR_1_ID = "cccccccc-0001-0000-0000-000000000001";
+const CREATOR_2_ID = "cccccccc-0002-0000-0000-000000000002";
+
+const FEAT_C1_1 = "fc100000-0000-0000-0000-000000000001";
+const FEAT_C1_2 = "fc100000-0000-0000-0000-000000000002";
+const FEAT_C2_1 = "fc200000-0000-0000-0000-000000000001";
+
+const POST_C1_1 = "pc100000-0000-0000-0000-000000000001";
+const POST_C1_2 = "pc100000-0000-0000-0000-000000000002";
+const POST_C2_1 = "pc200000-0000-0000-0000-000000000001";
+
+function makeRowForCreator(opts: {
+  id: string;
+  post_id: string;
+  category: string;
+  creatorId: string;
+  username: string;
+}): any {
+  return {
+    id:          opts.id,
+    post_id:     opts.post_id,
+    category:    opts.category,
+    featured_at: "2025-07-25T12:00:00.000Z",
+    status:      "live",
+    posts: {
+      id:               opts.post_id,
+      content:          `Post by ${opts.username}`,
+      location_city:    "Madrid",
+      location_country: "ES",
+      author_id:        opts.creatorId,
+      post_media:       [],
+      profiles: {
+        id:        opts.creatorId,
+        username:  opts.username,
+        full_name: opts.username,
+        avatar_url: null,
+        verified:  false,
+        is_private: false,
+      },
+    },
+  };
+}
+
+const MIXED_ROWS = [
+  makeRowForCreator({ id: FEAT_C1_1, post_id: POST_C1_1, category: "best_photo",     creatorId: CREATOR_1_ID, username: "creator_one" }),
+  makeRowForCreator({ id: FEAT_C1_2, post_id: POST_C1_2, category: "best_adventure", creatorId: CREATOR_1_ID, username: "creator_one" }),
+  makeRowForCreator({ id: FEAT_C2_1, post_id: POST_C2_1, category: "best_video",     creatorId: CREATOR_2_ID, username: "creator_two" }),
+];
+
+describe("G: creatorId filter — only returns that creator's posts, not leaking others", () => {
+  it("GET /api/featured?creatorId=creator1 returns only creator1 posts in total and groups", async () => {
+    _setTestServiceClient(makeFakeSc(MIXED_ROWS) as any);
+
+    const { status, body } = await getReq(`/api/featured?creatorId=${CREATOR_1_ID}`);
+
+    assert.equal(status, 200, `Expected 200, got ${status}: ${JSON.stringify(body)}`);
+
+    // total must equal exactly 2 (the two creator1 posts)
+    assert.equal(
+      body.total,
+      2,
+      `total must be 2 (only creator1 posts), got ${body.total}`,
+    );
+
+    // All posts in every group must belong to creator1
+    const groups: any[] = body.groups ?? [];
+    const allPosts: any[] = groups.flatMap((g: any) => g.posts as any[]);
+    assert.equal(allPosts.length, 2, `Expected 2 posts across all groups, got ${allPosts.length}`);
+
+    for (const post of allPosts) {
+      assert.equal(
+        post.author.id,
+        CREATOR_1_ID,
+        `post ${post.postId} must belong to creator1, got author.id=${post.author.id}`,
+      );
+    }
+  });
+
+  it("creator2's post_id is absent from the filtered response", async () => {
+    _setTestServiceClient(makeFakeSc(MIXED_ROWS) as any);
+
+    const { status, body } = await getReq(`/api/featured?creatorId=${CREATOR_1_ID}`);
+
+    assert.equal(status, 200);
+
+    const groups: any[] = body.groups ?? [];
+    const allPostIds: string[] = groups.flatMap((g: any) => (g.posts as any[]).map((p: any) => p.postId));
+
+    assert.ok(
+      !allPostIds.includes(POST_C2_1),
+      `creator2's post ${POST_C2_1} must not appear when filtering by creator1`,
+    );
+  });
+
+  it("omitting creatorId returns all three posts from both creators", async () => {
+    _setTestServiceClient(makeFakeSc(MIXED_ROWS) as any);
+
+    const { status, body } = await getReq("/api/featured");
+
+    assert.equal(status, 200);
+    assert.equal(
+      body.total,
+      3,
+      `Without creatorId filter, total must be 3, got ${body.total}`,
+    );
+  });
+});
