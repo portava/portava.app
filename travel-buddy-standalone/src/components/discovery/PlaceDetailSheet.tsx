@@ -142,23 +142,23 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
     if (place.phone) Linking.openURL(`tel:${place.phone}`).catch(() => {});
   };
 
+  // Honest coordinates only: never fall back to a name-only Google Maps
+  // query. A name-only "destination" search silently used the VIEWER's
+  // current location as the implicit origin/anchor and frequently failed to
+  // resolve (e.g. an idea-style title like "Beach bonfire & music" isn't a
+  // geocodable address), producing bogus cross-city directions. If we don't
+  // have the real place's coordinates, we don't offer directions.
+  const hasRealCoords = place.lat != null && place.lng != null;
+
   const openMap = () => {
-    if (place.lat != null && place.lng != null) {
-      const url = `https://www.openstreetmap.org/?mlat=${place.lat}&mlon=${place.lng}&zoom=17`;
-      Linking.openURL(url).catch(() => {});
-    } else {
-      const q = encodeURIComponent(place.name + (place.address ? ` ${place.address}` : ''));
-      Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${q}`).catch(() => {});
-    }
+    if (!hasRealCoords) return;
+    const url = `https://www.openstreetmap.org/?mlat=${place.lat}&mlon=${place.lng}&zoom=17`;
+    Linking.openURL(url).catch(() => {});
   };
 
   const openDirections = () => {
-    if (place.lat != null && place.lng != null) {
-      Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}`).catch(() => {});
-    } else {
-      const q = encodeURIComponent(place.name);
-      Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${q}`).catch(() => {});
-    }
+    if (!hasRealCoords) return;
+    Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}`).catch(() => {});
   };
 
   return (
@@ -382,9 +382,13 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
             </View>
           </View>
 
-          {/* Attribution */}
+          {/* Attribution — events are member-hosted activities, not resolved
+              venues, so the OSM attribution (which implies venue data) would
+              be misleading. */}
           <Text style={styles.attribution}>
-            {place.attribution ?? 'Place data © OpenStreetMap contributors (ODbL)'}
+            {place.isCompassEvent
+              ? 'Hosted event · not a verified venue'
+              : (place.attribution ?? 'Place data © OpenStreetMap contributors (ODbL)')}
           </Text>
         </ScrollView>
 
@@ -402,10 +406,12 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
 
         {/* Footer actions */}
         <View style={styles.footer}>
-          <Pressable style={styles.dirBtn} onPress={openDirections}>
-            <Navigation size={18} color={color.deep} />
-            <Text style={styles.dirText}>Directions</Text>
-          </Pressable>
+          {hasRealCoords ? (
+            <Pressable style={styles.dirBtn} onPress={openDirections}>
+              <Navigation size={18} color={color.deep} />
+              <Text style={styles.dirText}>Directions</Text>
+            </Pressable>
+          ) : null}
           <Pressable
             style={styles.wishlistBtn}
             onPress={() => setPickerVisible(true)}

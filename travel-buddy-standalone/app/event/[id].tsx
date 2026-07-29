@@ -71,6 +71,22 @@ import { PlaceInfoSection } from '../../src/components/place/PlaceInfoSection';
 import { getVenueInfoByCoords, clearVenueInfoCache, getCanonicalPlace, type VenueContactInfo } from '../../src/services/places';
 import type { CanonicalPlace } from '../../src/types/canonicalPlace';
 
+/**
+ * Composes the location subtitle line, avoiding a duplicated city when
+ * `locationName` already ends with the city (e.g. locationName="Cebu,
+ * Philippines" + city="Cebu" previously rendered "Cebu, Philippines, Cebu").
+ */
+function formatEventLocationLine(locationName?: string | null, city?: string | null): string {
+  const name = locationName?.trim() ?? '';
+  const c = city?.trim() ?? '';
+  if (!name) return c;
+  if (!c) return name;
+  const normalizedName = name.toLowerCase();
+  const normalizedCity = c.toLowerCase();
+  if (normalizedName === normalizedCity || normalizedName.includes(normalizedCity)) return name;
+  return `${name}, ${c}`;
+}
+
 const STATE_BADGE: Record<string, { label: string; bg: string; fg: string }> = {
   draft:     { label: 'Draft',          bg: color.haze, fg: color.mute },
   open:      { label: 'Open',           bg: '#DCFCE7', fg: '#16A34A' },
@@ -713,7 +729,7 @@ export default function EventDetailScreen() {
               >
                 <MapPin size={14} color={color.signal} />
                 <Text style={[styles.meta, { color: color.signal }]}>
-                  {event.locationName}{event.city ? `, ${event.city}` : ''}
+                  {formatEventLocationLine(event.locationName, event.city)}
                 </Text>
               </Pressable>
             )}

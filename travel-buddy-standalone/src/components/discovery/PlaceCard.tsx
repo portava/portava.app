@@ -116,14 +116,18 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
       .catch(() => {});
   }, [place.id]);
 
+  // Honest coordinates only — no name-only fallback. A name-only Google Maps
+  // query silently anchored on the viewer's own location and frequently
+  // couldn't resolve idea-style titles (e.g. "Beach bonfire & music") as an
+  // address, producing bogus cross-city directions. See PlaceDetailSheet for
+  // the matching fix.
   const openDirections = () => {
-    if (place.lat != null && place.lng != null) {
-      const url = `https://www.openstreetmap.org/?mlat=${place.lat}&mlon=${place.lng}&zoom=17`;
-      Linking.openURL(url).catch(() => {});
-    } else if (place.name) {
-      const query = encodeURIComponent(place.name);
-      Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${query}`).catch(() => {});
-    }
+    if (place.lat == null || place.lng == null) return;
+    // Pin the exact coordinate as the destination — never a name/query search.
+    // A name search (e.g. "maps/search/?query=Cebu+Zoo") can return a list of
+    // similarly-named results instead of navigating to this specific place.
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}`;
+    Linking.openURL(url).catch(() => {});
   };
 
   const fallbackDesc = getPlaceCategoryFallback(place.category);
@@ -342,7 +346,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
               </Pressable>
             )}
 
-            {(place.lat != null || place.name) && (
+            {(place.lat != null && place.lng != null) && (
               <Pressable
                 style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.7 }]}
                 onPress={openDirections}

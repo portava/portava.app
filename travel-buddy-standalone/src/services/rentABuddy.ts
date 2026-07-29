@@ -1359,6 +1359,12 @@ export interface LaunchStatusResponse {
   status: CityRolloutStatus;
   message: string;
   available: boolean;
+  /** Real "someone is online right now in this city" count — the single
+   * source of truth shared with /rent-a-buddy/available-now. `available`
+   * above only means the city rollout status is public_mvp; it does NOT
+   * mean anyone is actually available. Any surface claiming "buddies
+   * available in X" must check this field, not `available` alone. */
+  availableNowCount: number;
   betaAvailable: boolean;
   waitlistOpen: boolean;
   applicationsOpen: boolean;

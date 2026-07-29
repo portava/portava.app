@@ -80,7 +80,7 @@ type LaunchInfo = {
   waitlistOpen: boolean;
 };
 
-function CityAvailabilityBanner({ city }: { city: string }) {
+function CityAvailabilityBanner({ city, availableNowCount }: { city: string; availableNowCount: number | null }) {
   const [info, setInfo] = useState<LaunchInfo | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -112,19 +112,34 @@ function CityAvailabilityBanner({ city }: { city: string }) {
   const isWaitlist  = info.status === 'waitlist_only' || info.status === 'buddy_applications_open' || info.status === 'internal_testing';
   const isDisabled  = info.status === 'disabled';
 
-  const bannerColor = isLive   ? '#10B98115'
+  // `isLive` only means the city has been rolled out to public MVP — it does
+  // NOT mean a buddy is online right now. Previously this rendered a green
+  // "live" success banner regardless of real availability, which then sat
+  // directly above (or, worse, on top of) the "Available Now" section's own
+  // "no buddies right now" empty state — two contradictory claims about the
+  // same city on the same screen. Fold real availability into THIS banner so
+  // there is exactly one message about the city, and it can never lie.
+  const hasNoBuddiesRightNow = isLive && availableNowCount != null && availableNowCount === 0;
+  const effectiveMessage = hasNoBuddiesRightNow
+    ? `Rent a Buddy is live in ${city} — no buddies are online right now. Check back soon, or browse other live cities below.`
+    : info.message;
+
+  const bannerColor = hasNoBuddiesRightNow ? '#F59E0B15'
+    : isLive   ? '#10B98115'
     : isBeta   ? '#EC489915'
     : isPaused ? '#EF444415'
     : isWaitlist ? '#F59E0B15'
     : '#99999915';
 
-  const borderColor = isLive   ? '#10B981'
+  const borderColor = hasNoBuddiesRightNow ? '#F59E0B'
+    : isLive   ? '#10B981'
     : isBeta   ? '#EC4899'
     : isPaused ? '#EF4444'
     : isWaitlist ? '#F59E0B'
     : '#999999';
 
-  const textColor = isLive   ? '#059669'
+  const textColor = hasNoBuddiesRightNow ? '#D97706'
+    : isLive   ? '#059669'
     : isBeta   ? '#BE185D'
     : isPaused ? '#DC2626'
     : isWaitlist ? '#D97706'
@@ -133,7 +148,7 @@ function CityAvailabilityBanner({ city }: { city: string }) {
   return (
     <View style={[bannerStyles.banner, { backgroundColor: bannerColor, borderColor }]}>
       <AlertCircle size={15} color={textColor} />
-      <Text style={[bannerStyles.message, { color: textColor }]}>{info.message}</Text>
+      <Text style={[bannerStyles.message, { color: textColor }]}>{effectiveMessage}</Text>
       {info.waitlistOpen && !isLive && !isBeta && (
         <Pressable
           style={[bannerStyles.pill, { borderColor }]}
@@ -267,8 +282,13 @@ export default function RentABuddyLanding() {
         usedFor="buddy_search"
       />
 
-      {/* City availability banner — shown when city is typed */}
-      <CityAvailabilityBanner city={city} />
+      {/* City availability banner — shown when city is typed. Fed the same
+          availableNow count used by the list below so the two can never
+          disagree (one honest claim per city, not two). */}
+      <CityAvailabilityBanner
+        city={city}
+        availableNowCount={availableNowCity === city ? availableNow.length : null}
+      />
 
       {/* Available Now */}
       <TravelSectionHeader
