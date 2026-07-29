@@ -52,12 +52,6 @@ jest.mock('../PostSaversSheet', () => ({
 jest.mock('../stamps/StampButton', () => ({
   StampButton: () => null,
 }));
-// NOTE: intentionally an exhaustive stub — PostSaversSheet calls useSafeAreaInsets
-// which requires a SafeAreaProvider; stub prevents the missing-provider error.
-jest.mock('../PostSaversSheet', () => ({
-  PostSaversSheet: () => null,
-}));
-
 // ── Service mocks ─────────────────────────────────────────────────────────────
 
 jest.mock('../../services/postEngagement', () => ({

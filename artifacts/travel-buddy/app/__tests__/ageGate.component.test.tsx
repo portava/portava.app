@@ -30,7 +30,32 @@ import React from 'react';
 import { render, waitFor, screen } from '@testing-library/react-native';
 import { AgeGate } from '../../src/components/AgeGate';
 
+// ── DEV bypass guard ──────────────────────────────────────────────────────────
+// AgeGate evaluates `const DEV_BYPASS_GATE = __DEV__` at module-load time.
+// Under jest-expo __DEV__ is true, which auto-clears the gate on every render
+// and makes the blocked/error screens unreachable in tests.
+//
+// jest.mock() factories are HOISTED above import statements by babel-jest, so
+// the factory below runs before the AgeGate module body executes.  Temporarily
+// setting __DEV__ = false inside the factory ensures DEV_BYPASS_GATE is false
+// for the lifetime of this test file without affecting other test files.
+jest.mock('../../src/components/AgeGate', () => {
+  const origDev = (global as any).__DEV__;
+  (global as any).__DEV__ = false;
+  const actual = jest.requireActual('../../src/components/AgeGate');
+  (global as any).__DEV__ = origDev;
+  return actual;
+});
+
 // ── Mocks ─────────────────────────────────────────────────────────────────────
+
+// NOTE: AsyncStorage is read before the network call to check for a persisted
+// verification. Return null so every test exercises the real profile-fetch path.
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  getItem: jest.fn().mockResolvedValue(null),
+  setItem: jest.fn().mockResolvedValue(undefined),
+  removeItem: jest.fn().mockResolvedValue(undefined),
+}));
 
 // NOTE: intentionally exhaustive — SessionContext pulls in Supabase, AppState,
 // and several async service calls at module load; a partial mock would crash.

@@ -927,6 +927,44 @@ if (missingByKey.size > 0) {
   );
 }
 
+// ── @portava profile smoke-test ───────────────────────────────────────────────
+//
+// The @portava official account must always be present in the live DB.
+// A missing row means a new environment or DB reset has not run the seeder.
+// This check fails loudly so the gap is caught before any deployment.
+
+console.log("\nChecking @portava profile row …");
+try {
+  const portavaRows = await liveQuery<{ handle: string; is_official: boolean }>(
+    `select handle, is_official from profiles where handle = 'portava' limit 1`,
+  );
+  if (portavaRows.length === 0) {
+    failed = true;
+    console.error(
+      "\n✗ @portava profile row is MISSING from the live DB.\n" +
+        "  Run the seeder to fix this:\n" +
+        "    cd artifacts/api-server\n" +
+        "    node --env-file-if-exists=.env --import tsx/esm src/scripts/seed-portava-account.ts",
+    );
+  } else {
+    const row = portavaRows[0];
+    if (!row.is_official) {
+      failed = true;
+      console.error(
+        "\n✗ @portava profile exists but is_official=false.\n" +
+          "  Re-run the seeder to patch it:\n" +
+          "    cd artifacts/api-server\n" +
+          "    node --env-file-if-exists=.env --import tsx/esm src/scripts/seed-portava-account.ts",
+      );
+    } else {
+      console.log("✓ @portava profile row present (is_official=true).");
+    }
+  }
+} catch (err) {
+  failed = true;
+  console.error("ERROR: could not query @portava profile row:", err);
+}
+
 if (!failed) {
   console.log(
     `✓ All ${referencedTables.length} referenced tables and every extracted ` +
