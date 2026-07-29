@@ -309,6 +309,15 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
   // ── Profile ───────────────────────────────────────────────────────────────
 
   {
+    key: 'profile-analytics',
+    path: 'profile/analytics',
+    title: 'Profile Analytics',
+    parent: 'user-profile',
+    icon: null,
+    requiresAuth: true,
+    ownerOnly: true,
+  },
+  {
     key: 'user-profile',
     path: 'u/[username]',
     title: 'Profile',
