@@ -27,7 +27,6 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import {
-  Heart,
   Share2,
   Navigation,
   CalendarPlus,
@@ -39,6 +38,7 @@ import {
   Flag,
   Ban,
 } from 'lucide-react-native';
+import { StampIcon } from '../stamps/StampIcon.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import type { MapEntity, MapEntityType } from '../../types/mapTypes.ts';
 import type { ModerationSubjectType } from '../../services/moderation.ts';
@@ -303,7 +303,7 @@ function ActionRowInner({ entity, onBeforeNavigate }: { entity: MapEntity; onBef
         {showSave && (
           <ActionBtn
             testID="map-action-save"
-            icon={<Heart size={15} color={color.signal} />}
+            icon={<StampIcon size={15} color={color.signal} />}
             label="Save"
             onPress={() => setWishlistOpen(true)}
           />

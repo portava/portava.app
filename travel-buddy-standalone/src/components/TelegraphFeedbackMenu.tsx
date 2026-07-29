@@ -8,7 +8,8 @@ import React, { useState } from 'react';
 import {
   View, Text, Pressable, Modal, StyleSheet,
 } from 'react-native';
-import { MoreHorizontal, ThumbsUp, ThumbsDown, X, Heart, EyeOff } from 'lucide-react-native';
+import { MoreHorizontal, ThumbsUp, ThumbsDown, X, EyeOff } from 'lucide-react-native';
+import { StampIcon } from './stamps/StampIcon.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { sendFeedback, type FeedbackSignal } from '../services/intelligence.ts';
 
@@ -31,7 +32,7 @@ const OPTIONS: FeedbackOption[] = [
   { label: 'More like this', signal: 'more_like_this', icon: ThumbsUp, tint: color.deep },
   { label: 'Less like this', signal: 'less_like_this', icon: ThumbsDown, tint: color.mute },
   { label: 'Not for me', signal: 'not_for_me', icon: X, tint: color.signal },
-  { label: 'Save', signal: 'save', icon: Heart, tint: color.success ?? color.deep },
+  { label: 'Save', signal: 'save', icon: StampIcon, tint: color.success ?? color.deep },
   { label: 'Dismiss', signal: 'dismiss', icon: EyeOff, tint: color.mute },
 ];
 

@@ -1485,6 +1485,19 @@ router.get("/events/requests", async (req, res) => {
   });
 });
 
+// Draft rows are stored as { id, host_id, data: {...fields}, last_saved_at,
+// created_at }. The client's EventDraft shape expects the fields flattened to
+// the top level plus `updatedAt` — without this mapping the title/date fields
+// are always undefined, showing "Untitled draft" / "Saved Invalid Date".
+function toClientDraft(row: Record<string, any>): Record<string, any> {
+  const { data, last_saved_at, host_id, ...rest } = row;
+  return {
+    ...rest,
+    ...(data && typeof data === "object" ? data : {}),
+    updatedAt: last_saved_at,
+  };
+}
+
 // ── GET /api/events/drafts ────────────────────────────────────────────────────
 
 router.get("/events/drafts", async (req, res) => {
@@ -1506,7 +1519,7 @@ router.get("/events/drafts", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "list drafts"); sendError(res, "db_error", error.message); return; }
 
-  res.json({ drafts: drafts ?? [], page, limit });
+  res.json({ drafts: (drafts ?? []).map(toClientDraft), page, limit });
 });
 
 // ── POST /api/events/drafts ───────────────────────────────────────────────────
@@ -1529,7 +1542,7 @@ router.post("/events/drafts", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "create draft"); sendError(res, "db_error", error.message); return; }
 
-  res.status(201).json(draft);
+  res.status(201).json(toClientDraft(draft));
 });
 
 // ── GET /api/events/drafts/:draftId ──────────────────────────────────────────
@@ -1555,7 +1568,7 @@ router.get("/events/drafts/:draftId", async (req, res) => {
   if (error) { req.log.error({ err: error }, "get draft"); sendError(res, "db_error", error.message); return; }
   if (!draft) { sendError(res, "not_found", "Draft not found"); return; }
 
-  res.json(draft);
+  res.json(toClientDraft(draft));
 });
 
 // ── PATCH /api/events/drafts/:draftId ─────────────────────────────────────────
@@ -1583,7 +1596,7 @@ router.patch("/events/drafts/:draftId", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "update draft"); sendError(res, "db_error", error.message); return; }
 
-  res.json(updated);
+  res.json(toClientDraft(updated));
 });
 
 // ── DELETE /api/events/drafts/:draftId ────────────────────────────────────────

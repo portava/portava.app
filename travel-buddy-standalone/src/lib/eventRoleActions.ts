@@ -34,6 +34,28 @@ function isActive(state: EventLifecycleState): boolean {
 }
 
 /**
+ * Returns the state an event should DISPLAY as, correcting for events whose
+ * date has passed while the stored `state` is still an active one (the
+ * server never runs a background sweep to flip `open`/`full`/`waitlist`/
+ * `started` rows to `completed` once `endsAt`/`startsAt` passes — see
+ * events.ts CRUD, which only transitions state on explicit host action).
+ * Terminal states (completed/cancelled/archived/draft) pass through untouched.
+ */
+export function effectiveEventState(
+  state: EventLifecycleState,
+  startsAt: string | null | undefined,
+  endsAt: string | null | undefined,
+  now: number = Date.now(),
+): EventLifecycleState {
+  if (!isActive(state)) return state;
+  const cutoff = endsAt ?? startsAt;
+  if (!cutoff) return state;
+  const cutoffMs = new Date(cutoff).getTime();
+  if (!Number.isNaN(cutoffMs) && cutoffMs <= now) return 'completed';
+  return state;
+}
+
+/**
  * Returns which host/mod management actions are available.
  * Returns all-false when the role is null, 'banned', or the event is closed.
  */

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
 import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation, Route, ListPlus, ThumbsUp } from 'lucide-react-native';
+import { StampIcon } from '../stamps/StampIcon.tsx';
 import type { DiscoveryPlace, PlaceLiveStatus } from '../../services/discovery.ts';
 import { getPlaceLiveStatusCached } from '../../services/discovery.ts';
 import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
@@ -202,6 +203,27 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
             <Text style={styles.ratingOverlayValue}>{place.rating.toFixed(1)}</Text>
           </View>
         )}
+
+        {/* Stamp (collect) affordance — top-right overlay. Always rendered on
+            the image header, whether the image is a real cover photo or the
+            category fallback, so it never depends on image presence. Mirrors
+            the `saved` state also exposed via the Bookmark action below. */}
+        <Pressable
+          style={({ pressed }) => [styles.stampOverlay, pressed && { opacity: 0.7 }]}
+          hitSlop={8}
+          onPress={() => {
+            const next = !saved;
+            setSaved(next);
+            (next ? saveItem('place', place.id) : unsaveItem('place', place.id))
+              .then((ok) => { if (!ok) setSaved(!next); })
+              .catch(() => setSaved(!next));
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={saved ? 'Remove stamp' : 'Stamp this place'}
+          testID={`place-card-stamp-${place.id}`}
+        >
+          <StampIcon size={18} active={saved} />
+        </Pressable>
       </View>
 
       {/* Content row: accent strip + body */}
@@ -445,6 +467,18 @@ const styles = StyleSheet.create({
   headerImage: {
     width: '100%' as any,
     height: HEADER_HEIGHT,
+  },
+  stampOverlay: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadow.card,
   },
   fallbackEmoji: {
     fontSize: 36,

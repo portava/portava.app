@@ -13,7 +13,8 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
 import { router } from 'expo-router';
-import { MapPin, Heart, MessageCircle, ExternalLink, User } from 'lucide-react-native';
+import { MapPin, MessageCircle, ExternalLink, User } from 'lucide-react-native';
+import { StampIcon } from './stamps/StampIcon.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { TG } from '../theme/telegraphTokens.ts';
@@ -131,7 +132,7 @@ export function PostCardMessage({ body, mine }: Props) {
         ) : null}
         {typeof payload.likeCount === 'number' ? (
           <View style={card.count}>
-            <Heart size={10} color={mine ? color.onInk + 'AA' : color.mute} />
+            <StampIcon size={10} color={mine ? color.onInk + 'AA' : color.mute} />
             <Text style={[card.meta, mine && card.metaMine]}>{payload.likeCount}</Text>
           </View>
         ) : null}

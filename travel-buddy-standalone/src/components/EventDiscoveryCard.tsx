@@ -22,6 +22,7 @@ import { usePlaceImage } from '../hooks/usePlaceImage.ts';
 import type { EventListItem, EventRsvpStatus } from '../services/events.ts';
 import { primaryIdentityText } from '../lib/displayIdentity.ts';
 import { openInMaps } from '../lib/openInMaps.ts';
+import { effectiveEventState } from '../lib/eventRoleActions.ts';
 
 interface Props {
   event: EventListItem;
@@ -71,8 +72,9 @@ function formatDate(iso: string | null): string {
 }
 
 export function EventDiscoveryCard({ event, onPress, onHostPress, onRsvp, isSaved, onToggleSave }: Props) {
-  const stateColor = STATE_COLOR[event.state] ?? color.mute;
-  const stateLabel = STATE_LABEL[event.state] ?? event.state;
+  const displayState = effectiveEventState(event.state, event.startsAt, event.endsAt);
+  const stateColor = STATE_COLOR[displayState] ?? color.mute;
+  const stateLabel = STATE_LABEL[displayState] ?? displayState;
   const catColor = event.category ? (CATEGORY_COLORS[event.category] ?? color.signal) : color.signal;
   const [imgFailed, setImgFailed] = useState(false);
   // Route cover URLs through signed-URL hydration so this surface keeps working

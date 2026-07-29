@@ -565,13 +565,18 @@ describe("Event drafts CRUD", () => {
     const { status, body } = await req(port, "POST", "/api/events/drafts", { title: "Draft Title" }, ID.host1);
     assert.equal(status, 201);
     assert.ok(body.id);
-    assert.ok(body.data);
+    // Response is flattened to the client's EventDraft shape (title at the
+    // top level, plus updatedAt) — not the raw { data: {...} } DB row.
+    assert.equal(body.title, "Draft Title");
+    assert.ok(body.updatedAt);
   });
 
   it("PATCH /drafts/:id updates draft data", async () => {
     const { status, body } = await req(port, "PATCH", `/api/events/drafts/${ID.draft1}`, { title: "Updated Draft" }, ID.host1);
     assert.equal(status, 200);
-    assert.ok(body.id === ID.draft1 || body.data !== undefined);
+    assert.equal(body.id, ID.draft1);
+    assert.equal(body.title, "Updated Draft");
+    assert.ok(body.updatedAt);
   });
 
   it("PATCH /drafts/:id — forbidden for other user", async () => {

@@ -7,8 +7,9 @@ import {
   View, Text, Image, Pressable, Modal, ScrollView,
   StyleSheet, ActivityIndicator,
 } from 'react-native';
-import { X, Heart } from 'lucide-react-native';
+import { X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { StampIcon } from './stamps/StampIcon.tsx';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
 import { fetchHighlightViewers, type HighlightViewer } from '../services/highlights.ts';
 
@@ -66,7 +67,7 @@ export function HighlightViewersSheet({ visible, highlightId, onClose }: Props) 
                   <Text style={s.time}>{fmtTime(v.viewedAt)}</Text>
                 </View>
                 {v.likedByMe && (
-                  <Heart size={14} color={color.signal} fill={color.signal} />
+                  <StampIcon size={14} active color={color.signal} />
                 )}
               </View>
             ))}

@@ -38,7 +38,8 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { X, SendHorizonal, Trash2, Heart, CornerDownRight, Flag } from 'lucide-react-native';
+import { X, SendHorizonal, Trash2, CornerDownRight, Flag } from 'lucide-react-native';
+import { StampIcon } from './stamps/StampIcon.tsx';
 import { ReportSheet } from './ReportSheet.tsx';
 import { blockUser } from '../services/blocks.ts';
 import { ProfilePreviewCard } from './ProfilePreviewCard.tsx';
@@ -267,7 +268,7 @@ function ReplyRow({
         </View>
         <View style={s.commentActions}>
           <Pressable hitSlop={likeHitSlop} onPress={handleLike} disabled={liking} style={s.likeBtn}>
-            <Heart size={12} color={likedByMe ? color.signal : color.faint} fill={likedByMe ? color.signal : 'transparent'} />
+            <StampIcon size={12} active={likedByMe} color={likedByMe ? color.signal : color.faint} />
           </Pressable>
           {likeCount > 0 && (
             <Pressable onPress={() => setLikerReplyId(reply.id)} hitSlop={5} style={s.likeCountBtn}>
@@ -432,7 +433,7 @@ function CommentItem({
           </View>
           <View style={s.commentActions}>
             <Pressable hitSlop={likeHitSlop} onPress={handleLike} disabled={liking} style={s.likeBtn}>
-              <Heart size={13} color={likedByMe ? color.signal : color.faint} fill={likedByMe ? color.signal : 'transparent'} />
+              <StampIcon size={13} active={likedByMe} color={likedByMe ? color.signal : color.faint} />
             </Pressable>
             {likeCount > 0 && (
               <Pressable onPress={() => setLikerCommentId(comment.id)} hitSlop={5} style={s.likeCountBtn}>

@@ -32,6 +32,7 @@ import { color, type as t, space, radius } from '../../theme/tokens.ts';
 import { useSmartVideoFit } from '../../hooks/useSmartVideoFit.ts';
 import { VideoBlurBackdrop } from '../ui/VideoBlurBackdrop.tsx';
 import { VerifiedLocationStamp } from './VerifiedLocationStamp.tsx';
+import { StampButton } from '../stamps/StampButton.tsx';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -163,6 +164,17 @@ function GridTileInner({ item, index, cellWidth, cellHeight, onPress, isVisible 
           </View>
         ) : null}
       </View>
+
+      {/* ── Stamp-it collect button — bottom-right corner ─────────── */}
+      <View style={styles.stampBtnWrapper} pointerEvents="box-none">
+        <StampButton
+          entityType="media"
+          entityId={item.id}
+          initialCount={0}
+          initialIsStamped={false}
+          iconSize={16}
+        />
+      </View>
     </Pressable>
   );
 }
@@ -264,5 +276,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: color.onInk,
     letterSpacing: 0.2,
+  },
+
+  // ── Stamp-it collect button ─────────────────────────────────────────
+  stampBtnWrapper: {
+    position: 'absolute',
+    bottom: 4,
+    right: 4,
+    zIndex: 6,
   },
 });
