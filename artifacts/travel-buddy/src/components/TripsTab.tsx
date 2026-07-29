@@ -11,7 +11,7 @@
  * views only see public trips, and taps open the existing /trip/[id] screen.
  */
 import React, { useMemo, useState } from 'react';
-import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Image, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { MapPin, Calendar, ChevronRight, Luggage } from 'lucide-react-native';
 import type { TripRow } from '../services/trips.ts';
@@ -19,14 +19,7 @@ import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { useBottomInset } from '../hooks/useBottomInset.ts';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import { fromISODate } from '../lib/dateTime/formatters.ts';
-
-const STATUS_COLOR: Record<string, string> = {
-  planning: color.mute,
-  upcoming: color.deep,
-  active: color.success,
-  completed: color.signal,
-  cancelled: color.faint,
-};
+import { tripStatusColor, tripStatusLabel } from '../lib/tripStatus.ts';
 
 type Filter = 'all' | 'upcoming' | 'ongoing' | 'past';
 
@@ -64,7 +57,7 @@ function fmtRange(trip: TripRow): string {
 }
 
 function TripCard({ trip }: { trip: TripRow }) {
-  const statusColor = STATUS_COLOR[trip.status] ?? color.mute;
+  const statusColor = tripStatusColor(trip.status);
   const dates = fmtDates(trip);
   return (
     <Pressable key={trip.id} style={tr.card} onPress={() => router.push(`/trip/${trip.id}` as any)}>
@@ -75,7 +68,7 @@ function TripCard({ trip }: { trip: TripRow }) {
           {trip.destinationCountry ? <Text style={tr.country}>{trip.destinationCountry}</Text> : null}
         </View>
         <View style={[tr.statusBadge, { backgroundColor: `${statusColor}18` }]}>
-          <Text style={[tr.statusText, { color: statusColor }]}>{trip.status.replace('_', ' ')}</Text>
+          <Text style={[tr.statusText, { color: statusColor }]}>{tripStatusLabel(trip.status)}</Text>
         </View>
       </View>
       <Text style={tr.title} numberOfLines={1}>{trip.title}</Text>
@@ -93,9 +86,11 @@ function TripCard({ trip }: { trip: TripRow }) {
 export function TripsTab({
   trips,
   isOwner,
+  loading = false,
 }: {
   trips: TripRow[];
   isOwner: boolean;
+  loading?: boolean;
 }) {
   const visible = isOwner ? trips : trips.filter((t) => t.visibility === 'public');
   const [filter, setFilter] = useState<Filter>('all');
@@ -131,6 +126,14 @@ export function TripsTab({
         rows: rows.sort((a, b) => (b.startDate ?? '').localeCompare(a.startDate ?? '')),
       }));
   }, [visible]);
+
+  if (loading && visible.length === 0) {
+    return (
+      <View style={[tr.empty, { paddingBottom: bottomInset }]}>
+        <ActivityIndicator size="small" color={color.deep} />
+      </View>
+    );
+  }
 
   if (visible.length === 0) {
     return (

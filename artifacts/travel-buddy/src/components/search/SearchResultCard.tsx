@@ -417,7 +417,10 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
       {isTraveler && !isPrivate && (
         <Pressable
           style={[styles.actionBtn, isFollowing && styles.actionBtnActive]}
-          onPress={handleFollowToggle}
+          onPress={(e) => {
+            e.stopPropagation();
+            handleFollowToggle();
+          }}
           disabled={followToggling}
           hitSlop={8}
         >
@@ -441,7 +444,14 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
       {isTraveler && isPrivate && !isFollowing && (
         <Pressable
           style={[styles.actionBtn, isRequestSent && styles.actionBtnActive]}
-          onPress={isRequestSent ? undefined : handleFollowToggle}
+          onPress={
+            isRequestSent
+              ? undefined
+              : (e) => {
+                  e.stopPropagation();
+                  handleFollowToggle();
+                }
+          }
           disabled={followToggling || isRequestSent}
           hitSlop={8}
         >

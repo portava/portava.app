@@ -248,25 +248,27 @@ export function GemsItemOverlay({
         {/* Divider */}
         <View style={styles.divider} />
 
-        {/* Creator row */}
+        {/* Creator row — falls back to a generic label if the profile join
+            failed to resolve (both displayName and username come back empty),
+            so attribution is never silently blank. */}
         <View style={styles.creatorRow}>
           {item.creator.avatarUrl ? (
             <Image
               source={{ uri: item.creator.avatarUrl }}
               style={styles.avatar}
-              accessibilityLabel={`${item.creator.displayName}'s avatar`}
+              accessibilityLabel={`${item.creator.displayName || 'Traveler'}'s avatar`}
             />
           ) : (
             <View style={[styles.avatar, styles.avatarFallback]}>
               <Text style={styles.avatarInitial}>
-                {(item.creator.displayName || item.creator.username || '?')[0].toUpperCase()}
+                {(item.creator.displayName || item.creator.username || 'T')[0].toUpperCase()}
               </Text>
             </View>
           )}
 
           <View style={styles.creatorInfo}>
             <Text style={styles.creatorName} numberOfLines={1}>
-              {item.creator.displayName || `@${item.creator.username}`}
+              {item.creator.displayName || (item.creator.username ? `@${item.creator.username}` : 'Traveler')}
             </Text>
             {item.creator.username ? (
               <Text style={styles.creatorUsername} numberOfLines={1}>

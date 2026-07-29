@@ -42,6 +42,7 @@ import {
   buildStats,
 } from "../services/passport/PassportMapService.js";
 import { countContentStampsReceived } from "../services/stamps/ContentStampService.js";
+import { countUserTrips } from "../lib/tripCounts.js";
 import { recordContribution } from "../services/passport/PassportContributionService.js";
 import type { VisibilityTier, CallerContext } from "../services/passport/PassportPrivacyGuard.js";
 import { filterStamps, filterMemories } from "../services/passport/PassportPrivacyGuard.js";
@@ -519,7 +520,7 @@ router.get("/me/passport/stats", async (req, res) => {
 
   const [stats, tripResult, followersResult, followingResult, stampsEarnedResult, milestonesResult] = await Promise.all([
     buildStats(client, user.id),
-    client.from("trips").select("id", { count: "exact", head: true }).eq("owner_id", user.id),
+    countUserTrips(sc ?? client, user.id),
     client.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("following_id", user.id),
     client.from("user_follows").select("following_id", { count: "exact", head: true }).eq("follower_id", user.id),
     // Lifetime stamps earned: passport milestone stamps + content stamps received on

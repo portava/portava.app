@@ -16,20 +16,22 @@ interface MediaCommentSheetProps {
   mediaId: string | null;
   visible: boolean;
   onClose: () => void;
+  /** Called with the new total comment count whenever it changes (e.g. after posting). */
+  onCountChange?: (count: number) => void;
 }
 
 /**
  * Thin adapter: maps the media item ID to CommentsSheet's postId prop.
  * When `mediaId` is null the sheet is not rendered.
  */
-export function MediaCommentSheet({ mediaId, visible, onClose }: MediaCommentSheetProps) {
+export function MediaCommentSheet({ mediaId, visible, onClose, onCountChange }: MediaCommentSheetProps) {
   if (!mediaId) return null;
   return (
     <CommentsSheet
       visible={visible}
       postId={mediaId}
       onClose={onClose}
-      onCountChange={() => {}}
+      onCountChange={onCountChange ?? (() => {})}
     />
   );
 }

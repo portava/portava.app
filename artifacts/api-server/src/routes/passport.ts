@@ -14,6 +14,7 @@ import {
 } from "../lib/privacy/profileSerializers.js";
 import { computeTrustScore } from "../lib/trustScore.js";
 import { countStampsReceived } from "../services/stamps/ContentStampService.js";
+import { countUserTrips } from "../lib/tripCounts.js";
 
 const router = Router();
 
@@ -779,7 +780,7 @@ router.get("/users/:username/profile", async (req, res) => {
   }
 
   const [tripResult, stampResult] = await Promise.all([
-    sc.from("trips").select("id", { count: "exact", head: true }).eq("owner_id", profile.id),
+    countUserTrips(sc, profile.id),
     sc.from("passport_stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id).eq("locked", false),
   ]);
   const tripCount = tripResult.count;
@@ -1296,7 +1297,7 @@ router.get("/users/:username/og-image.png", async (req, res) => {
     }
 
     const [tripResult, stampResult] = await Promise.all([
-      sc.from("trips").select("id", { count: "exact", head: true }).eq("owner_id", profile.id),
+      countUserTrips(sc, profile.id),
       sc.from("passport_stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id).eq("locked", false),
     ]);
 

@@ -9,8 +9,9 @@
  * Renders nothing when neither city nor notes are available.
  */
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { MapPin } from 'lucide-react-native';
+import { router } from 'expo-router';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import type { TripDetail } from '../../types/models.ts';
 
@@ -27,20 +28,23 @@ export function TripDestinationInfoCard({ trip }: TripDestinationInfoCardProps) 
 
   const locationLabel = [city, country].filter(Boolean).join(', ');
 
-  function openInMaps() {
-    if (!locationLabel) return;
-    const q = encodeURIComponent(locationLabel);
-    Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${q}`).catch(() => {});
+  // Opens Discovery already filtered to the trip's destination city, rather
+  // than leaving the app for an external maps link.
+  function exploreOnMap() {
+    if (!city) return;
+    router.push({ pathname: '/(tabs)/discovery', params: { city } } as any);
   }
 
+  // The whole card is tappable — the placeholder line previously sat outside
+  // the Pressable, so tapping it (as opposed to the heading row) did nothing.
   return (
-    <View style={s.card}>
+    <Pressable style={s.card} onPress={exploreOnMap} disabled={!city} accessibilityRole="button">
       {/* Destination heading */}
       {locationLabel ? (
-        <Pressable style={s.headingRow} onPress={openInMaps} accessibilityRole="button">
+        <View style={s.headingRow}>
           <MapPin size={16} color={color.deep} />
           <Text style={s.heading}>{locationLabel}</Text>
-        </Pressable>
+        </View>
       ) : null}
 
       {/* Trip notes / city description */}
@@ -53,7 +57,7 @@ export function TripDestinationInfoCard({ trip }: TripDestinationInfoCardProps) 
           </Text>
         ) : null
       )}
-    </View>
+    </Pressable>
   );
 }
 

@@ -10,6 +10,7 @@ import { sniffMedia, processImage, type ProcessedImage, type SniffResult } from 
 import { appMediaRef } from "../lib/postSchemas";
 import { computeTrustScore } from "../lib/trustScore.js";
 import { countContentStampsReceived } from "../services/stamps/ContentStampService.js";
+import { countUserTrips } from "../lib/tripCounts.js";
 
 /**
  * Sniff + strip-EXIF/auto-orient an avatar/cover image. Returns the processed
@@ -410,7 +411,7 @@ router.get("/me/profile", async (req, res) => {
   // Completeness score + trust score + stamp count: parallel queries (all fail-open)
   const [stampRes, tripRes, followersRes, followingRes, trustRes, stampsEarnedRes, contentStampsReceivedRes] = await Promise.allSettled([
     sc ? sc.from("passport_stamps").select("user_id", { count: "exact", head: true }).eq("user_id", user.id).limit(1) : Promise.resolve({ count: 0 }),
-    sc ? sc.from("trips").select("id", { count: "exact", head: true }).eq("owner_id", user.id) : Promise.resolve({ count: 0 }),
+    sc ? countUserTrips(sc, user.id) : Promise.resolve({ count: 0 }),
     sc ? sc.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("following_id", user.id) : Promise.resolve({ count: 0 }),
     sc ? sc.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("follower_id", user.id) : Promise.resolve({ count: 0 }),
     sc ? computeTrustScore(user.id, sc, data as Record<string, any>) : Promise.resolve(null),

@@ -3,34 +3,35 @@ import {
   View, Text, FlatList, Pressable, Image, StyleSheet,
   ActivityIndicator,
 } from 'react-native';
-import { useFocusEffect, router } from 'expo-router';
+import { useFocusEffect, router, useLocalSearchParams } from 'expo-router';
 import { Users } from 'lucide-react-native';
 import { AppHeader } from '../src/components/ui/AppHeader';
 import { OfficialBadge } from '../src/components/OfficialBadge';
 import { color, space, radius, type as t } from '../src/theme/tokens';
-import { getMyFollowers } from '../src/services/follows';
+import { getMyFollowers, getUserFollowers } from '../src/services/follows';
 import type { FollowUser } from '../src/services/follows';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
 
 export default function FollowersScreen() {
+  const { userId, title } = useLocalSearchParams<{ userId?: string; title?: string }>();
   const [users, setUsers] = useState<FollowUser[]>([]);
   const [loading, setLoading] = useState(true);
   const navBarScrollHandler = useNavBarScrollHandler();
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await getMyFollowers();
+    const res = userId ? await getUserFollowers(userId) : await getMyFollowers();
     if (res.ok && res.data) setUsers(res.data);
     else setUsers([]);
     setLoading(false);
-  }, []);
+  }, [userId]);
 
   useFocusEffect(useCallback(() => { void load(); }, [load]));
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <AppHeader variant="detail" title="Followers" onBack={router.back} />
+      <AppHeader variant="detail" title={title ? `${title}'s Followers` : 'Followers'} onBack={router.back} />
       {loading ? (
         <View style={s.center}>
           <ActivityIndicator color={color.signal} />

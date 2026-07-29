@@ -25,6 +25,7 @@ import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { AddToPlanSheet } from './AddToPlanSheet.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
+import { deriveTripDisplayStatus, tripStatusLabel } from '../lib/tripStatus.ts';
 
 /* ── Progress ring (semicircle arc) ── */
 function ProgressRing({ pct }: { pct: number }) {
@@ -52,6 +53,9 @@ export function TripHero({ trip }: { trip: TripDetail }) {
   const dates = hasDates
     ? `${fmt(trip.startDate)} – ${fmt(trip.endDate)}, ${new Date(trip.endDate).getFullYear()}`
     : null;
+  // Derive from end date rather than trusting the stored status column, which
+  // is only recomputed on writes and can go stale once a trip's dates pass.
+  const displayStatus = deriveTripDisplayStatus(trip.status, trip.endDate);
   return (
     <View style={hero.wrap}>
       <View style={hero.imageCard}>
@@ -75,7 +79,7 @@ export function TripHero({ trip }: { trip: TripDetail }) {
         <View style={hero.identity}>
           <View style={hero.titleRow}>
             <Text style={hero.title}>{trip.title}</Text>
-            <View style={hero.activeChip}><Text style={hero.activeText}>{cap(trip.status)}</Text></View>
+            <View style={hero.activeChip}><Text style={hero.activeText}>{tripStatusLabel(displayStatus)}</Text></View>
           </View>
           <Text style={hero.dest}>{trip.destinationCity}, {trip.destinationCountry}</Text>
           <View style={hero.metaRow}><CalendarDays size={14} color={color.onInk} /><Text style={hero.meta}>{dates ? `${dates} (${trip.nights} nights)` : 'No dates yet'}</Text></View>
@@ -612,21 +616,27 @@ function MemberAvatar({ u, currentUserId }: { u: User; currentUserId?: string | 
 
 /* ── Trip Circle ── */
 export function TripCircle({ cityCount, inCity, suggested, currentUserId, tripId, city }: { cityCount: number; inCity: User[]; suggested: User[]; currentUserId?: string | null; tripId?: string; city?: string }) {
-  const circlePath = tripId ? `/circle?tripId=${encodeURIComponent(tripId)}` : '/circle';
+  // Object-form href (pathname + params), matching the pattern used elsewhere
+  // in this file (e.g. circle-context-settings below) — a raw string href
+  // with a hand-encoded query string is not guaranteed to resolve reliably
+  // under Expo Router's typed-routes navigator, which expects params to be
+  // passed separately from the pathname.
+  const goToCircle = () =>
+    router.push(tripId ? ({ pathname: '/circle', params: { tripId } } as any) : ('/circle' as any));
   return (
     <View>
-      <TravelSectionHeader title="Trip Circle" onAction={() => router.push(circlePath as any)} actionLabel="View all" />
+      <TravelSectionHeader title="Trip Circle" onAction={goToCircle} actionLabel="View all" />
       <View style={cr.card}>
         <Text style={cr.count}>{cityCount} {cityCount === 1 ? 'buddy' : 'buddies'} near {city ?? 'your destination'}</Text>
         <View style={cr.avatars}>
           {inCity.map((u) => (
             <MemberAvatar key={u.id} u={u} currentUserId={currentUserId} />
           ))}
-          <Pressable style={cr.inviteBtn} onPress={() => router.push(circlePath as any)}>
+          <Pressable style={cr.inviteBtn} onPress={goToCircle}>
             <UserPlus size={16} color={color.signal} />
           </Pressable>
         </View>
-        <Pressable style={cr.inviteRow} onPress={() => router.push(circlePath as any)}>
+        <Pressable style={cr.inviteRow} onPress={goToCircle}>
           <Plus size={14} color={color.signal} /><Text style={cr.inviteText}>Invite more buddies</Text>
         </Pressable>
         <View style={cr.divider} />
@@ -637,7 +647,7 @@ export function TripCircle({ cityCount, inCity, suggested, currentUserId, tripId
               <Image source={{ uri: u.avatarUrl }} style={cr.suggestAvatar} />
             </Pressable>
           ))}
-          <Pressable style={cr.suggestMore} onPress={() => router.push(circlePath as any)}><ChevronRight size={18} color={color.mute} /></Pressable>
+          <Pressable style={cr.suggestMore} onPress={goToCircle}><ChevronRight size={18} color={color.mute} /></Pressable>
         </ScrollView>
       </View>
     </View>

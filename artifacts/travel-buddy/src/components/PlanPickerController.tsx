@@ -15,7 +15,8 @@ import {
   View, Text, Pressable, Modal, ScrollView, ActivityIndicator, StyleSheet, Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { X, Check, MapPin, ChevronLeft } from 'lucide-react-native';
+import { router } from 'expo-router';
+import { X, Check, MapPin, ChevronLeft, Plus } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
 import { fetchPlanEditableTrips, createPlanItem, addMeetupToPlan, addPlaceToPlan } from '../services/tripPlan.ts';
 import type { EditableTripRow } from '../services/tripPlan.ts';
@@ -153,6 +154,11 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
   const close = useCallback(() => {
     setSheetOpen(false);
   }, []);
+
+  const handleCreateTrip = useCallback(() => {
+    close();
+    router.push('/trip/new' as any);
+  }, [close]);
 
   const handlePickTrip = useCallback((trip: EditableTripRow) => {
     setSelectedTrip(trip);
@@ -304,6 +310,16 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
                     </View>
                   </Pressable>
                 ))}
+
+                <Pressable
+                  style={({ pressed }) => [s.createRow, pressed && { opacity: layout.pressedOpacity }]}
+                  onPress={handleCreateTrip}
+                >
+                  <View style={s.createIcon}>
+                    <Plus size={14} color={color.onInk} />
+                  </View>
+                  <Text style={s.createText}>Create new trip</Text>
+                </Pressable>
               </ScrollView>
             )
           ) : (
@@ -400,6 +416,17 @@ const s = StyleSheet.create({
   tripMeta: { ...t.small, color: color.mute, fontSize: 11 },
   emptyWrap: { paddingVertical: space.xl, alignItems: 'center' },
   emptyText: { ...t.body, color: color.mute, textAlign: 'center' },
+  createRow: {
+    flexDirection: 'row', alignItems: 'center', gap: space.md,
+    borderRadius: radius.md, borderWidth: 1.5,
+    borderColor: color.signal + '50', borderStyle: 'dashed',
+    padding: space.md,
+  },
+  createIcon: {
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center',
+  },
+  createText: { ...t.bodyStrong, color: color.signal, fontSize: 14 },
 
   selectedTripChip: { flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start', backgroundColor: color.signal + '12', borderRadius: radius.pill, borderWidth: 1, borderColor: color.signal + '40', paddingHorizontal: space.md, paddingVertical: 5 },
   selectedTripText: { ...t.small, color: color.signal, fontWeight: '700', fontSize: 12 },

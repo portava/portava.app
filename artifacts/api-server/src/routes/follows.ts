@@ -384,6 +384,121 @@ router.get("/me/followers", async (req, res) => {
   });
 });
 
+/* ===========================================================================
+ * GET /users/:userId/followers  — followers of ANY user (public list)
+ * GET /users/:userId/following  — accounts ANY user follows (public list)
+ * ===========================================================================
+ * Read-only social lists for another user's profile. Callers may be
+ * unauthenticated. Blocked relationships and private-account visibility are
+ * enforced the same way the postcard wall is: private accounts (or accounts
+ * a follower-only viewer isn't authorized for) return an empty list.
+ */
+router.get("/users/:userId/followers", async (req, res) => {
+  const target = req.params.userId;
+  if (!isUuid(target)) { sendError(res, "invalid_payload", "Invalid user id"); return; }
+
+  const { getServiceClient } = await import("../lib/supabase");
+  const { resolveProfileVisibility, extractBearerToken } = await import("../lib/profileVisibility");
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: profile } = await sc
+    .from("profiles")
+    .select("id, is_private, account_status")
+    .eq("id", target)
+    .maybeSingle();
+  if (!profile) { sendError(res, "not_found"); return; }
+
+  let viewerId: string | null = null;
+  const token = extractBearerToken(req);
+  if (token) {
+    try {
+      const { data: { user } } = await sc.auth.getUser(token);
+      viewerId = user?.id ?? null;
+    } catch { /* unauthenticated */ }
+  }
+  const isMe = viewerId === target;
+
+  if (!isMe) {
+    try {
+      const { visibility } = await resolveProfileVisibility(sc, viewerId, target, profile);
+      if (visibility === "unavailable" || visibility === "blocked" || visibility === "limited_preview") {
+        res.status(200).json({ users: [] });
+        return;
+      }
+    } catch (e: any) {
+      req.log.error({ err: e }, "users/:userId/followers: visibility check failed");
+      sendError(res, "db_error", e.message ?? "Visibility check failed");
+      return;
+    }
+  }
+
+  const { data, error } = await sc
+    .from("user_follows")
+    .select(`follower_id, created_at, profile:profiles!user_follows_follower_id_fkey(${PUBLIC_PROFILE})`)
+    .eq("following_id", target)
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) { req.log.error({ err: error }, "public followers list failed"); sendError(res, "db_error", error.message); return; }
+
+  const rows = data ?? [];
+  const allowedNames = await nameVisibilitySet(sc, rows.map((r: any) => r.profile?.id));
+  res.status(200).json({ users: rows.map((r: any) => rowToUser(r, allowedNames, viewerId)) });
+});
+
+router.get("/users/:userId/following", async (req, res) => {
+  const target = req.params.userId;
+  if (!isUuid(target)) { sendError(res, "invalid_payload", "Invalid user id"); return; }
+
+  const { getServiceClient } = await import("../lib/supabase");
+  const { resolveProfileVisibility, extractBearerToken } = await import("../lib/profileVisibility");
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: profile } = await sc
+    .from("profiles")
+    .select("id, is_private, account_status")
+    .eq("id", target)
+    .maybeSingle();
+  if (!profile) { sendError(res, "not_found"); return; }
+
+  let viewerId: string | null = null;
+  const token = extractBearerToken(req);
+  if (token) {
+    try {
+      const { data: { user } } = await sc.auth.getUser(token);
+      viewerId = user?.id ?? null;
+    } catch { /* unauthenticated */ }
+  }
+  const isMe = viewerId === target;
+
+  if (!isMe) {
+    try {
+      const { visibility } = await resolveProfileVisibility(sc, viewerId, target, profile);
+      if (visibility === "unavailable" || visibility === "blocked" || visibility === "limited_preview") {
+        res.status(200).json({ users: [] });
+        return;
+      }
+    } catch (e: any) {
+      req.log.error({ err: e }, "users/:userId/following: visibility check failed");
+      sendError(res, "db_error", e.message ?? "Visibility check failed");
+      return;
+    }
+  }
+
+  const { data, error } = await sc
+    .from("user_follows")
+    .select(`following_id, created_at, profile:profiles!user_follows_following_id_fkey(${PUBLIC_PROFILE})`)
+    .eq("follower_id", target)
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) { req.log.error({ err: error }, "public following list failed"); sendError(res, "db_error", error.message); return; }
+
+  const rows = data ?? [];
+  const allowedNames = await nameVisibilitySet(sc, rows.map((r: any) => r.profile?.id));
+  res.status(200).json({ users: rows.map((r: any) => rowToUser(r, allowedNames, viewerId)) });
+});
+
 function rowToUser(r: any, allowedNames?: Set<string>, viewerId?: string | null) {
   const p = r.profile ?? {};
   // Universal display-name rule: name only when the subject opted in (or is the viewer).

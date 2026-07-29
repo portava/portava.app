@@ -103,7 +103,12 @@ function CityAvailabilityBanner({
   const isWaitlist  = info.status === 'waitlist_only' || info.status === 'buddy_applications_open' || info.status === 'internal_testing';
 
   // `isLive` only means the city has been rolled out to public MVP — it does
-  // NOT mean a buddy is online right now.
+  // NOT mean a buddy is online right now. Previously this rendered a green
+  // "live" success banner regardless of real availability, which then sat
+  // directly above (or, worse, on top of) the "Available Now" section's own
+  // "no buddies right now" empty state — two contradictory claims about the
+  // same city on the same screen. Fold real availability into THIS banner so
+  // there is exactly one message about the city, and it can never lie.
   const hasNoBuddiesRightNow = isLive && availableNowCount != null && availableNowCount === 0;
 
   let effectiveMessage: string;
@@ -243,7 +248,7 @@ export default function RentABuddyLanding() {
   }, [city]);
 
   // When we have a suggestedCity and the viewer's city has no one available,
-  // fetch that city's available buddies. Clear whenever local buddies appear
+  // fetch that city's available buddies.  Clear whenever local buddies appear
   // or the city changes.
   useEffect(() => {
     const sc = launchInfo?.suggestedCity ?? null;

@@ -198,7 +198,23 @@ export async function requireTripMember(
     .eq("user_id", userId)
     .maybeSingle();
 
-  if (error || !data) return null;
+  if (error) return null;
+
+  if (!data) {
+    // The trip owner is never given an explicit trip_members row on trip
+    // creation (see POST /trips), so a missing row does NOT mean "not a
+    // member" when the caller is the trip's owner_id — check that before
+    // concluding no membership exists. Without this, every gate built on
+    // requireTripMember (plan add/edit/reorder, etc.) incorrectly blocks
+    // the trip owner.
+    const { data: trip } = await client
+      .from("trips")
+      .select("owner_id")
+      .eq("id", tripId)
+      .maybeSingle();
+    if (trip && (trip as any).owner_id === userId) return { role: "owner" };
+    return null;
+  }
 
   const row = data as { role: string; status?: string | null };
 

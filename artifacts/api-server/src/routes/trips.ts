@@ -1036,12 +1036,15 @@ router.get("/me/plan-editable-trips", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // Get all trip memberships for this user (owner or member)
+  // Get all trip memberships for this user (any accepted role — owner, member,
+  // co_host, viewer). Must match the RLS trips_select policy and countUserTrips'
+  // "not invited" definition, or accepted members with a co_host/viewer role
+  // silently vanish from this picker even though they see the trip everywhere else.
   const { data: memberRows, error: memErr } = await sc
     .from("trip_members")
     .select("trip_id, role")
     .eq("user_id", user.id)
-    .in("role", ["owner", "member"]);
+    .neq("role", "invited");
 
   if (memErr) { sendError(res, "db_error", memErr.message); return; }
   if (!memberRows || memberRows.length === 0) { res.json({ trips: [] }); return; }

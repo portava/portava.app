@@ -165,8 +165,7 @@ export default function PassportScreen() {
 
   React.useEffect(() => {
     if ((tab === 'plans' || tab === 'destinations') && !tripsLoaded) {
-      setTripsLoaded(true);
-      listMyTrips().then(setTrips).catch(() => {});
+      listMyTrips().then(setTrips).finally(() => setTripsLoaded(true)).catch(() => {});
     }
   }, [tab, tripsLoaded]);
 
@@ -262,6 +261,7 @@ export default function PassportScreen() {
         onStampUpdated={updateStamp}
         memories={memories}
         trips={trips}
+        tripsLoaded={tripsLoaded}
         tab={tab}
         setTab={setTab}
         menuOpen={menuOpen}
@@ -350,7 +350,7 @@ export default function PassportScreen() {
 // ─── PassportContent ──────────────────────────────────────────────────────────
 
 function PassportContent({
-  profile, postcards, stamps, stampsNew, onStampUpdated, memories, trips, tab, setTab,
+  profile, postcards, stamps, stampsNew, onStampUpdated, memories, trips, tripsLoaded, tab, setTab,
   menuOpen, setMenuOpen,
   openSettings, actions, handleEditProfile, handleViewAsPublic,
   reload, stampsTotal, loadingMoreStamps, loadMoreStamps,
@@ -369,6 +369,8 @@ function PassportContent({
   onStampUpdated: (updated: import('../../src/services/passportStamps').PassportStampNew) => void;
   memories: PassportMemory[];
   trips: TripRow[];
+  /** True once the initial trips fetch (for the Plans tab) has resolved. */
+  tripsLoaded: boolean;
   tab: PassportTabKey;
   setTab: (t: PassportTabKey) => void;
   menuOpen: boolean; setMenuOpen: (v: boolean) => void;
@@ -541,7 +543,7 @@ function PassportContent({
           <MemoriesTab memories={memories} onReload={reload} />
         )}
         {tab === 'plans' && (
-          <TripsTab trips={trips} isOwner />
+          <TripsTab trips={trips} isOwner loading={!tripsLoaded} />
         )}
         {tab === 'stamps' && (
           <StampsTab
@@ -674,7 +676,7 @@ function PassportContent({
           onStatsLoaded={setPassportStats}
           onStatPress={(label) => {
             if (label === 'Trips') setTab('plans');
-            else if (label === 'Stamps') setTab('stamps');
+            else if (label === 'Stamps') setStampsViewOpen(true);
             else if (label === 'Countries') setTab('map');
             else if (label === 'Followers') router.push('/followers' as any);
             else if (label === 'Following') router.push('/following' as any);

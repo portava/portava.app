@@ -122,17 +122,20 @@ export default function DiscoveryHub() {
   }, [currentCity]);
 
   // Deep-link: ?category=food navigates to that tab on mount
-  const params = useLocalSearchParams<{ category?: string }>();
+  const params = useLocalSearchParams<{ category?: string; city?: string }>();
   const initialCategory = (
     VALID_CATEGORY_KEYS.includes(params.category as DiscoveryCategory)
       ? params.category as DiscoveryCategory
       : 'for_you'
   );
+  // Deep-link: ?city=Cebu City switches the active destination on mount
+  // (e.g. from a trip's "explore on the map" CTA).
+  const cityParam = typeof params.city === 'string' && params.city.trim() ? params.city.trim() : null;
 
   const [activeTab, setActiveTab] = useState<DiscoveryCategory>(initialCategory);
   // Seed from resolved location (cascade: GPS → last-known → home).
   const [destination, setDestination] = useState<string | null>(
-    () => resolvedLocation.place.city ?? null
+    () => cityParam ?? resolvedLocation.place.city ?? null
   );
   const [destinationLat, setDestinationLat] = useState<number | null>(
     () => finiteOrNull(resolvedLocation.coords?.lat)

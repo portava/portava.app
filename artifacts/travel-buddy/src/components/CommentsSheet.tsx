@@ -161,9 +161,12 @@ interface ReplyThreadProps {
 }
 
 function ReplyThread({ replies, loaded, open, loading, postId, onToggle, onDelete, onLikeChange }: ReplyThreadProps) {
+  // Once loaded, keep the toggle visible even when there are zero replies —
+  // otherwise tapping "View replies" on a comment with no replies just makes
+  // the row vanish with no feedback (looked like the tap did nothing).
   return (
     <View>
-      {(!loaded || replies.length > 0 || loading) && (
+      {(!loaded || replies.length > 0 || loading || open) && (
         <Pressable style={s.repliesToggle} onPress={onToggle} hitSlop={4}>
           {loading ? (
             <ActivityIndicator size="small" color={color.signal} />
@@ -179,17 +182,21 @@ function ReplyThread({ replies, loaded, open, loading, postId, onToggle, onDelet
         </Pressable>
       )}
 
-      {open && replies.length > 0 && (
+      {open && !loading && (
         <View style={s.repliesContainer}>
-          {replies.map((r) => (
-            <ReplyRow
-              key={r.id}
-              reply={r}
-              postId={postId}
-              onDelete={onDelete}
-              onLikeChange={onLikeChange}
-            />
-          ))}
+          {replies.length > 0 ? (
+            replies.map((r) => (
+              <ReplyRow
+                key={r.id}
+                reply={r}
+                postId={postId}
+                onDelete={onDelete}
+                onLikeChange={onLikeChange}
+              />
+            ))
+          ) : (
+            <Text style={s.repliesEmptyText}>No replies yet.</Text>
+          )}
         </View>
       )}
     </View>
@@ -1358,6 +1365,7 @@ const s = StyleSheet.create({
   repliesToggle: { marginLeft: 44, paddingVertical: 4, alignSelf: 'flex-start' },
   repliesToggleText: { fontSize: 12, fontWeight: '600', color: color.deep },
   repliesContainer: { marginLeft: space.sm, gap: space.md, marginTop: space.xs },
+  repliesEmptyText: { marginLeft: 44, fontSize: 12, color: color.faint },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',

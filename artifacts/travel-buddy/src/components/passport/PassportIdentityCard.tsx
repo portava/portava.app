@@ -14,7 +14,7 @@ import Svg, { Circle, Path, Rect, Text as SvgText } from 'react-native-svg';
 import {
   ShieldCheck, Globe, MapPin, Camera,
   UserPlus, UserCheck, MoreHorizontal,
-  Briefcase, Users, Stamp, PenLine,
+  Briefcase, Users, Stamp, PenLine, MessageCircle,
 } from 'lucide-react-native';
 import type { OwnProfile, PublicProfile } from '../../types/models.ts';
 import { resolveAvatarUrl, fallbackInitials, truncateDisplayName } from '../../utils/identity.ts';
@@ -52,6 +52,8 @@ interface Props {
   isFollowing?: boolean;
   followLoading?: boolean;
   onFollowPress?: () => void;
+  /** Public profile: opens/starts a Telegraph DM with this user. Hidden when not provided. */
+  onMessagePress?: () => void;
   /** Owner: tap "Add a bio" empty state → navigate to edit profile */
   onEditBio?: () => void;
   /** Owner: primary Edit Profile button at the bottom of the card */
@@ -248,7 +250,7 @@ export function PassportIdentityCard({
   onMenuPress, onAvatarPress, onChangeCover, coverUploading,
   hasHighlights, allHighlightsViewed, onHighlightRingPress, onNewHighlightPress,
   trustScore, trustLabel, onTrustInfo,
-  isFollowing, followLoading, onFollowPress,
+  isFollowing, followLoading, onFollowPress, onMessagePress,
   onEditBio, onEditProfile, onSavedPress, countriesVisited,
   availabilityChip, onAvailabilityChipPress,
 }: Props) {
@@ -441,6 +443,17 @@ export function PassportIdentityCard({
                       </>
                     )}
                   </Pressable>
+                  {onMessagePress ? (
+                    <Pressable
+                      style={s.messagePill}
+                      onPress={onMessagePress}
+                      hitSlop={8}
+                      accessibilityLabel="Message"
+                    >
+                      <MessageCircle size={14} color={PP.ink} strokeWidth={2} />
+                      <Text style={s.messagePillText}>Message</Text>
+                    </Pressable>
+                  ) : null}
                 </View>
               ) : null}
             </View>
@@ -726,6 +739,22 @@ const s = StyleSheet.create({
   },
   followPillActive: {
     backgroundColor: '#0D9B6F',
+  },
+  messagePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: PP.ink,
+  },
+  messagePillText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: PP.ink,
   },
   followPillText: {
     fontSize: 13,

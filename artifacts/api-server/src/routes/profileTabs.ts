@@ -77,8 +77,18 @@ async function applyVisibilityGuard(
   const isOwner = viewerId === targetId;
 
   if (isOwner) {
-    const { data: ps } = await sc.from("profile_privacy_settings").select("*").eq("user_id", targetId).maybeSingle().catch(() => ({ data: null }));
-    return { allowed: true, privacySettings: ps ?? null, isOwner: true };
+    // NOTE: the supabase-js query builder is only a `then`-able (PostgrestBuilder does
+    // not extend Promise), so chaining `.catch()` directly on it throws
+    // "...catch is not a function" synchronously — it is not a valid error guard.
+    // Wrap the awaited call in try/catch instead.
+    let ps: PrivacySettings | null = null;
+    try {
+      const { data } = await sc.from("profile_privacy_settings").select("*").eq("user_id", targetId).maybeSingle();
+      ps = data ?? null;
+    } catch {
+      ps = null;
+    }
+    return { allowed: true, privacySettings: ps, isOwner: true };
   }
 
   let visibility: string;
