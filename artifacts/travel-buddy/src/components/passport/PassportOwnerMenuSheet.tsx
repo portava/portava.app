@@ -22,6 +22,7 @@ import {
   Briefcase, Bookmark, Users, UserPlus, UserCheck, UserX,
   VolumeX, Settings, Lock, Bell, HelpCircle, LogOut,
   ChevronRight, X, MoreHorizontal, Edit2, Compass, PlusCircle,
+  BarChart2,
 } from 'lucide-react-native';
 import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
 import { space, radius } from '../../theme/tokens.ts';
@@ -134,6 +135,14 @@ const SECTIONS: Section[] = [
         iconColor: '#27AE71',
         live: true,
         action: (p) => { close(p); p.onViewAsPublic?.(); },
+      },
+      {
+        key: 'analytics',
+        label: 'Profile Analytics',
+        Icon: BarChart2,
+        iconColor: '#7B5CE5',
+        live: true,
+        action: (p) => { close(p); router.push('/profile/analytics' as any); },
       },
     ],
   },

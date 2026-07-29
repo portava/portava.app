@@ -595,6 +595,38 @@ export async function deactivateAccount(): Promise<ProfileResult<{ deactivated: 
   }
 }
 
+/* ---------- Profile analytics ---------- */
+
+export interface ProfileAnalytics {
+  profileViews: { sevenDay: number; thirtyDay: number };
+  followerGrowth: { sevenDay: number; thirtyDay: number };
+  postImpressions7d: number;
+  stampsEarned: number;
+  milestones: Array<{ level: number; celebratedAt: string }>;
+}
+
+export async function getProfileAnalytics(): Promise<ProfileResult<ProfileAnalytics>> {
+  if (!isSupabaseConfigured || !apiBase()) {
+    return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
+  }
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated', message: 'Please sign in' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/me/profile/analytics`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message ?? `API ${res.status}` };
+    }
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable', message: 'Network unavailable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
 export async function reactivateAccount(): Promise<ProfileResult<{ reactivated: boolean }>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
   const token = await freshToken();
