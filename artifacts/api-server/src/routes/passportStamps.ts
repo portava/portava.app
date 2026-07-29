@@ -24,7 +24,6 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { normalizedFriendshipPair } from "../lib/friendDecisions.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { countStampsReceived } from "../services/stamps/ContentStampService.js";
 import {
   createStamp,
   updateStampVisibility,
@@ -543,10 +542,10 @@ router.get("/me/passport/stats", async (req, res) => {
       : Promise.resolve({ data: [] }),
   ]);
 
-  // Stamps received on this user's own posts/media (Roam/Watch stamp reactions),
-  // added to the passport milestone-award count so STAMPS reflects both.
-  const contentStampsReceived = await countStampsReceived(client, user.id);
-  const stampsEarned = ((stampsEarnedResult as any).count ?? 0) + contentStampsReceived;
+  // stampsEarnedResult already combines the passport milestone-award count with
+  // content stamps received (via countContentStampsReceived, paginated so it's
+  // exact for high-post-count users) — do not add it again here.
+  const stampsEarned = (stampsEarnedResult as any).count ?? 0;
   const milestones: Array<{ level: number; celebratedAt: string }> =
     ((milestonesResult as any).data ?? []).map((m: any) => ({
       level: m.milestone_level as number,

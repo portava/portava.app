@@ -165,6 +165,21 @@ function CategoryCard({ post }: { post: FeaturedPost }) {
   );
 }
 
+// ── Fallback notice ───────────────────────────────────────────────────────────
+//
+// Shown when the API returns isFallback:true — portava_featured had no live
+// rows and the server synthesised content from @Portava's own posts instead.
+
+function FallbackNotice() {
+  return (
+    <View style={styles.fallbackNotice}>
+      <Text style={styles.fallbackNoticeText}>
+        ✨ Showcasing @Portava's top posts while new featured selections are being curated.
+      </Text>
+    </View>
+  );
+}
+
 // ── Empty state ───────────────────────────────────────────────────────────────
 
 function EmptyState() {
@@ -185,6 +200,7 @@ export default function FeaturedHubScreen() {
   const insets = useSafeAreaInsets();
   const [groups, setGroups] = useState<FeaturedGroup[]>([]);
   const [winners, setWinners] = useState<FeaturedPost[]>([]);
+  const [isFallback, setIsFallback] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -198,6 +214,7 @@ export default function FeaturedHubScreen() {
     if (result.ok && result.data) {
       setGroups(result.data.groups);
       setWinners(result.data.thisWeeksWinners);
+      setIsFallback(result.data.isFallback === true);
     } else {
       setError(result.message ?? 'Could not load featured posts');
     }
@@ -218,6 +235,7 @@ export default function FeaturedHubScreen() {
   );
 
   const sections = [
+    ...(isFallback ? [{ key: 'fallback-notice', render: () => <FallbackNotice /> }] : []),
     { key: 'winners', render: () => <WinnerBanner posts={winners} /> },
     ...groups.map((group) => ({ key: group.category, render: () => <CategoryRow group={group} /> })),
   ];
@@ -368,6 +386,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5, paddingVertical: 2,
   },
   videoIndicatorText: { color: '#fff', fontSize: 9 },
+
+  // ── Fallback notice ─────────────────────────────────────────────────────────
+  fallbackNotice: {
+    marginHorizontal: space.lg,
+    marginBottom: space.md,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    backgroundColor: '#EFF6FF',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  fallbackNoticeText: { ...t.small, color: '#1E40AF', lineHeight: 18 },
 
   // ── Empty / error ───────────────────────────────────────────────────────────
   empty: {

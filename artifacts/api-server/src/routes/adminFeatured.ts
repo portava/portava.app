@@ -596,6 +596,109 @@ router.post("/admin/featured/revoke/:postId", asyncHandler(async (req, res) => {
   res.json({ ok: true, featured: revoked });
 }));
 
+// ── POST /admin/featured/reseed ───────────────────────────────────────────────
+//
+// Repopulates portava_featured from @Portava's own top posts without a deploy.
+// Useful when an admin accidentally revokes all featured rows or the table is
+// otherwise empty.  Skips posts that already have a live row for the assigned
+// category (idempotent).
+//
+// Strategy:
+//   1. Fetch the top MAX_RESEED @Portava posts ordered by like_count.
+//   2. Distribute them round-robin across the 6 standard categories.
+//   3. Upsert with status = 'live', respecting the existing (post_id, category)
+//      unique constraint — existing live rows are left unchanged.
+//
+// Returns { seeded: number, skipped: number } so callers can tell whether the
+// table actually needed repopulation.
+
+const MAX_RESEED = 18; // 3 posts per category across 6 categories
+
+router.post("/admin/featured/reseed", asyncHandler(async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+
+  // Resolve @portava's profile id by handle at request time — never hardcode
+  // it, since seeding flows can assign @portava a different id per environment.
+  const { data: portavaProfile } = await sc
+    .from("profiles")
+    .select("id")
+    .eq("handle", "portava")
+    .maybeSingle();
+
+  if (!portavaProfile) {
+    res.json({ seeded: 0, skipped: 0, message: "@portava profile not found — nothing to seed from" });
+    return;
+  }
+
+  // 1. Fetch @Portava's top posts by like_count.
+  const { data: portavaPosts, error: postsErr } = await sc
+    .from("posts")
+    .select("id, author_id, like_count, primary_media_type, has_video, status, post_status")
+    .eq("author_id", (portavaProfile as any).id)
+    .eq("status", "active")
+    .eq("post_status", "published")
+    .order("like_count", { ascending: false })
+    .limit(MAX_RESEED);
+
+  if (postsErr) { sendError(res, "db_error", postsErr.message); return; }
+
+  const posts = (portavaPosts ?? []) as any[];
+  if (posts.length === 0) {
+    res.json({ seeded: 0, skipped: 0, message: "@Portava has no published posts to seed from" });
+    return;
+  }
+
+  // 2. Load existing live rows to skip them (idempotency).
+  const { data: liveRows } = await sc
+    .from("portava_featured")
+    .select("post_id, category")
+    .eq("status", "live");
+
+  const liveSet = new Set(
+    ((liveRows ?? []) as any[]).map((r: any) => `${r.post_id}::${r.category}`),
+  );
+
+  const now = new Date().toISOString();
+
+  // 3. Distribute posts round-robin across the 6 categories.
+  const toUpsert: any[] = [];
+  for (let i = 0; i < posts.length; i++) {
+    const post = posts[i];
+    const category = PORTAVA_FEATURED_CATEGORY[i % PORTAVA_FEATURED_CATEGORY.length];
+    const key = `${post.id}::${category}`;
+    if (liveSet.has(key)) continue;   // already live — skip
+    toUpsert.push({
+      post_id:     post.id,
+      category,
+      featured_at: now,
+      approved_by: adminUserId,
+      status:      "live",
+      creator_permission_requested_at: null,
+      creator_permission_granted_at:   null,
+    });
+  }
+
+  if (toUpsert.length === 0) {
+    res.json({ seeded: 0, skipped: posts.length, message: "All posts already have live featured rows" });
+    return;
+  }
+
+  const { error: upsertErr } = await sc
+    .from("portava_featured")
+    .upsert(toUpsert, { onConflict: "post_id,category" });
+
+  if (upsertErr) { sendError(res, "db_error", upsertErr.message); return; }
+
+  res.json({
+    seeded:  toUpsert.length,
+    skipped: posts.length - toUpsert.length,
+    categories: [...new Set(toUpsert.map((r) => r.category))],
+    seededAt: now,
+  });
+}));
+
 // ── DELETE /admin/featured/:id ────────────────────────────────────────────────
 
 router.delete("/admin/featured/:id", asyncHandler(async (req, res) => {

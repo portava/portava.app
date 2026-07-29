@@ -10,9 +10,12 @@
  *
  * Response:
  *   {
- *     groups:          FeaturedGroup[]   — per-category arrays
- *     thisWeeksWinners: FeaturedPost[]   — posts featured in the last 7 days
- *     total:           number
+ *     groups:           FeaturedGroup[]   — per-category arrays
+ *     thisWeeksWinners: FeaturedPost[]    — posts featured in the last 7 days
+ *     total:            number
+ *     isFallback:       boolean           — true when portava_featured has no
+ *                                           live rows and we synthesise from
+ *                                           @Portava's own posts instead
  *   }
  */
 
@@ -23,6 +26,21 @@ import { getServiceClient } from "../lib/supabase.js";
 
 const router = Router();
 
+/**
+ * Resolve @portava's profile row (id, username, full_name, avatar_url,
+ * verified) by handle at request time — never hardcode its UUID. Seeding
+ * flows can assign @portava a different id per environment, so a fixed
+ * constant would silently break the fallback wherever that id doesn't match.
+ */
+async function resolvePortavaProfile(sc: any): Promise<{ id: string; username: string | null; full_name: string | null; avatar_url: string | null; verified: boolean } | null> {
+  const { data } = await sc
+    .from("profiles")
+    .select("id, username, full_name, avatar_url, verified")
+    .eq("handle", "portava")
+    .maybeSingle();
+  return (data as any) ?? null;
+}
+
 /** Human-readable labels for each category. */
 const CATEGORY_LABELS: Record<string, string> = {
   best_video:       "Best Video",
@@ -31,6 +49,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   best_restaurant:  "Best Restaurant",
   best_adventure:   "Best Adventure",
   best_photo:       "Best Photo",
+  portava_picks:    "Portava's Picks",
 };
 
 /** Preferred display order for category groups. */
@@ -85,6 +104,21 @@ router.get("/featured", asyncHandler(async (req, res) => {
     ? allRows.filter((r: any) => (r.posts as any)?.profiles?.id === creatorId || (r.posts as any)?.author_id === creatorId)
     : allRows;
 
+  // Privacy guard: the Featured endpoint is public (no auth), so any post
+  // from a private account must be excluded entirely — we cannot check
+  // whether an anonymous viewer follows the author. is_private is now
+  // included in the profiles join above.
+  const visible = filtered.filter((r: any) => (r.posts as any)?.profiles?.is_private !== true);
+
+  // ── Fallback: synthesise from @Portava's own posts when the table is empty ──
+  //
+  // This keeps the carousel populated when an admin revokes all featured posts
+  // or a deployment bug clears portava_featured, rather than showing a blank UI.
+  // The mobile client receives isFallback:true so it can display a subtle notice.
+  if (visible.length === 0 && !creatorId) {
+    return buildFallbackResponse(sc, res);
+  }
+
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   // Map rows to FeaturedPost objects
@@ -125,11 +159,6 @@ router.get("/featured", asyncHandler(async (req, res) => {
     };
   }
 
-  // Privacy guard: the Featured endpoint is public (no auth), so any post
-  // from a private account must be excluded entirely — we cannot check
-  // whether an anonymous viewer follows the author. is_private is now
-  // included in the profiles join above.
-  const visible = filtered.filter((r: any) => (r.posts as any)?.profiles?.is_private !== true);
   const posts = visible.map(mapRow);
 
   // This week's winners (featured within last 7 days)
@@ -163,7 +192,102 @@ router.get("/featured", asyncHandler(async (req, res) => {
     groups: orderedGroups,
     thisWeeksWinners,
     total: posts.length,
+    isFallback: false,
   });
 }));
+
+// ── Fallback builder ──────────────────────────────────────────────────────────
+//
+// Called when portava_featured has no live rows.  Fetches @Portava's own top
+// posts (by like_count) and returns them as a single "portava_picks" group so
+// the Discovery carousel always has something to display.
+
+async function buildFallbackResponse(sc: any, res: any): Promise<void> {
+  const portavaProfile = await resolvePortavaProfile(sc);
+
+  if (!portavaProfile) {
+    // @portava's profile can't be resolved (not seeded yet) — return a clean
+    // empty state rather than erroring.
+    res.json({ groups: [], thisWeeksWinners: [], total: 0, isFallback: true });
+    return;
+  }
+
+  const { data: portavaPosts, error } = await sc
+    .from("posts")
+    .select("id, content, location_city, location_country, author_id, like_count, post_media(id, media_type, public_url, thumbnail_url, thumbnail_path, sort_order, processing_status, storage_path, storage_bucket), profiles!author_id(id, username, full_name, avatar_url, verified, is_private)")
+    .eq("author_id", portavaProfile.id)
+    .eq("status", "active")
+    .eq("post_status", "published")
+    .order("like_count", { ascending: false })
+    .limit(18);
+
+  if (error) {
+    // Surface the DB error rather than returning empty — the client can retry.
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  const rawPosts = (portavaPosts ?? []) as any[];
+
+  if (rawPosts.length === 0) {
+    // @Portava itself has no published posts — return a clean empty state.
+    res.json({ groups: [], thisWeeksWinners: [], total: 0, isFallback: true });
+    return;
+  }
+
+  const now = new Date().toISOString();
+
+  // Synthesise FeaturedPost objects — use a synthetic ID so the shape matches
+  // the normal response without colliding with real portava_featured PKs.
+  const fallbackPosts = rawPosts.map((post: any, idx: number) => {
+    const profile = post.profiles ?? {};
+    const postMedia: any[] = Array.isArray(post.post_media) ? post.post_media : [];
+    const sortedMedia = postMedia
+      .filter((m: any) => m.processing_status === "ready" || !m.processing_status)
+      .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    const primaryMedia = sortedMedia[0];
+
+    const thumbnailUrl: string | null = primaryMedia?.thumbnail_url ?? primaryMedia?.public_url ?? null;
+    const mediaType: "image" | "video" = (primaryMedia?.media_type as any) ?? "image";
+    const username = profile.username ?? null;
+    const displayName = profile.full_name ?? profile.username ?? null;
+
+    return {
+      // Use a deterministic synthetic ID so clients can key on it.
+      id:            `fallback-${post.id}`,
+      postId:        post.id as string,
+      category:      "portava_picks",
+      categoryLabel: categoryLabel("portava_picks"),
+      featuredAt:    now,
+      caption:       post.content ?? null,
+      thumbnailUrl,
+      mediaType,
+      author: {
+        id:          (profile.id ?? post.author_id ?? portavaProfile.id) as string,
+        username:    (username ?? portavaProfile.username ?? "portava") as string,
+        displayName: (displayName ?? portavaProfile.full_name ?? portavaProfile.username ?? "Portava") as string,
+        avatarUrl:   (profile.avatar_url ?? portavaProfile.avatar_url ?? null) as string | null,
+        verified:    Boolean(profile.verified ?? portavaProfile.verified),
+      },
+      locationCity:    (post.location_city ?? null) as string | null,
+      locationCountry: (post.location_country ?? null) as string | null,
+    };
+  });
+
+  const groups = [
+    {
+      category:      "portava_picks",
+      categoryLabel: categoryLabel("portava_picks"),
+      posts:         fallbackPosts,
+    },
+  ];
+
+  res.json({
+    groups,
+    thisWeeksWinners: [],
+    total: fallbackPosts.length,
+    isFallback: true,
+  });
+}
 
 export default router;

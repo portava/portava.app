@@ -63,3 +63,4 @@
 - [Shared media composer kit](shared-media-composer-kit.md) — useMediaComposer+MediaPickerButton+MediaAttachmentTray replace all copy-pasted picker flows; new composers must use the kit.
 - [uploadItem test-env constraint](uploaditem-test-env-constraint.md) — uploadItem's setItems-as-reader pattern requires React eager-eval (fiber.lanes===NoLanes); React 19 jest-expo always has pending lanes at the second setItems; use it.skip with docs, fix needs useRef refactor.
 - [expo-image-picker deprecated APIs](expo-image-picker-deprecated-apis.md) — MediaTypeOptions.Images/Videos removed in v15+; use `['images']`/`['videos']` string arrays instead.
+- [Featured carousel fallback pattern](featured-carousel-fallback.md) — GET /api/featured synthesizes @Portava top posts when portava_featured is empty; isFallback flag drives mobile notice.

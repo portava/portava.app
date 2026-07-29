@@ -204,7 +204,7 @@ export async function countContentStampsReceived(
       const { count, error: countErr } = await db
         .from("content_stamps")
         .select("id", { count: "exact", head: true })
-        .eq("entity_type", "post")
+        .in("entity_type", ["post", "media"])
         .in("entity_id", postIds);
 
       if (!countErr) {

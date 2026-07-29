@@ -92,14 +92,50 @@ const SEEDED_ROWS = [
 
 // ── Fake client builder ───────────────────────────────────────────────────────
 
+const PORTAVA_UUID = "c00f4f1c-6543-4a86-81a4-35ba1c0be385";
+
+// Fake @Portava post rows returned by the fallback query on the `posts` table.
+// The shape mirrors what the posts-table select in buildFallbackResponse returns.
+function makePortavaPostRow(postId: string, likeCount: number): any {
+  return {
+    id:               postId,
+    content:          `Portava top post ${postId}`,
+    location_city:    "Lisbon",
+    location_country: "PT",
+    author_id:        PORTAVA_UUID,
+    like_count:       likeCount,
+    status:           "active",
+    post_status:      "published",
+    post_media:       [],
+    profiles: {
+      id:        PORTAVA_UUID,
+      username:  "portava",
+      full_name: "Portava Official",
+      avatar_url: null,
+      verified:  true,
+      is_private: false,
+    },
+  };
+}
+
+const PORTAVA_POST_ROWS = [
+  makePortavaPostRow("pp000001-0000-0000-0000-000000000001", 900),
+  makePortavaPostRow("pp000002-0000-0000-0000-000000000002", 800),
+  makePortavaPostRow("pp000003-0000-0000-0000-000000000003", 700),
+];
+
 /**
  * Builds a minimal fake service client that answers the
  * portava_featured query used by GET /api/featured.
  *
  * The select string is ignored — we return SEEDED_ROWS directly so that
  * mapRow() in the route receives the expected nested shape.
+ *
+ * Pass `portavaPosts` to also back the fallback `posts` table query used
+ * when portava_featured returns no live rows. Pass `portavaProfileMissing`
+ * to simulate an environment where @portava hasn't been seeded yet.
  */
-function makeFakeSc(rows: any[] = SEEDED_ROWS) {
+function makeFakeSc(rows: any[] = SEEDED_ROWS, portavaPosts: any[] = [], portavaProfileMissing = false) {
   function makeBuilder(source: any[]): any {
     let current = source;
     const b: any = {
@@ -118,12 +154,27 @@ function makeFakeSc(rows: any[] = SEEDED_ROWS) {
     return b;
   }
 
+  // @portava's profile row, resolved by handle — used by the fallback path
+  // instead of a hardcoded UUID, so tests also exercise handle-based lookup.
+  const portavaProfileRows = portavaProfileMissing
+    ? []
+    : [{
+        id:         PORTAVA_UUID,
+        handle:     "portava",
+        username:   "portava",
+        full_name:  "Portava Official",
+        avatar_url: null,
+        verified:   true,
+      }];
+
   return {
     auth: {
       getUser: async () => ({ data: { user: null }, error: { message: "no auth" } }),
     },
     from: (table: string) => {
       if (table === "portava_featured") return makeBuilder(rows);
+      if (table === "posts") return makeBuilder(portavaPosts);
+      if (table === "profiles") return makeBuilder(portavaProfileRows);
       return makeBuilder([]);
     },
   };
@@ -447,5 +498,160 @@ describe("G: creatorId filter — only returns that creator's posts, not leaking
       3,
       `Without creatorId filter, total must be 3, got ${body.total}`,
     );
+  });
+});
+
+// ── H: fallback when portava_featured has no live rows ────────────────────────
+//
+// When portava_featured returns an empty array the route must synthesise
+// content from @Portava's own top posts and set isFallback:true so the mobile
+// client can display a notice rather than a blank carousel.
+
+describe("H: fallback to @Portava posts when portava_featured is empty", () => {
+  it("returns isFallback:true and a portava_picks group when featured table is empty", async () => {
+    // Empty portava_featured table; @Portava has 3 published posts available.
+    _setTestServiceClient(makeFakeSc([], PORTAVA_POST_ROWS) as any);
+
+    const { status, body } = await getReq("/api/featured");
+
+    assert.equal(status, 200, `Expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.isFallback, true, "isFallback must be true when featured table is empty");
+    assert.ok(
+      Array.isArray(body.groups) && body.groups.length >= 1,
+      `Expected at least one fallback group, got ${body.groups?.length}`,
+    );
+
+    const picksGroup = (body.groups as any[]).find((g: any) => g.category === "portava_picks");
+    assert.ok(picksGroup, "A portava_picks group must be present in the fallback response");
+    assert.ok(
+      picksGroup.posts.length >= 1,
+      `portava_picks group must contain at least one post, got ${picksGroup.posts.length}`,
+    );
+  });
+
+  it("fallback posts carry the expected shape with synthetic fallback- id prefix", async () => {
+    _setTestServiceClient(makeFakeSc([], PORTAVA_POST_ROWS) as any);
+
+    const { status, body } = await getReq("/api/featured");
+
+    assert.equal(status, 200);
+
+    const picksGroup = (body.groups as any[]).find((g: any) => g.category === "portava_picks");
+    assert.ok(picksGroup, "portava_picks group must exist");
+
+    for (const post of picksGroup.posts as any[]) {
+      assert.ok(
+        typeof post.id === "string" && post.id.startsWith("fallback-"),
+        `Fallback post id must start with 'fallback-', got '${post.id}'`,
+      );
+      assert.ok(typeof post.postId   === "string" && post.postId,   "postId must be a non-empty string");
+      assert.ok(typeof post.category === "string" && post.category, "category must be a non-empty string");
+      assert.ok(post.author,                                         "author must exist");
+      assert.ok(typeof post.author.username === "string",            "author.username must be a string");
+    }
+  });
+
+  it("returns isFallback:false and normal content when featured rows exist", async () => {
+    _setTestServiceClient(makeFakeSc(SEEDED_ROWS, PORTAVA_POST_ROWS) as any);
+
+    const { status, body } = await getReq("/api/featured");
+
+    assert.equal(status, 200);
+    assert.equal(body.isFallback, false, "isFallback must be false when live featured rows exist");
+    assert.ok(
+      (body.groups as any[]).every((g: any) => g.category !== "portava_picks"),
+      "portava_picks group must not appear when real featured rows exist",
+    );
+  });
+
+  it("returns empty groups with isFallback:true when both tables have no posts", async () => {
+    // portava_featured empty AND @Portava has no posts
+    _setTestServiceClient(makeFakeSc([], []) as any);
+
+    const { status, body } = await getReq("/api/featured");
+
+    assert.equal(status, 200, `Expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.isFallback, true, "isFallback must be true even when @Portava has no posts");
+    assert.deepEqual(body.groups, [], "groups must be empty when @Portava has no posts either");
+    assert.equal(body.total, 0, "total must be 0");
+  });
+
+  it("resolves @portava by handle even when its id differs from any hardcoded constant", async () => {
+    // Simulate an environment where @portava was seeded with a different UUID
+    // than the one this route module (or its tests) might otherwise assume.
+    const ALT_PORTAVA_ID = "aaaaaaaa-9999-0000-0000-000000000099";
+    const altPortavaPost = {
+      id:               "pp999999-0000-0000-0000-000000000099",
+      content:          "Post from an alternate @portava id",
+      location_city:    "Porto",
+      location_country: "PT",
+      author_id:        ALT_PORTAVA_ID,
+      like_count:       500,
+      status:           "active",
+      post_status:      "published",
+      post_media:       [],
+      profiles: {
+        id:        ALT_PORTAVA_ID,
+        username:  "portava",
+        full_name: "Portava Official",
+        avatar_url: null,
+        verified:  true,
+        is_private: false,
+      },
+    };
+
+    // Build a fake client whose profiles table resolves @portava to
+    // ALT_PORTAVA_ID, proving the route looks it up at request time rather
+    // than trusting a hardcoded constant.
+    const customSc: any = {
+      auth: { getUser: async () => ({ data: { user: null }, error: { message: "no auth" } }) },
+      from: (table: string) => {
+        const rowsFor: Record<string, any[]> = {
+          portava_featured: [],
+          posts: [altPortavaPost],
+          profiles: [{ id: ALT_PORTAVA_ID, handle: "portava", username: "portava", full_name: "Portava Official", avatar_url: null, verified: true }],
+        };
+        const source = rowsFor[table] ?? [];
+        let current = source;
+        const b: any = {
+          select:      ()               => b,
+          eq:          (col: string, val: any) => { current = current.filter((r) => r[col] === val); return b; },
+          neq:         (col: string, val: any) => { current = current.filter((r) => r[col] !== val); return b; },
+          order:       ()               => b,
+          limit:       (n: number)      => { current = current.slice(0, n); return b; },
+          is:          ()               => b,
+          in:          (col: string, vals: any[]) => { current = current.filter((r) => vals.includes(r[col])); return b; },
+          maybeSingle: async ()         => ({ data: current[0] ?? null, error: null }),
+          single:      async ()         => ({ data: current[0] ?? null, error: null }),
+          then: (onF: (v: any) => any) => Promise.resolve({ data: current, error: null }).then(onF),
+        };
+        return b;
+      },
+    };
+    _setTestServiceClient(customSc);
+
+    const { status, body } = await getReq("/api/featured");
+
+    assert.equal(status, 200, `Expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.isFallback, true, "isFallback must be true when featured table is empty");
+
+    const picksGroup = (body.groups as any[]).find((g: any) => g.category === "portava_picks");
+    assert.ok(picksGroup, "portava_picks group must exist even with a non-canonical @portava id");
+    assert.equal(
+      picksGroup.posts.length,
+      1,
+      "the alternate-id @portava post must be picked up via handle resolution, not a hardcoded id",
+    );
+    assert.equal(picksGroup.posts[0].author.id, ALT_PORTAVA_ID, "author id must match the resolved (non-canonical) @portava id");
+  });
+
+  it("returns a clean empty state when @portava's profile cannot be resolved at all", async () => {
+    _setTestServiceClient(makeFakeSc([], [], /* portavaProfileMissing */ true) as any);
+
+    const { status, body } = await getReq("/api/featured");
+
+    assert.equal(status, 200, `Expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.isFallback, true, "isFallback must be true when @portava's profile is unresolvable");
+    assert.deepEqual(body.groups, [], "groups must be empty when @portava's profile can't be found");
   });
 });
