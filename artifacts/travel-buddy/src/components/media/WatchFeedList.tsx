@@ -167,7 +167,6 @@ const CellWrapper = React.memo(function CellWrapper({
   // rail's stamp button via `stamp` (useWatchStamp).
   const handleDoubleTapStamp = useCallback(
     (x: number, y: number) => {
-      console.log('[STAMP_DEBUG] handleDoubleTapStamp fired', { x, y });
       heartBurstRef.current?.trigger();
       stamp.triggerAt(x, y);
     },

@@ -183,12 +183,6 @@ export function WatchItemOverlay({
   const insets = useSafeAreaInsets();
   const [captionExpanded, setCaptionExpanded] = useState(false);
 
-  console.log('[STAMP_DEBUG] WatchItemOverlay render', {
-    itemId: item.id,
-    stampVisualIsStamped,
-    stampVisualCount,
-  });
-
   const handleCreate = useCallback(() => {
     if (isGemsMode) {
       router.push('/media/add-gem' as any);

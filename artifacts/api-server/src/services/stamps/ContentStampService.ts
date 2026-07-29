@@ -145,6 +145,59 @@ export async function getStampState(
 }
 
 /**
+ * Count content stamps *received* by a user — i.e. stamps placed by anyone on
+ * posts authored by that user. Used to compute the "Stamps Earned" profile stat
+ * that reflects appreciation from peers, not just passport milestone awards.
+ *
+ * Counts ALL posts via a paged traversal (1 000 IDs per page) so the result is
+ * always an exact lifetime total, not a capped lower bound. The loop terminates
+ * as soon as a page returns fewer IDs than PAGE_SIZE.
+ *
+ * Fails open: returns 0 on any DB error so callers never surface a 500 because
+ * the content-stamp count couldn't be fetched.
+ */
+export async function countContentStampsReceived(
+  db: SupabaseClient,
+  userId: string,
+): Promise<number> {
+  const PAGE_SIZE = 1000;
+  let totalCount = 0;
+  let offset = 0;
+
+  try {
+    while (true) {
+      const { data: posts, error: postsErr } = await db
+        .from("posts")
+        .select("id")
+        .eq("author_id", userId)
+        .range(offset, offset + PAGE_SIZE - 1);
+
+      if (postsErr || !posts || posts.length === 0) break;
+
+      const postIds = (posts as any[]).map((p) => p.id as string);
+
+      const { count, error: countErr } = await db
+        .from("content_stamps")
+        .select("id", { count: "exact", head: true })
+        .eq("entity_type", "post")
+        .in("entity_id", postIds);
+
+      if (!countErr) {
+        totalCount += count ?? 0;
+      }
+
+      if (posts.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
+    }
+  } catch {
+    // Fail open — callers treat 0 as "unknown" rather than surfacing a 500.
+    return 0;
+  }
+
+  return totalCount;
+}
+
+/**
  * Batch-fetch stamp counts and viewer stamp state for a list of entity IDs
  * of the same entity_type. Returns a map of entityId → StampResult.
  *

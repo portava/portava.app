@@ -107,8 +107,6 @@ function unauthSession() {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
 beforeEach(async () => {
   jest.clearAllMocks();
   // Disable the DEV bypass so the real gate logic runs in tests.

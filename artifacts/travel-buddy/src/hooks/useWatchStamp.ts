@@ -81,38 +81,32 @@ export function useWatchStamp(item: MediaFeedItem): UseWatchStampReturn {
   /** Core: toggle + launch the traveling-stamp animation from a launch point. */
   const fireStampAt = useCallback(
     (launchX: number, launchY: number) => {
-      console.log('[STAMP_DEBUG] fireStampAt called', { launchX, launchY, itemId: item.id, stampLoading, animating: animatingRef.current, isAnimating, visualIsStamped });
-      if (stampLoading || animatingRef.current || isAnimating) {
-        console.log('[STAMP_DEBUG] fireStampAt BAILED');
-        return;
-      }
+      if (stampLoading || animatingRef.current || isAnimating) return;
 
       const wasStamped = visualIsStamped;
       const nextStamped = !wasStamped;
 
       nextStamped ? playStamp() : playUnstamp();
 
-      // Fix (2026-07-28): the animation's onComplete used to read a ref that
-      // mirrored apiIsStamped/apiCount via a useEffect. If the toggle's
-      // network round-trip hadn't resolved yet by the time onComplete fired
-      // (~1.1s after press), that ref still held the STALE pre-toggle value,
-      // so onComplete would silently revert the fill back to hollow right
-      // after the animation even though the stamp had actually succeeded
-      // (or was still in flight). Fixed by finalizing visual state only once
-      // BOTH the animation has finished AND the toggle() call has resolved —
+      // Fix: the animation's onComplete used to read a ref that mirrored
+      // apiIsStamped/apiCount via a useEffect. If the toggle's network
+      // round-trip hadn't resolved yet by the time onComplete fired (~1.1s
+      // after press), that ref still held the STALE pre-toggle value, so
+      // onComplete would silently revert the fill back to hollow right after
+      // the animation even though the stamp had actually succeeded (or was
+      // still in flight). Fixed by finalizing visual state only once BOTH the
+      // animation has finished AND the toggle() call has resolved —
       // whichever happens later — using the toggle promise's own resolved
       // value directly, never a possibly-stale mirror ref.
       let animDone = false;
       let toggleResult: { isStamped: boolean; count: number } | null = null;
       const finalizeIfReady = () => {
         if (!animDone || !toggleResult) return;
-        console.log('[STAMP_DEBUG] finalizing visual state', { itemId: item.id, toggleResult });
         setVisualIsStamped(toggleResult.isStamped);
         setVisualCount(toggleResult.count);
       };
 
       void toggleStamp().then((result) => {
-        console.log('[STAMP_DEBUG] toggleStamp() settled', { itemId: item.id, result });
         latestToggleResultRef.current = result;
         toggleResult = result;
         finalizeIfReady();
@@ -129,7 +123,6 @@ export function useWatchStamp(item: MediaFeedItem): UseWatchStampReturn {
         contentY: H / 2,
         theme: 'Default',
         onImpact: () => {
-          console.log('[STAMP_DEBUG] onImpact — setting visual state', { itemId: item.id, nextStamped });
           setVisualIsStamped(nextStamped);
           setVisualCount((prev) => (nextStamped ? prev + 1 : Math.max(0, prev - 1)));
         },
@@ -145,26 +138,11 @@ export function useWatchStamp(item: MediaFeedItem): UseWatchStampReturn {
 
   /** Rail button entry point — measures its own screen position as the launch point. */
   const handleStampPress = useCallback(() => {
-    console.log('[STAMP_DEBUG] handleStampPress fired', {
-      itemId: item.id,
-      stampLoading,
-      animating: animatingRef.current,
-      isAnimating,
-      hasRef: !!stampGroupRef.current,
-    });
-    if (stampLoading || animatingRef.current || isAnimating) {
-      console.log('[STAMP_DEBUG] handleStampPress BAILED (loading/animating)');
-      return;
-    }
-    if (!stampGroupRef.current) {
-      console.log('[STAMP_DEBUG] handleStampPress BAILED — stampGroupRef.current is null, measure() never called');
-      return;
-    }
-    stampGroupRef.current.measure((_x, _y, width, height, pageX, pageY) => {
-      console.log('[STAMP_DEBUG] measure() resolved', { width, height, pageX, pageY });
+    if (stampLoading || animatingRef.current || isAnimating) return;
+    stampGroupRef.current?.measure((_x, _y, width, height, pageX, pageY) => {
       fireStampAt(pageX + width / 2, pageY + height / 2);
     });
-  }, [stampLoading, isAnimating, fireStampAt, item.id]);
+  }, [stampLoading, isAnimating, fireStampAt]);
 
   /** Double-tap-on-content entry point — launch point is the tap coordinates. */
   const triggerAt = useCallback(

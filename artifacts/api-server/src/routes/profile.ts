@@ -408,15 +408,17 @@ router.get("/me/profile", async (req, res) => {
   }
 
   // Completeness score + trust score + stamp count: parallel queries (all fail-open)
-  const [stampRes, tripRes, followersRes, followingRes, trustRes, stampsEarnedRes] = await Promise.allSettled([
+  const [stampRes, tripRes, followersRes, followingRes, trustRes, stampsEarnedRes, contentStampsReceivedRes] = await Promise.allSettled([
     sc ? sc.from("passport_stamps").select("user_id", { count: "exact", head: true }).eq("user_id", user.id).limit(1) : Promise.resolve({ count: 0 }),
     sc ? sc.from("trips").select("id", { count: "exact", head: true }).eq("owner_id", user.id) : Promise.resolve({ count: 0 }),
     sc ? sc.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("following_id", user.id) : Promise.resolve({ count: 0 }),
     sc ? sc.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("follower_id", user.id) : Promise.resolve({ count: 0 }),
     sc ? computeTrustScore(user.id, sc, data as Record<string, any>) : Promise.resolve(null),
-    // Lifetime stamps earned (all entity types, excluding revoked). Fails silently if
+    // Lifetime passport milestone stamps (all entity types, excluding revoked). Fails silently if
     // user_stamps table is absent (schema-drift safe).
     sc ? sc.from("user_stamps").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("is_revoked", false) : Promise.resolve({ count: 0 }),
+    // Content stamps received: stamps placed by others on this user's posts.
+    sc ? countContentStampsReceived(sc, user.id) : Promise.resolve(0),
   ]);
   // Stamps received on this user's own posts/media (Roam/Watch stamp reactions
   // from other people) — separate from the milestone-award count above, added

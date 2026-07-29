@@ -42,6 +42,7 @@ import {
   buildMapPayload,
   buildStats,
 } from "../services/passport/PassportMapService.js";
+import { countContentStampsReceived } from "../services/stamps/ContentStampService.js";
 import { recordContribution } from "../services/passport/PassportContributionService.js";
 import type { VisibilityTier, CallerContext } from "../services/passport/PassportPrivacyGuard.js";
 import { filterStamps, filterMemories } from "../services/passport/PassportPrivacyGuard.js";
@@ -522,12 +523,16 @@ router.get("/me/passport/stats", async (req, res) => {
     client.from("trips").select("id", { count: "exact", head: true }).eq("owner_id", user.id),
     client.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("following_id", user.id),
     client.from("user_follows").select("following_id", { count: "exact", head: true }).eq("follower_id", user.id),
-    // Lifetime stamps earned (user_stamps, non-revoked). Fails silently when table is absent.
+    // Lifetime stamps earned: passport milestone stamps + content stamps received on
+    // this user's posts. Both fail silently so a table-absence or DB error returns 0.
     sc
-      ? sc.from("user_stamps").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("is_revoked", false).then(
-          (r: any) => r,
-          () => ({ count: 0 }),
-        )
+      ? Promise.all([
+          sc.from("user_stamps").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("is_revoked", false).then(
+            (r: any) => r,
+            () => ({ count: 0 }),
+          ),
+          countContentStampsReceived(sc, user.id),
+        ]).then(([milestones, content]) => ({ count: ((milestones as any).count ?? 0) + (content as number) }))
       : Promise.resolve({ count: 0 }),
     // Milestone history from stamp_milestones. Fails silently when table is absent.
     sc
