@@ -549,8 +549,7 @@ function Pulse() {
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       {/* Compact sticky bar — invisible until the large AppHeader scrolls away */}
       <Animated.View
-        style={[styles.compactBar, { paddingTop: insets.top }, compactBarStyle]}
-        pointerEvents={compactBarInteractive ? 'auto' : 'none'}
+        style={[styles.compactBar, { paddingTop: insets.top }, compactBarStyle, { pointerEvents: compactBarInteractive ? 'auto' : 'none' }]}
       >
         <View style={styles.compactBarInner}>
           <Text style={styles.compactBarTitle}>Pulse</Text>

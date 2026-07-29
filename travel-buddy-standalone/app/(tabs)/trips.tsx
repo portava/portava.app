@@ -305,8 +305,7 @@ function TripsScreen() {
         <>
           {/* Compact sticky bar — fades in as the large AppHeader scrolls away */}
           <Animated.View
-            style={[styles.compactBar, { paddingTop: insets.top }, compactBarStyle]}
-            pointerEvents={compactBarInteractive ? 'auto' : 'none'}
+            style={[styles.compactBar, { paddingTop: insets.top }, compactBarStyle, { pointerEvents: compactBarInteractive ? 'auto' : 'none' }]}
           >
             <View style={styles.compactBarInner}>
               <Text style={styles.compactBarTitle}>Trips</Text>
