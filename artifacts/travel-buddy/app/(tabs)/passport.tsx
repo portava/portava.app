@@ -607,8 +607,7 @@ function PassportContent({
       {/* Compact sticky bar — fades in as the large AppHeader scrolls away.
           Replaces the always-visible absolute share/bell buttons. */}
       <Animated.View
-        style={[s.compactBar, { paddingTop: insets.top }, compactBarStyle]}
-        pointerEvents={compactBarInteractive ? 'auto' : 'none'}
+        style={[s.compactBar, { paddingTop: insets.top }, compactBarStyle, { pointerEvents: compactBarInteractive ? 'auto' : 'none' }]}
       >
         <View style={s.compactBarInner}>
           <Text style={s.compactBarTitle}>Passport</Text>
