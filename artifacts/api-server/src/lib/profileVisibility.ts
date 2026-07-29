@@ -63,13 +63,18 @@ export async function resolveProfileVisibility(
 ): Promise<ProfileVisibilityResult> {
   // ── Owner always gets full access ─────────────────────────────────────────
   if (viewerId === targetId) {
-    const { data: ps } = await sc
-      .from("profile_privacy_settings")
-      .select("*")
-      .eq("user_id", targetId)
-      .maybeSingle()
-      .catch(() => ({ data: null }));
-    return { visibility: "full", privacySettings: ps ?? null };
+    let ps: any = null;
+    try {
+      const res = await sc
+        .from("profile_privacy_settings")
+        .select("*")
+        .eq("user_id", targetId)
+        .maybeSingle();
+      ps = res.data ?? null;
+    } catch {
+      ps = null;
+    }
+    return { visibility: "full", privacySettings: ps };
   }
 
   // ── 1. Account status — profile row first (fast path), then state table ───
