@@ -7,6 +7,7 @@
  * request fails/times out — search then runs on Nominatim alone.
  */
 import { logger as rootLogger } from "./logger";
+import { Sentry } from "./sentry.js";
 
 const logger = rootLogger.child({ lib: "foursquarePlaces" });
 
@@ -57,6 +58,10 @@ export async function searchFoursquare(q: string, opts: FoursquareOptions = {}):
       if (!authFailedLogged) {
         authFailedLogged = true;
         logger.warn({ status: res.status }, "Foursquare auth failed — venue search disabled (check FOURSQUARE_API_KEY)");
+        Sentry.captureMessage("Foursquare auth failure — venue search disabled", {
+          level: "error",
+          extra: { status: res.status, hint: "Check FOURSQUARE_API_KEY is set and valid" },
+        });
       }
       return [];
     }

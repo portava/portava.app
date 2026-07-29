@@ -47,8 +47,9 @@ describe('PublicStampShowcaseSection', () => {
     await act(async () => {});
 
     expect(screen.getByTestId('public-showcase-section')).toBeTruthy();
-    expect(screen.getByText('Alpha')).toBeTruthy();
-    expect(screen.getByText('Beta')).toBeTruthy();
+    // Each card renders the label twice (placeholder + footer), so use getAllByText
+    expect(screen.getAllByText('Alpha').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Beta').length).toBeGreaterThan(0);
     expect(screen.getByText('FEATURED STAMPS')).toBeTruthy();
   });
 
@@ -73,7 +74,7 @@ describe('PublicStampShowcaseSection', () => {
     await render(<PublicStampShowcaseSection items={ITEMS} onPress={onPress} />);
     await act(async () => {});
 
-    fireEvent.press(screen.getByText('Alpha'));
+    fireEvent.press(screen.getAllByText('Alpha')[0]);
     expect(onPress).toHaveBeenCalledTimes(1);
     expect(onPress).toHaveBeenCalledWith(ITEMS[0]);
   });
