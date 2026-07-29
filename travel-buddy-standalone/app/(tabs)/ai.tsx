@@ -402,6 +402,42 @@ const ACTION_ICONS: Record<string, React.ReactNode> = {
   askCommunity:   <MessageCircle size={13} color={color.onInk} />,
 };
 
+// The model sometimes returns a raw camelCase actionType (e.g. "explore") as
+// the chip's `label` instead of a human-readable string — this canonical map
+// is the source of truth for chip text so a raw key never reaches the UI.
+// Keys must mirror the backend's ALLOWED_QUICK_ACTION_TYPES.
+const ACTION_LABELS: Record<string, string> = {
+  addTrip:        'Add to Trip',
+  buildItinerary: 'Build Itinerary',
+  askCommunity:   'Ask Community',
+  explore:        'Explore Area',
+  viewEvent:      'View Event',
+  viewPlace:      'View Place',
+  startPoll:      'Start Poll',
+  shareTip:       'Share Tip',
+  openMap:        'Open Map',
+  viewPassport:   'View Passport',
+  findBuddy:      'Find Buddy',
+  viewTrips:      'View Trips',
+};
+
+/** A raw actionType key looks like "openMap"/"view_place" — never contains a
+ *  space — while a genuine human label always does (or is a single common
+ *  word we already know isn't one of our keys). Used only as a last-resort
+ *  guard for actionTypes not yet in ACTION_LABELS. */
+function isLikelyRawActionKey(label: string, actionType: string): boolean {
+  return label === actionType;
+}
+
+function displayLabelFor(actionType: string, label: string): string {
+  if (ACTION_LABELS[actionType]) return ACTION_LABELS[actionType];
+  if (isLikelyRawActionKey(label, actionType)) {
+    // Fall back to a readable form of the key itself rather than showing it raw.
+    return actionType.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+  }
+  return label;
+}
+
 function RecCard({
   rec,
   onAction,
@@ -478,7 +514,7 @@ function RecCard({
               onPress={() => onAction(a.actionType)}
             >
               {ACTION_ICONS[a.actionType] ?? null}
-              <Text style={styles.actionText}>{a.label}</Text>
+              <Text style={styles.actionText}>{displayLabelFor(a.actionType, a.label)}</Text>
             </Pressable>
           ))}
         </View>

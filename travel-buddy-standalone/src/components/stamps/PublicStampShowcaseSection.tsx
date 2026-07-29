@@ -139,6 +139,24 @@ const styles = StyleSheet.create({
     backgroundColor: color.haze,
     position: 'relative',
   },
+  artImage: {
+    width: CARD_SIZE,
+    height: CARD_SIZE,
+  },
+  artPlaceholder: {
+    width: CARD_SIZE,
+    height: CARD_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+    paddingHorizontal: 4,
+  },
+  artPlaceholderLabel: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: color.mute,
+    textAlign: 'center',
+  },
   rarityDot: {
     position: 'absolute',
     bottom: 4,
@@ -148,5 +166,12 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     borderWidth: 1.5,
     borderColor: '#fff',
+  },
+  cardLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: color.mute,
+    textAlign: 'center',
+    width: CARD_SIZE,
   },
 });

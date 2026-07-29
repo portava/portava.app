@@ -17,6 +17,7 @@ import {
   ActivityIndicator,
   Pressable,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Settings, Radio, Users, Pause, WifiOff, AlertCircle, MapPin } from 'lucide-react-native';
@@ -193,13 +194,24 @@ export default function CirclePresenceScreen() {
     // context level (per-trip or per-event overrides) and belong in
     // /circle-context-settings, which requires contextType + contextId + contextLabel
     // as route params to load the correct per-context settings.
-    if (screenState === 'sharing_off') {
-      router.push('/profile/edit/location' as any);
-    } else {
-      router.push({
-        pathname: '/circle-context-settings' as any,
-        params: { contextType, contextId, contextLabel },
-      });
+    //
+    // Guarded: a bad/missing contextId (e.g. a Circles-tab thread whose id is a
+    // circleOwnerId rather than a trip/event id) must never hard-crash the app —
+    // surface a recoverable alert instead of letting router.push throw.
+    try {
+      if (screenState === 'sharing_off') {
+        router.push('/profile/edit/location' as any);
+      } else if (!contextId) {
+        Alert.alert('Unavailable', "This circle's settings can't be opened right now.");
+      } else {
+        router.push({
+          pathname: '/circle-context-settings' as any,
+          params: { contextType, contextId, contextLabel },
+        });
+      }
+    } catch (err) {
+      console.error('[circle-presence] goToSettings navigation failed', err);
+      Alert.alert('Something went wrong', 'Could not open settings. Please try again.');
     }
   }
 
@@ -350,7 +362,7 @@ export default function CirclePresenceScreen() {
 
   const listHeader = (
     <View style={g.headerArea}>
-      <AppHeader variant="detail" title={contextLabel} />
+      <AppHeader variant="detail" title={contextLabel} onBack={() => router.back()} />
       {globalPaused && (
         <View style={g.pauseBanner}>
           <Pause size={14} color={color.mute} />
