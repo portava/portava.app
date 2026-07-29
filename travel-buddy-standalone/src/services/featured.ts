@@ -49,6 +49,9 @@ export interface FeaturedHubResult {
   groups: FeaturedGroup[];
   thisWeeksWinners: FeaturedPost[];
   total: number;
+  /** True when portava_featured has no live rows and the API returned
+   *  @Portava's own top posts as a temporary stand-in. */
+  isFallback?: boolean;
 }
 
 export interface FeaturedResult<T> {
