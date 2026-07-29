@@ -126,7 +126,7 @@ const GRID_MEDIA_COLUMNS =
 
 /** Columns projected from posts for the Watch-mode feed. */
 const FEED_POST_COLUMNS =
-  "id, author_id, trip_id, content, visibility, status, post_status, " +
+  "id, author_id, trip_id, event_id, content, visibility, status, post_status, " +
   "created_at, category, " +
   "location_name, location_city, location_country, location_source, location_verified, " +
   "location_lat, location_lng, " +

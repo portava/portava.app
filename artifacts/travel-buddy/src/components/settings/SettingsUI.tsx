@@ -18,7 +18,7 @@
  */
 import React, { useCallback, useEffect, useRef } from 'react';
 import {
-  View, Text, TextInput, Pressable, ScrollView, StyleSheet, Alert,
+  View, Text, TextInput, Pressable, ScrollView, StyleSheet, Alert, Platform,
   ActivityIndicator, Switch,
   type StyleProp, type ViewStyle, type TextInputProps,
 } from 'react-native';
@@ -64,16 +64,25 @@ export function useUnsavedGuard(dirty: boolean) {
     const unsub = (navigation as any).addListener('beforeRemove', (e: any) => {
       if (!dirtyRef.current) return;
       e.preventDefault();
+      const proceed = () => (navigation as any).dispatch(e.data.action);
+      // RN's Alert.alert is a silent no-op on web — calling it here after an
+      // unconditional preventDefault() would block every future back/tab-nav
+      // attempt with no dialog and no way out short of a full reload. Use the
+      // browser's native confirm() there instead.
+      if (Platform.OS === 'web') {
+        if (typeof window !== 'undefined' && window.confirm(
+          'You have unsaved changes. Are you sure you want to leave?',
+        )) {
+          proceed();
+        }
+        return;
+      }
       Alert.alert(
         'Discard changes?',
         'You have unsaved changes. Are you sure you want to leave?',
         [
           { text: 'Keep editing', style: 'cancel' },
-          {
-            text: 'Discard',
-            style: 'destructive',
-            onPress: () => (navigation as any).dispatch(e.data.action),
-          },
+          { text: 'Discard', style: 'destructive', onPress: proceed },
         ],
       );
     });

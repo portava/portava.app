@@ -392,6 +392,12 @@ export interface PassportStamp {
    * (definition names / title overrides) can diverge from the city name.
    */
   city?: string | null;
+  /**
+   * Authoritative rarity from the stamp definition, when known. When set,
+   * this must be used instead of deriving rarity from `kind` — the kind-based
+   * guess is only a fallback for legacy stamps with no definition record.
+   */
+  rarity?: 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 }
 
 export interface TravelStats {

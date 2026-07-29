@@ -43,6 +43,7 @@
     "expo-secure-store": "~14.0.1",
     "expo-sharing": "~14.0.8",
     "expo-task-manager": "~14.0.9",
+    "expo-video-thumbnails": "~10.0.8",
     "livekit-client": "^2.20.1",
     "lucide-react-native": "^0.544.0",
     "react-native-draggable-flatlist": "^4.0.3",

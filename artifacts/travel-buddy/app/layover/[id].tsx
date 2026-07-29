@@ -195,7 +195,7 @@ export default function LayoverDashboardScreen() {
     if (overview.session.tripId) {
       router.push(`/trip/chat?id=${overview.session.tripId}` as any);
     } else if (res) {
-      router.push('/ai');
+      router.push({ pathname: '/ai', params: { prefillMessage: msg } } as any);
     } else {
       showToast('Telegraph is unavailable right now');
     }

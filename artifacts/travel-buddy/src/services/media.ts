@@ -11,6 +11,7 @@
  * verify identity, then uploads with the service-role key — same pattern as
  * trip / post creation.
  */
+import * as VideoThumbnails from 'expo-video-thumbnails';
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 import {
@@ -239,15 +240,49 @@ export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMed
     return { ok: false, url: null, mediaType: null, errorKind: 'upload_failed', message: 'Upload succeeded but no URL returned' };
   }
 
+  // The API server has no video transcoder in this tier (see mediaProcessing.ts),
+  // so it never returns a thumbnailUrl for videos — every video grid tile would
+  // render grey. Extract a frame on-device and upload it as a normal image so
+  // the post gets a real poster, same as photos get server-side.
+  let thumbnailUrl: string | null = (body as any)?.thumbnailUrl ?? null;
+  if (!thumbnailUrl && media.type === 'video') {
+    thumbnailUrl = await extractAndUploadVideoThumbnail(media.uri, token);
+  }
+
   return {
     ok: true,
     url,
     mediaType: mime,
-    thumbnailUrl: (body as any)?.thumbnailUrl ?? null,
+    thumbnailUrl,
     width: (body as any)?.width ?? null,
     height: (body as any)?.height ?? null,
     processed: (body as any)?.processed ?? false,
   };
+}
+
+/**
+ * Best-effort: grab a frame near the start of a local video file and upload
+ * it through the same /api/media/upload endpoint (as a JPEG) so the post has
+ * a real poster image instead of the grey grid-tile fallback. Never throws —
+ * a failed extraction just leaves thumbnailUrl null, same as before this fix.
+ */
+async function extractAndUploadVideoThumbnail(videoUri: string, token: string): Promise<string | null> {
+  try {
+    const { uri: thumbUri } = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 300 });
+    const resp = await fetch(thumbUri);
+    const blob = await resp.blob();
+    const base = apiBase();
+    const apiRes = await fetch(`${base}/api/media/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'image/jpeg', Authorization: `Bearer ${token}` },
+      body: blob,
+    });
+    if (!apiRes.ok) return null;
+    const body = await apiRes.json().catch(() => ({}));
+    return (body as any)?.url ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Best-effort cleanup: remove an uploaded object if post creation later fails. */
