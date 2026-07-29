@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getProfileAnalytics, type ProfileAnalytics } from '../../src/services/profile';
 import { PP, PP_LABEL, fmtMonthYear } from '../../src/theme/passportTokens';
 import { space, type as t, radius } from '../../src/theme/tokens';
+import { ProfileViewersSheet } from '../../src/components/ProfileViewersSheet';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -99,6 +100,7 @@ export default function ProfileAnalyticsScreen() {
   const [data, setData] = useState<ProfileAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [viewersSheetVisible, setViewersSheetVisible] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -170,12 +172,14 @@ export default function ProfileAnalyticsScreen() {
           {/* ── Reach ── */}
           <SectionLabel label="Reach" />
 
-          <StatCard
-            icon={<Eye size={16} color="#3B7DED" strokeWidth={1.8} />}
-            label="Profile Views"
-            sevenDay={data.profileViews.sevenDay}
-            thirtyDay={data.profileViews.thirtyDay}
-          />
+          <Pressable onPress={() => setViewersSheetVisible(true)} accessibilityRole="button" accessibilityLabel="Open profile viewers list">
+            <StatCard
+              icon={<Eye size={16} color="#3B7DED" strokeWidth={1.8} />}
+              label="Profile Views"
+              sevenDay={data.profileViews.sevenDay}
+              thirtyDay={data.profileViews.thirtyDay}
+            />
+          </Pressable>
 
           <SingleStatCard
             icon={<TrendingUp size={16} color="#059669" strokeWidth={1.8} />}
@@ -230,6 +234,11 @@ export default function ProfileAnalyticsScreen() {
           )}
         </ScrollView>
       ) : null}
+
+      <ProfileViewersSheet
+        visible={viewersSheetVisible}
+        onClose={() => setViewersSheetVisible(false)}
+      />
     </View>
   );
 }
