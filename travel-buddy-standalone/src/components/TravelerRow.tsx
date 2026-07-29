@@ -44,6 +44,17 @@ interface Props {
 export function TravelerRow({ user, isOwnProfile = false, onFollowed, onBlockSuccess }: Props) {
   const [isFollowing, setIsFollowing] = useState(user.isFollowing);
   const [followerCount, setFollowerCount] = useState(user.followerCount);
+
+  // Re-sync local mirrors when a fresh search/suggestion result comes in for
+  // this same user (e.g. re-running a search after their follower count
+  // changed) — this component instance can be reused across result sets
+  // with the same `user.id` but a stale locally-held count/isFollowing.
+  const lastSyncedUserRef = React.useRef(user);
+  if (lastSyncedUserRef.current !== user) {
+    lastSyncedUserRef.current = user;
+    if (followerCount !== user.followerCount) setFollowerCount(user.followerCount);
+    if (isFollowing !== user.isFollowing) setIsFollowing(user.isFollowing);
+  }
   const [toggling, setToggling] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [hidden, setHidden] = useState(false);

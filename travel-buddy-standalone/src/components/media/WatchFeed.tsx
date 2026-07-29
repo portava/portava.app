@@ -283,6 +283,9 @@ export function WatchFeed() {
         mediaId={commentItemId}
         visible={commentItemId !== null}
         onClose={() => setCommentItemId(null)}
+        onCountChange={(count) => {
+          if (commentItemId) feed.setItemCommentCount(commentItemId, count);
+        }}
       />
 
       {/* ── More menu ──────────────────────────────────────────────────── */}

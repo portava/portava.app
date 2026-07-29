@@ -3,45 +3,48 @@ import {
   View, Text, FlatList, Pressable, Image, StyleSheet,
   ActivityIndicator,
 } from 'react-native';
-import { useFocusEffect, router } from 'expo-router';
+import { useFocusEffect, router, useLocalSearchParams } from 'expo-router';
 import { useSocialVersion } from '../src/hooks/useSocialVersion';
 import { UserPlus } from 'lucide-react-native';
 import { AppHeader } from '../src/components/ui/AppHeader';
 import { OfficialBadge } from '../src/components/OfficialBadge';
 import { color, space, radius, type as t } from '../src/theme/tokens';
-import { getMyFollowing } from '../src/services/follows';
+import { getMyFollowing, getUserFollowing } from '../src/services/follows';
 import type { FollowUser } from '../src/services/follows';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
 
 export default function FollowingScreen() {
+  const { userId, title } = useLocalSearchParams<{ userId?: string; title?: string }>();
   const [users, setUsers] = useState<FollowUser[]>([]);
   const [loading, setLoading] = useState(true);
   const navBarScrollHandler = useNavBarScrollHandler();
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await getMyFollowing();
+    const res = userId ? await getUserFollowing(userId) : await getMyFollowing();
     if (res.ok && res.data) setUsers(res.data);
     else setUsers([]);
     setLoading(false);
-  }, []);
+  }, [userId]);
 
   useFocusEffect(useCallback(() => { void load(); }, [load]));
 
   // Re-fetch whenever the social-version counter bumps (e.g. after onboarding
   // completes and the server-side @Portava auto-follow has been written), so
   // @Portava appears in the list without requiring a manual focus/refresh.
+  // Only relevant to the viewer's own "following" list.
   const socialVersion = useSocialVersion();
   const versionMounted = useRef(false);
   useEffect(() => {
+    if (userId) return;
     if (!versionMounted.current) { versionMounted.current = true; return; }
     void load();
-  }, [socialVersion, load]);
+  }, [socialVersion, load, userId]);
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <AppHeader variant="detail" title="Following" onBack={router.back} />
+      <AppHeader variant="detail" title={title ? `${title}'s Following` : 'Following'} onBack={router.back} />
       {loading ? (
         <View style={s.center}>
           <ActivityIndicator color={color.signal} />

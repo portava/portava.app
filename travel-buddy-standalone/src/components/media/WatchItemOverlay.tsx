@@ -27,6 +27,7 @@ import {
   View,
   Text,
   Pressable,
+  Platform,
   StyleSheet,
   Image,
   Share,
@@ -34,6 +35,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { recordMediaShare } from '../../services/mediaInteractions.ts';
+import { ShareSheet } from '../ShareSheet.tsx';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -41,6 +43,7 @@ import {
   MessageCircle,
   Bookmark,
   Share2,
+  Send,
   MoreVertical,
   Music2,
   MapPin,
@@ -182,6 +185,7 @@ export function WatchItemOverlay({
 }: WatchItemOverlayProps) {
   const insets = useSafeAreaInsets();
   const [captionExpanded, setCaptionExpanded] = useState(false);
+  const [sendSheetVisible, setSendSheetVisible] = useState(false);
 
   const handleCreate = useCallback(() => {
     if (isGemsMode) {
@@ -192,17 +196,34 @@ export function WatchItemOverlay({
   }, [isGemsMode]);
 
   const handleShare = useCallback(async () => {
+    // Point the share sheet at an actual image/frame (video thumbnail, or the
+    // still image for photo posts) so the native preview shows real content
+    // instead of falling back to a generic app-icon placeholder.
+    const previewUrl = item.posterUrl || item.videoUrl || null;
+    const message = item.caption || 'Check this out on Travel Buddy!';
     try {
-      await Share.share({ message: item.caption || 'Check this out on Travel Buddy!' });
+      await Share.share(
+        Platform.OS === 'ios'
+          ? { message, url: previewUrl ?? undefined }
+          : { message: previewUrl ? `${message}\n${previewUrl}` : message },
+      );
       // Record share event in background — never block on this
       recordMediaShare(item.id, 'native').catch(() => {});
     } catch {
       // User dismissed — no share event recorded
     }
-  }, [item.id, item.caption]);
+  }, [item.id, item.caption, item.posterUrl, item.videoUrl]);
+
+  // Defensive fallback: if the profile join for this post's author fails to
+  // resolve (schema drift / missing row), displayName and username both come
+  // back as "" and the creator row silently renders nothing — indistinguishable
+  // from "no attribution at all". Always show something rather than blank text.
+  const creatorDisplayName = item.creator.displayName || item.creator.username || 'Traveler';
+  const creatorUsername = item.creator.username || '';
 
   const goProfile = useCallback(() => {
     // Profile route is username-based: /u/[username]
+    if (!item.creator.username) return;
     router.push(`/u/${item.creator.username}` as any);
   }, [item.creator.username]);
 
@@ -265,7 +286,7 @@ export function WatchItemOverlay({
               ) : (
                 <View style={[s.avatar, s.avatarFallback]}>
                   <Text style={s.avatarInitial}>
-                    {(item.creator.displayName || item.creator.username).charAt(0).toUpperCase()}
+                    {creatorDisplayName.charAt(0).toUpperCase()}
                   </Text>
                 </View>
               )}
@@ -274,15 +295,17 @@ export function WatchItemOverlay({
             <View style={s.creatorInfo} pointerEvents="box-none">
               <Pressable onPress={goProfile} hitSlop={4} style={s.creatorNameRow}>
                 <Text style={s.displayName} numberOfLines={1}>
-                  {item.creator.displayName}
+                  {creatorDisplayName}
                 </Text>
                 {item.creator.verified ? <VerifiedStamp size="sm" dark /> : null}
               </Pressable>
-              <Pressable onPress={goProfile} hitSlop={4}>
-                <Text style={s.username} numberOfLines={1}>
-                  @{item.creator.username}
-                </Text>
-              </Pressable>
+              {creatorUsername ? (
+                <Pressable onPress={goProfile} hitSlop={4}>
+                  <Text style={s.username} numberOfLines={1}>
+                    @{creatorUsername}
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
 
             <FollowButton userId={item.creator.id} currentUserId={currentUserId} />
@@ -434,12 +457,27 @@ export function WatchItemOverlay({
           />
 
           <ActionBtn
+            icon={<Send size={26} color="#fff" strokeWidth={1.8} />}
+            onPress={() => setSendSheetVisible(true)}
+            label="Send"
+          />
+
+          <ActionBtn
             icon={<MoreVertical size={26} color="#fff" strokeWidth={1.8} />}
             onPress={onMore}
             label="More options"
           />
         </View>
       </View>
+
+      <ShareSheet
+        visible={sendSheetVisible}
+        postId={item.id}
+        onClose={() => setSendSheetVisible(false)}
+        onShareSuccess={() => {
+          recordMediaShare(item.id, 'telegraph').catch(() => {});
+        }}
+      />
 
     </View>
   );

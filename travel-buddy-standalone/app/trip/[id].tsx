@@ -48,6 +48,7 @@ import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
+import { deriveTripDisplayStatus } from '../../src/lib/tripStatus';
 
 function TripDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -75,7 +76,10 @@ function TripDetailScreen() {
   // missing or erroring fetch leaves canonicalTripPlace as null and omits the
   // link — the rest of the trip screen is unaffected.
   useEffect(() => {
-    const placeId = (realTrip as any)?.canonicalPlaceId as string | undefined;
+    // NOTE: the trip service exposes this as `destinationPlaceId` (from the
+    // `destination_place_id` column) — `canonicalPlaceId` is not a field the
+    // API ever returns, so reading it always left this CTA permanently dead.
+    const placeId = (realTrip as any)?.destinationPlaceId as string | undefined;
     if (!placeId) { setCanonicalTripPlace(null); return; }
     let cancelled = false;
     getCanonicalPlace(placeId)
@@ -442,7 +446,7 @@ function TripDetailScreen() {
         {canonicalTripPlace ? (
           <Pressable
             style={styles.seeDestinationRow}
-            onPress={() => router.push(`/place/${(realTrip as any).canonicalPlaceId}` as any)}
+            onPress={() => router.push(`/place/${(realTrip as any).destinationPlaceId}` as any)}
             accessibilityRole="link"
             accessibilityLabel={`See ${canonicalTripPlace.name} destination page`}
           >
@@ -480,7 +484,11 @@ function TripDetailScreen() {
           <TripFsqPlacesSection cityKey={toFsqCityKey(trip.destinationCity, trip.destinationCountry) ?? undefined} />
         ) : null}
 
-        <TodayNextUp nextUp={null} tripId={trip.id} action={nextBestAction} />
+        {/* Planning prompts don't make sense once the trip has ended — derive
+            from end date rather than the (possibly stale) stored status. */}
+        {deriveTripDisplayStatus(trip.status, trip.endDate) !== 'completed' && (
+          <TodayNextUp nextUp={null} tripId={trip.id} action={nextBestAction} />
+        )}
 
         {/* ── Gap-day nudge ── */}
         {live && gapDays.length > 0 && trip.status !== 'planning' && (

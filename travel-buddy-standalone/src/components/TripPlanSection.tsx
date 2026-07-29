@@ -578,7 +578,9 @@ export function TripPlanSection({
 
       {loading && <ActivityIndicator color={color.signal} style={{ marginVertical: space.lg }} />}
 
-      {!loading && accessDenied && (isPendingInvite ? <PendingInviteView /> : <PlanLockedView />)}
+      {/* The trip owner/creator is always a member — never show the members-only
+          gate for them, even if the server response briefly looked denied. */}
+      {!loading && accessDenied && !isOwner && (isPendingInvite ? <PendingInviteView /> : <PlanLockedView />)}
 
       {!loading && !accessDenied && items.length === 0 && (
         <View style={ps.empty}>

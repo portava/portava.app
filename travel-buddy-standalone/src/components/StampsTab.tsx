@@ -264,7 +264,11 @@ export function StampsTab({
   const featured = displayed.length > 0
     ? displayed.reduce((best, s) => ((s.earnedAt ?? '') > (best.earnedAt ?? '') ? s : best), displayed[0])
     : null;
-  const gridStamps = featured ? displayed.filter((s) => s.id !== featured.id) : displayed;
+  // Only drop the featured stamp from the grid when there's at least one other
+  // match to show in its place — otherwise a category with exactly one stamp
+  // (which becomes MOST RECENT) would empty the grid entirely and wrongly
+  // render "No stamps in this category" despite MOST RECENT proving one exists.
+  const gridStamps = (featured && displayed.length > 1) ? displayed.filter((s) => s.id !== featured.id) : displayed;
 
   const totalCount = viewingUsername
     ? effStamps.filter((s) => !s.isRevoked && s.visibility !== 'private').length

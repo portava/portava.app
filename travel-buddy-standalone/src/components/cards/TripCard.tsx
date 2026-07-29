@@ -11,6 +11,7 @@ import { MapPin, CalendarDays, Users } from 'lucide-react-native';
 import { CachedImage } from '../CachedImage.tsx';
 import { useEntityHeaderImage } from '../../hooks/useEntityHeaderImage.ts';
 import { color, space, radius, shadow, typography, layout } from '../../theme/tokens.ts';
+import { tripStatusColor, tripStatusLabel } from '../../lib/tripStatus.ts';
 
 export interface TripCardProps {
   id: string;
@@ -25,27 +26,13 @@ export interface TripCardProps {
   onPress: () => void;
 }
 
-const STATUS_COLOR: Record<string, string> = {
-  planning:  color.deep,
-  active:    color.success,
-  completed: color.mute,
-  cancelled: '#DC2626',
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  planning:  'Planning',
-  active:    'Active',
-  completed: 'Completed',
-  cancelled: 'Cancelled',
-};
-
 export function TripCard({
   title, destinationCity, destinationCountry, startDate, endDate,
   status, coverUrl, memberCount, onPress,
 }: TripCardProps) {
   const [imgFailed, setImgFailed] = useState(false);
-  const statusColor = STATUS_COLOR[status] ?? color.mute;
-  const statusLabel = STATUS_LABEL[status] ?? status;
+  const statusColor = tripStatusColor(status);
+  const statusLabel = tripStatusLabel(status);
   const destination = destinationCountry
     ? `${destinationCity}, ${destinationCountry}`
     : destinationCity;

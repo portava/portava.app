@@ -56,6 +56,9 @@ export interface WatchFeedState {
   loadFeed: () => Promise<void>;
   /** Append the next page. */
   loadMore: () => Promise<void>;
+
+  /** Patch a single item's commentCount in place (e.g. after posting a comment). */
+  setItemCommentCount: (id: string, count: number) => void;
 }
 
 export function useWatchFeed(): WatchFeedState {
@@ -151,6 +154,27 @@ export function useWatchFeed(): WatchFeedState {
     [feedType, rerender],
   );
 
+  // Patches commentCount for a single item across BOTH feed slots (an item can
+  // be present in both for_you and following simultaneously), so the bubble
+  // updates immediately after a comment is posted regardless of which tab is
+  // active.
+  const setItemCommentCount = useCallback(
+    (id: string, count: number) => {
+      let changed = false;
+      (Object.keys(slotsRef.current) as WatchFeedType[]).forEach((type) => {
+        const s = slotsRef.current[type];
+        const idx = s.items.findIndex((it) => it.id === id);
+        if (idx === -1) return;
+        const nextItems = [...s.items];
+        nextItems[idx] = { ...nextItems[idx], commentCount: count };
+        slotsRef.current[type] = { ...s, items: nextItems };
+        changed = true;
+      });
+      if (changed) rerender();
+    },
+    [rerender],
+  );
+
   return {
     feedType,
     setFeedType,
@@ -161,5 +185,6 @@ export function useWatchFeed(): WatchFeedState {
     setActiveIndex,
     loadFeed,
     loadMore,
+    setItemCommentCount,
   };
 }

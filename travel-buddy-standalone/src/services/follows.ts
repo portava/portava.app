@@ -393,3 +393,35 @@ export async function getMyFollowers(): Promise<FollowResult<FollowUser[]>> {
     return { ok: true, data: [] };
   }
 }
+
+/* ---------- Any user's followers / following (public, read-only) ---------- */
+
+export async function getUserFollowers(userId: string): Promise<FollowResult<FollowUser[]>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
+  try {
+    const token = await freshToken();
+    const res = await fetch(`${apiBase()}/api/users/${encodeURIComponent(userId)}/followers`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) return { ok: true, data: [] };
+    const body = await res.json();
+    return { ok: true, data: body.users ?? [] };
+  } catch {
+    return { ok: true, data: [] };
+  }
+}
+
+export async function getUserFollowing(userId: string): Promise<FollowResult<FollowUser[]>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
+  try {
+    const token = await freshToken();
+    const res = await fetch(`${apiBase()}/api/users/${encodeURIComponent(userId)}/following`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) return { ok: true, data: [] };
+    const body = await res.json();
+    return { ok: true, data: body.users ?? [] };
+  } catch {
+    return { ok: true, data: [] };
+  }
+}

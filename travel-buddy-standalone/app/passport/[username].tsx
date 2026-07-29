@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, MoreVertical } from 'lucide-react-native';
 import { getPublicShowcase, type ShowcaseStamp } from '../../src/services/stampShowcase';
 import { blockUser } from '../../src/services/blocks';
+import { openDirectThread } from '../../src/services/messaging';
 import { submitReport, type ReportReason } from '../../src/services/reports';
 import { useSession } from '../../src/context/SessionContext';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
@@ -63,6 +64,9 @@ export default function PassportDeepLinkScreen() {
   // Tracks a request sent this session so the header badge can flip to "Pending"
   // without a full data reload. Must live here — above all early returns.
   const [requestSent, setRequestSent] = useState(false);
+  const [messageStarting, setMessageStarting] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [reportPickerOpen, setReportPickerOpen] = useState(false);
   const insets = useSafeAreaInsets();
   const navBarScrollHandler = useNavBarScrollHandler();
   const bottomInset = usePlainBottomInset();
@@ -98,47 +102,59 @@ export default function PassportDeepLinkScreen() {
     setStatsIconOnly(e.nativeEvent.contentOffset.y > 60);
   }, [navBarScrollHandler]);
 
+  const handleMessagePress = useCallback(async () => {
+    if (!profile || messageStarting) return;
+    setMessageStarting(true);
+    try {
+      const res = await openDirectThread(profile.id);
+      if (res.ok && res.data) {
+        const displayName = truncateDisplayName(resolveDisplayName(profile));
+        const params = new URLSearchParams({
+          threadType: 'direct',
+          title: displayName,
+          otherUserId: profile.id,
+        });
+        router.push(`/messages/${res.data.threadId}?${params.toString()}` as any);
+      } else {
+        Alert.alert("Couldn't start conversation", 'Please try again.');
+      }
+    } finally {
+      setMessageStarting(false);
+    }
+  }, [profile, messageStarting]);
+
   const handleMorePress = useCallback(() => {
     if (!profile) return;
+    setMoreMenuOpen(true);
+  }, [profile]);
+
+  const handleReportPress = useCallback(() => {
+    setMoreMenuOpen(false);
+    setReportPickerOpen(true);
+  }, []);
+
+  const handleBlockPress = useCallback(() => {
+    if (!profile) return;
+    setMoreMenuOpen(false);
     const displayName = truncateDisplayName(resolveDisplayName(profile));
-    Alert.alert(displayName, undefined, [
-      {
-        text: 'Report',
-        onPress: () => {
-          Alert.alert('Report profile', 'Why are you reporting this profile?', [
-            { text: 'Spam',        onPress: () => doReport('spam') },
-            { text: 'Harassment',  onPress: () => doReport('harassment') },
-            { text: 'Fake account',onPress: () => doReport('fake_account') },
-            { text: 'Other',       onPress: () => doReport('other') },
-            { text: 'Cancel', style: 'cancel' },
-          ]);
+    Alert.alert(`Block ${displayName}?`,
+      "They won't be able to message you, follow you, or see your profile.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Block', style: 'destructive',
+          onPress: async () => {
+            const res = await blockUser(profile.id);
+            if (res.ok) {
+              router.canGoBack() ? router.back() : router.replace('/(tabs)/' as any);
+            } else {
+              Alert.alert('Error', res.error ?? 'Could not block user');
+            }
+          },
         },
-      },
-      {
-        text: 'Block', style: 'destructive',
-        onPress: () => {
-          Alert.alert(`Block ${displayName}?`,
-            "They won't be able to message you, follow you, or see your profile.",
-            [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Block', style: 'destructive',
-                onPress: async () => {
-                  const res = await blockUser(profile.id);
-                  if (res.ok) {
-                    router.canGoBack() ? router.back() : router.replace('/(tabs)/' as any);
-                  } else {
-                    Alert.alert('Error', res.error ?? 'Could not block user');
-                  }
-                },
-              },
-            ],
-          );
-        },
-      },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
-  }, [profile, username]);
+      ],
+    );
+  }, [profile]);
 
   async function doReport(reason: ReportReason) {
     if (!profile) return;
@@ -285,7 +301,7 @@ export default function PassportDeepLinkScreen() {
   const cities    = new Set(postcards.map((c) => c.locationCity).filter(Boolean)).size;
 
   const visitorStats = [
-    { n: postcards.length, label: 'Posts' },
+    { n: postcards.length, label: 'Postcards' },
     { n: countries,        label: 'Countries' },
     { n: cities,           label: 'Cities' },
     { n: follow.followersCount, label: 'Followers' },
@@ -317,6 +333,53 @@ export default function PassportDeepLinkScreen() {
       {/* Header rule */}
       <View style={vs.headerRule} />
 
+      {/* Overflow menu — Modal-based (not Alert.alert, which doesn't render
+          multi-button dialogs reliably on web) */}
+      <Modal
+        visible={moreMenuOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMoreMenuOpen(false)}
+      >
+        <Pressable style={vs.menuOverlay} onPress={() => setMoreMenuOpen(false)}>
+          <View style={vs.menuCard}>
+            <Pressable style={vs.menuItem} onPress={handleReportPress}>
+              <Text style={vs.menuItemText}>Report</Text>
+            </Pressable>
+            <Pressable style={[vs.menuItem, vs.menuItemBorder]} onPress={handleBlockPress}>
+              <Text style={[vs.menuItemText, { color: '#B91C1C' }]}>Block</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Report reason picker */}
+      <Modal
+        visible={reportPickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setReportPickerOpen(false)}
+      >
+        <Pressable style={vs.menuOverlay} onPress={() => setReportPickerOpen(false)}>
+          <View style={vs.menuCard}>
+            {(['spam', 'harassment', 'fake_account', 'other'] as ReportReason[]).map((reason, i) => (
+              <Pressable
+                key={reason}
+                style={[vs.menuItem, i > 0 && vs.menuItemBorder]}
+                onPress={() => { setReportPickerOpen(false); doReport(reason); }}
+              >
+                <Text style={vs.menuItemText}>
+                  {reason === 'spam' ? 'Spam'
+                    : reason === 'harassment' ? 'Harassment'
+                    : reason === 'fake_account' ? 'Fake account'
+                    : 'Other'}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </Pressable>
+      </Modal>
+
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: bottomInset }}
@@ -334,6 +397,7 @@ export default function PassportDeepLinkScreen() {
           isFollowing={isAuthed ? follow.isFollowing : undefined}
           followLoading={isAuthed ? (follow.loading || follow.toggling) : undefined}
           onFollowPress={isAuthed ? follow.toggle : undefined}
+          onMessagePress={isAuthed ? handleMessagePress : undefined}
           countriesVisited={countries}
           availabilityChip={publicChipState}
           onAvailabilityChipPress={publicChipState ? () => setAvailStatusSheetOpen(true) : undefined}
@@ -344,6 +408,9 @@ export default function PassportDeepLinkScreen() {
           overrideStats={visitorStats}
           onStatPress={(label) => {
             if (label === 'Countries') setTab('map');
+            else if (label === 'Followers') {
+              router.push(`/followers?userId=${profile.id}&title=${encodeURIComponent(truncateDisplayName(resolveDisplayName(profile)))}` as any);
+            }
           }}
           iconOnly={statsIconOnly}
         />
@@ -426,6 +493,17 @@ export default function PassportDeepLinkScreen() {
 
 const vs = StyleSheet.create({
   container: { flex: 1 },
+  menuOverlay: {
+    flex: 1, backgroundColor: 'rgba(17,17,15,0.3)',
+    alignItems: 'flex-end', paddingTop: 60, paddingRight: 16,
+  },
+  menuCard: {
+    backgroundColor: PP.paper, borderRadius: radius.md,
+    borderWidth: 1, borderColor: PP.inkFaint, minWidth: 160, overflow: 'hidden',
+  },
+  menuItem: { paddingVertical: 12, paddingHorizontal: 16 },
+  menuItemText: { fontSize: 14, fontWeight: '600', color: PP.ink },
+  menuItemBorder: { borderTopWidth: 1, borderTopColor: PP.inkFaint },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingBottom: 10,
