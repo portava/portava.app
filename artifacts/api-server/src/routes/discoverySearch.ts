@@ -235,12 +235,15 @@ async function fetchActiveOwnerSet(sc: any, ownerIds: string[]): Promise<Set<str
  * Travelers / Buddies
  *
  * Privacy:
- *   - is_private=true excluded (DB filter).
+ *   - is_private=true accounts ARE included, but rendered as a locked preview:
+ *     no avatar/location/matchedReason, canAccess=false, isFollowing=false.
+ *     This matches the /api/users/search "find travelers" surface so a private
+ *     account is discoverable everywhere or nowhere, never inconsistently.
  *   - Only account_status='active' (DB filter).
  *   - Profile-discovery opt-outs excluded (secondary query, fail-closed).
  *   - Blocked users excluded; returns [] on null blockedSet.
  *
- * actionState: { isFollowing: boolean }
+ * actionState: { isFollowing: boolean, isRequestSent?: boolean }
  */
 async function searchTravelers(
   sc: any, q: string, userId: string,
@@ -257,7 +260,6 @@ async function searchTravelers(
       .or(`name.ilike.${pat},handle.ilike.${pat},username.ilike.${pat}`)
       .neq("id", userId)
       .in("account_status", ["active"])
-      .eq("is_private", false)
       .order("name", { ascending: true })
       .range(offset, offset + fetchLimit - 1);
 
@@ -301,12 +303,19 @@ async function searchTravelers(
     if (nameSafe.length === 0) return [];
 
     const visibleIds = nameSafe.map((p: any) => p.id as string);
-    const { data: followEdges } = await sc
-      .from("user_follows")
-      .select("following_id")
-      .eq("follower_id", userId)
-      .in("following_id", visibleIds);
+    const [{ data: followEdges }, { data: pendingRequests }] = await Promise.all([
+      sc.from("user_follows")
+        .select("following_id")
+        .eq("follower_id", userId)
+        .in("following_id", visibleIds),
+      sc.from("friend_requests")
+        .select("recipient_id")
+        .eq("requester_id", userId)
+        .eq("status", "pending")
+        .in("recipient_id", visibleIds),
+    ]);
     const followingSet = new Set<string>((followEdges ?? []).map((e: any) => e.following_id as string));
+    const pendingSet = new Set<string>((pendingRequests ?? []).map((e: any) => e.recipient_id as string));
 
     const type: Exclude<SearchType, "all"> = isBuddy ? "buddies" : "travelers";
     const mapped: SearchResult[] = nameSafe.map((p: any): SearchResult => {
@@ -314,19 +323,28 @@ async function searchTravelers(
       const nameAllowed = p.id === userId || allowedNames.has(p.id as string);
       const presented = nameAllowed ? ((p.name as string | null) ?? null) : null;
       const fallbackLabel = presented ?? (p.handle as string) ?? "?";
+      const isFollowing = followingSet.has(p.id as string);
+      // Private accounts the viewer doesn't already follow get a locked
+      // preview: no avatar/location/matchedReason leak, canAccess=false.
+      // Once followed, the row behaves exactly like a public traveler.
+      const isPrivate = ((p.is_private as boolean) ?? false) && !isFollowing;
       return {
         id: p.id,
         type,
         title: presented ?? (p.handle as string) ?? "",
         subtitle: p.handle ? `@${p.handle as string}` : null,
-        avatarUrl: (p.avatar_url as string | null) ?? null,
+        avatarUrl: isPrivate ? null : ((p.avatar_url as string | null) ?? null),
         imageUrl: null,
         fallbackInitials: initials(fallbackLabel),
-        locationPreview: [(p.home_city as string | null), (p.home_country as string | null)].filter(Boolean).join(", ") || null,
+        locationPreview: isPrivate
+          ? null
+          : [(p.home_city as string | null), (p.home_country as string | null)].filter(Boolean).join(", ") || null,
         matchedReason: null,
-        actionState: { isFollowing: followingSet.has(p.id as string) },
-        privacyState: { isPrivate: false },
-        accessState: { canAccess: true },
+        actionState: isPrivate
+          ? { isFollowing, isRequestSent: pendingSet.has(p.id as string) }
+          : { isFollowing },
+        privacyState: { isPrivate },
+        accessState: { canAccess: !isPrivate },
         destinationRoute: p.handle
           ? `/passport/${p.handle as string}`
           : `/passport/${p.id as string}`,

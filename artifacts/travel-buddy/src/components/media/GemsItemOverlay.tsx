@@ -236,6 +236,8 @@ export function GemsItemOverlay({
                 id: loc.canonicalPlaceId ?? undefined,
                 name: loc.name ?? 'Place',
                 city: loc.city ?? null,
+                lat: loc.lat ?? null,
+                lng: loc.lng ?? null,
               }}
               sourceId={item.id}
               variant="dark"

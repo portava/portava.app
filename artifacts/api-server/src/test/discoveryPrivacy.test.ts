@@ -160,11 +160,15 @@ describe("Discovery search — privacy exclusions", () => {
     assert.ok(ids.includes(PUBLIC_USER), "public profile should appear in results");
   });
 
-  it("excludes profiles with is_private=true from traveler search", async () => {
+  it("returns profiles with is_private=true as a locked preview, not excluded", async () => {
     const r = await req("/api/discovery/search?q=bob&type=travelers");
     assert.equal(r.status, 200, `unexpected status: ${JSON.stringify(r.body)}`);
-    const ids = (r.body.results ?? []).map((x: any) => x.id);
-    assert.ok(!ids.includes(PRIVATE_USER), "private profile (is_private=true) must be excluded from search");
+    const results = (r.body.results ?? []) as any[];
+    const bob = results.find((x) => x.id === PRIVATE_USER);
+    assert.ok(bob, "private profile (is_private=true) should still be discoverable by handle");
+    assert.equal(bob.privacyState?.isPrivate, true, "must be flagged private");
+    assert.equal(bob.accessState?.canAccess, false, "locked preview must not grant access");
+    assert.equal(bob.avatarUrl, null, "locked preview must not leak the avatar");
   });
 
   it("excludes profiles with allow_profile_discovery=false from traveler search", async () => {

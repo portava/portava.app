@@ -51,6 +51,8 @@ export interface GemsFeedItem {
     canonicalPlaceId: string | null;
     placeType: string | null;
     isVerified: boolean;
+    lat: number | null;
+    lng: number | null;
   } | null;
   viewerState: {
     hasLiked: boolean;

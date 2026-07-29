@@ -64,6 +64,7 @@ import {
   type MediaSessionState,
 } from "../services/ranking/MediaFeedRankingService.js";
 import { recordMediaEvent } from "../lib/mediaAnalytics.js";
+import { resolveGemCoords, type GemCoordContext } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
 
 const router = Router();
 
@@ -842,6 +843,20 @@ router.get("/media/gems-feed", asyncHandler(async (req, res) => {
     nameVisibilitySet(sc, submitterIds),
   ]);
 
+  // Resolve safe, privacy-filtered coordinates per gem (exact/approximate/hidden
+  // per sensitivity_level) — same choke point used by hiddenGems.ts, so Gems-feed
+  // Navigate gets real coordinates without bypassing the disclosure policy.
+  const coordsByGemId = new Map<string, { lat: number | null; lng: number | null }>();
+  await Promise.all(page.map(async (gem: any) => {
+    const coords = await resolveGemCoords(
+      gem as GemCoordContext,
+      sc,
+      user.id,
+      gem.submitted_by ?? null,
+    );
+    coordsByGemId.set(gem.id as string, { lat: coords.lat, lng: coords.lng });
+  }));
+
   const items: MediaFeedItem[] = page.map((gem: any) =>
     hydrateGemFeedItem({
       gem,
@@ -850,6 +865,7 @@ router.get("/media/gems-feed", asyncHandler(async (req, res) => {
       savedGemIds: savedSet,
       followedCreatorIds: followedCreatorIdsGems,
       submitterProfile: profileMap.get(gem.submitted_by) ?? null,
+      resolvedCoords: coordsByGemId.get(gem.id as string) ?? null,
     }),
   );
 

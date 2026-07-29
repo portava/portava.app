@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback, Component } from 'react';
 import {
-  View, Text, TextInput, Pressable, FlatList,
+  View, Text, TextInput, Pressable, FlatList, ScrollView,
   StyleSheet, RefreshControl,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import {
   ArrowLeft, Search, MapPin, Zap, Users, Globe, ShoppingBag,
-  Plane, Camera, Music, BookOpen, HelpCircle, CheckCircle, X,
+  Plane, Camera, Music, BookOpen, HelpCircle, CheckCircle, X, Bell,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../../src/theme/tokens';
 import {
@@ -14,7 +14,11 @@ import {
 } from '../../src/components/primitives';
 import { Stamp } from '../../src/components/ui';
 import { BuddyCard, BuddyCardSkeleton } from '../../src/components/BuddyCard';
-import { searchBuddies, type BuddyProfile, type BuddyCategory, type CoordPair } from '../../src/services/rentABuddy';
+import {
+  searchBuddies, saveMatchPreferences, runMatch,
+  type BuddyProfile, type BuddyCategory, type CoordPair, type MatchPreferences,
+} from '../../src/services/rentABuddy';
+import { useLocationContext } from '../../src/context/LocationContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CompassBuddyRow } from '../../src/components/compass/CompassBuddyRow';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
@@ -29,7 +33,7 @@ class CompassBuddyErrorBoundary extends Component<
   render() { return this.state.hasError ? null : this.props.children; }
 }
 
-type ScreenMode = 'categories' | 'quiz' | 'results';
+type ScreenMode = 'categories' | 'quiz' | 'results' | 'quizResults';
 
 const CATEGORIES = [
   { key: 'city' as BuddyCategory, label: 'City Explorer', icon: MapPin, desc: 'Navigate like a local' },
@@ -88,6 +92,13 @@ function computeCompatibility(answers: string[], buddy: BuddyProfile): { score: 
 export default function RentABuddySearch() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ city?: string; category?: string; mode?: string; bookingDate?: string; lat?: string; lng?: string }>();
+  const { resolvedLocation } = useLocationContext();
+  // Same city resolution CompassBuddyRow uses (canonical location, not a
+  // blank manual field) — so this screen's "All" tab never contradicts the
+  // Compass-matched row rendered a few lines above it on the same screen.
+  const fallbackCity = resolvedLocation.place.city ?? null;
+  const fallbackLat = resolvedLocation.coords?.lat;
+  const fallbackLng = resolvedLocation.coords?.lng;
 
   const [bookingDate] = useState<string | undefined>(params.bookingDate);
 
@@ -96,12 +107,12 @@ export default function RentABuddySearch() {
       : params.category ? 'results'
         : 'categories'
   );
-  const [city, setCity] = useState(params.city ?? '');
+  const [city, setCity] = useState(params.city ?? fallbackCity ?? '');
   const [cityLat, setCityLat] = useState<number | undefined>(
-    params.lat ? Number(params.lat) : undefined,
+    params.lat ? Number(params.lat) : fallbackLat,
   );
   const [cityLng, setCityLng] = useState<number | undefined>(
-    params.lng ? Number(params.lng) : undefined,
+    params.lng ? Number(params.lng) : fallbackLng,
   );
   const [cityPickerOpen, setCityPickerOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<BuddyCategory | undefined>(
@@ -110,6 +121,7 @@ export default function RentABuddySearch() {
 
   const [quizStep, setQuizStep] = useState(0);
   const [quizAnswers, setQuizAnswers] = useState<string[]>([]);
+  const [quizCityWarning, setQuizCityWarning] = useState(false);
 
   const [buddies, setBuddies] = useState<BuddyProfile[]>([]);
   const [total, setTotal] = useState(0);
@@ -120,10 +132,25 @@ export default function RentABuddySearch() {
   const [hasMore, setHasMore] = useState(false);
   const [withScores, setWithScores] = useState(false);
 
+  // "Buddies elsewhere" fallback — shown instead of a bare dead end when the
+  // resolved/typed city genuinely has none, so a real (honestly city-labeled)
+  // result is always the outcome of a search, never a silent zero.
+  const [elsewhereBuddies, setElsewhereBuddies] = useState<BuddyProfile[]>([]);
+  const [elsewhereLoading, setElsewhereLoading] = useState(false);
+
+  // Quiz results — a dedicated pipeline from the "results" list, because a
+  // completed quiz always needs a real outcome (ranked matches, or an
+  // explicit no-matches summary of what was captured), never a silent
+  // reuse of the plain-browse empty state.
+  const [quizMatching, setQuizMatching] = useState(false);
+  const [quizMatchError, setQuizMatchError] = useState<string | null>(null);
+  const [quizMatches, setQuizMatches] = useState<Array<BuddyProfile & { compatibilityScore: number }>>([]);
+  const [quizRanBadge, setQuizRanBadge] = useState(false);
+
   const doSearch = useCallback(async (reset = true) => {
     if (!city.trim()) return;
     const nextPage = reset ? 1 : page + 1;
-    if (reset) { setLoading(true); setError(null); }
+    if (reset) { setLoading(true); setError(null); setElsewhereBuddies([]); }
     try {
     const res = await searchBuddies({
       city,
@@ -140,6 +167,15 @@ export default function RentABuddySearch() {
     setBuddies(reset ? newBuddies : prev => [...prev, ...newBuddies]);
     setTotal(res.data.total);
     setPage(nextPage);
+    // Honest fallback: this city genuinely has none — show real, correctly
+    // city-labeled Buddies from elsewhere rather than a bare dead end that
+    // contradicts the Compass row on the previous screen.
+    if (reset && newBuddies.length === 0) {
+      setElsewhereLoading(true);
+      const elsewhereRes = await searchBuddies({ city: '', category: selectedCategory, perPage: 6 });
+      setElsewhereLoading(false);
+      setElsewhereBuddies(elsewhereRes.ok ? elsewhereRes.data.buddies.filter(b => b.city !== city) : []);
+    }
     setHasMore(newBuddies.length === 10 && (nextPage * 10) < res.data.total);
     } catch {
       // A rejected promise must never strand the results on skeletons
@@ -155,15 +191,59 @@ export default function RentABuddySearch() {
     if (mode === 'results') doSearch(true);
   }, [mode, selectedCategory]);
 
+  /** Quiz answers -> the backend's MatchPreferences shape, plus the raw Q&A for editing/reference. */
+  const buildPreferencesFromQuiz = (answers: string[]): MatchPreferences => {
+    const [languageAns, budgetAns, groupAns, vibeAns, settingAns] = answers;
+    const budgetMinUsd =
+      budgetAns === '$20–$40/hr' ? 20 : budgetAns === '$40–$70/hr' ? 40 : undefined;
+    const budgetMaxUsd =
+      budgetAns === 'Under $20/hr' ? 20 : budgetAns === '$20–$40/hr' ? 40 : budgetAns === '$40–$70/hr' ? 70 : undefined;
+    const groupSize =
+      groupAns === '2 people' ? 2 : groupAns === '3–5 people' ? 4 : groupAns === '6+ people' ? 6 : 1;
+    const rawAnswers: Record<string, string> = {};
+    QUIZ_STEPS.forEach((step, i) => { if (answers[i]) rawAnswers[step.id] = answers[i]; });
+    return {
+      vibe: vibeAns ?? null,
+      budgetMinUsd,
+      budgetMaxUsd,
+      groupSize,
+      publicOnly: settingAns === 'Fully public only',
+      safetyPrefs: { languageRequired: languageAns === 'Yes, essential' },
+      rawAnswers,
+    };
+  };
+
+  const runQuizMatch = useCallback(async (answers: string[]) => {
+    setQuizMatching(true);
+    setQuizMatchError(null);
+    const prefs = buildPreferencesFromQuiz(answers);
+    // Persist so these preferences inform future matching and can be
+    // reviewed/edited by retaking the quiz — never just discarded on completion.
+    saveMatchPreferences(prefs).catch(() => {});
+    const res = await runMatch(city, prefs, 10);
+    setQuizMatching(false);
+    if (!res.ok) { setQuizMatchError(res.error); return; }
+    setQuizMatches(res.data.results);
+    setQuizRanBadge(true);
+  }, [city]);
+
   const handleQuizAnswer = (answer: string) => {
     const next = [...quizAnswers, answer];
     setQuizAnswers(next);
     if (quizStep < QUIZ_STEPS.length - 1) {
       setQuizStep(s => s + 1);
-    } else {
-      setWithScores(true);
-      setMode('results');
+      return;
     }
+    // A city is required to produce a real match — block completion and
+    // surface the requirement instead of silently landing on an empty state.
+    if (!city.trim()) {
+      setQuizCityWarning(true);
+      setCityPickerOpen(true);
+      return;
+    }
+    setWithScores(true);
+    setMode('quizResults');
+    runQuizMatch(next);
   };
 
   const handleCategorySelect = (cat: BuddyCategory) => {
@@ -172,10 +252,13 @@ export default function RentABuddySearch() {
   };
 
   const handleBack = () => {
-    if (mode === 'results') {
+    if (mode === 'results' || mode === 'quizResults') {
       setMode('categories');
       setBuddies([]);
       setError(null);
+      setQuizMatches([]);
+      setQuizMatchError(null);
+      setQuizRanBadge(false);
     } else if (mode === 'quiz') {
       if (quizStep > 0) setQuizStep(s => s - 1);
       else setMode('categories');
@@ -190,6 +273,8 @@ export default function RentABuddySearch() {
       ? buddies.map(b => ({ buddy: b, ...computeCompatibility(quizAnswers, b) }))
         .sort((a, b) => b.score - a.score)
       : buddies.map(b => ({ buddy: b, score: undefined as any, why: undefined as any }));
+
+  const quizPrefsSummary = quizAnswers.length === QUIZ_STEPS.length ? buildPreferencesFromQuiz(quizAnswers) : null;
 
   return (
     <View style={styles.page}>
@@ -326,10 +411,14 @@ export default function RentABuddySearch() {
           <Text style={styles.quizStepLabel}>Question {quizStep + 1} of {QUIZ_STEPS.length}</Text>
           <Text style={styles.quizQ}>{QUIZ_STEPS[quizStep].q}</Text>
           {!city.trim() && (
-            <View style={styles.cityPrompt}>
+            <Pressable style={styles.cityPrompt} onPress={() => setCityPickerOpen(true)}>
               <MapPin size={14} color={color.warn} />
-              <Text style={styles.cityPromptText}>Enter a city above to get matched with local Buddies</Text>
-            </View>
+              <Text style={styles.cityPromptText}>
+                {quizCityWarning
+                  ? 'A city is required to match you with local Buddies — tap to choose one.'
+                  : 'A city is required to get matched with local Buddies. Tap to choose one.'}
+              </Text>
+            </Pressable>
           )}
           <View style={styles.quizOptions}>
             {QUIZ_STEPS[quizStep].options.map(opt => (
@@ -348,7 +437,17 @@ export default function RentABuddySearch() {
       {/* RESULTS mode */}
       {mode === 'results' && (
         <>
-          {loading && !refreshing ? (
+          {!city.trim() ? (
+            // Distinct from "zero results" — nobody has told this screen
+            // where to search yet, so say that plainly instead of implying
+            // no Buddies exist anywhere.
+            <TravelEmptyState
+              title="Enter a city to search Buddies"
+              sub="Pick a destination and we'll show verified local Buddies there."
+              action="Choose a city"
+              onAction={() => setCityPickerOpen(true)}
+            />
+          ) : loading && !refreshing ? (
             <View style={{ padding: space.lg }}>
               <BuddyCardSkeleton />
               <BuddyCardSkeleton />
@@ -361,12 +460,28 @@ export default function RentABuddySearch() {
               onRetry={() => doSearch(true)}
             />
           ) : buddies.length === 0 ? (
-            <TravelEmptyState
-              title="No verified Buddies available"
-              sub={`No Buddies found in ${city || 'this city'} right now. Join the waitlist and we'll notify you when one becomes available.`}
-              action="Join Waitlist"
-              onAction={() => router.push({ pathname: '/(rent-a-buddy)/waitlist' as any, params: { city } })}
-            />
+            <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: 40 + insets.bottom }}>
+              <TravelEmptyState
+                title={`No Buddies in ${city} yet`}
+                sub="Join the waitlist and we'll notify you when one becomes available here."
+                action="Join Waitlist"
+                onAction={() => router.push({ pathname: '/(rent-a-buddy)/waitlist' as any, params: { city } })}
+              />
+              {elsewhereLoading ? (
+                <BuddyCardSkeleton />
+              ) : elsewhereBuddies.length > 0 ? (
+                <View style={{ marginTop: space.lg }}>
+                  <Text style={styles.sectionLabel}>BUDDIES AVAILABLE ELSEWHERE</Text>
+                  {elsewhereBuddies.map(b => (
+                    <BuddyCard
+                      key={b.id}
+                      buddy={b}
+                      onBook={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: b.id } })}
+                    />
+                  ))}
+                </View>
+              ) : null}
+            </ScrollView>
           ) : (
             <FlatList
               data={getScoredBuddies()}
@@ -403,6 +518,121 @@ export default function RentABuddySearch() {
               onEndReached={() => { if (hasMore && !loading) doSearch(false); }}
               onEndReachedThreshold={0.3}
             />
+          )}
+        </>
+      )}
+
+      {/* QUIZ RESULTS mode — a completed quiz always ends in a real outcome */}
+      {mode === 'quizResults' && (
+        <>
+          {quizMatching ? (
+            <View style={{ padding: space.lg }}>
+              <BuddyCardSkeleton />
+              <BuddyCardSkeleton />
+              <BuddyCardSkeleton />
+            </View>
+          ) : quizMatchError ? (
+            <TravelErrorState
+              title="Couldn't run your match"
+              sub={quizMatchError}
+              onRetry={() => runQuizMatch(quizAnswers)}
+            />
+          ) : quizMatches.length > 0 ? (
+            <FlatList
+              data={quizMatches}
+              keyExtractor={item => item.id}
+              contentContainerStyle={{ paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: 40 + insets.bottom }}
+              ListHeaderComponent={
+                <View style={styles.resultsHeader}>
+                  <Text style={styles.resultsCount}>
+                    {quizMatches.length} matched Buddies in {city}
+                  </Text>
+                  {quizRanBadge && (
+                    <View style={styles.matchedBadge}>
+                      <CheckCircle size={11} color={color.success} />
+                      <Text style={styles.matchedText}>Ranked by compatibility</Text>
+                    </View>
+                  )}
+                </View>
+              }
+              renderItem={({ item }) => (
+                <BuddyCard
+                  buddy={item}
+                  compatibilityScore={Math.round(item.compatibilityScore)}
+                  whyMatched={item.verified ? `Matches your quiz answers for ${city}` : undefined}
+                  onBook={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: item.id } })}
+                />
+              )}
+            />
+          ) : (
+            <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: 40 + insets.bottom }}>
+              <View style={styles.noMatchWrap}>
+                <Users size={28} color={color.mute} />
+                <Text style={styles.noMatchTitle}>No matches in {city} right now</Text>
+                <Text style={styles.noMatchSub}>
+                  Here's what we captured — we'll use it the moment a Buddy matching your
+                  criteria becomes available.
+                </Text>
+              </View>
+
+              <View style={styles.summaryCard}>
+                <Text style={styles.summaryLabel}>Your preferences</Text>
+                {QUIZ_STEPS.map((step, i) => (
+                  quizAnswers[i] ? (
+                    <View key={step.id} style={styles.summaryRow}>
+                      <Text style={styles.summaryQ} numberOfLines={1}>{step.q}</Text>
+                      <Text style={styles.summaryA} numberOfLines={1}>{quizAnswers[i]}</Text>
+                    </View>
+                  ) : null
+                ))}
+              </View>
+
+              <Pressable
+                style={styles.waitlistCTA}
+                onPress={() => router.push({
+                  pathname: '/(rent-a-buddy)/waitlist' as any,
+                  params: {
+                    city,
+                    budget: quizPrefsSummary?.budgetMaxUsd ? String(quizPrefsSummary.budgetMaxUsd) : undefined,
+                    notes: `From Match quiz: ${quizAnswers.join(' · ')}`,
+                  },
+                })}
+              >
+                <Bell size={14} color={color.onInk} />
+                <Text style={styles.waitlistCTAText}>Join the waitlist for {city}</Text>
+              </Pressable>
+
+              <Text style={styles.broadenLabel}>Or broaden your search</Text>
+              <View style={styles.broadenRow}>
+                <Pressable
+                  style={styles.broadenChip}
+                  onPress={() => { setCityPickerOpen(true); }}
+                >
+                  <MapPin size={12} color={color.deep} />
+                  <Text style={styles.broadenChipText}>Change city</Text>
+                </Pressable>
+                {(quizPrefsSummary?.budgetMaxUsd != null) && (
+                  <Pressable
+                    style={styles.broadenChip}
+                    onPress={() => {
+                      const relaxed = quizAnswers.slice();
+                      relaxed[1] = 'Flexible';
+                      setQuizAnswers(relaxed);
+                      runQuizMatch(relaxed);
+                    }}
+                  >
+                    <Zap size={12} color={color.deep} />
+                    <Text style={styles.broadenChipText}>Relax budget</Text>
+                  </Pressable>
+                )}
+                <Pressable
+                  style={styles.broadenChip}
+                  onPress={() => { setMode('categories'); setSelectedCategory(undefined); }}
+                >
+                  <Text style={styles.broadenChipText}>Browse all Buddies</Text>
+                </Pressable>
+              </View>
+            </ScrollView>
           )}
         </>
       )}
@@ -487,4 +717,28 @@ const styles = StyleSheet.create({
   resultsCount: { ...t.small, color: color.mute, fontWeight: '600' },
   matchedBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#EEF8F3', borderRadius: 999, paddingHorizontal: space.sm, paddingVertical: 3 },
   matchedText: { fontSize: 10, fontWeight: '700', color: color.success, fontFamily: 'Courier', letterSpacing: 0.3 },
+  noMatchWrap: { alignItems: 'center', gap: space.sm, paddingVertical: space.lg },
+  noMatchTitle: { ...t.bodyStrong, color: color.ink, fontSize: 17, textAlign: 'center' },
+  noMatchSub: { ...t.body, color: color.mute, textAlign: 'center', lineHeight: 20 },
+  summaryCard: {
+    backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze,
+    padding: space.lg, marginTop: space.lg, gap: space.sm,
+  },
+  summaryLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.mute, letterSpacing: 1.5, marginBottom: 2 },
+  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', gap: space.md },
+  summaryQ: { ...t.small, color: color.mute, flex: 1.4 },
+  summaryA: { ...t.small, color: color.ink, fontWeight: '600', flex: 1, textAlign: 'right' },
+  waitlistCTA: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.sm,
+    backgroundColor: color.ink, borderRadius: radius.md, padding: space.lg, marginTop: space.lg,
+  },
+  waitlistCTAText: { ...t.bodyStrong, color: color.onInk },
+  broadenLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.mute, letterSpacing: 1.5, marginTop: space.xl, marginBottom: space.sm },
+  broadenRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  broadenChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: space.md, paddingVertical: space.sm,
+    borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised,
+  },
+  broadenChipText: { ...t.small, fontWeight: '600', color: color.ink },
 });

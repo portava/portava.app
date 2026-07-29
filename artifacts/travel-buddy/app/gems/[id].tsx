@@ -32,6 +32,7 @@ import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 import { ReasonPromptModal } from '../../src/components/ReasonPromptModal';
 import { StampButton } from '../../src/components/stamps/StampButton';
+import * as Sentry from '@sentry/react-native';
 
 // ── Privacy section ────────────────────────────────────────────────────────────
 
@@ -308,12 +309,32 @@ export default function GemDetailScreen() {
     );
   }
 
+  // Log the raw technical error to Sentry once per occurrence, but never
+  // render it — a raw DB/network message (e.g. a Postgres column error) is
+  // not something a user should ever see. The UI always shows a friendly,
+  // generic fail-soft message with a retry action instead.
+  useEffect(() => {
+    if (error) {
+      Sentry.captureException(new Error(`GemDetailScreen load failed: ${error}`), {
+        tags: { screen: 'gems/[id]' },
+        extra: { gemId: id, rawError: error },
+      });
+    }
+  }, [error, id]);
+
   if (error || !gem) {
     return (
       <SafeAreaView style={styles.root} edges={['top']}>
         <View style={styles.loadingContainer}>
           <Ionicons name="alert-circle-outline" size={48} color="#FF6B6B" />
-          <Text style={styles.errorText}>{error ?? 'Gem not found'}</Text>
+          <Text style={styles.errorText}>
+            {error ? 'We could not load this place right now.' : 'Gem not found.'}
+          </Text>
+          {error ? (
+            <TouchableOpacity onPress={refresh} style={styles.retryBtnFull}>
+              <Text style={styles.retryBtnText}>Try Again</Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtnFull}>
             <Text style={styles.backBtnText}>Go Back</Text>
           </TouchableOpacity>
@@ -607,6 +628,8 @@ const styles = StyleSheet.create({
   errorText: { color: '#FF6B6B', fontSize: 16, textAlign: 'center' },
   backBtnFull: { backgroundColor: '#1E2D45', borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12, marginTop: 8 },
   backBtnText: { color: '#4C8BF5', fontWeight: '600' },
+  retryBtnFull: { backgroundColor: '#4C8BF5', borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12, marginTop: 8 },
+  retryBtnText: { color: '#fff', fontWeight: '700' },
 
   detailHeader: {
     flexDirection: 'row',

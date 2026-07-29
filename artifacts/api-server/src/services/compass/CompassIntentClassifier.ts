@@ -64,6 +64,11 @@ export async function classify(
       model:                 "gpt-5-mini",
       temperature:           0,
       max_completion_tokens: 60,
+      // Without this, gpt-5-mini can spend the whole token budget on hidden
+      // reasoning and return empty content, silently failing classification
+      // on every call (caught by the try/catch below, but wastes a full
+      // model round trip on every single Compass message).
+      reasoning_effort:      "minimal" as const,
       messages: [
         { role: "system", content: CLASSIFIER_SYSTEM },
         { role: "user",   content: message.slice(0, 400) },

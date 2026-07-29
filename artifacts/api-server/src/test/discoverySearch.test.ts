@@ -379,14 +379,14 @@ describe("GET /api/discovery/search — block lookup fail-closed", () => {
   });
 });
 
-// ── Private accounts excluded ──────────────────────────────────────────────────
+// ── Private accounts: locked preview, not excluded ─────────────────────────────
 
-describe("GET /api/discovery/search — private accounts excluded entirely", () => {
-  it("does NOT return private accounts in travelers search", async () => {
+describe("GET /api/discovery/search — private accounts shown as a locked preview", () => {
+  it("returns a private account as a locked preview (matches /users/search behavior)", async () => {
     const PRIVATE = "ee000000-0000-4000-a000-000000000005";
     setup({
       profiles: [
-        { id: PRIVATE, handle: "ghost", name: "Ghost Traveler", avatar_url: null, is_private: true, home_city: null, home_country: null, account_status: "active" },
+        { id: PRIVATE, handle: "ghost", name: "Ghost Traveler", avatar_url: "https://cdn/ghost.jpg", is_private: true, home_city: "Berlin", home_country: "Germany", account_status: "active" },
         { id: ALICE,   handle: "alice", name: "Alice Travel",   avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
       ],
       blocks: [],
@@ -395,12 +395,37 @@ describe("GET /api/discovery/search — private accounts excluded entirely", () 
       user_follows: [],
     });
 
-    const r = await get("/discovery/search?q=travel&type=travelers");
+    const r = await get("/discovery/search?q=ghost&type=travelers");
     assert.equal(r.status, 200);
     const { results } = await r.json() as any;
-    const ids = (results as any[]).map((u: any) => u.id as string);
-    assert.ok(!ids.includes(PRIVATE), "Private account must NOT appear");
-    assert.ok(ids.includes(ALICE),    "Non-private account should appear");
+    const ghost = (results as any[]).find((u: any) => u.id === PRIVATE);
+    assert.ok(ghost, "Private account should be discoverable by handle, not vanish entirely");
+    assert.equal(ghost.privacyState?.isPrivate, true);
+    assert.equal(ghost.accessState?.canAccess, false);
+    assert.equal(ghost.avatarUrl, null, "Locked preview must not leak the avatar");
+    assert.equal(ghost.locationPreview, null, "Locked preview must not leak location");
+    assert.equal(ghost.actionState?.isFollowing, false);
+    assert.equal(ghost.actionState?.isRequestSent, false);
+  });
+
+  it("shows a followed private account with full info, not a locked preview", async () => {
+    const PRIVATE = "ee000000-0000-4000-a000-000000000006";
+    setup({
+      profiles: [
+        { id: PRIVATE, handle: "ghost2", name: "Ghost Two", avatar_url: "https://cdn/ghost2.jpg", is_private: true, home_city: "Berlin", home_country: "Germany", account_status: "active" },
+      ],
+      blocks: [],
+      profile_privacy_settings: [{ user_id: PRIVATE, show_real_name: true }],
+      user_follows: [{ follower_id: ME, following_id: PRIVATE }],
+    });
+
+    const r = await get("/discovery/search?q=ghost2&type=travelers");
+    const { results } = await r.json() as any;
+    const ghost = results[0] as any;
+    assert.equal(ghost.privacyState?.isPrivate, false);
+    assert.equal(ghost.accessState?.canAccess, true);
+    assert.equal(ghost.avatarUrl, "https://cdn/ghost2.jpg");
+    assert.equal(ghost.actionState?.isFollowing, true);
   });
 
   it("excludes profiles that opted out of discovery (fail-closed on opt-out error)", async () => {

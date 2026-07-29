@@ -18,7 +18,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet,
-  ScrollView, Switch, Alert, ActivityIndicator, Image,
+  ScrollView, Switch, Alert, ActivityIndicator, Image, Platform,
 } from 'react-native';
 import { KeyboardSafeScrollView } from '../../../src/components/ui/KeyboardSafeView';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -534,9 +534,29 @@ export default function CreateEventScreen() {
   }
 
   function handleDiscard() {
+    // Nothing to lose yet (no draft autosaved, no title typed) — leave immediately,
+    // no confirmation needed.
+    if (!draftId && !title.trim()) {
+      router.back();
+      return;
+    }
+
     const msg = draftId
       ? 'Your unsaved changes will be lost. The saved draft will remain in your drafts.'
       : 'Your unsaved changes will be lost. No draft will be created.';
+
+    // Alert.alert has no native counterpart on web (react-native's Alert module
+    // is a no-op there), which made this header button appear completely dead
+    // in the web preview — tapping it fired handleDiscard but no dialog ever
+    // rendered and router.back() never ran. Mirror the window.confirm fallback
+    // already used in app/layover/[id].tsx for web.
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm(`Discard changes?\n\n${msg}`)) {
+        router.back();
+      }
+      return;
+    }
+
     Alert.alert('Discard changes?', msg, [
       { text: 'Cancel', style: 'cancel' },
       {

@@ -99,12 +99,20 @@ function postToItem(post: any): CompassItem {
 
 // ── Buddy profiles ────────────────────────────────────────────────────────────
 
-async function fetchBuddies(db: SupabaseClient): Promise<CompassItem[]> {
+async function fetchBuddies(db: SupabaseClient, profile: CompassProfile): Promise<CompassItem[]> {
+  // Rent a Buddy is a real-world meetup service — a buddy in another city
+  // can never actually be booked by this viewer, so (unlike posts/events,
+  // which fall back to a global pool) buddies are strictly scoped to the
+  // viewer's current city. Without a known city there is no meaningful
+  // "near you" pool, so surface none — matching the Rent a Buddy directory,
+  // which also shows nothing until a city is chosen.
+  if (!profile.currentCity) return [];
   try {
     const { data } = await db
       .from("rent_buddy_profiles")
-      .select("user_id, status, verified, verified_at, profiles!user_id(id, created_at)")
+      .select("user_id, status, verified, verified_at, city, profiles!user_id(id, created_at)")
       .eq("status", "active")
+      .ilike("city", profile.currentCity)
       .limit(MAX_BUDDIES);
 
     return ((data as any[]) ?? []).map((buddy): CompassItem => {
@@ -318,7 +326,7 @@ export async function hydrateCompassItems(
 ): Promise<CompassItem[]> {
   const [posts, buddies, places, events, hiddenGems] = await Promise.allSettled([
     fetchPosts(db, profile),
-    fetchBuddies(db),
+    fetchBuddies(db, profile),
     fetchPlaces(db, profile),
     fetchEvents(db, profile),
     fetchHiddenGems(db, profile),

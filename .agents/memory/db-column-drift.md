@@ -21,3 +21,10 @@ Column existence isn't the only drift axis: DB CHECK constraints can lag the API
 ## Wizard write-path audit (2026-07-20)
 - Mechanical pass: extract insert/upsert/update payload keys per table (perl over routes/services), fetch live `information_schema.columns` via the Management API, diff. Regex bleeds across chained calls — verify each hit in code before calling it drift.
 - Real drifts found & fixed by 0163: posts.filter_id/filter_intensity/media_duration_seconds, rent_buddy_bookings.country_code, rent_buddy_policy_flags.updated_at. All now probed in CRITICAL_COLUMNS with a sentinel column per audited path (test-guarded).
+
+## ALLOWLIST entries can permanently hide a real drift (2026-07-29)
+`artifacts/api-server/src/scripts/checkWritePathColumns.ts` already had `hidden_gems.trip_id` sitting in its `ALLOWLIST` (meant for columns from a migration "pending live apply"), so the checker green-lit a shared `GEM_SELECT_COLS` string and an insert/filter that referenced a column the live `hidden_gems` table never had. It shipped straight to users as a raw Postgres error ("column hidden_gems.trip_id does not exist") on the gem detail screen. The checker was working correctly; a stale allowlist entry defeated it.
+
+**Why:** allowlist entries are written optimistically ("migration pending") and nothing forces someone to come back and either land the migration or fix the code — they silently become permanent holes.
+
+**How to apply:** when a checker/audit flags a missing column, don't reach for the allowlist as the fix — allowlist only for a migration that is genuinely in flight and being tracked elsewhere. If you find an existing allowlist entry for a table/column an endpoint is 500ing on, treat that as the prime suspect and grep every reference to that column before assuming the schema needs a migration; the correct fix is often to remove the bogus column reference (e.g. trip-attachment for a gem belongs in the `trip_plan_items` join table, not a `hidden_gems.trip_id` column) and delete the allowlist entry, not add the column live.

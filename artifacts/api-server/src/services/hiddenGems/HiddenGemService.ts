@@ -16,7 +16,6 @@ const GEM_SELECT_COLS = `
   submitted_by, guide_verified_by,
   save_count, visit_count, report_count,
   image_url, canonical_place_id, source_type, moderation_status,
-  trip_id,
   created_at, updated_at
 `.trim();
 
@@ -116,14 +115,36 @@ export async function submitGem(db: SupabaseClient, input: CreateGemInput) {
       ...(input.crowdLevel !== undefined
         ? { crowd_level: input.crowdLevel }
         : {}),
-      ...(input.tripId !== undefined
-        ? { trip_id: input.tripId }
-        : {}),
     })
     .select(GEM_SELECT_COLS)
     .single();
 
   if (error) throw error;
+
+  // hidden_gems has no trip_id column — attaching a gem to a trip at
+  // submission time is recorded the same way the /:id/plan endpoint does it:
+  // a trip_plan_items row (source_type="hidden_gem", source_id=gem id).
+  // Best-effort: a failure here should not fail gem submission itself.
+  if (input.tripId) {
+    await db
+      .from("trip_plan_items")
+      .insert({
+        trip_id: input.tripId,
+        added_by: input.submittedBy,
+        source_type: "hidden_gem",
+        source_id: (data as any).id,
+        title: (data as any).name,
+        description: (data as any).description ?? null,
+        location_name: (data as any).name,
+        city: (data as any).city,
+        country: (data as any).country ?? null,
+        category: (data as any).category,
+      })
+      .then(({ error: planError }) => {
+        if (planError) logger.warn({ err: planError, gemId: (data as any).id, tripId: input.tripId }, "submitGem: failed to attach gem to trip plan");
+      });
+  }
+
   return data;
 }
 

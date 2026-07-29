@@ -1067,7 +1067,14 @@ async function summariseFallback(
   );
   const opts = {
     model:                 "gpt-5-mini",
-    max_completion_tokens: 800,
+    max_completion_tokens: 1200,
+    // Low reasoning effort: this is a text-only re-prompt after the model
+    // already reasoned through tool calls in the previous round. At default
+    // reasoning effort, gpt-5-mini can spend its entire completion-token
+    // budget on hidden reasoning tokens and return empty visible content —
+    // the exact "empty final turn" case this function exists to recover
+    // from. "low" leaves enough budget for actual output text.
+    reasoning_effort:      "low" as const,
     messages: [
       ...convo,
       { role: "user", content: SUMMARISE_PROMPT },
@@ -1185,6 +1192,15 @@ async function runToolCallingLoop(
     const requestOpts = {
       model: "gpt-5-mini",
       max_completion_tokens: 1200,
+      // Low reasoning effort keeps the completion-token budget available for
+      // actual visible output. At default effort, gpt-5-mini can burn the
+      // whole budget on hidden reasoning tokens and return empty content —
+      // forcing the summariseFallback re-prompt on every single request and
+      // roughly doubling response time (this was the root cause of the
+      // Compass chat feeling like it hung: ~30s round trips, sometimes with
+      // no real answer even after the fallback). "low" cut reasoning tokens
+      // from ~700 to <100 in testing with no loss of answer quality.
+      reasoning_effort: "low" as const,
       messages: convo,
       ...(forceFinal
         ? {}
@@ -2672,6 +2688,17 @@ router.get("/compass/recommendations", async (req, res) => {
 
       const effectiveCity = city ?? profile.currentCity ?? null;
 
+      // Rent-a-Buddy is a real-world meetup service — a buddy in another
+      // city can never actually be booked "today" by this viewer. The
+      // directory (rent-a-buddy/search) already scopes to the viewer's
+      // city; Compass must agree, or it advertises buddies the directory
+      // (correctly) says don't exist here. No effectiveCity => no
+      // recommendations, matching the directory's "enter a city" state.
+      if (!effectiveCity) {
+        res.json({ recommendations: [], surface });
+        return;
+      }
+
       const { data: buddyRows } = await sc
         .from("rent_buddy_profiles")
         .select(
@@ -2679,7 +2706,8 @@ router.get("/compass/recommendations", async (req, res) => {
           "hourly_rate_usd, status, verified, average_rating, review_count, " +
           "cover_photo_url, admin_status, risk_hold",
         )
-        .eq("status", "active");
+        .eq("status", "active")
+        .ilike("city", effectiveCity);
 
       const ADULT_CATS = new Set(["escort", "adult", "dating", "romantic", "sexual"]);
 

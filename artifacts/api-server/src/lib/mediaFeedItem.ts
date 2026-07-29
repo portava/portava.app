@@ -97,6 +97,14 @@ export interface MediaFeedLocation {
   placeType?: string | null;
   /** Gems mode only — whether the gem has been verified. */
   isVerified?: boolean;
+  /**
+   * Gems mode only — coordinates resolved through HiddenGemPrivacyGuard
+   * (exact/approximate/hidden per the gem's sensitivity_level). Null when
+   * disclosure isn't permitted for this viewer. Safe to expose as-is —
+   * already privacy-filtered, unlike raw hidden_gems.latitude/longitude.
+   */
+  lat?: number | null;
+  lng?: number | null;
 }
 
 export interface MediaFeedViewerState {
@@ -292,6 +300,8 @@ export interface HydrateGemInput {
   followedCreatorIds: Set<string>;
   /** Submitter's profile row (pre-fetched). */
   submitterProfile: any;
+  /** Coordinates already resolved via HiddenGemPrivacyGuard for this viewer. */
+  resolvedCoords?: { lat: number | null; lng: number | null } | null;
 }
 
 /**
@@ -299,7 +309,7 @@ export interface HydrateGemInput {
  * The gem itself becomes the location context; image_url becomes the single media item.
  */
 export function hydrateGemFeedItem(input: HydrateGemInput): MediaFeedItem {
-  const { gem, viewerUserId, allowedRealNameIds, savedGemIds, followedCreatorIds, submitterProfile } = input;
+  const { gem, viewerUserId, allowedRealNameIds, savedGemIds, followedCreatorIds, submitterProfile, resolvedCoords } = input;
 
   const creatorId: string = gem.submitted_by ?? "";
   const isOwnItem = creatorId === viewerUserId;
@@ -370,6 +380,8 @@ export function hydrateGemFeedItem(input: HydrateGemInput): MediaFeedItem {
     canonicalPlaceId: gem.canonical_place_id ?? null,
     placeType: gem.category ?? null,
     isVerified: gem.verification_level !== "unverified" && gem.verification_level != null,
+    lat: resolvedCoords?.lat ?? null,
+    lng: resolvedCoords?.lng ?? null,
   };
 
   const viewerState: MediaFeedViewerState = {

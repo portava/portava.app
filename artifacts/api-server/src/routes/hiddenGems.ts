@@ -451,13 +451,25 @@ router.get("/hidden-gems", async (req, res) => {
     }
 
     try {
-      const { data: tripGems } = await sc
-        .from("hidden_gems")
-        .select("*")
+      // hidden_gems has no trip_id column — a gem's attachment to a trip is
+      // recorded in trip_plan_items (source_type="hidden_gem", source_id =
+      // gem id), the same table /:id/plan writes to. Resolve the gem ids via
+      // that join table first, then fetch the gems themselves.
+      const { data: planItems } = await sc
+        .from("trip_plan_items")
+        .select("source_id")
         .eq("trip_id", callerTripId)
-        .eq("status", "active")
-        .order("created_at", { ascending: false })
-        .limit(opts.limit);
+        .eq("source_type", "hidden_gem");
+      const gemIdsForTrip = [...new Set(((planItems as any[]) ?? []).map((p: any) => p.source_id as string))];
+      const { data: tripGems } = gemIdsForTrip.length
+        ? await sc
+            .from("hidden_gems")
+            .select("*")
+            .in("id", gemIdsForTrip)
+            .eq("status", "active")
+            .order("created_at", { ascending: false })
+            .limit(opts.limit)
+        : { data: [] as any[] };
       const safe = await applyGemPrivacyBatch(tripGems ?? [], sc, user.id, callerTripId);
       const gemIds = (safe as any[]).map((g: any) => g.id as string);
       const agg = await batchFetchGemAggregates(sc, gemIds);

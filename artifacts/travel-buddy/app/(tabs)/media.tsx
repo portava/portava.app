@@ -114,6 +114,10 @@ function MediaScreenInner() {
         {selectedMode === 'gems'  && (
           <GemsFeed
             nearMeEnabled={isEnabled('MEDIA_HIDDEN_GEMS_NEARBY_ENABLED')}
+            onViewPlace={(item) => {
+              const placeId = item.location?.canonicalPlaceId;
+              if (placeId) router.push(`/place/${placeId}` as any);
+            }}
           />
         )}
       </View>

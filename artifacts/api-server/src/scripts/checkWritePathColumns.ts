@@ -129,7 +129,6 @@ const ALLOWLIST = new Set<string>([
   "hidden_gems.crowd_level",
   "hidden_gems.source_confirmation",
   "hidden_gems.visibility",
-  "hidden_gems.trip_id",
   // Place coverage buckets: per-post bucket array + classified flag — migration 2046 pending live apply.
   // Remove once the columns exist in the live posts table.
   "posts.post_buckets",
