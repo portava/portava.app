@@ -9,7 +9,7 @@ import { invalidateCompassHomeCache } from "./compassHome";
 import { sniffMedia, processImage, type ProcessedImage, type SniffResult } from "../lib/mediaProcessing";
 import { appMediaRef } from "../lib/postSchemas";
 import { computeTrustScore } from "../lib/trustScore.js";
-import { countStampsReceived } from "../services/stamps/ContentStampService.js";
+import { countContentStampsReceived, countStampsReceived } from "../services/stamps/ContentStampService.js";
 
 /**
  * Sniff + strip-EXIF/auto-orient an avatar/cover image. Returns the processed

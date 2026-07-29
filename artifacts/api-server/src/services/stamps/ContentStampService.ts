@@ -149,9 +149,13 @@ export async function getStampState(
  * posts authored by that user. Used to compute the "Stamps Earned" profile stat
  * that reflects appreciation from peers, not just passport milestone awards.
  *
- * Counts ALL posts via a paged traversal (1 000 IDs per page) so the result is
- * always an exact lifetime total, not a capped lower bound. The loop terminates
- * as soon as a page returns fewer IDs than PAGE_SIZE.
+ * Primary path: delegates to the `count_content_stamps_received` Postgres RPC
+ * which does the join server-side in a single query, giving an exact lifetime
+ * total regardless of how many posts the user has.
+ *
+ * Fallback (schema-drift safe): if the RPC does not exist yet (PGRST202), the
+ * function falls back to a paged traversal (1 000 IDs per page) so the result
+ * is still an exact total rather than the old 500-row cap.
  *
  * Fails open: returns 0 on any DB error so callers never surface a 500 because
  * the content-stamp count couldn't be fetched.
@@ -160,6 +164,27 @@ export async function countContentStampsReceived(
   db: SupabaseClient,
   userId: string,
 ): Promise<number> {
+  try {
+    // --- Primary path: single server-side join via RPC ---
+    const { data, error: rpcErr } = await db.rpc(
+      "count_content_stamps_received",
+      { p_user_id: userId },
+    );
+
+    // PGRST202 = function not found (migration not yet applied).
+    // Any other error is also handled by falling through to the paged loop so
+    // we never surface a 500 to callers.
+    if (!rpcErr) {
+      return typeof data === "number" ? data : Number(data ?? 0);
+    }
+
+    // If the error is NOT "function not found" we log and fall through anyway —
+    // the paged loop is an exact fallback, not a degraded one.
+  } catch {
+    // Unexpected throw — fall through to the paged loop.
+  }
+
+  // --- Fallback path: paged traversal (schema-drift safe) ---
   const PAGE_SIZE = 1000;
   let totalCount = 0;
   let offset = 0;
