@@ -341,14 +341,14 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
           )}
 
           {/* Tags */}
-          {place.tags.length > 0 && (
+          {place.tags.filter((t) => !isInternalTag(t)).length > 0 && (
             <View style={styles.section}>
               <View style={styles.infoRow}>
                 <Tag size={14} color={color.mute} />
                 <Text style={styles.sectionLabel}>Tags</Text>
               </View>
               <View style={styles.tagRow}>
-                {place.tags.map((tag) => (
+                {place.tags.filter((t) => !isInternalTag(t)).map((tag) => (
                   <View key={tag} style={[styles.tag, { backgroundColor: accent + '18' }]}>
                     <Text style={[styles.tagText, { color: accent }]}>{capitalize(tag)}</Text>
                   </View>
@@ -450,7 +450,22 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
 }
 
 function capitalize(s: string) {
-  return s.charAt(0).toUpperCase() + s.slice(1);
+  // Internal category/tag values can arrive as snake_case or camelCase
+  // (e.g. "traveler_pick", "hiddenGem") — always render Title Case words,
+  // never the raw internal token.
+  return s
+    .replace(/_/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(' ')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+}
+
+/** Raw OpenStreetMap node/way/relation IDs (e.g. "osm:node/123") are internal
+ * data and must never be shown to users — filter them out of the tags list. */
+function isInternalTag(tag: string): boolean {
+  return /^osm[:/]/i.test(tag);
 }
 
 const styles = StyleSheet.create({
