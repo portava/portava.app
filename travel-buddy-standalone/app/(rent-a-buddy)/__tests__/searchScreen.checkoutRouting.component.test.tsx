@@ -65,6 +65,15 @@ jest.mock('../../../src/components/BuddyCard', () => ({
   BuddyCardSkeleton: () => null,
 }));
 
+// ── LocationContext ───────────────────────────────────────────────────────────
+// NOTE: intentional stub — RentABuddySearch reads resolvedLocation for a
+// coordinate fallback; provider is not under test here.
+jest.mock('../../../src/context/LocationContext', () => ({
+  useLocationContext: () => ({
+    resolvedLocation: { place: { city: null }, coords: null },
+  }),
+}));
+
 // ── other components not under test ───────────────────────────────────────────
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/primitives', () => ({
