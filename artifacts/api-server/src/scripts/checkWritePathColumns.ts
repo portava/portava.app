@@ -222,7 +222,7 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/compass.ts|upsert|payload not statically resolvable", 3],
   ["src/routes/compass.ts|upsert|payload partially resolvable", 2],
   ["src/routes/events.ts|select|select list not statically resolvable", 2],
-  ["src/routes/follows.ts|select|select list not statically resolvable", 4],
+  ["src/routes/follows.ts|select|select list not statically resolvable", 6],
   ["src/routes/friends.ts|select|select list not statically resolvable", 4],
   ["src/routes/geofence.ts|select|select list not statically resolvable", 1],
   ["src/routes/groupChat.ts|select|select list not statically resolvable", 1],

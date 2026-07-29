@@ -423,8 +423,6 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
                     );
                   })
                 : threads;
-              const showUserResults = isSearchActive && filteredThreads.length === 0;
-
               if (loadingThreads) {
                 return (
                   <View style={s.loadingRow}>
@@ -433,75 +431,83 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
                 );
               }
 
-              if (showUserResults) {
-                if (searchingUsers) {
+              if (!isSearchActive) {
+                if (filteredThreads.length === 0) {
                   return (
                     <View style={s.loadingRow}>
-                      <ActivityIndicator size="small" color={color.signal} />
+                      <MessageCircle size={24} color={color.faint} />
+                      <Text style={s.emptyLabel}>No existing chats yet.</Text>
                     </View>
                   );
                 }
-                if (userResults.length > 0) {
-                  return (
-                    <FlatList
-                      data={userResults}
-                      keyExtractor={(u) => u.id}
-                      style={s.list}
-                      renderItem={({ item: user }) => (
-                        <UserResultRow user={user} onPress={() => handleUserResultPress(user)} />
-                      )}
-                      ItemSeparatorComponent={() => (
-                        <View style={{ height: 1, backgroundColor: color.haze }} />
-                      )}
-                    />
-                  );
-                }
                 return (
-                  <View style={s.loadingRow}>
-                    <MessageCircle size={24} color={color.faint} />
-                    <Text style={s.emptyLabel}>No users found for "{threadSearch}".</Text>
-                  </View>
+                  <FlatList
+                    data={filteredThreads}
+                    keyExtractor={(th) => th.id}
+                    style={s.list}
+                    renderItem={({ item: thread }) => (
+                      <ThreadRow
+                        thread={thread}
+                        selected={selectedId === thread.id}
+                        onPress={() => setSelectedId(thread.id)}
+                      />
+                    )}
+                    ItemSeparatorComponent={() => (
+                      <View style={{ height: 1, backgroundColor: color.haze }} />
+                    )}
+                  />
                 );
               }
 
-              if (filteredThreads.length === 0 && isSearchActive) {
-                return searchingUsers ? (
-                  <View style={s.loadingRow}>
-                    <ActivityIndicator size="small" color={color.signal} />
-                  </View>
-                ) : (
-                  <View style={s.loadingRow}>
-                    <MessageCircle size={24} color={color.faint} />
-                    <Text style={s.emptyLabel}>No chats match "{threadSearch}".</Text>
-                  </View>
-                );
-              }
-
-              if (filteredThreads.length === 0) {
+              // Search active — show threads and user results together
+              const noneFound = filteredThreads.length === 0 && !searchingUsers && userResults.length === 0;
+              if (noneFound) {
                 return (
                   <View style={s.loadingRow}>
                     <MessageCircle size={24} color={color.faint} />
-                    <Text style={s.emptyLabel}>No existing chats yet.</Text>
+                    <Text style={s.emptyLabel}>No results for "{threadSearch}".</Text>
                   </View>
                 );
               }
 
               return (
-                <FlatList
-                  data={filteredThreads}
-                  keyExtractor={(th) => th.id}
-                  style={s.list}
-                  renderItem={({ item: thread }) => (
-                    <ThreadRow
-                      thread={thread}
-                      selected={selectedId === thread.id}
-                      onPress={() => setSelectedId(thread.id)}
-                    />
+                <ScrollView style={s.list} keyboardShouldPersistTaps="handled">
+                  {filteredThreads.map((thread, i) => (
+                    <View key={thread.id}>
+                      <ThreadRow
+                        thread={thread}
+                        selected={selectedId === thread.id}
+                        onPress={() => setSelectedId(thread.id)}
+                      />
+                      {i < filteredThreads.length - 1 && (
+                        <View style={{ height: 1, backgroundColor: color.haze }} />
+                      )}
+                    </View>
+                  ))}
+                  {filteredThreads.length > 0 && <View style={{ height: 1, backgroundColor: color.haze }} />}
+                  <View style={s.peopleDividerRow}>
+                    <Text style={s.peopleDividerText}>PEOPLE</Text>
+                  </View>
+                  {searchingUsers ? (
+                    <View style={s.loadingRow}>
+                      <ActivityIndicator size="small" color={color.signal} />
+                    </View>
+                  ) : userResults.length > 0 ? (
+                    userResults.map((user, i) => (
+                      <View key={user.id}>
+                        <UserResultRow user={user} onPress={() => handleUserResultPress(user)} />
+                        {i < userResults.length - 1 && (
+                          <View style={{ height: 1, backgroundColor: color.haze }} />
+                        )}
+                      </View>
+                    ))
+                  ) : (
+                    <View style={s.loadingRow}>
+                      <MessageCircle size={20} color={color.faint} />
+                      <Text style={s.emptyLabel}>No people found.</Text>
+                    </View>
                   )}
-                  ItemSeparatorComponent={() => (
-                    <View style={{ height: 1, backgroundColor: color.haze }} />
-                  )}
-                />
+                </ScrollView>
               );
             })()}
 
@@ -828,6 +834,20 @@ const s = StyleSheet.create({
     color: color.ink,
     padding: 0,
   },
+  peopleDividerRow: {
+    paddingHorizontal: space.md,
+    paddingVertical: 6,
+    backgroundColor: color.paper,
+  },
+  peopleDividerText: {
+    fontSize: 10,
+    fontFamily: 'Courier',
+    fontWeight: '700',
+    color: color.mute,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase' as const,
+  },
+
   startChatBadge: {
     paddingHorizontal: 10,
     paddingVertical: 4,

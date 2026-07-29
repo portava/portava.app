@@ -73,6 +73,7 @@ function makeClient(state: FakeState) {
           return builder;
         },
         eq(col: string, val: any) { filters.push((r) => r[col] === val); return builder; },
+        neq(col: string, val: any) { filters.push((r) => r[col] !== val); return builder; },
         in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; },
         or() { return builder; },
         limit() { return builder; },
