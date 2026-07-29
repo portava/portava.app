@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet,
   ActivityIndicator, ScrollView, RefreshControl,
@@ -6,7 +6,7 @@ import {
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 import { Sparkles, Send, Plane, MessageCircle, Map, PlusCircle } from 'lucide-react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import {
   postCompassFrontloadEvent, postCompassAskStream,
   confirmCompassProposal, declineCompassProposal,
@@ -34,6 +34,7 @@ type ChatEntry =
 
 export default function AiChat() {
   const router = useRouter();
+  const { prefillMessage } = useLocalSearchParams<{ prefillMessage?: string }>();
   const planPicker = usePlanPicker();
   const [entries, setEntries]       = useState<ChatEntry[]>([]);
   const [input, setInput]           = useState('');
@@ -62,6 +63,18 @@ export default function AiChat() {
   useFocusEffect(useCallback(() => {
     postCompassFrontloadEvent({ eventType: 'navigation', screen: 'ai_chat' }).catch(() => {});
   }, []));
+
+  // Layover's "Ask locals" hands off a ready-made prompt (airport + city +
+  // time-to-spare context) via router params — auto-send it once so the
+  // traveler lands in a live conversation instead of a blank chat that
+  // silently dropped their layover context.
+  const sentPrefillRef = useRef(false);
+  useEffect(() => {
+    if (!prefillMessage || sentPrefillRef.current) return;
+    sentPrefillRef.current = true;
+    send(prefillMessage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefillMessage]);
 
   function scrollToEnd() {
     setTimeout(() => scroll.current?.scrollToEnd({ animated: true }), 80);
@@ -242,7 +255,11 @@ export default function AiChat() {
 
   return (
     <KeyboardSafeScrollView style={{ backgroundColor: color.paper }}>
-      <AppHeader variant="detail" title="AI Buddy" onBack={router.back} />
+      <AppHeader
+        variant="detail"
+        title="AI Buddy"
+        onBack={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/' as any))}
+      />
       <ScrollView
         ref={scroll}
         contentContainerStyle={{ padding: space.lg, gap: space.md }}

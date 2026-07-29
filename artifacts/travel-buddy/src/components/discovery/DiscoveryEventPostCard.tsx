@@ -15,7 +15,8 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { MapPin, Heart, Music2 } from 'lucide-react-native';
+import { MapPin, Music2 } from 'lucide-react-native';
+import { StampIcon } from '../stamps/StampIcon.tsx';
 import { color, space, radius, shadow } from '../../theme/tokens.ts';
 import type { DiscoveryEventPost } from '../../types/discovery.ts';
 import { DisplayMediaImage } from '../ui/DisplayMediaImage.tsx';
@@ -93,7 +94,7 @@ export function DiscoveryEventPostCard({ post }: Props) {
           <Text style={s.recency}>{recencyLabel(post.createdAt)}</Text>
           {post.likeCount > 0 ? (
             <View style={s.likeRow}>
-              <Heart size={10} color={color.mute} />
+              <StampIcon size={10} color={color.mute} />
               <Text style={s.likeCount}>{post.likeCount}</Text>
             </View>
           ) : null}

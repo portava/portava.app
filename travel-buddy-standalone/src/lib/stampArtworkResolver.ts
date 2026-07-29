@@ -134,7 +134,11 @@ function buildAccessibilityLabel(
  */
 export function resolveArtwork(stamp: PassportStamp): StampArtworkDef {
   const theme = CATEGORY_THEME[stamp.kind];
-  const rarity = KIND_RARITY[stamp.kind];
+  // Prefer the authoritative rarity from the stamp definition when known;
+  // only fall back to the kind-based guess for legacy stamps without one.
+  // Using the kind guess when a real rarity exists caused header/subtitle
+  // rarity mismatches (e.g. "Rare" badge vs "COMMON" artwork subtitle).
+  const rarity = stamp.rarity ?? KIND_RARITY[stamp.kind];
   const locked = stamp.locked ?? false;
 
   const def: StampArtworkDef = {

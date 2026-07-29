@@ -607,6 +607,42 @@ export async function reportEvent(
   });
 }
 
+// ── Reminders ─────────────────────────────────────────────────────────────────
+
+export interface EventReminder {
+  id: string;
+  eventId: string;
+  userId: string;
+  remindAt: string;
+  note: string | null;
+  sent: boolean;
+  createdAt: string;
+}
+
+export async function getEventReminders(
+  eventId: string,
+): Promise<ApiResult<{ reminders: EventReminder[] }>> {
+  return apiCall(`/api/events/${eventId}/reminders`);
+}
+
+export async function createEventReminder(
+  eventId: string,
+  remindAt: string,
+  note?: string,
+): Promise<ApiResult<EventReminder>> {
+  return apiCall(`/api/events/${eventId}/reminders`, {
+    method: 'POST',
+    body: JSON.stringify({ remindAt, ...(note ? { note } : {}) }),
+  });
+}
+
+export async function deleteEventReminder(
+  eventId: string,
+  reminderId: string,
+): Promise<ApiResult<{ ok: boolean }>> {
+  return apiCall(`/api/events/${eventId}/reminders/${reminderId}`, { method: 'DELETE' });
+}
+
 // ── Following / circle feed ───────────────────────────────────────────────────
 
 export async function listCircleEvents(

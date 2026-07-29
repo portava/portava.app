@@ -11,6 +11,7 @@ import {
   View, ScrollView, Text, Pressable, StyleSheet,
 } from 'react-native';
 import { Image } from 'expo-image';
+import { Award } from 'lucide-react-native';
 import type { ShowcaseStamp } from '../../services/stampShowcase.ts';
 import { color, space, radius } from '../../theme/tokens.ts';
 import { RARITY_COLORS, normalizeRarity, hasGlowRing } from '../../lib/stampRarity.ts';
@@ -48,7 +49,10 @@ function ShowcaseCard({ item, onPress }: { item: ShowcaseStamp; onPress: () => v
             testID="stamp-artwork-image"
           />
         ) : (
-          <View style={styles.artPlaceholder} />
+          <View style={[styles.artPlaceholder, { backgroundColor: rarityColor + '22' }]}>
+            <Award size={22} color={rarityColor} strokeWidth={1.75} />
+            <Text style={styles.artPlaceholderLabel} numberOfLines={2}>{label}</Text>
+          </View>
         )}
         <View
           style={[styles.rarityDot, { backgroundColor: rarityColor }]}
@@ -128,7 +132,16 @@ const styles = StyleSheet.create({
   artPlaceholder: {
     width: CARD_SIZE,
     height: CARD_SIZE,
-    backgroundColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+    paddingHorizontal: 4,
+  },
+  artPlaceholderLabel: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: color.mute,
+    textAlign: 'center',
   },
   rarityDot: {
     position: 'absolute',

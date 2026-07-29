@@ -58,6 +58,7 @@ import {
   RefreshCw,
   X,
 } from 'lucide-react-native';
+import { StampIcon } from '../stamps/StampIcon.tsx';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { useMapStore } from '../../stores/mapStore.tsx';
 import type { PreviewDetent } from '../../stores/mapStore.tsx';
@@ -355,7 +356,7 @@ function GemCardBody({ entity }: { entity: MapEntity<HiddenGem> }) {
         ))}
         {gem.saveCount != null && gem.saveCount > 0 && (
           <View style={cs.chip}>
-            <Heart size={10} color={color.mute} />
+            <StampIcon size={10} color={color.mute} />
             <Text style={cs.chipText}>{gem.saveCount}</Text>
           </View>
         )}

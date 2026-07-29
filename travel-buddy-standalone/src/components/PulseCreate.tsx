@@ -512,7 +512,7 @@ export function UnifiedPostComposer({
                     <View style={uc.typeIcon}>
                       <Icon size={16} color={color.mute} />
                     </View>
-                    <Text style={uc.typeLabel} numberOfLines={1}>{label}</Text>
+                    <Text style={uc.typeLabel}>{label}</Text>
                     <Text style={uc.typeSub} numberOfLines={1}>{sub}</Text>
                   </Pressable>
                 ))}

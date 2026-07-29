@@ -28,11 +28,11 @@ jest.mock('expo-image', () => {
       ...rest
     }: any) =>
       React.createElement(View, {
+        ...rest,
         testID: 'expo-image',
         accessibilityLabel,
         onTouchStart: onError,   // expose via an event for fireEvent
         style,
-        ...rest,
       }),
   };
 });

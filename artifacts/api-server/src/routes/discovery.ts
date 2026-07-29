@@ -481,6 +481,28 @@ async function queryOverpass(
 // Prefer primary_category from the DB; fall back to the canonical mapper
 // only for rows that pre-date migration 0083 (no primary_category yet).
 
+/** Internal dedup keys (e.g. "osm:node/4089438971" from seed-discovery-places.ts)
+ * are never valid display text — filter them the same way isInternalTag does
+ * in the mobile client's PlaceDetailSheet. */
+function isInternalTag(tag: string | null | undefined): boolean {
+  return typeof tag === "string" && /^osm[:/]/i.test(tag);
+}
+
+/** Title-cases a snake_case/camelCase category into a display label
+ * (e.g. "hidden_gem" → "Hidden Gem"). Used as the Traveler Pick chip
+ * fallback when the stored `tag` is an internal dedup key, not real text. */
+function humanizeCategory(category: string | null | undefined): string {
+  if (!category) return "Place";
+  const s = category
+    .replace(/_/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(" ")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
+  return s || "Place";
+}
+
 function mapDbCategory(rawCategory: string, rawPlaceType?: string): string {
   return toCanonicalCategory(rawCategory, rawPlaceType);
 }
@@ -1872,7 +1894,11 @@ router.get("/discovery/community", async (req, res) => {
             }
           : null,
         savedCount: (row.saved_count as number) ?? 0,
-        tag:       row.tag ?? null,
+        // `tag` doubles as an internal OSM dedup key on seeded rows
+        // (e.g. "osm:node/4089438971" — see scripts/seed-discovery-places.ts)
+        // and must never reach the client as a display label. Fall back to a
+        // humanized category so seeded Traveler Picks still show a real chip.
+        tag:       isInternalTag(row.tag) ? humanizeCategory(row.category) : (row.tag ?? null),
         note:      row.note ?? null,
         rating:    row.rating != null ? parseFloat(row.rating) : null,
         source:    row.source ?? "traveler",

@@ -18,7 +18,8 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
 import { getMediaFilter, buildCssFilter } from '../lib/media/filters.ts';
-import { X, Heart, MessageCircle, Flag, Eye, Share2, Plus, Trash2, Volume2, VolumeX } from 'lucide-react-native';
+import { X, MessageCircle, Flag, Eye, Share2, Plus, Trash2, Volume2, VolumeX } from 'lucide-react-native';
+import { StampIcon } from './stamps/StampIcon.tsx';
 import { SaveButton } from './SaveButton.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -457,10 +458,10 @@ export function HighlightViewer({
                   onLongPress={() => setLikerHighlightId(current.id)}
                   hitSlop={HIT_SLOP}
                 >
-                  <Heart
+                  <StampIcon
                     size={24}
+                    active={likeState.liked}
                     color={likeState.liked ? color.signal : '#fff'}
-                    fill={likeState.liked ? color.signal : 'transparent'}
                   />
                 </Pressable>
                 {likeState.count > 0 && (

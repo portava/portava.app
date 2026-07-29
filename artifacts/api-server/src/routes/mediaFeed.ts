@@ -124,9 +124,17 @@ const GRID_MEDIA_COLUMNS =
   "duration_seconds, width, height, sort_order, processing_status, moderation_status, " +
   "storage_path, storage_bucket";
 
-/** Columns projected from posts for the Watch-mode feed. */
+/**
+ * Columns projected from posts for the Watch-mode feed.
+ *
+ * NOTE: posts has no `event_id` column in the live schema — a post can only
+ * link to a trip (trip_id). Event linkage for posts does not exist yet (the
+ * `event_id` column referenced in earlier versions of this file never
+ * existed live and made every /media/feed request 500). Do not add it back
+ * without first confirming the column exists via the live schema.
+ */
 const FEED_POST_COLUMNS =
-  "id, author_id, trip_id, event_id, content, visibility, status, post_status, " +
+  "id, author_id, trip_id, content, visibility, status, post_status, " +
   "created_at, category, " +
   "location_name, location_city, location_country, location_source, location_verified, " +
   "location_lat, location_lng, " +

@@ -6,7 +6,7 @@
  * - Gesture layer: single-tap → toggle play/pause, double-tap → like,
  *   press-and-hold → pause while held + open radial quick-menu.
  * - Swipe right (≥60 px) → Route It place sheet.
- * - HeartBurst animation on double-tap (multi-particle).
+ * - StampItBurst animation on double-tap.
  * - Progress bar at the bottom with scrubbing (pan to seek).
  * - Mute/unmute button with AsyncStorage persistence.
  * - Poster prefetch for upcoming items on active-index change.
@@ -39,7 +39,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { WatchVideoCell, type WatchVideoCellHandle } from './WatchVideoCell.tsx';
 import { WatchItemOverlay } from './WatchItemOverlay.tsx';
-import { HeartBurst, type HeartBurstHandle } from './HeartBurst.tsx';
+import { StampItBurst, type StampItBurstHandle } from './StampItBurst.tsx';
 import { RouteItPlaceSheet } from './RouteItPlaceSheet.tsx';
 import { WatchRadialMenu } from './WatchRadialMenu.tsx';
 import { useWatchPlayback } from '../../hooks/useWatchPlayback.ts';
@@ -103,7 +103,7 @@ const CellWrapper = React.memo(function CellWrapper({
 
   // ── Refs ───────────────────────────────────────────────────────────────────
   const cellVideoHandle = useRef<WatchVideoCellHandle>(null);
-  const heartBurstRef = useRef<HeartBurstHandle>(null);
+  const stampBurstRef = useRef<StampItBurstHandle>(null);
 
   // ── Stamp state — single shared controller for the rail button AND the
   // double-tap-on-content gesture below (bug fix: previously the rail button
@@ -167,7 +167,7 @@ const CellWrapper = React.memo(function CellWrapper({
   // rail's stamp button via `stamp` (useWatchStamp).
   const handleDoubleTapStamp = useCallback(
     (x: number, y: number) => {
-      heartBurstRef.current?.trigger();
+      stampBurstRef.current?.trigger();
       stamp.triggerAt(x, y);
     },
     [stamp],
@@ -385,8 +385,8 @@ const CellWrapper = React.memo(function CellWrapper({
         </View>
       </GestureDetector>
 
-      {/* Heart burst animation overlay */}
-      <HeartBurst ref={heartBurstRef} />
+      {/* Stamp burst animation overlay */}
+      <StampItBurst ref={stampBurstRef} />
 
       {/* Pause indicator */}
       {userPaused ? (

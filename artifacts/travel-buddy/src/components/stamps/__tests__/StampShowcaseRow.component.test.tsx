@@ -32,10 +32,10 @@ jest.mock('expo-image', () => {
   return {
     Image: ({ accessibilityLabel, source, ...rest }: any) =>
       React.createElement(View, {
+        ...rest,
         testID: 'showcase-row-expo-image',
         accessibilityLabel,
         'data-source': source,
-        ...rest,
       }),
   };
 });
