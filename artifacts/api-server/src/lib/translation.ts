@@ -134,6 +134,14 @@ export function getTranslationProvider(): TranslationProvider {
   return _provider;
 }
 
+/**
+ * Test-only: inject a custom provider and clear it after the test.
+ * Never call this in production code.
+ */
+export function _setTestTranslationProvider(p: TranslationProvider | null): void {
+  _provider = p;
+}
+
 /** ISO 639-1 → display name (e.g. 'es' → 'Spanish') */
 export function languageDisplayName(iso: string): string {
   return ISO_LANGUAGE_NAMES[iso] ?? iso.toUpperCase();
