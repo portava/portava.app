@@ -309,7 +309,15 @@ export function DiscoveryCategoryTab({
     if (reset) setLoading(true);
     setError(null);
 
-    const res = await getDiscoveryPlaces(destination, category, currentFilters, nextPage, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng);
+    const res = await getDiscoveryPlaces(
+      destination, category, currentFilters, nextPage,
+      contextMode, ageFilter, customMinAge, customMaxAge,
+      lat, lng,
+      undefined, undefined,
+      // emitSignal=true only on page 1 so explicit category-tab selections
+      // contribute to Compass personalization without double-counting pagination.
+      nextPage === 1,
+    );
 
     setLoading(false);
     setRefreshing(false);

@@ -463,6 +463,15 @@ export async function getDiscoveryPlaces(
    *  for nearest sort. Never used as the Overpass query centre or for geocoding. */
   userLat?: number | null,
   userLng?: number | null,
+  /**
+   * When true and page === 1, fires a fire-and-forget Compass search signal so
+   * category_weights reflect the user's explicit browsing intent.
+   *
+   * Must be false (default) for background/count callers such as
+   * getDiscoveryCategoryCounts — those enumerate all categories and would
+   * corrupt personalization weights with non-intent traffic.
+   */
+  emitSignal = false,
 ): Promise<{ ok: true; data: DiscoveryResult } | { ok: false; error: string }> {
   const base = apiBase();
   if (!base) return { ok: false, error: 'API not configured' };
@@ -491,6 +500,14 @@ export async function getDiscoveryPlaces(
     const data = (await res.json()) as DiscoveryResult;
     // Populate client cache so the next mount of the same tab is instant.
     _CLIENT_CACHE.set(_discoveryCacheKey(destination, category, filters.radiusKm, page), { data, at: Date.now() });
+    // Signal search intent to Compass so category_weights reflect browsing.
+    // Only fires when the caller opts in (emitSignal=true) AND this is page 1
+    // (explicit category selection, not pagination). Background callers such as
+    // getDiscoveryCategoryCounts must NOT pass emitSignal=true — they enumerate
+    // all categories and would corrupt personalization weights with non-intent traffic.
+    if (emitSignal && page === 1) {
+      postSearchSignal(destination, { city: destination, category });
+    }
     return { ok: true, data };
   } catch {
     return { ok: false, error: 'Network error — check your connection' };
@@ -560,6 +577,36 @@ export async function getDiscoveryCategoryCountsBatch(
   } catch {
     return {};
   }
+}
+
+// ── Compass search-signal helper ──────────────────────────────────────────────
+//
+// Fire-and-forget: posts the search intent to the Compass signal endpoint so
+// category_weights in compass_user_preferences are nudged for the For You feed.
+// Never throws, never delays the search response.
+
+export function postSearchSignal(
+  query: string,
+  opts?: { city?: string | null; category?: string | null },
+): void {
+  const base = apiBase();
+  if (!base) return;
+  freshToken()
+    .then((token) => {
+      if (!token) return;
+      return fetch(`${base}/api/compass/signals/search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          query,
+          city: opts?.city ?? null,
+          category: opts?.category ?? null,
+        }),
+      });
+    })
+    .catch(() => {
+      // best-effort — signal failures must never surface to the user
+    });
 }
 
 // ── Unified search ────────────────────────────────────────────────────────────
@@ -643,6 +690,8 @@ export async function searchUnified(
       return { ok: false, error: (body.message as string) ?? `HTTP ${res.status}` };
     }
     const data = (await res.json()) as UnifiedSearchResponse;
+    // Signal search intent to Compass for For You feed personalisation.
+    postSearchSignal(query, { city: opts?.city ?? null });
     return { ok: true, data };
   } catch {
     return { ok: false, error: 'Network error — check your connection' };

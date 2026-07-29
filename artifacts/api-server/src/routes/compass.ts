@@ -2447,6 +2447,77 @@ router.post("/compass/analytics", async (req, res) => {
   res.status(202).json({ ok: true });
 });
 
+// ── POST /api/compass/signals/search ─────────────────────────────────────────
+// Fire-and-forget search-signal ingestion.
+// Nudges compass_user_preferences.category_weights (+1) for the searched
+// category so subsequent For You / Compass feeds reflect search intent.
+// Always returns { ok: true } — never blocks the caller.
+
+const searchSignalBodySchema = z.object({
+  /** Raw search query text (used for logging; not stored verbatim). */
+  query:    z.string().min(1).max(500),
+  /** City / destination context of the search (optional). */
+  city:     z.string().max(200).optional().nullable(),
+  /**
+   * Discovery category the user searched within, e.g. "food", "nightlife".
+   * When present and not "for_you" / "all", the weight for this category
+   * is nudged +1 (clamped to ±10, matching the outcome-feedback nudge size).
+   */
+  category: z.string().max(100).optional().nullable(),
+});
+
+router.post("/compass/signals/search", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const parsed = searchSignalBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    // Best-effort endpoint — invalid body is not an error the client needs to retry.
+    res.status(202).json({ ok: true });
+    return;
+  }
+
+  const { category } = parsed.data;
+
+  // Respond immediately — weight nudge runs detached so the search flow is never blocked.
+  res.status(202).json({ ok: true });
+
+  // Only nudge weights for explicit, non-personalised categories.
+  if (!category || category === "for_you" || category === "all") return;
+
+  const sc = getServiceClient();
+  if (!sc) return;
+
+  (async () => {
+    try {
+      const { data } = await sc
+        .from("compass_user_preferences")
+        .select("category_weights")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      const weights: Record<string, number> =
+        ((data as any)?.category_weights as Record<string, number>) ?? {};
+      // Nudge +1 toward the searched category, clamped to [-10, +10].
+      weights[category] = Math.max(-10, Math.min(10, (weights[category] ?? 0) + 1));
+      const { error } = await sc
+        .from("compass_user_preferences")
+        .upsert(
+          { user_id: user.id, category_weights: weights, updated_at: new Date().toISOString() },
+          { onConflict: "user_id" },
+        );
+      if (!error) {
+        req.log?.debug(
+          { userId: user.id, category, newWeight: weights[category] },
+          "compass/signals/search: category weight nudged",
+        );
+      }
+    } catch (err) {
+      req.log?.warn({ err }, "compass/signals/search: weight nudge failed (non-fatal)");
+    }
+  })();
+});
+
 // ── POST /api/compass/report ──────────────────────────────────────────────────
 // Dedicated abuse report endpoint for Compass recommendations.
 // Writes to compass_feedback (action=report) and triggers the abuse scanner.
