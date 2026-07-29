@@ -9,7 +9,8 @@
  * ATTRIBUTION: any surface showing FSQ photos must display "Powered by Foursquare".
  */
 
-const FSQ_SEARCH = 'https://api.foursquare.com/v3/places/search';
+const FSQ_SEARCH = 'https://places-api.foursquare.com/places/search';
+const FSQ_API_VERSION = '2025-06-17';
 const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 interface CacheEntry { url: string | null; ts: number }
@@ -50,7 +51,7 @@ export async function lookupFsqPhoto(
     }
 
     const res = await fetch(`${FSQ_SEARCH}?${params}`, {
-      headers: { Authorization: apiKey, Accept: 'application/json' },
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json', 'X-Places-Api-Version': FSQ_API_VERSION },
       signal: AbortSignal.timeout(5000),
     });
 

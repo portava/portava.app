@@ -10,6 +10,8 @@ import { logger as rootLogger } from "./logger";
 
 const logger = rootLogger.child({ lib: "foursquarePlaces" });
 
+const FSQ_SEARCH = "https://places-api.foursquare.com/places/search";
+const FSQ_API_VERSION = "2025-06-17";
 const TIMEOUT_MS = 1500;
 let keyMissingLogged = false;
 let authFailedLogged = false;
@@ -47,8 +49,8 @@ export async function searchFoursquare(q: string, opts: FoursquareOptions = {}):
   }
 
   try {
-    const res = await fetch(`https://api.foursquare.com/v3/places/search?${params}`, {
-      headers: { Authorization: key, Accept: "application/json" },
+    const res = await fetch(`${FSQ_SEARCH}?${params}`, {
+      headers: { Authorization: `Bearer ${key}`, Accept: "application/json", "X-Places-Api-Version": FSQ_API_VERSION },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     if (res.status === 401 || res.status === 403) {
@@ -63,16 +65,15 @@ export async function searchFoursquare(q: string, opts: FoursquareOptions = {}):
     const results: any[] = Array.isArray(body?.results) ? body.results : [];
 
     return results
-      .filter((r) => r?.fsq_id && r?.name)
+      .filter((r) => r?.fsq_place_id && r?.name)
       .map((r) => {
         const loc = r.location ?? {};
-        const geo = r.geocodes?.main ?? {};
         const city = loc.locality ?? null;
         const country = null; // v3 returns ISO code in location.country; keep name null
         const countryCode = typeof loc.country === "string" ? loc.country.toUpperCase() : null;
         const displayParts = [r.name, city, loc.region].filter(Boolean);
         return {
-          id: `foursquare-${r.fsq_id}`,
+          id: `foursquare-${r.fsq_place_id}`,
           type: inferType(r.categories),
           name: r.name,
           displayName: displayParts.join(", "),
@@ -81,8 +82,8 @@ export async function searchFoursquare(q: string, opts: FoursquareOptions = {}):
           region: loc.region ?? null,
           city,
           district: loc.neighborhood?.[0] ?? null,
-          lat: typeof geo.latitude === "number" ? geo.latitude : null,
-          lng: typeof geo.longitude === "number" ? geo.longitude : null,
+          lat: typeof r.latitude === "number" ? r.latitude : null,
+          lng: typeof r.longitude === "number" ? r.longitude : null,
           timezone: null,
           source: "foursquare" as const,
           // License requirement: any surface showing this result must display

@@ -96,7 +96,7 @@ const EVENT = {
   host_id: "host-1", state: "open", visibility: "public",
 };
 
-const FSQ_OPEN = { results: [{ fsq_id: "fsq-1", name: "Cafe Uno", hours: { open_now: true } }] };
+const FSQ_OPEN = { results: [{ fsq_place_id: "fsq-1", name: "Cafe Uno", hours: { open_now: true } }] };
 
 // ── A. Live fetch on demand + short-lived cache ───────────────────────────────
 

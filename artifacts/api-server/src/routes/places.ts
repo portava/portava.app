@@ -620,12 +620,12 @@ router.get("/places/nearby-venue", async (req, res) => {
     const params = new URLSearchParams({
       limit: "1",
       ll: `${lat},${lng}`,
-      fields: "fsq_id,name,tel,website,hours",
+      fields: "fsq_place_id,name,tel,website,hours",
     });
     if (nameHint) params.set("query", nameHint);
 
-    const fsqRes = await fetch(`https://api.foursquare.com/v3/places/search?${params}`, {
-      headers: { Authorization: apiKey, Accept: "application/json" },
+    const fsqRes = await fetch(`https://places-api.foursquare.com/places/search?${params}`, {
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "X-Places-Api-Version": "2025-06-17" },
       signal: AbortSignal.timeout(3_000),
     });
 
@@ -639,7 +639,7 @@ router.get("/places/nearby-venue", async (req, res) => {
     const body: any = await fsqRes.json();
     const r = Array.isArray(body?.results) ? body.results[0] : null;
 
-    if (!r?.fsq_id) {
+    if (!r?.fsq_place_id) {
       nearbyVenueCache.set(cacheKey, { venue: null, cachedAt: nowMs });
       res.json({ venue: null });
       return;

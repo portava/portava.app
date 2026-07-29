@@ -79,7 +79,8 @@ export function isSourceDown(source: LiveSource): boolean {
 
 // ── Live venue open-now lookup (Foursquare) ───────────────────────────────────
 
-const FSQ_URL = "https://api.foursquare.com/v3/places/search";
+const FSQ_URL = "https://places-api.foursquare.com/places/search";
+const FSQ_API_VERSION = "2025-06-17";
 const LIVE_TIMEOUT_MS = 2_500;
 const LIVE_CACHE_TTL_MS = 10 * 60 * 1_000; // 10 minutes — volatile data, short TTL
 
@@ -134,12 +135,12 @@ export async function getLiveVenueStatus(
     const params = new URLSearchParams({
       query: name,
       limit: "1",
-      fields: "fsq_id,name,hours,closed_bucket",
+      fields: "fsq_place_id,name,hours",
     });
     if (city) params.set("near", city);
 
     const res = await fetch(`${FSQ_URL}?${params}`, {
-      headers: { Authorization: apiKey, Accept: "application/json" },
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "X-Places-Api-Version": FSQ_API_VERSION },
       signal: AbortSignal.timeout(LIVE_TIMEOUT_MS),
     });
     if (!res.ok) {
@@ -148,20 +149,14 @@ export async function getLiveVenueStatus(
     }
     const body: any = await res.json();
     const r = Array.isArray(body?.results) ? body.results[0] : null;
-    if (!r?.fsq_id) {
+    if (!r?.fsq_place_id) {
       // Confirmed "not found" — cache the miss so we don't hammer the source.
       liveCache.set(key, { status: null, cachedAt: nowMs });
       return null;
     }
 
     const openNow: boolean | null =
-      typeof r.hours?.open_now === "boolean"
-        ? r.hours.open_now
-        : r.closed_bucket === "VeryLikelyOpen" || r.closed_bucket === "LikelyOpen"
-        ? true
-        : r.closed_bucket === "VeryLikelyClosed" || r.closed_bucket === "LikelyClosed"
-        ? false
-        : null;
+      typeof r.hours?.open_now === "boolean" ? r.hours.open_now : null;
 
     const status: LiveVenueStatus = {
       openNow,

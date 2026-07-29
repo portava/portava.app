@@ -42,7 +42,7 @@ let port = 0;
 before(async () => {
   globalThis.fetch = (async (url: any, init?: any) => {
     const u = String(typeof url === "string" ? url : url?.href ?? url);
-    if (u.includes("api.foursquare.com")) {
+    if (u.includes("places-api.foursquare.com")) {
       const body = fsqResponder ? fsqResponder() : { results: [] };
       if (body instanceof Error) throw body;
       return { ok: true, status: 200, json: async () => body } as any;
@@ -87,7 +87,7 @@ async function get(path: string) {
 describe("GET /api/places/live-status", () => {
   it("returns verified_live openNow when the source has hours data", async () => {
     stubFsq(() => ({
-      results: [{ fsq_id: "abc", name: "Cafe Uno", hours: { open_now: true } }],
+      results: [{ fsq_place_id: "abc", name: "Cafe Uno", hours: { open_now: true } }],
     }));
     const { status, body } = await get("/places/live-status?name=Cafe%20Uno&city=Lisbon");
     assert.equal(status, 200);
@@ -113,7 +113,7 @@ describe("GET /api/places/live-status", () => {
   });
 
   it("keeps openNow null when the source responds without hours (honest unknown)", async () => {
-    stubFsq(() => ({ results: [{ fsq_id: "xyz", name: "Mystery Bar" }] }));
+    stubFsq(() => ({ results: [{ fsq_place_id: "xyz", name: "Mystery Bar" }] }));
     const { body } = await get("/places/live-status?name=Mystery%20Bar");
     const ls = body.liveStatus;
     assert.equal(ls.available, true);
