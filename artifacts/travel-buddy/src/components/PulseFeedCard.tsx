@@ -98,6 +98,10 @@ function AuthorRow({
     if (isOwner) {
       Alert.alert('Post Options', undefined, [
         {
+          text: 'Edit post',
+          onPress: () => router.push(`/post/edit/${item.id}` as any),
+        },
+        {
           text: 'Delete post',
           style: 'destructive',
           onPress: () =>
@@ -328,6 +332,9 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
       <View style={s.postFooter}>
         {item.caption ? (
           <RichText content={item.caption} tags={item.spanTags} hashtagUsages={item.spanHashtags} style={s.caption} numberOfLines={4} />
+        ) : null}
+        {item.updatedAt && item.updatedAt > item.createdAt ? (
+          <Text style={s.editedLabel}>Edited</Text>
         ) : null}
         <TagRow tags={item.tags} fallbackFirst={item.categoryFallback} />
         {chipVariant !== 'no_location' && (
@@ -893,6 +900,7 @@ const s = StyleSheet.create({
   postcardDate: { position: 'absolute', top: 16, right: 14, fontFamily: 'Courier', fontSize: 10, fontWeight: '600', color: 'rgba(250,249,246,0.70)', letterSpacing: 0.5 },
   tripLabelBadge: { position: 'absolute', bottom: 76, left: 14, backgroundColor: color.signal, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 12 },
   tripLabelBadgeText: { fontFamily: 'Courier', fontSize: 9, fontWeight: '700', color: color.onInk, letterSpacing: 0.5 },
+  editedLabel: { fontSize: 11, color: color.faint, fontStyle: 'italic' },
   postFooter: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16, gap: 10, backgroundColor: color.paperRaised },
   postPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10 },
   postPlaceholderCity: { fontFamily: 'Courier', fontSize: 11, color: color.onInk, fontWeight: '700', letterSpacing: 1.5 },

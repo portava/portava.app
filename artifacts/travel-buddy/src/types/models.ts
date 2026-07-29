@@ -835,6 +835,7 @@ export interface PulseFeedItem {
   neighborhood?: string;
   author?: PulseAuthor;
   createdAt: ISODate;
+  updatedAt?: ISODate;
   timeAgo?: string;
   visibility?: 'public' | 'circle' | 'private';
   tags: string[];

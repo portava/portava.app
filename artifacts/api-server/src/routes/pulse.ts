@@ -70,7 +70,7 @@ const pulseQuerySchema = z.object({
 
 // Safe columns — exact GPS is never projected
 const POST_SAFE_COLUMNS =
-  "id, author_id, trip_id, content, media_urls, visibility, status, created_at, " +
+  "id, author_id, trip_id, content, media_urls, visibility, status, created_at, updated_at, " +
   "location_name, location_city, location_country, location_source, canonical_place_id";
 
 const GEO_TAG_COLUMNS =
@@ -326,6 +326,7 @@ router.get("/pulse", async (req, res) => {
       mediaUrls:   row.media_urls ?? [],
       visibility:  row.visibility,
       createdAt:   row.created_at,
+      updatedAt:   row.updated_at ?? undefined,
       // location labels — safe, no coords
       locationName:    row.location_name ?? null,
       locationCity:    geoTag?.city ?? row.location_city ?? null,

@@ -27,6 +27,7 @@ import {
   Image,
   ActivityIndicator,
   Alert,
+  TextInput,
   useWindowDimensions,
 } from 'react-native';
 import Animated, {
@@ -38,7 +39,7 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { X, SendHorizonal, Trash2, CornerDownRight, Flag } from 'lucide-react-native';
+import { X, SendHorizonal, Trash2, CornerDownRight, Flag, Pencil } from 'lucide-react-native';
 import { StampIcon } from './stamps/StampIcon.tsx';
 import { ReportSheet } from './ReportSheet.tsx';
 import { blockUser } from '../services/blocks.ts';
@@ -51,6 +52,7 @@ import {
   listComments,
   addComment,
   deleteComment,
+  editComment,
   likeComment,
   unlikeComment,
   listReplies,
@@ -159,9 +161,10 @@ interface ReplyThreadProps {
   onToggle: () => void;
   onDelete: (id: string) => void;
   onLikeChange: (id: string, likedByMe: boolean, likeCount: number) => void;
+  onReplyEdit: (replyId: string, newBody: string, newUpdatedAt: string) => void;
 }
 
-function ReplyThread({ replies, loaded, open, loading, postId, onToggle, onDelete, onLikeChange }: ReplyThreadProps) {
+function ReplyThread({ replies, loaded, open, loading, postId, onToggle, onDelete, onLikeChange, onReplyEdit }: ReplyThreadProps) {
   // Once loaded, keep the toggle visible even when there are zero replies —
   // otherwise tapping "View replies" on a comment with no replies just makes
   // the row vanish with no feedback (looked like the tap did nothing).
@@ -193,6 +196,7 @@ function ReplyThread({ replies, loaded, open, loading, postId, onToggle, onDelet
                 postId={postId}
                 onDelete={onDelete}
                 onLikeChange={onLikeChange}
+                onEdit={onReplyEdit}
               />
             ))
           ) : (
@@ -211,11 +215,13 @@ function ReplyRow({
   postId,
   onDelete,
   onLikeChange,
+  onEdit,
 }: {
   reply: EngagementReply;
   postId: string;
   onDelete: (id: string) => void;
   onLikeChange: (id: string, likedByMe: boolean, likeCount: number) => void;
+  onEdit: (replyId: string, newBody: string, newUpdatedAt: string) => void;
 }) {
   const [liking, setLiking] = useState(false);
   const { userId: currentUserId } = useSession();
@@ -225,6 +231,10 @@ function ReplyRow({
   const likeCount = reply.likeCount ?? 0;
   const likeGuardRef = useRef(createLikeToggleGuard());
   const [likerReplyId, setLikerReplyId] = useState<string | null>(null);
+  const isOwner = !!currentUserId && currentUserId === reply.author.id;
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
 
   const handleLike = useCallback(async () => {
     if (likeGuardRef.current.isToggling()) return;
@@ -246,6 +256,21 @@ function ReplyRow({
     }
   }, [likedByMe, likeCount, reply.id, postId, onLikeChange]);
 
+  const handleEditSave = useCallback(async () => {
+    if (editSaving || !editText.trim()) return;
+    setEditSaving(true);
+    const result = await editComment(postId, reply.id, editText);
+    setEditSaving(false);
+    if (result) {
+      setIsEditing(false);
+      onEdit(reply.id, result.body, result.updatedAt);
+    } else {
+      Alert.alert('Error', 'Could not save changes. Please try again.');
+    }
+  }, [editSaving, editText, postId, reply.id, onEdit]);
+
+  const isEdited = !!(reply.updatedAt && reply.updatedAt !== reply.createdAt);
+
   return (
     <>
       <View style={s.replyRow}>
@@ -257,14 +282,43 @@ function ReplyRow({
               <Text style={s.commentAuthor}>{primaryIdentityText({ name: reply.author.name, handle: reply.author.handle })}</Text>
             </Pressable>
             <Text style={s.commentTime}>{timeAgo(reply.createdAt)}</Text>
+            {isEdited && <Text style={s.editedLabel}>Edited</Text>}
           </View>
-          <RichText
-            content={reply.body}
-            tags={reply.tags}
-            hashtagUsages={reply.hashtagUsages}
-            currentUserId={currentUserId ?? undefined}
-            style={s.commentText}
-          />
+          {isEditing ? (
+            <View style={s.inlineEditWrap}>
+              <TextInput
+                style={s.inlineEditInput}
+                value={editText}
+                onChangeText={setEditText}
+                multiline
+                maxLength={1000}
+                autoFocus
+                textAlignVertical="top"
+              />
+              <View style={s.inlineEditActions}>
+                <Pressable
+                  onPress={handleEditSave}
+                  disabled={editSaving || !editText.trim()}
+                  style={[s.inlineEditBtn, s.inlineEditBtnSave]}
+                >
+                  {editSaving
+                    ? <ActivityIndicator size="small" color={color.onInk} />
+                    : <Text style={s.inlineEditBtnSaveText}>Save</Text>}
+                </Pressable>
+                <Pressable onPress={() => setIsEditing(false)} style={s.inlineEditBtn}>
+                  <Text style={s.inlineEditBtnText}>Cancel</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : (
+            <RichText
+              content={reply.body}
+              tags={reply.tags}
+              hashtagUsages={reply.hashtagUsages}
+              currentUserId={currentUserId ?? undefined}
+              style={s.commentText}
+            />
+          )}
         </View>
         <View style={s.commentActions}>
           <Pressable hitSlop={likeHitSlop} onPress={handleLike} disabled={liking} style={s.likeBtn}>
@@ -273,6 +327,15 @@ function ReplyRow({
           {likeCount > 0 && (
             <Pressable onPress={() => setLikerReplyId(reply.id)} hitSlop={5} style={s.likeCountBtn}>
               <Text style={[s.likeCount, likedByMe && s.likeCountActive]}>{likeCount}</Text>
+            </Pressable>
+          )}
+          {isOwner && !isEditing && (
+            <Pressable
+              hitSlop={8}
+              onPress={() => { setEditText(reply.body); setIsEditing(true); }}
+              style={s.deleteBtn}
+            >
+              <Pencil size={12} color={color.faint} />
             </Pressable>
           )}
           {reply.canDelete && (
@@ -321,6 +384,8 @@ function CommentItem({
   onToggleReplies,
   onReplyDelete,
   onReplyLikeChange,
+  onEdit,
+  onReplyEdit,
 }: {
   comment: EngagementComment;
   postId: string;
@@ -335,6 +400,8 @@ function CommentItem({
   onToggleReplies: (commentId: string) => void;
   onReplyDelete: (commentId: string, replyId: string) => void;
   onReplyLikeChange: (commentId: string, replyId: string, likedByMe: boolean, likeCount: number) => void;
+  onEdit: (commentId: string, newBody: string, newUpdatedAt: string) => void;
+  onReplyEdit: (commentId: string, replyId: string, newBody: string, newUpdatedAt: string) => void;
   onReport?: (authorId: string, authorName: string, commentId: string) => void;
 }) {
   const [liking, setLiking] = useState(false);
@@ -347,6 +414,9 @@ function CommentItem({
   const likeGuardRef = useRef(createLikeToggleGuard());
   const [likerCommentId, setLikerCommentId] = useState<string | null>(null);
   const isOwner = !!currentUserId && currentUserId === comment.author.id;
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
 
   const commentTx = useContentTranslation({
     entityType: 'comment',
@@ -402,6 +472,21 @@ function CommentItem({
     }
   }, [repliesLoaded, comment.id, onLoadReplies, onToggleReplies]);
 
+  const handleEditSave = useCallback(async () => {
+    if (editSaving || !editText.trim()) return;
+    setEditSaving(true);
+    const result = await editComment(postId, comment.id, editText);
+    setEditSaving(false);
+    if (result) {
+      setIsEditing(false);
+      onEdit(comment.id, result.body, result.updatedAt);
+    } else {
+      Alert.alert('Error', 'Could not save changes. Please try again.');
+    }
+  }, [editSaving, editText, postId, comment.id, onEdit]);
+
+  const isEdited = !!(comment.updatedAt && comment.updatedAt !== comment.createdAt);
+
   return (
     <View>
       <Pressable
@@ -418,18 +503,56 @@ function CommentItem({
                 {comment.author.verified ? <VerifiedStamp size="sm" /> : null}
               </Pressable>
               <Text style={s.commentTime}>{timeAgo(comment.createdAt)}</Text>
+              {isEdited && <Text style={s.editedLabel}>Edited</Text>}
             </View>
-            <RichText
-              content={commentTx.translated && commentTx.translatedFields.body ? commentTx.translatedFields.body : comment.body}
-              tags={comment.tags}
-              hashtagUsages={comment.hashtagUsages}
-              currentUserId={currentUserId ?? undefined}
-              style={s.commentText}
-            />
-            <TranslationToggle tx={commentTx} />
-            <Pressable hitSlop={6} onPress={() => onReply(comment.id, primaryIdentityText({ name: comment.author.name, handle: comment.author.handle }))} style={s.replyBtn}>
-              <Text style={s.replyBtnText}>Reply</Text>
-            </Pressable>
+            {isEditing ? (
+              <View style={s.inlineEditWrap}>
+                <TextInput
+                  style={s.inlineEditInput}
+                  value={editText}
+                  onChangeText={setEditText}
+                  multiline
+                  maxLength={1000}
+                  autoFocus
+                  textAlignVertical="top"
+                />
+                <View style={s.inlineEditActions}>
+                  <Pressable
+                    onPress={handleEditSave}
+                    disabled={editSaving || !editText.trim()}
+                    style={[s.inlineEditBtn, s.inlineEditBtnSave]}
+                  >
+                    {editSaving
+                      ? <ActivityIndicator size="small" color={color.onInk} />
+                      : <Text style={s.inlineEditBtnSaveText}>Save</Text>}
+                  </Pressable>
+                  <Pressable onPress={() => setIsEditing(false)} style={s.inlineEditBtn}>
+                    <Text style={s.inlineEditBtnText}>Cancel</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <>
+                <RichText
+                  content={commentTx.translated && commentTx.translatedFields.body ? commentTx.translatedFields.body : comment.body}
+                  tags={comment.tags}
+                  hashtagUsages={comment.hashtagUsages}
+                  currentUserId={currentUserId ?? undefined}
+                  style={s.commentText}
+                />
+                <TranslationToggle tx={commentTx} />
+                <View style={s.commentInlineButtons}>
+                  <Pressable hitSlop={6} onPress={() => onReply(comment.id, primaryIdentityText({ name: comment.author.name, handle: comment.author.handle }))} style={s.replyBtn}>
+                    <Text style={s.replyBtnText}>Reply</Text>
+                  </Pressable>
+                  {isOwner && (
+                    <Pressable hitSlop={6} onPress={() => { setEditText(comment.body); setIsEditing(true); }} style={s.replyBtn}>
+                      <Text style={s.replyBtnText}>Edit</Text>
+                    </Pressable>
+                  )}
+                </View>
+              </>
+            )}
           </View>
           <View style={s.commentActions}>
             <Pressable hitSlop={likeHitSlop} onPress={handleLike} disabled={liking} style={s.likeBtn}>
@@ -467,6 +590,7 @@ function CommentItem({
         onToggle={handleToggle}
         onDelete={(replyId) => onReplyDelete(comment.id, replyId)}
         onLikeChange={(replyId, liked, count) => onReplyLikeChange(comment.id, replyId, liked, count)}
+        onReplyEdit={(replyId, newBody, newUpdatedAt) => onReplyEdit(comment.id, replyId, newBody, newUpdatedAt)}
       />
       {likerCommentId !== null && (
         <EngagementUserListSheet
@@ -644,6 +768,27 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
     [],
   );
 
+  const handleCommentEdit = useCallback(
+    (commentId: string, newBody: string, newUpdatedAt: string) => {
+      setComments((prev) =>
+        prev.map((c) => c.id === commentId ? { ...c, body: newBody, updatedAt: newUpdatedAt } : c),
+      );
+    },
+    [],
+  );
+
+  const handleReplyEdit = useCallback(
+    (commentId: string, replyId: string, newBody: string, newUpdatedAt: string) => {
+      setRepliesMap((prev) => ({
+        ...prev,
+        [commentId]: (prev[commentId] ?? []).map((r) =>
+          r.id === replyId ? { ...r, body: newBody, updatedAt: newUpdatedAt } : r,
+        ),
+      }));
+    },
+    [],
+  );
+
   const inputPlaceholder = replyingTo ? `Reply to ${replyingTo.authorName}…` : 'Add a comment…';
 
   return (
@@ -678,6 +823,8 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
                     onToggleReplies={handleToggleReplies}
                     onReplyDelete={handleReplyDelete}
                     onReplyLikeChange={handleReplyLikeChange}
+                    onEdit={handleCommentEdit}
+                    onReplyEdit={handleReplyEdit}
                   />
                 ))}
               </View>
@@ -1059,6 +1206,27 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
     [],
   );
 
+  const handleCommentEdit = useCallback(
+    (commentId: string, newBody: string, newUpdatedAt: string) => {
+      setComments((prev) =>
+        prev.map((c) => c.id === commentId ? { ...c, body: newBody, updatedAt: newUpdatedAt } : c),
+      );
+    },
+    [],
+  );
+
+  const handleReplyEdit = useCallback(
+    (commentId: string, replyId: string, newBody: string, newUpdatedAt: string) => {
+      setRepliesMap((prev) => ({
+        ...prev,
+        [commentId]: (prev[commentId] ?? []).map((r) =>
+          r.id === replyId ? { ...r, body: newBody, updatedAt: newUpdatedAt } : r,
+        ),
+      }));
+    },
+    [],
+  );
+
   const inputPlaceholder = replyingTo ? `Reply to ${replyingTo.authorName}…` : 'Add a comment…';
 
   // ── Animated styles ─────────────────────────────────────────────────────────
@@ -1166,6 +1334,8 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
                   onToggleReplies={handleToggleReplies}
                   onReplyDelete={handleReplyDelete}
                   onReplyLikeChange={handleReplyLikeChange}
+                  onEdit={handleCommentEdit}
+                  onReplyEdit={handleReplyEdit}
                 />
               )}
               ListEmptyComponent={
@@ -1363,6 +1533,34 @@ const s = StyleSheet.create({
   likeCount: { fontSize: 10, fontWeight: '700', color: color.faint },
   likeCountActive: { color: color.signal },
   deleteBtn: { paddingLeft: space.xs },
+  editedLabel: { fontSize: 10, color: color.faint, fontStyle: 'italic' },
+  commentInlineButtons: { flexDirection: 'row', gap: space.md, alignItems: 'center', marginTop: 3 },
+  inlineEditWrap: { marginTop: 4, gap: 6 },
+  inlineEditInput: {
+    borderWidth: 1.5,
+    borderColor: color.haze,
+    borderRadius: radius.md,
+    paddingHorizontal: space.sm,
+    paddingTop: 8,
+    paddingBottom: 8,
+    fontSize: 14,
+    color: color.ink,
+    backgroundColor: color.paper,
+    minHeight: 60,
+  },
+  inlineEditActions: { flexDirection: 'row', gap: space.sm, alignItems: 'center' },
+  inlineEditBtn: {
+    paddingHorizontal: space.md,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: color.haze,
+    minWidth: 56,
+    alignItems: 'center',
+  },
+  inlineEditBtnSave: { backgroundColor: color.signal, borderColor: color.signal },
+  inlineEditBtnSaveText: { fontSize: 12, fontWeight: '700', color: color.onInk },
+  inlineEditBtnText: { fontSize: 12, fontWeight: '600', color: color.mute },
   repliesToggle: { marginLeft: 44, paddingVertical: 4, alignSelf: 'flex-start' },
   repliesToggleText: { fontSize: 12, fontWeight: '600', color: color.deep },
   repliesContainer: { marginLeft: space.sm, gap: space.md, marginTop: space.xs },
