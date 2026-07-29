@@ -147,7 +147,21 @@ export default function CircleContextSettingsScreen() {
 
   const pageHeader = (
     <View style={s.header}>
-      <Pressable onPress={() => router.back()} style={s.backBtn}>
+      <Pressable
+        onPress={() => {
+          if (router.canGoBack()) {
+            router.back();
+          } else {
+            // Reached directly (e.g. deep link) with no stack to pop —
+            // fall back to the trip/event's Circle view instead of a no-op.
+            router.replace({
+              pathname: '/circle-presence',
+              params: { contextType, contextId, contextLabel },
+            } as any);
+          }
+        }}
+        style={s.backBtn}
+      >
         <ArrowLeft size={22} color={color.ink} />
       </Pressable>
       <View style={{ flex: 1 }}>

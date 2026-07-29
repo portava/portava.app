@@ -186,10 +186,13 @@ export default function CirclePresenceScreen() {
   }
 
   function goToSettings() {
-    router.push({
-      pathname: '/circle-context-settings',
-      params: { contextType, contextId, contextLabel },
-    } as any);
+    // The "sharing off" state here is gated on the GLOBAL Find Your Circle
+    // toggle (settingsRes.data.globalEnabled), not the per-context override —
+    // /circle-context-settings can only set a per-context override on top of
+    // an already-enabled global switch, so routing there left the global
+    // switch untouched: the override appeared to save, but this screen kept
+    // showing "sharing is off" because the actual blocker was never fixed.
+    router.push('/profile/edit/location' as any);
   }
 
   // ── State screens ────────────────────────────────────────────────────────────

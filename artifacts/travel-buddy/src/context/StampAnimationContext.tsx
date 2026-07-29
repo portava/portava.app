@@ -122,6 +122,15 @@ interface StampAnimationContextValue {
   triggerStamp: (params: StampTriggerParams) => void;
   /** True while a stamp animation sequence is in progress. */
   isAnimating: boolean;
+  /**
+   * Immediately release the singleton lock. Callers should only invoke this
+   * when THEY are the one who currently holds it (i.e. their own local
+   * "am I animating" flag is true) — see useWatchStamp's unmount cleanup.
+   * Exists so a cell that gets unmounted mid-animation (FlatList recycling
+   * during a fast Watch-feed scroll) frees the lock instantly instead of
+   * leaving every stamp tap in the app dead until the 2.5s watchdog fires.
+   */
+  cancelStamp: () => void;
 }
 
 const StampAnimationContext = createContext<StampAnimationContextValue | null>(null);
@@ -134,6 +143,7 @@ const StampAnimationContext = createContext<StampAnimationContextValue | null>(n
 const NOOP_CONTEXT: StampAnimationContextValue = {
   triggerStamp: () => {},
   isAnimating: false,
+  cancelStamp: () => {},
 };
 
 export function useStampAnimationContext(): StampAnimationContextValue {
@@ -150,6 +160,7 @@ export function useStampAnimationContext(): StampAnimationContextValue {
 export function StampAnimationProvider({ children }: PropsWithChildren) {
   const prefersReducedMotion = useReducedMotion();
   const isAnimatingRef = useRef(false);
+  const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
   const [overlayTheme, setOverlayTheme] = useState<StampTheme>('Default');
 
@@ -254,8 +265,12 @@ export function StampAnimationProvider({ children }: PropsWithChildren) {
 
       // Watchdog (2026-07-28 fix): force-unlock if fireComplete never runs
       // within a safe upper bound, so one interrupted animation can never
-      // permanently disable stamping app-wide.
-      const watchdogId = setTimeout(() => {
+      // permanently disable stamping app-wide. Kept as a backstop, but the
+      // owning cell should normally release the lock instantly via
+      // cancelStamp() on unmount (see useWatchStamp) rather than relying on
+      // this 2.5s timeout — a Watch-feed cell recycled mid-animation during
+      // a fast scroll used to leave every stamp button dead for up to 2.5s.
+      watchdogRef.current = setTimeout(() => {
         if (isAnimatingRef.current) {
           console.log('[STAMP_DEBUG] triggerStamp WATCHDOG fired — force-unlocking stuck isAnimatingRef');
           isAnimatingRef.current = false;
@@ -288,7 +303,8 @@ export function StampAnimationProvider({ children }: PropsWithChildren) {
         onImpact();
       };
       const fireComplete = () => {
-        clearTimeout(watchdogId);
+        if (watchdogRef.current) clearTimeout(watchdogRef.current);
+        watchdogRef.current = null;
         isAnimatingRef.current = false;
         setIsAnimating(false);
         onComplete?.();
@@ -397,8 +413,16 @@ export function StampAnimationProvider({ children }: PropsWithChildren) {
     [prefersReducedMotion],
   );
 
+  // ── cancelStamp ───────────────────────────────────────────────────────────
+  const cancelStamp = useCallback(() => {
+    if (watchdogRef.current) clearTimeout(watchdogRef.current);
+    watchdogRef.current = null;
+    isAnimatingRef.current = false;
+    setIsAnimating(false);
+  }, []);
+
   // ── Context value ─────────────────────────────────────────────────────────
-  const contextValue: StampAnimationContextValue = { triggerStamp, isAnimating };
+  const contextValue: StampAnimationContextValue = { triggerStamp, isAnimating, cancelStamp };
 
   return (
     <StampAnimationContext.Provider value={contextValue}>

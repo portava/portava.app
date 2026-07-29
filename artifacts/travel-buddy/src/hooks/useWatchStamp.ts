@@ -47,7 +47,7 @@ export function useWatchStamp(item: MediaFeedItem): UseWatchStampReturn {
   });
 
   const { buttonStyle, playStamp, playUnstamp } = useStampAnimation();
-  const { triggerStamp, isAnimating } = useStampAnimationContext();
+  const { triggerStamp, isAnimating, cancelStamp } = useStampAnimationContext();
 
   const [visualIsStamped, setVisualIsStamped] = useState(
     item.isStampedByViewer ?? item.likedByMe ?? false,
@@ -59,6 +59,20 @@ export function useWatchStamp(item: MediaFeedItem): UseWatchStampReturn {
   const latestToggleResultRef = useRef({ isStamped: apiIsStamped, count: apiCount });
   const animatingRef = useRef(false);
   const stampGroupRef = useRef<View | null>(null);
+
+  // Release the shared singleton lock instantly if THIS cell is unmounted
+  // (FlatList recycling during a fast Watch-feed scroll) while it still owns
+  // an in-flight animation — otherwise every stamp button in the app stayed
+  // dead until the 2.5s watchdog in StampAnimationContext fired.
+  useEffect(() => {
+    return () => {
+      if (animatingRef.current) {
+        animatingRef.current = false;
+        cancelStamp();
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     apiStateRef.current = { isStamped: apiIsStamped, count: apiCount };
