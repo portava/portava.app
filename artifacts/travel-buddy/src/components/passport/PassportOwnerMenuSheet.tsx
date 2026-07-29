@@ -45,6 +45,7 @@ export interface PassportOwnerMenuSheetProps {
   onManageHighlights?: () => void;
   /** Navigate to the owner's public profile */
   onViewAsPublic?: () => void;
+  onViewMyStamps?: () => void;
   /** Open the section reorder sheet */
   onArrangeSections?: () => void;
   /** Switch the passport tab (for My Posts / My Memories / My Trips) */
@@ -155,7 +156,7 @@ const SECTIONS: Section[] = [
         Icon: Stamp,
         iconColor: '#D97706',
         live: true,
-        action: (p) => { close(p); p.onSwitchTab?.('stamps'); },
+        action: (p) => { close(p); p.onViewMyStamps?.(); },
       },
       {
         key: 'travel-history',

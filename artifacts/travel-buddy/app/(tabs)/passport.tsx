@@ -824,6 +824,7 @@ function PassportContent({
         onArrangeTabs={() => { setMenuOpen(false); onArrangeTabs(); }}
         onManageHighlights={() => { setMenuOpen(false); onDirectAddHighlight?.(); }}
         onViewAsPublic={() => { setMenuOpen(false); handleViewAsPublic(); }}
+        onViewMyStamps={() => { setMenuOpen(false); setStampsViewOpen(true); }}
         onArrangeSections={() => { setMenuOpen(false); onArrangeSections(); }}
         onSwitchTab={(tabKey) => { setMenuOpen(false); setTab(tabKey as PassportTabKey); }}
         onCreatePress={() => { setMenuOpen(false); setCreateHubOpen(true); }}
