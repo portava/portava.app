@@ -25,6 +25,15 @@ import { resolveCompassTitle } from '../../utils/compassFormat.ts';
 
 interface Props {
   city?: string | null;
+  /** Optional trailing label after "Compass Picks" (e.g. "· near Miami").
+   * Callers that pass a resolved/current-location city (not necessarily the
+   * city the user is currently browsing/searching) should set this so the
+   * strip can't be misread as being about a destination it isn't — the
+   * `city` prop here always drives the query and per-card city chips, but
+   * the section header itself said nothing about which city, which is how a
+   * "Compass Picks" strip full of Miami buddies could appear while a
+   * traveler was looking at Cebu. */
+  headerSuffix?: string | null;
 }
 
 function BuddySkeleton() {
@@ -124,7 +133,7 @@ function BuddyCard({ item }: { item: CompassBuddyResult }) {
   );
 }
 
-export function CompassBuddyRow({ city }: Props) {
+export function CompassBuddyRow({ city, headerSuffix }: Props) {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<CompassBuddyResult[]>([]);
 
@@ -154,6 +163,7 @@ export function CompassBuddyRow({ city }: Props) {
         <View style={s.header}>
           <Sparkles size={13} color={color.signal} />
           <Text style={s.headerText}>Compass Picks</Text>
+          {headerSuffix ? <Text style={s.headerSub}>{headerSuffix}</Text> : null}
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.strip}>
           <BuddySkeleton />
@@ -171,7 +181,7 @@ export function CompassBuddyRow({ city }: Props) {
       <View style={s.header}>
         <Sparkles size={13} color={color.signal} />
         <Text style={s.headerText}>Compass Picks</Text>
-        <Text style={s.headerSub}>· matched for you</Text>
+        <Text style={s.headerSub}>{headerSuffix ?? '· matched for you'}</Text>
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.strip}>
         {items.map((item) => (

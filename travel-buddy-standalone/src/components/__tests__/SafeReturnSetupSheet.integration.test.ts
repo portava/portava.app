@@ -1686,10 +1686,15 @@ describe('SafeReturnSetupSheet — startCheckedOpenEffect timeout race (Android 
   });
 
   it('cancel() during linger — checking ends as false exactly once (no stuck overlay)', async () => {
+    // Use a long linger so cancel() reliably fires well before the linger
+    // timer elapses. With LINGER_MS=10 and TIMEOUT_MS+2 cancel, fast timer
+    // scheduling on a loaded machine caused the linger to fire first (race).
+    const LONG_LINGER_MS = 200;
     const falseCallTimestamps: number[] = [];
 
     const handler = makeOnTimeoutHandler({
       onCheckingChange: (v) => { if (!v) falseCallTimestamps.push(Date.now()); },
+      lingerMs: LONG_LINGER_MS,
     });
 
     const handle = startCheckedOpenEffect(
@@ -1703,7 +1708,9 @@ describe('SafeReturnSetupSheet — startCheckedOpenEffect timeout race (Android 
     );
     handler.setHandle(handle);
 
-    await new Promise<void>((r) => setTimeout(r, TIMEOUT_MS + 2));
+    // Wait for the timeout to fire (TIMEOUT_MS), then cancel well within the
+    // long linger window so the linger's isLive() guard definitely sees false.
+    await new Promise<void>((r) => setTimeout(r, TIMEOUT_MS + 5));
     handle.cancel();
     await handler.lingerDone;
 

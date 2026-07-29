@@ -160,7 +160,26 @@ export function useStampAnimationContext(): StampAnimationContextValue {
 export function StampAnimationProvider({ children }: PropsWithChildren) {
   const prefersReducedMotion = useReducedMotion();
   const isAnimatingRef = useRef(false);
-  const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const watchdogRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * Monotonically-increasing animation session token.  Every call to
+   * triggerStamp captures the *current* token in its closure; cancelStamp
+   * increments it so any in-flight fireComplete / fireImpact / watchdog
+   * callbacks from the *previous* session become no-ops — they check
+   * `animTokenRef.current === token` before doing anything.
+   */
+  const animTokenRef   = useRef(0);
+  /**
+   * Timer handle for the setTimeout(fireImpact, TRAVEL_MS) scheduled inside
+   * triggerStamp.  Stored so cancelStamp can clear it and prevent a
+   * cancelled animation from firing onImpact on a stale cell.
+   */
+  const impactTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * Timer handle for the setTimeout(fireComplete, 750) in the reduced-motion
+   * path.  Same reason as impactTimerRef.
+   */
+  const reducedCompleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
   const [overlayTheme, setOverlayTheme] = useState<StampTheme>('Default');
 
@@ -262,6 +281,12 @@ export function StampAnimationProvider({ children }: PropsWithChildren) {
       }
       isAnimatingRef.current = true;
       setIsAnimating(true);
+      // Session token: captures the identity of THIS animation run.  Any
+      // deferred callback (worklet, setTimeout, Reanimated completion) that
+      // fires after cancelStamp() or a newer triggerStamp() call will find
+      // animTokenRef.current !== token and exit early, so a stale sequence
+      // can never clear the lock owned by a newer animation.
+      const token = ++animTokenRef.current;
 
       // Watchdog (2026-07-28 fix): force-unlock if fireComplete never runs
       // within a safe upper bound, so one interrupted animation can never
@@ -271,7 +296,7 @@ export function StampAnimationProvider({ children }: PropsWithChildren) {
       // this 2.5s timeout — a Watch-feed cell recycled mid-animation during
       // a fast scroll used to leave every stamp button dead for up to 2.5s.
       watchdogRef.current = setTimeout(() => {
-        if (isAnimatingRef.current) {
+        if (isAnimatingRef.current && animTokenRef.current === token) {
           console.log('[STAMP_DEBUG] triggerStamp WATCHDOG fired — force-unlocking stuck isAnimatingRef');
           isAnimatingRef.current = false;
           setIsAnimating(false);
@@ -299,12 +324,21 @@ export function StampAnimationProvider({ children }: PropsWithChildren) {
         }
       };
       const fireImpact = () => {
+        // Token guard: if this session was cancelled (or a newer animation
+        // started), the impact side-effect belongs to a stale run — skip it.
+        if (animTokenRef.current !== token) return;
         fireHaptic();
         onImpact();
       };
       const fireComplete = () => {
+        // Token guard: only the animation session that set this lock may clear it.
+        if (animTokenRef.current !== token) return;
         if (watchdogRef.current) clearTimeout(watchdogRef.current);
         watchdogRef.current = null;
+        if (impactTimerRef.current) clearTimeout(impactTimerRef.current);
+        impactTimerRef.current = null;
+        if (reducedCompleteTimerRef.current) clearTimeout(reducedCompleteTimerRef.current);
+        reducedCompleteTimerRef.current = null;
         isAnimatingRef.current = false;
         setIsAnimating(false);
         onComplete?.();
@@ -321,7 +355,7 @@ export function StampAnimationProvider({ children }: PropsWithChildren) {
           withDelay(350, withTiming(0, { duration: 300 })),
         );
         fireImpact();
-        setTimeout(fireComplete, 750);
+        reducedCompleteTimerRef.current = setTimeout(fireComplete, 750);
         return;
       }
 
@@ -406,7 +440,9 @@ export function StampAnimationProvider({ children }: PropsWithChildren) {
       );
 
       // ── Fire haptic + onImpact at the moment of impact ────────────────────
-      setTimeout(fireImpact, TRAVEL_MS);
+      // Stored so cancelStamp() can clear it and prevent a cancelled animation
+      // from firing onImpact on a stale/unmounted cell.
+      impactTimerRef.current = setTimeout(fireImpact, TRAVEL_MS);
     },
     // Shared values are stable Reanimated refs — no deps needed beyond the flag.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -415,8 +451,17 @@ export function StampAnimationProvider({ children }: PropsWithChildren) {
 
   // ── cancelStamp ───────────────────────────────────────────────────────────
   const cancelStamp = useCallback(() => {
+    // Increment the session token first — any in-flight fireComplete,
+    // fireImpact, or worklet runOnJS callback captured by the current token
+    // will now find animTokenRef.current !== token and exit without touching
+    // the lock, preventing a stale callback from clearing a newer animation.
+    animTokenRef.current++;
     if (watchdogRef.current) clearTimeout(watchdogRef.current);
     watchdogRef.current = null;
+    if (impactTimerRef.current) clearTimeout(impactTimerRef.current);
+    impactTimerRef.current = null;
+    if (reducedCompleteTimerRef.current) clearTimeout(reducedCompleteTimerRef.current);
+    reducedCompleteTimerRef.current = null;
     isAnimatingRef.current = false;
     setIsAnimating(false);
   }, []);

@@ -143,6 +143,13 @@ function makeClient(userId: string) {
       delete() { return this; },
       eq(col: string, val: any)       { this._filters.push(["eq",    col, val]);                        return this; },
       ilike(col: string, val: any)    { this._filters.push(["ilike", col, (val as string).trim()]);     return this; },
+      // .not(col, op, val) negates the given filter.  The route uses
+      // .not("city", "ilike", trimmedCity) to exclude the viewer's city when
+      // looking for nearby-city suggestions.
+      not(col: string, op: string, val: any) {
+        this._filters.push([`not_${op}`, col, typeof val === "string" ? val.trim() : val]);
+        return this;
+      },
       gte(col: string, val: any)      { return this; },
       lte(col: string, val: any)      { return this; },
       contains(col: string, val: any) { return this; },
@@ -183,15 +190,27 @@ function makeClient(userId: string) {
         }
 
         if (t === "rent_buddy_city_rollouts") {
-          const rolls = Object.values(state.cityRollouts);
-          const ilikeCity = this._filters.find(([op, col]) => op === "ilike" && col === "city");
-          const eqId      = this._filters.find(([op, col]) => op === "eq"    && col === "id");
+          let rolls = Object.values(state.cityRollouts) as any[];
+          const ilikeCity    = this._filters.find(([op, col]) => op === "ilike"     && col === "city");
+          const notIlikeCity = this._filters.find(([op, col]) => op === "not_ilike" && col === "city");
+          const eqId         = this._filters.find(([op, col]) => op === "eq"        && col === "id");
+          const eqStatus     = this._filters.find(([op, col]) => op === "eq"        && col === "status");
           if (eqId && this._maybeSingle)
             return { data: state.cityRollouts[eqId[2]] ?? null, error: null };
           if (ilikeCity && this._maybeSingle) {
             const v = (ilikeCity[2] as string).toLowerCase();
             const match = rolls.find((r: any) => r.city?.toLowerCase() === v);
             return { data: match ?? null, error: null };
+          }
+          if (eqStatus)
+            rolls = rolls.filter((r: any) => r.status === eqStatus[2]);
+          if (notIlikeCity) {
+            const v = (notIlikeCity[2] as string).toLowerCase();
+            rolls = rolls.filter((r: any) => r.city?.toLowerCase() !== v);
+          }
+          if (ilikeCity) {
+            const v = (ilikeCity[2] as string).toLowerCase();
+            rolls = rolls.filter((r: any) => r.city?.toLowerCase() === v);
           }
           return { data: rolls, count: rolls.length, error: null };
         }
