@@ -28,6 +28,7 @@ import {
   Animated,
 } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { openMapsNavigation } from '../../src/lib/maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, MapPin, CalendarClock, Users, Clock, Check,
@@ -124,23 +125,15 @@ function relDateTime(iso: string | null | undefined): string {
   }) + ' · ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-/** Open the event location in the platform's native maps app. */
+/** Open the event location in the platform's native maps app (web falls back to Google Maps web URL). */
 function openMap(locationName: string | null, lat: number | null, lng: number | null, city: string | null) {
-  if (lat != null && lng != null) {
-    const label = encodeURIComponent(locationName ?? 'Event location');
-    if (Platform.OS === 'ios') {
-      Linking.openURL(`maps:?q=${label}&ll=${lat},${lng}`).catch(() =>
-        Linking.openURL(`https://maps.apple.com/?q=${label}&ll=${lat},${lng}`).catch(() => {}),
-      );
-    } else {
-      Linking.openURL(`geo:${lat},${lng}?q=${label}`).catch(() =>
-        Linking.openURL(`https://maps.google.com/?q=${lat},${lng}`).catch(() => {}),
-      );
-    }
-  } else if (locationName) {
-    const q = encodeURIComponent(locationName + (city ? `, ${city}` : ''));
-    Linking.openURL(`https://maps.google.com/?q=${q}`).catch(() => {});
-  }
+  if (lat == null && lng == null && !locationName) return;
+  openMapsNavigation({
+    name: locationName ?? 'Event location',
+    city,
+    lat,
+    lng,
+  });
 }
 
 export default function EventDetailScreen() {
