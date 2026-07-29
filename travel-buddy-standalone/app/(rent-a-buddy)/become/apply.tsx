@@ -702,42 +702,43 @@ export default function ApplyToBeBuddy() {
 
             <FieldLabel label="Languages you speak" />
             {languages.map((l, i) => (
-              <View key={i} style={lang.row}>
-                <TextInput
-                  style={[fi.input, { flex: 1 }]}
-                  value={l.lang}
-                  onChangeText={(v) => {
-                    const next = [...languages];
-                    next[i] = { ...next[i], lang: v };
-                    setLanguages(next);
-                  }}
-                  placeholder="Language"
-                  placeholderTextColor={color.haze}
-                />
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginLeft: space.sm }}>
-                  <View style={{ flexDirection: 'row', gap: space.xs }}>
-                    {FLUENCY.map((f) => (
-                      <TravelChip
-                        key={f}
-                        label={f}
-                        active={l.fluency === f}
-                        onPress={() => {
-                          const next = [...languages];
-                          next[i] = { ...next[i], fluency: f };
-                          setLanguages(next);
-                        }}
-                      />
-                    ))}
-                  </View>
-                </ScrollView>
-                {languages.length > 1 && (
-                  <Pressable
-                    onPress={() => setLanguages((prev) => prev.filter((_, j) => j !== i))}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <X size={16} color={color.mute} />
-                  </Pressable>
-                )}
+              <View key={i} style={lang.block}>
+                <View style={lang.inputRow}>
+                  <TextInput
+                    style={[fi.input, { flex: 1 }]}
+                    value={l.lang}
+                    onChangeText={(v) => {
+                      const next = [...languages];
+                      next[i] = { ...next[i], lang: v };
+                      setLanguages(next);
+                    }}
+                    placeholder="Language"
+                    placeholderTextColor={color.haze}
+                  />
+                  {languages.length > 1 && (
+                    <Pressable
+                      onPress={() => setLanguages((prev) => prev.filter((_, j) => j !== i))}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      style={{ marginLeft: space.sm }}
+                    >
+                      <X size={16} color={color.mute} />
+                    </Pressable>
+                  )}
+                </View>
+                <View style={lang.chipRow}>
+                  {FLUENCY.map((f) => (
+                    <TravelChip
+                      key={f}
+                      label={f}
+                      active={l.fluency === f}
+                      onPress={() => {
+                        const next = [...languages];
+                        next[i] = { ...next[i], fluency: f };
+                        setLanguages(next);
+                      }}
+                    />
+                  ))}
+                </View>
               </View>
             ))}
             <Pressable style={addBtn.row} onPress={() => setLanguages((prev) => [...prev, { lang: '', fluency: 'Proficient' }])}>
@@ -1032,6 +1033,9 @@ const fi = StyleSheet.create({
 });
 
 const lang = StyleSheet.create({
+  block: { marginBottom: space.sm },
+  inputRow: { flexDirection: 'row', alignItems: 'center' },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xs, marginTop: space.xs },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: space.sm },
 });
 
