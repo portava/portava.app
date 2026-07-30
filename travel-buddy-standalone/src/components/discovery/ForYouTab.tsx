@@ -50,6 +50,8 @@ interface ForYouTabProps {
   viewMode?: 'list' | 'map';
   sortBy?: string | null;
   bottomInset?: number;
+  /** Called when the user pulls to refresh, after the re-fetch is initiated. */
+  onRefresh?: () => void;
 }
 
 type ForYouItem =
@@ -76,7 +78,7 @@ function compassItemToPlace(item: import('../../services/compass.ts').CompassFee
   };
 }
 
-export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list', sortBy, bottomInset }: ForYouTabProps) {
+export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list', sortBy, bottomInset, onRefresh }: ForYouTabProps) {
   const { isAuthed }            = useSession();
   // SWR: seed from in-memory client cache so second opens paint instantly.
   const [items, setItems]       = useState<ForYouItem[]>(() => {
@@ -240,6 +242,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   const handleRefresh = () => {
     setRefreshing(true);
     load(true);
+    onRefresh?.();
   };
 
   if (!destination) return null;
@@ -283,6 +286,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   return (
     <>
       <ScrollView
+        testID="main-scroll"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.list}
         refreshControl={

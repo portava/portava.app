@@ -353,6 +353,8 @@ interface DiscoveryCategoryTabProps {
   filters: DiscoveryFilters;
   /** Kept for back-compat; no longer called by this component. */
   onFiltersChange?: (filters: DiscoveryFilters) => void;
+  /** Called when the user pulls to refresh, after the re-fetch is initiated. */
+  onRefresh?: () => void;
   /** Padding applied to the list top so first items clear the floating chrome overlay. 0 for map mode. */
   listTopInset?: number;
   bottomInset?: number;
@@ -378,6 +380,7 @@ export function DiscoveryCategoryTab({
   filters,
   listTopInset = 0,
   bottomInset,
+  onRefresh,
 }: DiscoveryCategoryTabProps) {
   // SWR: seed from in-memory client cache so second opens paint instantly.
   const [places, setPlaces]         = useState<DiscoveryPlace[]>(() => {
@@ -563,6 +566,7 @@ export function DiscoveryCategoryTab({
     setRefreshing(true);
     setPlaces([]);
     load(1, filters, false);
+    onRefresh?.();
   };
 
   const handleLoadMore = () => {
@@ -607,6 +611,7 @@ export function DiscoveryCategoryTab({
         </View>
       ) : (
         <FlatList
+          testID="main-scroll"
           data={places}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
