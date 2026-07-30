@@ -31,7 +31,7 @@ import { PeopleYouMayKnow } from '../../src/components/PeopleYouMayKnow';
 import { CircleCompassSuggestions } from '../../src/components/CircleCompassSuggestions';
 import { LivePulseRail } from '../../src/components/LivePulseRail';
 import { useLivePulse } from '../../src/hooks/useLivePulse';
-import { useBottomInset } from '../../src/hooks/useBottomInset';
+import { useLayoverAwareBottomInset } from '../../src/hooks/useBottomInset';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useSnapshotCache } from '../../src/hooks/useSnapshotCache';
 
@@ -107,7 +107,7 @@ function Pulse() {
     () => new Map(getCommentCountSnapshot()),
   );
 
-  const bottomInset = useBottomInset();
+  const bottomInset = useLayoverAwareBottomInset();
   const { markFirstContent, epoch } = useScreenTiming('Pulse');
 
   // Stale-while-revalidate: pre-paint the Pulse feed from the previous session's

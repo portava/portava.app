@@ -1,7 +1,13 @@
 /**
  * ActiveLayoverPill — floating "resume layover" pill shown on the home tab
  * while a layover session is active.
+ *
+ * Geometry constants are exported so `useLayoverAwareBottomInset` can compute
+ * the exact feed clearance needed when the pill is visible.
  */
+
+// Re-export geometry constants so callers can import from either file.
+export { LAYOVER_PILL_BOTTOM_OFFSET, LAYOVER_PILL_HEIGHT } from './layoverPillGeometry.ts';
 import React, { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';

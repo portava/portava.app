@@ -36,7 +36,7 @@ import { LivePulseRail } from '../../src/components/LivePulseRail';
 import { useLivePulse } from '../../src/hooks/useLivePulse';
 import { fireRankOutcome } from '../../src/hooks/useRankOutcome';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
-import { useBottomInset } from '../../src/hooks/useBottomInset';
+import { useLayoverAwareBottomInset } from '../../src/hooks/useBottomInset';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useSnapshotCache } from '../../src/hooks/useSnapshotCache';
 import { FeedSkeleton } from '../../src/components/loading/FeedSkeleton';
@@ -114,7 +114,7 @@ function Pulse() {
   );
 
   const navBarScrollHandler = useNavBarScrollHandler();
-  const bottomInset = useBottomInset();
+  const bottomInset = useLayoverAwareBottomInset();
   const insets = useSafeAreaInsets();
   const { largeHeaderStyle, compactBarStyle, compactBarInteractive } = useCollapsingHeader();
   const { markFirstContent, epoch } = useScreenTiming('Pulse');

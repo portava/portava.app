@@ -43,7 +43,16 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Keyboard, View, type LayoutChangeEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from 'expo-router';
 import { NAV_BAR_FILLER_HEIGHT } from './useNavBarCollapse.ts';
+import {
+  LAYOVER_PILL_BOTTOM_OFFSET,
+  LAYOVER_PILL_HEIGHT,
+} from '../components/layover/layoverPillGeometry.ts';
+import { getActiveLayoverSession } from '../services/layover.ts';
+
+/** Breathing room above the layover pill top edge (pt). */
+const LAYOVER_PILL_TOP_GAP = 16;
 
 /** Breathing room added below the last content item on non-pill surfaces. */
 export const BOTTOM_BREATHING_ROOM = 24;
@@ -54,6 +63,46 @@ export const BOTTOM_BREATHING_ROOM = 24;
  */
 export function useBottomInset(): number {
   const insets = useSafeAreaInsets();
+  return NAV_BAR_FILLER_HEIGHT + insets.bottom;
+}
+
+/**
+ * Tier 1 — layover-aware variant of useBottomInset.
+ *
+ * When a layover session is active the persistent pill floats above the tab
+ * bar, so the feed needs additional clearance to keep the last item fully
+ * visible:
+ *
+ *   active   → insets.bottom + LAYOVER_PILL_BOTTOM_OFFSET
+ *                             + LAYOVER_PILL_HEIGHT + LAYOVER_PILL_TOP_GAP
+ *            = insets.bottom + 74 + 44 + 16 = insets.bottom + 134
+ *
+ *   inactive → NAV_BAR_FILLER_HEIGHT + insets.bottom  (same as useBottomInset)
+ *            = insets.bottom + 96
+ *
+ * The layover state is refreshed via useFocusEffect so it tracks the user
+ * starting / finishing a layover session while the Pulse tab is in use.
+ *
+ * Use this instead of useBottomInset() on any screen that renders
+ * <ActiveLayoverPill />.
+ */
+export function useLayoverAwareBottomInset(): number {
+  const insets = useSafeAreaInsets();
+  const [layoverActive, setLayoverActive] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+      getActiveLayoverSession()
+        .then((res) => { if (alive) setLayoverActive(!!res?.session); })
+        .catch(() => { if (alive) setLayoverActive(false); });
+      return () => { alive = false; };
+    }, []),
+  );
+
+  if (layoverActive) {
+    return insets.bottom + LAYOVER_PILL_BOTTOM_OFFSET + LAYOVER_PILL_HEIGHT + LAYOVER_PILL_TOP_GAP;
+  }
   return NAV_BAR_FILLER_HEIGHT + insets.bottom;
 }
 

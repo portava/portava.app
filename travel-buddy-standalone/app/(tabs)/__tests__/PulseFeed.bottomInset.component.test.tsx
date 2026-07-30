@@ -15,7 +15,7 @@
  */
 
 import React from 'react';
-import { render } from '@testing-library/react-native';
+import { act, render } from '@testing-library/react-native';
 
 // ── Inset constants ──────────────────────────────────────────────────────────
 
@@ -23,9 +23,23 @@ import { render } from '@testing-library/react-native';
 const IPHONE_BOTTOM = 34;
 /** Android gesture-nav bar height (dp). */
 const ANDROID_BOTTOM = 48;
-/** Minimum clearance contract for Pulse's paddingBottom (NAV_BAR_FILLER_HEIGHT
- *  96 + iPhone 14 bottom inset 34 = 130 ≥ 120). */
+/** Minimum clearance contract for Pulse's paddingBottom when NO layover is
+ *  active: NAV_BAR_FILLER_HEIGHT (96) + iPhone 14 bottom inset (34) = 130 ≥ 120. */
 const MIN_EXPECTED_PADDING = 120;
+
+// ── Layover-active inset constants ────────────────────────────────────────────
+// These mirror the exported constants in ActiveLayoverPill + useBottomInset.
+const LAYOVER_PILL_BOTTOM_OFFSET = 74;
+const LAYOVER_PILL_HEIGHT        = 44;
+const LAYOVER_PILL_TOP_GAP       = 16;
+/**
+ * Minimum paddingBottom when a layover session IS active (iPhone 14):
+ *   insets.bottom (34) + 74 + 44 + 16 = 168
+ * We assert ≥ 155 to leave a small tolerance while still confirming the pill
+ * is fully cleared.
+ */
+const MIN_EXPECTED_PADDING_LAYOVER =
+  IPHONE_BOTTOM + LAYOVER_PILL_BOTTOM_OFFSET + LAYOVER_PILL_HEIGHT + LAYOVER_PILL_TOP_GAP - 13; // 155
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
@@ -173,7 +187,13 @@ jest.mock('../../../src/components/ManualCityPicker',        () => ({ ManualCity
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/layover/LayoverModeSheet', () => ({ LayoverModeSheet:       () => null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/layover/ActiveLayoverPill',() => ({ ActiveLayoverPill:      () => null }));
+jest.mock('../../../src/components/layover/ActiveLayoverPill',() => ({ ActiveLayoverPill: () => null }));
+
+// Layover session service — default inactive; individual tests override this.
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/services/layover', () => ({
+  getActiveLayoverSession: jest.fn().mockResolvedValue(null),
+}));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PeopleYouMayKnow',        () => ({ PeopleYouMayKnow:        () => null }));
 // NOTE: intentional stub — not under test here.
@@ -252,5 +272,75 @@ describe('Pulse FlatList — clearance constants', () => {
 
   it('MIN_EXPECTED_PADDING (120) clears Android gesture nav (48 dp)', () => {
     expect(MIN_EXPECTED_PADDING).toBeGreaterThanOrEqual(ANDROID_BOTTOM);
+  });
+});
+
+// ── Layover-active clearance ───────────────────────────────────────────────────
+// When a layover session is active the pill floats above the tab bar:
+//   bottom: insets.bottom + 74,  height ~44 pt.
+// The FlatList's paddingBottom must clear the pill top edge
+// (insets.bottom + 74 + 44 + 16 = insets.bottom + 134).
+
+describe('Pulse FlatList — layover-active increases bottom clearance', () => {
+  const FAKE_SESSION = {
+    session: {
+      id: 'layover-test-1',
+      departureTime: '2026-07-29T23:00:00Z',
+      manualIata: 'JFK',
+    },
+    airport: null,
+  };
+
+  beforeEach(() => {
+    const layover = require('../../../src/services/layover');
+    layover.getActiveLayoverSession.mockResolvedValue(FAKE_SESSION);
+  });
+
+  afterEach(() => {
+    const layover = require('../../../src/services/layover');
+    layover.getActiveLayoverSession.mockResolvedValue(null);
+  });
+
+  it('paddingBottom exceeds inactive baseline when layover is active', async () => {
+    const Pulse = require('../index.tsx').default;
+    const { toJSON } = await render(<Pulse />);
+    // Flush the resolved getActiveLayoverSession promise so the hook's state
+    // update fires and the FlatList re-renders with the larger inset.
+    await act(async () => { await Promise.resolve(); });
+
+    const paddings = collectContentContainerPaddingBottoms(toJSON());
+    expect(paddings.length).toBeGreaterThan(0);
+    const max = Math.max(...paddings);
+    expect(max).toBeGreaterThanOrEqual(MIN_EXPECTED_PADDING_LAYOVER);
+  });
+
+  it('paddingBottom with active layover clears iPhone 14 home indicator + pill (168 pt)', async () => {
+    const Pulse = require('../index.tsx').default;
+    const { toJSON } = await render(<Pulse />);
+    await act(async () => { await Promise.resolve(); });
+
+    const paddings = collectContentContainerPaddingBottoms(toJSON());
+    const max = Math.max(...paddings);
+    // 34 (insets.bottom) + 74 + 44 + 16 = 168
+    const exactExpected = IPHONE_BOTTOM + LAYOVER_PILL_BOTTOM_OFFSET + LAYOVER_PILL_HEIGHT + LAYOVER_PILL_TOP_GAP;
+    expect(max).toBeGreaterThanOrEqual(exactExpected);
+  });
+});
+
+describe('Pulse FlatList — no regression when layover session absent', () => {
+  it('paddingBottom stays within sane range when no layover (no oversized void)', async () => {
+    // Confirm there is no always-on oversized gap by checking the baseline is
+    // not inflated when getActiveLayoverSession returns null (the default mock).
+    const Pulse = require('../index.tsx').default;
+    const { toJSON } = await render(<Pulse />);
+    await act(async () => { await Promise.resolve(); });
+
+    const paddings = collectContentContainerPaddingBottoms(toJSON());
+    const max = Math.max(...paddings);
+    // Baseline: NAV_BAR_FILLER_HEIGHT (96) + insets.bottom (34) = 130.
+    // Should NOT be as large as the layover-active value (168) when inactive.
+    expect(max).toBeLessThan(MIN_EXPECTED_PADDING_LAYOVER);
+    // But must still clear the tab bar.
+    expect(max).toBeGreaterThanOrEqual(MIN_EXPECTED_PADDING);
   });
 });
