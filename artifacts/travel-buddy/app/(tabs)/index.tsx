@@ -248,7 +248,12 @@ function Pulse() {
     if (hasContent) markFirstContent();
   }, [epoch, pulseLoadedOnce, pulseFeed.items.length > 0, (pulseSnapshot?.length ?? 0) > 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const fits = [...buckets.fitsAvailability, ...buckets.openNearby];
+  // Guard: fitsAvailability/openNearby are always arrays from filterPulse, but
+  // a stale Metro bundler cache can serve an older version of recommend.ts that
+  // returned {fits, flexible} (old property names), leaving these undefined and
+  // causing a "not iterable" TypeError on every Pulse tab open. ?? [] makes the
+  // spread safe against cache-version skew and any future bucket-shape changes.
+  const fits = [...(buckets.fitsAvailability ?? []), ...(buckets.openNearby ?? [])];
   const noFits = fits.length === 0;
 
   // pulseFeed.items are already PulseFeedItem[] (pre-mapped by usePulseFeed).
