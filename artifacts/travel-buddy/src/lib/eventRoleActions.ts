@@ -40,6 +40,12 @@ function isActive(state: EventLifecycleState): boolean {
  * `started` rows to `completed` once `endsAt`/`startsAt` passes — see
  * events.ts CRUD, which only transitions state on explicit host action).
  * Terminal states (completed/cancelled/archived/draft) pass through untouched.
+ *
+ * Auto-promotion rules (evaluated in order):
+ *  1. If `endsAt` has passed → `completed`.
+ *  2. If `startsAt` has passed (and the event has not ended) → `started`
+ *     ("Happening now"), regardless of whether `endsAt` is set.
+ *  3. Otherwise → stored state unchanged.
  */
 export function effectiveEventState(
   state: EventLifecycleState,
@@ -48,10 +54,16 @@ export function effectiveEventState(
   now: number = Date.now(),
 ): EventLifecycleState {
   if (!isActive(state)) return state;
-  const cutoff = endsAt ?? startsAt;
-  if (!cutoff) return state;
-  const cutoffMs = new Date(cutoff).getTime();
-  if (!Number.isNaN(cutoffMs) && cutoffMs <= now) return 'completed';
+  // Rule 1 — completed when endsAt has passed.
+  if (endsAt) {
+    const endMs = new Date(endsAt).getTime();
+    if (!Number.isNaN(endMs) && endMs <= now) return 'completed';
+  }
+  // Rule 2 — in-progress when startsAt has passed (endsAt absent or in the future).
+  if (startsAt) {
+    const startMs = new Date(startsAt).getTime();
+    if (!Number.isNaN(startMs) && startMs <= now) return 'started';
+  }
   return state;
 }
 

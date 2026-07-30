@@ -29,8 +29,10 @@ jest.mock('../../../services/discovery', () => ({
 
 // NOTE: intentionally exhaustive — the real module imports Supabase.
 jest.mock('../../../services/compass', () => ({
-  postCompassFrontloadEvent: jest.fn().mockResolvedValue(undefined),
-  reportCompassViewed:       jest.fn().mockResolvedValue(undefined),
+  postCompassFrontloadEvent:  jest.fn().mockResolvedValue(undefined),
+  reportCompassViewed:        jest.fn().mockResolvedValue(undefined),
+  fetchCompassSettings:       jest.fn().mockResolvedValue({ ok: true, data: { onboarding_completed: true } }),
+  fetchCompassPreferences:    jest.fn().mockResolvedValue({ ok: true, data: {} }),
 }));
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
