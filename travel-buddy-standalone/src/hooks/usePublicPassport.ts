@@ -10,7 +10,7 @@
  *                                           is_friend / friend_request_pending attached by server
  *   { ...full profile }                  → profile set, normal render
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { PublicProfile, PassportPostcard } from '../types/models.ts';
 import { getPublicPassport, getPublicPostcards, type PostcardsSentinel } from '../services/profile.ts';
 import { useSocialVersion } from './useSocialVersion.ts';
@@ -58,9 +58,11 @@ export interface PublicPassportState {
   blockedTargetId: string | null;
   /** Sentinel returned by the postcards endpoint — 'private' | 'blocked' | 'unavailable' | null. */
   postcardSentinel: PostcardsSentinel | null;
+  /** Re-fetches the passport (and postcards) for the current username without resetting to a blank loading state. */
+  reload: () => void;
 }
 
-const EMPTY_STATE: PublicPassportState = {
+const EMPTY_STATE: Omit<PublicPassportState, 'reload'> = {
   profile: null, postcards: [], loading: true, error: null,
   isPrivate: false, previewProfile: null, isFriend: false, friendRequestPending: false,
   privateProfileId: null, notFound: false, isBlocked: false, blockedTargetId: null,
@@ -68,13 +70,24 @@ const EMPTY_STATE: PublicPassportState = {
 };
 
 export function usePublicPassport(username: string): PublicPassportState {
-  const [state, setState] = useState<PublicPassportState>({ ...EMPTY_STATE });
+  const [state, setState] = useState<PublicPassportState>({ ...EMPTY_STATE, reload: () => {} });
   const socialVersion = useSocialVersion();
+  // Bumped by reload() to re-run the fetch effect without resetting to the
+  // blank loading state (pull-to-refresh keeps existing content visible).
+  const [refreshKey, setRefreshKey] = useState(0);
+  const isRefreshRef = useRef(false);
+
+  const reload = useCallback(() => {
+    isRefreshRef.current = true;
+    setRefreshKey((k) => k + 1);
+  }, []);
 
   useEffect(() => {
     if (!username) return;
     let alive = true;
-    setState({ ...EMPTY_STATE });
+    const isRefresh = isRefreshRef.current;
+    isRefreshRef.current = false;
+    if (!isRefresh) setState({ ...EMPTY_STATE, reload });
 
     getPublicPassport(username).then(async (res) => {
       if (!alive) return;
@@ -86,6 +99,8 @@ export function usePublicPassport(username: string): PublicPassportState {
         }
         return;
       }
+
+      setState((s) => ({ ...s, error: null }));
 
       const d = res.data as any;
 
@@ -148,7 +163,7 @@ export function usePublicPassport(username: string): PublicPassportState {
     });
 
     return () => { alive = false; };
-  }, [username, socialVersion]);
+  }, [username, socialVersion, refreshKey]);
 
   return state;
 }

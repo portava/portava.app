@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert } from 'react-native';
+import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, RefreshControl } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useCollapsingHeader } from '../../src/hooks/useCollapsingHeader';
 import { router, useFocusEffect } from 'expo-router';
@@ -486,6 +486,29 @@ function PassportContent({
   const bottomInset = useBottomInset();
   const { largeHeaderStyle, compactBarStyle, compactBarInteractive } = useCollapsingHeader();
   const [statsIconOnly, setStatsIconOnly] = useState(false);
+
+  // Pull-to-refresh: re-fetches the passport (bypassing the focus TTL), plus
+  // the lightweight availability chip so both stay in sync with the backend.
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    reload();
+    refreshAvailability().catch(() => {});
+  }, [reload, refreshAvailability]);
+  // usePassport's `loading` isn't exposed here, so clear the spinner once the
+  // shared pipeline stamps a fresh lastLoadedAt (successful reload landed).
+  const refreshStartedAt = React.useRef(0);
+  React.useEffect(() => {
+    if (!refreshing) return;
+    refreshStartedAt.current = Date.now();
+    const id = setInterval(() => {
+      if (lastLoadedAt.current >= refreshStartedAt.current || Date.now() - refreshStartedAt.current > 8000) {
+        setRefreshing(false);
+        clearInterval(id);
+      }
+    }, 150);
+    return () => clearInterval(id);
+  }, [refreshing]); // eslint-disable-line react-hooks/exhaustive-deps
   // Filled by StampsTab with its load-more function (paginated grid data).
   const stampsLoadMoreRef = React.useRef<(() => void) | null>(null);
   const handleScroll = useCallback((e: any) => {
@@ -633,6 +656,9 @@ function PassportContent({
         showsVerticalScrollIndicator={false}
         onScroll={handleScroll}
         scrollEventThrottle={16}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={color.signal} />
+        }
       >
         <AppHeader
           variant="primary"
