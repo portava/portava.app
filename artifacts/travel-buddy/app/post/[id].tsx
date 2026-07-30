@@ -5,7 +5,7 @@ import {
   Keyboard,
 } from 'react-native';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
-import { useLocalSearchParams, router } from 'expo-router';
+import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
 import { navigateToProfile } from '../../src/lib/navigateToProfile.ts';
 import * as Linking from 'expo-linking';
 import {
@@ -233,26 +233,28 @@ export default function PostDetail() {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 300);
   }, []);
 
-  useEffect(() => {
-    if (!id) { setLoading(false); return; }
-    setLoading(true);
-    setFetchError(null);
-    getPostById(id)
-      .then((result) => {
-        if (result.ok && result.data) {
-          setPost(result.data);
-          setCommentCount(result.data.commentCount);
-        } else {
-          setFetchError(
-            result.errorKind === 'not_found'
-              ? 'Post not found.'
-              : 'Could not load this post.',
-          );
-        }
-      })
-      .catch(() => setFetchError('Could not load this post.'))
-      .finally(() => setLoading(false));
-  }, [id]);
+  useFocusEffect(
+    useCallback(() => {
+      if (!id) { setLoading(false); return; }
+      setLoading(true);
+      setFetchError(null);
+      getPostById(id)
+        .then((result) => {
+          if (result.ok && result.data) {
+            setPost(result.data);
+            setCommentCount(result.data.commentCount);
+          } else {
+            setFetchError(
+              result.errorKind === 'not_found'
+                ? 'Post not found.'
+                : 'Could not load this post.',
+            );
+          }
+        })
+        .catch(() => setFetchError('Could not load this post.'))
+        .finally(() => setLoading(false));
+    }, [id]),
+  );
 
   useEffect(() => () => {
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
