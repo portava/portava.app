@@ -60,6 +60,7 @@ import {
   clearViewerContext,
   type ViewerContextItem,
 } from '../../src/lib/viewerContext.ts';
+import { formatLocationLabel } from '../../src/lib/formatPlaceLabel.ts';
 import { color, space, type as t, radius } from '../../src/theme/tokens.ts';
 import { useSession } from '../../src/context/SessionContext.tsx';
 import { PlaceQuickActions } from '../../src/components/PlaceQuickActions.tsx';
@@ -263,8 +264,7 @@ function ViewerOverlay({
                 <View style={ov.placeChip} pointerEvents="none">
                   <MapPin size={10} color="rgba(255,255,255,0.85)" />
                   <Text style={ov.placeText} numberOfLines={1}>
-                    {post.locationName}
-                    {post.locationCity ? ` · ${post.locationCity}` : ''}
+                    {formatLocationLabel(post.locationName, post.locationCity, ' · ')}
                   </Text>
                 </View>
               ) : null}
