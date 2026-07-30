@@ -595,7 +595,8 @@ function PublicPassportScreenNative() {
   const { username } = useLocalSearchParams<{ username: string }>();
   const { userId: currentUserId } = useSession();
 
-  const { profile, postcards, loading, error, isPrivate, previewProfile, isFriend, friendRequestPending, privateProfileId, notFound, isBlocked, blockedTargetId, postcardSentinel } = usePublicPassport(username ?? '');
+  const { profile, postcards, loading, error, isPrivate, previewProfile, isFriend, friendRequestPending, privateProfileId, notFound, isBlocked, blockedTargetId, postcardSentinel, reload: reloadPassport } = usePublicPassport(username ?? '');
+  const [refreshing, setRefreshing] = useState(false);
   // Use privateProfileId as fallback so the Follow button works on the private-profile header.
   const follow = useFollow(profile?.id ?? privateProfileId ?? null);
   const ringState = useHighlightRingState(profile?.id ?? null);
@@ -612,13 +613,14 @@ function PublicPassportScreenNative() {
   // counts (BZ): most postcards never carry a tagged location, so counting
   // from postcards alone under-reports vs. the owner's own passport view.
   const [showcaseItems, setShowcaseItems] = useState<ShowcaseStamp[] | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    setShowcaseItems(null);
-    if (!username) return;
-    getPublicShowcase(username).then((items) => { if (!cancelled) setShowcaseItems(items); }).catch(() => {});
-    return () => { cancelled = true; };
+  const loadShowcase = useCallback(() => {
+    if (!username) return Promise.resolve();
+    return getPublicShowcase(username).then((items) => setShowcaseItems(items)).catch(() => {});
   }, [username]);
+  useEffect(() => {
+    setShowcaseItems(null);
+    void loadShowcase();
+  }, [loadShowcase]);
 
   // Social profile (friend/block/about data) loaded via the friends service
   const [social, setSocial] = useState<SocialProfile | null>(null);
@@ -744,6 +746,19 @@ function PublicPassportScreenNative() {
     setIsMutedByMe(false);
     setIBlockedThem(false);
   }, [username]);
+
+  // Pull-to-refresh: re-fetches passport, social (friend/block/mute), and
+  // stamp showcase data. refreshing clears once the passport hook's own
+  // loading flag comes back down (it never resets to true on a reload()).
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    reloadPassport();
+    loadSocial();
+    void loadShowcase();
+  }, [reloadPassport, loadSocial, loadShowcase]);
+  useEffect(() => {
+    if (refreshing && !loading && !socialLoading) setRefreshing(false);
+  }, [refreshing, loading, socialLoading]);
 
   function handleViewerClose() {
     setHighlightViewerOpen(false);
@@ -916,7 +931,12 @@ function PublicPassportScreenNative() {
       return (
         <View style={{ flex: 1 }}>
           {navHeader}
-          <ScrollView showsVerticalScrollIndicator={false}>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={color.signal} />
+            }
+          >
             {/* Header is always visible — private only gates the content below */}
             <PassportHero
               profile={previewAsProfile}
@@ -978,6 +998,9 @@ function PublicPassportScreenNative() {
         showsVerticalScrollIndicator={false}
         onScroll={navBarScrollHandler}
         scrollEventThrottle={16}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={color.signal} />
+        }
       >
         {navHeader}
         <PassportHero

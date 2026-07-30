@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, Pressable, Modal, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, Pressable, Modal, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
 import { X } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { AppHeader } from '../src/components/ui/AppHeader';
@@ -72,15 +72,20 @@ export default function StampsPage() {
   const [filter, setFilter]       = useState('All');
   const [selected, setSelected]   = useState<PassportStampNew | null>(null);
   const [visUpdating, setVisUpdating] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const navBarScrollHandler = useNavBarScrollHandler();
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
     const res = await getMyPassportStamps();
     setLoading(false);
+    setRefreshing(false);
     if (res.ok) setStamps(res.data);
   }, []);
+
+  const handleRefresh = useCallback(() => { load(true); }, [load]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -112,7 +117,14 @@ export default function StampsPage() {
       {loading ? (
         <View style={styles.center}><ActivityIndicator color={color.signal} /></View>
       ) : (
-        <ScrollView contentContainerStyle={styles.grid} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
+        <ScrollView
+          contentContainerStyle={styles.grid}
+          onScroll={navBarScrollHandler}
+          scrollEventThrottle={16}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={color.signal} />
+          }
+        >
           {shown.map((s, i) => {
             const leg = toLegacy(s);
             return (

@@ -238,6 +238,8 @@ interface DiscoveryCategoryTabProps {
   onScroll?: any;
   /** Shared header element from the parent discovery screen — scrolls inside this tab's FlatList. */
   listHeaderComponent?: React.ReactElement;
+  /** Invoked alongside this tab's own places refresh so the parent can re-fetch counts/buddy-strip/trending on pull-to-refresh. */
+  onRefresh?: () => void;
 }
 
 export function DiscoveryCategoryTab({
@@ -260,6 +262,7 @@ export function DiscoveryCategoryTab({
   bottomInset,
   onScroll,
   listHeaderComponent,
+  onRefresh,
 }: DiscoveryCategoryTabProps) {
   // SWR: seed from in-memory client cache so second opens paint instantly.
   const [places, setPlaces]         = useState<DiscoveryPlace[]>(() => {
@@ -364,6 +367,7 @@ export function DiscoveryCategoryTab({
     setRefreshing(true);
     setPlaces([]);
     load(1, filters, false);
+    onRefresh?.();
   };
 
   const handleLoadMore = () => {

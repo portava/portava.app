@@ -49,6 +49,8 @@ interface ForYouTabProps {
   onScroll?: any;
   /** Shared header element from the parent discovery screen — scrolls inside this tab's FlatList. */
   listHeaderComponent?: React.ReactElement;
+  /** Invoked alongside this tab's own places refresh so the parent can re-fetch counts/buddy-strip/trending on pull-to-refresh. */
+  onRefresh?: () => void;
 }
 
 type ForYouItem =
@@ -92,7 +94,7 @@ function compassItemToPlace(item: import('../../services/compass').CompassFeedIt
   } as DiscoveryPlace;
 }
 
-export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, sortBy, bottomInset, onScroll, listHeaderComponent }: ForYouTabProps) {
+export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, sortBy, bottomInset, onScroll, listHeaderComponent, onRefresh }: ForYouTabProps) {
   const { isAuthed }            = useSession();
   // SWR: seed from in-memory client cache so second opens paint instantly.
   const [items, setItems]       = useState<ForYouItem[]>(() => {
@@ -234,6 +236,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   const handleRefresh = () => {
     setRefreshing(true);
     load(true);
+    onRefresh?.();
   };
 
   // ── Hooks hoisted before early returns ──────────────────────────────────────

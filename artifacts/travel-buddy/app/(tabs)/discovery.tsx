@@ -108,6 +108,10 @@ export default function DiscoveryHub() {
   const navScrollHandler = useNavBarScrollHandler();
   const { largeHeaderStyle, compactBarStyle, compactBarInteractive } = useCollapsingHeader();
 
+  // Bumped by pull-to-refresh to force the counts/buddy/trending effects below
+  // to re-run without changing any of their real dependencies.
+  const [refreshNonce, setRefreshNonce] = useState(0);
+
   const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([]);
   useEffect(() => {
     let cancelled = false;
@@ -119,7 +123,7 @@ export default function DiscoveryHub() {
       if (!cancelled && __DEV__) console.error('[Discovery] trending hashtags failed:', err);
     });
     return () => { cancelled = true; };
-  }, [currentCity]);
+  }, [currentCity, refreshNonce]);
 
   // Deep-link: ?category=food navigates to that tab on mount
   const params = useLocalSearchParams<{ category?: string; city?: string }>();
@@ -287,7 +291,7 @@ export default function DiscoveryHub() {
       });
     });
     return () => { cancelled = true; task.cancel(); };
-  }, [currentCity]);
+  }, [currentCity, refreshNonce]);
 
   // Debounce custom age inputs (500 ms) so that each keystroke while the user
   // is typing a number doesn't fire a batch of 7 parallel API requests.
@@ -365,7 +369,7 @@ export default function DiscoveryHub() {
     });
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [destination, activeFilters, contextMode, ageFilter, debouncedAgeRange]);
+  }, [destination, activeFilters, contextMode, ageFilter, debouncedAgeRange, refreshNonce]);
 
   // Upgrade to the user's actual trip destination once trips load.
   // Only overrides if the user hasn't set a location yet.
@@ -400,6 +404,17 @@ export default function DiscoveryHub() {
 
   const handleFiltersChange = useCallback((filters: DiscoveryFilters) => {
     setActiveFilters(filters);
+  }, []);
+
+  // Pull-to-refresh (triggered from inside ForYouTab/DiscoveryCategoryTab's own
+  // FlatList RefreshControl): invalidates the cached counts and re-runs the
+  // counts/buddy-strip/trending-hashtag fetches alongside the tab's own
+  // places refresh. Does not change what's fetched or TTL/caching strategy —
+  // it only forces an immediate re-fetch.
+  const handleDiscoveryRefresh = useCallback(() => {
+    // The counts effect below re-fetches and calls saveCachedCounts() itself
+    // once fresh data lands, replacing the stale cached entry in place.
+    setRefreshNonce((n) => n + 1);
   }, []);
 
   const handleAddToPlan = useCallback((place: { id: string; name: string; category: string; address?: string | null }) => {
@@ -924,6 +939,7 @@ export default function DiscoveryHub() {
             bottomInset={bottomInset}
             onScroll={navScrollHandler}
             listHeaderComponent={discoveryHeader}
+            onRefresh={handleDiscoveryRefresh}
           />
         </SectionErrorBoundary>
       ) : (
@@ -949,6 +965,7 @@ export default function DiscoveryHub() {
             bottomInset={bottomInset}
             onScroll={navScrollHandler}
             listHeaderComponent={discoveryHeader}
+            onRefresh={handleDiscoveryRefresh}
           />
         </SectionErrorBoundary>
       )}

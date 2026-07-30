@@ -14,7 +14,7 @@
  */
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  View, Text, Image, Pressable, StyleSheet, ScrollView, ActivityIndicator,
+  View, Text, Image, Pressable, StyleSheet, ScrollView, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, MapPin, Gem, CalendarDays, Compass } from 'lucide-react-native';
@@ -82,6 +82,13 @@ export default function Destination() {
 
   useEffect(() => { loadGems(); loadEvents(); loadPosts(); }, [loadGems, loadEvents, loadPosts]);
 
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([loadGems(), loadEvents(), loadPosts()]);
+    setRefreshing(false);
+  }, [loadGems, loadEvents, loadPosts]);
+
   const anyLoading = gems.status === 'loading' || events.status === 'loading' || posts.status === 'loading';
   const allEmpty =
     !anyLoading &&
@@ -105,7 +112,13 @@ export default function Destination() {
         <View style={{ width: 32 }} />
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: plainInset }} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: plainInset }}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={color.signal} />
+        }
+      >
         {/* City hero strip */}
         <View style={s.hero}>
           <MapPin size={16} color={color.deep} />
