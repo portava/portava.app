@@ -397,6 +397,7 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
   );
 }
 
+
 /* ── Question — delegates to SharedPostCard ── */
 function QuestionCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void }) {
   const [dismissed, setDismissed] = useState(false);

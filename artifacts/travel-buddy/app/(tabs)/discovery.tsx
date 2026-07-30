@@ -986,11 +986,13 @@ export default function DiscoveryHub() {
         onSelect={handlePickDestination}
       />
 
-      {/* Layover Mode floating entry — positioned above the floating tab bar */}
-      <Pressable style={[styles.layoverFab, { bottom: insets.bottom + 88 }]} onPress={() => setLayoverOpen(true)}>
-        <Plane size={16} color="#fff" />
-        <Text style={styles.layoverFabText}>Layover Mode</Text>
-      </Pressable>
+      {/* Layover Mode floating entry — hidden while place detail sheet is open */}
+      {!detailVisible && (
+        <Pressable style={[styles.layoverFab, { bottom: insets.bottom + 88 }]} onPress={() => setLayoverOpen(true)}>
+          <Plane size={16} color="#fff" />
+          <Text style={styles.layoverFabText}>Layover Mode</Text>
+        </Pressable>
+      )}
 
       <LayoverModeSheet
         visible={layoverOpen}
