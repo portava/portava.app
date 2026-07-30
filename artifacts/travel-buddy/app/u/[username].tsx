@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet,
-  Alert, Modal, TextInput, Platform, Animated,
+  Alert, Modal, TextInput, Platform, Animated, RefreshControl,
 } from 'react-native';
 import PassportDocumentScreen from '../passport/[username]';
 import { useLocalSearchParams, useFocusEffect, router } from 'expo-router';
