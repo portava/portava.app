@@ -52,6 +52,7 @@ export interface PulsePost {
   media?: import('./postcards').PostcardMediaItem[];
   visibility: string;
   createdAt: string;
+  updatedAt?: string;
   locationName: string | null;
   locationCity: string | null;
   locationCountry: string | null;
@@ -137,6 +138,7 @@ export function pulsePostToFeedItem(p: PulsePost): PulseFeedItem {
       isOfficial: p.author?.isOfficial ?? false,
     },
     createdAt: p.createdAt,
+    updatedAt: p.updatedAt,
     timeAgo: timeAgo(p.createdAt),
     tags: [],
     mediaUrl: p.media?.[0]?.thumbnail_url ?? p.media?.[0]?.url ?? p.mediaUrls[0],

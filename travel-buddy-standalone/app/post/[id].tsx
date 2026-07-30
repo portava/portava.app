@@ -147,7 +147,12 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
             <Text style={card.authorName}>{authorName}</Text>
             {post.author?.isOfficial ? <OfficialBadge size="sm" /> : null}
           </View>
-          <Text style={card.ts}>{ts}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={card.ts}>{ts}</Text>
+            {post.updatedAt && post.updatedAt > post.createdAt ? (
+              <Text style={card.ts}>· Edited</Text>
+            ) : null}
+          </View>
         </View>
       </Pressable>
 

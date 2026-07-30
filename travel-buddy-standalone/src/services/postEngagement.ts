@@ -323,6 +323,32 @@ export async function addReply(
   return null;
 }
 
+// ── Comment / Reply Edit ──────────────────────────────────────────────────────
+
+/**
+ * Edit an existing comment or reply body (PATCH /posts/:postId/comments/:commentId).
+ * Returns the updated body and server-side updatedAt on success, null on failure.
+ */
+export async function editComment(
+  postId: string,
+  commentId: string,
+  body: string,
+): Promise<{ id: string; body: string; updatedAt: string } | null> {
+  const trimmed = body.trim();
+  if (!trimmed || trimmed.length > 1000) return null;
+  const res = await apiCall<{ ok: boolean; comment: { id: string; body: string; updated_at: string } }>(
+    'PATCH',
+    `/api/posts/${postId}/comments/${commentId}`,
+    { body: trimmed },
+  );
+  if (!res.ok) return null;
+  return {
+    id: res.data.comment.id,
+    body: res.data.comment.body,
+    updatedAt: res.data.comment.updated_at,
+  };
+}
+
 // ── Edit History ──────────────────────────────────────────────────────────────
 
 export interface EditHistoryEntry {
