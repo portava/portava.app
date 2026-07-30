@@ -173,7 +173,7 @@ function AuthorRow({
         ) : null}
         <Text style={[s.meta, light ? { color: color.onInkMute } : undefined]}>{item.timeAgo}{item.neighborhood ? ` · ${item.neighborhood}` : item.city ? ` · ${item.city}` : ''}</Text>
       </View>
-      <Pressable hitSlop={layout.hitSlop} onPress={openOverflow}>
+      <Pressable hitSlop={layout.hitSlop} onPress={openOverflow} testID="overflow-menu-btn">
         <MoreHorizontal size={18} color={light ? color.onInkMute : color.faint} />
       </Pressable>
 
