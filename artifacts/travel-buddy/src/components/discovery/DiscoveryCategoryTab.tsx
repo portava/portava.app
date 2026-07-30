@@ -433,6 +433,7 @@ export function DiscoveryCategoryTab({
         </>
       ) : (
         <FlatList
+          testID="main-scroll"
           data={places}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (

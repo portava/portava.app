@@ -390,6 +390,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   return (
     <>
       <FlatList
+        testID="main-scroll"
         data={listData}
         keyExtractor={(item) => item.place.id}
         renderItem={renderItem}

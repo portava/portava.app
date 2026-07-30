@@ -397,7 +397,6 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
   );
 }
 
-
 /* ── Question — delegates to SharedPostCard ── */
 function QuestionCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void }) {
   const [dismissed, setDismissed] = useState(false);
@@ -930,3 +929,4 @@ const rab = StyleSheet.create({
   ctaOutline: { flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: '#E53935', borderRadius: radius.sm, paddingHorizontal: space.md, paddingVertical: 8 },
   ctaOutlineText: { ...t.small, fontWeight: '800', color: '#E53935', fontSize: 12 },
 });
+

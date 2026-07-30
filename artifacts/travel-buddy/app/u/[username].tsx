@@ -932,6 +932,7 @@ function PublicPassportScreenNative() {
         <View style={{ flex: 1 }}>
           {navHeader}
           <ScrollView
+            testID="main-scroll"
             showsVerticalScrollIndicator={false}
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={color.signal} />
@@ -1001,6 +1002,7 @@ function PublicPassportScreenNative() {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={color.signal} />
         }
+        testID="main-scroll"
       >
         {navHeader}
         <PassportHero

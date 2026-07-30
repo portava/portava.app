@@ -113,6 +113,7 @@ export default function Destination() {
       </View>
 
       <ScrollView
+        testID="main-scroll"
         contentContainerStyle={{ paddingBottom: plainInset }}
         showsVerticalScrollIndicator={false}
         refreshControl={

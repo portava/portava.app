@@ -13,6 +13,7 @@ import {
 import { getTrendingHashtags, type TrendingHashtag } from '../../src/services/hashtag';
 import type { DiscoveryAgeFilter } from '../../src/services/discovery';
 import type { Place } from '../../src/lib/location/placeTypes';
+import { useBottomInset } from '../../src/hooks/useBottomInset';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import type { DiscoveryCategory, DiscoveryPlace, DiscoveryContextMode, DiscoveryFilters } from '../../src/services/discovery';
 import { getDiscoveryCategoryCounts } from '../../src/services/discovery';
@@ -90,6 +91,7 @@ const CONTEXT_MODES: ContextModeItem[] = [
 
 function DiscoveryHubScreen() {
   const insets = useSafeAreaInsets();
+  const bottomInset = useBottomInset();
   const { isAuthed } = useSession();
   const { open: openPlanPicker } = usePlanPicker();
   const { locationState, requestLocation, showCityPicker, openCityPicker, closeCityPicker, setManualCity } = useLocationContext();
@@ -536,6 +538,7 @@ function DiscoveryHubScreen() {
               viewMode={viewMode}
               fallbackZoom={destinationZoom}
               sortBy={activeFilters.sortBy ?? null}
+              bottomInset={bottomInset}
             />
           </SectionErrorBoundary>
         ) : (
@@ -560,6 +563,7 @@ function DiscoveryHubScreen() {
               filters={activeFilters}
               fallbackZoom={destinationZoom}
               listTopInset={tabRowHeight}
+              bottomInset={bottomInset}
             />
           </SectionErrorBoundary>
         )}

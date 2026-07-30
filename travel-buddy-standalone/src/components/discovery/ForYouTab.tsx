@@ -49,6 +49,7 @@ interface ForYouTabProps {
   fallbackZoom?: number;
   viewMode?: 'list' | 'map';
   sortBy?: string | null;
+  bottomInset?: number;
 }
 
 type ForYouItem =
@@ -75,7 +76,7 @@ function compassItemToPlace(item: import('../../services/compass.ts').CompassFee
   };
 }
 
-export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list', sortBy }: ForYouTabProps) {
+export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list', sortBy, bottomInset }: ForYouTabProps) {
   const { isAuthed }            = useSession();
   // SWR: seed from in-memory client cache so second opens paint instantly.
   const [items, setItems]       = useState<ForYouItem[]>(() => {

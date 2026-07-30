@@ -355,6 +355,7 @@ interface DiscoveryCategoryTabProps {
   onFiltersChange?: (filters: DiscoveryFilters) => void;
   /** Padding applied to the list top so first items clear the floating chrome overlay. 0 for map mode. */
   listTopInset?: number;
+  bottomInset?: number;
 }
 
 export function DiscoveryCategoryTab({
@@ -376,6 +377,7 @@ export function DiscoveryCategoryTab({
   fallbackZoom,
   filters,
   listTopInset = 0,
+  bottomInset,
 }: DiscoveryCategoryTabProps) {
   // SWR: seed from in-memory client cache so second opens paint instantly.
   const [places, setPlaces]         = useState<DiscoveryPlace[]>(() => {
