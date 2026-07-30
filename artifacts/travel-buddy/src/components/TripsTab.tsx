@@ -19,7 +19,7 @@ import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { useBottomInset } from '../hooks/useBottomInset.ts';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import { fromISODate } from '../lib/dateTime/formatters.ts';
-import { tripStatusColor, tripStatusLabel } from '../lib/tripStatus.ts';
+import { tripStatusColor, tripStatusLabel, deriveTripDisplayStatus } from '../lib/tripStatus.ts';
 
 type Filter = 'all' | 'upcoming' | 'ongoing' | 'past';
 
@@ -31,9 +31,10 @@ const FILTERS: { key: Filter; label: string }[] = [
 ];
 
 function bucket(trip: TripRow): Exclude<Filter, 'all'> | 'other' {
-  if (trip.status === 'active') return 'ongoing';
-  if (trip.status === 'upcoming' || trip.status === 'planning') return 'upcoming';
-  if (trip.status === 'completed') return 'past';
+  const status = deriveTripDisplayStatus(trip.status, trip.endDate);
+  if (status === 'active') return 'ongoing';
+  if (status === 'upcoming' || status === 'planning') return 'upcoming';
+  if (status === 'completed') return 'past';
   return 'other';
 }
 
@@ -57,7 +58,8 @@ function fmtRange(trip: TripRow): string {
 }
 
 function TripCard({ trip }: { trip: TripRow }) {
-  const statusColor = tripStatusColor(trip.status);
+  const displayStatus = deriveTripDisplayStatus(trip.status, trip.endDate);
+  const statusColor = tripStatusColor(displayStatus);
   const dates = fmtDates(trip);
   return (
     <Pressable key={trip.id} style={tr.card} onPress={() => router.push(`/trip/${trip.id}` as any)}>
@@ -68,7 +70,7 @@ function TripCard({ trip }: { trip: TripRow }) {
           {trip.destinationCountry ? <Text style={tr.country}>{trip.destinationCountry}</Text> : null}
         </View>
         <View style={[tr.statusBadge, { backgroundColor: `${statusColor}18` }]}>
-          <Text style={[tr.statusText, { color: statusColor }]}>{tripStatusLabel(trip.status)}</Text>
+          <Text style={[tr.statusText, { color: statusColor }]}>{tripStatusLabel(displayStatus)}</Text>
         </View>
       </View>
       <Text style={tr.title} numberOfLines={1}>{trip.title}</Text>
