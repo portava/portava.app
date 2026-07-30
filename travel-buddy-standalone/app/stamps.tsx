@@ -118,6 +118,7 @@ export default function StampsPage() {
         <View style={styles.center}><ActivityIndicator color={color.signal} /></View>
       ) : (
         <ScrollView
+          testID="main-scroll"
           contentContainerStyle={styles.grid}
           onScroll={navBarScrollHandler}
           scrollEventThrottle={16}

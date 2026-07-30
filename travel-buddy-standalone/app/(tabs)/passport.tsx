@@ -651,6 +651,7 @@ function PassportContent({
         </View>
       </Animated.View>
       <ScrollView
+        testID="main-scroll"
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: bottomInset }}
         showsVerticalScrollIndicator={false}
