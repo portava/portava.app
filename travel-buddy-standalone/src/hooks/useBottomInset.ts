@@ -43,13 +43,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Keyboard, View, type LayoutChangeEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect } from 'expo-router';
 import { NAV_BAR_FILLER_HEIGHT } from './useNavBarCollapse.ts';
 import {
   LAYOVER_PILL_BOTTOM_OFFSET,
   LAYOVER_PILL_HEIGHT,
 } from '../components/layover/layoverPillGeometry.ts';
-import { getActiveLayoverSession } from '../services/layover.ts';
+import { useLayoverSessionContext } from '../context/LayoverSessionContext.tsx';
 
 /** Breathing room above the layover pill top edge (pt). */
 const LAYOVER_PILL_TOP_GAP = 16;
@@ -88,19 +87,9 @@ export function useBottomInset(): number {
  */
 export function useLayoverAwareBottomInset(): number {
   const insets = useSafeAreaInsets();
-  const [layoverActive, setLayoverActive] = useState(false);
+  const { session } = useLayoverSessionContext();
 
-  useFocusEffect(
-    useCallback(() => {
-      let alive = true;
-      getActiveLayoverSession()
-        .then((res) => { if (alive) setLayoverActive(!!res?.session); })
-        .catch(() => { if (alive) setLayoverActive(false); });
-      return () => { alive = false; };
-    }, []),
-  );
-
-  if (layoverActive) {
+  if (session) {
     return insets.bottom + LAYOVER_PILL_BOTTOM_OFFSET + LAYOVER_PILL_HEIGHT + LAYOVER_PILL_TOP_GAP;
   }
   return NAV_BAR_FILLER_HEIGHT + insets.bottom;

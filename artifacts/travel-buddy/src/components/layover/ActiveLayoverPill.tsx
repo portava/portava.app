@@ -8,33 +8,21 @@
 
 // Re-export geometry constants so callers can import from either file.
 export { LAYOVER_PILL_BOTTOM_OFFSET, LAYOVER_PILL_HEIGHT } from './layoverPillGeometry.ts';
-import React, { useCallback, useState } from 'react';
+import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronRight, Plane } from 'lucide-react-native';
 import { color, space, type as t } from '../../theme/tokens.ts';
-import { getActiveLayoverSession, type LayoverSession, type PublicAirport } from '../../services/layover.ts';
+import { useLayoverSessionContext } from '../../context/LayoverSessionContext.tsx';
 import { fmtClock } from './layoverFormat.ts';
 
 export function ActiveLayoverPill() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [active, setActive] = useState<{ session: LayoverSession; airport?: PublicAirport } | null>(null);
+  const { session, airport } = useLayoverSessionContext();
 
-  useFocusEffect(
-    useCallback(() => {
-      let alive = true;
-      getActiveLayoverSession().then((res) => {
-        if (!alive) return;
-        setActive(res?.session ? { session: res.session, airport: res.airport } : null);
-      }).catch(() => { if (alive) setActive(null); });
-      return () => { alive = false; };
-    }, []),
-  );
-
-  if (!active) return null;
-  const { session, airport } = active;
+  if (!session) return null;
   const label = airport?.iataCode ?? session.manualIata ?? 'Layover';
   const depLocal = fmtClock(session.departureTime, airport?.timezone);
 

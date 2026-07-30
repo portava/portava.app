@@ -40,6 +40,7 @@ import { useLayoverAwareBottomInset } from '../../src/hooks/useBottomInset';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useSnapshotCache } from '../../src/hooks/useSnapshotCache';
 import { FeedSkeleton } from '../../src/components/loading/FeedSkeleton';
+import { LayoverSessionProvider } from '../../src/context/LayoverSessionContext';
 
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
 
@@ -710,10 +711,17 @@ const styles = StyleSheet.create({
 // Wrapped: a render throw anywhere in Pulse (the default landing tab) must
 // show the recoverable error screen, never a white screen. Matches
 // discovery.tsx / trips.tsx / trip/[id].tsx.
+//
+// LayoverSessionProvider owns the single getActiveLayoverSession call per
+// focus event; both ActiveLayoverPill and useLayoverAwareBottomInset (used
+// inside <Pulse />) read from the shared context instead of each firing their
+// own fetch.
 export default function PulseScreen() {
   return (
     <ScreenErrorBoundary>
-      <Pulse />
+      <LayoverSessionProvider>
+        <Pulse />
+      </LayoverSessionProvider>
     </ScreenErrorBoundary>
   );
 }
