@@ -29,12 +29,8 @@ jest.mock('../../../services/discovery', () => ({
 
 // NOTE: intentionally exhaustive — the real module imports Supabase.
 jest.mock('../../../services/compass', () => ({
-  postCompassFrontloadEvent:  jest.fn().mockResolvedValue(undefined),
-  postCompassContext:         jest.fn().mockResolvedValue(undefined),
-  postCompassAnalyticsEvent:  jest.fn().mockResolvedValue(undefined),
-  reportCompassViewed:        jest.fn().mockResolvedValue(undefined),
-  fetchCompassSettings:       jest.fn().mockResolvedValue(null),
-  COMPASS_ENGINE_VERSION:     '1',
+  postCompassFrontloadEvent: jest.fn().mockResolvedValue(undefined),
+  reportCompassViewed:       jest.fn().mockResolvedValue(undefined),
 }));
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
@@ -80,12 +76,6 @@ jest.mock('../../DiscoveryWall', () => ({
 }));
 // NOTE: intentional stub — not under test; pulls reanimated animations.
 jest.mock('../PlaceSkeleton', () => ({ PlaceSkeletonList: Null }));
-// NOTE: intentional stub — not under test; calls fetchCompassSettings (Supabase).
-jest.mock('../../compass/CompassOnboardingCard', () => ({ CompassOnboardingCard: Null }));
-// NOTE: intentional stub — not under test; pulls compass analytics + native modules.
-jest.mock('../../compass/CompassPicksSection', () => ({ CompassPicksSection: Null }));
-// NOTE: intentional stub — not under test; pulls @maplibre/maplibre-react-native native module.
-jest.mock('../DiscoveryMapView', () => ({ DiscoveryMapView: Null }));
 
 // ── Imports after mocks ───────────────────────────────────────────────────────
 

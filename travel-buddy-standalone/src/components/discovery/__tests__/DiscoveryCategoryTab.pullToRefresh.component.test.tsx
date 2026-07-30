@@ -46,8 +46,6 @@ jest.mock('../../selectors/GlobalPlacePicker', () => ({
   POPULAR: [],
   GlobalPlacePicker: Null,
 }));
-// NOTE: intentional stub — not under test; pulls @maplibre/maplibre-react-native native module.
-jest.mock('../DiscoveryMapView', () => ({ DiscoveryMapView: Null }));
 
 // ── Imports after mocks ───────────────────────────────────────────────────────
 
@@ -84,7 +82,6 @@ describe('DiscoveryCategoryTab — pull-to-refresh', () => {
         destination="Lisbon"
         onSelectPlace={jest.fn()}
         onAddToPlan={jest.fn()}
-        filters={{ radiusKm: 10, openNow: false, minRating: null }}
         onFiltersChange={jest.fn()}
         onRefresh={onRefreshSpy}
       />,
@@ -113,7 +110,6 @@ describe('DiscoveryCategoryTab — pull-to-refresh', () => {
         destination="Lisbon"
         onSelectPlace={jest.fn()}
         onAddToPlan={jest.fn()}
-        filters={{ radiusKm: 10, openNow: false, minRating: null }}
         onFiltersChange={jest.fn()}
         onRefresh={onRefreshSpy}
       />,
