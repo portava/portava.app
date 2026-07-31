@@ -25,7 +25,9 @@
  *
  *   // Use:
  *   closeThenNavigate(onClose, '/some-path');
- *   // or:
+ *   // or with an Expo Router Href object (pathname + params):
+ *   closeThenNavigate(onClose, { pathname: '/some-path', params: { id } });
+ *   // or with a lambda:
  *   closeThenNavigate(() => { onClose(); }, '/some-path');
  *
  * WHAT THIS CHECK DETECTS

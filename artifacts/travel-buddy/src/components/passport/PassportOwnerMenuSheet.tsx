@@ -14,7 +14,6 @@ import React from 'react';
 import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Alert,
 } from 'react-native';
-import { router } from 'expo-router';
 import {
   PenLine, Camera, Image, FileText, Columns, Star, Eye,
   Stamp, MapPin, Home, Globe, Heart, Calendar,
@@ -24,6 +23,7 @@ import {
   ChevronRight, X, MoreHorizontal, Edit2, Compass, PlusCircle,
   BarChart2,
 } from 'lucide-react-native';
+import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
 import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
 import { space, radius } from '../../theme/tokens.ts';
 
@@ -77,20 +77,6 @@ function close(props: PassportOwnerMenuSheetProps) {
   props.onClose();
 }
 
-// BUG CC fix: navigating in the same tick as onClose() can leave this sheet's
-// native <Modal> (animationType="slide") still dismissing while the newly
-// pushed screen mounts underneath/behind it — on iOS the modal's window stays
-// on top, on web the closing overlay can keep intercepting touches. The
-// symptom is a freshly pushed screen (e.g. Safety & Verification) whose back
-// button never responds until a full reload. Deferring the push until after
-// the slide-close animation has had time to finish avoids the race.
-const MODAL_CLOSE_MS = 320;
-
-function closeThenNavigate(props: PassportOwnerMenuSheetProps, path: string) {
-  props.onClose();
-  setTimeout(() => router.push(path as any), MODAL_CLOSE_MS);
-}
-
 const SECTIONS: Section[] = [
   {
     title: 'Profile',
@@ -125,7 +111,7 @@ const SECTIONS: Section[] = [
         Icon: FileText,
         iconColor: '#059669',
         live: true,
-        action: (p) => { closeThenNavigate(p, '/profile/edit/about'); },
+        action: (p) => { closeThenNavigate(p.onClose, '/profile/edit/about'); },
       },
       {
         key: 'reorder-tabs',
@@ -157,7 +143,7 @@ const SECTIONS: Section[] = [
         Icon: BarChart2,
         iconColor: '#7B5CE5',
         live: true,
-        action: (p) => { closeThenNavigate(p, '/profile/analytics'); },
+        action: (p) => { closeThenNavigate(p.onClose, '/profile/analytics'); },
       },
     ],
   },
@@ -178,7 +164,7 @@ const SECTIONS: Section[] = [
         Icon: MapPin,
         iconColor: '#2563EB',
         live: true,
-        action: (p) => { closeThenNavigate(p, '/profile/travel-history'); },
+        action: (p) => { closeThenNavigate(p.onClose, '/profile/travel-history'); },
       },
       {
         key: 'home-base',
@@ -186,7 +172,7 @@ const SECTIONS: Section[] = [
         Icon: Home,
         iconColor: '#059669',
         live: true,
-        action: (p) => { closeThenNavigate(p, '/profile/edit/home-base'); },
+        action: (p) => { closeThenNavigate(p.onClose, '/profile/edit/home-base'); },
       },
       {
         key: 'languages',
@@ -194,7 +180,7 @@ const SECTIONS: Section[] = [
         Icon: Globe,
         iconColor: '#7C3AED',
         live: true,
-        action: (p) => { closeThenNavigate(p, '/profile/edit/languages'); },
+        action: (p) => { closeThenNavigate(p.onClose, '/profile/edit/languages'); },
       },
       {
         key: 'interests',
@@ -202,7 +188,7 @@ const SECTIONS: Section[] = [
         Icon: Heart,
         iconColor: '#DB2777',
         live: true,
-        action: (p) => { closeThenNavigate(p, '/profile/edit/interests'); },
+        action: (p) => { closeThenNavigate(p.onClose, '/profile/edit/interests'); },
       },
       {
         key: 'availability',
@@ -210,7 +196,7 @@ const SECTIONS: Section[] = [
         Icon: Calendar,
         iconColor: '#059669',
         live: true,
-        action: (p) => { closeThenNavigate(p, '/availability'); },
+        action: (p) => { closeThenNavigate(p.onClose, '/availability'); },
       },
       {
         key: 'verification',
@@ -218,7 +204,7 @@ const SECTIONS: Section[] = [
         Icon: ShieldCheck,
         iconColor: '#2563EB',
         live: true,
-        action: (p) => { closeThenNavigate(p, '/profile/verification'); },
+        action: (p) => { closeThenNavigate(p.onClose, '/profile/verification'); },
       },
       {
         key: 'trust-safety',
@@ -226,7 +212,7 @@ const SECTIONS: Section[] = [
         Icon: Shield,
         iconColor: '#D94040',
         live: true,
-        action: (p) => { closeThenNavigate(p, '/profile/edit/safety'); },
+        action: (p) => { closeThenNavigate(p.onClose, '/profile/edit/safety'); },
       },
     ],
   },
@@ -287,7 +273,7 @@ const SECTIONS: Section[] = [
         Icon: Bookmark,
         iconColor: '#D4A017',
         live: true,
-        action: (p) => { closeThenNavigate(p, '/saved'); },
+        action: (p) => { closeThenNavigate(p.onClose, '/saved'); },
       },
       {
         key: 'drafts',
@@ -308,7 +294,7 @@ const SECTIONS: Section[] = [
         Icon: Users,
         iconColor: '#DB2777',
         live: true,
-        action: (p) => { closeThenNavigate(p, '/followers'); },
+        action: (p) => { closeThenNavigate(p.onClose, '/followers'); },
       },
       {
         key: 'following',
@@ -316,7 +302,7 @@ const SECTIONS: Section[] = [
         Icon: UserPlus,
         iconColor: '#059669',
         live: true,
-        action: (p) => { closeThenNavigate(p, '/following'); },
+        action: (p) => { closeThenNavigate(p.onClose, '/following'); },
       },
       {
         key: 'follow-requests',
@@ -324,7 +310,7 @@ const SECTIONS: Section[] = [
         Icon: UserCheck,
         iconColor: '#2563EB',
         live: true,
-        action: (p) => { closeThenNavigate(p, '/follow-requests'); },
+        action: (p) => { closeThenNavigate(p.onClose, '/follow-requests'); },
       },
       {
         key: 'blocked',
@@ -332,7 +318,10 @@ const SECTIONS: Section[] = [
         Icon: UserX,
         iconColor: '#D94040',
         live: true,
-        action: (p) => { closeThenNavigate(p, '/blocked-users'); },
+        // Demonstrates object-form Href: closeThenNavigate now accepts
+        // { pathname, params } in addition to plain strings, so sheets
+        // that need to pass route params can use the shared helper too.
+        action: (p) => { closeThenNavigate(p.onClose, { pathname: '/blocked-users' }); },
       },
       {
         key: 'muted',
@@ -340,7 +329,7 @@ const SECTIONS: Section[] = [
         Icon: VolumeX,
         iconColor: '#6B6862',
         live: true,
-        action: (p) => { closeThenNavigate(p, '/muted-users'); },
+        action: (p) => { closeThenNavigate(p.onClose, '/muted-users'); },
       },
     ],
   },
@@ -353,7 +342,7 @@ const SECTIONS: Section[] = [
         Icon: Settings,
         iconColor: '#4A4A48',
         live: true,
-        action: (p) => { closeThenNavigate(p, '/profile/edit'); },
+        action: (p) => { closeThenNavigate(p.onClose, '/profile/edit'); },
       },
       {
         key: 'privacy',
@@ -361,7 +350,7 @@ const SECTIONS: Section[] = [
         Icon: Lock,
         iconColor: '#3B7DED',
         live: true,
-        action: (p) => { closeThenNavigate(p, '/profile/edit/privacy'); },
+        action: (p) => { closeThenNavigate(p.onClose, '/profile/edit/privacy'); },
       },
       {
         key: 'notifications',
@@ -385,7 +374,7 @@ const SECTIONS: Section[] = [
         Icon: Compass,
         iconColor: '#3B7DED',
         live: true,
-        action: (p) => { closeThenNavigate(p, '/explore-portava'); },
+        action: (p) => { closeThenNavigate(p.onClose, '/explore-portava'); },
       },
       {
         key: 'sign-out',

@@ -11,12 +11,16 @@
  *
  * Fix: close the sheet first, then defer the navigation until after the
  * close animation has had time to finish.
+ *
+ * The `path` argument accepts the same union that `router.push` accepts:
+ *   - a plain string:                  closeThenNavigate(onClose, '/foo')
+ *   - an Expo Router Href object:      closeThenNavigate(onClose, { pathname: '/foo', params: { id } })
  */
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
 
 const SHEET_CLOSE_MS = 320;
 
-export function closeThenNavigate(close: () => void, path: string): void {
+export function closeThenNavigate(close: () => void, path: string | Href): void {
   close();
   setTimeout(() => router.push(path as any), SHEET_CLOSE_MS);
 }
