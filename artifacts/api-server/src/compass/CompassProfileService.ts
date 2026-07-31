@@ -19,6 +19,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassProfile } from "./types.js";
+import { getDecayedWeights } from "./CompassSearchDecayService.js";
 
 const CACHE_TTL_MS = 2 * 60 * 1_000; // 2 minutes
 const FUTURE_WINDOW_48H_MS = 48 * 60 * 60 * 1_000;
@@ -240,7 +241,11 @@ async function buildProfile(
     currentCity: locState?.city ?? null,
     currentCountry: locState?.country ?? null,
     safeReturnActive: safeReturn.length > 0,
-    categoryWeights: (compassPrefs?.category_weights as Record<string, number>) ?? {},
+    categoryWeights: await getDecayedWeights(
+      db,
+      userId,
+      (compassPrefs?.category_weights as Record<string, number>) ?? {},
+    ),
     ignoredItemIds:  (compassPrefs?.ignored_item_ids as string[]) ?? [],
     mutedHashtags:   (compassPrefs?.muted_hashtags as string[]) ?? [],
     computedAt: nowIso,

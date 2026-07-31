@@ -71,6 +71,7 @@ import {
   buildFallbackFeed,
   isFallbackModeEnabled,
 } from "../compass/CompassFallbackFeedBuilder.js";
+import { logSearchNudge } from "../compass/CompassSearchDecayService.js";
 import {
   TRIP_SURFACE_TYPES,
   PASSPORT_SURFACE_TYPES,
@@ -2527,7 +2528,12 @@ router.post("/compass/signals/search", async (req, res) => {
       const weights: Record<string, number> =
         ((data as any)?.category_weights as Record<string, number>) ?? {};
       // Nudge +1 toward the searched category, clamped to [-10, +10].
-      weights[category] = Math.max(-10, Math.min(10, (weights[category] ?? 0) + 1));
+      const prevWeight = weights[category] ?? 0;
+      weights[category] = Math.max(-10, Math.min(10, prevWeight + 1));
+      // Track only the effective delta: when the weight was already at +10 the
+      // clamp means appliedDelta=0 and we must NOT log it — search_weight must
+      // reflect real contribution, never clamped-out attempts.
+      const appliedDelta = weights[category] - prevWeight;
       const { error } = await sc
         .from("compass_user_preferences")
         .upsert(
@@ -2536,9 +2542,14 @@ router.post("/compass/signals/search", async (req, res) => {
         );
       if (!error) {
         req.log?.debug(
-          { userId: user.id, category, newWeight: weights[category] },
+          { userId: user.id, category, newWeight: weights[category], appliedDelta },
           "compass/signals/search: category weight nudged",
         );
+        // Record the effective nudge in the search-signal decay log so the
+        // profile service can time-decay this contribution after
+        // SEARCH_SIGNAL_DECAY_DAYS.  logSearchNudge is a no-op when
+        // appliedDelta=0 (weight was already at the ±10 clamp).
+        await logSearchNudge(sc, user.id, category, appliedDelta);
       }
     } catch (err) {
       req.log?.warn({ err }, "compass/signals/search: weight nudge failed (non-fatal)");

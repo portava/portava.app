@@ -47,6 +47,13 @@ import {
 
 import { localMinutesOfDay } from "../services/notifications/NotificationPreferenceService.js";
 
+import {
+  applySearchDecay,
+  logSearchNudge,
+  getDecayedWeights,
+  type SearchSignalRow,
+} from "../compass/CompassSearchDecayService.js";
+
 // ── Shared fake DB builder ─────────────────────────────────────────────────────
 
 interface FakeCall {
@@ -103,6 +110,7 @@ function makeFakeDb(
         return { error: null, data: null };
       },
 
+
       delete() {
         calls.push({ table, method: "delete" });
         return {
@@ -121,6 +129,10 @@ function makeFakeDb(
   const db = {
     from(table: string) {
       return chain(table);
+    },
+    async rpc(fn: string, args?: unknown) {
+      calls.push({ table: `rpc:${fn}`, method: "rpc", args });
+      return { data: null, error: null };
     },
   };
   return { db, calls };
@@ -1192,6 +1204,223 @@ describe("CompassAbuseDefenseEngine", () => {
       assert.ok(req, `Expected suspension request for ${uid}`);
       assert.equal(req!["status"], "pending_review");
     }
+  });
+});
+
+// ── CompassSearchDecayService ─────────────────────────────────────────────────
+
+describe("applySearchDecay", () => {
+  const MS_PER_DAY = 86_400_000;
+
+  it("returns unchanged weights when there are no signal rows", () => {
+    const weights = { nightlife: 3, food: 2 };
+    const result = applySearchDecay(weights, [], 7);
+    assert.deepEqual(result, weights);
+  });
+
+  it("returns unchanged weights when halfLifeDays is 0", () => {
+    const weights = { nightlife: 3 };
+    const rows: SearchSignalRow[] = [
+      { category: "nightlife", last_nudge_at: new Date(Date.now() - 14 * MS_PER_DAY).toISOString(), search_weight: 3 },
+    ];
+    const result = applySearchDecay(weights, rows, 0);
+    assert.deepEqual(result, weights);
+  });
+
+  it("does not decay a nudge applied today (age ≈ 0)", () => {
+    const weights = { nightlife: 3 };
+    const rows: SearchSignalRow[] = [
+      { category: "nightlife", last_nudge_at: new Date().toISOString(), search_weight: 3 },
+    ];
+    const result = applySearchDecay(weights, rows, 7);
+    // decay_factor ≈ 1, weightToShed ≈ 0
+    assert.equal(result["nightlife"], 3);
+  });
+
+  it("halves search contribution after exactly one half-life", () => {
+    const halfLifeDays = 7;
+    const nudgeMs = Date.now() - halfLifeDays * MS_PER_DAY;
+    const weights = { nightlife: 4 };
+    const rows: SearchSignalRow[] = [
+      {
+        category:      "nightlife",
+        last_nudge_at: new Date(nudgeMs).toISOString(),
+        search_weight: 4,
+      },
+    ];
+    const result = applySearchDecay(weights, rows, halfLifeDays, Date.now());
+    // effective_sw = round(4 * 0.5) = 2; weightToShed = 2; result = 4 − 2 = 2
+    assert.equal(result["nightlife"], 2);
+  });
+
+  it("fully decays after four half-lives (rounds to 0 shed)", () => {
+    const halfLifeDays = 7;
+    const nudgeMs = Date.now() - 4 * halfLifeDays * MS_PER_DAY; // 28 days ago
+    const weights = { nightlife: 2 };
+    const rows: SearchSignalRow[] = [
+      {
+        category:      "nightlife",
+        last_nudge_at: new Date(nudgeMs).toISOString(),
+        search_weight: 2,
+      },
+    ];
+    const result = applySearchDecay(weights, rows, halfLifeDays, Date.now());
+    // effective_sw = round(2 * 0.5^4) = round(0.125) = 0; weightToShed = 2; result = max(-10, 2−2) = 0
+    assert.equal(result["nightlife"], 0);
+  });
+
+  it("does not decay categories that have no search signal row", () => {
+    const weights = { nightlife: 3, food: 5 };
+    const rows: SearchSignalRow[] = [
+      { category: "nightlife", last_nudge_at: new Date(Date.now() - 14 * MS_PER_DAY).toISOString(), search_weight: 3 },
+    ];
+    const result = applySearchDecay(weights, rows, 7, Date.now());
+    // food has no search signal — untouched
+    assert.equal(result["food"], 5);
+  });
+
+  it("clamps result at WEIGHT_MIN (−10), never below", () => {
+    // contrived: search_weight huge vs actual stored weight
+    const weights = { nightlife: 1 };
+    const rows: SearchSignalRow[] = [
+      { category: "nightlife", last_nudge_at: new Date(Date.now() - 28 * MS_PER_DAY).toISOString(), search_weight: 20 },
+    ];
+    const result = applySearchDecay(weights, rows, 7, Date.now());
+    assert.ok(result["nightlife"] >= -10, "Must be ≥ −10");
+  });
+
+  it("skips rows with invalid last_nudge_at (NaN date)", () => {
+    const weights = { nightlife: 3 };
+    const rows: SearchSignalRow[] = [
+      { category: "nightlife", last_nudge_at: "not-a-date", search_weight: 3 },
+    ];
+    const result = applySearchDecay(weights, rows, 7);
+    assert.equal(result["nightlife"], 3);
+  });
+
+  it("skips rows with search_weight = 0", () => {
+    const weights = { nightlife: 3 };
+    const rows: SearchSignalRow[] = [
+      { category: "nightlife", last_nudge_at: new Date(Date.now() - 14 * MS_PER_DAY).toISOString(), search_weight: 0 },
+    ];
+    const result = applySearchDecay(weights, rows, 7);
+    assert.equal(result["nightlife"], 3);
+  });
+});
+
+describe("logSearchNudge", () => {
+  it("calls upsert_compass_search_signal RPC with correct args for delta=1", async () => {
+    const { db, calls } = makeFakeDb({});
+
+    await logSearchNudge(db as any, "user-1", "nightlife", 1);
+
+    const rpc = calls.find((c) => c.table === "rpc:upsert_compass_search_signal");
+    assert.ok(rpc, "Expected RPC call to upsert_compass_search_signal");
+    assert.equal((rpc!.args as any).p_user_id, "user-1");
+    assert.equal((rpc!.args as any).p_category, "nightlife");
+    assert.equal((rpc!.args as any).p_delta, 1);
+  });
+
+  it("is a no-op when delta=0 (weight was already at the ±10 clamp)", async () => {
+    const { db, calls } = makeFakeDb({});
+
+    await logSearchNudge(db as any, "user-1", "nightlife", 0);
+
+    const rpc = calls.find((c) => c.table === "rpc:upsert_compass_search_signal");
+    assert.equal(rpc, undefined, "No RPC call expected when delta is 0");
+  });
+
+  it("is a no-op when delta is negative", async () => {
+    const { db, calls } = makeFakeDb({});
+
+    await logSearchNudge(db as any, "user-1", "nightlife", -1);
+
+    const rpc = calls.find((c) => c.table === "rpc:upsert_compass_search_signal");
+    assert.equal(rpc, undefined, "No RPC call expected when delta is negative");
+  });
+
+  it("search_weight stays bounded when weight is already at max (+10)", () => {
+    // Simulate 20 nudges where the weight was already at +10: all deltas are 0.
+    // applySearchDecay must never over-subtract because search_weight was never
+    // incremented beyond the initial effective nudges.
+    const MS_PER_DAY = 86_400_000;
+    const staleDate = new Date(Date.now() - 14 * MS_PER_DAY).toISOString();
+    const weights = { nightlife: 10 };
+    // search_weight=2 (only 2 real effective nudges before cap was hit)
+    const rows: SearchSignalRow[] = [
+      { category: "nightlife", last_nudge_at: staleDate, search_weight: 2 },
+    ];
+    const result = applySearchDecay(weights, rows, 7, Date.now());
+    // effective_sw = round(2 * 0.5^2) = round(0.5) = 1 (rounds to 0 or 1 depending on impl)
+    // weightToShed ≤ 2; result = 10 − weightToShed ≥ 8
+    assert.ok(result["nightlife"] >= 8, `Expected ≥8 after decay of capped weight; got ${result["nightlife"]}`);
+  });
+
+  it("never drives a category below 0 when weight was earned legitimately (not just from search)", () => {
+    // weight=5 of which search contributed 2 (the rest came from feedback/outcome)
+    const MS_PER_DAY = 86_400_000;
+    const staleDate = new Date(Date.now() - 28 * MS_PER_DAY).toISOString(); // 4 half-lives
+    const weights = { food: 5 };
+    const rows: SearchSignalRow[] = [
+      { category: "food", last_nudge_at: staleDate, search_weight: 2 },
+    ];
+    const result = applySearchDecay(weights, rows, 7, Date.now());
+    // effective_sw = round(2 * 0.5^4) = 0; weightToShed = 2; result = 5 − 2 = 3
+    assert.equal(result["food"], 3);
+    assert.ok(result["food"] > 0, "Non-search contribution must not be removed");
+  });
+});
+
+describe("getDecayedWeights", () => {
+  it("returns original weights when decay flag is disabled", async () => {
+    const tableData: Record<string, Record<string, unknown>[]> = {
+      feature_flags: [
+        { flag: "SEARCH_SIGNAL_DECAY_DAYS", enabled: false, numeric_value: 7 },
+      ],
+      compass_search_signal_log: [],
+    };
+    const { db } = makeFakeDb(tableData);
+
+    const result = await getDecayedWeights(db as any, "user-1", { nightlife: 4 });
+    assert.equal(result["nightlife"], 4);
+  });
+
+  it("returns original weights when there are no log rows", async () => {
+    const tableData: Record<string, Record<string, unknown>[]> = {
+      feature_flags: [
+        { flag: "SEARCH_SIGNAL_DECAY_DAYS", enabled: true, numeric_value: 7 },
+      ],
+      compass_search_signal_log: [],
+    };
+    const { db } = makeFakeDb(tableData);
+
+    const result = await getDecayedWeights(db as any, "user-1", { food: 5 });
+    assert.equal(result["food"], 5);
+  });
+
+  it("decays weight when a stale search signal exists", async () => {
+    const staleDate = new Date(Date.now() - 14 * 86_400_000).toISOString(); // 14 days = 2 half-lives
+    const tableData: Record<string, Record<string, unknown>[]> = {
+      feature_flags: [
+        { flag: "SEARCH_SIGNAL_DECAY_DAYS", enabled: true, numeric_value: 7 },
+      ],
+      compass_search_signal_log: [
+        { user_id: "user-1", category: "nightlife", last_nudge_at: staleDate, search_weight: 4 },
+      ],
+    };
+    const { db } = makeFakeDb(tableData);
+
+    const result = await getDecayedWeights(db as any, "user-1", { nightlife: 4 });
+    // effective_sw = round(4 * 0.5^2) = round(1) = 1; weightToShed = 3; result = 4 − 3 = 1
+    assert.equal(result["nightlife"], 1);
+  });
+
+  it("returns original weights when DB throws (non-fatal)", async () => {
+    const brokenDb = {
+      from() { throw new Error("db error"); },
+    };
+    const result = await getDecayedWeights(brokenDb as any, "user-1", { nightlife: 3 });
+    assert.equal(result["nightlife"], 3);
   });
 });
 
