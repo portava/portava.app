@@ -77,6 +77,28 @@ export function resolveEventsOnError(isDev: boolean, fallback: CityEvent[]): Cit
 }
 
 /**
+ * Convert a CityEvent startAt value to a numeric millisecond timestamp for
+ * sorting, handling all edge cases that break the native comparator:
+ *
+ *   • empty string ('')      → new Date('').getTime() = NaN  ← the root-cause bug
+ *   • null / undefined       → NaN
+ *   • any other invalid ISO  → NaN
+ *
+ * NaN returned from a comparator is coerced to 0 by V8's sort, meaning the
+ * affected item appears "equal" to every other item and can land anywhere in
+ * the output — producing the observed out-of-order list (11 AM before 10:24 AM,
+ * 6 PM stranded after 11:34 PM, etc.).
+ *
+ * We replace NaN with Infinity so events without a known start time sort
+ * consistently to the END of the list rather than silently breaking the order
+ * of events around them.
+ */
+function safeStartMs(startAt: string | null | undefined): number {
+  if (!startAt) return Infinity;
+  const ms = new Date(startAt).getTime();
+  return isNaN(ms) ? Infinity : ms;
+}
+/**
  * Result shape returned by fetchCityEvents.
  * `sessionId` is the UUID the server stamped on the impression batch — pass it
  * through to any recordOutcome() call so the learning loop can join impressions
@@ -108,22 +130,6 @@ export function todayBoundsIso(now = new Date()): { dateFrom: string; dateTo: st
   return { dateFrom: start.toISOString(), dateTo: end.toISOString() };
 }
 
-/**
- * Sort events by start time, ascending. Events with a missing/unparseable
- * `startAt` (NaN from `getTime()`) are pushed to the end of the list instead
- * of relying on stable-sort "leave in place" behaviour — a NaN result from a
- * comparator is treated as "equal" by `Array.prototype.sort`, which silently
- * strands malformed-timestamp events near their original fetch-order
- * position rather than a well-defined spot. Never mutates the input array.
- */
-export function sortByStartAt<T extends { startAt: string }>(events: T[]): T[] {
-  const key = (e: T): number => {
-    const t = new Date(e.startAt).getTime();
-    return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
-  };
-  return [...events].sort((a, b) => key(a) - key(b));
-}
-
 export async function fetchCityEvents(
   base: string,
   token: string,
@@ -146,4 +152,18 @@ export async function fetchCityEvents(
     mapApiEvent(e as Record<string, unknown>, city, currentCitySlug),
   );
   return { events, sessionId: data?.sessionId };
+}
+
+/**
+ * Sort a CityEvent array by ascending start time.
+ *
+ * Safe against missing, empty, or invalid `startAt` values — events without a
+ * parseable start time are placed at the END of the list instead of corrupting
+ * the position of adjacent valid events.
+ *
+ * Use this instead of an inline `.sort()` comparator wherever CityEvents need
+ * chronological ordering (Full Day list, Happening Now, Today Around You band).
+ */
+export function sortEventsByStartTime(events: CityEvent[]): CityEvent[] {
+  return [...events].sort((a, b) => safeStartMs(a.startAt) - safeStartMs(b.startAt));
 }
