@@ -432,7 +432,7 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
             <FeaturedBadge category={item.featuredByPortava} size="sm" dark />
           ) : null}
           {/* Passport-stamp label — city name */}
-          <View style={s.postcardLabel}>
+          <View style={s.postcardLabel} testID="postcard-label">
             <MapPin size={9} color={color.onInk} />
             <Text style={s.postcardLabelText}>{item.city?.toUpperCase() ?? 'POSTCARD'}</Text>
           </View>
