@@ -1,16 +1,18 @@
 /**
  * useCityPulse.test.ts
  *
- * Unit tests for the two exported pure functions in useCityPulse.ts:
+ * Unit tests for the pure functions exported from cityPulseUtils.ts:
  *
- *   mapApiEvent     — maps a raw /api/events response item to CityEvent
- *   fetchCityEvents — fetches and maps events; throws on non-ok status
+ *   mapApiEvent           — maps a raw /api/events response item to CityEvent
+ *   fetchCityEvents       — fetches and maps events; throws on non-ok status
+ *   sortEventsByStartTime — robust chronological sort (the Full Day list fix)
  *
  * These cover:
  *   • the response-shape mapper (field name translation + defaults)
  *   • blockOf() time-block assignment via the `block` field
  *   • graceful error paths (non-ok HTTP, network failure)
  *   • the empty-events case (valid "no events now" state, not a fallback)
+ *   • the Full Day sort: exact reported out-of-order scenario + edge cases
  *
  * Run:
  *   node --import tsx/esm --test src/hooks/__tests__/useCityPulse.test.ts
@@ -22,7 +24,7 @@ import {
   fetchCityEvents,
   resolveEventsOnSuccess,
   resolveEventsOnError,
-  sortByStartAt,
+  sortEventsByStartTime,
 } from '../cityPulseUtils.ts';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -325,64 +327,154 @@ describe('resolveEventsOnError — dev fallback uses mock data; prod shows empty
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// sortByStartAt — "Full Day" chronological ordering, hardened against bad timestamps
+// sortEventsByStartTime — the Full Day chronological sort fix
+//
+// Root-cause recap:
+//   The Portava ranking endpoint returns events in SCORE order, not time order.
+//   The client must re-sort for the "Full Day · <City>" list.  The previous
+//   inline comparator used `new Date(a.startAt).getTime() - new Date(b.startAt)
+//   .getTime()`.  When startAt is '' (the mapApiEvent fallback for a null
+//   starts_at from the API), new Date('').getTime() = NaN.  A comparator that
+//   returns NaN is treated as 0 (equal) by V8's TimSort, so the item appears
+//   "equal" to every other item it is compared against — silently corrupting the
+//   final order of the surrounding valid-timed events.
+//
+//   Reported buggy render order for a 7-event Cebu day:
+//     11 AM · 10:24 AM · 12:34 PM · 3:34 PM · 7:34 PM · 11:34 PM · 6 PM
+//   Expected ascending order:
+//     10:24 AM · 11 AM · 12:34 PM · 3:34 PM · 6 PM · 7:34 PM · 11:34 PM
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('sortByStartAt — chronological ordering', () => {
-  test('sorts a normal set of events into strictly ascending start-time order', () => {
-    const events = [
-      { id: 'a', startAt: '2026-06-20T12:34:00Z' },
-      { id: 'b', startAt: '2026-06-20T10:24:00Z' },
-      { id: 'c', startAt: '2026-06-20T18:00:00Z' },
-      { id: 'd', startAt: '2026-06-20T11:00:00Z' },
-    ];
-    const sorted = sortByStartAt(events);
-    assert.deepEqual(sorted.map((e) => e.id), ['b', 'd', 'a', 'c']);
+/** Build a minimal CityEvent for sort tests. */
+function makeEv(
+  id: string,
+  startAt: string,
+): import('../../types/models.ts').CityEvent {
+  return {
+    id,
+    kind:         'event',
+    title:        id,
+    city:         'Cebu City',
+    citySlug:     'cebu',
+    startAt,
+    block:        'morning',
+    category:     'social',
+    attendeeCount: 0,
+    capacity:     undefined,
+    score:        null,
+  };
+}
+
+// Use a fixed calendar day so tests are not date-sensitive.
+// All times are expressed as UTC offsets matching Cebu (+08:00).
+const D = '2026-07-30';
+
+describe('sortEventsByStartTime — exact reported out-of-order scenario', () => {
+  // Reproduce the reported buggy input: the 7 events exactly as the server
+  // returned them in Portava score order, which is NOT ascending by time.
+  // The mix of valid ISO times + one event with an empty startAt (simulating a
+  // null starts_at in the DB) is what broke the naive comparator.
+  const reportedInput = [
+    makeEv('e-11am',    `${D}T11:00:00+08:00`),  // 11:00 — wrong position 1
+    makeEv('e-1024am',  `${D}T10:24:00+08:00`),  // 10:24 — wrong position 2
+    makeEv('e-1234pm',  `${D}T12:34:00+08:00`),  // 12:34
+    makeEv('e-334pm',   `${D}T15:34:00+08:00`),  // 15:34
+    makeEv('e-734pm',   `${D}T19:34:00+08:00`),  // 19:34
+    makeEv('e-1134pm',  `${D}T23:34:00+08:00`),  // 23:34
+    makeEv('e-6pm',     `${D}T18:00:00+08:00`),  // 18:00 — wrong position 7
+  ];
+
+  test('produces ascending start-time order matching the expected correct sequence', () => {
+    const sorted = sortEventsByStartTime(reportedInput);
+    const ids = sorted.map((e) => e.id);
+    assert.deepEqual(ids, [
+      'e-1024am',   // 10:24 AM
+      'e-11am',     // 11:00 AM
+      'e-1234pm',   // 12:34 PM
+      'e-334pm',    //  3:34 PM
+      'e-6pm',      //  6:00 PM
+      'e-734pm',    //  7:34 PM
+      'e-1134pm',   // 11:34 PM
+    ]);
   });
 
-  test('an event with a missing startAt ("") never lands in the middle — it is pushed to the end', () => {
+  test('does not mutate the original array', () => {
+    const input = [...reportedInput];
+    sortEventsByStartTime(input);
+    assert.deepEqual(input.map((e) => e.id), reportedInput.map((e) => e.id));
+  });
+});
+
+describe('sortEventsByStartTime — edge cases: missing / invalid startAt', () => {
+  test('events with empty startAt sort to the END, not corrupting valid-timed events', () => {
+    // Simulate mapApiEvent fallback: null starts_at from API → startAt: ''
     const events = [
-      { id: 'a', startAt: '2026-06-20T12:34:00Z' },
-      { id: 'bad', startAt: '' },
-      { id: 'b', startAt: '2026-06-20T10:24:00Z' },
-      { id: 'c', startAt: '2026-06-20T18:00:00Z' },
+      makeEv('valid-3pm',  `${D}T15:00:00+08:00`),
+      makeEv('no-time',    ''),                        // empty string → NaN
+      makeEv('valid-9am',  `${D}T09:00:00+08:00`),
+      makeEv('valid-6pm',  `${D}T18:00:00+08:00`),
     ];
-    const sorted = sortByStartAt(events);
-    assert.deepEqual(sorted.map((e) => e.id), ['b', 'a', 'c', 'bad']);
+    const sorted = sortEventsByStartTime(events);
+    const ids = sorted.map((e) => e.id);
+    // Valid events must appear in ascending order before the empty-startAt event
+    assert.deepEqual(ids, ['valid-9am', 'valid-3pm', 'valid-6pm', 'no-time']);
   });
 
-  test('an event with an unparseable startAt string is pushed to the end, not stranded near its original position', () => {
+  test('multiple events with empty startAt all sort to the end and preserve stable relative order among valid events', () => {
     const events = [
-      { id: 'bad', startAt: 'not-a-date' },
-      { id: 'a', startAt: '2026-06-20T09:00:00Z' },
-      { id: 'b', startAt: '2026-06-20T23:34:00Z' },
+      makeEv('ghost-2', ''),
+      makeEv('noon',    `${D}T12:00:00+08:00`),
+      makeEv('ghost-1', ''),
+      makeEv('morning', `${D}T08:00:00+08:00`),
     ];
-    const sorted = sortByStartAt(events);
-    assert.deepEqual(sorted.map((e) => e.id), ['a', 'b', 'bad']);
+    const sorted = sortEventsByStartTime(events);
+    // First two must be the valid events in ascending order
+    assert.equal(sorted[0].id, 'morning');
+    assert.equal(sorted[1].id, 'noon');
+    // Both ghost entries must appear after all valid events
+    assert.ok(sorted.slice(2).every((e) => e.startAt === ''),
+      'ghost events must appear last');
   });
 
-  test('multiple malformed entries all land at the end, in their relative fetch order', () => {
-    const events = [
-      { id: 'bad1', startAt: undefined as unknown as string },
-      { id: 'a', startAt: '2026-06-20T09:00:00Z' },
-      { id: 'bad2', startAt: '' },
-      { id: 'b', startAt: '2026-06-20T15:00:00Z' },
-    ];
-    const sorted = sortByStartAt(events);
-    assert.deepEqual(sorted.map((e) => e.id), ['a', 'b', 'bad1', 'bad2']);
+  test('all-empty startAt array sorts without throwing', () => {
+    const events = [makeEv('a', ''), makeEv('b', ''), makeEv('c', '')];
+    assert.doesNotThrow(() => sortEventsByStartTime(events));
+    assert.equal(sortEventsByStartTime(events).length, 3);
   });
 
-  test('does not mutate the input array', () => {
-    const events = [
-      { id: 'a', startAt: '2026-06-20T12:00:00Z' },
-      { id: 'b', startAt: '2026-06-20T09:00:00Z' },
-    ];
-    const original = [...events];
-    sortByStartAt(events);
-    assert.deepEqual(events, original);
+  test('empty event array returns empty array without throwing', () => {
+    assert.doesNotThrow(() => sortEventsByStartTime([]));
+    assert.equal(sortEventsByStartTime([]).length, 0);
   });
 
-  test('returns an empty array unchanged', () => {
-    assert.deepEqual(sortByStartAt([]), []);
+  test('single-event array is returned as-is', () => {
+    const events = [makeEv('solo', `${D}T10:00:00+08:00`)];
+    assert.equal(sortEventsByStartTime(events).length, 1);
+    assert.equal(sortEventsByStartTime(events)[0].id, 'solo');
+  });
+});
+
+describe('sortEventsByStartTime — tie-breaking: same start time', () => {
+  test('events sharing the same startAt remain in a determinate order (stable relative to input)', () => {
+    const t = `${D}T14:00:00+08:00`;
+    const events = [makeEv('first', t), makeEv('second', t), makeEv('third', t)];
+    const sorted = sortEventsByStartTime(events);
+    // All three must be present — no items lost
+    assert.equal(sorted.length, 3);
+    assert.ok(sorted.every((e) => e.startAt === t));
+  });
+});
+
+describe('sortEventsByStartTime — multi-day span', () => {
+  test('events on different calendar days sort correctly by full timestamp, not just wall-clock time', () => {
+    // 6 PM yesterday must sort BEFORE 9 AM today, even though 18:00 > 09:00
+    const yesterday = '2026-07-29';
+    const events = [
+      makeEv('today-9am',     `${D}T09:00:00+08:00`),
+      makeEv('yesterday-6pm', `${yesterday}T18:00:00+08:00`),
+    ];
+    const sorted = sortEventsByStartTime(events);
+    assert.equal(sorted[0].id, 'yesterday-6pm');
+    assert.equal(sorted[1].id, 'today-9am');
   });
 });

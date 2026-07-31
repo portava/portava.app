@@ -30,7 +30,7 @@ import { CalendarDays, Radio } from 'lucide-react-native';
 import type { CityEvent } from '../types/models.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { FitsCard } from './PulseFits.tsx';
-import { sortByStartAt } from '../hooks/cityPulseUtils.ts';
+import { sortEventsByStartTime } from '../hooks/cityPulseUtils.ts';
 
 // ── Types & constants ─────────────────────────────────────────────────────────
 
@@ -125,19 +125,19 @@ export function ExploreTodaySection({
 
   const happeningNow = useMemo(() => {
     const nowMs = Date.now();
-    return sortByStartAt(events.filter((e) => isHappeningNow(e, nowMs)));
+    return sortEventsByStartTime(events.filter((e) => isHappeningNow(e, nowMs)));
   }, [events]);
 
   const bandEvents = useMemo(
-    () => sortByStartAt(events.filter((e) => e.block === band)),
+    () => sortEventsByStartTime(events.filter((e) => e.block === band)),
     [events, band],
   );
 
-  // Chronological "Full Day" list. Uses sortByStartAt (not a raw
+  // Chronological "Full Day" list. Uses sortEventsByStartTime (not a raw
   // getTime()-diff comparator) so an event with a missing/unparseable
   // startAt is deterministically pushed to the end instead of a NaN
   // comparator result stranding it near its original fetch-order position.
-  const chronEvents = useMemo(() => sortByStartAt(events), [events]);
+  const chronEvents = useMemo(() => sortEventsByStartTime(events), [events]);
 
   // ── Absolute fallback — server returned zero events ────────────────────────
   if (events.length === 0) {

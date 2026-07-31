@@ -19,7 +19,7 @@ import { filterPulse } from '../lib/recommend.ts';
 import { resolveStatus } from '../lib/availability.ts';
 import { useAvailabilityStore } from '../context/AvailabilityStore.tsx';
 import { freshToken } from '../services/apiToken.ts';
-export { mapApiEvent, fetchCityEvents, resolveEventsOnSuccess, resolveEventsOnError } from './cityPulseUtils.ts';
+export { mapApiEvent, fetchCityEvents, resolveEventsOnSuccess, resolveEventsOnError, sortEventsByStartTime } from './cityPulseUtils.ts';
 export type { FetchCityEventsResult } from './cityPulseUtils.ts';
 import { fetchCityEvents, resolveEventsOnSuccess, resolveEventsOnError } from './cityPulseUtils.ts';
 
