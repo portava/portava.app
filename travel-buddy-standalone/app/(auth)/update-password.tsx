@@ -8,9 +8,14 @@
  * query params and fires a PASSWORD_RECOVERY onAuthStateChange event,
  * which the root layout detects and navigates here.  This screen then
  * calls supabase.auth.updateUser to set the new password.
+ *
+ * On mount, the screen verifies that a recovery session is actually
+ * present before showing the password form.  If the session is missing
+ * after SESSION_TIMEOUT_MS, it shows a clear expiry error so the user
+ * knows to request a new reset link.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -27,9 +32,14 @@ import { supabase } from '../../src/lib/supabase';
 import { color, space, radius, typography } from '../../src/theme/tokens';
 
 const MIN_PASSWORD_LENGTH = 8;
+/** How long to wait for a recovery session before showing the expiry error. */
+const SESSION_TIMEOUT_MS = 5000;
+
+type SessionState = 'checking' | 'ready' | 'expired';
 
 export default function UpdatePassword() {
   const insets = useSafeAreaInsets();
+  const [sessionState, setSessionState] = useState<SessionState>('checking');
   const [password, setPassword]       = useState('');
   const [confirm, setConfirm]         = useState('');
   const [showPw, setShowPw]           = useState(false);
@@ -37,6 +47,52 @@ export default function UpdatePassword() {
   const [busy, setBusy]               = useState(false);
   const [error, setError]             = useState<string | null>(null);
   const [success, setSuccess]         = useState(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    let timeoutId: ReturnType<typeof setTimeout>;
+
+    async function checkSession() {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!mountedRef.current) return;
+        if (data.session) {
+          setSessionState('ready');
+        } else {
+          // Session not yet present — wait for the timeout, then expire.
+          timeoutId = setTimeout(() => {
+            if (mountedRef.current) setSessionState('expired');
+          }, SESSION_TIMEOUT_MS);
+        }
+      } catch {
+        if (mountedRef.current) {
+          timeoutId = setTimeout(() => {
+            if (mountedRef.current) setSessionState('expired');
+          }, SESSION_TIMEOUT_MS);
+        }
+      }
+    }
+
+    checkSession();
+
+    // Also listen for the recovery auth event in case the session arrives
+    // slightly after mount (deep-link handler race).
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!mountedRef.current) return;
+      if ((event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN') && session) {
+        clearTimeout(timeoutId);
+        setSessionState('ready');
+      }
+    });
+
+    return () => {
+      mountedRef.current = false;
+      clearTimeout(timeoutId);
+      subscription.unsubscribe();
+    };
+  }, []);
 
   async function handleUpdate() {
     setError(null);
@@ -72,6 +128,42 @@ export default function UpdatePassword() {
         <CheckCircle size={56} color={color.success} />
         <Text style={styles.successTitle}>Password updated!</Text>
         <Text style={styles.successSub}>Redirecting you to sign in…</Text>
+      </View>
+    );
+  }
+
+  if (sessionState === 'checking') {
+    return (
+      <View style={[styles.center, { paddingTop: insets.top }]}>
+        <ActivityIndicator size="large" color={color.ink} />
+        <Text style={styles.checkingText}>Verifying your reset link…</Text>
+      </View>
+    );
+  }
+
+  if (sessionState === 'expired') {
+    return (
+      <View style={[styles.center, { paddingTop: insets.top, paddingHorizontal: space.xl }]}>
+        <Text style={styles.expiredTitle}>Link expired</Text>
+        <Text style={styles.expiredBody}>
+          Your reset link has expired. Please request a new one.
+        </Text>
+        <Pressable
+          style={styles.btn}
+          onPress={() => router.replace('/(auth)/forgot-password' as any)}
+          accessibilityRole="button"
+          accessibilityLabel="Go to forgot password"
+        >
+          <Text style={styles.btnText}>Request a new link</Text>
+        </Pressable>
+        <Pressable
+          style={styles.cancelBtn}
+          onPress={() => router.replace('/(auth)' as any)}
+          accessibilityRole="button"
+          accessibilityLabel="Back to sign in"
+        >
+          <Text style={styles.cancelText}>Back to sign in</Text>
+        </Pressable>
       </View>
     );
   }
@@ -219,6 +311,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: space.sm,
     marginBottom: space.md,
+    width: '100%',
   },
   btnText: {
     ...typography.button,
@@ -240,5 +333,22 @@ const styles = StyleSheet.create({
   successSub: {
     ...typography.body,
     color: color.mute,
+  },
+  checkingText: {
+    ...typography.body,
+    color: color.mute,
+    marginTop: space.sm,
+  },
+  expiredTitle: {
+    ...typography.pageTitle,
+    color: color.ink,
+    marginBottom: space.sm,
+    textAlign: 'center',
+  },
+  expiredBody: {
+    ...typography.body,
+    color: color.mute,
+    textAlign: 'center',
+    marginBottom: space.xl,
   },
 });
