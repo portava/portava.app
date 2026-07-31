@@ -97,14 +97,10 @@ describe('DiscoveryCategoryTab — pull-to-refresh', () => {
     expect(onRefreshSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('clears the refreshing indicator once the re-fetch resolves', async () => {
-    // Note: DiscoveryCategoryTab's handleRefresh calls setPlaces([]) which unmounts
-    // the FlatList while the re-fetch is in-flight (places.length===0 → empty branch).
-    // We therefore cannot check refreshing===true through the FlatList; instead we
-    // confirm the indicator resolves by: (a) verifying the FlatList starts with
-    // refreshing=false, (b) holding the re-fetch open with a pending Promise,
-    // (c) resolving it, and (d) waiting for the FlatList to reappear — that
-    // reappearance only happens after setPlaces(newData) + setRefreshing(false) fire.
+  it('keeps the list visible while refreshing and clears the spinner once the re-fetch resolves', async () => {
+    // handleRefresh no longer calls setPlaces([]), so the FlatList stays mounted
+    // throughout the refresh cycle. We can therefore check refreshing===true
+    // in-flight and refreshing===false after resolution — all on the same node.
     await render(
       <DiscoveryCategoryTab
         category="places"
@@ -129,14 +125,25 @@ describe('DiscoveryCategoryTab — pull-to-refresh', () => {
       }),
     );
 
-    // Trigger refresh — FlatList unmounts because setPlaces([]) is called.
-    await act(async () => { scroll.props.refreshControl.props.onRefresh(); });
+    // Trigger refresh — FlatList stays mounted because setPlaces([]) is NOT called.
+    // Flush one microtask so the synchronous setRefreshing(true) commits before
+    // we assert, without letting the pending fetch Promise itself resolve.
+    await act(async () => {
+      scroll.props.refreshControl.props.onRefresh();
+      await Promise.resolve();
+    });
+
+    // Spinner is active while the fetch is in-flight.
+    await waitFor(() =>
+      expect(screen.getByTestId('main-scroll').props.refreshControl.props.refreshing).toBe(true),
+    );
 
     // Resolve the refresh fetch — setPlaces(filtered) + setRefreshing(false) fire.
     await act(async () => { resolveFetch(); });
 
-    // FlatList reappears only after places are loaded and refreshing is cleared.
-    const reloaded = await screen.findByTestId('main-scroll');
-    expect(reloaded.props.refreshControl.props.refreshing).toBe(false);
+    // Spinner is cleared and the FlatList is still visible.
+    await waitFor(() =>
+      expect(screen.getByTestId('main-scroll').props.refreshControl.props.refreshing).toBe(false),
+    );
   });
 });

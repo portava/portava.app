@@ -365,7 +365,6 @@ export function DiscoveryCategoryTab({
 
   const handleRefresh = () => {
     setRefreshing(true);
-    setPlaces([]);
     load(1, filters, false);
     onRefresh?.();
   };

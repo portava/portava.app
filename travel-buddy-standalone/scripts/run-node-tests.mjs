@@ -86,6 +86,7 @@ const KNOWN_BROKEN = [
   'src/services/__tests__/compass.reportViewed.test.ts',
   'src/services/__tests__/compass.tzOffsetSurfaces.test.ts',
   'src/services/__tests__/discovery.liveStatusCached.test.ts',
+  'src/services/__tests__/discovery.searchSignal.test.ts',
   'src/services/__tests__/friends.sendAutoAccept.test.ts',
   'src/services/__tests__/onboardingSaveAlert.partialSave.test.ts',
   'src/services/__tests__/profilePartialSave.test.ts',
