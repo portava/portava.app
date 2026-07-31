@@ -31,6 +31,7 @@ jest.mock('../../../services/discovery', () => ({
 jest.mock('../../../services/compass', () => ({
   postCompassFrontloadEvent:  jest.fn().mockResolvedValue(undefined),
   reportCompassViewed:        jest.fn().mockResolvedValue(undefined),
+  postCompassContext:         jest.fn().mockResolvedValue(undefined),
   fetchCompassSettings:       jest.fn().mockResolvedValue({ data: null, error: null }),
   fetchCompassPreferences:    jest.fn().mockResolvedValue({ data: null, error: null }),
 }));
