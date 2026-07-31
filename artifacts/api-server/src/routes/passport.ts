@@ -335,10 +335,15 @@ router.get("/users/:username/passport", async (req, res) => {
         const ts = await computeTrustScore(targetId, sc);
         trustScore = ts.score;
         trustLabel = ts.label;
-        // Only include the breakdown for the profile owner — it contains improvement hints
-        // that would be meaningless (or confusing) on a public profile view.
         if (isMe) {
+          // Owner gets the full breakdown including personal improvement hints.
           trustScoreBreakdown = ts.breakdown;
+        } else if (buddyProvider !== null) {
+          // Public viewer on a buddy-provider profile gets the factor list but
+          // with hints stripped — they're irrelevant to a traveler evaluating trust.
+          trustScoreBreakdown = {
+            factors: ts.breakdown.factors.map(f => ({ ...f, hint: null })),
+          };
         }
       } catch {
         /* non-critical — passport still served without trust score */

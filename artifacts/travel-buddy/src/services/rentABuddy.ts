@@ -49,6 +49,21 @@ export interface BuddyProfile {
   /** Approximate (neighbourhood-level) meetup-base pin, when the buddy has set one. */
   meetupBaseLat?: number | null;
   meetupBaseLng?: number | null;
+  /** Trust score (0–100) computed server-side. Null when not yet computed. */
+  trustScore?: number | null;
+  /** Human-readable trust tier label, e.g. "Trusted Traveler". */
+  trustLabel?: string | null;
+  /** Public factor breakdown — hints are always null for non-owners. */
+  trustScoreBreakdown?: {
+    factors: Array<{
+      key: string;
+      label: string;
+      points: number;
+      maxPoints: number;
+      maxed: boolean;
+      hint: null;
+    }>;
+  } | null;
 }
 
 export interface BuddyPackage {

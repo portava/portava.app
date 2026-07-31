@@ -20,6 +20,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
+import { computeTrustScore } from "../lib/trustScore.js";
 import { adjustBuddyCounter, syncFavoritesCount } from "../services/rentBuddy/ReliabilityCounters.js";
 import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js";
 import { endFairExposure } from "../compass/CompassFairExposureEngine.js";
@@ -856,8 +857,32 @@ router.get("/rent-a-buddy/buddies/:buddyId", async (req, res) => {
     savedByMe = !!savedRow;
   }
 
+  // Compute trust score for the buddy — fail-open.
+  let trustScore: number | null = null;
+  let trustLabel: string | null = null;
+  let trustScoreBreakdown: { factors: Array<{ key: string; label: string; points: number; maxPoints: number; maxed: boolean; hint: null }> } | null = null;
+  if (profileRes.data) {
+    try {
+      const buddyUserId = (profileRes.data as any).user_id as string;
+      // Pass no preloaded row — profileRes.data is from rent_buddy_profiles, not profiles.
+      // computeTrustScore will fetch the correct profiles row (verified, id_verified_at,
+      // created_at, safety_flags_count) itself.
+      const ts = await computeTrustScore(buddyUserId, serviceClient);
+      trustScore = ts.score;
+      trustLabel = ts.label;
+      // Public breakdown — hints are stripped (they're only meaningful to the owner).
+      trustScoreBreakdown = {
+        factors: ts.breakdown.factors.map(f => ({ ...f, hint: null })),
+      };
+    } catch {
+      /* non-critical — buddy card still shown without trust breakdown */
+    }
+  }
+
   return res.json({
-    buddy: mapProfile(profileRes.data),
+    buddy: mapProfile(profileRes.data)
+      ? { ...mapProfile(profileRes.data), trustScore, trustLabel, trustScoreBreakdown }
+      : null,
     packages: (packagesRes.data ?? []).map((p: any) => ({
       id: p.id, buddyId: p.buddy_id, title: p.title, description: p.description,
       category: p.category, durationH: Number(p.duration_h), priceUsd: Number(p.price_usd),

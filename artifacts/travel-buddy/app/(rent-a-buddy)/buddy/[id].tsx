@@ -266,26 +266,53 @@ export default function BuddyProfileScreen() {
           <View style={styles.sectionRow}>
             <Shield size={16} color={color.success} />
             <Text style={styles.sectionTitle}>Trust Score</Text>
+            {buddy.trustLabel ? (
+              <View style={styles.trustLabelBadge}>
+                <Text style={styles.trustLabelBadgeText}>{buddy.trustLabel}</Text>
+              </View>
+            ) : null}
           </View>
           <View style={styles.trustRingRow}>
             <View style={styles.trustRing}>
               <Text style={styles.trustRingNum}>
-                {Math.min(100, Math.round((buddy.verified ? 35 : 0) + (avgRating / 5) * 35 + Math.min(buddy.reviewCount, 30)))}
+                {buddy.trustScore ?? Math.min(100, Math.round((buddy.verified ? 35 : 0) + (avgRating / 5) * 35 + Math.min(buddy.reviewCount, 30)))}
               </Text>
               <Text style={styles.trustRingLabel}>/ 100</Text>
             </View>
             <View style={styles.trustFactors}>
-              {[
-                { label: 'ID verified', ok: buddy.verified },
-                { label: 'Background check', ok: buddy.verified },
-                { label: `${buddy.reviewCount} verified reviews`, ok: buddy.reviewCount > 0 },
-                { label: `${avgRating > 0 ? avgRating.toFixed(1) : '—'} average rating`, ok: avgRating >= 4.0 },
-              ].map(f => (
-                <View key={f.label} style={styles.trustFactor}>
-                  <CheckCircle size={12} color={f.ok ? color.success : color.haze} fill={f.ok ? color.success : color.haze} />
-                  <Text style={[styles.trustFactorText, !f.ok && { color: color.haze }]}>{f.label}</Text>
-                </View>
-              ))}
+              {buddy.trustScoreBreakdown?.factors.map(f => {
+                const positive = f.maxPoints > 0;
+                const earned = positive ? f.points > 0 : f.points < 0;
+                return (
+                  <View key={f.key} style={styles.trustFactor}>
+                    <CheckCircle
+                      size={12}
+                      color={positive ? (earned ? color.success : color.haze) : color.warn}
+                      fill={positive ? (earned ? color.success : color.haze) : color.warn}
+                    />
+                    <Text style={[styles.trustFactorText, !earned && positive && { color: color.haze }]}>
+                      {f.label}
+                      {f.points !== 0 ? (
+                        <Text style={styles.trustFactorPts}>
+                          {f.points > 0 ? ` +${f.points}` : ` ${f.points}`}
+                        </Text>
+                      ) : null}
+                    </Text>
+                  </View>
+                );
+              }) ?? (
+                // Fallback when breakdown is absent (API didn't return it yet)
+                [
+                  { label: 'ID verified', ok: buddy.verified },
+                  { label: `${buddy.reviewCount} verified reviews`, ok: buddy.reviewCount > 0 },
+                  { label: `${avgRating > 0 ? avgRating.toFixed(1) : '—'} average rating`, ok: avgRating >= 4.0 },
+                ].map(f => (
+                  <View key={f.label} style={styles.trustFactor}>
+                    <CheckCircle size={12} color={f.ok ? color.success : color.haze} fill={f.ok ? color.success : color.haze} />
+                    <Text style={[styles.trustFactorText, !f.ok && { color: color.haze }]}>{f.label}</Text>
+                  </View>
+                ))
+              )}
             </View>
           </View>
         </View>
@@ -526,9 +553,12 @@ const styles = StyleSheet.create({
   },
   trustRingNum: { fontSize: 22, fontWeight: '800', color: color.success, fontFamily: 'Courier' },
   trustRingLabel: { fontSize: 10, color: color.mute, fontFamily: 'Courier' },
+  trustLabelBadge: { backgroundColor: '#EEF8F3', borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: 2 },
+  trustLabelBadgeText: { ...t.small, fontWeight: '700', color: color.success },
   trustFactors: { flex: 1, gap: 6 },
   trustFactor: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   trustFactorText: { ...t.small, color: color.ink },
+  trustFactorPts: { ...t.small, color: color.mute, fontWeight: '600' },
   availGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   availCell: {
     width: 44, alignItems: 'center', paddingVertical: 6,
