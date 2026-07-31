@@ -448,7 +448,7 @@ function StarLine({ rating }: { rating: number }) {
   );
 }
 
-function BuddySection({ userId }: { userId: string }) {
+function BuddySection({ userId, refreshKey }: { userId: string; refreshKey?: number }) {
   const [loading, setLoading] = useState(false);
   const [buddy, setBuddy] = useState<BuddyProfile | null>(null);
 
@@ -460,7 +460,7 @@ function BuddySection({ userId }: { userId: string }) {
         if (res.ok && res.data?.buddy) setBuddy(res.data.buddy);
       })
       .catch(() => setLoading(false));
-  }, [userId]);
+  }, [userId, refreshKey]);
 
   if (loading) return <ActivityIndicator size="small" color={color.mute} style={{ marginVertical: space.md }} />;
   // Only show card for active/approved buddies; pending/suspended/rejected show nothing to visitors
@@ -612,6 +612,7 @@ function PublicPassportScreenNative() {
   // Public stamp showcase — used to union with postcards for Countries/Cities
   // counts (BZ): most postcards never carry a tagged location, so counting
   // from postcards alone under-reports vs. the owner's own passport view.
+  const [buddyRefreshKey, setBuddyRefreshKey] = useState(0);
   const [showcaseItems, setShowcaseItems] = useState<ShowcaseStamp[] | null>(null);
   const loadShowcase = useCallback(() => {
     if (!username) return Promise.resolve();
@@ -755,6 +756,7 @@ function PublicPassportScreenNative() {
     reloadPassport();
     loadSocial();
     void loadShowcase();
+    setBuddyRefreshKey((k) => k + 1);
   }, [reloadPassport, loadSocial, loadShowcase]);
   useEffect(() => {
     if (refreshing && !loading && !socialLoading) setRefreshing(false);
@@ -1213,7 +1215,7 @@ function PublicPassportScreenNative() {
                     <HostReviewsSummary userId={profile.id} />
                   )}
                   {profile.id && (
-                    <BuddySection userId={profile.id} />
+                    <BuddySection userId={profile.id} refreshKey={buddyRefreshKey} />
                   )}
                 </>
               )}
