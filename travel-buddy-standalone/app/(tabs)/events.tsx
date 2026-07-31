@@ -709,13 +709,38 @@ function EventsTabScreen() {
 
           {/* Your events — always shows the viewer's hosted/attending events,
               regardless of city/category/visibility filters, so a freshly
-              published event is immediately visible to its creator. */}
-          {renderSection(
-            'Your events',
-            <Users size={15} color={color.signal} />,
-            myEvents,
-            undefined,
-            true,
+              published event is immediately visible to its creator.
+
+              Design decision: when myEvents is empty (e.g. all personal events
+              fall within the upcoming window and were deduplicated out by a
+              future code change), we render a contextual note row instead of
+              hiding the section entirely. This preserves personalised signal
+              at the top of the tab for active hosts. The dedup rule is not
+              changed — each event still renders in exactly one section. When
+              myEvents is non-empty the cards render as before (skipDedup=true
+              so no cross-section filter is applied). */}
+          {isAuthed && !loading && (
+            myEvents.length > 0
+              ? renderSection(
+                  'Your events',
+                  <Users size={15} color={color.signal} />,
+                  myEvents,
+                  undefined,
+                  true,
+                )
+              : (todayEvents.length > 0 || tomorrowEvents.length > 0 || weekendEvents.length > 0) && (
+                <View style={styles.section}>
+                  <View style={styles.sectionHeader}>
+                    <View style={styles.sectionTitleRow}>
+                      <Users size={15} color={color.signal} />
+                      <Text style={styles.sectionTitle}>Your events</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.yourEventsNote}>
+                    Your upcoming events are listed in the sections below.
+                  </Text>
+                </View>
+              )
           )}
 
           {/* Upcoming (or the active date preset) */}
@@ -962,6 +987,7 @@ const styles = StyleSheet.create({
 
   browseAllBtn:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, marginHorizontal: space.lg, marginTop: space.lg, marginBottom: space.sm, paddingVertical: space.md, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
   browseAllText:      { ...t.body, color: color.signal, fontWeight: '700' },
+  yourEventsNote:     { ...t.small, color: color.mute, paddingHorizontal: space.lg, paddingBottom: space.sm },
 });
 
 
