@@ -11,6 +11,7 @@
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { lookupFsqPhoto, _setSentryForTest } from '../fsqPhotoLookup.ts';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -66,7 +67,6 @@ describe('lookupFsqPhoto — request URL', () => {
     const { fetch: mockFetch, captured } = makeFetch(200, { results: [] });
     globalThis.fetch = mockFetch;
 
-    const { lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
     await lookupFsqPhoto(uniqueName(), 1.23, 4.56);
 
     assert.ok(captured.length > 0, 'fetch was not called');
@@ -81,7 +81,6 @@ describe('lookupFsqPhoto — request URL', () => {
     const { fetch: mockFetch, captured } = makeFetch(200, { results: [] });
     globalThis.fetch = mockFetch;
 
-    const { lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
     const name = uniqueName();
     await lookupFsqPhoto(name, null, null);
 
@@ -96,7 +95,7 @@ describe('lookupFsqPhoto — request headers', () => {
     const { fetch: mockFetch, captured } = makeFetch(200, { results: [] });
     globalThis.fetch = mockFetch;
 
-    const { lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+
     await lookupFsqPhoto(uniqueName(), null, null);
 
     assert.ok(captured.length > 0, 'fetch was not called');
@@ -112,7 +111,7 @@ describe('lookupFsqPhoto — request headers', () => {
     const { fetch: mockFetch, captured } = makeFetch(200, { results: [] });
     globalThis.fetch = mockFetch;
 
-    const { lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+
     await lookupFsqPhoto(uniqueName(), null, null);
 
     assert.ok(captured.length > 0, 'fetch was not called');
@@ -142,7 +141,7 @@ describe('lookupFsqPhoto — photo URL assembly', () => {
     const { fetch: mockFetch } = makeFetch(200, body);
     globalThis.fetch = mockFetch;
 
-    const { lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+
     const result = await lookupFsqPhoto(uniqueName(), null, null);
 
     assert.equal(
@@ -156,7 +155,7 @@ describe('lookupFsqPhoto — photo URL assembly', () => {
     const { fetch: mockFetch } = makeFetch(200, body);
     globalThis.fetch = mockFetch;
 
-    const { lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+
     const result = await lookupFsqPhoto(uniqueName(), null, null);
 
     assert.equal(result, null);
@@ -167,7 +166,7 @@ describe('lookupFsqPhoto — photo URL assembly', () => {
     const { fetch: mockFetch } = makeFetch(200, body);
     globalThis.fetch = mockFetch;
 
-    const { lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+
     const result = await lookupFsqPhoto(uniqueName(), null, null);
 
     assert.equal(result, null);
@@ -181,7 +180,7 @@ describe('lookupFsqPhoto — non-ok response', () => {
     const { fetch: mockFetch } = makeFetch(401, { message: 'Unauthorized' });
     globalThis.fetch = mockFetch;
 
-    const { lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+
     const result = await lookupFsqPhoto(uniqueName(), 10.0, 20.0);
 
     assert.equal(result, null);
@@ -191,7 +190,7 @@ describe('lookupFsqPhoto — non-ok response', () => {
     const { fetch: mockFetch } = makeFetch(500, {});
     globalThis.fetch = mockFetch;
 
-    const { lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+
     const result = await lookupFsqPhoto(uniqueName(), null, null);
 
     assert.equal(result, null);
@@ -206,7 +205,7 @@ describe('lookupFsqPhoto — missing API key', () => {
     const { fetch: mockFetch, captured } = makeFetch(200, { results: [] });
     globalThis.fetch = mockFetch;
 
-    const { lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+
     const result = await lookupFsqPhoto(uniqueName(), null, null);
 
     assert.equal(result, null);
@@ -221,7 +220,7 @@ describe('lookupFsqPhoto — AbortSignal timeout', () => {
     const abortError = new DOMException('The operation was aborted.', 'AbortError');
     globalThis.fetch = async () => { throw abortError; };
 
-    const { lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+
     const result = await lookupFsqPhoto(uniqueName(), 10.0, 20.0);
 
     assert.equal(result, null);
@@ -235,7 +234,7 @@ describe('lookupFsqPhoto — AbortSignal timeout', () => {
       throw abortError;
     };
 
-    const { lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+
     const name = uniqueName();
     const lat = 48.0;
     const lng = 2.0;
@@ -277,8 +276,7 @@ function makeSentryStub(): {
 
 describe('lookupFsqPhoto — Sentry auth error reporting', () => {
   it('calls addBreadcrumb and captureMessage with level "error" on a 401 response', async () => {
-    const { _setSentryForTest, _resetAuthFailedForTest, lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
-    _resetAuthFailedForTest();
+
     const { stub, captureMessageCalls, addBreadcrumbCalls } = makeSentryStub();
     _setSentryForTest(stub);
     try {
@@ -313,8 +311,7 @@ describe('lookupFsqPhoto — Sentry auth error reporting', () => {
   });
 
   it('calls addBreadcrumb and captureMessage with level "error" on a 403 response', async () => {
-    const { _setSentryForTest, _resetAuthFailedForTest, lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
-    _resetAuthFailedForTest();
+
     const { stub, captureMessageCalls, addBreadcrumbCalls } = makeSentryStub();
     _setSentryForTest(stub);
     try {
@@ -349,7 +346,7 @@ describe('lookupFsqPhoto — Sentry auth error reporting', () => {
   });
 
   it('calls addBreadcrumb but NOT captureMessage on a non-auth error (500)', async () => {
-    const { _setSentryForTest, lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+
     const { stub, captureMessageCalls, addBreadcrumbCalls } = makeSentryStub();
     _setSentryForTest(stub);
     try {

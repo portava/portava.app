@@ -240,7 +240,12 @@ interface DiscoveryCategoryTabProps {
   listHeaderComponent?: React.ReactElement;
   /** Invoked alongside this tab's own places refresh so the parent can re-fetch counts/buddy-strip/trending on pull-to-refresh. */
   onRefresh?: () => void;
+  /** Optional initial filters — seeds the internal filter state on first render.
+   *  When omitted the component defaults to { radiusKm: 10, openNow: false, minRating: null }. */
+  filters?: DiscoveryFilters;
 }
+
+const DEFAULT_FILTERS: DiscoveryFilters = { radiusKm: 10, openNow: false, minRating: null };
 
 export function DiscoveryCategoryTab({
   category,
@@ -263,21 +268,23 @@ export function DiscoveryCategoryTab({
   onScroll,
   listHeaderComponent,
   onRefresh,
+  filters: filtersProp,
 }: DiscoveryCategoryTabProps) {
   // SWR: seed from in-memory client cache so second opens paint instantly.
+  const initialFilters = filtersProp ?? DEFAULT_FILTERS;
   const [places, setPlaces]         = useState<DiscoveryPlace[]>(() => {
     if (!destination) return [];
-    return getCachedDiscoveryPlaces(destination, category, 10, 1)?.places ?? [];
+    return getCachedDiscoveryPlaces(destination, category, initialFilters.radiusKm, 1)?.places ?? [];
   });
   const [loading, setLoading]       = useState<boolean>(() => {
     if (!destination) return false;
-    return getCachedDiscoveryPlaces(destination, category, 10, 1) === null;
+    return getCachedDiscoveryPlaces(destination, category, initialFilters.radiusKm, 1) === null;
   });
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [page, setPage]             = useState(1);
   const [total, setTotal]           = useState(0);
-  const [filters, setFilters]       = useState<DiscoveryFilters>({ radiusKm: 10, openNow: false, minRating: null });
+  const [filters, setFilters]       = useState<DiscoveryFilters>(initialFilters);
   const loadingMore                 = useRef(false);
 
   // Notify parent whenever the filter strip changes so it can refresh count badges.

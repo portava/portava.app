@@ -38,6 +38,9 @@ module.exports = {
     // react-dom) — the native renderer cannot commit their out-of-band
     // event-bus state updates (known React 19 renderer wall).
     '\\.webrender\\.test\\.',
+    // node:test runner files — these import from 'node:test' and must not be
+    // picked up by jest-expo; they are exercised via run-node-tests.mjs.
+    'src/services/__tests__/fsqPhotoLookup\\.test\\.ts',
   ],
   // Cap workers so the full component suite doesn't exhaust the heap.
   // Without this limit Jest spawns one worker per CPU and OOMs on large suites.
