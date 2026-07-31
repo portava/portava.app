@@ -35,7 +35,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { closeThenNavigate } from '../lib/deferredNavigate.ts';
 import { X } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
 import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
@@ -67,8 +67,8 @@ function LikerRow({ user, onClose }: LikerRowProps) {
 
   function handlePress() {
     if (!user.handle) return;
-    onClose();
-    router.push(`/u/${user.handle}` as any);
+    // BUG CC/CD fix: defer navigation until after the sheet close animation.
+    closeThenNavigate(onClose, `/u/${user.handle}`);
   }
 
   const initials = primaryIdentityText({ displayName: user.displayName, handle: user.handle })

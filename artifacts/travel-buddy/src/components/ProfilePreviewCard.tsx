@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   View, Text, Pressable, Modal, ActivityIndicator, StyleSheet,
 } from 'react-native';
-import { router } from 'expo-router';
+import { closeThenNavigate } from '../lib/deferredNavigate.ts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X } from 'lucide-react-native';
 import { getPublicProfile, type PublicProfileCard } from '../services/profile.ts';
@@ -44,8 +44,8 @@ export function ProfilePreviewCard({ username, visible, onClose }: Props) {
 
   function handleViewProfile() {
     if (!username) return;
-    onClose();
-    router.push(`/u/${username}` as any);
+    // BUG CC/CD fix: defer navigation until after the sheet close animation.
+    closeThenNavigate(onClose, `/u/${username}`);
   }
 
   return (

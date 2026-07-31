@@ -223,7 +223,8 @@ describe('TripEntrySection', () => {
     await findByText(/Add passport/);
     const { router } = require('expo-router');
     fireEvent.press(getByText(/Add passport/));
-    expect(router.push).toHaveBeenCalledWith('/profile/edit/passports');
+    // closeThenNavigate defers router.push via setTimeout — wait for it to fire.
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith('/profile/edit/passports'));
   });
 
   // ── 3. Caller's own status card ───────────────────────────────────────────

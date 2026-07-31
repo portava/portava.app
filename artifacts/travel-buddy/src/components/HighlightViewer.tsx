@@ -22,7 +22,7 @@ import { X, MessageCircle, Flag, Eye, Share2, Plus, Trash2, Volume2, VolumeX } f
 import { StampIcon } from './stamps/StampIcon.tsx';
 import { SaveButton } from './SaveButton.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { closeThenNavigate } from '../lib/deferredNavigate.ts';
 import * as Sharing from 'expo-sharing';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
@@ -257,8 +257,8 @@ export function HighlightViewer({
       if (r.ok && r.data?.threadId) {
         setReplyOpen(false);
         setReplyText('');
-        onClose();
-        router.push(`/messages/${r.data.threadId}` as any);
+        // BUG CC/CD fix: defer navigation until after the sheet close animation.
+        closeThenNavigate(onClose, `/messages/${r.data.threadId}`);
       } else {
         Alert.alert('Could not send reply', r.message ?? 'Try again.');
       }

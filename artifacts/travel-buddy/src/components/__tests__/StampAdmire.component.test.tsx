@@ -268,6 +268,7 @@ describe('StampAdmirersSheet — via count press', () => {
 
     fireEvent.press(screen.getByText('@alice'));
 
-    expect(mockRouterPush).toHaveBeenCalledWith('/passport/alice');
+    // closeThenNavigate defers router.push via setTimeout — wait for it to fire.
+    await waitFor(() => expect(mockRouterPush).toHaveBeenCalledWith('/passport/alice'));
   });
 });

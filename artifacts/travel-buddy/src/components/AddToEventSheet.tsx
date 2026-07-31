@@ -19,7 +19,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Calendar, Plus, MapPin, Check } from 'lucide-react-native';
-import { router } from 'expo-router';
+import { closeThenNavigate } from '../lib/deferredNavigate.ts';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
 import { listMyEvents, type EventListItem } from '../services/events.ts';
 import { freshToken as freshApiToken } from '../services/apiToken.ts';
@@ -169,8 +169,8 @@ export function AddToEventSheet({ visible, place, onClose }: AddToEventSheetProp
   }, [place, submitting, onClose]);
 
   const handleCreateEvent = useCallback(() => {
-    onClose();
-    router.push('/events/create' as any);
+    // BUG CC/CD fix: defer navigation until after the sheet close animation.
+    closeThenNavigate(onClose, '/events/create');
   }, [onClose]);
 
   return (

@@ -47,7 +47,7 @@ import {
   X,
   Search,
 } from 'lucide-react-native';
-import { router } from 'expo-router';
+import { closeThenNavigate } from '../lib/deferredNavigate.ts';
 import { color, space, radius, shadow } from '../theme/tokens.ts';
 import { getMyThreads, sendMessage, openDirectThread } from '../services/messaging.ts';
 import type { ThreadSummary } from '../services/messaging.ts';
@@ -396,8 +396,8 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
               <Pressable
                 style={s.newThreadRow}
                 onPress={() => {
-                  onClose();
-                  router.push('/(tabs)/messages' as any);
+                  // BUG CC/CD fix: defer navigation until after the sheet close animation.
+                  closeThenNavigate(onClose, '/(tabs)/messages');
                 }}
               >
                 <View style={s.newThreadIcon}>

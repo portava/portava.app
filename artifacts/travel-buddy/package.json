@@ -13,7 +13,7 @@
     "eas-build-pre-install": "corepack enable",
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit && node scripts/check-import-extensions.mjs && node scripts/check-route-registry.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && node scripts/check-import-extensions.mjs && node scripts/check-route-registry.mjs && node scripts/check-close-then-navigate.mjs",
     "test": "node scripts/run-node-tests.mjs",
     "test:event-rab-cta": "node --import tsx/esm --test src/services/__tests__/event.rabCta.test.ts",
     "test:stamps": "node --import tsx --test src/test/stampGracefulDegradation.test.ts",
@@ -21,7 +21,8 @@
     "lint:imports": "node scripts/check-import-extensions.mjs",
     "lint:mocks": "node scripts/check-test-mocks.mjs",
     "lint:ksv": "node scripts/check-ksv-inner-scroll.mjs",
-    "lint:routes": "node scripts/check-route-registry.mjs"
+    "lint:routes": "node scripts/check-route-registry.mjs",
+    "lint:close-then-navigate": "node scripts/check-close-then-navigate.mjs"
   },
   "dependencies": {
     "@livekit/react-native": "^2.11.1",
