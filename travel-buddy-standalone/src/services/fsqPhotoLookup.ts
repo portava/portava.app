@@ -8,7 +8,34 @@
  *
  * ATTRIBUTION: any surface showing FSQ photos must display "Powered by Foursquare".
  */
-import { getSentry } from '../lib/sentry.ts';
+// Shared lazy Sentry accessor — defers require('@sentry/react-native') to
+// call-time so node:test runners can import this file without triggering the
+// esbuild "Unexpected typeof" TransformError from react-native source.
+import { getSentry as _getSentryBase } from '../lib/sentry.ts';
+
+// Test-only injection point. When set (including null = "Sentry unavailable"),
+// getSentry() returns this value instead of calling _getSentryBase(). Set via
+// _setSentryForTest(); clear by passing undefined to restore normal behaviour.
+let _sentryOverride:
+  | { captureMessage: (m: string, opts?: any) => void; addBreadcrumb: (d: any) => void }
+  | null
+  | undefined = undefined;
+
+/** @internal Only for node:test suites — inject a Sentry stub so auth-error tests
+ *  can assert on captureMessage/addBreadcrumb without loading @sentry/react-native. */
+export function _setSentryForTest(
+  s:
+    | { captureMessage: (m: string, opts?: any) => void; addBreadcrumb: (d: any) => void }
+    | null
+    | undefined,
+): void {
+  _sentryOverride = s;
+}
+
+function getSentry(): typeof import('@sentry/react-native') | null {
+  if (_sentryOverride !== undefined) return (_sentryOverride ?? null) as any;
+  return _getSentryBase();
+}
 
 const FSQ_SEARCH = 'https://places-api.foursquare.com/places/search';
 const FSQ_API_VERSION = '2025-06-17';
@@ -101,4 +128,20 @@ export async function lookupFsqPhoto(
     photoCache.set(cKey, { url: null, ts: Date.now() });
     return null;
   }
+}
+
+let _sentryOverride:
+  | { captureMessage: (m: string, opts?: any) => void; addBreadcrumb: (d: any) => void }
+  | null
+  | undefined = undefined;
+
+/** @internal Only for node:test suites — inject a Sentry stub so auth-error tests
+ *  can assert on captureMessage/addBreadcrumb without loading @sentry/react-native. */
+export function _setSentryForTest(
+  s:
+    | { captureMessage: (m: string, opts?: any) => void; addBreadcrumb: (d: any) => void }
+    | null
+    | undefined,
+): void {
+  _sentryOverride = s;
 }

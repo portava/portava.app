@@ -246,3 +246,130 @@ describe('lookupFsqPhoto — AbortSignal timeout', () => {
     assert.equal(fetchCallCount, 1, 'fetch must not be called again — null result is cached');
   });
 });
+
+// ── lookupFsqPhoto — Sentry auth error reporting ──────────────────────────────
+//
+// fsqPhotoLookup.ts exposes _setSentryForTest() so node:test suites can inject
+// a stub without needing to mock the @sentry/react-native module (which tsx
+// routes through the ESM loader, bypassing the CJS require.cache).
+
+type SentryCall = unknown[];
+
+function makeSentryStub(): {
+  stub: { captureMessage: (...args: SentryCall) => void; addBreadcrumb: (...args: SentryCall) => void };
+  captureMessageCalls: SentryCall[];
+  addBreadcrumbCalls: SentryCall[];
+} {
+  const captureMessageCalls: SentryCall[] = [];
+  const addBreadcrumbCalls: SentryCall[] = [];
+  return {
+    stub: {
+      captureMessage: (...args: SentryCall) => { captureMessageCalls.push(args); },
+      addBreadcrumb:  (...args: SentryCall) => { addBreadcrumbCalls.push(args); },
+    },
+    captureMessageCalls,
+    addBreadcrumbCalls,
+  };
+}
+
+describe('lookupFsqPhoto — Sentry auth error reporting', () => {
+  it('calls addBreadcrumb and captureMessage with level "error" on a 401 response', async () => {
+    const { _setSentryForTest, lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+    const { stub, captureMessageCalls, addBreadcrumbCalls } = makeSentryStub();
+    _setSentryForTest(stub);
+    try {
+      const { fetch: mockFetch } = makeFetch(401, { message: 'Unauthorized' });
+      globalThis.fetch = mockFetch;
+
+      await lookupFsqPhoto(uniqueName(), 10.0, 20.0);
+
+      assert.equal(
+        addBreadcrumbCalls.length,
+        1,
+        'addBreadcrumb must be called once for a 401 auth error',
+      );
+      assert.equal(
+        (addBreadcrumbCalls[0][0] as any)?.level,
+        'error',
+        'addBreadcrumb level must be "error" for a 401',
+      );
+      assert.equal(
+        captureMessageCalls.length,
+        1,
+        'captureMessage must be called for a 401 auth failure',
+      );
+      assert.equal(
+        (captureMessageCalls[0][1] as any)?.level,
+        'error',
+        'captureMessage must be called with level "error" for a 401',
+      );
+    } finally {
+      _setSentryForTest(undefined);
+    }
+  });
+
+  it('calls addBreadcrumb and captureMessage with level "error" on a 403 response', async () => {
+    const { _setSentryForTest, lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+    const { stub, captureMessageCalls, addBreadcrumbCalls } = makeSentryStub();
+    _setSentryForTest(stub);
+    try {
+      const { fetch: mockFetch } = makeFetch(403, { message: 'Forbidden' });
+      globalThis.fetch = mockFetch;
+
+      await lookupFsqPhoto(uniqueName(), 10.0, 20.0);
+
+      assert.equal(
+        addBreadcrumbCalls.length,
+        1,
+        'addBreadcrumb must be called once for a 403 auth error',
+      );
+      assert.equal(
+        (addBreadcrumbCalls[0][0] as any)?.level,
+        'error',
+        'addBreadcrumb level must be "error" for a 403',
+      );
+      assert.equal(
+        captureMessageCalls.length,
+        1,
+        'captureMessage must be called for a 403 auth failure',
+      );
+      assert.equal(
+        (captureMessageCalls[0][1] as any)?.level,
+        'error',
+        'captureMessage must be called with level "error" for a 403',
+      );
+    } finally {
+      _setSentryForTest(undefined);
+    }
+  });
+
+  it('calls addBreadcrumb but NOT captureMessage on a non-auth error (500)', async () => {
+    const { _setSentryForTest, lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+    const { stub, captureMessageCalls, addBreadcrumbCalls } = makeSentryStub();
+    _setSentryForTest(stub);
+    try {
+      const { fetch: mockFetch } = makeFetch(500, { message: 'Internal Server Error' });
+      globalThis.fetch = mockFetch;
+
+      await lookupFsqPhoto(uniqueName(), 10.0, 20.0);
+
+      assert.equal(
+        addBreadcrumbCalls.length,
+        1,
+        'addBreadcrumb must be called for any non-ok response',
+      );
+      assert.equal(
+        (addBreadcrumbCalls[0][0] as any)?.level,
+        'warning',
+        'addBreadcrumb level must be "warning" for a non-auth error',
+      );
+      assert.equal(
+        captureMessageCalls.length,
+        0,
+        'captureMessage must NOT be called for a non-auth error like 500',
+      );
+    } finally {
+      _setSentryForTest(undefined);
+    }
+  });
+});
