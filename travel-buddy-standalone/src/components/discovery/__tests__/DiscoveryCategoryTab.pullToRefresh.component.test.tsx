@@ -62,6 +62,8 @@ describe('DiscoveryCategoryTab — pull-to-refresh', () => {
     rating: null, photoUrl: null, visitCount: null, savedCount: null,
   };
 
+  const DEFAULT_FILTERS = { radiusKm: 25, openNow: false, minRating: null, sortBy: null };
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetCachedDiscoveryPlaces.mockReturnValue(null);
@@ -80,7 +82,7 @@ describe('DiscoveryCategoryTab — pull-to-refresh', () => {
       <DiscoveryCategoryTab
         category="places"
         destination="Lisbon"
-        filters={{ radiusKm: 10, openNow: false, minRating: null }}
+        filters={DEFAULT_FILTERS}
         onSelectPlace={jest.fn()}
         onAddToPlan={jest.fn()}
         onFiltersChange={jest.fn()}
@@ -89,7 +91,6 @@ describe('DiscoveryCategoryTab — pull-to-refresh', () => {
     );
 
     await waitFor(() => expect(mockGetDiscoveryPlaces).toHaveBeenCalledTimes(1));
-
     const scroll = await screen.findByTestId('main-scroll');
     await act(async () => { scroll.props.refreshControl.props.onRefresh(); });
 
@@ -109,7 +110,7 @@ describe('DiscoveryCategoryTab — pull-to-refresh', () => {
       <DiscoveryCategoryTab
         category="places"
         destination="Lisbon"
-        filters={{ radiusKm: 10, openNow: false, minRating: null }}
+        filters={DEFAULT_FILTERS}
         onSelectPlace={jest.fn()}
         onAddToPlan={jest.fn()}
         onFiltersChange={jest.fn()}

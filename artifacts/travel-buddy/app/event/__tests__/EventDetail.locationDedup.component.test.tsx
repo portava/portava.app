@@ -123,7 +123,11 @@ jest.mock('../../../src/services/events', () => ({
   addEventToTrip: jest.fn(),
   buildRentBuddyCtaUrl:   jest.fn().mockReturnValue(''),
   shouldShowRentBuddyCta: jest.fn().mockReturnValue(false),
-  getEventReminders:      jest.fn().mockResolvedValue({ ok: true, data: { reminders: [] } }),
+  // getEventReminders / reminder CRUD added to EventDetailScreen after this test
+  // was written. Mock as no-ops — reminder display is not under test here.
+  getEventReminders:    jest.fn().mockResolvedValue({ ok: true, data: { reminders: [] } }),
+  createEventReminder:  jest.fn().mockResolvedValue({ ok: true }),
+  deleteEventReminder:  jest.fn().mockResolvedValue({ ok: true }),
 }));
 
 // NOTE: intentional stub — not under test here.
@@ -150,10 +154,12 @@ jest.mock('../../../src/lib/waitlistState', () => ({
 }));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/lib/eventRoleActions', () => ({
+  // effectiveEventState was added to EventDetailScreen after this test was written.
+  // Return the raw state unchanged — location dedup is independent of lifecycle state.
+  effectiveEventState: jest.fn((state: string) => state),
   getAttendeeActionSet: jest.fn().mockReturnValue({
     canRsvp: false, canLeave: false, canJoinWaitlist: false,
   }),
-  effectiveEventState: jest.fn((state: string) => state),
 }));
 
 // ── Visual helpers ────────────────────────────────────────────────────────────

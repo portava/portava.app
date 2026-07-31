@@ -21,7 +21,6 @@
   "src/test/circle.test.ts",
   "src/test/communityPlacePhotos.test.ts",
   "src/test/compass-hardening.test.ts",
-  "src/test/compass-place-affinity.test.ts",
   "src/test/compassSafetyFilter.test.ts",
   "src/test/compassServedDedup.test.ts",
   "src/test/compass-settings-feedback.test.ts",

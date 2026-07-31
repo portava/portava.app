@@ -233,6 +233,109 @@ describe("Compass place-affinity boost — buildSection integration", () => {
   });
 });
 
+// ── Fake DB builder (table-aware) ─────────────────────────────────────────────
+
+/**
+ * Returns a minimal Supabase-compatible fake for test F.
+ *
+ * The fake is stateful: only the very first `from("rank_events")` call
+ * (which is `buildPlaceAffinities`, called at the top of `runFeedPipeline`)
+ * resolves with `placeViewRows`.  Every subsequent call — to `rank_events`
+ * OR any other table — rejects.  This ensures:
+ *
+ *   • `buildPlaceAffinities` builds `{ [AFFINITY_PLACE_ID]: count }` from the
+ *     mocked DB without relying on `_overrides.placeAffinities`.
+ *   • The DiscoveryRankingService (DRS) pass, which also queries `rank_events`
+ *     and would otherwise reorder the pool independently of Compass scores,
+ *     fails fast into its own try/catch and leaves the Compass-scored order
+ *     intact.
+ *   • All other ancillary callers (feature-flag loader, creator-caps, fair-
+ *     exposure preloads) also fail into their own guards and use safe defaults.
+ */
+function fakePlaceViewDb(placeViewRows: { item_id: string }[]): any {
+  let rankEventsConsumed = false;
+
+  /** Chain that resolves to the supplied rows. */
+  function successChain(rows: { item_id: string }[]): any {
+    const terminal = { data: rows, error: null };
+    const c: any = {
+      select:      () => c,
+      insert:      () => c,
+      upsert:      () => c,
+      update:      () => c,
+      delete:      () => c,
+      eq:          () => c,
+      neq:         () => c,
+      gte:         () => c,
+      gt:          () => c,
+      lte:         () => c,
+      lt:          () => c,
+      in:          () => c,
+      like:        () => c,
+      ilike:       () => c,
+      is:          () => c,
+      order:       () => c,
+      limit:       () => c,
+      range:       () => c,
+      single:      () => Promise.resolve({ data: null, error: null }),
+      maybeSingle: () => Promise.resolve({ data: null, error: null }),
+      then(resolve?: (v: typeof terminal) => unknown, reject?: (e: unknown) => unknown) {
+        return Promise.resolve(terminal).then(resolve, reject);
+      },
+    };
+    return c;
+  }
+
+  /** Chain that always rejects — ancillary callers (DRS, flags, caps) each have
+   *  their own try/catch, so they fall back to safe defaults without crashing.
+   *
+   *  NOTE: all Supabase chain builder methods (including write paths like
+   *  `insert`, `upsert`, `update`, `delete`) must be present.  A missing method
+   *  throws a synchronous TypeError that can be swallowed by a caller's own
+   *  try/catch (e.g. `scoreItem`'s catch-all returns finalScore=0), producing
+   *  silent wrong results instead of a clean fail-soft.
+   */
+  function throwingChain(): any {
+    const err = new Error("fake-db: table not available in test");
+    const c: any = {
+      select:      () => c,
+      insert:      () => c,
+      upsert:      () => c,
+      update:      () => c,
+      delete:      () => c,
+      eq:          () => c,
+      neq:         () => c,
+      gte:         () => c,
+      gt:          () => c,
+      lte:         () => c,
+      lt:          () => c,
+      in:          () => c,
+      like:        () => c,
+      ilike:       () => c,
+      is:          () => c,
+      order:       () => c,
+      limit:       () => c,
+      range:       () => c,
+      single:      () => Promise.reject(err),
+      maybeSingle: () => Promise.reject(err),
+      then(_resolve?: unknown, reject?: (e: unknown) => unknown) {
+        return Promise.reject(err).then(undefined, reject);
+      },
+    };
+    return c;
+  }
+
+  return {
+    from(table: string) {
+      if (table === "rank_events" && !rankEventsConsumed) {
+        rankEventsConsumed = true;
+        return successChain(placeViewRows);
+      }
+      return throwingChain();
+    },
+  };
+}
+
 // ── Integration: boost flows end-to-end through buildFeed ─────────────────────
 
 describe("Compass place-affinity boost — buildFeed integration", () => {
@@ -297,6 +400,72 @@ describe("Compass place-affinity boost — buildFeed integration", () => {
       affinityIdx < baselineIdx,
       `Affinity item (idx ${affinityIdx}) must rank above baseline item (idx ${baselineIdx}) ` +
       `when placeAffinities has ≥${THRESHOLD} views for its placeId`,
+    );
+  });
+
+  it("F: place-affinity boost fires end-to-end when buildPlaceAffinities reads from a mocked DB — no override bypass", async () => {
+    const AFFINITY_PLACE_ID = "uuid-affinity-place-db-001";
+
+    /** Item whose placeId the viewer has THRESHOLD place_view events for. */
+    const affinityItem: CompassItem = {
+      id:              "item-with-affinity-db",
+      type:            "stamp",
+      placeId:         AFFINITY_PLACE_ID,
+      city:            "Tokyo",
+      languageCode:    "en",
+      qualityScore:    5,
+      interestTags:    ["culture"],
+      createdAt:       new Date().toISOString(),
+      visibilityScope: "public",
+    };
+
+    /** Identical item but for a place the viewer has never visited. */
+    const baselineItem: CompassItem = {
+      id:              "item-without-affinity-db",
+      type:            "stamp",
+      placeId:         "uuid-unvisited-place-db-999",
+      city:            "Tokyo",
+      languageCode:    "en",
+      qualityScore:    5,
+      interestTags:    ["culture"],
+      createdAt:       new Date().toISOString(),
+      visibilityScope: "public",
+    };
+
+    // Fake DB: rank_events returns THRESHOLD rows for AFFINITY_PLACE_ID so
+    // buildPlaceAffinities builds { [AFFINITY_PLACE_ID]: THRESHOLD }.
+    // All other tables return empty rows — ancillary calls fail gracefully.
+    const db = fakePlaceViewDb(
+      Array.from({ length: THRESHOLD }, () => ({ item_id: AFFINITY_PLACE_ID })),
+    );
+
+    const profile = baseProfile();
+    const ctx     = baseContext(); // no placeAffinities — must come from DB
+
+    const result = await buildFeed(
+      [baselineItem, affinityItem],
+      profile,
+      ctx,
+      db as any,
+      null,
+      {
+        skipFairExposure:  true,
+        skipActiveRewards: true,
+        // No placeAffinities override — buildPlaceAffinities must query the fake DB
+      },
+    );
+
+    const allItems    = result.sections.flatMap((s) => s.items);
+    const affinityIdx = allItems.findIndex((i) => i.item.id === "item-with-affinity-db");
+    const baselineIdx = allItems.findIndex((i) => i.item.id === "item-without-affinity-db");
+
+    assert.ok(affinityIdx  !== -1, "Affinity item must appear in feed output");
+    assert.ok(baselineIdx  !== -1, "Baseline item must appear in feed output");
+
+    assert.ok(
+      affinityIdx < baselineIdx,
+      `Affinity item (idx ${affinityIdx}) must rank above baseline (idx ${baselineIdx}) ` +
+      `when buildPlaceAffinities returns ≥${THRESHOLD} views for its placeId from the DB`,
     );
   });
 });
