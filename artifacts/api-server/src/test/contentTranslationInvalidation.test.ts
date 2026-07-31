@@ -154,6 +154,17 @@ function makeFakeClient(db: FakeDb, tokens: Record<string, string>, track: Track
             });
           }
         }
+        // Bio language detection stores to bio_original_language on profiles
+        if (updateData.bio_original_language !== undefined) {
+          const idCond = eqConditions.find((c) => c.col === "id");
+          if (idCond) {
+            track.langDetectUpdates.push({
+              table: tableName,
+              id:    idCond.val as string,
+              lang:  updateData.bio_original_language as string,
+            });
+          }
+        }
         const updated: Row[] = [];
         for (const row of filtered) {
           const idx = table.findIndex((r) => r.id === row.id);
@@ -327,6 +338,35 @@ function seedTripTranslation(db: FakeDb) {
     id: "ct-trip-1",
     entity_type: "trip", entity_id: TRIP_ID, target_language: "de",
     translated_fields: { title: "Originalreise" }, status: "translated",
+  });
+}
+
+function seedProfile(db: FakeDb) {
+  db.profiles.push({
+    id: USER_ID, handle: "testuser", name: "Test User", display_name: "Test User",
+    username: "testuser", bio: "original bio text", avatar_url: null,
+    home_city: null, home_country: null, current_city: null,
+    travel_style: null, interests: [], verified: false,
+    verification_status: "unverified", verified_at: null, open_to_meet: false,
+    is_private: false, passport_visibility: "public", cover_photo_url: null,
+    username_updated_at: null, created_at: new Date().toISOString(),
+    spoken_languages: [], default_language: null, travel_styles: [],
+    travel_pace: null, budget_style: null, travel_group_style: [],
+    looking_for: [], comfort_level: null, availability_tags: [],
+    planning_style: null, public_social_links: {}, preferred_language: null,
+    verification_level: null, id_verified_at: null, selfie_verified_at: null,
+    home_country_verified_at: null, safety_flags_count: 0, host_verified_at: null,
+    buddy_verified_at: null, passport_section_order: null, passport_tab_order: null,
+    passport_hidden_sections: null, date_of_birth: null, is_official: false,
+    featured_count: 0, bio_original_language: null,
+  });
+}
+
+function seedBioTranslation(db: FakeDb) {
+  db.content_translations.push({
+    id: "ct-bio-1",
+    entity_type: "bio", entity_id: USER_ID, target_language: "es",
+    translated_fields: { bio: "texto del perfil original" }, status: "translated",
   });
 }
 
@@ -559,6 +599,88 @@ describe("translation cache invalidation on edit — all routes", () => {
         track.deletedTranslations.filter((d) => d.entity_type === "trip" && d.entity_id === TRIP_ID).length,
         0,
         "non-text-field PATCH must not trigger translation invalidation",
+      );
+    });
+  });
+
+  // ── PATCH /api/me/profile (bio field) ─────────────────────────────────────
+
+  describe("PATCH /api/me/profile — bio translation invalidation", () => {
+    beforeEach(async () => {
+      _setTestTranslationProvider(new MockTranslationProvider());
+      await startServer();
+    });
+    afterEach(async () => {
+      _setTestClient(null as any, false);
+      _setTestTranslationProvider(null);
+      await stopServer();
+    });
+
+    it("invalidates content_translations cache when bio changes", async () => {
+      const db = makeDb(); seedProfile(db); seedBioTranslation(db);
+      const track = makeTrack();
+      _setTestClient(makeFakeClient(db, { [RAW_TOKEN]: USER_ID }, track), true);
+
+      assert.equal(db.content_translations.length, 1, "pre: bio translation row seeded");
+
+      const { status } = await doPatch(port, "/api/me/profile", { bio: "updated bio text" });
+      assert.equal(status, 200, `PATCH failed: ${status}`);
+      await flush();
+
+      assert.ok(
+        track.deletedTranslations.some((d) => d.entity_type === "bio" && d.entity_id === USER_ID),
+        "invalidateContentTranslations must delete the bio's cache rows",
+      );
+    });
+
+    it("re-detects language after bio change (bio_original_language updated on profiles)", async () => {
+      const db = makeDb(); seedProfile(db); seedBioTranslation(db);
+      const track = makeTrack();
+      _setTestClient(makeFakeClient(db, { [RAW_TOKEN]: USER_ID }, track), true);
+
+      const { status } = await doPatch(port, "/api/me/profile", { bio: "a brand new bio in english" });
+      assert.equal(status, 200, `PATCH failed: ${status}`);
+      await flush();
+
+      const upd = track.langDetectUpdates.find((u) => u.table === "profiles" && u.id === USER_ID);
+      assert.ok(upd, "detectAndStoreLanguage must update bio_original_language on the profile row");
+      assert.equal(upd!.lang, "en", "MockTranslationProvider returns 'en' for ASCII text");
+    });
+
+    it("does NOT call detectAndStoreLanguage when bio is cleared (set to null)", async () => {
+      const db = makeDb(); seedProfile(db); seedBioTranslation(db);
+      const track = makeTrack();
+      _setTestClient(makeFakeClient(db, { [RAW_TOKEN]: USER_ID }, track), true);
+
+      const { status } = await doPatch(port, "/api/me/profile", { bio: null });
+      assert.equal(status, 200, `PATCH failed: ${status}`);
+      await flush();
+
+      // Translation cache should still be invalidated (bio removed = translations stale)
+      assert.ok(
+        track.deletedTranslations.some((d) => d.entity_type === "bio" && d.entity_id === USER_ID),
+        "invalidateContentTranslations must still fire when bio is cleared",
+      );
+      // But detectAndStoreLanguage must NOT run — empty bio has nothing to detect
+      assert.equal(
+        track.langDetectUpdates.filter((u) => u.table === "profiles" && u.id === USER_ID).length,
+        0,
+        "detectAndStoreLanguage must NOT run when bio is null/empty",
+      );
+    });
+
+    it("does NOT invalidate translations when only non-bio fields are updated", async () => {
+      const db = makeDb(); seedProfile(db); seedBioTranslation(db);
+      const track = makeTrack();
+      _setTestClient(makeFakeClient(db, { [RAW_TOKEN]: USER_ID }, track), true);
+
+      await doPatch(port, "/api/me/profile", { openToMeet: true });
+      await flush();
+
+      assert.equal(
+        track.deletedTranslations.filter((d) => d.entity_type === "bio" && d.entity_id === USER_ID).length,
+        0,
+        "non-bio-field PATCH must not invalidate bio translations",
       );
     });
   });
