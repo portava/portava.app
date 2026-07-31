@@ -162,6 +162,36 @@ describe('CityAvailabilityBanner — rendered availability agreement', () => {
     expect(screen.queryByText(/no buddies are online right now/i)).toBeNull();
   });
 
+  it('shows green banner for public_mvp city where launch-status reports 10 available buddies even when the Available Now list is capped at 6', async () => {
+    // Scenario: 10 buddies are online but getAvailableNow returns only 6 items
+    // (the list is sliced to 6 in the component). The banner must use
+    // info.availableNowCount (10) not availableNow.length (6 or 0) — both are
+    // > 0 so the branch is the same here, but this guards against a future
+    // regression where the banner re-derives count from the sliced list.
+    //
+    // To make the divergence conclusive we return an empty list from
+    // getAvailableNow (simulating a failed list call) while launch-status
+    // still reports 10 online.  Old prop-based code would read
+    // availableNow.length = 0 → amber; new code reads info.availableNowCount
+    // = 10 → green.
+    mockGetAvailableNow.mockResolvedValue({ ok: true, data: { buddies: [] } });
+    mockGetLaunchStatus.mockResolvedValue({
+      ok: true,
+      data: { ...PUBLIC_MVP_BASE, availableNowCount: 10 },
+    });
+
+    await render(<RentABuddyLanding />);
+    await sleepInAct(1100);
+
+    // Banner must show the green "live" message — 10 buddies online.
+    await waitFor(() => {
+      expect(screen.getByText('Rent a Buddy is live in Cebu!')).toBeTruthy();
+    });
+
+    // Amber "no buddies" override must NOT appear (count is 10, not 0).
+    expect(screen.queryByText(/no buddies are online right now/i)).toBeNull();
+  });
+
   it('Available Now empty-state text agrees with the zero-buddy amber banner', async () => {
     // Both the Available Now section AND the banner must report zero buddies —
     // they must never show contradictory messages on the same screen.

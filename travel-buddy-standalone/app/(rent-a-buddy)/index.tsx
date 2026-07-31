@@ -81,12 +81,10 @@ function CityAvailabilityBanner({
   city,
   info,
   loading,
-  availableNowCount,
 }: {
   city: string;
   info: LaunchStatusResponse | null;
   loading: boolean;
-  availableNowCount: number | null;
 }) {
   if (city.trim().length <= 2) return null;
   if (loading) return (
@@ -109,7 +107,13 @@ function CityAvailabilityBanner({
   // "no buddies right now" empty state — two contradictory claims about the
   // same city on the same screen. Fold real availability into THIS banner so
   // there is exactly one message about the city, and it can never lie.
-  const hasNoBuddiesRightNow = isLive && availableNowCount != null && availableNowCount === 0;
+  //
+  // Use `info.availableNowCount` (the authoritative count from the launch-status
+  // endpoint) rather than deriving it from the sliced Available Now list.  The
+  // list is capped at 6 items; for a city with 7+ online buddies the list
+  // length would diverge from the true count, and any future display of the
+  // number would be wrong.
+  const hasNoBuddiesRightNow = isLive && info.availableNowCount === 0;
 
   let effectiveMessage: string;
   if (hasNoBuddiesRightNow) {
@@ -341,14 +345,13 @@ export default function RentABuddyLanding() {
         usedFor="buddy_search"
       />
 
-      {/* City availability banner — fed the same launch-status data and
-          availableNow count used by the list below so the two can never
-          disagree (one honest claim per city, not two). */}
+      {/* City availability banner — reads availableNowCount from the
+          launch-status response directly so it is never capped by the 6-item
+          slice applied to the Available Now list. */}
       <CityAvailabilityBanner
         city={city}
         info={launchInfo}
         loading={launchInfoLoading}
-        availableNowCount={availableNowCity === city ? availableNow.length : null}
       />
 
       {/* Available Now */}
