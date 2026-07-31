@@ -18,7 +18,7 @@
  */
 
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react-native';
+import { render, screen, waitFor, act } from '@testing-library/react-native';
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
@@ -282,5 +282,75 @@ describe('PostDetailCard media rendering', () => {
 
     // MediaStampOverlay is only rendered alongside image media, never video.
     expect(screen.queryByTestId('stamp-overlay')).toBeNull();
+  });
+});
+
+// ── Re-focus fetch: Edited label ──────────────────────────────────────────────
+
+/**
+ * Verifies that the '· Edited' label appears on the post detail card after the
+ * screen regains focus and the refreshed post has updatedAt > createdAt.
+ *
+ * PostDetail uses useFocusEffect to re-fetch on every focus event.  This
+ * describe block replaces useFocusEffect with a controllable stub so the test
+ * can simulate the author returning from the edit screen without a full
+ * navigation stack.
+ */
+describe('PostDetailCard — Edited label on re-focus', () => {
+  // Holds the callback passed by PostDetail to useFocusEffect.
+  // Calling it re-runs the fetch, simulating screen regaining focus.
+  let fireFocus: () => void = () => {};
+  let focusSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    fireFocus = () => {};
+    // Override useFocusEffect on the mocked expo-router module so we can
+    // capture and re-trigger the fetch callback without a real navigator.
+    const routerMod = require('expo-router');
+    focusSpy = jest.spyOn(routerMod, 'useFocusEffect').mockImplementation(
+      (cb: () => (() => void) | void) => {
+        // Store so the test can fire a second focus event.
+        fireFocus = () => { cb(); };
+        // Fire once on mount to replicate the initial screen-enter behaviour.
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        React.useEffect(() => { cb(); }, []);
+      },
+    );
+  });
+
+  afterEach(() => {
+    // Restore only this spy — jest.restoreAllMocks() would break the
+    // jest.mock() factory registered at the top of the file.
+    focusSpy.mockRestore();
+  });
+
+  it('shows · Edited after the screen regains focus with an updated post', async () => {
+    // First fetch: post not yet edited (updatedAt === createdAt).
+    const basePost = makePost();
+    // Second fetch (re-focus): post updated one hour after creation.
+    const editedPost = makePost({
+      updatedAt: new Date('2025-01-01T13:00:00Z').toISOString(),
+    });
+
+    mockGetPostById
+      .mockResolvedValueOnce(postOk(basePost))
+      .mockResolvedValueOnce(postOk(editedPost));
+
+    await render(<PostDetail />);
+
+    // Initial load — post is not edited yet; label must be absent.
+    await waitFor(() =>
+      expect(screen.queryByText('· Edited')).toBeNull(),
+    );
+
+    // Simulate the author navigating back from the edit screen.  The real
+    // useFocusEffect fires here; our stub lets us trigger it manually.
+    // await act(async …) flushes the entire promise chain (setLoading → fetch
+    // → setPost) inside React's act context so state updates are committed
+    // before the assertion runs.
+    await act(async () => { fireFocus(); });
+
+    // After the re-focus fetch resolves, the Edited label must be visible.
+    expect(screen.getByText('· Edited')).toBeTruthy();
   });
 });
