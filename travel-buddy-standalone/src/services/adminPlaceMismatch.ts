@@ -17,6 +17,10 @@ export interface PlaceMismatchReport {
   resolved_action: 'accept' | 'reject' | null;
   resolved_at: string | null;
   created_at: string;
+  /** Snippet of the post body, joined server-side from posts.content */
+  post_content: string | null;
+  /** Human-readable place name, joined server-side from places.name */
+  place_name: string | null;
 }
 
 export interface ListPlaceMismatchReportsParams {
