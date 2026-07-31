@@ -28,6 +28,7 @@ import { color, space, radius, type as t, shadow } from '../../src/theme/tokens'
 import { acceptTripInvite, declineTripInvite, type TripInvite } from '../../src/services/trips';
 import { addEventToTrip } from '../../src/services/events';
 import { classifyInviteAcceptError } from '../../src/lib/inviteCardGoneHandler';
+import { formatTripDateRange } from '../../src/lib/tripDateFormat';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useSnapshotCache } from '../../src/hooks/useSnapshotCache';
 import type { TripRow } from '../../src/services/trips';
@@ -95,11 +96,7 @@ function InviteCard({ invite, onDone }: { invite: TripInvite; onDone: () => void
     }
   }
 
-  const dateStr = invite.startDate
-    ? invite.endDate
-      ? `${invite.startDate} – ${invite.endDate}`
-      : invite.startDate
-    : 'Dates TBD';
+  const dateStr = formatTripDateRange(invite.startDate, invite.endDate);
 
   const destination = invite.destinationCountry
     ? `${invite.destinationCity}, ${invite.destinationCountry}`
