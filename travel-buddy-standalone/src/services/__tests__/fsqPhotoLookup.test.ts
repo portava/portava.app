@@ -47,8 +47,11 @@ const FAKE_KEY = 'test-fsq-key-abc123';
 const originalFetch = globalThis.fetch;
 const originalEnv = process.env.EXPO_PUBLIC_FOURSQUARE_API_KEY;
 
-beforeEach(() => {
+beforeEach(async () => {
   process.env.EXPO_PUBLIC_FOURSQUARE_API_KEY = FAKE_KEY;
+  // Reset the once-per-session auth-failure guard so each test starts clean.
+  const { _resetAuthStateForTest } = await import('../fsqPhotoLookup.ts');
+  _resetAuthStateForTest();
 });
 
 afterEach(() => {

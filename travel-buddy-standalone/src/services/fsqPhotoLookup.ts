@@ -36,6 +36,11 @@ export function _setSentryForTest(
   if (s !== undefined) authFailedReported = false;
 }
 
+/** @internal Only for node:test suites — reset the once-per-session auth-failure
+ *  guard so each test that exercises a 401/403 path sees a fresh state. */
+export function _resetAuthStateForTest(): void {
+  authFailedReported = false;
+}
 function getSentry(): typeof import('@sentry/react-native') | null {
   if (_sentryOverride !== undefined) return (_sentryOverride ?? null) as any;
   return _getSentryBase();
