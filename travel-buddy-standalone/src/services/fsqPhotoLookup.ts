@@ -41,7 +41,6 @@ export function _setSentryForTest(
 export function _resetAuthStateForTest(): void {
   authFailedReported = false;
 }
-
 function getSentry(): typeof import('@sentry/react-native') | null {
   if (_sentryOverride !== undefined) return (_sentryOverride ?? null) as any;
   return _getSentryBase();
@@ -71,7 +70,6 @@ const photoCache = new Map<string, CacheEntry>();
  * picked up from photoCache on any subsequent call.
  */
 const inFlightPhotos = new Map<string, Promise<string | null>>();
-
 function cacheKey(name: string, lat: number | null, lng: number | null): string {
   const n = name.toLowerCase().trim().replace(/\s+/g, ' ');
   return `${n}|${lat != null ? lat.toFixed(3) : '_'}|${lng != null ? lng.toFixed(3) : '_'}`;
