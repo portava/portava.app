@@ -305,7 +305,14 @@ export default function PassportScreen() {
         tabOrder={tabOrderOverride ?? resolveTabOrder(profile.passportTabOrder)}
         onArrangeTabs={() => setTabReorderOpen(true)}
         onChangeAvatar={handleChangeAvatarViaCamera}
-        onSignOut={async () => { await signOut(); router.replace('/(auth)/sign-in'); }}
+        onSignOut={async () => {
+          try {
+            await signOut();
+            router.replace('/(auth)/sign-in');
+          } catch {
+            Alert.alert('Sign out failed', 'Could not sign you out — please try again.');
+          }
+        }}
       />
 
       {/* ── Modals ── */}
