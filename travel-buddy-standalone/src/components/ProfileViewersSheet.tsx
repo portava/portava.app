@@ -43,7 +43,7 @@ export function ProfileViewersSheet({ visible, onClose }: Props) {
             {viewers.length > 0 ? `${viewers.length} profile viewer${viewers.length !== 1 ? 's' : ''} · 7 days` : 'Profile viewers · 7 days'}
           </Text>
           <View style={{ flex: 1 }} />
-          <Pressable onPress={onClose} hitSlop={8} style={s.closeBtn}>
+          <Pressable onPress={onClose} hitSlop={8} style={s.closeBtn} accessibilityLabel="Close profile viewers" accessibilityRole="button">
             <X size={18} color={color.ink} />
           </Pressable>
         </View>
