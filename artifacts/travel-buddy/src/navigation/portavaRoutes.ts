@@ -1324,6 +1324,15 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     adminOnly: true,
   },
   {
+    key: 'admin-featured',
+    path: 'admin/featured',
+    title: 'Featured by @Portava',
+    parent: 'admin-portava-posts',
+    icon: null,
+    requiresAuth: true,
+    adminOnly: true,
+  },
+  {
     key: 'admin-portava-post-new',
     path: 'admin/portava-post',
     title: 'New @Portava Post',
