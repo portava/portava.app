@@ -137,6 +137,11 @@ function EventsTabScreen() {
   // Per-event in-flight lock — Set so different events can be saved concurrently
   const savingLockRef = useRef(new Set<string>());
 
+  // Cross-section dedup: ids currently shown in "Your events" — kept in sync by
+  // load() and consulted by handleNearMeRequest, which sets its own state outside
+  // the main load() call.
+  const myEventIdsRef = useRef<Set<string>>(new Set());
+
   // ── Focus TTL — prevents scroll-position resets on tab re-entry ────────────
   // Timestamp of the last successful load.
   const lastLoadedAt = useRef(0);
@@ -213,20 +218,30 @@ function EventsTabScreen() {
     const tomorrowIds = new Set(rawTomorrow.map((e) => e.id));
     const dedupedMain = isPresetActive ? rawMain : rawMain.filter((e) => !tomorrowIds.has(e.id));
 
-    // Dedup: exclude any event already surfaced by a time-based section ("Upcoming"
-    // or "Tomorrow") from the "Your events" row, so a hosted/attending event that
-    // also falls in those windows only renders once.
+    // "Your events" always shows the viewer's hosted/attending events, unaffected
+    // by any other section's contents.
     const rawMy = myRes.ok ? (myRes.data?.events ?? []) : [];
-    const timeBasedIds = isPresetActive ? new Set<string>() : new Set([...tomorrowIds, ...dedupedMain.map((e) => e.id)]);
-    const dedupedMy = rawMy.filter((e) => !timeBasedIds.has(e.id));
+    // Cross-section exclusion: any event already surfaced in "Your events" must
+    // not also appear in the time/social/category sections below.
+    const myIds = new Set(rawMy.map((e) => e.id));
+    myEventIdsRef.current = myIds;
 
-    if (myRes.ok) setMyEvents(dedupedMy);
+    const dedupedToday = dedupedMain.filter((e) => !myIds.has(e.id));
+    const dedupedTomorrow = rawTomorrow.filter((e) => !myIds.has(e.id));
+    const rawWeekend = weekendRes.ok ? (weekendRes.data?.events ?? []) : [];
+    const dedupedWeekend = rawWeekend.filter((e) => !myIds.has(e.id));
+    const rawFollowing = followRes.ok ? (followRes.data?.events ?? []) : [];
+    const dedupedFollowing = rawFollowing.filter((e) => !myIds.has(e.id));
+    const rawCircle = circleRes.ok ? (circleRes.data?.events ?? []) : [];
+    const dedupedCircle = rawCircle.filter((e) => !myIds.has(e.id));
 
-    if (mainRes.ok) setTodayEvents(dedupedMain);
-    if (tomorrowRes.ok) setTomorrowEvents(rawTomorrow);
-    if (weekendRes.ok) setWeekendEvents(weekendRes.data?.events ?? []);
-    if (followRes.ok) setFollowingEvents(followRes.data?.events ?? []);
-    if (circleRes.ok) setCircleEvents(circleRes.data?.events ?? []);
+    if (myRes.ok) setMyEvents(rawMy);
+
+    if (mainRes.ok) setTodayEvents(dedupedToday);
+    if (tomorrowRes.ok) setTomorrowEvents(dedupedTomorrow);
+    if (weekendRes.ok) setWeekendEvents(dedupedWeekend);
+    if (followRes.ok) setFollowingEvents(dedupedFollowing);
+    if (circleRes.ok) setCircleEvents(dedupedCircle);
     if (savedRes.ok) {
       const evs = savedRes.data?.events ?? [];
       setSavedEvents(evs);
@@ -242,7 +257,7 @@ function EventsTabScreen() {
       );
       const rows: Record<string, EventListItem[]> = {};
       FEATURED_CATEGORIES.forEach((c, i) => {
-        if (catResults[i].ok) rows[c] = catResults[i].data?.events ?? [];
+        if (catResults[i].ok) rows[c] = (catResults[i].data?.events ?? []).filter((e) => !myIds.has(e.id));
       });
       setCategoryRows(rows);
     } else {
@@ -318,7 +333,7 @@ function EventsTabScreen() {
       nearRadiusKm: radiusKm,
       limit: 15,
     });
-    if (res.ok) setNearMeEvents(res.data?.events ?? []);
+    if (res.ok) setNearMeEvents((res.data?.events ?? []).filter((e) => !myEventIdsRef.current.has(e.id)));
     setNearMeLoading(false);
   }
 
