@@ -23,6 +23,7 @@ import { isUuid } from "../lib/followDecisions.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { invalidateDiscoveryCacheForOsmId } from "../lib/discoveryPersistentCache.js";
+import { evictOsmPlaceFromL1Cache } from "./discovery.js";
 
 const router = Router();
 
@@ -48,6 +49,11 @@ async function maybeInvalidateDiscoveryVoteCacheForPlace(
       .maybeSingle();
     const osmId = (data as any)?.osm_id as string | null | undefined;
     if (osmId) {
+      // Evict the L1 in-memory cache so the next feed request re-enriches
+      // vote/review counts from the live DB immediately — not after the 2-hour TTL.
+      evictOsmPlaceFromL1Cache(osmId);
+      // Evict the L2 Postgres discovery_cache so requests on other processes
+      // (or after a server restart) also skip stale entries.
       void invalidateDiscoveryCacheForOsmId(osmId);
     }
   } catch {

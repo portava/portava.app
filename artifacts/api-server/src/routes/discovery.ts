@@ -538,6 +538,24 @@ export function _clearTestCacheEntry(key: string): void {
 export const _testEnrichOsmSavedCounts = enrichOsmSavedCounts;
 
 /**
+ * Evict all L1 in-memory cache entries that contain an OSM place with the
+ * given osmId (stored directly as place.id, e.g. "node/12345678").  Called
+ * after a vote or review write so the next feed request re-enriches vote
+ * counts from the live DB rather than serving the stale cached values for
+ * up to the 2-hour TTL.
+ *
+ * Analogous to patchOsmSavedCount but used for vote/review enrichment where
+ * a simple in-place patch is not safe (counts require a DB re-fetch).
+ */
+export function evictOsmPlaceFromL1Cache(osmId: string): void {
+  for (const [key, entry] of cache) {
+    if (entry.places.some((p) => p.id === osmId)) {
+      cache.delete(key);
+    }
+  }
+}
+
+/**
  * Evict all L1 in-memory cache entries that contain a DB place with the given
  * entityId (stored as id "db/<entityId>").  Called by admin moderation actions
  * (approve/reject/downgrade/replace/report-resolve) so that a request served
