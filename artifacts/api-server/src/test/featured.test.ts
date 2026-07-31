@@ -655,3 +655,92 @@ describe("H: fallback to @Portava posts when portava_featured is empty", () => {
     assert.deepEqual(body.groups, [], "groups must be empty when @portava's profile can't be found");
   });
 });
+
+// ── I: creatorId + privacy guard — private-profile post excluded even when creator matches ──
+
+const CREATOR_PRIV_ID = "cccccccc-0099-0000-0000-000000000099";
+
+const FEAT_PRIV_PUBLIC  = "fp000000-0000-0000-0000-000000000001";
+const FEAT_PRIV_PRIVATE = "fp000000-0000-0000-0000-000000000002";
+
+const POST_PRIV_PUBLIC  = "pp000000-0000-0000-0000-000000000001";
+const POST_PRIV_PRIVATE = "pp000000-0000-0000-0000-000000000002";
+
+function makeRowWithPrivacy(opts: {
+  id: string;
+  post_id: string;
+  category: string;
+  creatorId: string;
+  isPrivate: boolean;
+}): any {
+  return {
+    id:          opts.id,
+    post_id:     opts.post_id,
+    category:    opts.category,
+    featured_at: "2025-07-25T12:00:00.000Z",
+    status:      "live",
+    posts: {
+      id:               opts.post_id,
+      content:          `Post from ${opts.isPrivate ? "private" : "public"} profile`,
+      location_city:    "Rome",
+      location_country: "IT",
+      author_id:        opts.creatorId,
+      post_media:       [],
+      profiles: {
+        id:         opts.creatorId,
+        username:   "creator_priv_test",
+        full_name:  "Creator Privacy Test",
+        avatar_url: null,
+        verified:   false,
+        is_private: opts.isPrivate,
+      },
+    },
+  };
+}
+
+const PRIVACY_ROWS = [
+  makeRowWithPrivacy({ id: FEAT_PRIV_PUBLIC,  post_id: POST_PRIV_PUBLIC,  category: "best_photo",     creatorId: CREATOR_PRIV_ID, isPrivate: false }),
+  makeRowWithPrivacy({ id: FEAT_PRIV_PRIVATE, post_id: POST_PRIV_PRIVATE, category: "best_adventure", creatorId: CREATOR_PRIV_ID, isPrivate: true  }),
+];
+
+describe("I: creatorId filter also excludes private-profile posts from that creator", () => {
+  it("only the public post appears when the same creator has one public and one private-profile post", async () => {
+    _setTestServiceClient(makeFakeSc(PRIVACY_ROWS) as any);
+
+    const { status, body } = await getReq(`/api/featured?creatorId=${CREATOR_PRIV_ID}`);
+
+    assert.equal(status, 200, `Expected 200, got ${status}: ${JSON.stringify(body)}`);
+
+    assert.equal(
+      body.total,
+      1,
+      `total must be 1 (only the public post), got ${body.total}`,
+    );
+
+    const groups: any[] = body.groups ?? [];
+    const allPosts: any[] = groups.flatMap((g: any) => g.posts as any[]);
+    assert.equal(allPosts.length, 1, `Expected exactly 1 post across all groups, got ${allPosts.length}`);
+
+    assert.equal(
+      allPosts[0].postId,
+      POST_PRIV_PUBLIC,
+      `The only returned post must be the public one (${POST_PRIV_PUBLIC}), got ${allPosts[0].postId}`,
+    );
+  });
+
+  it("the private-profile post's postId is absent from the filtered response", async () => {
+    _setTestServiceClient(makeFakeSc(PRIVACY_ROWS) as any);
+
+    const { status, body } = await getReq(`/api/featured?creatorId=${CREATOR_PRIV_ID}`);
+
+    assert.equal(status, 200);
+
+    const groups: any[] = body.groups ?? [];
+    const allPostIds: string[] = groups.flatMap((g: any) => (g.posts as any[]).map((p: any) => p.postId));
+
+    assert.ok(
+      !allPostIds.includes(POST_PRIV_PRIVATE),
+      `Private-profile post ${POST_PRIV_PRIVATE} must not appear even when its creator matches the creatorId filter`,
+    );
+  });
+});
