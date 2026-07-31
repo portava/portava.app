@@ -29,14 +29,10 @@ jest.mock('../../../services/discovery', () => ({
 
 // NOTE: intentionally exhaustive — the real module imports Supabase.
 jest.mock('../../../services/compass', () => ({
-  postCompassFrontloadEvent: jest.fn().mockResolvedValue(undefined),
-  reportCompassViewed:       jest.fn().mockResolvedValue(undefined),
-  postCompassContext:        jest.fn().mockResolvedValue(undefined),
-  // fetchCompassSettings is called by CompassOnboardingCard / CompassTravelerRow
-  // child components rendered inside ForYouTab when compassEnabled is true.
-  // Mock it as a noop so child mounts don't throw.
-  fetchCompassSettings:      jest.fn().mockResolvedValue({ ok: false, data: null }),
-  fetchCompassPreferences:   jest.fn().mockResolvedValue({ ok: false, data: null }),
+  postCompassFrontloadEvent:  jest.fn().mockResolvedValue(undefined),
+  reportCompassViewed:        jest.fn().mockResolvedValue(undefined),
+  fetchCompassSettings:       jest.fn().mockResolvedValue({ data: null, error: null }),
+  fetchCompassPreferences:    jest.fn().mockResolvedValue({ data: null, error: null }),
 }));
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
