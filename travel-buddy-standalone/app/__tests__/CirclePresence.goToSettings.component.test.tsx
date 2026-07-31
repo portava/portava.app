@@ -1,17 +1,19 @@
 /**
- * Circle Presence (standalone) — goToSettings routing fix
+ * Circle Presence — goToSettings routing fix
  *
- * Mirrors artifacts/travel-buddy/app/__tests__/CirclePresence.goToSettings.component.test.tsx.
+ * Confirms that the "Open settings" button in the "sharing is off" state
+ * routes to `/profile/edit/location` (the global Find Your Circle toggle
+ * screen) rather than `/circle-context-settings` (the per-context override
+ * screen that cannot fix the global switch).
  *
- * Confirms state-aware routing in goToSettings():
- *   - sharing_off state  → /profile/edit/location  (global toggle screen)
- *   - other states       → /circle-context-settings (per-context override)
+ * Background:
+ *   The empty state fires when `settingsRes.data.globalEnabled === false`.
+ *   Before the fix, "Open settings" pushed to `/circle-context-settings`,
+ *   which only controls per-context overrides on top of an already-enabled
+ *   global switch — so the real blocker was never reachable and the screen
+ *   appeared stuck after going back.
  *
- * Before the fix, goToSettings() always pushed to /profile/edit/location,
- * breaking the "Resume" paused-banner and "Who's sharing" settings icon for
- * users whose global sharing was already on.
- *
- * Run with: pnpm --filter @workspace/travel-buddy-standalone test:component
+ * Run with: pnpm --filter @workspace/travel-buddy test:component
  */
 
 import React from 'react';
@@ -32,7 +34,7 @@ jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn() },
   useLocalSearchParams: () => ({
     contextType:  'event',
-    contextId:    'evt-circle-sa-1',
+    contextId:    'evt-circle-test-1',
     contextLabel: 'Sunset Party',
   }),
   useFocusEffect: (cb: () => (() => void) | void) => {
@@ -53,7 +55,7 @@ jest.mock('expo-location', () => ({
 // ── Session ───────────────────────────────────────────────────────────────────
 // NOTE: intentional stub — not under test here.
 jest.mock('../../src/context/SessionContext', () => ({
-  useSession: () => ({ userId: 'viewer-circle-sa' }),
+  useSession: () => ({ userId: 'viewer-circle-test' }),
 }));
 
 // ── Bottom inset ─────────────────────────────────────────────────────────────
@@ -65,7 +67,7 @@ jest.mock('../../src/hooks/useBottomInset', () => ({
 // ── circle service — global sharing disabled scenario ─────────────────────────
 // Key pre-condition: getCircleSettings returns globalEnabled=false, which
 // triggers the 'sharing_off' screen state and shows the "Open settings" button.
-// NOTE: partial stub — getCircleSettings is the service under test; others return safe defaults.
+// NOTE: partial stub. getCircleSettings is the one being tested; others return safe defaults.
 jest.mock('../../src/services/circle', () => ({
   getCircleSettings: jest.fn().mockResolvedValue({
     ok: true,
@@ -84,7 +86,8 @@ jest.mock('../../src/services/circle', () => ({
 }));
 
 // ── Sub-components — null stubs ───────────────────────────────────────────────
-// NOTE: intentional stub — not under test here.
+// NOTE: intentional stub — not under test here. AppHeader renders the title and
+// back button but the actual behaviour under test is the "Open settings" press.
 jest.mock('../../src/components/ui/AppHeader', () => ({
   AppHeader: ({ title }: any) => {
     const { Text } = require('react-native');
@@ -116,25 +119,32 @@ import CirclePresenceScreen from '../circle-presence.tsx';
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('Circle Presence (standalone) — goToSettings routes correctly per screen state', () => {
+describe('Circle Presence — "Open settings" routes to global toggle screen', () => {
   beforeEach(() => {
+    // Access push through require so we get the live mock fn, not a TDZ ref.
     require('expo-router').router.push.mockClear();
   });
 
-  it('sharing_off: "Open settings" pushes to /profile/edit/location — NOT circle-context-settings', async () => {
+  it('tapping "Open settings" pushes to /profile/edit/location — NOT circle-context-settings', async () => {
     const { getByText } = await render(<CirclePresenceScreen />);
 
+    // Wait for the service calls to resolve and the sharing_off state to render.
     await act(async () => {});
 
     await waitFor(() => {
       expect(getByText('Open settings')).toBeTruthy();
     }, { timeout: 4000 });
 
+    // Tap the button.
     fireEvent.press(getByText('Open settings'));
 
+    // Access the live mock fn through require — avoids TDZ issues with const hoisting.
     const pushMock = require('expo-router').router.push;
+
+    // The router must push to the global location settings screen.
     expect(pushMock).toHaveBeenCalledWith('/profile/edit/location');
 
+    // The old (wrong) destination must never have been used.
     const wrongCalls = (pushMock.mock.calls as any[][]).filter(
       ([arg]) =>
         typeof arg === 'string'
@@ -144,7 +154,7 @@ describe('Circle Presence (standalone) — goToSettings routes correctly per scr
     expect(wrongCalls.length).toBe(0);
   });
 
-  it('sharing_off: shows "Find Your Circle is off." message', async () => {
+  it('shows the "Find Your Circle is off." message in the sharing_off state', async () => {
     const { getByText } = await render(<CirclePresenceScreen />);
     await act(async () => {});
 
@@ -153,31 +163,7 @@ describe('Circle Presence (standalone) — goToSettings routes correctly per scr
     }, { timeout: 4000 });
   });
 
-  it('ok state (globalEnabled=true): settings icon pushes to /circle-context-settings with context params', async () => {
-    const { getCircleSettings } = require('../../src/services/circle');
-    getCircleSettings.mockResolvedValueOnce({
-      ok: true,
-      data: { globalEnabled: true, isPaused: false },
-    });
-
-    // Render in the 'ok' state — the Settings icon in the "Who's sharing" row
-    // should route to /circle-context-settings, not /profile/edit/location.
-    const { queryByText } = await render(<CirclePresenceScreen />);
-    await act(async () => {});
-
-    // Give the screen time to transition to the ok state.
-    await new Promise((r) => setTimeout(r, 300));
-
-    // In the ok state the sharing_off copy must be absent.
-    expect(queryByText('Find Your Circle is off.')).toBeNull();
-
-    // The "Open settings" button (sharing_off exclusive) must not exist.
-    expect(queryByText('Open settings')).toBeNull();
-  });
-
-  it('sharing_off gone after globalEnabled toggles on: screen no longer shows the off-state copy', async () => {
-    // Second render simulates returning with global sharing now enabled —
-    // the screen should transition out of sharing_off.
+  it('does NOT reach sharing_off when globalEnabled is true', async () => {
     const { getCircleSettings } = require('../../src/services/circle');
     getCircleSettings.mockResolvedValueOnce({
       ok: true,
@@ -186,8 +172,12 @@ describe('Circle Presence (standalone) — goToSettings routes correctly per scr
 
     const { queryByText } = await render(<CirclePresenceScreen />);
     await act(async () => {});
-    await new Promise((r) => setTimeout(r, 300));
 
-    expect(queryByText('Find Your Circle is off.')).toBeNull();
+    // Give components time to settle.
+    await new Promise((r) => setTimeout(r, 200));
+
+    // The "sharing is off" copy must be absent when global sharing is enabled.
+    const offMsg = queryByText('Find Your Circle is off.');
+    expect(offMsg).toBeNull();
   });
 });

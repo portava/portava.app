@@ -22,6 +22,7 @@ import {
   fetchCityEvents,
   resolveEventsOnSuccess,
   resolveEventsOnError,
+  sortByStartAt,
 } from '../cityPulseUtils.ts';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -320,5 +321,68 @@ describe('resolveEventsOnError — dev fallback uses mock data; prod shows empty
     const bigFallback = Array.from({ length: 50 }, (_, i) => ({ ...MOCK_EVENTS[0], id: `m${i}` }));
     const result = resolveEventsOnError(false, bigFallback);
     assert.equal(result.length, 0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// sortByStartAt — "Full Day" chronological ordering, hardened against bad timestamps
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('sortByStartAt — chronological ordering', () => {
+  test('sorts a normal set of events into strictly ascending start-time order', () => {
+    const events = [
+      { id: 'a', startAt: '2026-06-20T12:34:00Z' },
+      { id: 'b', startAt: '2026-06-20T10:24:00Z' },
+      { id: 'c', startAt: '2026-06-20T18:00:00Z' },
+      { id: 'd', startAt: '2026-06-20T11:00:00Z' },
+    ];
+    const sorted = sortByStartAt(events);
+    assert.deepEqual(sorted.map((e) => e.id), ['b', 'd', 'a', 'c']);
+  });
+
+  test('an event with a missing startAt ("") never lands in the middle — it is pushed to the end', () => {
+    const events = [
+      { id: 'a', startAt: '2026-06-20T12:34:00Z' },
+      { id: 'bad', startAt: '' },
+      { id: 'b', startAt: '2026-06-20T10:24:00Z' },
+      { id: 'c', startAt: '2026-06-20T18:00:00Z' },
+    ];
+    const sorted = sortByStartAt(events);
+    assert.deepEqual(sorted.map((e) => e.id), ['b', 'a', 'c', 'bad']);
+  });
+
+  test('an event with an unparseable startAt string is pushed to the end, not stranded near its original position', () => {
+    const events = [
+      { id: 'bad', startAt: 'not-a-date' },
+      { id: 'a', startAt: '2026-06-20T09:00:00Z' },
+      { id: 'b', startAt: '2026-06-20T23:34:00Z' },
+    ];
+    const sorted = sortByStartAt(events);
+    assert.deepEqual(sorted.map((e) => e.id), ['a', 'b', 'bad']);
+  });
+
+  test('multiple malformed entries all land at the end, in their relative fetch order', () => {
+    const events = [
+      { id: 'bad1', startAt: undefined as unknown as string },
+      { id: 'a', startAt: '2026-06-20T09:00:00Z' },
+      { id: 'bad2', startAt: '' },
+      { id: 'b', startAt: '2026-06-20T15:00:00Z' },
+    ];
+    const sorted = sortByStartAt(events);
+    assert.deepEqual(sorted.map((e) => e.id), ['a', 'b', 'bad1', 'bad2']);
+  });
+
+  test('does not mutate the input array', () => {
+    const events = [
+      { id: 'a', startAt: '2026-06-20T12:00:00Z' },
+      { id: 'b', startAt: '2026-06-20T09:00:00Z' },
+    ];
+    const original = [...events];
+    sortByStartAt(events);
+    assert.deepEqual(events, original);
+  });
+
+  test('returns an empty array unchanged', () => {
+    assert.deepEqual(sortByStartAt([]), []);
   });
 });

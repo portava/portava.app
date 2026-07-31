@@ -30,6 +30,7 @@ import { CalendarDays, Radio } from 'lucide-react-native';
 import type { CityEvent } from '../types/models.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { FitsCard } from './PulseFits.tsx';
+import { sortByStartAt } from '../hooks/cityPulseUtils.ts';
 
 // ── Types & constants ─────────────────────────────────────────────────────────
 
@@ -124,26 +125,19 @@ export function ExploreTodaySection({
 
   const happeningNow = useMemo(() => {
     const nowMs = Date.now();
-    return events
-      .filter((e) => isHappeningNow(e, nowMs))
-      .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+    return sortByStartAt(events.filter((e) => isHappeningNow(e, nowMs)));
   }, [events]);
 
   const bandEvents = useMemo(
-    () =>
-      events
-        .filter((e) => e.block === band)
-        .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime()),
+    () => sortByStartAt(events.filter((e) => e.block === band)),
     [events, band],
   );
 
-  const chronEvents = useMemo(
-    () =>
-      [...events].sort(
-        (a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
-      ),
-    [events],
-  );
+  // Chronological "Full Day" list. Uses sortByStartAt (not a raw
+  // getTime()-diff comparator) so an event with a missing/unparseable
+  // startAt is deterministically pushed to the end instead of a NaN
+  // comparator result stranding it near its original fetch-order position.
+  const chronEvents = useMemo(() => sortByStartAt(events), [events]);
 
   // ── Absolute fallback — server returned zero events ────────────────────────
   if (events.length === 0) {
