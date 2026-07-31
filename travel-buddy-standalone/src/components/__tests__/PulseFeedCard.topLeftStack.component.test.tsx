@@ -1,18 +1,25 @@
 /**
- * PulseFeedCard — overflow menu owner-only gating
+ * PulseFeedCard — topLeftStack container presence and badge-stacking order
  *
- * Confirms that the '…' overflow menu in AuthorRow shows "Edit post" only
- * when the current user is the post owner.
+ * Confirms that:
+ *   1. The `topLeftStack` flex-column container is present in the media frame.
+ *   2. When `featuredByPortava` is set, FeaturedBadge renders inside that
+ *      container ABOVE (before) the postcard-label child — stacked, not
+ *      overlapping.
+ *   3. When `featuredByPortava` is absent, only the postcard label renders
+ *      inside the container (badge absent).
+ *   4. The city text appears uppercased in all relevant states.
  *
- *   Owner:     Alert buttons include "Edit post" → navigates to /post/edit/[id]
- *   Non-owner: Alert buttons do NOT include "Edit post"; Share/Report/Hide shown
+ * Render-order assertion: the JSON tree of the topLeftStack node is inspected
+ * directly to verify that the featured-badge child precedes the postcard-label
+ * child, matching the visual "badge above label" requirement.
  *
  * Run with: pnpm test:component
  */
 
 import React from 'react';
-import { Alert } from 'react-native';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { render, screen, within } from '@testing-library/react-native';
+import type { ReactTestInstance } from 'react-test-renderer';
 
 // ── expo-router ───────────────────────────────────────────────────────────────
 // NOTE: intentionally exhaustive — spreading requireActual pulls in native
@@ -26,18 +33,16 @@ jest.mock('expo-router', () => ({
   },
 }));
 
-import { router } from 'expo-router';
-
 // ── SessionContext ─────────────────────────────────────────────────────────────
-// Mutable so each test can flip the viewer identity without re-mocking.
-// NOTE: intentionally exhaustive — SessionContext imports Supabase auth internals.
-const mockUserId = { current: 'viewer-1' };
+// NOTE: intentionally exhaustive — SessionContext imports Supabase auth
+// internals that are not safe under the JS-only renderer.
 jest.mock('../../context/SessionContext.tsx', () => ({
-  useSession: () => ({ userId: mockUserId.current, isAuthed: true }),
+  useSession: () => ({ userId: 'viewer-1', isAuthed: true }),
 }));
 
 // ── BlockedIdsContext ─────────────────────────────────────────────────────────
-// NOTE: intentionally exhaustive — BlockedIdsContext pulls Supabase realtime.
+// NOTE: intentionally exhaustive — BlockedIdsContext pulls Supabase realtime
+// subscriptions that crash the JS-only renderer.
 jest.mock('../../context/BlockedIdsContext.tsx', () => ({
   useBlockedIds: () => ({ blockedIds: new Set(), blockerIds: new Set(), isLoading: false }),
 }));
@@ -86,27 +91,25 @@ jest.mock('../../lib/batchSignMedia.ts', () => ({
 }));
 
 // ── AvatarImage ────────────────────────────────────────────────────────────────
-// NOTE: intentionally exhaustive — DisplayMediaImage imports Supabase storage helpers
-// that are not safe under jest; only the null stub is needed here.
+// NOTE: intentionally exhaustive — DisplayMediaImage imports Supabase storage
+// helpers that are not safe under jest.
 jest.mock('../ui/DisplayMediaImage.tsx', () => ({ AvatarImage: () => null }));
 
 // ── useHighlightRingState ──────────────────────────────────────────────────────
-// NOTE: intentionally exhaustive — useHighlightRingState hits highlight services;
-// AuthorRow only reads the returned object to decide ring visibility.
+// NOTE: intentionally exhaustive — hits highlight services.
 jest.mock('../../hooks/useHighlightRingState.ts', () => ({
   useHighlightRingState: () => null,
 }));
 
 // ── displayIdentity ────────────────────────────────────────────────────────────
-// NOTE: intentionally exhaustive — displayIdentity imports locale-dependent
-// formatting utilities; only the text shape matters for this test.
+// NOTE: intentionally exhaustive — imports locale-dependent formatting utilities.
 jest.mock('../../lib/displayIdentity.ts', () => ({
   primaryIdentityText: ({ username }: { username?: string | null }) => username ?? '',
 }));
 
 // ── navigateToProfile ──────────────────────────────────────────────────────────
-// NOTE: intentionally exhaustive — navigateToProfile calls router APIs that
-// require a mounted navigation stack; a jest.fn() stub is sufficient.
+// NOTE: intentionally exhaustive — calls router APIs that require a mounted
+// navigation stack.
 jest.mock('../../lib/navigateToProfile.ts', () => ({
   navigateToProfile: jest.fn(),
 }));
@@ -133,14 +136,7 @@ jest.mock('../PostEngagementBar.tsx', () => ({ PostEngagementBar: () => null }))
 // NOTE: intentionally exhaustive — CompassFeedbackMenu needs compass context.
 jest.mock('../compass/CompassFeedbackMenu.tsx', () => ({ CompassFeedbackMenu: () => null }));
 // NOTE: intentionally exhaustive — CompassWhySheet needs bottom-sheet native deps.
-// Captures the props it's rendered with so the why-sheet lifecycle tests below
-// can assert on visible/recommendationId without mounting the real sheet.
-jest.mock('../compass/CompassWhySheet.tsx', () => ({
-  CompassWhySheet: (props: { visible: boolean; recommendationId: string | null; onClose: () => void }) => {
-    (global as any).__lastWhySheetProps = props;
-    return null;
-  },
-}));
+jest.mock('../compass/CompassWhySheet.tsx', () => ({ CompassWhySheet: () => null }));
 // NOTE: intentionally exhaustive — MediaStampOverlay loads stamp assets.
 jest.mock('../StampOverlayBadge.tsx', () => ({ MediaStampOverlay: () => null }));
 // NOTE: intentionally exhaustive — VideoThumbnail uses native video deps.
@@ -149,8 +145,6 @@ jest.mock('../ui/VideoThumbnail.tsx', () => ({ VideoThumbnail: () => null }));
 jest.mock('../LocationChip.tsx', () => ({ LocationChip: () => null }));
 // NOTE: intentionally exhaustive — RichText uses text-parsing utilities.
 jest.mock('../RichText.tsx', () => ({ RichText: () => null }));
-// NOTE: intentionally exhaustive — FeaturedBadge imports image assets.
-jest.mock('../FeaturedBadge.tsx', () => ({ FeaturedBadge: () => null }));
 // NOTE: intentionally exhaustive — OfficialBadge imports SVG assets.
 jest.mock('../OfficialBadge.tsx', () => ({ OfficialBadge: () => null }));
 // NOTE: intentionally exhaustive — VerifiedStamp imports SVG assets.
@@ -172,184 +166,146 @@ jest.mock('../../services/postEngagement.ts', () => ({ deletePost: jest.fn() }))
 // NOTE: intentionally exhaustive — posts service makes real Supabase calls.
 jest.mock('../../services/posts.ts', () => ({ hidePost: jest.fn() }));
 
+// ── FeaturedBadge — testID stub so presence and order can be asserted ─────────
+// NOTE: intentionally exhaustive — the real FeaturedBadge imports lucide icons
+// that require native module setup; a labelled stub is safe and sufficient.
+jest.mock('../FeaturedBadge.tsx', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+  return {
+    FeaturedBadge: ({ category }: { category?: string | null }) =>
+      React.createElement(View, {
+        testID: 'featured-badge',
+        accessibilityLabel: `Featured: ${category ?? 'generic'}`,
+      }),
+  };
+});
+
 // ── Component under test ───────────────────────────────────────────────────────
 import { PulseFeedCard } from '../PulseFeedCard.tsx';
 import type { PulseFeedItem } from '../../types/models.ts';
-import { deletePost } from '../../services/postEngagement.ts';
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+/**
+ * Finds the index of a child (by testID) within a rendered RNTL node's
+ * children array. Returns -1 when not found (child was not rendered).
+ *
+ * Because FlatList and nested Views can wrap nodes, we walk only the
+ * *direct* children of the given parent node.
+ */
+function childIndexByTestId(parent: ReactTestInstance, testID: string): number {
+  return parent.children.findIndex(
+    (child) => typeof child !== 'string' && child.props?.testID === testID,
+  );
+}
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────
 
-const AUTHOR_ID = 'author-1';
-const POST_ID   = 'post-abc';
+const AUTHOR = {
+  id: 'author-1',
+  name: 'Alice',
+  username: 'alice',
+  avatarUrl: null,
+  verified: false,
+  isOfficial: false,
+};
 
-function makePostItem(): PulseFeedItem {
+/**
+ * Builds a post item with a synthetic media URL so the media-frame branch
+ * renders — the topLeftStack and postcardLabel live inside that branch.
+ */
+function makePostItem(overrides: Partial<PulseFeedItem> = {}): PulseFeedItem {
   return {
-    id: POST_ID,
+    id: 'post-1',
     type: 'post',
     city: 'Tokyo',
     timeAgo: '2h ago',
     tags: [],
-    author: {
-      id: AUTHOR_ID,
-      name: 'Alice',
-      username: 'alice',
-      avatarUrl: null,
-      verified: false,
-      isOfficial: false,
-    },
+    author: AUTHOR,
+    media: [{ url: 'https://example.com/photo.jpg', thumbnail_url: 'https://example.com/thumb.jpg' }],
+    featuredByPortava: null,
+    ...overrides,
   } as unknown as PulseFeedItem;
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
-let alertSpy: jest.SpyInstance;
-
 beforeEach(() => {
   jest.clearAllMocks();
-  alertSpy = jest.spyOn(Alert, 'alert');
 });
 
-afterEach(() => {
-  alertSpy.mockRestore();
-});
-
-describe('PulseFeedCard AuthorRow — overflow menu owner gating', () => {
-  it('owner sees "Edit post" as the first option and it navigates to the edit route', async () => {
-    mockUserId.current = AUTHOR_ID; // viewer IS the author
-
+describe('PulseFeedCard — topLeftStack container presence and badge-stacking order', () => {
+  it('topLeftStack container renders in the media frame', async () => {
     await render(<PulseFeedCard item={makePostItem()} />);
-    fireEvent.press(screen.getByTestId('overflow-menu-btn'));
 
-    expect(alertSpy).toHaveBeenCalledTimes(1);
-
-    const buttons: Array<{ text: string; onPress?: () => void }> =
-      alertSpy.mock.calls[0][2];
-
-    // "Edit post" must be present
-    const editBtn = buttons.find((b) => b.text === 'Edit post');
-    expect(editBtn).toBeDefined();
-
-    // It must be the first actionable option (before destructive / share / cancel)
-    expect(buttons[0].text).toBe('Edit post');
-
-    // Pressing it navigates to the edit route (bare call per TESTING.md rule 2)
-    editBtn!.onPress?.();
-    expect(router.push).toHaveBeenCalledWith(`/post/edit/${POST_ID}`);
+    // The container must be present regardless of badge state.
+    expect(screen.getByTestId('top-left-stack')).toBeTruthy();
   });
 
-  it('non-owner never sees "Edit post" in the overflow menu', async () => {
-    mockUserId.current = 'viewer-99'; // viewer is NOT the author
-
-    await render(<PulseFeedCard item={makePostItem()} />);
-    fireEvent.press(screen.getByTestId('overflow-menu-btn'));
-
-    expect(alertSpy).toHaveBeenCalledTimes(1);
-
-    const labels: string[] = alertSpy.mock.calls[0][2].map(
-      (b: { text: string }) => b.text,
+  it('badge renders BEFORE (above) the city label inside topLeftStack when featuredByPortava is set', async () => {
+    await render(
+      <PulseFeedCard item={makePostItem({ featuredByPortava: 'best_hidden_gem', city: 'Kyoto' })} />,
     );
 
-    expect(labels).not.toContain('Edit post');
+    const stack = screen.getByTestId('top-left-stack');
 
-    // Non-owner options are all present
-    expect(labels).toContain('Share post');
-    expect(labels).toContain('Report');
-    expect(labels).toContain('Hide from feed');
-  });
-});
+    // Both elements must be present inside the stack.
+    expect(within(stack).getByTestId('featured-badge')).toBeTruthy();
+    expect(within(stack).getByTestId('postcard-label')).toBeTruthy();
 
-describe('PulseFeedCard — "Why this?" sheet lifecycle across navigation', () => {
-  it('closing the sheet clears both visible and recommendationId — no stale id left behind', async () => {
-    mockUserId.current = AUTHOR_ID;
-    await render(<PulseFeedCard item={makePostItem()} />);
+    // Badge must appear BEFORE the label in the child order — confirming it
+    // is rendered above (not overlapping) the city label.
+    const badgeIdx = childIndexByTestId(stack, 'featured-badge');
+    const labelIdx = childIndexByTestId(stack, 'postcard-label');
+    expect(badgeIdx).toBeGreaterThanOrEqual(0);
+    expect(labelIdx).toBeGreaterThanOrEqual(0);
+    expect(badgeIdx).toBeLessThan(labelIdx);
 
-    // Simulate the sheet having been opened and then closed via onClose
-    // (PostCard is mocked to null, so drive the close handler directly).
-    const props = (global as any).__lastWhySheetProps;
-    expect(props).toBeDefined();
-    expect(props.visible).toBe(false);
-
-    props.onClose();
-
-    const afterClose = (global as any).__lastWhySheetProps;
-    expect(afterClose.visible).toBe(false);
-    expect(afterClose.recommendationId).toBeNull();
-  });
-});
-
-describe('PulseFeedCard — owner Delete post flow', () => {
-  it('confirming deletion calls deletePost with the post ID and removes the card from the feed', async () => {
-    mockUserId.current = AUTHOR_ID; // viewer IS the author
-
-    // deletePost succeeds
-    (deletePost as jest.Mock).mockResolvedValue(true);
-
-    const onDeleteSuccess = jest.fn();
-    await render(<PulseFeedCard item={makePostItem()} onDeleteSuccess={onDeleteSuccess} />);
-
-    // ── Step 1: open overflow ────────────────────────────────────────────────
-    fireEvent.press(screen.getByTestId('overflow-menu-btn'));
-
-    expect(alertSpy).toHaveBeenCalledTimes(1);
-    const firstButtons: Array<{ text: string; style?: string; onPress?: () => void }> =
-      alertSpy.mock.calls[0][2];
-
-    // ── Step 2: press 'Delete post' — triggers the confirmation Alert ────────
-    const deletePostBtn = firstButtons.find((b) => b.text === 'Delete post');
-    expect(deletePostBtn).toBeDefined();
-    deletePostBtn!.onPress?.();
-
-    expect(alertSpy).toHaveBeenCalledTimes(2);
-    const secondButtons: Array<{ text: string; style?: string; onPress?: () => void }> =
-      alertSpy.mock.calls[1][2];
-
-    // ── Step 3: confirm 'Delete' on the second Alert ─────────────────────────
-    const confirmBtn = secondButtons.find((b) => b.text === 'Delete');
-    expect(confirmBtn).toBeDefined();
-    // Per RNTL Alert act() rules: call onPress bare — never inside awaited act().
-    confirmBtn!.onPress?.();
-
-    // ── Step 4: assert deletePost called + card dismissed ─────────────────────
-    await waitFor(() => {
-      expect(deletePost).toHaveBeenCalledWith(POST_ID);
-    });
-
-    // PostCard sets dismissed=true → returns null → overflow button gone
-    await waitFor(() => {
-      expect(screen.queryByTestId('overflow-menu-btn')).toBeNull();
-    });
+    // City text is uppercased inside the label.
+    expect(within(stack).getByText('KYOTO')).toBeTruthy();
   });
 
-  it('a failed deletePost shows an error alert and leaves the card visible', async () => {
-    mockUserId.current = AUTHOR_ID;
+  it('only the city label is inside topLeftStack when featuredByPortava is absent', async () => {
+    await render(
+      <PulseFeedCard item={makePostItem({ featuredByPortava: null, city: 'Lisbon' })} />,
+    );
 
-    // deletePost fails
-    (deletePost as jest.Mock).mockResolvedValue(false);
+    const stack = screen.getByTestId('top-left-stack');
 
-    await render(<PulseFeedCard item={makePostItem()} />);
+    // Badge must be absent — label sits alone at the top of the stack.
+    expect(within(stack).queryByTestId('featured-badge')).toBeNull();
+    expect(within(stack).getByTestId('postcard-label')).toBeTruthy();
+    expect(within(stack).getByText('LISBON')).toBeTruthy();
+  });
 
-    // Open overflow → Delete post → confirm Delete
-    fireEvent.press(screen.getByTestId('overflow-menu-btn'));
-    const firstButtons: Array<{ text: string; onPress?: () => void }> =
-      alertSpy.mock.calls[0][2];
-    firstButtons.find((b) => b.text === 'Delete post')!.onPress?.();
+  it('postcard label shows fallback text when city is absent and badge is present', async () => {
+    await render(
+      <PulseFeedCard item={makePostItem({ featuredByPortava: 'best_video', city: undefined })} />,
+    );
 
-    const secondButtons: Array<{ text: string; onPress?: () => void }> =
-      alertSpy.mock.calls[1][2];
-    secondButtons.find((b) => b.text === 'Delete')!.onPress?.();
+    const stack = screen.getByTestId('top-left-stack');
 
-    // deletePost is called but returns false → error alert shown
-    await waitFor(() => {
-      expect(deletePost).toHaveBeenCalledWith(POST_ID);
-    });
+    // Badge still renders above the fallback label.
+    const badgeIdx = childIndexByTestId(stack, 'featured-badge');
+    const labelIdx = childIndexByTestId(stack, 'postcard-label');
+    expect(badgeIdx).toBeGreaterThanOrEqual(0);
+    expect(labelIdx).toBeGreaterThanOrEqual(0);
+    expect(badgeIdx).toBeLessThan(labelIdx);
 
-    // Third alert is the error message
-    await waitFor(() => {
-      expect(alertSpy).toHaveBeenCalledTimes(3);
-      expect(alertSpy.mock.calls[2][0]).toBe('Error');
-    });
+    // Fallback label text when no city is available.
+    expect(within(stack).getByText('POSTCARD')).toBeTruthy();
+  });
 
-    // Card must still be visible (not dismissed)
-    expect(screen.getByTestId('overflow-menu-btn')).toBeTruthy();
+  it('postcard label shows fallback text when neither city nor badge is set', async () => {
+    await render(
+      <PulseFeedCard item={makePostItem({ featuredByPortava: null, city: undefined })} />,
+    );
+
+    const stack = screen.getByTestId('top-left-stack');
+
+    expect(within(stack).queryByTestId('featured-badge')).toBeNull();
+    expect(within(stack).getByTestId('postcard-label')).toBeTruthy();
+    expect(within(stack).getByText('POSTCARD')).toBeTruthy();
   });
 });
