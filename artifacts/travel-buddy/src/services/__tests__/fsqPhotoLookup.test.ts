@@ -276,7 +276,8 @@ function makeSentryStub(): {
 
 describe('lookupFsqPhoto — Sentry auth error reporting', () => {
   it('calls addBreadcrumb and captureMessage with level "error" on a 401 response', async () => {
-
+    const { _setSentryForTest, _resetAuthFailedForTest, lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+    _resetAuthFailedForTest();
     const { stub, captureMessageCalls, addBreadcrumbCalls } = makeSentryStub();
     _setSentryForTest(stub);
     try {
@@ -311,7 +312,8 @@ describe('lookupFsqPhoto — Sentry auth error reporting', () => {
   });
 
   it('calls addBreadcrumb and captureMessage with level "error" on a 403 response', async () => {
-
+    const { _setSentryForTest, _resetAuthFailedForTest, lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+    _resetAuthFailedForTest();
     const { stub, captureMessageCalls, addBreadcrumbCalls } = makeSentryStub();
     _setSentryForTest(stub);
     try {
