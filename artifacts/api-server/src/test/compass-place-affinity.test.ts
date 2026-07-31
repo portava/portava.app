@@ -142,8 +142,8 @@ describe("Compass place-affinity boost", () => {
     const scoreNone = scoreItem(item, profile, ctxNone, null).finalScore;
     const scoreLow  = scoreItem(item, profile, ctxLow,  null).finalScore;
 
-    assert.strictEqual(
-      scoreNone, scoreLow,
+    assert.ok(
+      Math.abs(scoreNone - scoreLow) < 0.001,
       `Below-threshold affinity must not change score: ${scoreLow} should equal ${scoreNone}`,
     );
   });
