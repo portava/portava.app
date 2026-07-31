@@ -44,7 +44,6 @@ function getSentry(): typeof import('@sentry/react-native') | null {
   if (_sentryOverride !== undefined) return (_sentryOverride ?? null) as any;
   return _getSentryBase();
 }
-
 const FSQ_SEARCH = 'https://places-api.foursquare.com/places/search';
 
 /** Ensures the Sentry auth-failure event fires at most once per app session. */
