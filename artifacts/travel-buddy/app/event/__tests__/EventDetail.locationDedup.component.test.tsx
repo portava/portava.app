@@ -123,6 +123,7 @@ jest.mock('../../../src/services/events', () => ({
   addEventToTrip: jest.fn(),
   buildRentBuddyCtaUrl:   jest.fn().mockReturnValue(''),
   shouldShowRentBuddyCta: jest.fn().mockReturnValue(false),
+  getEventReminders:      jest.fn().mockResolvedValue({ ok: true, data: { reminders: [] } }),
 }));
 
 // NOTE: intentional stub — not under test here.
@@ -152,6 +153,7 @@ jest.mock('../../../src/lib/eventRoleActions', () => ({
   getAttendeeActionSet: jest.fn().mockReturnValue({
     canRsvp: false, canLeave: false, canJoinWaitlist: false,
   }),
+  effectiveEventState: jest.fn((state: string) => state),
 }));
 
 // ── Visual helpers ────────────────────────────────────────────────────────────

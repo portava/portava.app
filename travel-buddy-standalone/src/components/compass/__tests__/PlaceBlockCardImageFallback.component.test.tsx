@@ -19,7 +19,14 @@ import { CompassChatBlocks } from '../CompassChatBlocks.tsx';
 // NOTE: intentionally exhaustive — expo-router navigation internals are not
 // safe under jest-expo.
 jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: jest.fn(), back: jest.fn(), replace: jest.fn() }),
+  useRouter:      () => ({ push: jest.fn(), back: jest.fn(), replace: jest.fn() }),
+  useFocusEffect: (cb: () => (() => void) | void) => {
+    const React = require('react');
+    React.useEffect(() => {
+      const cleanup = cb();
+      return typeof cleanup === 'function' ? cleanup : undefined;
+    }, []);
+  },
 }));
 
 // NOTE: intentionally exhaustive — spreading requireActual pulls in native

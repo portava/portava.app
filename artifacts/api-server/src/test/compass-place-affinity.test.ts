@@ -21,7 +21,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import { scoreItem } from "../compass/CompassScoringEngine.js";
-import { buildFeed } from "../compass/CompassFeedBuilder.js";
+import { buildFeed, buildSection } from "../compass/CompassFeedBuilder.js";
 import type { CompassItem, CompassProfile, CompassContext } from "../compass/types.js";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -160,6 +160,75 @@ describe("Compass place-affinity boost", () => {
     assert.strictEqual(
       scoreNone, scoreWith,
       `Item without placeId must not be affected by placeAffinities: ${scoreWith} vs ${scoreNone}`,
+    );
+  });
+});
+
+// ── Integration: boost flows end-to-end through buildSection ──────────────────
+
+describe("Compass place-affinity boost — buildSection integration", () => {
+  it("F: a place item with affinity ranks above a baseline item of equal quality in the section", async () => {
+    const AFFINITY_PLACE_ID = "uuid-affinity-place-002";
+
+    /** Item with a placeId the viewer has affinity for. */
+    const affinityItem: CompassItem = {
+      id:              "section-item-with-affinity",
+      type:            "stamp",
+      placeId:         AFFINITY_PLACE_ID,
+      city:            "Tokyo",
+      languageCode:    "en",
+      qualityScore:    5,
+      interestTags:    ["culture"],
+      createdAt:       new Date().toISOString(),
+      visibilityScope: "public",
+    };
+
+    /** Identical item but tied to an unvisited place — should rank lower. */
+    const baselineItem: CompassItem = {
+      id:              "section-item-without-affinity",
+      type:            "stamp",
+      placeId:         "uuid-unvisited-place-888",
+      city:            "Tokyo",
+      languageCode:    "en",
+      qualityScore:    5,
+      interestTags:    ["culture"],
+      createdAt:       new Date().toISOString(),
+      visibilityScope: "public",
+    };
+
+    const profile = baseProfile();
+    const ctx     = baseContext();
+
+    // stamp items are routed to "passport_stamp_opportunities"
+    const result = await buildSection(
+      "passport_stamp_opportunities",
+      [baselineItem, affinityItem],
+      profile,
+      ctx,
+      null,   // no real DB
+      null,
+      {
+        skipFairExposure:  true,
+        skipActiveRewards: true,
+        // Inject affinity at threshold — bypasses the DB call
+        placeAffinities:   { [AFFINITY_PLACE_ID]: THRESHOLD },
+      },
+    );
+
+    const { items } = result.section;
+
+    // Both items must appear in the section
+    const affinityIdx  = items.findIndex((i) => i.item.id === "section-item-with-affinity");
+    const baselineIdx  = items.findIndex((i) => i.item.id === "section-item-without-affinity");
+
+    assert.ok(affinityIdx  !== -1, "Affinity item must appear in section output");
+    assert.ok(baselineIdx  !== -1, "Baseline item must appear in section output");
+
+    // Affinity item must rank higher (lower index) than the baseline item
+    assert.ok(
+      affinityIdx < baselineIdx,
+      `Affinity item (idx ${affinityIdx}) must rank above baseline item (idx ${baselineIdx}) ` +
+      `when placeAffinities has ≥${THRESHOLD} views for its placeId`,
     );
   });
 });

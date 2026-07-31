@@ -76,6 +76,8 @@ jest.mock('../../DiscoveryWall', () => ({
 }));
 // NOTE: intentional stub — not under test; pulls reanimated animations.
 jest.mock('../PlaceSkeleton', () => ({ PlaceSkeletonList: Null }));
+// NOTE: intentional stub — not under test; CompassOnboardingCard fetches settings on mount.
+jest.mock('../../compass/CompassOnboardingCard', () => ({ CompassOnboardingCard: Null }));
 
 // ── Imports after mocks ───────────────────────────────────────────────────────
 
