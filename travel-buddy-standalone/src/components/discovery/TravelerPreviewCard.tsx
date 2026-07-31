@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { router } from 'expo-router';
+import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
 import { MapPin, X, ArrowRight, HandMetal } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
@@ -28,8 +28,8 @@ export function TravelerPreviewCard({ traveler, onClose }: {
   const freshColor = traveler.freshness === 'live' ? '#22C55E' : '#F59E0B';
 
   const openPassport = () => {
-    onClose();
-    router.push(`/passport/${traveler.handle ?? traveler.id}` as any);
+    // BUG CC/CD fix: defer navigation until after the sheet close animation.
+    closeThenNavigate(onClose, `/passport/${traveler.handle ?? traveler.id}`);
   };
 
   return (

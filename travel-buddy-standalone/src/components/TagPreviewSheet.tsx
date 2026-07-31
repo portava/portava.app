@@ -13,7 +13,7 @@ import React, { useEffect, useState } from 'react';
 import {
   Modal, View, Text, Pressable, StyleSheet, ActivityIndicator, Image, Alert,
 } from 'react-native';
-import { router } from 'expo-router';
+import { closeThenNavigate } from '../lib/deferredNavigate.ts';
 import {
   X, Hash, User, Plane, Users, Calendar, MapPin, Flag,
 } from 'lucide-react-native';
@@ -341,7 +341,7 @@ export function TagPreviewSheet({ visible, type, id, label, onClose, onNavigate 
             title={stripPrefix(label) || 'Place'}
             subtitle="Place"
             ctaLabel="Discover"
-            onNavigate={() => { router.push('/(tabs)/discovery' as any); onClose(); }}
+            onNavigate={() => { closeThenNavigate(onClose, '/(tabs)/discovery'); }}
             onClose={onClose}
           />
         );

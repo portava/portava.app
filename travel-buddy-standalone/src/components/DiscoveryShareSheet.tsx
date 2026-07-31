@@ -30,7 +30,7 @@ import {
   PlusCircle,
   Search,
 } from 'lucide-react-native';
-import { router } from 'expo-router';
+import { closeThenNavigate } from '../lib/deferredNavigate.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { getMyThreads, sendMessage, openDirectThread } from '../services/messaging.ts';
@@ -360,8 +360,8 @@ export function DiscoveryShareSheet({ visible, item, onClose }: Props) {
           <Pressable
             style={s.newThreadRow}
             onPress={() => {
-              onClose();
-              router.push('/(tabs)/messages' as any);
+              // BUG CC/CD fix: defer navigation until after the sheet close animation.
+              closeThenNavigate(onClose, '/(tabs)/messages');
             }}
           >
             <View style={s.newThreadIcon}>

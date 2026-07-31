@@ -10,7 +10,7 @@ import {
   Modal, View, Text, Pressable, FlatList, Image, StyleSheet,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
 import { X } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
@@ -40,8 +40,9 @@ function AdmirerRow({ item, onClose }: RowProps) {
 
   function handlePress() {
     if (!item.username) return;
-    onClose();
-    router.push(`/passport/${item.username}` as any);
+    // BUG CC/CD fix: close first, then navigate after the sheet animation
+    // finishes to avoid the back-button-dead race.
+    closeThenNavigate(onClose, `/passport/${item.username}`);
   }
 
   const initials = primary.replace(/^@/, '').split(' ').map((w) => w[0] ?? '').slice(0, 2).join('').toUpperCase();

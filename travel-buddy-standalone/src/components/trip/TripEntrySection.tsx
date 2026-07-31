@@ -20,7 +20,7 @@ import {
   StyleSheet,
   Linking,
 } from 'react-native';
-import { router } from 'expo-router';
+import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
 import { ShieldCheck, ChevronRight, Globe, Clock } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import {
@@ -152,8 +152,8 @@ function PassportPickerSheet({ visible, onClose, onSelect }: PassportPickerSheet
         <Pressable
           style={sheet.addRow}
           onPress={() => {
-            onClose();
-            router.push('/profile/edit/passports' as any);
+            // BUG CC/CD fix: defer navigation until after the sheet close animation.
+            closeThenNavigate(onClose, '/profile/edit/passports');
           }}
         >
           <Text style={sheet.addText}>Add passport</Text>

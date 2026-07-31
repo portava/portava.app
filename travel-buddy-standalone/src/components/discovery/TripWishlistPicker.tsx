@@ -25,7 +25,7 @@ import {
   ActivityIndicator,
   StyleSheet,
 } from 'react-native';
-import { router } from 'expo-router';
+import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
 import { X, MapPin, Check, ListPlus, AlertCircle, Plus } from 'lucide-react-native';
 import { listMyTrips, type TripRow } from '../../services/trips.ts';
 import {
@@ -252,8 +252,9 @@ export function TripWishlistPicker({
             <Pressable
               style={styles.createTripBtn}
               onPress={() => {
-                onClose();
-                router.push('/trip/new' as any);
+                // BUG CC/CD fix: close first, then navigate after the sheet
+                // animation finishes to avoid the back-button-dead race.
+                closeThenNavigate(onClose, '/trip/new');
               }}
             >
               <Plus size={15} color={color.onInk} />
