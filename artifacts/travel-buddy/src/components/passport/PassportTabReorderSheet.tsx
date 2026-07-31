@@ -130,14 +130,19 @@ export function PassportTabReorderSheet({ visible, initialOrder, onClose, onSave
         </Text>
 
         {/* ── Live tab bar preview ── */}
-        <View style={rs.preview}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={rs.preview}
+          contentContainerStyle={rs.previewContent}
+        >
           {order.map((key, i) => (
             <View key={key} style={rs.previewTab}>
               <Text style={rs.previewTabText}>{TAB_LABELS[key].toUpperCase()}</Text>
               {i === 0 && <View style={rs.previewIndicator} />}
             </View>
           ))}
-        </View>
+        </ScrollView>
 
         {/* ── Drag rows ── */}
         <View style={{ height: ROW_HEIGHT * order.length, marginTop: space.md }}>
@@ -236,15 +241,17 @@ const rs = StyleSheet.create({
 
   // Live preview
   preview: {
-    flexDirection: 'row',
     borderBottomWidth: 1,
     borderBottomColor: PP.borderLight,
     marginTop: space.lg,
     marginHorizontal: -space.lg,
+  },
+  previewContent: {
+    flexDirection: 'row',
     paddingHorizontal: space.lg,
   },
   previewTab: {
-    flex: 1, alignItems: 'center', paddingVertical: 8, position: 'relative',
+    paddingHorizontal: 10, alignItems: 'center', paddingVertical: 8, position: 'relative',
   },
   previewTabText: {
     ...PP_LABEL, fontSize: 9, color: PP.inkMuted, letterSpacing: 1,

@@ -446,7 +446,12 @@ export default function PassportDeepLinkScreen() {
           return (
             <>
               <PassportDivider />
-              <View style={vs.tabBar}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={vs.tabBar}
+                contentContainerStyle={vs.tabBarContent}
+              >
                 {tabOrder.map((key) => (
                   <Pressable key={key} style={vs.tabItem} onPress={() => setTab(key)}>
                     <Text style={[vs.tabText, tab === key && vs.tabTextActive]}>
@@ -455,7 +460,7 @@ export default function PassportDeepLinkScreen() {
                     {tab === key && <View style={vs.tabIndicator} />}
                   </Pressable>
                 ))}
-              </View>
+              </ScrollView>
               <View style={vs.tabRule} />
               <View style={{ marginTop: space.md }}>
                 {tab === 'postcards' && <PostcardsTab postcards={postcards} isOwner={false} sentinel={postcardSentinel ?? undefined} />}
@@ -544,8 +549,9 @@ const vs = StyleSheet.create({
   },
   homeBtnText: { color: PP.paper, fontWeight: '700', fontSize: 14 },
 
-  tabBar: { flexDirection: 'row', marginHorizontal: 16, marginTop: 4 },
-  tabItem: { flex: 1, alignItems: 'center', paddingVertical: 10, position: 'relative' },
+  tabBar: { marginHorizontal: 16, marginTop: 4 },
+  tabBarContent: { flexDirection: 'row' },
+  tabItem: { paddingHorizontal: 12, alignItems: 'center', paddingVertical: 10, position: 'relative' },
   tabText: { ...PP_LABEL, fontSize: 10, color: PP.inkMuted, letterSpacing: 1.5 },
   tabTextActive: { color: PP.ink },
   tabIndicator: {

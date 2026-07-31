@@ -539,7 +539,12 @@ function PassportContent({
 
   const renderTabsSection = () => (
     <>
-      <View style={s.tabBar}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={s.tabBar}
+        contentContainerStyle={s.tabBarContent}
+      >
         {tabOrder.map((key) => (
           <Pressable
             key={key}
@@ -559,7 +564,7 @@ function PassportContent({
             {tab === key && <View style={s.tabIndicator} />}
           </Pressable>
         ))}
-      </View>
+      </ScrollView>
 
       {/* ── Tab content ── */}
       <View style={s.tabContent}>
@@ -953,16 +958,19 @@ const s = StyleSheet.create({
 
   // Document-style tab bar
   tabBar: {
-    flexDirection: 'row',
     marginTop: 24,
     marginBottom: 8,
     borderBottomWidth: 1,
     borderBottomColor: PP.borderLight,
     marginHorizontal: 16,
   },
+  tabBarContent: {
+    flexDirection: 'row',
+  },
   tabItem: {
     paddingVertical: 12,
-    marginRight: 24,
+    paddingHorizontal: 4,
+    marginRight: 20,
     position: 'relative',
   },
   tabText: {
