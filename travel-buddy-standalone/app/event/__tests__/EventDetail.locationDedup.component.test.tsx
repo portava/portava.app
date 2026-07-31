@@ -150,10 +150,10 @@ jest.mock('../../../src/lib/waitlistState', () => ({
 }));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/lib/eventRoleActions', () => ({
-  effectiveEventState: jest.fn((state: string) => state),
   getAttendeeActionSet: jest.fn().mockReturnValue({
     canRsvp: false, canLeave: false, canJoinWaitlist: false,
   }),
+  effectiveEventState: jest.fn((state: string) => state),
 }));
 
 // ── Visual helpers ────────────────────────────────────────────────────────────
