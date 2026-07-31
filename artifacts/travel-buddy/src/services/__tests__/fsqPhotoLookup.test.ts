@@ -210,3 +210,39 @@ describe('lookupFsqPhoto — missing API key', () => {
     assert.equal(captured.length, 0, 'fetch must not be called when no API key is set');
   });
 });
+
+// ── lookupFsqPhoto — AbortSignal timeout ─────────────────────────────────────
+
+describe('lookupFsqPhoto — AbortSignal timeout', () => {
+  it('returns null without throwing when fetch throws an AbortError', async () => {
+    const abortError = new DOMException('The operation was aborted.', 'AbortError');
+    globalThis.fetch = async () => { throw abortError; };
+
+    const { lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+    const result = await lookupFsqPhoto(uniqueName(), 10.0, 20.0);
+
+    assert.equal(result, null);
+  });
+
+  it('caches the null result so a second call does not fetch again', async () => {
+    const abortError = new DOMException('The operation was aborted.', 'AbortError');
+    let fetchCallCount = 0;
+    globalThis.fetch = async () => {
+      fetchCallCount++;
+      throw abortError;
+    };
+
+    const { lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+    const name = uniqueName();
+    const lat = 48.0;
+    const lng = 2.0;
+
+    const first = await lookupFsqPhoto(name, lat, lng);
+    assert.equal(first, null);
+    assert.equal(fetchCallCount, 1, 'fetch should be called once on the first request');
+
+    const second = await lookupFsqPhoto(name, lat, lng);
+    assert.equal(second, null);
+    assert.equal(fetchCallCount, 1, 'fetch must not be called again — null result is cached');
+  });
+});
