@@ -34,6 +34,11 @@ const safeUseReducedMotion: () => boolean =
     ? _useReducedMotion
     : () => false) as () => boolean;
 import { navBarProgress } from './useNavBarCollapse.ts';
+import { LARGE_FADE_END, COMPACT_FADE_START } from './collapsingHeaderUtils.ts';
+
+// Re-export constants and pure helper so callers that import from this module
+// keep working without knowing about the utils split.
+export { LARGE_FADE_END, COMPACT_FADE_START, _computeCollapsingOpacities } from './collapsingHeaderUtils.ts';
 
 // Null-safe alias: test environments mock useNavBarCollapse without
 // navBarProgress (it was added later as a module-level SharedValue), leaving
@@ -52,7 +57,7 @@ export function useCollapsingHeader() {
       return { opacity: p < 0.5 ? 1 : 0 };
     }
     return {
-      opacity: interpolate(p, [0, 0.55], [1, 0], 'clamp'),
+      opacity: interpolate(p, [0, LARGE_FADE_END], [1, 0], 'clamp'),
       transform: [
         { translateY: interpolate(p, [0, 1], [0, -6], 'clamp') },
       ],
@@ -60,13 +65,17 @@ export function useCollapsingHeader() {
   });
 
   // ── Compact bar — fades in as progress → 1 ───────────────────────────────
+  // Starts only from COMPACT_FADE_START (= LARGE_FADE_END) so the compact bar
+  // never overlaps with a still-visible large header.  On slow devices this
+  // prevents the double-title flicker that occurred with the previous [0.45, 1]
+  // range where the bar could appear while the large header was still fading.
   const compactBarStyle = useAnimatedStyle(() => {
     const p = _progress.value;
     if (reducedMotion) {
       return { opacity: p >= 0.5 ? 1 : 0 };
     }
     return {
-      opacity: interpolate(p, [0.45, 1], [0, 1], 'clamp'),
+      opacity: interpolate(p, [COMPACT_FADE_START, 1], [0, 1], 'clamp'),
     };
   });
 
