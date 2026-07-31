@@ -21,6 +21,17 @@ Sentry.init({
   // Performance tracing — 10 % sample rate; adjust once baseline is known.
   tracesSampleRate: 0.1,
 });
+
+// Warn loudly in non-dev builds when the DSN is missing so the misconfiguration
+// is visible in EAS build logs and device consoles rather than silently dropping
+// all crash reports.
+if (!__DEV__ && !process.env.EXPO_PUBLIC_SENTRY_DSN) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    '[Sentry] EXPO_PUBLIC_SENTRY_DSN is not set — crash reporting is disabled for this build. ' +
+    'Add the secret to the EAS production build profile to enable error tracking.',
+  );
+}
 import { PlanPickerControllerProvider } from '../src/components/PlanPickerController';
 import { AvailabilityProvider } from '../src/context/AvailabilityStore';
 import { SessionProvider, useSession } from '../src/context/SessionContext';
