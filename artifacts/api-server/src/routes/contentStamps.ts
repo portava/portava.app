@@ -614,11 +614,35 @@ router.post(
     }
 
     try {
+      // Check whether a stamp row already exists for this (user, type, entity)
+      // triple BEFORE the upsert so we know whether to fire the Compass signal.
+      //
+      // We must not fire linkOutcomeSignal for pre-existing rows:
+      //   • migrated_from IS NOT NULL → row was bulk-inserted from a legacy like
+      //     table (posts_likes / media_likes / post_reactions) during the
+      //     2049_content_stamps migration.  The old /posts/:id/like endpoint
+      //     already fired the "liked" outcome signal; re-firing here would
+      //     double-count the signal in the intelligence graph and inflate
+      //     affinity scores for early-adopter content.
+      //   • migrated_from IS NULL but row exists → the stamp was recorded
+      //     previously via this endpoint; the signal was already fired then.
+      //
+      // Only a genuinely new stamp (no prior row) should produce a signal.
+      const { data: priorStamp } = await sc
+        .from("content_stamps")
+        .select("migrated_from")
+        .eq("user_id", user.id)
+        .eq("entity_type", entityType)
+        .eq("entity_id", entityId)
+        .maybeSingle();
+
       const result = await stampEntity(sc, user.id, entityType, entityId);
 
-      // Route stamp event into the Compass personalization pipeline.
-      // Same outcome stage ("liked") as the strongest prior positive signal.
-      void linkOutcomeSignal(sc, user.id, entityId, "liked", "route:content_stamp");
+      // Fire the outcome signal only for new stamps — not re-stamps or
+      // migrated legacy-like rows.
+      if (!priorStamp) {
+        void linkOutcomeSignal(sc, user.id, entityId, "liked", "route:content_stamp");
+      }
 
       res.status(200).json(result);
     } catch (err: any) {
