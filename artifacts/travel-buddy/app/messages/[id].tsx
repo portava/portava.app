@@ -26,6 +26,7 @@ import {
   Bot, Reply, Copy, Trash2, Flag, CheckCheck, AlertCircle, Search, BookmarkPlus,
   RefreshCw, Clock, ChevronDown, X, Phone, Video, Lock,
 } from 'lucide-react-native';
+import { resolveCircleCardNav } from '../../src/lib/circleCardNavigation.ts';
 import { useCallState, useCallActions } from '../../src/context/CallContext';
 import { useBlockedIds } from '../../src/context/BlockedIdsContext';
 import { ensureCallMediaPermissions } from '../../src/services/callPermissions';
@@ -1180,28 +1181,27 @@ export default function TelegraphThread() {
   // Trip/event threads where membership is unknown/false → informational Alert (fail-closed).
   // No-op when the thread has no Circle context (direct threads, etc.).
   const onCircleCardPress = useCallback(() => {
-    // Circle-type thread: go straight to the Circle screen (same as QuickActionBar).
-    if (threadType === 'circle') {
+    const nav = resolveCircleCardNav(
+      threadType,
+      contextId,
+      isCircleMember,
+      (tripData as any)?.destinationCity ?? title ?? null,
+    );
+    if (nav.action === 'push-circle') {
       router.push('/circle' as any);
-      return;
-    }
-    const ctxType = threadType === 'trip' ? 'trip' : threadType === 'event' ? 'event' : null;
-    if (!ctxType || !contextId) return;
-    if (isCircleMember === true) {
+    } else if (nav.action === 'push-presence') {
       router.push({
         pathname: '/circle-presence',
         params: {
-          contextType: ctxType,
-          contextId,
-          contextLabel: (tripData as any)?.destinationCity ?? title ?? 'Circle',
+          contextType: nav.contextType,
+          contextId: nav.contextId,
+          contextLabel: nav.contextLabel,
         },
       } as any);
-    } else {
-      Alert.alert(
-        'Circle members only',
-        'Only Circle members can view the live presence for this group.',
-      );
+    } else if (nav.action === 'alert') {
+      Alert.alert(nav.title, nav.message);
     }
+    // noop: do nothing
   }, [threadType, contextId, isCircleMember, tripData, title]);
 
   async function toggleHideAiSuggestions() {
