@@ -12,7 +12,7 @@
 
 import React from 'react';
 import { Alert } from 'react-native';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 
 // ── expo-router ───────────────────────────────────────────────────────────────
 // NOTE: intentionally exhaustive — spreading requireActual pulls in native
@@ -175,6 +175,7 @@ jest.mock('../../services/posts.ts', () => ({ hidePost: jest.fn() }));
 // ── Component under test ───────────────────────────────────────────────────────
 import { PulseFeedCard } from '../PulseFeedCard.tsx';
 import type { PulseFeedItem } from '../../types/models.ts';
+import { deletePost } from '../../services/postEngagement.ts';
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────
 
@@ -273,5 +274,82 @@ describe('PulseFeedCard — "Why this?" sheet lifecycle across navigation', () =
     const afterClose = (global as any).__lastWhySheetProps;
     expect(afterClose.visible).toBe(false);
     expect(afterClose.recommendationId).toBeNull();
+  });
+});
+
+describe('PulseFeedCard — owner Delete post flow', () => {
+  it('confirming deletion calls deletePost with the post ID and removes the card from the feed', async () => {
+    mockUserId.current = AUTHOR_ID; // viewer IS the author
+
+    // deletePost succeeds
+    (deletePost as jest.Mock).mockResolvedValue(true);
+
+    const onDeleteSuccess = jest.fn();
+    await render(<PulseFeedCard item={makePostItem()} onDeleteSuccess={onDeleteSuccess} />);
+
+    // ── Step 1: open overflow ────────────────────────────────────────────────
+    fireEvent.press(screen.getByTestId('overflow-menu-btn'));
+
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    const firstButtons: Array<{ text: string; style?: string; onPress?: () => void }> =
+      alertSpy.mock.calls[0][2];
+
+    // ── Step 2: press 'Delete post' — triggers the confirmation Alert ────────
+    const deletePostBtn = firstButtons.find((b) => b.text === 'Delete post');
+    expect(deletePostBtn).toBeDefined();
+    deletePostBtn!.onPress?.();
+
+    expect(alertSpy).toHaveBeenCalledTimes(2);
+    const secondButtons: Array<{ text: string; style?: string; onPress?: () => void }> =
+      alertSpy.mock.calls[1][2];
+
+    // ── Step 3: confirm 'Delete' on the second Alert ─────────────────────────
+    const confirmBtn = secondButtons.find((b) => b.text === 'Delete');
+    expect(confirmBtn).toBeDefined();
+    // Per RNTL Alert act() rules: call onPress bare — never inside awaited act().
+    confirmBtn!.onPress?.();
+
+    // ── Step 4: assert deletePost called + card dismissed ─────────────────────
+    await waitFor(() => {
+      expect(deletePost).toHaveBeenCalledWith(POST_ID);
+    });
+
+    // PostCard sets dismissed=true → returns null → overflow button gone
+    await waitFor(() => {
+      expect(screen.queryByTestId('overflow-menu-btn')).toBeNull();
+    });
+  });
+
+  it('a failed deletePost shows an error alert and leaves the card visible', async () => {
+    mockUserId.current = AUTHOR_ID;
+
+    // deletePost fails
+    (deletePost as jest.Mock).mockResolvedValue(false);
+
+    await render(<PulseFeedCard item={makePostItem()} />);
+
+    // Open overflow → Delete post → confirm Delete
+    fireEvent.press(screen.getByTestId('overflow-menu-btn'));
+    const firstButtons: Array<{ text: string; onPress?: () => void }> =
+      alertSpy.mock.calls[0][2];
+    firstButtons.find((b) => b.text === 'Delete post')!.onPress?.();
+
+    const secondButtons: Array<{ text: string; onPress?: () => void }> =
+      alertSpy.mock.calls[1][2];
+    secondButtons.find((b) => b.text === 'Delete')!.onPress?.();
+
+    // deletePost is called but returns false → error alert shown
+    await waitFor(() => {
+      expect(deletePost).toHaveBeenCalledWith(POST_ID);
+    });
+
+    // Third alert is the error message
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledTimes(3);
+      expect(alertSpy.mock.calls[2][0]).toBe('Error');
+    });
+
+    // Card must still be visible (not dismissed)
+    expect(screen.getByTestId('overflow-menu-btn')).toBeTruthy();
   });
 });
