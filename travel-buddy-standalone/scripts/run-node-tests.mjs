@@ -91,6 +91,8 @@ const KNOWN_BROKEN = [
   'src/services/__tests__/friends.sendAutoAccept.test.ts',
   'src/services/__tests__/onboardingSaveAlert.partialSave.test.ts',
   'src/services/__tests__/profilePartialSave.test.ts',
+  // react-native@0.81.5 esbuild "Unexpected typeof" via discovery.ts → supabase.ts → SecureStoreAdapter
+  'src/services/__tests__/discovery.searchSignal.test.ts',
   'src/services/__tests__/profileSaveFlow.partialSave.test.ts',
   // standalone-only files that hit the same esbuild "Unexpected typeof" wall
   'src/components/__tests__/LivePulseRail.test.ts',
