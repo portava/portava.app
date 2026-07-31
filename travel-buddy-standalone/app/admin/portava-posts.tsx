@@ -184,9 +184,14 @@ export default function PortavaPostsScreen() {
         </Pressable>
         <View style={s.headerRow}>
           <Text style={s.title}>@Portava Posts</Text>
-          <Pressable style={s.newBtn} onPress={() => router.push('/admin/portava-post' as any)}>
-            <Text style={s.newBtnText}>+ New</Text>
-          </Pressable>
+          <View style={s.headerActions}>
+            <Pressable style={s.featuredBtn} onPress={() => router.push('/admin/featured' as any)}>
+              <Text style={s.featuredBtnText}>Featured ★</Text>
+            </Pressable>
+            <Pressable style={s.newBtn} onPress={() => router.push('/admin/portava-post' as any)}>
+              <Text style={s.newBtnText}>+ New</Text>
+            </Pressable>
+          </View>
         </View>
         <Text style={s.subtitle}>{total} total</Text>
       </View>
@@ -327,6 +332,9 @@ const s = StyleSheet.create({
   backText:       { fontSize: 14, color: '#3B82F6' },
   headerRow:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title:          { fontSize: 22, fontWeight: '700', color: '#111827' },
+  headerActions:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  featuredBtn:    { backgroundColor: '#7C3AED', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 },
+  featuredBtnText:{ color: '#FFFFFF', fontWeight: '600', fontSize: 13 },
   newBtn:         { backgroundColor: '#3B82F6', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 7 },
   newBtnText:     { color: '#FFFFFF', fontWeight: '600', fontSize: 14 },
   subtitle:       { fontSize: 13, color: '#6B7280', marginTop: 2 },
