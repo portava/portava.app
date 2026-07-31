@@ -50,6 +50,12 @@ const FSQ_SEARCH = 'https://places-api.foursquare.com/places/search';
 
 /** Ensures the Sentry auth-failure event fires at most once per app session. */
 let authFailedReported = false;
+
+/** @internal Only for node:test suites — reset the once-per-process auth guard
+ *  between tests so each test can assert a fresh captureMessage call. */
+export function _resetAuthFailedForTest(): void {
+  authFailedReported = false;
+}
 const FSQ_API_VERSION = '2025-06-17';
 const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 

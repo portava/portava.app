@@ -788,8 +788,8 @@ function DiscoveryHubScreen() {
         onSelect={handlePickDestination}
       />
 
-      {/* Layover Mode floating entry — hidden while any full-screen sheet/picker is open */}
-      {!detailVisible && !showCityPicker && !routeBuilderOpen && !submitPlaceOpen && (
+      {/* Layover Mode floating entry — hidden while place detail sheet is open */}
+      {!detailVisible && (
         <Pressable style={styles.layoverFab} onPress={() => setLayoverOpen(true)}>
           <Plane size={16} color="#fff" />
           <Text style={styles.layoverFabText}>Layover Mode</Text>

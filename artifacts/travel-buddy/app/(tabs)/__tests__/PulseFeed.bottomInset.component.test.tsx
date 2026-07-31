@@ -240,28 +240,31 @@ function collectContentContainerPaddingBottoms(node: any): number[] {
 
 describe('Pulse FlatList — contentContainerStyle.paddingBottom clears device insets', () => {
   it('FlatList contentContainerStyle.paddingBottom clears iPhone 14 home indicator (34 pt)', async () => {
-    const Pulse = require('../index.tsx').default;
+      const Pulse = require('../index.tsx').default;
     const { toJSON } = await render(<Pulse />);
+    await act(async () => { await Promise.resolve(); });
 
     const paddings = collectContentContainerPaddingBottoms(toJSON());
     expect(paddings.length).toBeGreaterThan(0);
     const max = Math.max(...paddings);
-    expect(max).toBeGreaterThanOrEqual(IPHONE_BOTTOM);
+    expect(max).toBeGreaterThanOrEqual(MIN_EXPECTED_PADDING);
   });
 
-  it('FlatList contentContainerStyle.paddingBottom clears Android gesture nav (48 dp)', async () => {
-    const Pulse = require('../index.tsx').default;
+  it('paddingBottom baseline (no layover) clears iPhone 14 home indicator + nav bar', async () => {
+      const Pulse = require('../index.tsx').default;
     const { toJSON } = await render(<Pulse />);
+    await act(async () => { await Promise.resolve(); });
 
     const paddings = collectContentContainerPaddingBottoms(toJSON());
     expect(paddings.length).toBeGreaterThan(0);
     const max = Math.max(...paddings);
-    expect(max).toBeGreaterThanOrEqual(ANDROID_BOTTOM);
+    expect(max).toBeGreaterThanOrEqual(MIN_EXPECTED_PADDING);
   });
 
-  it('FlatList contentContainerStyle.paddingBottom meets the minimum clearance contract (120)', async () => {
-    const Pulse = require('../index.tsx').default;
+  it('paddingBottom baseline is within expected range (no layover active)', async () => {
+      const Pulse = require('../index.tsx').default;
     const { toJSON } = await render(<Pulse />);
+    await act(async () => { await Promise.resolve(); });
 
     const paddings = collectContentContainerPaddingBottoms(toJSON());
     const max = Math.max(...paddings);
@@ -296,7 +299,9 @@ describe('Pulse FlatList — layover-active increases bottom clearance', () => {
   };
 
   beforeEach(() => {
-    const layover = require('../../../src/services/layover');
+      const layover = require('../../../src/services/layover');
+
+    const expoRouter = require('expo-router');
     layover.getActiveLayoverSession.mockResolvedValue(FAKE_SESSION);
   });
 
@@ -319,7 +324,7 @@ describe('Pulse FlatList — layover-active increases bottom clearance', () => {
   });
 
   it('paddingBottom with active layover clears iPhone 14 home indicator + pill (168 pt)', async () => {
-    const Pulse = require('../index.tsx').default;
+      const Pulse = require('../index.tsx').default;
     const { toJSON } = await render(<Pulse />);
     await act(async () => { await Promise.resolve(); });
 
@@ -335,7 +340,7 @@ describe('Pulse FlatList — no regression when layover session absent', () => {
   it('paddingBottom stays within sane range when no layover (no oversized void)', async () => {
     // Confirm there is no always-on oversized gap by checking the baseline is
     // not inflated when getActiveLayoverSession returns null (the default mock).
-    const Pulse = require('../index.tsx').default;
+      const Pulse = require('../index.tsx').default;
     const { toJSON } = await render(<Pulse />);
     await act(async () => { await Promise.resolve(); });
 
@@ -368,7 +373,9 @@ describe('Pulse FlatList — layover pill and feed padding stay in sync on re-fo
 
   afterEach(() => {
     // Reset service mock back to inactive so other describe blocks are unaffected.
-    const layover = require('../../../src/services/layover');
+      const layover = require('../../../src/services/layover');
+
+    const expoRouter = require('expo-router');
     layover.getActiveLayoverSession.mockResolvedValue(null);
     // Clear useFocusEffect call history between tests.
     const { useFocusEffect } = require('expo-router');
@@ -376,12 +383,12 @@ describe('Pulse FlatList — layover pill and feed padding stay in sync on re-fo
   });
 
   it('paddingBottom jumps to layover-active value in the same update when a session starts on re-focus', async () => {
-    const layover = require('../../../src/services/layover');
+      const layover = require('../../../src/services/layover');
 
-    // ── First focus: no active session ──────────────────────────────────────
+    const expoRouter = require('expo-router');
     layover.getActiveLayoverSession.mockResolvedValue(null);
 
-    const Pulse = require('../index.tsx').default;
+      const Pulse = require('../index.tsx').default;
     const { unmount, toJSON: toJSONRef } = await render(<Pulse />);
     // Flush the resolved promise so the context state settles.
     await act(async () => { await Promise.resolve(); });
@@ -434,10 +441,12 @@ describe('Pulse FlatList — layover pill and feed padding stay in sync on re-fo
   it('inactive paddingBottom never reaches layover-active threshold between focus events — no ghost expansion', async () => {
     // Guards against the inverse mismatch: feed padding expanding to
     // layover-active territory when no session is returned on first focus.
-    const layover = require('../../../src/services/layover');
+      const layover = require('../../../src/services/layover');
+
+    const expoRouter = require('expo-router');
     layover.getActiveLayoverSession.mockResolvedValue(null);
 
-    const Pulse = require('../index.tsx').default;
+      const Pulse = require('../index.tsx').default;
     const { toJSON } = await render(<Pulse />);
     await act(async () => { await Promise.resolve(); });
 
@@ -447,5 +456,61 @@ describe('Pulse FlatList — layover pill and feed padding stay in sync on re-fo
     expect(max).toBeLessThan(MIN_EXPECTED_PADDING_LAYOVER);
     // But must still clear the tab bar.
     expect(max).toBeGreaterThanOrEqual(MIN_EXPECTED_PADDING);
+  });
+});
+
+// ── Call-count guard ───────────────────────────────────────────────────────────
+// LayoverSessionContext (introduced in task 3283) de-duplicates the
+// getActiveLayoverSession call that was previously fired independently by both
+// ActiveLayoverPill and useLayoverAwareBottomInset. This test pins that
+// exactly one call is made per focus — not two — so a future refactor cannot
+// silently re-introduce the duplication.
+//
+// Implementation note: the module-level useFocusEffect stub calls cb() on
+// *every render*, so 3 re-renders → 3 calls even with a single caller. We
+// install a WeakSet-based mockImplementation that fires each
+// useCallback-memoised callback exactly once — matching real focus semantics
+// — so the assertion can be a clean toHaveBeenCalledTimes(1).
+
+describe('Pulse — getActiveLayoverSession call count on focus', () => {
+  beforeEach(() => {
+    const layover = require('../../../src/services/layover');
+    // Reset call count before each test in this suite.
+    layover.getActiveLayoverSession.mockClear();
+    layover.getActiveLayoverSession.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    // Restore the default synchronous-fire behaviour so other describe blocks
+    // in this file are unaffected.
+    const expoRouter = require('expo-router');
+    expoRouter.useFocusEffect.mockImplementation((cb: () => void) => { cb(); });
+  });
+
+  it('getActiveLayoverSession is called exactly once per focus — not twice', async () => {
+    // Install a per-test useFocusEffect implementation that fires each
+    // useCallback-memoised callback exactly once, regardless of how many
+    // re-renders occur. With useCallback(fn, []) the same fn reference is
+    // returned on every re-render, so the WeakSet prevents duplicate fires.
+    // This mirrors real useFocusEffect behaviour and lets us assert a clean
+    // call count of exactly 1.
+    const expoRouter = require('expo-router');
+    const fired = new WeakSet<object>();
+    expoRouter.useFocusEffect.mockImplementation((cb: () => void) => {
+      if (!fired.has(cb)) { fired.add(cb); cb(); }
+    });
+
+    const Pulse = require('../index.tsx').default;
+    await render(<Pulse />);
+    // Flush the resolved promise so the async fetch inside
+    // LayoverSessionProvider settles.
+    await act(async () => { await Promise.resolve(); });
+
+    const layover = require('../../../src/services/layover');
+    // LayoverSessionContext is the single caller. If this becomes 2 it means
+    // a consumer (ActiveLayoverPill or useLayoverAwareBottomInset) has
+    // reverted to calling the service directly instead of reading from the
+    // context.
+    expect(layover.getActiveLayoverSession).toHaveBeenCalledTimes(1);
   });
 });

@@ -70,13 +70,13 @@ jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
 // ── Bottom inset ──────────────────────────────────────────────────────────────
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useBottomInset', () => ({
-  usePlainBottomInset: () => 130,
-  PlainBottomFiller: () => null,
-  BOTTOM_BREATHING_ROOM: 24,
-  useStickyBarInset: () => ({ inset: 130, onBarLayout: () => {} }),
-  useKeyboardVisible: () => false,
-  useBottomInset:             () => 130,
-  useLayoverAwareBottomInset: () => 130,
+  usePlainBottomInset:         () => 130,
+  PlainBottomFiller:           () => null,
+  BOTTOM_BREATHING_ROOM:       24,
+  useStickyBarInset:           () => ({ inset: 130, onBarLayout: () => {} }),
+  useKeyboardVisible:          () => false,
+  useBottomInset:              () => 130,
+  useLayoverAwareBottomInset:  () => 130,
 }));
 
 // ── Session + location ────────────────────────────────────────────────────────
