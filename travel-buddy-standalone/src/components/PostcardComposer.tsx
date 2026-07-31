@@ -28,8 +28,7 @@ import {
 import { validateMedia } from '../services/media.ts';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
 import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
-import { MediaSourceSheet } from './ui/MediaSourceSheet.tsx';
-import { useMediaComposer } from '../hooks/useMediaComposer.ts';
+import { useMediaPicker } from '../hooks/useMediaPicker.ts';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import type { Place } from '../lib/location/placeTypes.ts';
 import { placeToLocationFields } from '../lib/location/locationPayload.ts';
@@ -90,9 +89,16 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
   const [error, setError] = useState<string | null>(null);
   const cancelRef = useRef<UploadCancelRef>({});
   const abortedRef = useRef(false);
-  // Sheet visibility is managed by useMediaComposer; PostcardComposer keeps
-  // its own asset state and upload flow — onPickResult is not used.
-  const postcardComposer = useMediaComposer('postcard');
+  const { pickMedia } = useMediaPicker();
+
+  async function pickPostcardMedia() {
+    const assets = await pickMedia({
+      title: asset ? 'Replace media' : 'Add media',
+      mediaTypes: ['images', 'videos'],
+      videoMaxDuration: 60,
+    });
+    if (assets?.[0]) applyAsset(assets[0]);
+  }
 
 
   // ── Stamp overlay editing state (images only; optional) ─────────────────
@@ -180,8 +186,8 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     onClose();
   }
 
-  // Picking is delegated to the MediaSourceSheet (via changeSheetOpen).
-  // applyAsset is still called on the onResult callback from the sheet.
+  // applyAsset validates and stores the picked asset. Called directly from
+  // pickPostcardMedia after the useMediaPicker chooser resolves.
   function applyAsset(picked: ImagePicker.ImagePickerAsset) {
     const mimeType =
       picked.mimeType ??
@@ -419,7 +425,7 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
                     )}
                   </>
                 )}
-                <Pressable style={s.changeBtn} onPress={postcardComposer.openSheet} hitSlop={8}>
+                <Pressable style={s.changeBtn} onPress={pickPostcardMedia} hitSlop={8}>
                   <Text style={s.changeBtnText}>Change</Text>
                 </Pressable>
               </View>
@@ -427,30 +433,17 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
               <View style={s.pickerArea}>
                 <Text style={s.pickerHint}>Photo or video (up to 100 MB)</Text>
                 <View style={s.pickerBtns}>
-                  <Pressable style={s.pickerBtn} onPress={postcardComposer.openSheet}>
+                  <Pressable style={s.pickerBtn} onPress={pickPostcardMedia}>
                     <Camera size={28} color={color.signal} />
                     <Text style={s.pickerBtnText}>Camera</Text>
                   </Pressable>
-                  <Pressable style={s.pickerBtn} onPress={postcardComposer.openSheet}>
+                  <Pressable style={s.pickerBtn} onPress={pickPostcardMedia}>
                     <ImageIcon size={28} color={color.signal} />
                     <Text style={s.pickerBtnText}>Library</Text>
                   </Pressable>
                 </View>
               </View>
             )}
-            {/* MediaSourceSheet is mounted unconditionally so it responds to
-                openSheet() from both the empty-state picker buttons and the
-                "Change" button in the asset preview. Sheet visibility is
-                managed by postcardComposer (useMediaComposer); the result is
-                routed through PostcardComposer's own applyAsset validator. */}
-            <MediaSourceSheet
-              visible={postcardComposer.sheetVisible}
-              onClose={postcardComposer.closeSheet}
-              onResult={applyAsset}
-              allowsVideo
-              videoMaxDuration={60}
-              title={asset ? 'Replace media' : 'Add media'}
-            />
 
             {/* Form — only shown after picking */}
             {asset && (

@@ -1,40 +1,33 @@
 /**
  * PostcardComposer — empty-state media pick test.
  *
- * Regression guard for the fix that moved MediaSourceSheet outside the
- * `asset ? (…) : (…)` conditional so it is always mounted.
- *
- * Before the fix: Camera/Library buttons in the empty state called
- * setChangeSheetOpen(true), but the sheet was only rendered inside the
- * `asset` branch, so it was never mounted — tapping did nothing.
- *
- * After the fix: the sheet is rendered unconditionally (as a sibling of the
- * asset/picker block), so changeSheetOpen=true always opens it.
+ * Regression guard for the Camera / Library picker buttons in the empty state.
+ * PostcardComposer now uses useMediaPicker (not a direct MediaSourceSheet render),
+ * so these tests mock useMediaPicker and drive picks via the returned pickMedia promise.
  *
  * Tests:
  *   1. Camera and Library buttons are visible in the empty state.
- *   2. Pressing Camera opens the MediaSourceSheet.
- *   3. Pressing Library opens the MediaSourceSheet.
- *   4. Selecting an asset via the sheet's onResult callback populates the preview.
+ *   2. Pressing Camera calls pickMedia.
+ *   3. Pressing Library calls pickMedia.
+ *   4. Resolving pickMedia with an asset populates the preview and hides the picker.
  */
 import React from 'react';
-import { View, Text } from 'react-native';
 import { render, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type * as ImagePickerNS from 'expo-image-picker';
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
 // Variables prefixed with "mock" so Jest's hoisting guard permits them inside the factory.
-let mockSheetVisible = false;
-let mockOnResult: ((a: ImagePickerNS.ImagePickerAsset) => void) | null = null;
-// NOTE: intentionally exhaustive — we capture visible+onResult to drive the sheet;
-// the real MediaSourceSheet requires native camera/library modules unavailable in Jest.
-jest.mock('../ui/MediaSourceSheet', () => ({
-  MediaSourceSheet: ({ visible, onResult }: any) => {
-    mockSheetVisible = visible;
-    if (onResult) mockOnResult = onResult;
-    return null; // no JSX here — jest.mock factories cannot reference out-of-scope imports
-  },
+let resolvePick: ((assets: ImagePickerNS.ImagePickerAsset[] | null) => void) | null = null;
+const mockPickMedia = jest.fn(() =>
+  new Promise<ImagePickerNS.ImagePickerAsset[] | null>((resolve) => {
+    resolvePick = resolve;
+  }),
+);
+
+// NOTE: intentionally exhaustive — useMediaPicker is the only export used.
+jest.mock('../../hooks/useMediaPicker', () => ({
+  useMediaPicker: () => ({ pickMedia: mockPickMedia }),
 }));
 
 // NOTE: intentionally exhaustive — useSafeAreaInsets is the only export used.
@@ -130,8 +123,15 @@ function makeAsset(): ImagePickerNS.ImagePickerAsset {
 
 describe('PostcardComposer — empty-state pick flow', () => {
   beforeEach(() => {
-    mockSheetVisible = false;
-    mockOnResult = null;
+    mockPickMedia.mockClear();
+    resolvePick = null;
+    // Provide a fresh pending promise for each test.
+    mockPickMedia.mockImplementation(
+      () =>
+        new Promise<ImagePickerNS.ImagePickerAsset[] | null>((resolve) => {
+          resolvePick = resolve;
+        }),
+    );
   });
 
   it('shows Camera and Library buttons in the empty state', async () => {
@@ -142,21 +142,22 @@ describe('PostcardComposer — empty-state pick flow', () => {
     expect(getByText('Library')).toBeTruthy();
   });
 
-  it('pressing Camera opens the MediaSourceSheet', async () => {
+  it('pressing Camera calls pickMedia', async () => {
     const { getByText } = await render(
       <PostcardComposer visible={true} onClose={jest.fn()} onSuccess={jest.fn()} />,
     );
-
-    expect(mockSheetVisible).toBe(false);
 
     await act(async () => {
       fireEvent.press(getByText('Camera'));
     });
 
-    await waitFor(() => expect(mockSheetVisible).toBe(true));
+    await waitFor(() => expect(mockPickMedia).toHaveBeenCalledTimes(1));
+    expect(mockPickMedia).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaTypes: ['images', 'videos'], videoMaxDuration: 60 }),
+    );
   });
 
-  it('pressing Library opens the MediaSourceSheet', async () => {
+  it('pressing Library calls pickMedia', async () => {
     const { getByText } = await render(
       <PostcardComposer visible={true} onClose={jest.fn()} onSuccess={jest.fn()} />,
     );
@@ -165,24 +166,24 @@ describe('PostcardComposer — empty-state pick flow', () => {
       fireEvent.press(getByText('Library'));
     });
 
-    await waitFor(() => expect(mockSheetVisible).toBe(true));
+    await waitFor(() => expect(mockPickMedia).toHaveBeenCalledTimes(1));
   });
 
-  it('selecting an asset via onResult populates the preview and hides the picker', async () => {
+  it('resolving pickMedia with an asset populates the preview and hides the picker', async () => {
     const { getByText, queryByText } = await render(
       <PostcardComposer visible={true} onClose={jest.fn()} onSuccess={jest.fn()} />,
     );
 
-    // Open the sheet via Camera button.
+    // Trigger the picker.
     await act(async () => {
       fireEvent.press(getByText('Camera'));
     });
 
-    await waitFor(() => expect(mockOnResult).not.toBeNull());
+    await waitFor(() => expect(resolvePick).not.toBeNull());
 
     // Simulate selecting an asset.
     await act(async () => {
-      mockOnResult!(makeAsset());
+      resolvePick!([makeAsset()]);
     });
 
     // Empty-state picker buttons should be gone after asset is set.

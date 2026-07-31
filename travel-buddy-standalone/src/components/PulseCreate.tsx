@@ -28,8 +28,7 @@ import { useSession } from '../context/SessionContext.tsx';
 import type { Place } from '../lib/location/placeTypes.ts';
 import { HighlightComposer } from './HighlightComposer.tsx';
 import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor.tsx';
-import { MediaSourceSheet } from './ui/MediaSourceSheet.tsx';
-import { useMediaComposer } from '../hooks/useMediaComposer.ts';
+import { useMediaPicker } from '../hooks/useMediaPicker.ts';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { createComposerDismissHandlers, createSubmitLock, createOnceGuard, handleSubmitResult, handleUploadResult, handleFilterApplyResult, TYPE_CATEGORY, CATEGORY_OPTIONS, resolveDefaultCategory, handleCategoryChipPress, resolveCreateCategory, validateCategoryGate } from './PulseCreate.machine';
 import { createFilterDismissHandlers } from './PulseFilterSheet.machine';
@@ -250,10 +249,7 @@ export function UnifiedPostComposer({
   // every navigation mounts a fresh instance whose useState initializers
   // already provide clean state.
 
-  // Sheet state is managed by useMediaComposer; PulseCreate uses the
-  // hook only for sheetVisible/openSheet/closeSheet — it keeps its own
-  // single-item `media` state and filter-editor flow.
-  const pulseComposer = useMediaComposer('pulse');
+  const { pickMedia } = useMediaPicker();
 
   // Auto-open camera on mount (native only). Fires exactly once.
   // If the user captures something, 'share_moment' is auto-selected and the
@@ -304,7 +300,14 @@ export function UnifiedPostComposer({
 
   function openPickerSheet() {
     setError(null);
-    pulseComposer.openSheet();
+    const maxDuration = selectedType === 'share_highlight' ? 10 : 60;
+    pickMedia({
+      title: 'Add media',
+      mediaTypes: ['images', 'videos'],
+      videoMaxDuration: maxDuration,
+    }).then((assets) => {
+      if (assets?.[0]) handlePickResult(assets[0]);
+    });
   }
 
   function handlePickResult(asset: ImagePicker.ImagePickerAsset) {
@@ -842,19 +845,6 @@ export function UnifiedPostComposer({
         />
       )}
 
-      {/* Media source sheet — opened by openPickerSheet(); handles camera/library
-          picking plus the denied→Settings path and iOS limited-library prompt.
-          Sheet visibility is managed by pulseComposer (useMediaComposer); the
-          result is routed through PulseCreate's own handlePickResult so the
-          filter-editor step and single-item PickedMedia state are preserved. */}
-      <MediaSourceSheet
-        visible={pulseComposer.sheetVisible}
-        onClose={pulseComposer.closeSheet}
-        onResult={(asset) => { pulseComposer.closeSheet(); handlePickResult(asset); }}
-        allowsVideo={true}
-        videoMaxDuration={selectedType === 'share_highlight' ? 10 : 60}
-        title="Add media"
-      />
     </View>
   );
 }

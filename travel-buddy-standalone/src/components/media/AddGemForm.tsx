@@ -32,14 +32,13 @@ import {
   Alert,
 } from 'react-native';
 import { Video, ResizeMode } from 'expo-av';
-import { X, MapPin, CheckSquare, Square, ChevronDown, Gem } from 'lucide-react-native';
+import { X, MapPin, CheckSquare, Square, ChevronDown, Gem, Camera, ImageIcon } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';
 import { useMediaComposer } from '../../hooks/useMediaComposer.ts';
-import { MediaPickerButton } from '../ui/MediaPickerButton.tsx';
-import { MediaSourceSheet } from '../ui/MediaSourceSheet.tsx';
+import { useMediaPicker } from '../../hooks/useMediaPicker.ts';
 import { GlobalPlacePicker } from '../selectors/GlobalPlacePicker.tsx';
 import { submitGem, type GemCategory } from '../../services/hiddenGems.ts';
 import { listMyTrips, type TripRow } from '../../services/trips.ts';
@@ -112,6 +111,7 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
 
   // Media composer (hiddenGem policy: 1 item, images+videos gated above)
   const composer = useMediaComposer('hiddenGem');
+  const { pickMedia } = useMediaPicker();
 
   // ── Flow state ──────────────────────────────────────────────────────────────
   const [step, setStep] = useState<Step>('media');
@@ -171,6 +171,20 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
       });
     return () => { cancelled = true; };
   }, [step]);
+
+  // ── Media picker ─────────────────────────────────────────────────────────────
+  async function handlePickGemMedia() {
+    const mediaTypes: ('images' | 'videos')[] = [
+      ...(imageEnabled ? ['images' as const] : []),
+      ...(videoEnabled ? ['videos' as const] : []),
+    ];
+    const assets = await pickMedia({
+      title: 'Add gem media',
+      mediaTypes,
+      videoMaxDuration: 60,
+    });
+    if (assets?.[0]) composer.onPickResult(assets[0]);
+  }
 
   // ── Place picker callback ────────────────────────────────────────────────────
   const handlePlaceSelect = useCallback((place: Place) => {
@@ -313,12 +327,8 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
   // ── Render: media step ────────────────────────────────────────────────────
   if (step === 'media') {
     const primaryItem = composer.primaryItem;
-    const allowedTypes = [
-      ...(imageEnabled ? (['images'] as const) : []),
-      ...(videoEnabled ? (['videos'] as const) : []),
-    ] as ('images' | 'videos')[];
 
-    if (allowedTypes.length === 0) {
+    if (!imageEnabled && !videoEnabled) {
       return (
         <View style={[styles.centeredState, { paddingBottom: insets.bottom + 16 }]}>
           <Gem size={40} color={color.mute} />
@@ -388,14 +398,13 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
               )}
             </View>
           ) : (
-            <MediaPickerButton
-              composer={{
-                ...composer,
-                // Narrow allowed types by flags at runtime
-                policy: { ...composer.policy, allowedTypes },
-              }}
-              sheetTitle="Add gem media"
-            />
+            <Pressable style={styles.mediaPickerBtn} onPress={handlePickGemMedia}>
+              <View style={styles.mediaPickerBtnIcons}>
+                <Camera size={20} color={color.mute} />
+                <ImageIcon size={20} color={color.mute} />
+              </View>
+              <Text style={styles.mediaPickerBtnText}>Take Photo · Choose from Library</Text>
+            </Pressable>
           )}
 
           {errors.media ? (
@@ -421,15 +430,6 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
           </Pressable>
         </View>
 
-        {/* MediaSourceSheet — opened by MediaPickerButton */}
-        <MediaSourceSheet
-          visible={composer.sheetVisible}
-          onClose={composer.closeSheet}
-          onResult={composer.onPickResult}
-          allowsVideo={videoEnabled}
-          videoMaxDuration={60}
-          title="Add gem media"
-        />
       </View>
     );
   }
@@ -886,6 +886,28 @@ const styles = StyleSheet.create({
     ...t.body,
     color: color.mute,
     lineHeight: 20,
+  },
+
+  // Media picker button (empty state)
+  mediaPickerBtn: {
+    borderWidth: 1.5,
+    borderColor: color.haze,
+    borderStyle: 'dashed',
+    borderRadius: radius.md,
+    paddingVertical: space.xl,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    gap: space.sm,
+    backgroundColor: color.paperRaised,
+  },
+  mediaPickerBtnIcons: {
+    flexDirection: 'row' as const,
+    gap: space.sm,
+  },
+  mediaPickerBtnText: {
+    ...t.small,
+    color: color.mute,
+    fontWeight: '600' as const,
   },
 
   // Media preview

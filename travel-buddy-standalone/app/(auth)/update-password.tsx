@@ -48,30 +48,40 @@ export default function UpdatePassword() {
   const [error, setError]             = useState<string | null>(null);
   const [success, setSuccess]         = useState(false);
   const mountedRef = useRef(true);
+  // Tracks whether the session was already confirmed (by either checkSession
+  // or onAuthStateChange). Prevents the expiry timeout from firing after the
+  // auth event has already set state to 'ready' — the classic TOCTOU race
+  // where checkSession resolves with no session *after* the auth event fired.
+  const sessionConfirmedRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
+    sessionConfirmedRef.current = false;
 
     let timeoutId: ReturnType<typeof setTimeout>;
+
+    function scheduleExpiry() {
+      if (sessionConfirmedRef.current) return; // auth event already won the race
+      timeoutId = setTimeout(() => {
+        if (mountedRef.current && !sessionConfirmedRef.current) {
+          setSessionState('expired');
+        }
+      }, SESSION_TIMEOUT_MS);
+    }
 
     async function checkSession() {
       try {
         const { data } = await supabase.auth.getSession();
         if (!mountedRef.current) return;
         if (data.session) {
+          sessionConfirmedRef.current = true;
           setSessionState('ready');
         } else {
           // Session not yet present — wait for the timeout, then expire.
-          timeoutId = setTimeout(() => {
-            if (mountedRef.current) setSessionState('expired');
-          }, SESSION_TIMEOUT_MS);
+          scheduleExpiry();
         }
       } catch {
-        if (mountedRef.current) {
-          timeoutId = setTimeout(() => {
-            if (mountedRef.current) setSessionState('expired');
-          }, SESSION_TIMEOUT_MS);
-        }
+        if (mountedRef.current) scheduleExpiry();
       }
     }
 
@@ -83,6 +93,7 @@ export default function UpdatePassword() {
       if (!mountedRef.current) return;
       if ((event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN') && session) {
         clearTimeout(timeoutId);
+        sessionConfirmedRef.current = true;
         setSessionState('ready');
       }
     });
