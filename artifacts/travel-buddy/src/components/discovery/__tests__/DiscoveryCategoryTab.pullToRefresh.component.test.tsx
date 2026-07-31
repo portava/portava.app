@@ -80,6 +80,7 @@ describe('DiscoveryCategoryTab — pull-to-refresh', () => {
       <DiscoveryCategoryTab
         category="places"
         destination="Lisbon"
+        filters={{ radiusKm: 10, openNow: false, minRating: null }}
         onSelectPlace={jest.fn()}
         onAddToPlan={jest.fn()}
         onFiltersChange={jest.fn()}
@@ -108,6 +109,7 @@ describe('DiscoveryCategoryTab — pull-to-refresh', () => {
       <DiscoveryCategoryTab
         category="places"
         destination="Lisbon"
+        filters={{ radiusKm: 10, openNow: false, minRating: null }}
         onSelectPlace={jest.fn()}
         onAddToPlan={jest.fn()}
         onFiltersChange={jest.fn()}

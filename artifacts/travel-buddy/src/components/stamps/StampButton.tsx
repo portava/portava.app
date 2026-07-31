@@ -123,8 +123,11 @@ export function StampButton({
   const { count: apiCount, isStamped: apiIsStamped, isLoading, toggle } = controlledStamp ?? privateStamp;
 
   // ── Visual state (delayed — flips at stamp impact, not on press) ─────────
-  const [visualIsStamped, setVisualIsStamped] = useState(initialIsStamped);
-  const [visualCount,     setVisualCount    ] = useState(initialCount);
+  // Seed from the resolved API source so that when a shared `controlledStamp`
+  // is provided the visual state reflects its current values, not the
+  // initialIsStamped/initialCount defaults (which default to false/0).
+  const [visualIsStamped, setVisualIsStamped] = useState(apiIsStamped);
+  const [visualCount,     setVisualCount    ] = useState(apiCount);
 
   // Keep a ref to the latest API state so `onComplete` can apply rollbacks
   // without stale closure values.

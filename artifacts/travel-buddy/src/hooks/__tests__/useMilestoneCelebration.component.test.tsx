@@ -130,3 +130,45 @@ it('produces activeMilestone=null on a second mount when the guard key is presen
   // Haptics must NOT have fired a second time.
   expect(impactAsyncSpy).not.toHaveBeenCalled();
 });
+
+it('stays idle when stampsEarned=99 and enabled=true — no milestone fires below the threshold', async () => {
+  const getItemSpy = jest.spyOn(AsyncStorage, 'getItem');
+
+  const { result } = await renderHook(() =>
+    useMilestoneCelebration(99, true),
+  );
+
+  // Flush any async work.
+  await flushAsync();
+  await flushAsync();
+
+  // Below the 100-stamp threshold: no celebration.
+  expect(result.current.activeMilestone).toBeNull();
+
+  // No haptic should have been triggered.
+  expect(impactAsyncSpy).not.toHaveBeenCalled();
+
+  // AsyncStorage should not have been consulted — the threshold check short-circuits first.
+  expect(getItemSpy).not.toHaveBeenCalled();
+});
+
+it('stays idle when stampsEarned=100 and enabled=false — own-profile guard respected', async () => {
+  const getItemSpy = jest.spyOn(AsyncStorage, 'getItem');
+
+  const { result } = await renderHook(() =>
+    useMilestoneCelebration(100, false),
+  );
+
+  // Flush any async work.
+  await flushAsync();
+  await flushAsync();
+
+  // enabled=false means we are not viewing the own profile — no celebration.
+  expect(result.current.activeMilestone).toBeNull();
+
+  // No haptic should have been triggered.
+  expect(impactAsyncSpy).not.toHaveBeenCalled();
+
+  // AsyncStorage should not have been consulted — enabled guard short-circuits first.
+  expect(getItemSpy).not.toHaveBeenCalled();
+});

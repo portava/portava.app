@@ -95,6 +95,7 @@ export function sanitizeIdentity<T extends IdentityRow | null | undefined>(
   const copy: any = { ...row };
   if ("name" in copy) copy.name = null;
   if ("display_name" in copy) copy.display_name = null;
+  if ("full_name" in copy) copy.full_name = null;
   return copy;
 }
 

@@ -84,6 +84,7 @@ describe('DiscoveryCategoryTab — pull-to-refresh', () => {
         onAddToPlan={jest.fn()}
         onFiltersChange={jest.fn()}
         onRefresh={onRefreshSpy}
+        filters={{ radiusKm: 10, openNow: false, minRating: null }}
       />,
     );
 
@@ -112,6 +113,7 @@ describe('DiscoveryCategoryTab — pull-to-refresh', () => {
         onAddToPlan={jest.fn()}
         onFiltersChange={jest.fn()}
         onRefresh={onRefreshSpy}
+        filters={{ radiusKm: 10, openNow: false, minRating: null }}
       />,
     );
 

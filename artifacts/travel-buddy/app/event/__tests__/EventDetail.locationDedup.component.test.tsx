@@ -87,7 +87,7 @@ jest.mock('../../../src/services/events', () => ({
     ok: true,
     data: {
       id: 'evt-loc-dedup-1',
-      title: 'Sinulog Festival',
+      title: 'BGC Night Run',
       state: 'open',
       category: 'festival',
       startsAt: '2026-01-19T08:00:00Z',
@@ -227,19 +227,15 @@ function collectAllText(node: any): string[] {
 describe('Event Detail — location dedup fix', () => {
   it('shows the location name only once — city is not appended again when already in locationName', async () => {
     const { toJSON } = await render(<EventDetailScreen />);
-
-    // Flush the getEvent promise so the screen exits the loading spinner.
     await act(async () => {});
 
     let tree: any;
     await waitFor(() => {
       tree = toJSON();
-      // Confirm the screen has rendered past the loading state.
       const texts = collectAllText(tree);
-      expect(texts.some((t) => t.includes('Sinulog Festival'))).toBe(true);
+      expect(texts.some((t) => t.includes('BGC Night Run'))).toBe(true);
     }, { timeout: 4000 });
 
-    // Collect all text nodes rendered in the location subtitle area.
     const allTexts = collectAllText(tree);
 
     // The correct display is the locationName "Cebu, Philippines" — the city "Cebu"

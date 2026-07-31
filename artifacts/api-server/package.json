@@ -79,7 +79,10 @@
     "test:portava-feed": "node --import tsx/esm --test src/test/portavaFeed.test.ts",
     "test:media-dedup-phash": "node --import tsx/esm --test src/test/mediaDedupPhash.test.ts",
     "test:place-living": "node --import tsx/esm --test src/test/placeLiving.test.ts",
-    "test:place-collections-worker": "node --import tsx/esm --test src/test/placeCollectionsWorker.test.ts"
+    "test:place-collections-worker": "node --import tsx/esm --test src/test/placeCollectionsWorker.test.ts",
+    "test:admin-place-images-l1-eviction": "node --import tsx/esm --test src/test/adminPlaceImagesL1Eviction.test.ts",
+    "test:media-grid-nearby": "node --import tsx/esm --test src/test/mediaGridNearby.test.ts",
+    "test:stamp-auto-approve-generation": "node --import tsx/esm --test src/test/stampAutoApproveGeneration.test.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",

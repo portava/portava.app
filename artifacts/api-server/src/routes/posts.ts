@@ -996,7 +996,7 @@ router.get("/posts", async (req, res) => {
     if (authorIds.length > 0) {
       const { data: profiles } = await sc
         .from("profiles")
-        .select("id, username, full_name, avatar_url, is_official")
+        .select("id, handle, name, username, full_name, avatar_url, is_official")
         .in("id", authorIds);
       const allowedNames = await nameVisibilitySet(sc, authorIds);
       for (const p of profiles ?? []) profileMap[p.id] = sanitizeIdentity(p as any, allowedNames, user.id);
@@ -1065,8 +1065,9 @@ router.get("/posts", async (req, res) => {
         author: pr
           ? {
               id:         pr.id,
-              username:   pr.username,
-              name:       pr.full_name ?? pr.username,
+              handle:     pr.handle ?? pr.username ?? null,
+              username:   pr.handle ?? pr.username ?? null,
+              name:       pr.name ?? pr.full_name ?? null,
               avatarUrl:  pr.avatar_url ?? null,
               isOfficial: (pr.is_official as boolean) ?? false,
             }

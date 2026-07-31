@@ -17,6 +17,8 @@
 - [JSX fragment in ternary branch](jsx-fragment-ternary.md) — `<>...</>` inside a ternary causes TS2657 in RN TypeScript projects; use a `<View>` wrapper instead.
 - [DB column-drift trap](db-column-drift.md) — verify columns against the LIVE schema (generated types drift both ways); PGRST204 = one unknown column fails the whole insert, even null.
 - [Standalone tree = mirror](standalone-fork-parity.md) — artifacts/travel-buddy is canonical; standalone auto-syncs post-merge. ONLY `STANDALONE_OWNED_FILES` ledger entries need manual two-tree porting.
+- [expo-router useFocusEffect mock gap](expo-router-usefocuseffect-mock-gap.md) — adding useFocusEffect to a shared component breaks every per-file mock that omits it; run full test:component suite after any new hook addition.
+- [Overlay header height mismatch](overlay-header-height-mismatch.md) — use getOverlayHeaderTotalHeight(insetsTop) not manual insets.top + OVERLAY_HEADER_HEIGHT; wrong formula causes overlap + swallowed taps.
 - [Stamp animation architecture](stamp-animation-architecture.md) — screen-level traveling stamp (StampAnimationProvider in _layout), delayed hollow→filled state at impact, no-op test fallback pattern.
 - [Compass item hydration](compass-item-hydration.md) — top-level `title`/`category` must be set in the hydrator; shared `compassFormat.ts` utility resolves real names and event metadata across feed and recommendation surfaces.
 - [API server test suite](api-server-testing.md) — node:test not vitest; suite >5min, run via api-test workflow; fake-client pitfalls.
