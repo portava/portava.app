@@ -862,7 +862,7 @@ describe("GET /api/compass/recommendations?surface=buddy", () => {
     invalidateFlagsCache();
     clearCompassProfileCache();
 
-    const { body } = await req(server, "GET", "/api/compass/recommendations?surface=buddy", {
+    const { body } = await req(server, "GET", "/api/compass/recommendations?surface=buddy&city=Cebu", {
       token: "alice-tok",
     });
     const buddyA = body.recommendations.find((r: any) => r.id === BUDDY_A_ID);
@@ -983,7 +983,7 @@ describe("GET /api/compass/recommendations?surface=buddy", () => {
     invalidateFlagsCache();
     clearCompassProfileCache();
 
-    const { body } = await req(server, "GET", "/api/compass/recommendations?surface=buddy", {
+    const { body } = await req(server, "GET", "/api/compass/recommendations?surface=buddy&city=Cebu", {
       token: "alice-tok",
     });
     const ids = body.recommendations.map((r: any) => r.id);

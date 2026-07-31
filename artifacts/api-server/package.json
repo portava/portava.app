@@ -58,6 +58,7 @@
     "test:creator-activity-score": "node --import tsx/esm --test src/test/creatorActivityScore.test.ts",
     "test:profile-privacy": "node --import tsx/esm --test src/test/profilePrivacy.test.ts",
     "test:event-privacy": "node --import tsx/esm --test src/test/eventPrivacy.test.ts",
+    "test:event-chat-lazy": "node --import tsx/esm --test src/test/eventChatLazyCreate.test.ts",
     "test:trip-privacy": "node --import tsx/esm --test src/test/tripPrivacy.test.ts",
     "test:rls-privacy": "node --import tsx/esm --test src/test/rlsPrivacy.test.ts",
     "test:cross-system-privacy": "node --import tsx/esm --test src/test/crossSystemPrivacy.test.ts",

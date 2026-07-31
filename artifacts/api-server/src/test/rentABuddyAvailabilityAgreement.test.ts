@@ -225,6 +225,10 @@ function makeClient(userId: string) {
               const v = (val as string).toLowerCase();
               rows = rows.filter((r: any) => r.city?.toLowerCase() === v);
             }
+            if (op === "not_ilike" && col === "city") {
+              const v = (val as string).toLowerCase();
+              rows = rows.filter((r: any) => r.city?.toLowerCase() !== v);
+            }
             if (op === "eq") {
               rows = rows.filter((r: any) => r[col] === val);
             }
