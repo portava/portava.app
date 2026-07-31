@@ -69,3 +69,4 @@
 - [Showcase artwork testID/mock order](showcase-artwork-testid-mock-order.md) — don't duplicate stamp.label as an outer caption Text alongside UniversalStampArtwork; per-file expo-image mocks must spread ...rest before their own testID override.
 - [Telegraph "Unknown" false lead](telegraph-unknown-orphaned-threads.md) — empty otherMembers (orphaned 0/1-member test threads) causes "Unknown"/"T", not a name-coalescing bug; check membership row counts first.
 - [rentABuddy fake-client/notification gotchas](rentabuddy-fake-client-notification-gotchas.md) — seeded bookings need explicit `id` field; notifyBookingParty is fire-and-forget (flush with setImmediate); notification rows use user_id/event_type.
+- [renderHook must be awaited](renderhook-await.md) — renderHook() returns a Promise in jest-expo; always `await renderHook(...)` or result.current is undefined.
