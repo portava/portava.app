@@ -24,31 +24,22 @@
  *   SEED_DRY_RUN=true      — print actions without writing to the DB
  */
 
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { fileURLToPath } from "node:url";
 
 const DRY_RUN = process.env.SEED_DRY_RUN === "true";
 
-const url = process.env.SUPABASE_URL;
-const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-if (!url || !key) {
-  console.warn(
-    "WARNING: SUPABASE_URL and/or SUPABASE_SERVICE_ROLE_KEY are not set — " +
-      "skipping @portava account seeding. Run manually once credentials are available.",
-  );
-  process.exit(0);
-}
-
-const sc = createClient(url, key, { auth: { persistSession: false } });
-
-const PORTAVA_EMAIL = process.env.PORTAVA_ACCOUNT_EMAIL ?? "portava@internal.portava.app";
-const PORTAVA_HANDLE = "portava";
-const PORTAVA_DISPLAY_NAME = "Portava";
-const PORTAVA_BIO = "Your travel community. Curated places, stories, and inspiration from around the world. 🌍✈️";
-const PORTAVA_AVATAR_URL = "https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?w=400&h=400&fit=crop&crop=center";
+export const PORTAVA_EMAIL_DEFAULT = "portava@internal.portava.app";
+export const PORTAVA_HANDLE = "portava";
+export const PORTAVA_DISPLAY_NAME = "Portava";
+export const PORTAVA_BIO = "Your travel community. Curated places, stories, and inspiration from around the world. 🌍✈️";
+export const PORTAVA_AVATAR_URL = "https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?w=400&h=400&fit=crop&crop=center";
 
 // ── Step 1: Resolve or create the auth user ────────────────────────────────────
 
-async function resolveAuthUser(): Promise<string> {
+async function resolveAuthUser(sc: SupabaseClient): Promise<string> {
+  const PORTAVA_EMAIL = process.env.PORTAVA_ACCOUNT_EMAIL ?? PORTAVA_EMAIL_DEFAULT;
+
   // Check for an explicit UUID override first.
   const override = process.env.PORTAVA_ACCOUNT_UUID;
   if (override) {
@@ -92,7 +83,19 @@ async function resolveAuthUser(): Promise<string> {
 
 // ── Step 2: Upsert the profile row ────────────────────────────────────────────
 
-async function upsertPortavaProfile(userId: string): Promise<void> {
+/**
+ * Creates or updates the @Portava profile row.
+ *
+ * @param userId - The auth user UUID to upsert the profile for.
+ * @param client - Supabase client to use (defaults to the service-role client
+ *   created from env vars; tests may pass a fake client here).
+ */
+export async function upsertPortavaProfile(
+  userId: string,
+  client?: SupabaseClient,
+): Promise<void> {
+  const sc = client ?? _getDefaultClient();
+
   // Check whether the profile already exists.
   const { data: existing } = await sc
     .from("profiles")
@@ -166,7 +169,7 @@ async function upsertPortavaProfile(userId: string): Promise<void> {
 
 // ── Step 3: Ensure location_preferences row ───────────────────────────────────
 
-async function ensureLocationPreferences(userId: string): Promise<void> {
+async function ensureLocationPreferences(sc: SupabaseClient, userId: string): Promise<void> {
   if (DRY_RUN) {
     console.log("[DRY-RUN] would ensure location_preferences row");
     return;
@@ -182,14 +185,43 @@ async function ensureLocationPreferences(userId: string): Promise<void> {
   }
 }
 
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+let _defaultClient: SupabaseClient | undefined;
+
+function _getDefaultClient(): SupabaseClient {
+  if (_defaultClient) return _defaultClient;
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    throw new Error(
+      "SUPABASE_URL and/or SUPABASE_SERVICE_ROLE_KEY are not set. " +
+      "Pass an explicit client argument or set the env vars.",
+    );
+  }
+  _defaultClient = createClient(url, key, { auth: { persistSession: false } });
+  return _defaultClient;
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    console.warn(
+      "WARNING: SUPABASE_URL and/or SUPABASE_SERVICE_ROLE_KEY are not set — " +
+        "skipping @portava account seeding. Run manually once credentials are available.",
+    );
+    process.exit(0);
+  }
+
+  const sc = _getDefaultClient();
   console.log(DRY_RUN ? "=== DRY RUN — no writes will occur ===" : "=== Seeding @portava official account ===");
 
-  const userId = await resolveAuthUser();
-  await upsertPortavaProfile(userId);
-  await ensureLocationPreferences(userId);
+  const userId = await resolveAuthUser(sc);
+  await upsertPortavaProfile(userId, sc);
+  await ensureLocationPreferences(sc, userId);
 
   console.log(`\n✓ @portava account seeded. userId=${userId}`);
   if (DRY_RUN) {
@@ -197,7 +229,10 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  console.error("Seed failed:", err);
-  process.exit(1);
-});
+// Only run main when this file is executed directly (not when imported by tests).
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    console.error("Seed failed:", err);
+    process.exit(1);
+  });
+}
