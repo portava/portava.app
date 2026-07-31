@@ -221,6 +221,30 @@ describe("GET /api/posts — global feed", () => {
   });
 });
 
+describe("GET /api/posts?feed=following — author identity", () => {
+  it("returns the author's real username/name (not stripped) — matches the /api/pulse identity contract", async () => {
+    const st = baseState();
+    st.user_follows = [{ follower_id: "member-1", following_id: "owner-1" }];
+    st.posts = [
+      { id: "p1", author_id: "owner-1", trip_id: null, visibility: "public", status: "active", post_status: "published", content: "hi", media_urls: [], created_at: "2026-01-03" },
+    ];
+    // profiles table uses username/full_name live — not the legacy handle/name
+    // columns. Following must resolve the same fields /api/pulse does, or the
+    // mobile client falls back to a generic "Traveler" label.
+    st.profiles = [
+      { id: "owner-1", username: "portava", full_name: "Portava Official", is_official: true },
+    ];
+    const { baseUrl, close } = await startApp(st);
+    const { status, body } = await doGet(baseUrl, "/api/posts?feed=following", BEARER("member-tok"));
+    await close();
+    assert.equal(status, 200);
+    const post = body.posts.find((p: any) => p.id === "p1");
+    assert.ok(post, "post from a followed author must appear in the following feed");
+    assert.equal(post.author.username, "portava", `expected username to be resolved, got: ${JSON.stringify(post.author)}`);
+    assert.notEqual(post.author.name, undefined, "author.name must not be undefined (legacy column drift)");
+  });
+});
+
 describe("PATCH /api/posts/:id — author-only edit", () => {
   it("12. author can edit their own post", async () => {
     const st = baseState();

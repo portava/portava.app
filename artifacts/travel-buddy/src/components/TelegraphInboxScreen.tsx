@@ -36,6 +36,42 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'requests', label: 'Requests' },
 ];
 
+/** Human-readable labels for system message types whose `body` is raw JSON. */
+const SYSTEM_MESSAGE_LABELS: Record<string, string> = {
+  post_card: 'Shared a post',
+  discovery_card: 'Shared a place',
+  compass_card: 'Shared a Compass result',
+  meetup: 'Created a meetup',
+  meetup_confirmed: 'Meetup confirmed',
+  ai_recommendation: 'AI suggestion',
+};
+
+/**
+ * Resolves the inbox row preview text for a thread's last message. System
+ * message types (post_card, discovery_card, compass_card, meetup,
+ * meetup_confirmed, ai_recommendation, circle_status_card) carry a
+ * structured JSON `body` — showing it raw leaks `{"postId":"..."}` into the
+ * conversation list, so each gets a short human-readable label instead.
+ */
+function systemMessageInboxPreview(
+  lmp: NonNullable<ThreadSummary['lastMessagePreview']>,
+  isMine: boolean,
+): string {
+  // Shared cards are stored with msgType 'system' and the real card kind in
+  // `subtype` (e.g. post_card, discovery_card, meetup). A few older/simple
+  // system messages key off msgType directly (circle_status_card,
+  // ai_recommendation), so check subtype first, then fall back to msgType.
+  const kind = lmp.subtype ?? lmp.msgType;
+  if (kind === 'circle_status_card') {
+    return circleCardInboxPreview(lmp.body);
+  }
+  const label = kind ? SYSTEM_MESSAGE_LABELS[kind] : undefined;
+  if (label) {
+    return isMine ? `You: ${label}` : label;
+  }
+  return isMine ? lmp.body : (lmp.displayBody ?? lmp.body);
+}
+
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const m = Math.floor(diff / 60000);
@@ -143,11 +179,7 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
 
   const lmp = item.lastMessagePreview;
   const isMine = lmp?.senderId === userId;
-  const previewText = lmp
-    ? lmp.msgType === 'circle_status_card'
-      ? circleCardInboxPreview(lmp.body)
-      : isMine ? lmp.body : (lmp.displayBody ?? lmp.body)
-    : '';
+  const previewText = lmp ? systemMessageInboxPreview(lmp, isMine) : '';
   const lastAt = lmp?.createdAt;
   const isMuted = !!item.mutedAt;
   const unread = item.unreadCount ?? 0;

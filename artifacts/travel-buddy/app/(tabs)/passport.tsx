@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, RefreshControl } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useCollapsingHeader } from '../../src/hooks/useCollapsingHeader';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { useBottomInset } from '../../src/hooks/useBottomInset';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -67,7 +67,16 @@ export default function PassportScreen() {
   const { profile, postcards, stamps, stampsNew, memories, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, updateStamp, reload, lastLoadedAt } = usePassport();
   const { markFirstContent, epoch } = useScreenTiming('Passport');
   const { userId: ownUserId, signOut } = useSession();
-  const [tab, setTab] = useState<PassportTabKey>('postcards');
+  // Deep links (e.g. the stamp-earned toast) can request a specific tab via
+  // ?tab=stamps — honor it on first mount, falling back to the default when
+  // absent or invalid so normal in-app navigation is unaffected.
+  const { tab: deepLinkTab } = useLocalSearchParams<{ tab?: string }>();
+  const initialTab: PassportTabKey =
+    deepLinkTab === 'stamps' || deepLinkTab === 'postcards' || deepLinkTab === 'memories'
+      || deepLinkTab === 'trips' || deepLinkTab === 'map' || deepLinkTab === 'destinations'
+      ? (deepLinkTab as PassportTabKey)
+      : 'postcards';
+  const [tab, setTab] = useState<PassportTabKey>(initialTab);
   const [menuOpen, setMenuOpen] = useState(false);
   const [trips, setTrips] = useState<TripRow[]>([]);
   const [tripsLoaded, setTripsLoaded] = useState(false);

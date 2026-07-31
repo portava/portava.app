@@ -26,6 +26,7 @@ import {
   type RankingFactor,
 } from "./CompassRecommendationEngine.js";
 import { getCityWorldModel, worldModelBoostForItem } from "./CompassGraphEngine.js";
+import { logger } from "../lib/logger.js";
 
 export interface PipelineResult {
   item:             CompassItem;
@@ -85,7 +86,8 @@ async function loadFlags(db: SupabaseClient | null): Promise<Record<string, bool
       out[row.flag] = Boolean(row.enabled);
     }
     return out;
-  } catch {
+  } catch (err) {
+    logger.warn({ err }, "Compass feed: COMPASS_* feature flag lookup failed — degraded to all-defaults");
     return {};
   }
 }

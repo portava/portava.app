@@ -3451,6 +3451,69 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     );
   });
 
+  it("returns 200 with expired: 0 when the stale-requests DB fetch itself errors — not just the update", async () => {
+    // The sweep's step-1 query (.in("status",["pending","requested"]).lt("expires_at", now))
+    // may itself return a DB error. The route must not crash and must report
+    // expired: 0 without touching any booking, distinguishing a fetch-error
+    // from an update-error (already covered by the sibling test above).
+    const PAST = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, false);
+    _setTestServiceClient(client as any);
+
+    state = {
+      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      bookings: {
+        "bk-fetch-err": {
+          id: "bk-fetch-err",
+          traveler_id: USER_ID,
+          buddy_id: BUDDY_PROF,
+          status: "requested",
+          expires_at: PAST,
+        },
+      },
+      // Arm a select error override that fires on the stale-requests fetch (the
+      // sweep's very first query against this table, using .in() rather than
+      // .eq() — matchEq is omitted so it fires unconditionally on the next select).
+      selectErrorOverrides: {
+        rent_buddy_bookings: {
+          error: { message: "simulated DB error fetching stale requests", code: "PGRST301" },
+        },
+      },
+    };
+
+    const r = await reqSweep();
+
+    // Sweep must not crash — it must respond with HTTP 200.
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    // expired count must be 0 — the initial fetch errored, so the update/loop
+    // must never run.
+    assert.equal(
+      r.body.expired,
+      0,
+      "expired must be 0 when the stale-requests DB fetch itself errors",
+    );
+
+    // The booking must retain its original status — the fetch failure must
+    // prevent any state transition, not just report a wrong count.
+    assert.equal(
+      state.bookings!["bk-fetch-err"].status,
+      "requested",
+      "booking status must remain 'requested' when the stale-requests DB fetch errors",
+    );
+
+    // No buddy_booking_events rows must have been inserted.
+    const expiredEvents = ((state as any).bookingEvents ?? []).filter(
+      (e: any) => e.event === "request_expired",
+    );
+    assert.equal(
+      expiredEvents.length,
+      0,
+      "no request_expired booking events must be inserted when the stale-requests DB fetch errors",
+    );
+  });
+
   it("both stale bookings retain status 'requested' when the batch expiry update errors — confirms .in() atomicity", async () => {
     // Two stale requested bookings; the single .update().in("id", ids) call is
     // armed to error.  Neither booking should be transitioned to 'expired' —
@@ -3715,6 +3778,65 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
       escalationEvents.length,
       0,
       "no no_show_escalated events must be written when the stale-no-shows DB query errors",
+    );
+  });
+
+  it("still sends the TRAVELER's auto-completion notification when the buddy-profile lookup errors", async () => {
+    // The auto-complete step resolves buddy_id -> user_id via a batch lookup
+    // against rent_buddy_profiles purely to notify the BUDDY side. If that
+    // lookup itself returns a DB error, the traveler's own notification must
+    // still fire — a buddy-ID resolution failure must never silence the
+    // traveler side.
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, false);
+    _setTestServiceClient(client as any);
+    const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+
+    state = {
+      bookings: {
+        "bk-buddy-lookup-err": {
+          id: "bk-buddy-lookup-err",
+          traveler_id: USER_ID,
+          buddy_id: BUDDY_PROF,
+          status: "completed_pending_traveler_confirmation",
+          dispute_window_expires_at: PAST,
+        },
+      },
+      selectErrorOverrides: {
+        rent_buddy_profiles: {
+          error: { message: "simulated DB error resolving buddy profile", code: "PGRST301" },
+        },
+      },
+    };
+
+    const r = await reqSweep();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    // The booking must still be auto-completed — the buddy-profile lookup
+    // failure is unrelated to the status update itself.
+    assert.equal(
+      r.body.autoCompleted,
+      1,
+      "autoCompleted must still count the booking even when the buddy-profile lookup errors",
+    );
+    assert.equal(
+      state.bookings!["bk-buddy-lookup-err"].status,
+      "completed",
+      "booking must still be promoted to completed when the buddy-profile lookup errors",
+    );
+
+    // The traveler's notification must still have fired. notifyBookingParty
+    // is fire-and-forget (void async IIFE), so flush pending microtasks
+    // before inspecting state.
+    await new Promise((r) => setImmediate(r));
+    const notifications = (state as any).notifications ?? [];
+    const travelerNotified = notifications.some(
+      (n: any) => n.user_id === USER_ID && n.event_type === "rent_buddy.booking_completed",
+    );
+    assert.equal(
+      travelerNotified,
+      true,
+      "traveler auto-completion notification must fire even when the buddy-profile lookup errors",
     );
   });
 });

@@ -12,6 +12,7 @@ import { CachedImage } from '../CachedImage.tsx';
 import { useEntityHeaderImage } from '../../hooks/useEntityHeaderImage.ts';
 import { color, space, radius, shadow, typography, layout } from '../../theme/tokens.ts';
 import { tripStatusColor, tripStatusLabel, deriveTripDisplayStatus } from '../../lib/tripStatus.ts';
+import { formatTripDateRange } from '../../lib/tripDateFormat.ts';
 
 export interface TripCardProps {
   id: string;
@@ -37,9 +38,7 @@ export function TripCard({
   const destination = destinationCountry
     ? `${destinationCity}, ${destinationCountry}`
     : destinationCity;
-  const dateRange = startDate
-    ? endDate ? `${startDate} – ${endDate}` : startDate
-    : 'Dates TBD';
+  const dateRange = formatTripDateRange(startDate, endDate);
 
   // Resolves: coverUrl → landmark category fallback (bundled asset).
   // Never returns null — the category fallback ensures an image is always shown.

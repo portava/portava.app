@@ -39,9 +39,12 @@ interface FakeState {
   rent_buddy_bookings?: any[];
   message_threads?: any[];
   message_thread_members?: any[];
+  messages?: any[];
+  message_translations?: any[];
   profiles?: any[];
   feature_flags?: any[];
   user_privacy_settings?: any[];
+  profile_privacy_settings?: any[];
 }
 
 function makeClient(state: FakeState = {}, authUserId = ALICE_ID) {
@@ -59,12 +62,15 @@ function makeClient(state: FakeState = {}, authUserId = ALICE_ID) {
     rent_buddy_bookings:    state.rent_buddy_bookings     ?? [],
     message_threads:        state.message_threads         ?? [],
     message_thread_members: state.message_thread_members  ?? [],
+    messages:               state.messages                ?? [],
+    message_translations:   state.message_translations    ?? [],
     profiles: state.profiles ?? [
       { id: ALICE_ID, handle: "alice", name: "Alice" },
       { id: BOB_ID,   handle: "bob",   name: "Bob"   },
     ],
-    feature_flags:         state.feature_flags          ?? [],
-    user_privacy_settings: state.user_privacy_settings  ?? [],
+    feature_flags:             state.feature_flags             ?? [],
+    user_privacy_settings:     state.user_privacy_settings     ?? [],
+    profile_privacy_settings:  state.profile_privacy_settings  ?? [],
   };
 
   function parseOrFilter(expr: string): (r: any) => boolean {
@@ -202,6 +208,97 @@ after(async () => {
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
+
+describe("GET /api/me/threads — Telegraph 'Unknown' display-name bug", () => {
+  it("resolves the other participant's real name (display_name) for a direct thread, not 'Unknown'", async () => {
+    _setTestClient(
+      makeClient({
+        message_threads: [
+          {
+            id: THREAD_ID,
+            thread_type: "direct",
+            trip_id: null,
+            circle_owner_id: null,
+            title: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            last_message_at: new Date().toISOString(),
+            status: "active",
+          },
+        ],
+        message_thread_members: [
+          { user_id: ALICE_ID, thread_id: THREAD_ID, muted_at: null, archived_at: null, left_at: null, last_read_at: null },
+          { user_id: BOB_ID,   thread_id: THREAD_ID, muted_at: null, archived_at: null, left_at: null, last_read_at: null },
+        ],
+        // profiles.name does not exist on the live schema — only
+        // display_name/handle do. This regression guards against the API
+        // silently returning "Unknown" when it selects a nonexistent
+        // "name" column instead of "display_name".
+        profiles: [
+          { id: ALICE_ID, handle: "alice", display_name: "Alice Traveler", avatar_url: null },
+          { id: BOB_ID,   handle: "bob",   display_name: "Bob Explorer",   avatar_url: null },
+        ],
+        profile_privacy_settings: [
+          { user_id: ALICE_ID, show_real_name: true },
+          { user_id: BOB_ID,   show_real_name: true },
+        ],
+      }, ALICE_ID) as any,
+      true,
+    );
+
+    const res = await callApi("GET", "/api/me/threads");
+    assert.equal(res.status, 200);
+    const thread = res.body.threads.find((t: any) => t.id === THREAD_ID);
+    assert.ok(thread, "thread must be present in the list");
+    const other = thread.otherMembers?.[0];
+    assert.ok(other, "otherMembers must include Bob for this direct thread");
+    assert.equal(other.id, BOB_ID);
+    assert.equal(other.name, "Bob Explorer", `expected Bob's display_name, got: ${JSON.stringify(other)}`);
+    assert.notEqual(other.name, null, "must not fall back to Unknown when display_name is opted-in and present");
+  });
+
+  it("falls back to @handle (not a null name) when the other participant has not opted in to showing their real name", async () => {
+    _setTestClient(
+      makeClient({
+        message_threads: [
+          {
+            id: THREAD_ID,
+            thread_type: "direct",
+            trip_id: null,
+            circle_owner_id: null,
+            title: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            last_message_at: new Date().toISOString(),
+            status: "active",
+          },
+        ],
+        message_thread_members: [
+          { user_id: ALICE_ID, thread_id: THREAD_ID, muted_at: null, archived_at: null, left_at: null, last_read_at: null },
+          { user_id: BOB_ID,   thread_id: THREAD_ID, muted_at: null, archived_at: null, left_at: null, last_read_at: null },
+        ],
+        profiles: [
+          { id: ALICE_ID, handle: "alice", display_name: "Alice Traveler", avatar_url: null },
+          { id: BOB_ID,   handle: "bob",   display_name: "Bob Explorer",   avatar_url: null },
+        ],
+        // Bob has NOT opted in — name must be redacted, but handle must
+        // still be present so the client shows "@bob", never "Unknown".
+        profile_privacy_settings: [
+          { user_id: ALICE_ID, show_real_name: true },
+        ],
+      }, ALICE_ID) as any,
+      true,
+    );
+
+    const res = await callApi("GET", "/api/me/threads");
+    assert.equal(res.status, 200);
+    const thread = res.body.threads.find((t: any) => t.id === THREAD_ID);
+    const other = thread.otherMembers?.[0];
+    assert.ok(other, "otherMembers must include Bob for this direct thread");
+    assert.equal(other.handle, "bob", "handle must always be present so the client can fall back to @handle");
+    assert.equal(other.name, null, "name must be redacted (null) when not opted in — client falls back to @handle, not the API");
+  });
+});
 
 describe("GET /api/me/message-settings", () => {
   it("returns defaults when no settings row exists", async () => {

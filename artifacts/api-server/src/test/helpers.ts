@@ -19,6 +19,10 @@ export interface FakeState {
   trips: Set<string>;
   members: Array<{ trip_id: string; user_id: string; role: string }>;
   posts: Array<Record<string, any>>;
+  user_follows?: Array<{ follower_id: string; following_id: string }>;
+  profiles?: Array<Record<string, any>>;
+  user_friendships?: Array<Record<string, any>>;
+  post_hides?: Array<Record<string, any>>;
 }
 
 export function makeFakeClient(state: FakeState) {
@@ -45,7 +49,20 @@ export function makeFakeClient(state: FakeState) {
       in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; },
       is(col: string, val: any) { filters.push((r) => (val === null ? r[col] == null : r[col] === val)); return builder; },
       lt(col: string, val: any) { filters.push((r) => r[col] < val); return builder; },
-      or() { return builder; }, // visibility OR is not exercised by these unit tests
+      or(expr: string) {
+        // Parses simple "col.eq.val,col2.eq.val2" expressions (the only shape
+        // the routes under test actually issue) and ORs them together.
+        const conds = String(expr).split(",").map((part) => {
+          const [col, op, val] = part.split(".");
+          return (r: any) => {
+            if (op !== "eq") return false;
+            const target = val === "true" ? true : val === "false" ? false : val;
+            return r[col] === target;
+          };
+        });
+        filters.push((r) => conds.some((c) => c(r)));
+        return builder;
+      },
       order() { return builder; },
       limit() { return builder; },
       maybeSingle() { return resolveSingle(true); },
@@ -58,6 +75,10 @@ export function makeFakeClient(state: FakeState) {
       if (table === "trips") source = [...state.trips].map((id) => ({ id }));
       else if (table === "trip_members") source = state.members;
       else if (table === "posts") source = state.posts;
+      else if (table === "user_follows") source = state.user_follows ?? [];
+      else if (table === "profiles") source = state.profiles ?? [];
+      else if (table === "user_friendships") source = state.user_friendships ?? [];
+      else if (table === "post_hides") source = state.post_hides ?? [];
       return source.filter((r) => filters.every((f) => f(r)));
     }
 

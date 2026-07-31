@@ -220,8 +220,6 @@ router.put("/admin/geocode-cache/:city_key", asyncHandler(async (req, res) => {
 
 // ── PUT /admin/repair_catalog ─────────────────────────────────────────────────
 
-const STROKED_LETTER_RE = /[ŁłØøĐđ]/;
-
 /**
  * Transliterate stroked letters (Ł→l, Ø→o, Đ→d) and apply the same
  * normalisation used when geocode cache keys are written:
@@ -244,10 +242,13 @@ function transliterateStrokedKey(raw: string): string {
 /**
  * PUT /admin/repair_catalog
  *
- * One-shot sweep: find every geocode-cache row whose city_key contains a
- * stroked letter (Ł, Ø, Đ — or their lowercase counterparts) that survives
- * the old NFD normalisation, upsert a new row under the fully-transliterated
- * key, and soft-delete the old row so the periodic tombstone sweep removes it.
+ * One-shot sweep: find every geocode-cache row whose city_key still carries a
+ * stroked letter (Ł, Ø, Đ) OR any ordinary decomposable accent (é, á, ü, ã,
+ * etc.) that survives the old NFD normalisation, upsert a new row under the
+ * fully-transliterated/normalised key, and soft-delete the old row so the
+ * periodic tombstone sweep removes it. This mirrors DELETE's re-keying
+ * behaviour (repairXXCatalogEntries / normCityKey) — accented-city entries
+ * must be re-keyed on PUT too, not only on DELETE.
  *
  * Returns { rekeyed: number, entries: [{ old_key, new_key }] }.
  */
@@ -272,8 +273,10 @@ router.put("/admin/repair_catalog", asyncHandler(async (req, res) => {
   const rekeyed: Array<{ old_key: string; new_key: string }> = [];
 
   for (const row of rows) {
-    if (!STROKED_LETTER_RE.test(row.city_key)) continue;
-
+    // Compute the fully-normalised key directly rather than pre-filtering on
+    // STROKED_LETTER_RE — that regex only catches Ł/Ø/Đ and would silently
+    // skip ordinary accented cities (São Paulo, München, etc.) that still
+    // need re-keying.
     const newKey = transliterateStrokedKey(row.city_key);
     if (newKey === row.city_key) continue;
 

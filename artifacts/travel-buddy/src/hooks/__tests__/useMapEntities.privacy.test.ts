@@ -107,6 +107,23 @@ describe('filterEvents — visibility guards', () => {
     assert.equal(result.length, 2);
     assert.deepEqual(result.map((e) => e.id), ['a', 'b']);
   });
+
+  it('a mixed list of located and location-less public events keeps only the located ones', () => {
+    // All events here are otherwise pin-eligible (public visibility); the
+    // only distinguishing factor is presence/absence of coordinates. This
+    // isolates the coordinate guard from the visibility guard covered above.
+    const events: FakeEvent[] = [
+      { id: 'has-coords-1', visibility: 'public', locationLat: 10, locationLng: 20 },
+      { id: 'no-coords',    visibility: 'public', locationLat: null, locationLng: null },
+      { id: 'has-coords-2', visibility: 'public', locationLat: 30, locationLng: 40 },
+      { id: 'half-pair',    visibility: 'public', locationLat: 50, locationLng: null },
+    ];
+    const result = filterEvents(events);
+    assert.equal(result.length, 2, 'only the two events with full coordinate pairs should remain');
+    assert.deepEqual(result.map((e) => e.id), ['has-coords-1', 'has-coords-2']);
+    // No fallback/default coordinate is ever substituted for the excluded events.
+    assert.ok(!result.some((e) => e.id === 'no-coords' || e.id === 'half-pair'));
+  });
 });
 
 // ── Friends coordinate coarsening ─────────────────────────────────────────────

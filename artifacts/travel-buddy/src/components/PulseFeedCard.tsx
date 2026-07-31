@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert, Share, useWindowDimensions } from 'react-native';
 import { CachedImage, withStorageParams } from './CachedImage.tsx';
 import { AvatarImage } from './ui/DisplayMediaImage.tsx';
 import { batchSignUrls } from '../lib/batchSignMedia.ts';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import {
   MapPin, MoreHorizontal, HelpCircle, Users,
   Sparkles, Info, Plus, ShieldCheck, Clock,
@@ -38,6 +38,9 @@ import { PostCard as SharedPostCard } from './cards/PostCard.tsx';
 import { FeaturedBadge } from './FeaturedBadge.tsx';
 import { PlaceQuickActions } from './PlaceQuickActions.tsx';
 import { PostWrongPlaceSheet } from './PostWrongPlaceSheet.tsx';
+import { useStamp } from '../hooks/useStamp.ts';
+import { useDoubleTapToStamp } from '../hooks/useDoubleTapToStamp.ts';
+import { PostCardStampBurst, type PostCardStampBurstHandle } from './stamps/PostCardStampBurst.tsx';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -239,6 +242,32 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
   const handleDeleted = () => { dismiss(); onDeleteSuccess?.(); };
   const { userId: currentUserIdForPlace } = useSession();
 
+  // ── Stamp state, shared between the engagement bar's StampButton and the
+  // card's double-tap gesture (single source of truth — see useStamp). ─────
+  const canStamp = item.canLike !== false;
+  const postStamp = useStamp({
+    entityType: 'post',
+    entityId: item.id,
+    initialCount: item.likeCount ?? 0,
+    initialIsStamped: item.likedByMe ?? false,
+  });
+  const burstRef = useRef<PostCardStampBurstHandle>(null);
+  const handleDoubleTapStamp = useCallback(() => {
+    if (!canStamp) return;
+    // Instagram-style: double-tap always shows the burst, but only stamps
+    // (never un-stamps) so a second double-tap can't accidentally remove it.
+    if (!postStamp.isStamped) void postStamp.toggle();
+    burstRef.current?.play();
+  }, [canStamp, postStamp]);
+  const handleTextCardPress = useDoubleTapToStamp(
+    () => router.push(`/post/${item.id}` as any),
+    handleDoubleTapStamp,
+  );
+  const handleMediaCardPress = useDoubleTapToStamp(
+    () => router.push(`/post/${item.id}` as any),
+    handleDoubleTapStamp,
+  );
+
   // Batch-sign the main media URL so list renders share a single POST
   // /api/media/sign call (45-min cache) rather than one redirect per image.
   // When the private-bucket flag is OFF this resolves immediately with the
@@ -258,17 +287,111 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
 
   if (dismissed) return null;
 
+  // A text-only post has no media at all, and a post whose only media URL
+  // 404s (e.g. a stale/synthetic seed URL) ends up in the same place from the
+  // reader's perspective — no viewable image. Both cases must skip the
+  // immersive photo frame (and its dark "no image" placeholder) entirely and
+  // fall back to the plain text layout, rather than showing a full-height
+  // placeholder block for a post that was never really about an image.
+  const hasMedia = Boolean(item.media?.[0]?.thumbnail_url ?? item.media?.[0]?.url ?? item.mediaUrl);
+  const showMediaFrame = hasMedia && !mediaFailed;
+
   // 4:5 portrait media frame; capped at 600 for tablet/web
   const effectiveWidth = Math.min(width, 600);
   const mediaHeight = Math.round(effectiveWidth * (5 / 4));
   const tripLabel = item.tripLabel ?? undefined;
 
+  if (!showMediaFrame) {
+    return (
+      <Pressable
+        style={({ pressed }) => [s.postCard, s.postCardTextOnly, width > 600 ? s.postCardWide : undefined, pressed && { opacity: 0.93 }]}
+        onPress={handleTextCardPress}
+        accessible={false}
+      >
+        {/* Card-local stamp burst — clipped to this card via s.postCard's
+            overflow: hidden, positioned relative to the card, not the screen. */}
+        <PostCardStampBurst ref={burstRef} />
+        <View style={s.postTextOnlyHeader}>
+          <AuthorRow item={item} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={handleDeleted} />
+        </View>
+
+        <View style={s.postFooter}>
+          {item.caption ? (
+            <RichText content={item.caption} tags={item.spanTags} hashtagUsages={item.spanHashtags} style={s.caption} numberOfLines={8} />
+          ) : null}
+          {item.updatedAt && item.updatedAt > item.createdAt ? (
+            <Text style={s.editedLabel}>Edited</Text>
+          ) : null}
+          <TagRow tags={item.tags} fallbackFirst={item.categoryFallback} />
+          {chipVariant !== 'no_location' && (
+            <View style={s.locationChipRow}>
+              <LocationChip
+                variant={chipVariant}
+                label={chipLabel}
+                sublabel={chipSublabel}
+                size="sm"
+                muted
+              />
+              {currentUserIdForPlace && currentUserIdForPlace !== item.author?.id && (
+                <Pressable
+                  style={s.wrongPlaceBtn}
+                  onPress={() => setWrongPlaceOpen(true)}
+                  hitSlop={8}
+                  testID={`wrong-place-btn-${item.id}`}
+                >
+                  <Text style={s.wrongPlaceBtnText}>Wrong place?</Text>
+                </Pressable>
+              )}
+            </View>
+          )}
+          <View style={s.actions}>
+            <View style={{ flex: 1 }}>
+              <PostEngagementBar
+                postId={item.id}
+                commentCount={item.commentCount ?? 0}
+                canStamp={canStamp}
+                canComment={item.canComment !== false}
+                canShare={item.canShare !== false}
+                controlledStamp={postStamp}
+                localBurst
+                onLocalBurst={() => burstRef.current?.play()}
+              />
+            </View>
+            <SaveButton
+              entityType="post"
+              entityId={item.id}
+              initialSaved={item.savedByMe ?? false}
+              size={17}
+              sessionId={sessionId}
+            />
+            <CompassFeedbackMenu
+              recommendationId={item.id}
+              itemType={item.type}
+              category={item.type}
+              onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
+              onDismiss={dismiss}
+            />
+          </View>
+        </View>
+
+        <PostWrongPlaceSheet
+          postId={item.id}
+          visible={wrongPlaceOpen}
+          onClose={() => setWrongPlaceOpen(false)}
+        />
+      </Pressable>
+    );
+  }
+
   return (
     <Pressable
       style={({ pressed }) => [s.postCard, width > 600 ? s.postCardWide : undefined, pressed && { opacity: 0.93 }]}
-      onPress={() => router.push(`/post/${item.id}` as any)}
+      onPress={handleMediaCardPress}
       accessible={false}
     >
+      {/* Card-local stamp burst — clipped to this card via s.postCard's
+          overflow: hidden, positioned relative to the card, not the screen. */}
+      <PostCardStampBurst ref={burstRef} />
       {/* ── Immersive media frame ── */}
       <View style={[s.postMedia, { height: mediaHeight }]}>
         {(item.media?.[0]?.thumbnail_url ?? item.media?.[0]?.url ?? item.mediaUrl) && !mediaFailed ? (
@@ -772,6 +895,19 @@ export function PulseFeedCard({ item, onDeleteSuccess, sessionId }: { item: Puls
   const [whyOpen, setWhyOpen] = useState(false);
 
   const handleWhyPress = (id: string) => { setWhyId(id); setWhyOpen(true); };
+  // Clear both flags together on close — leaving a stale whyId behind (even
+  // though the next press overwrites it) risks a brief flash of the previous
+  // recommendation's content if the sheet is ever remounted with visible=true
+  // before whyId updates. Also close the sheet if this card loses screen
+  // focus (navigated away) while still mounted — e.g. inside a tab navigator
+  // that keeps screens alive — so navigating back never reveals a ghost
+  // sheet stuck open over unrelated content.
+  const handleWhyClose = () => { setWhyOpen(false); setWhyId(null); };
+  useFocusEffect(
+    useCallback(() => {
+      return () => setWhyOpen(false);
+    }, []),
+  );
 
   let card: React.ReactNode;
   switch (item.type) {
@@ -795,7 +931,7 @@ export function PulseFeedCard({ item, onDeleteSuccess, sessionId }: { item: Puls
       <CompassWhySheet
         visible={whyOpen}
         recommendationId={whyId}
-        onClose={() => setWhyOpen(false)}
+        onClose={handleWhyClose}
       />
     </>
   );
@@ -881,6 +1017,10 @@ const s = StyleSheet.create({
   // ── Immersive PostCard (type='post') — full-bleed, edge-to-edge on mobile ─────
   postCard: { backgroundColor: color.paperRaised, overflow: 'hidden' },
   postCardWide: { maxWidth: 600, alignSelf: 'center' as const, width: '100%', borderRadius: 14, ...shadow.card },
+  // Text-only posts skip the immersive media frame entirely (no photo means
+  // no "no image" placeholder block) and get a plain author header instead.
+  postCardTextOnly: { borderBottomWidth: 1, borderBottomColor: color.haze },
+  postTextOnlyHeader: { paddingHorizontal: 16, paddingTop: 14 },
   postMedia: { overflow: 'hidden', backgroundColor: color.deep },
   videoPlayBadge: {
     ...StyleSheet.absoluteFillObject,

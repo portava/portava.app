@@ -25,7 +25,9 @@ import {
   Platform,
 } from 'react-native';
 import * as ExpoLocation from 'expo-location';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, type as t } from '../../theme/tokens.ts';
+import { getOverlayHeaderTotalHeight } from '../ui/AppHeader.tsx';
 import { useMediaStore, type GeoAreaMode, type GemCategory } from '../../stores/mediaStore.ts';
 import { useGemsFeed, type GemsFeedItem } from '../../hooks/useGemsFeed.ts';
 import { useMediaSave } from '../../hooks/useMediaSave.ts';
@@ -70,6 +72,7 @@ export function GemsFeed({
   onWrongPlace,
 }: GemsFeedProps) {
   const { height: screenHeight, width: screenWidth } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const { getGemsModeState, setGemsModeState } = useMediaStore();
   const session = useSession();
   const currentUserId = session?.userId ?? undefined;
@@ -282,8 +285,11 @@ export function GemsFeed({
         />
       )}
 
-      {/* Filter bar — floats above the list */}
-      <View style={styles.filterBarWrapper} pointerEvents="box-none">
+      {/* Filter bar — floats above the list, cleared below the overlay header + mode selector */}
+      <View
+        style={[styles.filterBarWrapper, { top: getOverlayHeaderTotalHeight(insets.top) + 4 + MODE_SELECTOR_HEIGHT + FILTER_BAR_GAP }]}
+        pointerEvents="box-none"
+      >
         <GemsFilterBar
           areaMode={areaMode}
           category={category}
@@ -333,7 +339,12 @@ export function GemsFeed({
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const TOP_FILTER_OFFSET = Platform.OS === 'ios' ? 100 : 80; // below safe area + mode selector
+// Must match MediaModeSelector's chip height (media.tsx) so the filter bar never
+// overlaps the mode-selector chips — a hardcoded platform guess drifted out of
+// sync with the real selector geometry and caused visual overlap + swallowed
+// taps on the mode chips underneath it.
+const MODE_SELECTOR_HEIGHT = 44;
+const FILTER_BAR_GAP = 8;
 
 const styles = StyleSheet.create({
   container: {
@@ -350,7 +361,6 @@ const styles = StyleSheet.create({
   },
   filterBarWrapper: {
     position: 'absolute',
-    top: TOP_FILTER_OFFSET,
     left: 0,
     right: 0,
   },

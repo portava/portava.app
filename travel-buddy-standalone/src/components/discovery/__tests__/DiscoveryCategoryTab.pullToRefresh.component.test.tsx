@@ -55,7 +55,6 @@ import { DiscoveryCategoryTab } from '../DiscoveryCategoryTab.tsx';
 
 describe('DiscoveryCategoryTab — pull-to-refresh', () => {
   const onRefreshSpy = jest.fn();
-  const DEFAULT_FILTERS = { radiusKm: 10, openNow: false, minRating: null };
 
   const MOCK_PLACE = {
     id: 'p1', name: 'Sushi Bar', category: 'food', type: null, description: null,
@@ -81,7 +80,6 @@ describe('DiscoveryCategoryTab — pull-to-refresh', () => {
       <DiscoveryCategoryTab
         category="places"
         destination="Lisbon"
-        filters={DEFAULT_FILTERS}
         onSelectPlace={jest.fn()}
         onAddToPlan={jest.fn()}
         onFiltersChange={jest.fn()}
@@ -110,7 +108,6 @@ describe('DiscoveryCategoryTab — pull-to-refresh', () => {
       <DiscoveryCategoryTab
         category="places"
         destination="Lisbon"
-        filters={DEFAULT_FILTERS}
         onSelectPlace={jest.fn()}
         onAddToPlan={jest.fn()}
         onFiltersChange={jest.fn()}

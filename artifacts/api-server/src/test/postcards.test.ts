@@ -1438,6 +1438,23 @@ describe('GET /users/:username/passport/postcards — visibility gating', () => 
     assert.ok(!('private' in body));
   });
 
+  it('returns blocked sentinel when the VIEWER blocked the target — not only when the target blocks the viewer', async () => {
+    // Same as the previous test but with the block row reversed: the viewer
+    // is the blocker and the target is the blocked party. The wall must lock
+    // in both directions, not only when the target blocks the viewer.
+    seedTargetProfile({ passport_visibility: 'public' });
+    seedPublicPostcard();
+    seedViewerProfile();
+    withViewer();
+    allBlocks.push({ blocker_id: VIEWER_ID, blocked_id: TARGET_ID });
+
+    const { status, body } = await apiReq('GET', '/users/target/passport/postcards', undefined, TOKEN_VIEWER);
+    assert.equal(status, 200);
+    assert.equal(body.blocked, true, 'viewer-blocked-target relationship should also return blocked sentinel');
+    assert.deepEqual(body.postcards, []);
+    assert.ok(!('private' in body));
+  });
+
   it('returns 404 for a username that does not exist', async () => {
     // No profile seeded for 'nobody'
     const { status } = await apiReq('GET', '/users/nobody/passport/postcards');

@@ -97,13 +97,30 @@ export interface FetchCityEventsResult {
  * @param city - human-readable city name for the `city` query param
  * @param currentCitySlug - slug used as the citySlug fallback in mapped events
  */
+/**
+ * Local-day [start, end) bounds for "today", as ISO strings, so the server's
+ * dateFrom/dateTo filter matches what the device considers "today" rather
+ * than the server's own timezone.
+ */
+export function todayBoundsIso(now = new Date()): { dateFrom: string; dateTo: string } {
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+  return { dateFrom: start.toISOString(), dateTo: end.toISOString() };
+}
+
 export async function fetchCityEvents(
   base: string,
   token: string,
   city: string,
   currentCitySlug: string,
 ): Promise<FetchCityEventsResult> {
-  const params = new URLSearchParams({ city, state: 'open', limit: '20' });
+  // Scope to today's events only. Without this, the API returns the next N
+  // upcoming events across ANY future date; since the UI (e.g. the "Full Day"
+  // chronological list) only displays a time-of-day like "10:24 AM" with no
+  // date, a tomorrow-morning event sorts correctly by absolute time but
+  // LOOKS out of order next to today's later events.
+  const { dateFrom, dateTo } = todayBoundsIso();
+  const params = new URLSearchParams({ city, state: 'open', limit: '20', dateFrom, dateTo });
   const r = await fetch(`${base}/api/events?${params}`, {
     headers: { Authorization: `Bearer ${token}` },
   });

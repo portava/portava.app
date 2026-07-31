@@ -345,12 +345,21 @@ function EventsTabScreen() {
     setCityFilter('');
   }
 
+  // "Your events" always lists the viewer's hosted/attending events regardless
+  // of filters. Every other section queries events independently and doesn't
+  // know about that list, so an event the viewer hosts/attends can show up a
+  // second time in Upcoming/Tomorrow/Weekend/Following/Circle. Strip it from
+  // every other section — "Your events" is the one place it should appear.
+  const myEventIds = React.useMemo(() => new Set(myEvents.map((e) => e.id)), [myEvents]);
+
   function renderSection(
     title: string,
     icon: React.ReactNode,
-    items: EventListItem[],
+    itemsIn: EventListItem[],
     onSeeAll?: () => void,
+    skipDedup?: boolean,
   ) {
+    const items = skipDedup ? itemsIn : itemsIn.filter((e) => !myEventIds.has(e.id));
     if (items.length === 0) return null;
     return (
       <View style={styles.section}>
@@ -674,6 +683,8 @@ function EventsTabScreen() {
             'Your events',
             <Users size={15} color={color.signal} />,
             myEvents,
+            undefined,
+            true,
           )}
 
           {/* Upcoming (or the active date preset) */}

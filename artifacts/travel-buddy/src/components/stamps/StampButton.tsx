@@ -51,7 +51,7 @@ import Animated, { type AnimatedStyle } from 'react-native-reanimated';
 import { color, layout, type as typeTokens } from '../../theme/tokens.ts';
 import { StampIcon } from './StampIcon.tsx';
 import { useStampAnimation } from '../../hooks/useStampAnimation.ts';
-import { useStamp } from '../../hooks/useStamp.ts';
+import { useStamp, type UseStampReturn } from '../../hooks/useStamp.ts';
 import { useStampAnimationContext } from '../../context/StampAnimationContext.tsx';
 import type { StampTheme } from './PortavaInkStamp.tsx';
 
@@ -62,8 +62,8 @@ import type { StampTheme } from './PortavaInkStamp.tsx';
 export interface StampButtonProps {
   entityType: string;
   entityId: string;
-  initialCount: number;
-  initialIsStamped: boolean;
+  initialCount?: number;
+  initialIsStamped?: boolean;
   /**
    * Thematic variant passed through to the ink-stamp overlay seal rendered by
    * StampAnimationProvider.  Controls the center icon and ring text.
@@ -73,6 +73,24 @@ export interface StampButtonProps {
   iconSize?: number;
   /** Extra styles for the outer wrapper View. */
   style?: StyleProp<ViewStyle>;
+  /**
+   * Share a single useStamp instance with a sibling surface (e.g. a
+   * card-level double-tap handler) instead of instantiating a private one.
+   * When provided, `initialCount`/`initialIsStamped` are ignored — the
+   * controlled instance is the sole source of truth for count/isStamped.
+   */
+  controlledStamp?: UseStampReturn;
+  /**
+   * When true, skip the screen-level traveling-stamp animation
+   * (StampAnimationProvider) entirely and call `onLocalBurst` instead. Use
+   * this inside any container that must keep all stamp visuals within its
+   * own bounds (e.g. an `overflow: hidden` post card) — the screen-level
+   * overlay is positioned in screen coordinates and would otherwise paint
+   * outside the card.
+   */
+  localBurst?: boolean;
+  /** Fired (in localBurst mode) at the moment a stamp is added. */
+  onLocalBurst?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -82,19 +100,27 @@ export interface StampButtonProps {
 export function StampButton({
   entityType,
   entityId,
-  initialCount,
-  initialIsStamped,
+  initialCount = 0,
+  initialIsStamped = false,
   theme = 'Default',
   iconSize = 22,
   style,
+  controlledStamp,
+  localBurst = false,
+  onLocalBurst,
 }: StampButtonProps) {
   // ── API state (optimistic + rollback via useStamp) ───────────────────────
-  const { count: apiCount, isStamped: apiIsStamped, isLoading, toggle } = useStamp({
+  // A private useStamp instance is always created (hooks can't be
+  // conditional), but its state is only used when the caller doesn't supply
+  // a shared `controlledStamp` instance (e.g. so a card-level double-tap
+  // handler and this button stay in sync off ONE source of truth).
+  const privateStamp = useStamp({
     entityType,
     entityId,
     initialCount,
     initialIsStamped,
   });
+  const { count: apiCount, isStamped: apiIsStamped, isLoading, toggle } = controlledStamp ?? privateStamp;
 
   // ── Visual state (delayed — flips at stamp impact, not on press) ─────────
   const [visualIsStamped, setVisualIsStamped] = useState(initialIsStamped);
@@ -148,6 +174,15 @@ export function StampButton({
 
     // Fire the API call concurrently — useStamp manages rollback.
     void toggle();
+
+    if (localBurst) {
+      // Card-local mode: no screen-level travel — flip state immediately
+      // and let the caller play its own contained burst animation.
+      setVisualIsStamped(nextStamped);
+      setVisualCount(prev => nextStamped ? prev + 1 : Math.max(0, prev - 1));
+      if (nextStamped) onLocalBurst?.();
+      return;
+    }
 
     // Measure button center in screen coordinates, then launch animation.
     wrapperRef.current?.measure((_x, _y, width, height, pageX, pageY) => {

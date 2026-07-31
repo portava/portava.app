@@ -38,7 +38,7 @@ import { GemsFeed } from '../../src/components/media/GemsFeed';
 import { MediaQuickCreateSheet } from '../../src/components/media/MediaQuickCreateSheet';
 import { mediaEvents } from '../../src/lib/mediaEvents';
 import { color, shadow } from '../../src/theme/tokens';
-import { AppHeader, OVERLAY_HEADER_HEIGHT } from '../../src/components/ui/AppHeader';
+import { AppHeader, getOverlayHeaderTotalHeight } from '../../src/components/ui/AppHeader';
 import { useBottomInset } from '../../src/hooks/useBottomInset';
 
 // ── Mode definitions ──────────────────────────────────────────────────────────
@@ -133,7 +133,7 @@ function MediaScreenInner() {
       {/* ── Mode selector — overlaid at the top, inside safe area ───── */}
       {enabledModes.length > 1 && (
         <View
-          style={[styles.selectorOverlay, { top: insets.top + (isImmersive ? OVERLAY_HEADER_HEIGHT + 4 : 8) }]}
+          style={[styles.selectorOverlay, { top: isImmersive ? getOverlayHeaderTotalHeight(insets.top) + 4 : insets.top + 8 }]}
           pointerEvents="box-none"
         >
           <MediaModeSelector

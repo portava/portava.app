@@ -2620,6 +2620,96 @@ describe("PushRetryQueue.processQueue() — mixed four-token batch (two live, on
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 12b — Three tokens, all sharing the SAME error code
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DEAD_TOKEN_2 = "ExponentPushToken[retryQueueTestDead2]";
+const DEAD_TOKEN_3 = "ExponentPushToken[retryQueueTestDead3]";
+
+/**
+ * Expo returns a 200 with three error tickets, ALL DeviceNotRegistered.
+ * The grouping reduce must accumulate to a single "DeviceNotRegistered × 3"
+ * entry — not three separate "× 1" entries.
+ */
+function expoAllSameErrorCodeFetch(): typeof fetch {
+  return async () =>
+    new Response(
+      JSON.stringify({
+        data: [
+          {
+            status:  "error",
+            message: "The push notification service reported that the push token is invalid: DeviceNotRegistered",
+            details: { error: "DeviceNotRegistered" },
+          },
+          {
+            status:  "error",
+            message: "The push notification service reported that the push token is invalid: DeviceNotRegistered",
+            details: { error: "DeviceNotRegistered" },
+          },
+          {
+            status:  "error",
+            message: "The push notification service reported that the push token is invalid: DeviceNotRegistered",
+            details: { error: "DeviceNotRegistered" },
+          },
+        ],
+      }),
+      { status: 200 },
+    ) as unknown as Response;
+}
+
+describe("PushRetryQueue.processQueue() — three tokens, all same error code", () => {
+  it("produces a single 'DeviceNotRegistered × 3' entry — not three separate '× 1' entries", async () => {
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN, DEAD_TOKEN_2, DEAD_TOKEN_3],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    _setTestFetch(expoAllSameErrorCodeFetch());
+    await queue.processQueue();
+
+    const prqUpdates   = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(failedUpdate, "push_retry_queue must be finalised as 'failed' for an all-dead 3-token batch");
+
+    const lastError = failedUpdate.patch.last_error as string;
+    assert.ok(
+      lastError.includes("DeviceNotRegistered \u00d7 3"),
+      `last_error must contain a single "DeviceNotRegistered × 3" entry; got: ${lastError}`,
+    );
+    // Guard against the reduce resetting per-item instead of accumulating —
+    // that bug would surface as three separate "× 1" segments.
+    assert.equal(
+      (lastError.match(/DeviceNotRegistered/g) ?? []).length,
+      1,
+      `"DeviceNotRegistered" must appear exactly once (as a single grouped "× 3" entry), not three separate entries; got: ${lastError}`,
+    );
+    assert.ok(
+      !lastError.includes("DeviceNotRegistered \u00d7 1"),
+      `last_error must NOT contain "DeviceNotRegistered × 1" segments; got: ${lastError}`,
+    );
+
+    const ndaUpdates  = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    const ndaUpdate   = ndaUpdates[ndaUpdates.length - 1];
+    const ndaErrorMsg = ndaUpdate.patch.error_message as string;
+    assert.ok(
+      ndaErrorMsg && ndaErrorMsg.includes("DeviceNotRegistered \u00d7 3"),
+      `delivery_attempt error_message must also contain the single grouped "DeviceNotRegistered × 3" entry; got: ${ndaErrorMsg}`,
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 13 — Duplicate error code: 2× DeviceNotRegistered + 1× InvalidCredentials
 // ─────────────────────────────────────────────────────────────────────────────
 

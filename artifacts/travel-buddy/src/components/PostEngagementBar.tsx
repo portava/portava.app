@@ -26,16 +26,17 @@ import { ShareSheet, type ShareTarget } from './ShareSheet.tsx';
 import { ReactionPicker, ReactionSummary } from './ReactionPicker.tsx';
 import { EngagementUserListSheet } from './EngagementUserListSheet.tsx';
 import { StampButton } from './stamps/StampButton.tsx';
+import type { UseStampReturn } from '../hooks/useStamp.ts';
 import { PostSaversSheet } from './PostSaversSheet.tsx';
 
 interface Props {
   postId: string;
-  stampCount: number;
+  stampCount?: number;
   commentCount: number;
   shareCount?: number;
   /** Displayed as a tappable chip when isOwner — opens who-saved list. */
   saveCount?: number;
-  isStampedByViewer: boolean;
+  isStampedByViewer?: boolean;
   /** When true the save-count chip is tappable (opens PostSaversSheet). */
   isOwner?: boolean;
   canStamp?: boolean;
@@ -43,13 +44,24 @@ interface Props {
   canShare?: boolean;
   sharingDisabled?: boolean;
   onCommentCountChange?: (n: number) => void;
+  /**
+   * Share a single useStamp instance with a card-level double-tap handler
+   * instead of letting StampButton own a private one — keeps the button's
+   * displayed count/state in sync with double-tap stamps. When provided,
+   * `stampCount`/`isStampedByViewer` are ignored.
+   */
+  controlledStamp?: UseStampReturn;
+  /** Forwarded to StampButton — see StampButtonProps.localBurst. */
+  localBurst?: boolean;
+  /** Forwarded to StampButton — see StampButtonProps.onLocalBurst. */
+  onLocalBurst?: () => void;
 }
 
 export function PostEngagementBar({
   postId,
-  stampCount,
+  stampCount = 0,
   commentCount,
-  isStampedByViewer,
+  isStampedByViewer = false,
   saveCount = 0,
   isOwner = false,
   canStamp = true,
@@ -57,6 +69,9 @@ export function PostEngagementBar({
   canShare = true,
   sharingDisabled = false,
   onCommentCountChange,
+  controlledStamp,
+  localBurst = false,
+  onLocalBurst,
 }: Props) {
   const { userId } = useSession();
 
@@ -185,6 +200,9 @@ export function PostEngagementBar({
               initialIsStamped={isStampedByViewer}
               iconSize={17}
               style={s.stampBtnWrapper}
+              controlledStamp={controlledStamp}
+              localBurst={localBurst}
+              onLocalBurst={onLocalBurst}
             />
           )}
 

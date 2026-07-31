@@ -5042,6 +5042,75 @@ describe("PUT /admin/repair_catalog", () => {
     );
   });
 
+  it("re-keys an ordinary accented city entry stored as 'São Paulo' to the normalised key 'sao paulo' — not just stroked letters", async () => {
+    // PUT /admin/repair_catalog must re-key ordinary decomposable-accent city
+    // entries (é, á, ã, ü, ...), not only the Ł/Ø/Đ stroked-letter set —
+    // matching DELETE's repairXXCatalogEntries/normCityKey behaviour.
+    const upserted: unknown[] = [];
+    const softDeleted: string[] = [];
+
+    const client: any = {
+      auth: {
+        getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+      },
+      from: (table: string) => {
+        if (table === "profiles") {
+          return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+        }
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: (_cols: string) => ({
+              then: (resolve: (v: any) => void) =>
+                resolve({
+                  data: [
+                    {
+                      city_key:    "São Paulo",
+                      country:     "Brazil",
+                      country_code: "BR",
+                      resolved_at: null,
+                      updated_at:  "2026-01-01T00:00:00.000Z",
+                    },
+                  ],
+                  error: null,
+                }),
+            }),
+            upsert: (row: unknown, _o?: unknown) => {
+              upserted.push(row);
+              return Promise.resolve({ data: null, error: null });
+            },
+            update: (_fields: unknown) => ({
+              eq: (_col: string, key: string) => {
+                softDeleted.push(key);
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+          };
+        }
+        return builder([]);
+      },
+    };
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("PUT", "/admin/repair_catalog");
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.rekeyed, 1, "must report exactly one re-keyed entry for an ordinary accented city");
+    assert.ok(
+      (upserted as any[]).some((row: any) => row.city_key === "sao paulo"),
+      "new entry must be upserted with city_key 'sao paulo' — São Paulo must normalise via NFD, not just stroked-letter transliteration",
+    );
+    assert.ok(
+      softDeleted.includes("São Paulo"),
+      "old accented key 'São Paulo' must be soft-deleted after re-key",
+    );
+    assert.deepEqual(
+      r.body.entries,
+      [{ old_key: "São Paulo", new_key: "sao paulo" }],
+      "response entries must list old and new keys for ordinary accented cities too",
+    );
+  });
+
   it("skips rows whose city_key contains no stroked letters", async () => {
     // Rows that are already clean should pass through untouched.
     let upsertCalled = false;

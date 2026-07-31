@@ -666,6 +666,88 @@ describe("profile data-leak prevention", () => {
   // which exercises yet another branch through the update-row builder and confirms
   // the DOB strip is robust regardless of which other nullable field is co-cleared.
 
+  // ── PATCH /api/me/profile — clearing travelPace/budgetStyle alongside DOB ──
+  //
+  // travelPace and budgetStyle are enum-typed nullable fields mapped to their
+  // own DB columns independently of dateOfBirth. This confirms the DOB strip
+  // on the response holds even when those enum fields are cleared in the
+  // same request as dateOfBirth — no cross-field leak of DOB data.
+
+  describe("PATCH /api/me/profile — clearing travelPace and budgetStyle alongside dateOfBirth", () => {
+    it("returns HTTP 200 when clearing travelPace, budgetStyle, and dateOfBirth together", async () => {
+      const { status, body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { travelPace: null, budgetStyle: null, dateOfBirth: null },
+        USER_TOKEN,
+      );
+      assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    });
+
+    it("does not include date_of_birth (snake_case) when clearing travelPace/budgetStyle/dateOfBirth", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { travelPace: null, budgetStyle: null, dateOfBirth: null },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("date_of_birth" in body),
+        `date_of_birth must not appear in response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dateOfBirth (camelCase) when clearing travelPace/budgetStyle/dateOfBirth", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { travelPace: null, budgetStyle: null, dateOfBirth: null },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dateOfBirth" in body),
+        `dateOfBirth must not appear in response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dob_verified (snake_case) when clearing travelPace/budgetStyle/dateOfBirth", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { travelPace: null, budgetStyle: null, dateOfBirth: null },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dob_verified" in body),
+        `dob_verified must not appear in response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dobVerified (camelCase) when clearing travelPace/budgetStyle/dateOfBirth", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { travelPace: null, budgetStyle: null, dateOfBirth: null },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dobVerified" in body),
+        `dobVerified must not appear in response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("clears travel_pace and budget_style themselves (nulled, not just DOB fields)", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { travelPace: null, budgetStyle: null, dateOfBirth: null },
+        USER_TOKEN,
+      );
+      assert.equal(body.travelPace ?? null, null, `travelPace must be null — got ${JSON.stringify(body.travelPace)}`);
+      assert.equal(body.budgetStyle ?? null, null, `budgetStyle must be null — got ${JSON.stringify(body.budgetStyle)}`);
+    });
+  });
+
   describe("PATCH /api/me/profile — clearing homeCity and dateOfBirth together", () => {
     it("returns HTTP 200 when clearing dateOfBirth and homeCity in the same request", async () => {
       const { status, body } = await apiReqWithBody(

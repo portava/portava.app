@@ -127,6 +127,17 @@ args = "pnpm --filter @workspace/api-server run check:frozen-dir"
 isValidation = true
 
 [[workflows.workflow]]
+name = "check-test-registration"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-server run check:test-registration"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
 name = "standalone-test"
 author = "agent"
 

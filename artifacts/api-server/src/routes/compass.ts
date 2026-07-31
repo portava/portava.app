@@ -418,7 +418,9 @@ router.get("/compass/feed", async (req, res) => {
       .eq("flag", "COMPASS_FEED_ENABLED")
       .maybeSingle();
     feedEnabled = Boolean((data as any)?.enabled);
-  } catch { /* degrade gracefully */ }
+  } catch (err) {
+    req.log?.warn({ err }, "Compass feed: COMPASS_FEED_ENABLED flag lookup failed — degrading to empty feed");
+  }
 
   if (!feedEnabled) {
     res.json({ sections: [], nextCursor: null, fallback: true });
@@ -429,7 +431,10 @@ router.get("/compass/feed", async (req, res) => {
   // before even attempting the full pipeline.
   const fallbackModeOn = await isFallbackModeEnabled(sc);
   if (fallbackModeOn) {
-    const profile = await getCompassProfile(sc, user.id).catch(() => null);
+    const profile = await getCompassProfile(sc, user.id).catch((err) => {
+      req.log?.warn({ err, userId: user.id }, "Compass feed: profile fetch failed in fallback-mode path — proceeding with null profile");
+      return null;
+    });
     const result  = await buildFallbackFeed(sc, user.id, profile, "fallback_mode_enabled");
     res.json(result);
     return;
@@ -680,8 +685,14 @@ router.get("/compass/feed/section/:section", async (req, res) => {
     // actual safe content so the client degrades gracefully rather than showing
     // an empty screen.
     req.log.error({ err }, "compass/feed/section: build failed, using fallback");
-    const profile  = await getCompassProfile(sc, user.id).catch(() => null);
-    const fallback = await buildFallbackFeed(sc, user.id, profile, "section_build_error").catch(() => ({ safeItems: [] }));
+    const profile  = await getCompassProfile(sc, user.id).catch((profileErr) => {
+      req.log?.warn({ err: profileErr, userId: user.id }, "compass/feed/section: fallback profile fetch failed — proceeding with null profile");
+      return null;
+    });
+    const fallback = await buildFallbackFeed(sc, user.id, profile, "section_build_error").catch((fallbackErr) => {
+      req.log?.error({ err: fallbackErr, userId: user.id }, "compass/feed/section: fallback feed build itself failed — returning empty safeItems");
+      return { safeItems: [] };
+    });
     res.json({ section: null, nextCursor: null, fallback: true, safeItems: fallback.safeItems });
   }
 });

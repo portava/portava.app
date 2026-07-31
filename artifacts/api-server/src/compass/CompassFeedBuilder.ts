@@ -45,6 +45,7 @@ import { enforceCreatorCaps } from "../services/ranking/CreatorCapEnforcer.js";
 import { getFeedShares, getCreatorCaps } from "../services/ranking/rankingConfig.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { buildPlaceAffinities } from "../services/ranking/MediaFeedRankingService.js";
+import { logger } from "../lib/logger.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -283,7 +284,15 @@ async function preloadFairExposureData(
         cooldowns.add(row.author_id as string);
       }
     }
-  } catch { /* non-fatal */ }
+    if (boostsRes.status === "rejected" || cooldownsRes.status === "rejected") {
+      logger.warn(
+        { boostsFailed: boostsRes.status === "rejected", cooldownsFailed: cooldownsRes.status === "rejected" },
+        "Compass feed: fair-exposure boosts/cooldowns fetch failed — degraded to no fair-exposure preload",
+      );
+    }
+  } catch (err) {
+    logger.warn({ err }, "Compass feed: fair-exposure preload failed — degraded to no fair-exposure preload");
+  }
 
   return { counts, cooldowns };
 }
@@ -441,7 +450,9 @@ async function runFeedPipeline(
           return aIdx - bIdx;
         });
       }
-    } catch { /* non-fatal — Compass pipeline order preserved on DRS error */ }
+    } catch (err) {
+      logger.warn({ err, userId: profile.userId }, "Compass feed: DiscoveryRankingService boost pass failed — order preserved on DRS error");
+    }
   }
 
   // ── Fair exposure — global cap (≤2 per feed build) ────────────────────────
@@ -486,7 +497,9 @@ async function runFeedPipeline(
         isFlagEnabled(db, "DISCOVERY_DIVERSITY_ENABLED"),
         getCreatorCaps(db),
       ]);
-    } catch { /* non-fatal — preserve existing behaviour */ }
+    } catch (err) {
+      logger.warn({ err, userId: profile.userId }, "Compass feed: diversity flag/creator-cap config load failed — preserving default config");
+    }
   }
 
   let allocatedPool = finalPool;
@@ -499,7 +512,9 @@ async function runFeedPipeline(
         surface: "compass",
         underexposedItemIds,
       });
-    } catch { /* non-fatal — use original pool */ }
+    } catch (err) {
+      logger.warn({ err, userId: profile.userId }, "Compass feed: slot allocation/underexposure fetch failed — using unallocated pool");
+    }
   }
 
   // ── Section assignment (raw — no diversity yet) ────────────────────────────
@@ -591,14 +606,18 @@ export async function rankItemsForDiscovery(
         isFlagEnabled(db, "DISCOVERY_DIVERSITY_ENABLED"),
         getCreatorCaps(db),
       ]);
-    } catch { /* non-fatal */ }
+    } catch (err) {
+      logger.warn({ err, userId: profile.userId }, "Discovery ranking: diversity flag/creator-cap config load failed — preserving default config");
+    }
   }
   if (discoveryDiversityEnabled && finalPool.length > 0 && db) {
     try {
       const shares = await getFeedShares(db);
       const underexposedItemIds = await loadUnderexposedItemIds(db, finalPool.map((r) => r.item.id));
       finalPool = allocateFeedSlots(finalPool, shares, { surface: "discovery", underexposedItemIds });
-    } catch { /* non-fatal */ }
+    } catch (err) {
+      logger.warn({ err, userId: profile.userId }, "Discovery ranking: slot allocation/underexposure fetch failed — using unallocated pool");
+    }
   }
   if (discoveryDiversityEnabled && finalPool.length > 0) {
     finalPool = enforceCreatorCaps(finalPool, discoveryCreatorCaps);

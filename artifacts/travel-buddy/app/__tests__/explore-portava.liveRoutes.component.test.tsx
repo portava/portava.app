@@ -52,7 +52,19 @@ describe('ExplorePortavaScreen SECTIONS — live route wiring', () => {
     { key: 'acc-blocked',  label: 'Blocked Accounts', expectedRoute: '/blocked-users' },
     { key: 'acc-muted',    label: 'Muted Accounts',   expectedRoute: '/muted-users' },
     { key: 'acc-report',   label: 'Report a Problem', expectedRoute: '/profile/edit/reports' },
+    // Following/Followers must route to the correct, distinct screens — not
+    // swapped, and not a dead route — so tapping either never dead-ends.
+    { key: 'following',    label: 'Following',        expectedRoute: '/following' },
+    { key: 'followers',    label: 'Followers',        expectedRoute: '/followers' },
   ];
+
+  it('Following and Followers rows are not swapped', () => {
+    const following = findItem('following');
+    const followers = findItem('followers');
+    expect(following?.route).toBe('/following');
+    expect(followers?.route).toBe('/followers');
+    expect(following?.route).not.toBe(followers?.route);
+  });
 
   for (const { key, label, expectedRoute } of LIVE_ROUTES) {
     describe(`${label} row (key="${key}")`, () => {

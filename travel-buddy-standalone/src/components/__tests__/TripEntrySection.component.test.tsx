@@ -161,6 +161,54 @@ describe('TripEntrySection', () => {
     await findByText(/Choose passport/);
   });
 
+  // ── 2b. Passport picker sheet — lists passports & Add passport navigation ──
+
+  it('lists fetched passports in the picker without crashing', async () => {
+    fetchTripEntryRequirements.mockResolvedValue({
+      destinationCountry: 'JP',
+      disclaimer: DISCLAIMER,
+      travelers: [SELF_NO_PASSPORT],
+    });
+    listMyPassports.mockResolvedValue([
+      { id: 'pp-1', label: 'US Passport', issuingCountry: 'US', isPrimary: true },
+      { id: 'pp-2', label: 'UK Passport', issuingCountry: 'GB', isPrimary: false },
+    ]);
+    const { findByText, getByText } = await mountSection();
+    await findByText(/Choose passport/);
+    fireEvent.press(getByText(/Choose passport/));
+    await findByText('US Passport');
+    await findByText('UK Passport');
+  });
+
+  it('shows the empty-state copy when the picker has no passports on file', async () => {
+    fetchTripEntryRequirements.mockResolvedValue({
+      destinationCountry: 'JP',
+      disclaimer: DISCLAIMER,
+      travelers: [SELF_NO_PASSPORT],
+    });
+    listMyPassports.mockResolvedValue([]);
+    const { findByText, getByText } = await mountSection();
+    await findByText(/Choose passport/);
+    fireEvent.press(getByText(/Choose passport/));
+    await findByText(/No passports on file yet\./);
+  });
+
+  it('navigates to /profile/edit/passports when Add passport is pressed, without crashing', async () => {
+    fetchTripEntryRequirements.mockResolvedValue({
+      destinationCountry: 'JP',
+      disclaimer: DISCLAIMER,
+      travelers: [SELF_NO_PASSPORT],
+    });
+    listMyPassports.mockResolvedValue([]);
+    const { findByText, getByText } = await mountSection();
+    await findByText(/Choose passport/);
+    fireEvent.press(getByText(/Choose passport/));
+    await findByText(/Add passport/);
+    const { router } = require('expo-router');
+    fireEvent.press(getByText(/Add passport/));
+    expect(router.push).toHaveBeenCalledWith('/profile/edit/passports');
+  });
+
   // ── 3. Caller's own status card ───────────────────────────────────────────
 
   it("shows the caller's status chip, allowed stay, source link, and disclaimer", async () => {

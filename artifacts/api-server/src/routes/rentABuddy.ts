@@ -5689,11 +5689,21 @@ router.post("/internal/buddy-requests/expire", async (req, res) => {
   const now = new Date().toISOString();
 
   // 1. Expire unanswered requests in requested or pending status
-  const { data: staleRequests } = await serviceClient
-    .from("rent_buddy_bookings")
-    .select("id, traveler_id, status")
-    .in("status", ["pending", "requested"])
-    .lt("expires_at", now);
+  let staleRequests: { id: string; traveler_id: string; status: string }[] | null = null;
+  try {
+    const { data, error: staleErr } = await serviceClient
+      .from("rent_buddy_bookings")
+      .select("id, traveler_id, status")
+      .in("status", ["pending", "requested"])
+      .lt("expires_at", now);
+    if (staleErr) {
+      req.log?.error({ err: staleErr }, "buddy-requests/expire: stale-request fetch failed");
+    } else {
+      staleRequests = data as { id: string; traveler_id: string; status: string }[] | null;
+    }
+  } catch (err) {
+    req.log?.error({ err }, "buddy-requests/expire: stale-request fetch threw");
+  }
 
   let expiredCount = 0;
   if (staleRequests && staleRequests.length > 0) {
@@ -5731,15 +5741,28 @@ router.post("/internal/buddy-requests/expire", async (req, res) => {
       .in("id", ids2);
 
     if (!autoCompleteErr) {
-      // Resolve buddy user IDs in one batch for completion notifications
+      // Resolve buddy user IDs in one batch for completion notifications.
+      // Wrapped in try/catch (rather than just checking `error`) so that an
+      // actual thrown/rejected lookup — not just a returned DB error — can
+      // never abort the loop below and silence the TRAVELER's notification.
+      // A failed lookup only means the buddy-side notification is skipped;
+      // it must never suppress the traveler side.
       const buddyProfileIds = [...new Set(pendingConfirm.map((r: any) => r.buddy_id as string))];
-      const { data: buddyProfiles } = await serviceClient
-        .from("rent_buddy_profiles")
-        .select("id, user_id")
-        .in("id", buddyProfileIds);
       const buddyUserIdMap: Record<string, string> = {};
-      for (const bp of buddyProfiles ?? []) {
-        buddyUserIdMap[(bp as any).id] = (bp as any).user_id;
+      try {
+        const { data: buddyProfiles, error: buddyLookupErr } = await serviceClient
+          .from("rent_buddy_profiles")
+          .select("id, user_id")
+          .in("id", buddyProfileIds);
+        if (buddyLookupErr) {
+          req.log?.error({ err: buddyLookupErr }, "buddy-requests/expire: buddy-profile lookup failed during auto-completion — traveler notifications still proceed");
+        } else {
+          for (const bp of buddyProfiles ?? []) {
+            buddyUserIdMap[(bp as any).id] = (bp as any).user_id;
+          }
+        }
+      } catch (err) {
+        req.log?.error({ err }, "buddy-requests/expire: buddy-profile lookup threw during auto-completion — traveler notifications still proceed");
       }
 
       for (const bk of pendingConfirm) {

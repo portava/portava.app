@@ -17,6 +17,17 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem } from "./types.js";
 import type { CompassProfile } from "./types.js";
+import { logger } from "../lib/logger.js";
+
+/**
+ * Logs a Compass candidate-source failure so a degraded feed (a source
+ * silently returning zero items) is visible in logs instead of vanishing
+ * without a trace. Never throws — the caller's fail-soft `[]` behavior is
+ * unchanged, this only adds observability.
+ */
+function logCompassSourceFailure(source: string, err: unknown, userId: string): void {
+  logger.warn({ compassSource: source, userId, err }, `Compass feed: ${source} candidate source failed — degraded to empty`);
+}
 
 const POSTS_WINDOW_HOURS  = 72;
 const MAX_POSTS    = 50;
@@ -70,7 +81,8 @@ async function fetchPosts(
 
     const { data } = await query;
     return ((data as any[]) ?? []).map(postToItem);
-  } catch {
+  } catch (err) {
+    logCompassSourceFailure("posts", err, profile.userId);
     return [];
   }
 }
@@ -136,7 +148,8 @@ async function fetchBuddies(db: SupabaseClient, profile: CompassProfile): Promis
         qualityScore:     buddy.verified ? 8 : 6,
       };
     });
-  } catch {
+  } catch (err) {
+    logCompassSourceFailure("buddies", err, profile.userId);
     return [];
   }
 }
@@ -241,7 +254,8 @@ async function fetchEvents(
         headerImageUrl: event.cover_url ?? null,
       },
     }));
-  } catch {
+  } catch (err) {
+    logCompassSourceFailure("events", err, profile.userId);
     return [];
   }
 }
@@ -294,7 +308,8 @@ async function fetchPlaces(
         headerImageUrl: place.header_image_url ?? place.image_url ?? null,
       },
     }));
-  } catch {
+  } catch (err) {
+    logCompassSourceFailure("places", err, profile.userId);
     return [];
   }
 }
@@ -334,7 +349,8 @@ async function fetchHiddenGems(
       // Raw DB id stored in data so frontend routes to /gems/:id correctly
       data: { id: String(gem.id), name: gem.name, category: gem.category, city: gem.city, country: gem.country },
     }));
-  } catch {
+  } catch (err) {
+    logCompassSourceFailure("hidden_gems", err, profile.userId);
     return [];
   }
 }
@@ -356,6 +372,19 @@ export async function hydrateCompassItems(
     fetchEvents(db, profile),
     fetchHiddenGems(db, profile),
   ]);
+
+  // Each fetch* already catches its own errors internally, so these branches
+  // are a defensive backstop — but if one ever rejects instead (e.g. a bug
+  // introduced in a future edit), the rejection must not vanish silently.
+  const settled: [string, PromiseSettledResult<CompassItem[]>][] = [
+    ["posts", posts], ["buddies", buddies], ["places", places],
+    ["events", events], ["hidden_gems", hiddenGems],
+  ];
+  for (const [name, result] of settled) {
+    if (result.status === "rejected") {
+      logCompassSourceFailure(name, result.reason, profile.userId);
+    }
+  }
 
   const allItems: CompassItem[] = [
     ...(posts.status       === "fulfilled" ? posts.value       : []),

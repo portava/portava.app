@@ -26,7 +26,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http';
 import { canMessage } from '../lib/messagingPermissions';
-import { nameVisibilitySet, sanitizeIdentity } from '../lib/publicIdentity';
+import { nameVisibilitySet, sanitizeIdentity, resolveHandle, presentedName } from '../lib/publicIdentity';
 import { getServiceClient } from '../lib/supabase';
 import { resolveInteractionPermissions } from '../services/interactionPermissions.js';
 import { isFlagEnabled } from '../lib/featureFlags.js';
@@ -55,7 +55,7 @@ import { NotificationRouter } from '../services/notifications/NotificationRouter
 
 const router = Router();
 
-const PROFILE_PUBLIC = 'id, handle, name, avatar_url';
+const PROFILE_PUBLIC = 'id, handle, name, display_name, username, full_name, avatar_url';
 
 const MESSAGE_PRIVACY_VALUES = [
   'everyone',
@@ -506,7 +506,7 @@ router.get('/me/message-requests', async (req, res) => {
   if (senderIds.length > 0) {
     const { data: profiles } = await sc
       .from('profiles')
-      .select('id, handle, name, avatar_url, default_language')
+      .select('id, handle, name, username, full_name, avatar_url, default_language')
       .in('id', senderIds);
     for (const p of profiles ?? []) profileMap[(p as any).id] = p;
 
@@ -526,8 +526,8 @@ router.get('/me/message-requests', async (req, res) => {
       sender: p
         ? {
             id: p.id,
-            handle: p.handle,
-            name: p.name,
+            handle: resolveHandle(p),
+            name: p.name ?? p.full_name ?? null,
             avatarUrl: p.avatar_url ?? null,
             city: locationMap[p.id] ?? null,
             language: p.default_language ?? null,
@@ -1135,7 +1135,7 @@ router.get('/me/threads', async (req, res) => {
 
     sc
       .from('messages')
-      .select('id, thread_id, body, sender_id, created_at, deleted_at, original_language, msg_type')
+      .select('id, thread_id, body, sender_id, created_at, deleted_at, original_language, msg_type, subtype')
       .in('thread_id', threadIds)
       .is('deleted_at', null)
       .order('created_at', { ascending: false }),
@@ -1201,8 +1201,8 @@ router.get('/me/threads', async (req, res) => {
     const p = m.profile ?? {};
     membersByThread[m.thread_id].push({
       id: p.id,
-      handle: p.handle,
-      name: p.name,
+      handle: resolveHandle(p),
+      name: p.display_name ?? p.name ?? p.full_name ?? null,
       avatarUrl: p.avatar_url ?? null,
     });
   }
@@ -1283,6 +1283,7 @@ router.get('/me/threads', async (req, res) => {
         senderId: lm.sender_id,
         createdAt: lm.created_at,
         msgType: lm.msg_type ?? 'text',
+        subtype: lm.subtype ?? null,
       };
     }
 
@@ -1413,17 +1414,18 @@ router.get('/threads/:threadId/messages', async (req, res) => {
         if (replyIds.length > 0) {
           const { data: quotedRows } = await sc
             .from('messages')
-            .select(`id, body, sender_id, profile:profiles!messages_sender_id_fkey(name, handle)`)
+            .select(`id, body, sender_id, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)`)
             .in('id', replyIds);
           // Universal display-name rule: quoted sender shows @handle unless opted in.
           const qAllowed = await nameVisibilitySet(sc, ((quotedRows as any[]) ?? []).map((q: any) => q.sender_id));
           for (const qr of quotedRows as any[] ?? []) {
             const nameOk = qr.sender_id === user.id || qAllowed.has(qr.sender_id as string);
+            const qHandle = resolveHandle(qr.profile);
             replyContextMap[qr.id] = {
               body: qr.body ?? '',
               senderName: nameOk
-                ? (qr.profile?.name ?? null)
-                : (qr.profile?.handle ? `@${qr.profile.handle}` : null),
+                ? (qr.profile?.name ?? qr.profile?.full_name ?? null)
+                : (qHandle ? `@${qHandle}` : null),
             };
           }
         }
@@ -1459,8 +1461,8 @@ router.get('/threads/:threadId/messages', async (req, res) => {
       id: m.id,
       threadId: m.thread_id,
       senderId: m.sender_id,
-      senderHandle: p.handle ?? null,
-      senderName: p.name ?? null,
+      senderHandle: resolveHandle(p),
+      senderName: p.name ?? p.full_name ?? null,
       senderAvatarUrl: p.avatar_url ?? null,
       body: isDeleted ? null : m.body,
       deleted: isDeleted,
@@ -1701,10 +1703,10 @@ router.post('/threads/:threadId/messages', async (req, res) => {
       if (taggedIds.length > 0) {
         const { data: taggerProfile } = await sc
           .from('profiles')
-          .select('handle')
+          .select('handle, username')
           .eq('id', user.id)
           .single();
-        const taggerHandle = (taggerProfile as any)?.handle ?? 'someone';
+        const taggerHandle = resolveHandle(taggerProfile as any) ?? 'someone';
         const notifSvc    = new NotificationService(sc);
         const notifRouter  = new NotificationRouter(sc);
         await Promise.allSettled(
@@ -2206,7 +2208,7 @@ router.get('/circles/:circleOwnerId/chat', async (req, res) => {
   // Get owner profile for title.
   const { data: ownerProfile } = await sc
     .from('profiles')
-    .select('id, name, handle')
+    .select('id, name, handle, username, full_name')
     .eq('id', circleOwnerId)
     .maybeSingle();
 
@@ -2214,7 +2216,8 @@ router.get('/circles/:circleOwnerId/chat', async (req, res) => {
 
   try {
     const threadId = await syncCircleChatMembers(sc, circleOwnerId);
-    const displayName = (ownerProfile as any).name ?? (ownerProfile as any).handle ?? 'Circle';
+    const displayName = (ownerProfile as any).name ?? (ownerProfile as any).full_name
+      ?? resolveHandle(ownerProfile as any) ?? 'Circle';
     const threadTitle = circleThreadTitle(displayName);
 
     res.status(200).json({

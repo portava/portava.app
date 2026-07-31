@@ -21,9 +21,24 @@ export interface IdentityRow {
   id?: string | null;
   name?: string | null;
   display_name?: string | null;
+  full_name?: string | null;
   handle?: string | null;
   username?: string | null;
   [k: string]: any;
+}
+
+/**
+ * Column-drift shim: some profile rows were written under the legacy
+ * handle/name columns, others under the newer username/full_name columns —
+ * both sets currently coexist live and are inconsistently populated per row.
+ * Always resolve through these helpers rather than reading handle/name/
+ * username/full_name directly, or a row populated under only one column
+ * family will render as "Unknown"/no handle.
+ */
+export function resolveHandle(row: IdentityRow | null | undefined): string | null {
+  if (!row) return null;
+  const h = row.handle ?? row.username ?? null;
+  return typeof h === "string" && h.trim().length > 0 ? h : null;
 }
 
 /**
@@ -58,7 +73,7 @@ export async function nameVisibleFor(sc: any, userId: string | null | undefined)
  */
 export function presentedName(row: IdentityRow | null | undefined, allowed: boolean): string | null {
   if (!row || !allowed) return null;
-  const n = (row.display_name ?? row.name ?? null);
+  const n = (row.display_name ?? row.name ?? row.full_name ?? null);
   return typeof n === "string" && n.trim().length > 0 ? n : null;
 }
 
