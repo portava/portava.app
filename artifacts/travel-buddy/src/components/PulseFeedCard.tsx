@@ -427,7 +427,7 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
         />
         {/* Top-left badge stack — Featured-by-Portava badge stacks ABOVE the
             passport-stamp label (never overlapping it) when both are present. */}
-        <View style={s.topLeftStack}>
+        <View style={s.topLeftStack} testID="top-left-stack">
           {item.featuredByPortava ? (
             <FeaturedBadge category={item.featuredByPortava} size="sm" dark />
           ) : null}
