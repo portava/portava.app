@@ -16,6 +16,15 @@ const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 interface CacheEntry { url: string | null; ts: number }
 const photoCache = new Map<string, CacheEntry>();
 
+/**
+ * In-flight dedup: if two callers request the same venue concurrently both
+ * miss the empty cache before either one populates it. Instead of firing two
+ * Google Places requests, the second caller joins the first caller's Promise.
+ * The entry is deleted once the request settles so the resolved value is
+ * picked up from photoCache on any subsequent call.
+ */
+const inFlightPhotos = new Map<string, Promise<string | null>>();
+
 function cacheKey(name: string, lat: number | null, lng: number | null): string {
   const n = name.toLowerCase().trim().replace(/\s+/g, ' ');
   return `${n}|${lat != null ? lat.toFixed(3) : '_'}|${lng != null ? lng.toFixed(3) : '_'}`;
@@ -41,29 +50,41 @@ export async function lookupGooglePhoto(
   const cached = photoCache.get(cKey);
   if (cached && Date.now() - cached.ts < TTL_MS) return cached.url;
 
-  try {
-    const params = new URLSearchParams({ name: name.trim() });
-    if (resolvedLat != null && resolvedLng != null) {
-      params.set('lat', String(resolvedLat));
-      params.set('lng', String(resolvedLng));
-    }
+  // Return the existing in-flight promise so concurrent callers for the same
+  // venue share one fetch instead of double-billing the API quota.
+  const existing = inFlightPhotos.get(cKey);
+  if (existing) return existing;
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
-    const res = await fetch(`${apiBase()}/api/places/photo?${params}`, { signal: controller.signal });
-    clearTimeout(timer);
+  const request = (async (): Promise<string | null> => {
+    try {
+      const params = new URLSearchParams({ name: name.trim() });
+      if (resolvedLat != null && resolvedLng != null) {
+        params.set('lat', String(resolvedLat));
+        params.set('lng', String(resolvedLng));
+      }
 
-    if (!res.ok) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`${apiBase()}/api/places/photo?${params}`, { signal: controller.signal });
+      clearTimeout(timer);
+
+      if (!res.ok) {
+        photoCache.set(cKey, { url: null, ts: Date.now() });
+        return null;
+      }
+
+      const body = (await res.json()) as { photoUrl?: string | null };
+      const photoUrl = typeof body.photoUrl === 'string' ? body.photoUrl : null;
+      photoCache.set(cKey, { url: photoUrl, ts: Date.now() });
+      return photoUrl;
+    } catch {
       photoCache.set(cKey, { url: null, ts: Date.now() });
       return null;
+    } finally {
+      inFlightPhotos.delete(cKey);
     }
+  })();
 
-    const body = (await res.json()) as { photoUrl?: string | null };
-    const photoUrl = typeof body.photoUrl === 'string' ? body.photoUrl : null;
-    photoCache.set(cKey, { url: photoUrl, ts: Date.now() });
-    return photoUrl;
-  } catch {
-    photoCache.set(cKey, { url: null, ts: Date.now() });
-    return null;
-  }
+  inFlightPhotos.set(cKey, request);
+  return request;
 }
