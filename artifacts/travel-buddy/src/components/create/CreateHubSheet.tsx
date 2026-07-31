@@ -34,6 +34,7 @@ import {
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
+import { useIsDesktop } from '../../hooks/useBreakpoint.ts';
 
 // ── Entry definitions ──────────────────────────────────────────────────────────
 
@@ -147,10 +148,64 @@ export interface CreateHubSheetProps {
 
 export function CreateHubSheet({ visible, onClose }: CreateHubSheetProps) {
   const insets = useSafeAreaInsets();
+  const isDesktop = useIsDesktop();
 
   function handleEntry(entry: HubEntry) {
     if (!entry.route) return; // coming soon — row is not tappable
     closeThenNavigate(onClose, entry.route);
+  }
+
+  const content = (
+    <ScrollView
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={styles.list}
+      keyboardShouldPersistTaps="handled"
+    >
+      {/* ── Share ── */}
+      <Text style={styles.sectionLabel}>Share</Text>
+      {SHARE_ENTRIES.map((entry) => (
+        <EntryRow key={entry.id} entry={entry} onPress={() => handleEntry(entry)} />
+      ))}
+
+      {/* ── Plan ── */}
+      <Text style={styles.sectionLabel}>Plan</Text>
+      {PLAN_ENTRIES.map((entry) => (
+        <EntryRow key={entry.id} entry={entry} onPress={() => handleEntry(entry)} />
+      ))}
+
+      {/* ── Contribute ── */}
+      <Text style={styles.sectionLabel}>Contribute</Text>
+      {CONTRIBUTE_ENTRIES.map((entry) => (
+        <EntryRow key={entry.id} entry={entry} onPress={() => handleEntry(entry)} />
+      ))}
+    </ScrollView>
+  );
+
+  if (isDesktop) {
+    return (
+      <Modal
+        visible={visible}
+        transparent
+        animationType="fade"
+        onRequestClose={onClose}
+      >
+        <Pressable style={styles.dialogBackdrop} onPress={onClose} />
+
+        <View style={styles.dialogWrapper} pointerEvents="box-none">
+          <View style={styles.dialog}>
+            {/* Header */}
+            <View style={styles.header}>
+              <Text style={styles.headerTitle}>Create</Text>
+              <Pressable onPress={onClose} hitSlop={8} style={styles.closeBtn}>
+                <X size={18} color={color.ink} />
+              </Pressable>
+            </View>
+
+            {content}
+          </View>
+        </View>
+      </Modal>
+    );
   }
 
   return (
@@ -174,29 +229,7 @@ export function CreateHubSheet({ visible, onClose }: CreateHubSheetProps) {
           </Pressable>
         </View>
 
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.list}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* ── Share ── */}
-          <Text style={styles.sectionLabel}>Share</Text>
-          {SHARE_ENTRIES.map((entry) => (
-            <EntryRow key={entry.id} entry={entry} onPress={() => handleEntry(entry)} />
-          ))}
-
-          {/* ── Plan ── */}
-          <Text style={styles.sectionLabel}>Plan</Text>
-          {PLAN_ENTRIES.map((entry) => (
-            <EntryRow key={entry.id} entry={entry} onPress={() => handleEntry(entry)} />
-          ))}
-
-          {/* ── Contribute ── */}
-          <Text style={styles.sectionLabel}>Contribute</Text>
-          {CONTRIBUTE_ENTRIES.map((entry) => (
-            <EntryRow key={entry.id} entry={entry} onPress={() => handleEntry(entry)} />
-          ))}
-        </ScrollView>
+        {content}
       </View>
     </Modal>
   );
@@ -253,10 +286,31 @@ function EntryRow({ entry, onPress }: EntryRowProps) {
 // ── Styles ─────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+  // Mobile: flex:1 backdrop participates in layout so the sheet sibling is pushed to the bottom
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(17,17,15,0.45)',
   },
+  // ── Desktop centered dialog ───────────────────────────────────────────────
+  // Desktop: absolute fill backdrop sits behind the centered dialog wrapper
+  dialogBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(17,17,15,0.45)',
+  },
+  dialogWrapper: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dialog: {
+    backgroundColor: color.paper,
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 480,
+    maxHeight: '80%',
+    ...shadow.float,
+  },
+  // ── Mobile bottom sheet ───────────────────────────────────────────────────
   sheet: {
     backgroundColor: color.paper,
     borderTopLeftRadius: 20,
