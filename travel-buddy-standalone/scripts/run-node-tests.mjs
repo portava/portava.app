@@ -116,6 +116,8 @@ const KNOWN_BROKEN = [
   'src/lib/__tests__/localMessageDb.e0.test.ts',
   'src/lib/__tests__/mlsSession.e2.test.ts',
   'src/lib/__tests__/secureStore.e0.test.ts',
+  // discovery.ts → supabase.ts → SecureStoreAdapter → react-native (esbuild "Unexpected typeof")
+  'src/services/__tests__/discovery.searchSignal.test.ts',
 ];
 
 const ROOTS = ['src', 'server'];

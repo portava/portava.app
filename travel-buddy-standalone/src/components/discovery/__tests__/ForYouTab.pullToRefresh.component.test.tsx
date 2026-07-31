@@ -18,7 +18,6 @@ import { render, screen, waitFor, act } from '@testing-library/react-native';
 
 const mockGetDiscoveryPlaces       = jest.fn();
 const mockGetCachedDiscoveryPlaces = jest.fn();
-
 // NOTE: intentionally exhaustive — the real module imports Supabase; spreading
 // requireActual would load the client and OOM the Jest runner.
 jest.mock('../../../services/discovery', () => ({
