@@ -22,7 +22,8 @@ let _sentryOverride:
   | undefined = undefined;
 
 /** @internal Only for node:test suites — inject a Sentry stub so auth-error tests
- *  can assert on captureMessage/addBreadcrumb without loading @sentry/react-native. */
+ *  can assert on captureMessage/addBreadcrumb without loading @sentry/react-native.
+ *  Also resets the module-level authFailedReported flag so each test begins clean. */
 export function _setSentryForTest(
   s:
     | { captureMessage: (m: string, opts?: any) => void; addBreadcrumb: (d: any) => void }
@@ -30,6 +31,9 @@ export function _setSentryForTest(
     | undefined,
 ): void {
   _sentryOverride = s;
+  // Reset per-session dedup flag whenever a test injects a fresh stub so that
+  // successive auth-error tests each see a clean slate.
+  if (s !== undefined) authFailedReported = false;
 }
 
 function getSentry(): typeof import('@sentry/react-native') | null {

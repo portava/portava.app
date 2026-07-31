@@ -13,7 +13,7 @@ import {
 import { getTrendingHashtags, type TrendingHashtag } from '../../src/services/hashtag';
 import type { DiscoveryAgeFilter } from '../../src/services/discovery';
 import type { Place } from '../../src/lib/location/placeTypes';
-import { useBottomInset } from '../../src/hooks/useBottomInset';
+import { useLayoverAwareBottomInset } from '../../src/hooks/useBottomInset';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import type { DiscoveryCategory, DiscoveryPlace, DiscoveryContextMode, DiscoveryFilters } from '../../src/services/discovery';
 import { getDiscoveryCategoryCounts } from '../../src/services/discovery';
@@ -91,7 +91,7 @@ const CONTEXT_MODES: ContextModeItem[] = [
 
 function DiscoveryHubScreen() {
   const insets = useSafeAreaInsets();
-  const bottomInset = useBottomInset();
+  const bottomInset = useLayoverAwareBottomInset();
   const { isAuthed } = useSession();
   const { open: openPlanPicker } = usePlanPicker();
   const { locationState, requestLocation, showCityPicker, openCityPicker, closeCityPicker, setManualCity } = useLocationContext();
@@ -788,11 +788,13 @@ function DiscoveryHubScreen() {
         onSelect={handlePickDestination}
       />
 
-      {/* Layover Mode floating entry */}
-      <Pressable style={styles.layoverFab} onPress={() => setLayoverOpen(true)}>
-        <Plane size={16} color="#fff" />
-        <Text style={styles.layoverFabText}>Layover Mode</Text>
-      </Pressable>
+      {/* Layover Mode floating entry — hidden while any full-screen sheet/picker is open */}
+      {!detailVisible && !showCityPicker && !routeBuilderOpen && !submitPlaceOpen && (
+        <Pressable style={styles.layoverFab} onPress={() => setLayoverOpen(true)}>
+          <Plane size={16} color="#fff" />
+          <Text style={styles.layoverFabText}>Layover Mode</Text>
+        </Pressable>
+      )}
 
       <LayoverModeSheet
         visible={layoverOpen}

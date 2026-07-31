@@ -51,7 +51,7 @@ function postRowToFeedItem(p: PostRow): PulseFeedItem {
   return {
     id: p.id,
     type: 'post',
-    city: p.locationCity ?? 'Traveler Post',
+    city: p.locationCity ?? undefined,
     author: {
       id: p.authorId,
       name: p.author?.name ?? 'Traveler',

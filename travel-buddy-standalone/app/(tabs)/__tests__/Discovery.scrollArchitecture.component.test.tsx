@@ -73,7 +73,8 @@ jest.mock('../../../src/hooks/useBottomInset', () => ({
   BOTTOM_BREATHING_ROOM: 24,
   useStickyBarInset: () => ({ inset: 130, onBarLayout: () => {} }),
   useKeyboardVisible: () => false,
-  useBottomInset: () => 130,
+  useBottomInset:             () => 130,
+  useLayoverAwareBottomInset: () => 130,
 }));
 
 // ── Session + location ────────────────────────────────────────────────────────

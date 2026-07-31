@@ -218,16 +218,6 @@ function FitBadge() {
   return <View style={s.fit}><Clock size={11} color={color.success} /><Text style={s.fitText}>Fits your time</Text></View>;
 }
 
-/* ── Traveler Post placeholder (no media / failed image) ── */
-function PostMediaPlaceholder({ city }: { city?: string }) {
-  return (
-    <View style={s.postPlaceholder}>
-      <MapPin size={30} color={color.onInk} />
-      {city ? <Text style={s.postPlaceholderCity}>{city.toUpperCase()}</Text> : null}
-    </View>
-  );
-}
-
 /* ── Traveler Post ── */
 function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void; sessionId?: string | null }) {
   const { width } = useWindowDimensions();
@@ -394,26 +384,22 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
       <PostCardStampBurst ref={burstRef} />
       {/* ── Immersive media frame ── */}
       <View style={[s.postMedia, { height: mediaHeight }]}>
-        {(item.media?.[0]?.thumbnail_url ?? item.media?.[0]?.url ?? item.mediaUrl) && !mediaFailed ? (
-          item.media?.[0]?.media_type === 'video' ? (
-            <VideoThumbnail
-              posterUri={item.media[0].thumbnail_url ?? item.media[0].url}
-              duration={item.media[0].duration_seconds ?? undefined}
-              style={StyleSheet.absoluteFill}
-            />
-          ) : (
-            // signedMediaUrl is pre-resolved via batchSignUrls (relay URL when flag
-            // is ON, original URL when OFF). withStorageParams passes relay URLs
-            // through unchanged and adds Supabase transform params to original URLs.
-            <CachedImage
-              source={{ uri: withStorageParams(signedMediaUrl, 'width=400&quality=80') }}
-              style={StyleSheet.absoluteFill}
-              resizeMode="cover"
-              onError={() => setMediaFailed(true)}
-            />
-          )
+        {item.media?.[0]?.media_type === 'video' ? (
+          <VideoThumbnail
+            posterUri={item.media[0].thumbnail_url ?? item.media[0].url}
+            duration={item.media[0].duration_seconds ?? undefined}
+            style={StyleSheet.absoluteFill}
+          />
         ) : (
-          <PostMediaPlaceholder city={item.city} />
+          // signedMediaUrl is pre-resolved via batchSignUrls (relay URL when flag
+          // is ON, original URL when OFF). withStorageParams passes relay URLs
+          // through unchanged and adds Supabase transform params to original URLs.
+          <CachedImage
+            source={{ uri: withStorageParams(signedMediaUrl, 'width=400&quality=80') }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+            onError={() => setMediaFailed(true)}
+          />
         )}
         {/* Passport-stamp overlay — sits on the photo, under the scrim/labels */}
         {!mediaFailed && <MediaStampOverlay raw={item.media?.[0]?.stamp_overlay} />}
@@ -1044,8 +1030,6 @@ const s = StyleSheet.create({
   tripLabelBadgeText: { fontFamily: 'Courier', fontSize: 9, fontWeight: '700', color: color.onInk, letterSpacing: 0.5 },
   editedLabel: { fontSize: 11, color: color.faint, fontStyle: 'italic' },
   postFooter: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16, gap: 10, backgroundColor: color.paperRaised },
-  postPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10 },
-  postPlaceholderCity: { fontFamily: 'Courier', fontSize: 11, color: color.onInk, fontWeight: '700', letterSpacing: 1.5 },
 });
 
 const plc = StyleSheet.create({
