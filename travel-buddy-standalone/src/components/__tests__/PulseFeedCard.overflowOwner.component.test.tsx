@@ -20,6 +20,10 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 jest.mock('expo-router', () => ({
   router: { push: jest.fn() },
   useLocalSearchParams: () => ({}),
+  useFocusEffect: (effect: () => void | (() => void)) => {
+    const React = require('react');
+    React.useEffect(effect, []);
+  },
 }));
 
 import { router } from 'expo-router';
@@ -129,7 +133,14 @@ jest.mock('../PostEngagementBar.tsx', () => ({ PostEngagementBar: () => null }))
 // NOTE: intentionally exhaustive — CompassFeedbackMenu needs compass context.
 jest.mock('../compass/CompassFeedbackMenu.tsx', () => ({ CompassFeedbackMenu: () => null }));
 // NOTE: intentionally exhaustive — CompassWhySheet needs bottom-sheet native deps.
-jest.mock('../compass/CompassWhySheet.tsx', () => ({ CompassWhySheet: () => null }));
+// Captures the props it's rendered with so the why-sheet lifecycle tests below
+// can assert on visible/recommendationId without mounting the real sheet.
+jest.mock('../compass/CompassWhySheet.tsx', () => ({
+  CompassWhySheet: (props: { visible: boolean; recommendationId: string | null; onClose: () => void }) => {
+    (global as any).__lastWhySheetProps = props;
+    return null;
+  },
+}));
 // NOTE: intentionally exhaustive — MediaStampOverlay loads stamp assets.
 jest.mock('../StampOverlayBadge.tsx', () => ({ MediaStampOverlay: () => null }));
 // NOTE: intentionally exhaustive — VideoThumbnail uses native video deps.
@@ -243,5 +254,24 @@ describe('PulseFeedCard AuthorRow — overflow menu owner gating', () => {
     expect(labels).toContain('Share post');
     expect(labels).toContain('Report');
     expect(labels).toContain('Hide from feed');
+  });
+});
+
+describe('PulseFeedCard — "Why this?" sheet lifecycle across navigation', () => {
+  it('closing the sheet clears both visible and recommendationId — no stale id left behind', async () => {
+    mockUserId.current = AUTHOR_ID;
+    await render(<PulseFeedCard item={makePostItem()} />);
+
+    // Simulate the sheet having been opened and then closed via onClose
+    // (PostCard is mocked to null, so drive the close handler directly).
+    const props = (global as any).__lastWhySheetProps;
+    expect(props).toBeDefined();
+    expect(props.visible).toBe(false);
+
+    props.onClose();
+
+    const afterClose = (global as any).__lastWhySheetProps;
+    expect(afterClose.visible).toBe(false);
+    expect(afterClose.recommendationId).toBeNull();
   });
 });

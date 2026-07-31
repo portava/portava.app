@@ -16,9 +16,9 @@
  * cards expose "Plan" through the existing PlanPicker flow (user-confirmed;
  * mutations never fire from a bare tap).
  */
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, Pressable, Modal, StyleSheet, Image } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import {
   MapPin, CalendarClock, ChevronRight, Users, Map as MapIcon, Plus, Star, Sparkles,
 } from 'lucide-react-native';
@@ -232,6 +232,11 @@ function PlaceBlockCard({ place, onAddToPlan }: {
 }) {
   const openPlace = usePlaceNavigation();
   const [whyOpen, setWhyOpen] = useState(false);
+  // The AI chat tab stays mounted across navigation (it's a persistent tab,
+  // not a stack screen), so tapping into a place and coming back would
+  // otherwise leave this sheet's local state open — a "ghost sheet" that
+  // reappears without the trigger being pressed again. Close on blur.
+  useFocusEffect(useCallback(() => () => setWhyOpen(false), []));
   // Track hero image load errors so we can fall back to the accent strip
   const [imageError, setImageError] = useState(false);
   const placeFallback = getPlaceCategoryFallback(place.category ?? '');
@@ -362,6 +367,7 @@ function PlaceBlockCard({ place, onAddToPlan }: {
 function EventBlockCard({ event }: { event: CompassUiEvent }) {
   const router = useRouter();
   const [whyOpen, setWhyOpen] = useState(false);
+  useFocusEffect(useCallback(() => () => setWhyOpen(false), []));
   return (
     <>
       <Pressable

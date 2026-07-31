@@ -126,10 +126,24 @@ function mapTrip(r: any): TripRow {
 
 export async function listMyTrips(): Promise<TripRow[]> {
   if (!isSupabaseConfigured) return [];
-  // RLS returns only trips the user can see; order by start date.
-  const { data, error } = await supabase.from('trips').select('*').order('start_date', { ascending: true });
-  if (error || !data) return [];
-  return data.map(mapTrip);
+  // Must go through GET /api/trips/me, which scopes by trip_members
+  // (owner OR any non-"invited" role) — the same membership definition used
+  // by the passport "Trips" stat (countUserTrips). A raw `trips` SELECT *
+  // relying on RLS previously used a different visibility rule and could
+  // return a different set/count of trips than the stat, e.g. the Trips tab
+  // showing several trips while the passport stat said "1 Trips".
+  const token = await freshToken();
+  if (!token) return [];
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  const res = await fetch(`${apiBase}/api/trips/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => null);
+  const trips = (data?.trips ?? []) as any[];
+  return trips
+    .map(mapTrip)
+    .sort((a, b) => (a.startDate ?? '').localeCompare(b.startDate ?? ''));
 }
 
 export async function getTrip(id: string): Promise<TripRow | null> {

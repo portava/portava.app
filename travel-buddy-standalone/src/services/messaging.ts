@@ -87,6 +87,7 @@ export interface ThreadSummary {
     senderId: string;
     createdAt: string;
     msgType?: string;
+    subtype?: string | null;
   } | null;
   unreadCount?: number;
   tripCity?: string | null;

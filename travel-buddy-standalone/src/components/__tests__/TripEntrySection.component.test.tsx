@@ -193,6 +193,23 @@ describe('TripEntrySection', () => {
     await findByText(/No passports on file yet\./);
   });
 
+  it('does not crash and clears loading when listMyPassports rejects', async () => {
+    fetchTripEntryRequirements.mockResolvedValue({
+      destinationCountry: 'JP',
+      disclaimer: DISCLAIMER,
+      travelers: [SELF_NO_PASSPORT],
+    });
+    listMyPassports.mockRejectedValue(new Error('network error'));
+    const { findByText, getByText } = await mountSection();
+    await findByText(/Choose passport/);
+    fireEvent.press(getByText(/Choose passport/));
+
+    // The sheet must remain open and stable (no crash) even though the fetch
+    // rejected; it settles on the empty passports list rather than hanging
+    // in a permanent loading state.
+    await findByText(/No passports on file yet\./);
+  });
+
   it('navigates to /profile/edit/passports when Add passport is pressed, without crashing', async () => {
     fetchTripEntryRequirements.mockResolvedValue({
       destinationCountry: 'JP',

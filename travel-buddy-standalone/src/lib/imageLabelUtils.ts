@@ -83,7 +83,20 @@ export function derivePlaceImageSourceLabel(
     case 'category_fallback':
     case 'map_fallback':
       return disclaimerRequired ? 'illustrative' : null;
+    case null:
+    case undefined:
+      return null;
     default:
+      // `imageSourceType` comes from backend/DB data, not a compile-time
+      // guarantee — an unrecognized value here means the source was
+      // misclassified (or the nine-type enum drifted) upstream. Warn rather
+      // than silently rendering no badge, so a misclassification never goes
+      // unnoticed.
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.warn(
+          `[imageLabelUtils] Unrecognized imageSourceType "${imageSourceType}" — falling back to no badge.`,
+        );
+      }
       return null;
   }
 }

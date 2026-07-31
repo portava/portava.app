@@ -33,6 +33,19 @@ import { color, space, radius, type as t } from '../../theme/tokens.ts';
 /** Exported so overlay consumers (e.g. media mode selector) can offset content. */
 export const OVERLAY_HEADER_HEIGHT = 44;
 
+/**
+ * Total on-screen height of the `overlay`/`detail`/`modal` header bar, including
+ * its top safe-area padding. The header floors its top padding at 54 (so it
+ * never sits too high on devices/web where `insets.top` is 0), so consumers
+ * MUST use this helper — not `insets.top + OVERLAY_HEADER_HEIGHT` — to compute
+ * where content below the header should start. Using the raw sum silently
+ * under-counts the header's real height whenever `insets.top < 54`, causing
+ * the header title to visually overlap whatever is positioned "below" it.
+ */
+export function getOverlayHeaderTotalHeight(insetsTop: number): number {
+  return Math.max(insetsTop, 54) + OVERLAY_HEADER_HEIGHT;
+}
+
 export type AppHeaderVariant = 'primary' | 'detail' | 'search' | 'modal' | 'overlay';
 
 export interface AppHeaderAction {

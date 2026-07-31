@@ -43,19 +43,38 @@ export function VideoThumbnail({ posterUri, duration, style, onPress }: VideoThu
     ? (hydratedMap[posterUri] === null ? null : (hydratedMap[posterUri] ?? posterUri))
     : null;
 
+  // When no onPress is supplied (e.g. embedded read-only inside a feed card
+  // whose own Pressable handles tap/double-tap), render a plain View instead
+  // of a Pressable. A nested Pressable — even with onPress=undefined — still
+  // claims the touch responder and swallows taps before they reach the
+  // parent card's gesture handler, breaking tap-to-open and double-tap-to-stamp.
+  // The "Play video" accessibility label is kept in both cases — it's the
+  // marker other components/tests use to identify a video thumbnail, whether
+  // or not this particular usage is independently tappable.
+  const Container = onPress ? Pressable : View;
+  const containerProps = onPress
+    ? { onPress, accessibilityRole: 'button' as const, accessibilityLabel: 'Play video' }
+    : { accessibilityLabel: 'Play video' };
+
   return (
-    <Pressable
+    <Container
       style={[s.container, style]}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel="Play video"
+      {...containerProps}
     >
       {effectivePosterUri ? (
+        // pointerEvents="none": on web, expo-image renders a real <img> DOM
+        // node. A bare <img> can intercept the second click of a rapid
+        // double-click as a native drag/selection gesture in some browsers,
+        // swallowing it before it reaches the card's Pressable. Forcing
+        // pointer-events: none guarantees every tap — single or double —
+        // is handled solely by the Container/parent Pressable, matching
+        // native mobile behavior where a nested Image never steals touches.
         <Image
           source={{ uri: effectivePosterUri }}
           style={StyleSheet.absoluteFill}
           contentFit="cover"
           transition={150}
+          pointerEvents="none"
         />
       ) : (
         <View style={[StyleSheet.absoluteFill, s.placeholder]} />
@@ -74,7 +93,7 @@ export function VideoThumbnail({ posterUri, duration, style, onPress }: VideoThu
           <Text style={s.durationText}>{formatDuration(duration)}</Text>
         </View>
       )}
-    </Pressable>
+    </Container>
   );
 }
 
