@@ -513,7 +513,8 @@ export async function getDiscoveryPlaces(
     // (explicit category selection, not pagination). Background callers such as
     // getDiscoveryCategoryCounts must NOT pass emitSignal=true — they enumerate
     // all categories and would corrupt personalization weights with non-intent traffic.
-    if (emitSignal && page === 1) {
+    // 'for_you' is a personalised feed, not a category intent — never signal.
+    if (emitSignal && page === 1 && category !== 'for_you') {
       postSearchSignal(destination, { city: destination, category });
     }
     return { ok: true, data };
