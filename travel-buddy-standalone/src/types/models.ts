@@ -831,7 +831,7 @@ export interface PulseAuthor {
 export interface PulseFeedItem {
   id: ID;
   type: PulseItemType;
-  city: string;
+  city?: string;
   neighborhood?: string;
   author?: PulseAuthor;
   createdAt: ISODate;
