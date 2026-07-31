@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
 import {
   Compass, Sparkles, MapPin, Coffee, Moon, Activity,
-  Calendar, Waves, Navigation, Plane, Users, Hash, PlusCircle, Search, SlidersHorizontal,
+  Calendar, Waves, Navigation, Plane, Users, Hash, PlusCircle, Search, SlidersHorizontal, Trophy,
 } from 'lucide-react-native';
 import { getTrendingHashtags, type TrendingHashtag } from '../../src/services/hashtag';
 import type { DiscoveryAgeFilter } from '../../src/services/discovery';
@@ -655,6 +655,23 @@ export default function DiscoveryHub() {
           <Text style={[styles.toggleBtnText, !destination && styles.toggleBtnTextDisabled]}>Map</Text>
         </Pressable>
       </View>
+
+      {/* ── Featured by Portava entry point ── */}
+      <Pressable
+        style={styles.featuredBanner}
+        onPress={() => router.push('/featured' as any)}
+        accessibilityRole="button"
+        accessibilityLabel="Featured by Portava — see this week's top picks"
+      >
+        <View style={styles.featuredBannerLeft}>
+          <Trophy size={16} color="#D97706" strokeWidth={2.5} />
+          <View>
+            <Text style={styles.featuredBannerTitle}>Featured by Portava 🏆</Text>
+            <Text style={styles.featuredBannerSub}>This week's top picks</Text>
+          </View>
+        </View>
+        <Text style={styles.featuredBannerArrow}>›</Text>
+      </Pressable>
 
       {/* ── Following highlights strip ── */}
       {isAuthed && (
@@ -1346,6 +1363,41 @@ const styles = StyleSheet.create({
   },
   layoverFabText: { color: '#fff', fontWeight: '700', fontSize: 13 },
 
+  featuredBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: space.lg,
+    marginVertical: space.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: 12,
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+    borderRadius: radius.md,
+  },
+  featuredBannerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  featuredBannerTitle: {
+    fontSize: 13,
+    fontWeight: '700' as const,
+    color: '#92400E',
+    letterSpacing: 0.1,
+  },
+  featuredBannerSub: {
+    fontSize: 11,
+    color: '#B45309',
+    marginTop: 1,
+  },
+  featuredBannerArrow: {
+    fontSize: 20,
+    color: '#D97706',
+    fontWeight: '700' as const,
+    lineHeight: 22,
+  },
   trendingBar: {
     flexGrow: 0,
     flexShrink: 0,
