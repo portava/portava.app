@@ -129,19 +129,3 @@ export async function lookupFsqPhoto(
     return null;
   }
 }
-
-let _sentryOverride:
-  | { captureMessage: (m: string, opts?: any) => void; addBreadcrumb: (d: any) => void }
-  | null
-  | undefined = undefined;
-
-/** @internal Only for node:test suites — inject a Sentry stub so auth-error tests
- *  can assert on captureMessage/addBreadcrumb without loading @sentry/react-native. */
-export function _setSentryForTest(
-  s:
-    | { captureMessage: (m: string, opts?: any) => void; addBreadcrumb: (d: any) => void }
-    | null
-    | undefined,
-): void {
-  _sentryOverride = s;
-}
