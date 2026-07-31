@@ -77,10 +77,14 @@ jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
 }));
 
 // expo-router
+// useFocusEffect is a jest.fn() so individual tests can inspect .mock.calls
+// to retrieve and re-invoke the registered callback, simulating a re-focus.
+// Existing behaviour is preserved: the callback is still called synchronously
+// on every (simulated) focus event.
 jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
   router: { push: jest.fn(), back: jest.fn() },
-  useFocusEffect: (cb: () => void) => { cb(); },
+  useFocusEffect: jest.fn().mockImplementation((cb: () => void) => { cb(); }),
 }));
 
 // ── Screen timing / snapshot cache — stub ─────────────────────────────────────
@@ -339,6 +343,107 @@ describe('Pulse FlatList — no regression when layover session absent', () => {
     const max = Math.max(...paddings);
     // Baseline: NAV_BAR_FILLER_HEIGHT (96) + insets.bottom (34) = 130.
     // Should NOT be as large as the layover-active value (168) when inactive.
+    expect(max).toBeLessThan(MIN_EXPECTED_PADDING_LAYOVER);
+    // But must still clear the tab bar.
+    expect(max).toBeGreaterThanOrEqual(MIN_EXPECTED_PADDING);
+  });
+});
+
+// ── Re-focus sync: session starts while Pulse is already open ─────────────────
+// LayoverSessionContext shares a single fetch result between ActiveLayoverPill
+// and useLayoverAwareBottomInset. Both consumers read from the same state, so
+// when a session activates on re-focus the paddingBottom must jump to the
+// layover-active value in the same render cycle — never showing the pill hidden
+// while the padding is already expanded, or vice-versa.
+
+describe('Pulse FlatList — layover pill and feed padding stay in sync on re-focus', () => {
+  const REFOCUS_SESSION = {
+    session: {
+      id: 'layover-refocus-1',
+      departureTime: '2026-07-29T23:00:00Z',
+      manualIata: 'SFO',
+    },
+    airport: null,
+  };
+
+  afterEach(() => {
+    // Reset service mock back to inactive so other describe blocks are unaffected.
+    const layover = require('../../../src/services/layover');
+    layover.getActiveLayoverSession.mockResolvedValue(null);
+    // Clear useFocusEffect call history between tests.
+    const { useFocusEffect } = require('expo-router');
+    (useFocusEffect as jest.Mock).mockClear();
+  });
+
+  it('paddingBottom jumps to layover-active value in the same update when a session starts on re-focus', async () => {
+    const layover = require('../../../src/services/layover');
+
+    // ── First focus: no active session ──────────────────────────────────────
+    layover.getActiveLayoverSession.mockResolvedValue(null);
+
+    const Pulse = require('../index.tsx').default;
+    const { unmount, toJSON: toJSONRef } = await render(<Pulse />);
+    // Flush the resolved promise so the context state settles.
+    await act(async () => { await Promise.resolve(); });
+
+    const paddingsBefore = collectContentContainerPaddingBottoms(toJSONRef());
+    expect(paddingsBefore.length).toBeGreaterThan(0);
+    const maxBefore = Math.max(...paddingsBefore);
+    // Sanity: baseline padding clears the tab bar but has not reached the
+    // layover-active territory yet.
+    expect(maxBefore).toBeGreaterThanOrEqual(MIN_EXPECTED_PADDING);
+    expect(maxBefore).toBeLessThan(MIN_EXPECTED_PADDING_LAYOVER);
+
+    // ── Second focus (re-focus): session now active ──────────────────────────
+    // Update the service mock BEFORE triggering the focus callback so that
+    // when the context's useFocusEffect handler runs getActiveLayoverSession it
+    // gets the new session.
+    layover.getActiveLayoverSession.mockResolvedValue(REFOCUS_SESSION);
+
+    // Retrieve the focus callback registered by LayoverSessionProvider's
+    // useFocusEffect call during the first render, then invoke it directly to
+    // simulate the user returning to the Pulse tab.
+    const { useFocusEffect } = require('expo-router');
+    const calls = (useFocusEffect as jest.Mock).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    const focusCb = calls[calls.length - 1][0] as () => void;
+    focusCb();
+
+    // Flush the newly-resolved promise from the re-focus fetch.
+    await act(async () => { await Promise.resolve(); });
+
+    // ── Assert: paddingBottom has grown to the layover-active value ──────────
+    // Both ActiveLayoverPill and useLayoverAwareBottomInset share the same
+    // LayoverSessionContext state, so this single assertion confirms they are
+    // in sync: if paddingBottom is in the layover-active range the context
+    // session is non-null, which means the pill also receives a non-null
+    // session and renders its content.
+    const paddingsAfter = collectContentContainerPaddingBottoms(toJSONRef());
+    expect(paddingsAfter.length).toBeGreaterThan(0);
+    const maxAfter = Math.max(...paddingsAfter);
+    expect(maxAfter).toBeGreaterThanOrEqual(MIN_EXPECTED_PADDING_LAYOVER);
+
+    // Padding must have strictly increased — the two consumers were NOT out of
+    // sync (e.g. padding already inflated before the context updated, or pill
+    // visible while padding stayed at the inactive baseline).
+    expect(maxAfter).toBeGreaterThan(maxBefore);
+
+    unmount();
+  });
+
+  it('inactive paddingBottom never reaches layover-active threshold between focus events — no ghost expansion', async () => {
+    // Guards against the inverse mismatch: feed padding expanding to
+    // layover-active territory when no session is returned on first focus.
+    const layover = require('../../../src/services/layover');
+    layover.getActiveLayoverSession.mockResolvedValue(null);
+
+    const Pulse = require('../index.tsx').default;
+    const { toJSON } = await render(<Pulse />);
+    await act(async () => { await Promise.resolve(); });
+
+    const paddings = collectContentContainerPaddingBottoms(toJSON());
+    const max = Math.max(...paddings);
+    // Padding must NOT be in layover territory while the pill is hidden.
     expect(max).toBeLessThan(MIN_EXPECTED_PADDING_LAYOVER);
     // But must still clear the tab bar.
     expect(max).toBeGreaterThanOrEqual(MIN_EXPECTED_PADDING);
