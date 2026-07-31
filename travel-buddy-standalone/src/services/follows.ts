@@ -336,11 +336,15 @@ export async function getMutualFollows(targetUserId: string): Promise<MutualFoll
     const viewerUserId = user.id;
     if (viewerUserId === targetUserId) return [];
 
-    // Step 1: IDs the viewer follows
+    // Step 1: IDs the viewer follows — capped at 200 to stay within PostgREST's
+    // IN-clause URL-length limits. Users following more than 200 people may see
+    // a partial mutual list (mutuals outside the first 200 are not shown), but
+    // this is far preferable to silently returning [] for everyone above the cap.
     const { data: viewerFollowing, error: e1 } = await supabase
       .from('user_follows')
       .select('following_id')
-      .eq('follower_id', viewerUserId);
+      .eq('follower_id', viewerUserId)
+      .limit(200);
     if (e1 || !viewerFollowing || viewerFollowing.length === 0) return [];
 
     const viewerFollowingIds = viewerFollowing.map((r) => r.following_id as string);
