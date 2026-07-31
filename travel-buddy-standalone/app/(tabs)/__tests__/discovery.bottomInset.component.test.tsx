@@ -67,14 +67,13 @@ jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
   NAV_BAR_FILLER_HEIGHT: 96,
 }));
 
-// ── Bottom inset — controlled value (iPhone 14: 96 + 34 = 130) ───────────────
-// The test scenario is: layover active, useBottomInset returns the standard
-// Tier-1 value (not the layover-aware variant because these screens have not
-// yet adopted it).  130 ≥ 120 satisfies the minimum clearance contract.
-let mockBottomInset = 130;
+// ── Bottom inset — controlled value (iPhone 14 layover-active: 34 + 74 + 44 + 16 = 168) ──
+// The test scenario is: layover active, useLayoverAwareBottomInset returns the
+// layover-aware Tier-1 value.  168 ≥ 155 satisfies the minimum clearance contract.
+let mockBottomInset = 168;
 // NOTE: intentional stub — only the forwarded bottomInset prop is under test.
 jest.mock('../../../src/hooks/useBottomInset', () => ({
-  useBottomInset:              () => mockBottomInset,
+  useBottomInset:              () => 130,
   useLayoverAwareBottomInset:  () => mockBottomInset,
   usePlainBottomInset:         () => 58,
   PlainBottomFiller:           () => null,
@@ -231,34 +230,35 @@ describe('Discovery tab — bottomInset forwarded to tab component when layover 
   beforeEach(() => {
     capturedForYouBottomInset   = undefined;
     capturedCategoryBottomInset = undefined;
-    mockBottomInset = 130; // iPhone 14: NAV_BAR_FILLER_HEIGHT (96) + insets.bottom (34)
+    mockBottomInset = 168; // iPhone 14 layover-active: insets.bottom (34) + 74 + 44 + 16
   });
 
-  it('ForYouTab receives bottomInset ≥ 120 (iPhone 14, layover active)', async () => {
+  it('ForYouTab receives bottomInset ≥ 155 (iPhone 14, layover active)', async () => {
     await render(<DiscoveryHub />);
     await act(async () => { await Promise.resolve(); });
 
     // The default tab is 'for_you', so ForYouTab should have been rendered.
     expect(capturedForYouBottomInset).toBeDefined();
-    expect(capturedForYouBottomInset!).toBeGreaterThanOrEqual(120);
+    expect(capturedForYouBottomInset!).toBeGreaterThanOrEqual(155);
   });
 
-  it('ForYouTab bottomInset equals the value from useBottomInset() (130 on iPhone 14)', async () => {
+  it('ForYouTab bottomInset equals the value from useLayoverAwareBottomInset() (168 on iPhone 14)', async () => {
     await render(<DiscoveryHub />);
     await act(async () => { await Promise.resolve(); });
 
-    expect(capturedForYouBottomInset).toBe(130);
+    expect(capturedForYouBottomInset).toBe(168);
   });
 
-  it('bottomInset contract satisfied: NAV_BAR_FILLER_HEIGHT (96) + iPhone bottom (34) = 130 ≥ 120', () => {
-    const NAV_BAR_FILLER_HEIGHT = 96;
+  it('bottomInset contract satisfied: iPhone bottom (34) + pill offset (74) + pill height (44) + gap (16) = 168 ≥ 155', () => {
     const IPHONE_BOTTOM = 34;
-    expect(NAV_BAR_FILLER_HEIGHT + IPHONE_BOTTOM).toBeGreaterThanOrEqual(120);
+    const LAYOVER_PILL_BOTTOM_OFFSET = 74;
+    const LAYOVER_PILL_HEIGHT = 44;
+    const LAYOVER_PILL_TOP_GAP = 16;
+    expect(IPHONE_BOTTOM + LAYOVER_PILL_BOTTOM_OFFSET + LAYOVER_PILL_HEIGHT + LAYOVER_PILL_TOP_GAP).toBeGreaterThanOrEqual(155);
   });
 
-  it('bottomInset contract satisfied on Android: NAV_BAR_FILLER_HEIGHT (96) + Android bottom (48) = 144 ≥ 120', () => {
-    const NAV_BAR_FILLER_HEIGHT = 96;
+  it('bottomInset contract satisfied on Android: Android bottom (48) + 74 + 44 + 16 = 182 ≥ 155', () => {
     const ANDROID_BOTTOM = 48;
-    expect(NAV_BAR_FILLER_HEIGHT + ANDROID_BOTTOM).toBeGreaterThanOrEqual(120);
+    expect(ANDROID_BOTTOM + 74 + 44 + 16).toBeGreaterThanOrEqual(155);
   });
 });

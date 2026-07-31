@@ -40,6 +40,7 @@ jest.mock('react-native-safe-area-context', () => ({
 // NOTE: intentional stub — bottom inset value not under test.
 jest.mock('../../../src/hooks/useBottomInset.ts', () => ({
   useBottomInset: () => 34,
+  useLayoverAwareBottomInset: () => 34,
 }));
 
 // ── mediaEvents ───────────────────────────────────────────────────────────────

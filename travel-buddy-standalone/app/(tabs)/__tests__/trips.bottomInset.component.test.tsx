@@ -15,12 +15,12 @@ import React from 'react';
 import { View } from 'react-native';
 import { render, act } from '@testing-library/react-native';
 
-// ── Constants (mirror useNavBarCollapse.ts) ───────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
 const NAV_BAR_FILLER_HEIGHT = 96;
 const IPHONE_BOTTOM  = 34;
 const ANDROID_BOTTOM = 48;
-/** Minimum clearance contract (must exceed home indicator on any device). */
-const MIN_CLEARANCE = 120;
+/** Minimum clearance contract when a layover session is active. */
+const MIN_CLEARANCE = 155;
 
 // ── Safe-area — iPhone 14 (bottom = 34 pt) ───────────────────────────────────
 jest.mock('react-native-safe-area-context', () => ({
@@ -43,21 +43,27 @@ jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({}),
 }));
 
-// ── Nav-bar collapse — NavBarFiller renders a measurable View ─────────────────
-// The real NavBarFiller renders <View style={{ height: NAV_BAR_FILLER_HEIGHT + insets.bottom }}/>.
-// We replicate that here so the height value (130 on iPhone 14) appears in the
-// rendered tree and can be asserted as the clearance mechanism.
-// NOTE: intentional partial stub — useNavBarScrollHandler is stubbed; NavBarFiller
-// renders its real height so the clearance assertion can detect a future removal.
+// ── Nav-bar collapse ──────────────────────────────────────────────────────────
+// NOTE: intentional stub — clearance is now provided by useLayoverAwareBottomInset()
+// on the ScrollView contentContainerStyle, not by NavBarFiller.
 jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
   useNavBarScrollHandler: () => () => {},
-  NavBarFiller: () => {
-    const { View } = require('react-native');
-    // Mirror real NavBarFiller: height = NAV_BAR_FILLER_HEIGHT + insets.bottom.
-    // insets.bottom is mocked to IPHONE_BOTTOM (34) above.
-    return <View testID="nav-bar-filler" style={{ height: 96 + 34 }} />;
-  },
+  NavBarFiller: () => null,
   NAV_BAR_FILLER_HEIGHT: 96,
+}));
+
+// ── Bottom inset — layover-aware (iPhone 14 active: 34 + 74 + 44 + 16 = 168) ─
+// NOTE: intentional stub — mocking the whole module avoids the LayoverSessionContext
+// dependency chain. Returns the layover-active value so the assertion scenario is
+// representative of the condition the hook is designed to handle.
+jest.mock('../../../src/hooks/useBottomInset', () => ({
+  useBottomInset:             () => 96 + 34,              // 130 (standard Tier-1)
+  useLayoverAwareBottomInset: () => 34 + 74 + 44 + 16,   // 168 (layover-active)
+  usePlainBottomInset:        () => 34 + 24,              // 58
+  PlainBottomFiller:          () => null,
+  BOTTOM_BREATHING_ROOM:      24,
+  useStickyBarInset:          () => ({ inset: 96 + 34, onBarLayout: () => {} }),
+  useKeyboardVisible:         () => false,
 }));
 
 // ── Layover service — active session ─────────────────────────────────────────
@@ -151,59 +157,64 @@ import Trips from '../trips.tsx';
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Collect every `height` value from View `style` props in the rendered tree.
- * NavBarFiller renders <View style={{ height: 130 }} /> which is the
- * clearance mechanism for the trips tab.
+ * Collect every bottom-clearance value from the rendered tree.
+ * Trips uses `contentContainerStyle={{ paddingBottom: bottomInset }}` on its
+ * ScrollView, so we scan both `style.paddingBottom` and
+ * `contentContainerStyle.paddingBottom` at every node.
  */
-function collectHeights(node: any): number[] {
+function collectClearanceValues(node: any): number[] {
   if (!node || typeof node !== 'object') return [];
   const found: number[] = [];
 
-  const style = node.props?.style;
-  if (style) {
-    const flat = Array.isArray(style)
-      ? Object.assign({}, ...style.map((s: any) => (s && typeof s === 'object' ? s : {})))
-      : style;
-    if (typeof flat?.height === 'number') found.push(flat.height);
+  function extractPaddingBottom(styleProp: any): void {
+    if (!styleProp) return;
+    const flat = Array.isArray(styleProp)
+      ? Object.assign({}, ...styleProp.map((s: any) => (s && typeof s === 'object' ? s : {})))
+      : styleProp;
+    if (typeof flat?.paddingBottom === 'number') found.push(flat.paddingBottom);
   }
 
+  extractPaddingBottom(node.props?.style);
+  extractPaddingBottom(node.props?.contentContainerStyle);
+
   for (const child of (node.children ?? [])) {
-    found.push(...collectHeights(child));
+    found.push(...collectClearanceValues(child));
   }
   return found;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('Trips tab — NavBarFiller clearance when layover active', () => {
-  it('NavBarFiller is rendered with height ≥ 120 (iPhone 14, layover active)', async () => {
+describe('Trips tab — ScrollView paddingBottom clearance when layover active', () => {
+  it('ScrollView paddingBottom ≥ 155 (iPhone 14, layover active)', async () => {
     const { toJSON } = await render(<Trips />);
     await act(async () => { await Promise.resolve(); });
 
-    const heights = collectHeights(toJSON());
-    expect(heights.length).toBeGreaterThan(0);
-    const max = Math.max(...heights);
+    const clearances = collectClearanceValues(toJSON());
+    expect(clearances.length).toBeGreaterThan(0);
+    const max = Math.max(...clearances);
     expect(max).toBeGreaterThanOrEqual(MIN_CLEARANCE);
   });
 
-  it('NavBarFiller height equals NAV_BAR_FILLER_HEIGHT + iPhone bottom (130 on iPhone 14)', async () => {
+  it('ScrollView paddingBottom equals useLayoverAwareBottomInset() value (168 on iPhone 14)', async () => {
     const { toJSON } = await render(<Trips />);
     await act(async () => { await Promise.resolve(); });
 
-    const heights = collectHeights(toJSON());
-    const expected = NAV_BAR_FILLER_HEIGHT + IPHONE_BOTTOM; // 130
-    expect(heights).toContain(expected);
+    const clearances = collectClearanceValues(toJSON());
+    // 34 (insets.bottom) + 74 (pill offset) + 44 (pill height) + 16 (gap) = 168
+    const expected = IPHONE_BOTTOM + 74 + 44 + 16; // 168
+    expect(clearances).toContain(expected);
   });
 
-  it('NavBarFiller clearance constant satisfies iPhone 14 home indicator (34 pt)', () => {
-    expect(NAV_BAR_FILLER_HEIGHT + IPHONE_BOTTOM).toBeGreaterThanOrEqual(IPHONE_BOTTOM);
+  it('layover-active inset satisfies iPhone 14 home indicator (34 pt)', () => {
+    expect(IPHONE_BOTTOM + 74 + 44 + 16).toBeGreaterThanOrEqual(IPHONE_BOTTOM);
   });
 
-  it('NavBarFiller clearance constant satisfies Android gesture nav bar (48 dp)', () => {
-    expect(NAV_BAR_FILLER_HEIGHT + ANDROID_BOTTOM).toBeGreaterThanOrEqual(ANDROID_BOTTOM);
+  it('layover-active inset satisfies Android gesture nav bar (48 dp)', () => {
+    expect(ANDROID_BOTTOM + 74 + 44 + 16).toBeGreaterThanOrEqual(ANDROID_BOTTOM);
   });
 
-  it('NavBarFiller clearance constant meets minimum contract (≥ 120)', () => {
-    expect(NAV_BAR_FILLER_HEIGHT + IPHONE_BOTTOM).toBeGreaterThanOrEqual(MIN_CLEARANCE);
+  it('layover-active inset meets minimum contract (≥ 155)', () => {
+    expect(IPHONE_BOTTOM + 74 + 44 + 16).toBeGreaterThanOrEqual(MIN_CLEARANCE);
   });
 });

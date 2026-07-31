@@ -3,7 +3,8 @@ import Animated from 'react-native-reanimated';
 import { useCollapsingHeader } from '../../src/hooks/useCollapsingHeader';
 import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useLayoverAwareBottomInset } from '../../src/hooks/useBottomInset';
 import { postCompassFrontloadEvent } from '../../src/services/compass';
 import {
   View, Text, ScrollView, Pressable,
@@ -271,6 +272,7 @@ function TripsScreen() {
     }
   }, [addTarget, addBusy]);
   const insets = useSafeAreaInsets();
+  const bottomInset = useLayoverAwareBottomInset();
   const navScrollHandler = useNavBarScrollHandler();
   const { largeHeaderStyle, compactBarStyle, compactBarInteractive } = useCollapsingHeader();
   const { markFirstContent, epoch } = useScreenTiming('Trips');
@@ -339,7 +341,7 @@ function TripsScreen() {
           <ScrollView
             onScroll={navScrollHandler}
             scrollEventThrottle={16}
-            contentContainerStyle={{ paddingBottom: 0 }}
+            contentContainerStyle={{ paddingBottom: bottomInset }}
             refreshControl={
               <RefreshControl
                 refreshing={loading && displayTrips.length > 0}
@@ -427,7 +429,6 @@ function TripsScreen() {
                 <Plus size={20} color={color.deep} />
                 <Text style={styles.emptyText}>Start a new trip</Text>
               </Pressable>
-              <NavBarFiller />
             </View>
           </ScrollView>
 

@@ -4,7 +4,7 @@ import Animated from 'react-native-reanimated';
 import { useCollapsingHeader } from '../../src/hooks/useCollapsingHeader';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
-import { useBottomInset } from '../../src/hooks/useBottomInset';
+import { useLayoverAwareBottomInset } from '../../src/hooks/useBottomInset';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Share2, Clock } from 'lucide-react-native';
 import { uploadAvatar, uploadCover } from '../../src/services/profile';
@@ -492,7 +492,7 @@ function PassportContent({
   }, [reload, refreshAvailability]));
 
   const navScrollHandler = useNavBarScrollHandler();
-  const bottomInset = useBottomInset();
+  const bottomInset = useLayoverAwareBottomInset();
   const { largeHeaderStyle, compactBarStyle, compactBarInteractive } = useCollapsingHeader();
   const [statsIconOnly, setStatsIconOnly] = useState(false);
 
