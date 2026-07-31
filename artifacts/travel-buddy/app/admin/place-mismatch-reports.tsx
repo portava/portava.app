@@ -57,8 +57,9 @@ function ReportRow({ item, tab, onAccept, onReject, actioning }: RowProps) {
       <View style={s.rowBody}>
         <View style={s.rowTop}>
           <Text style={s.postId} numberOfLines={1}>
-            Post&nbsp;
-            <Text style={s.mono}>{item.post_id.slice(0, 8)}…</Text>
+            {item.post_content
+              ? item.post_content.slice(0, 80) + (item.post_content.length > 80 ? '…' : '')
+              : <Text style={s.mono}>{item.post_id.slice(0, 8)}…</Text>}
           </Text>
           {tab === 'resolved' && item.resolved_action ? (
             <View
@@ -79,10 +80,12 @@ function ReportRow({ item, tab, onAccept, onReject, actioning }: RowProps) {
           ) : null}
         </View>
 
-        {item.reported_place_id ? (
+        {(item.place_name ?? item.reported_place_id) ? (
           <Text style={s.meta}>
             Place&nbsp;
-            <Text style={s.mono}>{item.reported_place_id.slice(0, 8)}…</Text>
+            <Text style={item.place_name ? s.placeName : s.mono}>
+              {item.place_name ?? `${item.reported_place_id!.slice(0, 8)}…`}
+            </Text>
           </Text>
         ) : null}
 
@@ -329,6 +332,7 @@ const s = StyleSheet.create({
   rowTop:         { flexDirection: 'row', alignItems: 'center', gap: 8 },
   postId:         { fontSize: 14, fontWeight: '600', color: '#111827', flex: 1 },
   mono:           { fontFamily: 'monospace', fontSize: 13 },
+  placeName:      { fontSize: 13, fontWeight: '500', color: '#374151' },
   meta:           { fontSize: 12, color: '#6B7280' },
   reason:         { fontSize: 13, color: '#374151', marginTop: 2 },
   footer:         { fontSize: 11, color: '#9CA3AF', marginTop: 2 },

@@ -66,7 +66,7 @@ router.get("/admin/place-mismatch-reports", asyncHandler(async (req, res) => {
   let q = sc
     .from("place_mismatch_reports")
     .select(
-      "id, post_id, reporter_id, reported_place_id, reason, status, resolved_action, resolved_at, created_at",
+      "id, post_id, reporter_id, reported_place_id, reason, status, resolved_action, resolved_at, created_at, posts!post_id(content), places!reported_place_id(name)",
       { count: "exact" },
     )
     .eq("status", status)
@@ -91,8 +91,18 @@ router.get("/admin/place-mismatch-reports", asyncHandler(async (req, res) => {
     return;
   }
 
+  // Flatten the joined post content and place name into top-level fields
+  const reports = (data ?? []).map((row: any) => {
+    const { posts, places, ...rest } = row;
+    return {
+      ...rest,
+      post_content: (posts as any)?.content ?? null,
+      place_name:   (places as any)?.name   ?? null,
+    };
+  });
+
   res.json({
-    reports: data ?? [],
+    reports,
     total: count ?? 0,
     status,
   });
