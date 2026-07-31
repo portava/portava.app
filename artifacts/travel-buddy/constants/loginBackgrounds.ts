@@ -1,17 +1,10 @@
 /**
  * loginBackgrounds.ts
  *
- * Placeholder travel/city/nightlife background images for the login screen.
+ * Travel/city/nightlife background images for the login screen.
+ * All entries are Unsplash travel photography in portrait orientation.
  *
- * TODO: Replace these with real Portava brand photography.
- *   - Format: { uri: string } — can be a local require() or CDN URL
- *   - Required: portrait orientation, 9:16 ratio, minimum 1080×1920px
- *   - Subjects: travel destinations, nightlife, outdoor adventure, social gatherings
- *   - Mood: warm, aspirational, social — avoid stock-photo clichés
- *   - Example swap: { uri: require('../assets/images/login-bg-1.jpg') }
- *
- * The picsum.photos URLs below are deterministic (same seed = same image)
- * and suitable for development/demo only.
+ * Format: { uri: string } — CDN URL or local require()
  */
 
 export interface LoginBackground {
