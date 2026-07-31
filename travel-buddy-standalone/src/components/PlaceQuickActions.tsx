@@ -103,19 +103,24 @@ export function PlaceQuickActions({
           </Text>
         </Pressable>
 
-        {/* Navigate */}
-        <Pressable
-          style={({ pressed }) => [chipStyle, pressed && s.pressed]}
-          onPress={handleNavigate}
-          accessibilityRole="button"
-          accessibilityLabel="Navigate to this place"
-          hitSlop={layout.hitSlop}
-        >
-          <Navigation size={11} color={variant === 'light' ? color.deep : 'rgba(255,255,255,0.9)'} strokeWidth={2} />
-          <Text style={[chipTextStyle, variant === 'light' && { color: color.deep }]}>
-            Navigate
-          </Text>
-        </Pressable>
+        {/* Navigate — only when honest coordinates are available.
+            Mirrors the guard in PlaceCard: null coords → button absent.
+            A name-only geocode fallback would silently anchor on the viewer's
+            own location and produce cross-city bogus directions. */}
+        {(place.lat != null && place.lng != null) && (
+          <Pressable
+            style={({ pressed }) => [chipStyle, pressed && s.pressed]}
+            onPress={handleNavigate}
+            accessibilityRole="button"
+            accessibilityLabel="Navigate to this place"
+            hitSlop={layout.hitSlop}
+          >
+            <Navigation size={11} color={variant === 'light' ? color.deep : 'rgba(255,255,255,0.9)'} strokeWidth={2} />
+            <Text style={[chipTextStyle, variant === 'light' && { color: color.deep }]}>
+              Navigate
+            </Text>
+          </Pressable>
+        )}
       </View>
 
       {eventSheetOpen && (

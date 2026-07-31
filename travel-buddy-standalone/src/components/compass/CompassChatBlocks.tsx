@@ -17,10 +17,10 @@
  * mutations never fire from a bare tap).
  */
 import React, { useCallback, useState } from 'react';
-import { View, Text, Pressable, Modal, StyleSheet, Image } from 'react-native';
+import { View, Text, Pressable, Modal, StyleSheet, Image, Linking } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import {
-  MapPin, CalendarClock, ChevronRight, Users, Map as MapIcon, Plus, Star, Sparkles,
+  MapPin, CalendarClock, ChevronRight, Users, Map as MapIcon, Plus, Star, Sparkles, Navigation,
 } from 'lucide-react-native';
 import {
   reportCompassViewed,
@@ -333,6 +333,22 @@ function PlaceBlockCard({ place, onAddToPlan }: {
               >
                 <Plus size={12} color={color.signal} />
                 <Text style={s.planBtnText}>Plan</Text>
+              </Pressable>
+            ) : null}
+            {/* Honest coordinates only — no name-only fallback. Mirrors PlaceCard/PlaceDetailSheet. */}
+            {place.lat != null && place.lng != null ? (
+              <Pressable
+                style={({ pressed }) => [s.planBtn, pressed && s.pressed]}
+                onPress={() => {
+                  const url = `https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}`;
+                  Linking.openURL(url).catch(() => {});
+                }}
+                hitSlop={6}
+                accessibilityLabel={`Directions to ${place.name}`}
+                testID={`compass-block-place-directions-${place.id}`}
+              >
+                <Navigation size={12} color={color.deep} />
+                <Text style={[s.planBtnText, { color: color.deep }]}>Directions</Text>
               </Pressable>
             ) : null}
             {place.recommendationToken ? (

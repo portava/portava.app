@@ -249,6 +249,18 @@ it('comparison with fewer than two coordinate rows renders no mini-map', async (
   expect(screen.queryByTestId('compass-block-compare-map')).toBeNull();
 });
 
+// ── 2c. Directions button — mirrors PlaceCard/PlaceDetailSheet coordinate guard ─
+
+it('Directions button appears on a chat place card when coordinates are present', async () => {
+  await render(<CompassChatBlocks blocks={[{ type: 'place_cards', places: [PLACE] }]} />);
+  expect(screen.getByTestId(`compass-block-place-directions-${PLACE.id}`)).toBeTruthy();
+});
+
+it('Directions button is hidden on a chat place card when coordinates are null', async () => {
+  await render(<CompassChatBlocks blocks={[{ type: 'place_cards', places: [PLACE_NO_COORDS] }]} />);
+  expect(screen.queryByTestId(`compass-block-place-directions-${PLACE_NO_COORDS.id}`)).toBeNull();
+});
+
 // ── 3. Plan button uses the confirmation-gated PlanPicker callback ────────────
 
 it('Plan button hands the real place to the PlanPicker callback', async () => {
