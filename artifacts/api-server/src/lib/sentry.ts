@@ -9,7 +9,7 @@
  * nothing is sent to the Sentry project.
  */
 
-import * as Sentry from "@sentry/node";
+import * as _Sentry from "@sentry/node";
 
 const dsn = process.env["SENTRY_DSN"];
 
@@ -18,13 +18,13 @@ if (dsn) {
   // Sentry.init() has already been called in the preload before Express loaded.
   // Detect that case and skip a second init so the instrumentation hooks are
   // not double-registered; just emit the startup log confirming it is active.
-  if (!Sentry.getClient()) {
+  if (!_Sentry.getClient()) {
     // Fallback: the --import sentry-preload.mjs did not share the same @sentry/node
     // module instance (e.g. the dist was stale or module resolution diverged).
     // Initialize here so error reporting still works, and suppress the
     // "express is not instrumented" warning — request context IS available via
     // setupExpressErrorHandler() registered in app.ts, just without OTel wrapping.
-    Sentry.init({
+    _Sentry.init({
       dsn,
       // Include the environment so events are bucketed correctly in the Sentry UI.
       environment: process.env["NODE_ENV"] ?? "development",
@@ -45,4 +45,8 @@ if (dsn) {
   console.info("[sentry] SENTRY_DSN not set — Sentry reporting is disabled");
 }
 
-export { Sentry };
+// Re-export through a plain mutable object so tests can stub individual
+// methods (e.g. captureMessage) without requiring loader-hook infrastructure.
+// In production this is functionally identical — all calls delegate to the
+// same function references that Sentry.init() bound to the global scope.
+export const Sentry: typeof _Sentry = { ..._Sentry } as unknown as typeof _Sentry;
