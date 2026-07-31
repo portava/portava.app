@@ -39,7 +39,7 @@ import { MediaQuickCreateSheet } from '../../src/components/media/MediaQuickCrea
 import { mediaEvents } from '../../src/lib/mediaEvents';
 import { color, shadow } from '../../src/theme/tokens';
 import { AppHeader, getOverlayHeaderTotalHeight } from '../../src/components/ui/AppHeader';
-import { useBottomInset } from '../../src/hooks/useBottomInset';
+import { useLayoverAwareBottomInset } from '../../src/hooks/useBottomInset';
 
 // ── Mode definitions ──────────────────────────────────────────────────────────
 
@@ -60,7 +60,7 @@ const ALL_MODES: ModeItem[] = [
 
 function MediaScreenInner() {
   const insets = useSafeAreaInsets();
-  const bottomInset = useBottomInset();
+  const bottomInset = useLayoverAwareBottomInset();
   const { isEnabled } = useFeatureFlags();
   const { selectedMode, setMode } = useMediaStore();
 

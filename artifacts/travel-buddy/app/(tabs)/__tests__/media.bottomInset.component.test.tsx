@@ -127,25 +127,26 @@ function collectBottomValues(node: any): number[] {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('Media tab — shell-level bottomInset when layover active', () => {
-  it('FAB bottom style reflects useBottomInset() ≥ 120 + 16 (iPhone 14, layover active)', async () => {
+  it('FAB bottom style reflects useLayoverAwareBottomInset() ≥ 155 + 16 (iPhone 14, layover active)', async () => {
     const { toJSON } = await render(<MediaScreen />);
     await act(async () => { await Promise.resolve(); });
 
     const bottoms = collectBottomValues(toJSON());
     expect(bottoms.length).toBeGreaterThan(0);
-    // FAB bottom = bottomInset + 16 = 130 + 16 = 146.
+    // FAB bottom = bottomInset + 16 = 168 + 16 = 184.
     // Subtract the fixed offset to recover the effective bottomInset.
     const maxBottom = Math.max(...bottoms);
     const effectiveInset = maxBottom - 16;
-    expect(effectiveInset).toBeGreaterThanOrEqual(MIN_CLEARANCE);
+    expect(effectiveInset).toBeGreaterThanOrEqual(155);
   });
 
-  it('FAB bottom value equals useBottomInset() + 16 (130 + 16 = 146 on iPhone 14)', async () => {
+  it('FAB bottom value equals useLayoverAwareBottomInset() + 16 (168 + 16 = 184 on iPhone 14)', async () => {
     const { toJSON } = await render(<MediaScreen />);
     await act(async () => { await Promise.resolve(); });
 
     const bottoms = collectBottomValues(toJSON());
-    const expected = (NAV_BAR_FILLER + IPHONE_BOTTOM) + 16; // 146
+    // 34 (insets.bottom) + 74 (pill offset) + 44 (pill height) + 16 (gap) + 16 (FAB margin) = 184
+    const expected = IPHONE_BOTTOM + 74 + 44 + 16 + 16; // 184
     expect(Math.max(...bottoms)).toBe(expected);
   });
 
@@ -160,11 +161,11 @@ describe('Media tab — shell-level bottomInset when layover active', () => {
 });
 
 describe('Media tab — inset computation constants', () => {
-  it('NAV_BAR_FILLER (96) + iPhone bottom (34) = 130 ≥ 120', () => {
-    expect(NAV_BAR_FILLER + IPHONE_BOTTOM).toBeGreaterThanOrEqual(MIN_CLEARANCE);
+  it('layover-active inset: iPhone bottom (34) + 74 + 44 + 16 = 168 ≥ 155', () => {
+    expect(IPHONE_BOTTOM + 74 + 44 + 16).toBeGreaterThanOrEqual(155);
   });
 
-  it('NAV_BAR_FILLER (96) + Android bottom (48) = 144 ≥ 120', () => {
-    expect(NAV_BAR_FILLER + ANDROID_BOTTOM).toBeGreaterThanOrEqual(MIN_CLEARANCE);
+  it('layover-active inset: Android bottom (48) + 74 + 44 + 16 = 182 ≥ 155', () => {
+    expect(ANDROID_BOTTOM + 74 + 44 + 16).toBeGreaterThanOrEqual(155);
   });
 });

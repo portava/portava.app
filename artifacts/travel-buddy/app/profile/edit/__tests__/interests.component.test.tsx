@@ -87,6 +87,7 @@ jest.mock('../../../../src/components/ui/KeyboardSafeView', () => {
 jest.mock('../../../../src/hooks/useBottomInset', () => ({
   PlainBottomFiller: () => null,
   useBottomInset: () => 0,
+  useLayoverAwareBottomInset: () => 0,
 }));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

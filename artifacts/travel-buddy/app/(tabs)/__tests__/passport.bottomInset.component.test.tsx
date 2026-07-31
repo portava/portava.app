@@ -302,23 +302,24 @@ describe('Passport tab — ScrollView contentContainerStyle.paddingBottom when l
     });
   });
 
-  it('ScrollView paddingBottom ≥ 120 (iPhone 14, layover active)', async () => {
+  it('ScrollView paddingBottom ≥ 155 (iPhone 14, layover active)', async () => {
     const { toJSON } = await render(<PassportScreen />);
     await act(async () => { await Promise.resolve(); });
 
     const paddings = collectPaddingBottoms(toJSON());
     expect(paddings.length).toBeGreaterThan(0);
     const max = Math.max(...paddings);
-    expect(max).toBeGreaterThanOrEqual(MIN_CLEARANCE);
+    expect(max).toBeGreaterThanOrEqual(155);
   });
 
-  it('ScrollView paddingBottom equals useBottomInset() value (130 on iPhone 14)', async () => {
+  it('ScrollView paddingBottom equals useLayoverAwareBottomInset() value (168 on iPhone 14)', async () => {
     const { toJSON } = await render(<PassportScreen />);
     await act(async () => { await Promise.resolve(); });
 
     const paddings = collectPaddingBottoms(toJSON());
     const max = Math.max(...paddings);
-    expect(max).toBe(NAV_BAR_FILLER + IPHONE_BOTTOM); // 130
+    // 34 (insets.bottom) + 74 (pill offset) + 44 (pill height) + 16 (gap) = 168
+    expect(max).toBe(IPHONE_BOTTOM + 74 + 44 + 16); // 168
   });
 
   it('ScrollView paddingBottom ≥ Android gesture nav height (48 dp)', async () => {
@@ -332,11 +333,11 @@ describe('Passport tab — ScrollView contentContainerStyle.paddingBottom when l
 });
 
 describe('Passport tab — inset computation constants', () => {
-  it('NAV_BAR_FILLER (96) + iPhone bottom (34) = 130 ≥ 120', () => {
-    expect(NAV_BAR_FILLER + IPHONE_BOTTOM).toBeGreaterThanOrEqual(MIN_CLEARANCE);
+  it('layover-active inset: iPhone bottom (34) + 74 + 44 + 16 = 168 ≥ 155', () => {
+    expect(IPHONE_BOTTOM + 74 + 44 + 16).toBeGreaterThanOrEqual(155);
   });
 
-  it('NAV_BAR_FILLER (96) + Android bottom (48) = 144 ≥ 120', () => {
-    expect(NAV_BAR_FILLER + ANDROID_BOTTOM).toBeGreaterThanOrEqual(MIN_CLEARANCE);
+  it('layover-active inset: Android bottom (48) + 74 + 44 + 16 = 182 ≥ 155', () => {
+    expect(ANDROID_BOTTOM + 74 + 44 + 16).toBeGreaterThanOrEqual(155);
   });
 });

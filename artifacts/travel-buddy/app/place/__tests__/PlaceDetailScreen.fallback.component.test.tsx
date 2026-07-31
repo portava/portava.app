@@ -121,6 +121,7 @@ jest.mock('../../../src/components/place/living/LivingDestinationPage.tsx', () =
 jest.mock('../../../src/hooks/useBottomInset.ts', () => ({
   PlainBottomFiller: () => null,
   useBottomInset:    () => 0,
+  useLayoverAwareBottomInset: () => 0,
 }));
 
 jest.mock('../../../src/services/collections.ts', () => ({

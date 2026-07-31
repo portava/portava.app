@@ -116,6 +116,7 @@ jest.mock('../../../src/hooks/useBottomInset', () => ({
   useStickyBarInset: () => ({ inset: 130, onBarLayout: () => {} }),
   useKeyboardVisible: () => false,
   useBottomInset: () => 130,
+  useLayoverAwareBottomInset: () => 130,
 }));
 
 // NOTE: intentional stub — not under test here.

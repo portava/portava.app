@@ -14,7 +14,7 @@ import { getTrendingHashtags, type TrendingHashtag } from '../../src/services/ha
 import type { DiscoveryAgeFilter } from '../../src/services/discovery';
 import type { Place } from '../../src/lib/location/placeTypes';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
-import { useBottomInset } from '../../src/hooks/useBottomInset';
+import { useLayoverAwareBottomInset } from '../../src/hooks/useBottomInset';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import type { DiscoveryCategory, DiscoveryPlace, DiscoveryContextMode, DiscoveryFilters } from '../../src/services/discovery';
 import { getDiscoveryCategoryCounts, getDiscoveryCategoryCountsBatch } from '../../src/services/discovery';
@@ -93,7 +93,7 @@ const CONTEXT_MODES: ContextModeItem[] = [
 
 export default function DiscoveryHub() {
   const insets = useSafeAreaInsets();
-  const bottomInset = useBottomInset();
+  const bottomInset = useLayoverAwareBottomInset();
   const { isAuthed } = useSession();
   const { isEnabled: isFlagEnabled } = useFeatureFlags();
   const { open: openPlanPicker } = usePlanPicker();

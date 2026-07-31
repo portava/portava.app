@@ -43,6 +43,7 @@ jest.mock('../../../src/hooks/useBottomInset', () => ({
   BOTTOM_BREATHING_ROOM: 24,
   useKeyboardVisible:    () => false,
   useBottomInset:        () => 100,
+  useLayoverAwareBottomInset: () => 100,
 }));
 
 // ── rentABuddy services ───────────────────────────────────────────────────────
