@@ -31,8 +31,11 @@ const DRY_RUN = process.env.SEED_DRY_RUN === "true";
 const url = process.env.SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 if (!url || !key) {
-  console.error("ERROR: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set.");
-  process.exit(1);
+  console.warn(
+    "WARNING: SUPABASE_URL and/or SUPABASE_SERVICE_ROLE_KEY are not set — " +
+      "skipping @portava account seeding. Run manually once credentials are available.",
+  );
+  process.exit(0);
 }
 
 const sc = createClient(url, key, { auth: { persistSession: false } });

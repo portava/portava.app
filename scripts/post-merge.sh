@@ -46,6 +46,8 @@ bash scripts/sync-standalone.sh --check-lockfile
 
 echo ""
 echo "=== 6/6: seed @portava official account (idempotent) ==="
+# The seeder exits 0 with a warning when SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY
+# are absent, so this step never blocks the pipeline in a fresh environment.
 ( cd artifacts/api-server && node --env-file-if-exists=.env --import tsx/esm src/scripts/seed-portava-account.ts )
 
 echo ""
