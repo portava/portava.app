@@ -227,7 +227,7 @@ TRANSLATION_PROVIDER = "openai"
 [userenv.development]
 
 [userenv.production]
-ALLOWED_ORIGINS = "https://portava.replit.app"
+ALLOWED_ORIGINS = "https://app.travel-buddy.io,https://www.travel-buddy.io,https://portava.replit.app"
 
 [nix]
 channel = "stable-25_05"
