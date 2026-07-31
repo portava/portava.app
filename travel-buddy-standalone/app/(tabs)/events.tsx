@@ -204,10 +204,26 @@ function EventsTabScreen() {
       listMyEvents(10),
     ]);
 
-    if (myRes.ok) setMyEvents(myRes.data?.events ?? []);
+    const rawTomorrow = tomorrowRes.ok ? (tomorrowRes.data?.events ?? []) : [];
+    const rawMain = mainRes.ok ? (mainRes.data?.events ?? []) : [];
 
-    if (mainRes.ok) setTodayEvents(mainRes.data?.events ?? []);
-    if (tomorrowRes.ok) setTomorrowEvents(tomorrowRes.data?.events ?? []);
+    // Dedup: when showing the default Upcoming/Tomorrow split, exclude tomorrow's
+    // events from the Upcoming set so each event appears only in the more-specific
+    // "Tomorrow" section.
+    const tomorrowIds = new Set(rawTomorrow.map((e) => e.id));
+    const dedupedMain = isPresetActive ? rawMain : rawMain.filter((e) => !tomorrowIds.has(e.id));
+
+    // Dedup: exclude any event already surfaced by a time-based section ("Upcoming"
+    // or "Tomorrow") from the "Your events" row, so a hosted/attending event that
+    // also falls in those windows only renders once.
+    const rawMy = myRes.ok ? (myRes.data?.events ?? []) : [];
+    const timeBasedIds = isPresetActive ? new Set<string>() : new Set([...tomorrowIds, ...dedupedMain.map((e) => e.id)]);
+    const dedupedMy = rawMy.filter((e) => !timeBasedIds.has(e.id));
+
+    if (myRes.ok) setMyEvents(dedupedMy);
+
+    if (mainRes.ok) setTodayEvents(dedupedMain);
+    if (tomorrowRes.ok) setTomorrowEvents(rawTomorrow);
     if (weekendRes.ok) setWeekendEvents(weekendRes.data?.events ?? []);
     if (followRes.ok) setFollowingEvents(followRes.data?.events ?? []);
     if (circleRes.ok) setCircleEvents(circleRes.data?.events ?? []);
