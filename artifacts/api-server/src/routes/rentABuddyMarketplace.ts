@@ -79,6 +79,7 @@ import { logger } from "../lib/logger.js";
 import { isNonNumericCoord } from "../lib/coords.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
+import { invalidateSuggestedCityCache } from "./rentABuddyRollout.js";
 import {
   calculateCompatibilityScore,
   rankBuddies,
@@ -632,6 +633,9 @@ router.post("/rent-a-buddy/me/available-now", async (req, res) => {
 
   if (error) return sendError(res, 'db_error', error.message);
 
+  // Invalidate the suggested-city cache — buddy availability just changed
+  invalidateSuggestedCityCache();
+
   // Notify waitlisted travelers
   notifyWaitlistedTravelers(svc, buddyProfile).catch(() => {});
 
@@ -651,6 +655,10 @@ router.delete("/rent-a-buddy/me/available-now", async (req, res) => {
     .eq("id", buddyProfile.id);
 
   if (error) return sendError(res, 'db_error', error.message);
+
+  // Invalidate the suggested-city cache — buddy availability just changed
+  invalidateSuggestedCityCache();
+
   res.json({ ok: true });
 });
 

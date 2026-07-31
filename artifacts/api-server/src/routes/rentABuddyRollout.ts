@@ -51,6 +51,26 @@ let _gcCache: any = null;
 let _gcCacheTs = 0;
 const GC_TTL_MS = 30_000;
 
+// ── Suggested-city cache (60s TTL) ────────────────────────────────────────────
+// Stores a full ranked snapshot of every public_mvp city with its live
+// available_now count, sorted descending. At read time each caller excludes
+// their own city and picks the first entry with count > 0 — so the N-parallel
+// DB queries only fire once per TTL window, and every caller still gets the
+// correct "best *other* city" without the cache ever returning their own city.
+
+interface RankedCityEntry {
+  city: string;
+  count: number;
+}
+
+let _scCache: RankedCityEntry[] | null = null;
+let _scCacheTs = 0;
+const SC_TTL_MS = 60_000;
+
+export function invalidateSuggestedCityCache(): void {
+  _scCacheTs = 0;
+}
+
 async function getGlobalControls(sc: any): Promise<any> {
   const now = Date.now();
   if (_gcCache && now - _gcCacheTs < GC_TTL_MS) return _gcCache;
@@ -1206,30 +1226,51 @@ router.get("/rent-buddy/launch-status", asyncHandler(async (req, res) => {
   let suggestedCityAvailableCount = 0;
 
   if (status === "public_mvp" && (availableNowCount ?? 0) === 0) {
-    const { data: publicCities } = await sc
-      .from("rent_buddy_city_rollouts")
-      .select("city")
-      .eq("status", "public_mvp")
-      .not("city", "ilike", trimmedCity);
+    const now = Date.now();
+    let ranked: RankedCityEntry[];
 
-    if (publicCities && (publicCities as any[]).length > 0) {
-      const counts = await Promise.all(
-        (publicCities as any[]).map(async (row: any) => {
-          const { count } = await sc
-            .from("rent_buddy_profiles")
-            .select("id", { count: "exact", head: true })
-            .eq("status", "active")
-            .eq("admin_status", "active")
-            .eq("available_now", true)
-            .ilike("city", row.city);
-          return { city: row.city as string, count: count ?? 0 };
-        }),
-      );
-      counts.sort((a, b) => b.count - a.count);
-      if (counts[0]?.count > 0) {
-        suggestedCity = counts[0].city;
-        suggestedCityAvailableCount = counts[0].count;
+    if (_scCache && now - _scCacheTs < SC_TTL_MS) {
+      // Cache hit — full ranked snapshot already populated; no DB queries needed
+      ranked = _scCache;
+    } else {
+      // Cache miss — query ALL public_mvp cities (no per-requester exclusion),
+      // then cache the full ranked list so every caller can derive their own
+      // "best other city" without re-running the N-parallel count queries.
+      const { data: publicCities } = await sc
+        .from("rent_buddy_city_rollouts")
+        .select("city")
+        .eq("status", "public_mvp");
+
+      if (publicCities && (publicCities as any[]).length > 0) {
+        const counts = await Promise.all(
+          (publicCities as any[]).map(async (row: any) => {
+            const { count } = await sc
+              .from("rent_buddy_profiles")
+              .select("id", { count: "exact", head: true })
+              .eq("status", "active")
+              .eq("admin_status", "active")
+              .eq("available_now", true)
+              .ilike("city", row.city);
+            return { city: row.city as string, count: count ?? 0 };
+          }),
+        );
+        counts.sort((a, b) => b.count - a.count);
+        ranked = counts;
+      } else {
+        ranked = [];
       }
+
+      _scCache = ranked;
+      _scCacheTs = now;
+    }
+
+    // Exclude the requesting city at read time (case-insensitive) so we never
+    // suggest the viewer's own city back to them.
+    const lowerCity = trimmedCity.toLowerCase();
+    const best = ranked.find((e) => e.city.toLowerCase() !== lowerCity && e.count > 0);
+    if (best) {
+      suggestedCity = best.city;
+      suggestedCityAvailableCount = best.count;
     }
   }
 

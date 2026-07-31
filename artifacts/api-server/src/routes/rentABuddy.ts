@@ -24,7 +24,7 @@ import { adjustBuddyCounter, syncFavoritesCount } from "../services/rentBuddy/Re
 import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js";
 import { endFairExposure } from "../compass/CompassFairExposureEngine.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
-import { checkRentBuddyAccess } from "./rentABuddyRollout.js";
+import { checkRentBuddyAccess, invalidateSuggestedCityCache } from "./rentABuddyRollout.js";
 import { haversineKm } from "../lib/canonicalLocations.js";
 import { isNonNumericCoord } from "../lib/coords.js";
 import { SEED_CITIES } from "../lib/popularCities.js";
@@ -3585,6 +3585,8 @@ router.patch("/rent-a-buddy/dashboard/availability/settings", async (req, res) =
   if (Object.keys(patch).length > 1) {
     const { error } = await serviceClient.from("rent_buddy_profiles").update(patch).eq("id", (bp as any).id);
     if (error) return sendError(res, "db_error", error.message);
+    // Invalidate the suggested-city cache when available_now changes
+    if (availableNow !== undefined) invalidateSuggestedCityCache();
   }
 
   if (hasBlockedInput) {
