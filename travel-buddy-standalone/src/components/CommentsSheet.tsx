@@ -282,11 +282,12 @@ function ReplyRow({
               <Text style={s.commentAuthor}>{primaryIdentityText({ name: reply.author.name, handle: reply.author.handle })}</Text>
             </Pressable>
             <Text style={s.commentTime}>{timeAgo(reply.createdAt)}</Text>
-            {isEdited && <Text style={s.editedLabel}>Edited</Text>}
+            {isEdited && <Text testID={`reply-edited-label-${reply.id}`} style={s.editedLabel}>Edited</Text>}
           </View>
           {isEditing ? (
             <View style={s.inlineEditWrap}>
               <TextInput
+                testID={`reply-edit-input-${reply.id}`}
                 style={s.inlineEditInput}
                 value={editText}
                 onChangeText={setEditText}
@@ -297,6 +298,7 @@ function ReplyRow({
               />
               <View style={s.inlineEditActions}>
                 <Pressable
+                  testID={`reply-save-btn-${reply.id}`}
                   onPress={handleEditSave}
                   disabled={editSaving || !editText.trim()}
                   style={[s.inlineEditBtn, s.inlineEditBtnSave]}
@@ -331,6 +333,7 @@ function ReplyRow({
           )}
           {isOwner && !isEditing && (
             <Pressable
+              testID={`reply-edit-btn-${reply.id}`}
               hitSlop={8}
               onPress={() => { setEditText(reply.body); setIsEditing(true); }}
               style={s.deleteBtn}
@@ -503,11 +506,12 @@ function CommentItem({
                 {comment.author.verified ? <VerifiedStamp size="sm" /> : null}
               </Pressable>
               <Text style={s.commentTime}>{timeAgo(comment.createdAt)}</Text>
-              {isEdited && <Text style={s.editedLabel}>Edited</Text>}
+              {isEdited && <Text testID={`comment-edited-label-${comment.id}`} style={s.editedLabel}>Edited</Text>}
             </View>
             {isEditing ? (
               <View style={s.inlineEditWrap}>
                 <TextInput
+                  testID={`comment-edit-input-${comment.id}`}
                   style={s.inlineEditInput}
                   value={editText}
                   onChangeText={setEditText}
@@ -518,6 +522,7 @@ function CommentItem({
                 />
                 <View style={s.inlineEditActions}>
                   <Pressable
+                    testID={`comment-save-btn-${comment.id}`}
                     onPress={handleEditSave}
                     disabled={editSaving || !editText.trim()}
                     style={[s.inlineEditBtn, s.inlineEditBtnSave]}
@@ -546,7 +551,7 @@ function CommentItem({
                     <Text style={s.replyBtnText}>Reply</Text>
                   </Pressable>
                   {isOwner && (
-                    <Pressable hitSlop={6} onPress={() => { setEditText(comment.body); setIsEditing(true); }} style={s.replyBtn}>
+                    <Pressable testID={`comment-edit-btn-${comment.id}`} hitSlop={6} onPress={() => { setEditText(comment.body); setIsEditing(true); }} style={s.replyBtn}>
                       <Text style={s.replyBtnText}>Edit</Text>
                     </Pressable>
                   )}
