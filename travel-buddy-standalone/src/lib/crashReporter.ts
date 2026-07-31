@@ -10,7 +10,7 @@
  * the Sentry dashboard without tailing server logs.
  */
 
-import * as Sentry from '@sentry/react-native';
+import { getSentry } from './sentry.ts';
 
 export interface CrashContext {
   userId?: string;
@@ -57,10 +57,11 @@ export function reportCrash(
 
   // Production: forward to Sentry so readable stack traces appear in the
   // Sentry dashboard (source maps uploaded via @sentry/react-native EAS hook).
-  Sentry.withScope(scope => {
+  const sentry = getSentry();
+  sentry?.withScope(scope => {
     if (context.userId) scope.setUser({ id: context.userId });
     scope.setExtra('componentStack', componentStack);
-    Sentry.captureException(error);
+    sentry.captureException(error);
   });
 
   // Production: also POST to the API server so crashes appear in server logs

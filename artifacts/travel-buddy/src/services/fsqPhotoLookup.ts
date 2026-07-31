@@ -8,16 +8,7 @@
  *
  * ATTRIBUTION: any surface showing FSQ photos must display "Powered by Foursquare".
  */
-// Lazy Sentry — avoids pulling react-native into node:test / esbuild transforms.
-// @sentry/react-native → react-native contains `typeof` syntax esbuild can't parse.
-function getSentry(): typeof import('@sentry/react-native') | null {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return require('@sentry/react-native') as typeof import('@sentry/react-native');
-  } catch {
-    return null;
-  }
-}
+import { getSentry } from '../lib/sentry.ts';
 
 const FSQ_SEARCH = 'https://places-api.foursquare.com/places/search';
 const FSQ_API_VERSION = '2025-06-17';

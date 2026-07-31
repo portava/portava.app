@@ -94,4 +94,53 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
+// ── Sentry static-import guard ────────────────────────────────────────────────
+// Direct `import * as Sentry from '@sentry/react-native'` in src/services/ or
+// src/lib/ causes an esbuild "Unexpected typeof" TransformError whenever that
+// file is imported by a node:test runner. Use getSentry() from src/lib/sentry.ts
+// instead (lazy require()-in-try/catch).
+//
+// Exclusions:
+//   src/__mocks__/ — mock module stubs are intentional static re-exports.
+//   src/lib/sentry.ts — the wrapper itself uses a type-only import for the
+//                       return annotation; no runtime static import.
+const SENTRY_GUARDED_ROOTS = ['src/services', 'src/lib'];
+const SENTRY_EXCLUSIONS = new Set(['src/__mocks__', 'src/lib/sentry.ts']);
+const STATIC_SENTRY_IMPORT = /^\s*import\s+.+from\s+['"]@sentry\/react-native['"]/;
+
+const sentryViolations = [];
+
+for (const root of SENTRY_GUARDED_ROOTS) {
+  for (const file of collectFiles(root)) {
+    // Skip explicitly excluded paths.
+    if (SENTRY_EXCLUSIONS.has(file)) continue;
+    const isUnderExcluded = [...SENTRY_EXCLUSIONS].some(
+      (ex) => file.startsWith(ex + '/') || file.startsWith(ex.replace(/\\/g, '/') + '/'),
+    );
+    if (isUnderExcluded) continue;
+
+    const src = readFileSync(file, 'utf8');
+    const lines = src.split('\n');
+    lines.forEach((line, idx) => {
+      if (STATIC_SENTRY_IMPORT.test(line)) {
+        sentryViolations.push(
+          `${file}:${idx + 1}: static '@sentry/react-native' import — use getSentry() from src/lib/sentry.ts instead`,
+        );
+      }
+    });
+  }
+}
+
+if (sentryViolations.length > 0) {
+  console.error(
+    `\nSentry static-import violations found (${sentryViolations.length}):\n` +
+      sentryViolations.map((v) => `  ${v}`).join('\n') +
+      '\n\nDirect static imports of @sentry/react-native in src/services/ or src/lib/ pull\n' +
+      'react-native into node:test via esbuild and cause an "Unexpected typeof" crash.\n' +
+      'Replace with: import { getSentry } from \'../lib/sentry.ts\'; (or the appropriate relative path)\n',
+  );
+  process.exit(1);
+}
+
 console.log(`lint:imports — no import-extension violations found in ${SCAN_ROOTS.join(', ')}.`);
+console.log(`lint:sentry  — no static @sentry/react-native imports found in guarded paths.`);
