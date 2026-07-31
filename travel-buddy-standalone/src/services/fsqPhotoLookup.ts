@@ -32,6 +32,15 @@ function cacheKey(name: string, lat: number | null, lng: number | null): string 
 }
 
 /**
+ * Returns true when `url` is served from a Foursquare photo CDN.
+ * Use this to decide whether to render "Powered by Foursquare" attribution
+ * next to a displayed image (required by FSQ API terms).
+ */
+export function isFoursquarePhotoUrl(url: string): boolean {
+  return url.includes('4sqi.net') || url.includes('foursquare.com/img');
+}
+
+/**
  * Look up the primary Foursquare photo for a place by name + coordinates.
  * Returns a photo URL string, or null when unavailable. Never throws.
  */

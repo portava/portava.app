@@ -5,6 +5,7 @@ import { StampIcon } from '../stamps/StampIcon.tsx';
 import type { DiscoveryPlace, PlaceLiveStatus } from '../../services/discovery.ts';
 import { getPlaceLiveStatusCached } from '../../services/discovery.ts';
 import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
+import { isFoursquarePhotoUrl } from '../../services/fsqPhotoLookup.ts';
 import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
 import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
 import { fallbackUriFor } from '../../lib/visuals/fallbackAssets.ts';
@@ -232,6 +233,13 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
           <StampIcon size={18} active={saved} />
         </Pressable>
       </View>
+
+      {/* FSQ photo credit — required by Foursquare API terms when an FSQ photo is displayed */}
+      {resolved?.url && isFoursquarePhotoUrl(resolved.url) && (
+        <Text style={styles.fsqCredit} testID="fsq-photo-credit" numberOfLines={1}>
+          Powered by Foursquare
+        </Text>
+      )}
 
       {/* Content row: accent strip + body */}
       <View style={styles.contentRow}>
@@ -683,6 +691,14 @@ const styles = StyleSheet.create({
     color: color.faint,
     fontSize: 9,
     marginTop: 2,
+  },
+  fsqCredit: {
+    ...t.stamp,
+    color: color.faint,
+    fontSize: 9,
+    textAlign: 'right',
+    paddingHorizontal: space.sm,
+    paddingTop: 2,
   },
   voteRow: {
     flexDirection: 'row',

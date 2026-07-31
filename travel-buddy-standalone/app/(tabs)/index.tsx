@@ -16,6 +16,7 @@ import { useFollowingFeed, FOCUS_REFETCH_TTL_MS } from '../../src/hooks/usePosts
 import { usePulseFeed } from '../../src/hooks/usePulseFeed';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useCircleFlag } from '../../src/hooks/useCircleFlag';
+import { getLaunchStatus } from '../../src/services/rentABuddy';
 import { fetchPreferences } from '../../src/services/intelligence';
 import { STATUS_LABEL } from '../../src/lib/availability';
 import type { PulseFilter, PulseFeedItem } from '../../src/types/models';
@@ -117,6 +118,20 @@ function Pulse() {
   const { locationState, openCityPicker } = useLocationContext();
   const activeCity = locationState.place.city ?? null;
   const activeCitySlug = (activeCity ?? '').toLowerCase().replace(/\s+/g, '-');
+
+  // Single source of truth for "are buddies actually available in this city" —
+  // same /rent-buddy/launch-status.availableNowCount field the Rent-a-Buddy
+  // landing page and its "Available Now" list read.
+  const [buddyAvailableCount, setBuddyAvailableCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (!rentBuddyEnabled || !activeCity) { setBuddyAvailableCount(null); return; }
+    let cancelled = false;
+    getLaunchStatus(activeCity).then((res) => {
+      if (cancelled) return;
+      setBuddyAvailableCount(res.ok ? (res.data.availableNowCount ?? 0) : 0);
+    }).catch(() => { if (!cancelled) setBuddyAvailableCount(0); });
+    return () => { cancelled = true; };
+  }, [rentBuddyEnabled, activeCity]);
 
   // Load learned category affinities from the preference engine so Pulse
   // ranking improves as the user interacts with recommendations.
@@ -387,8 +402,18 @@ function Pulse() {
           {/* Module header */}
           <View style={styles.buddyModuleHead}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.buddyModuleTitle}>Available Buddies in {activeCity ?? 'your city'}</Text>
-              <Text style={styles.buddyModuleCount}>Local buddies available</Text>
+              <Text style={styles.buddyModuleTitle}>
+                {buddyAvailableCount && buddyAvailableCount > 0
+                  ? `Available Buddies in ${activeCity ?? 'your city'}`
+                  : `Rent a Buddy in ${activeCity ?? 'your city'}`}
+              </Text>
+              <Text style={styles.buddyModuleCount}>
+                {buddyAvailableCount == null
+                  ? 'Checking availability…'
+                  : buddyAvailableCount > 0
+                    ? 'Local buddies available'
+                    : `No buddies online right now in ${activeCity} — check back soon`}
+              </Text>
             </View>
             <Pressable onPress={() => router.push('/(rent-a-buddy)/search' as any)}>
               <Text style={styles.buddyModuleViewAll}>View all →</Text>
