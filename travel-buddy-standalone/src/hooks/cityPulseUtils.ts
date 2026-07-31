@@ -108,6 +108,22 @@ export function todayBoundsIso(now = new Date()): { dateFrom: string; dateTo: st
   return { dateFrom: start.toISOString(), dateTo: end.toISOString() };
 }
 
+/**
+ * Sort events by start time, ascending. Events with a missing/unparseable
+ * `startAt` (NaN from `getTime()`) are pushed to the end of the list instead
+ * of relying on stable-sort "leave in place" behaviour — a NaN result from a
+ * comparator is treated as "equal" by `Array.prototype.sort`, which silently
+ * strands malformed-timestamp events near their original fetch-order
+ * position rather than a well-defined spot. Never mutates the input array.
+ */
+export function sortByStartAt<T extends { startAt: string }>(events: T[]): T[] {
+  const key = (e: T): number => {
+    const t = new Date(e.startAt).getTime();
+    return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
+  };
+  return [...events].sort((a, b) => key(a) - key(b));
+}
+
 export async function fetchCityEvents(
   base: string,
   token: string,
