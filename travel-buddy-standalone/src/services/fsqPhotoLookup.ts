@@ -58,7 +58,6 @@ export function _resetAuthFailedForTest(): void {
 }
 const FSQ_API_VERSION = '2025-06-17';
 const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-
 interface CacheEntry { url: string | null; ts: number }
 const photoCache = new Map<string, CacheEntry>();
 

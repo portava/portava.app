@@ -22,7 +22,8 @@ import { RsvpBar } from '../../src/components/RsvpBar';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
-import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
+import { useLayoverAwareBottomInset } from '../../src/hooks/useBottomInset';
+import { LayoverSessionProvider } from '../../src/context/LayoverSessionContext';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -140,9 +141,10 @@ function SectionHeader({ title, count }: { title: string; count: number }) {
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 
-export default function MeetupsScreen() {
+function MeetupsScreenInner() {
   const insets = useSafeAreaInsets();
   const navBarScrollHandler = useNavBarScrollHandler();
+  const bottomInset = useLayoverAwareBottomInset();
   const { isAuthed, configured } = useSession();
 
   const [meetups, setMeetups] = useState<MeetupListItem[]>([]);
@@ -228,7 +230,7 @@ export default function MeetupsScreen() {
         </View>
       ) : (
         <ScrollView
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[styles.list, { paddingBottom: bottomInset }]}
           refreshControl={
             <RefreshControl refreshing={loading} onRefresh={load} tintColor={color.signal} />
           }
@@ -248,7 +250,6 @@ export default function MeetupsScreen() {
               {past.map((m) => <MeetupRow key={m.id} meetup={m} />)}
             </>
           )}
-          <NavBarFiller />
         </ScrollView>
       )}
 
@@ -453,3 +454,16 @@ const styles = StyleSheet.create({
     gap: space.sm,
   },
 });
+
+/**
+ * LayoverSessionProvider owns a single getActiveLayoverSession call per focus
+ * event, so both the pill clearance (useLayoverAwareBottomInset) and any future
+ * pill-render on this screen share one fetch instead of each firing their own.
+ */
+export default function MeetupsScreen() {
+  return (
+    <LayoverSessionProvider>
+      <MeetupsScreenInner />
+    </LayoverSessionProvider>
+  );
+}
