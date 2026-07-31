@@ -60,6 +60,10 @@ args = "mobile-typecheck"
 task = "workflow.run"
 args = "check-write-path-columns"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "check-missing-live-columns"
+
 [[workflows.workflow]]
 name = "api-test"
 author = "agent"
@@ -188,6 +192,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "pnpm --filter @workspace/api-server run check:write-path-columns"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "check-missing-live-columns"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-server run check:missing-live-columns"
 
 [workflows.workflow.metadata]
 isValidation = true

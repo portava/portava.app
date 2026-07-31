@@ -142,6 +142,8 @@ function makeClient(userId: string) {
       upsert(data: any, _o?: any) { return this; },
       delete() { return this; },
       eq(col: string, val: any)       { this._filters.push(["eq",    col, val]);                        return this; },
+      neq(col: string, val: any)      { this._filters.push(["neq",   col, val]);                        return this; },
+      not(col: string, _op: string, val: any) { this._filters.push(["neq", col, val]);                  return this; },
       ilike(col: string, val: any)    { this._filters.push(["ilike", col, (val as string).trim()]);     return this; },
       // .not(col, op, val) negates the given filter.  The route uses
       // .not("city", "ilike", trimmedCity) to exclude the viewer's city when
