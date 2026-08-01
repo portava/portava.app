@@ -40,6 +40,28 @@ export const PORTAVA_LAYOUT_FILES = [
 `.trimStart();
 }
 
+/**
+ * portavaRoutes.ts variant that lets the caller control which layout paths are
+ * registered, so tests can omit specific layouts to exercise the drift check.
+ */
+function makeRoutesTsWithLayouts(layoutPaths: string[] = [], extraScreenPaths: string[] = []): string {
+  const layouts = layoutPaths
+    .map((p, i) => `  { key: 'layout-${i}', path: '${p}', title: 'Layout ${i}', navigator: 'Stack', description: 'Layout' },`)
+    .join('\n');
+  const screens = extraScreenPaths
+    .map((p) => `  { key: 'extra', path: '${p}', title: 'Extra', parent: null, icon: null, requiresAuth: false },`)
+    .join('\n');
+  return `
+export const PORTAVA_ROUTES = [
+  { key: 'root', path: 'index', title: 'Entry', parent: null, icon: null, requiresAuth: false },
+${screens}
+];
+export const PORTAVA_LAYOUT_FILES = [
+${layouts}
+];
+`.trimStart();
+}
+
 /** Run the guard script in the given cwd, capturing output. */
 function runGuard(cwd: string) {
   return spawnSync(process.execPath, [GUARD_SCRIPT], {
@@ -116,6 +138,69 @@ describe('check-route-registry.mjs', () => {
     assert.ok(
       output.includes('(tabs)/_layout'),
       `expected the missing layout path in the error output, got:\n${output}`,
+    );
+  });
+
+  it('exits 1 and reports Layout registry drift when the root _layout.tsx is absent from PORTAVA_LAYOUT_FILES', () => {
+    const tmp = makeTmpDir();
+    tmps.push(tmp);
+
+    // PORTAVA_LAYOUT_FILES is empty — root _layout is intentionally omitted
+    writeFileSync(
+      join(tmp, 'src', 'navigation', 'portavaRoutes.ts'),
+      makeRoutesTsWithLayouts(/* no layouts registered */),
+    );
+    writeFileSync(join(tmp, 'app', 'index.tsx'), 'export default function Index() { return null; }');
+    // Root layout present on disk but not in PORTAVA_LAYOUT_FILES
+    writeFileSync(join(tmp, 'app', '_layout.tsx'), 'export default function Layout() { return null; }');
+
+    const result = runGuard(tmp);
+
+    assert.equal(result.status, 1, 'expected exit code 1 for an unregistered root layout');
+
+    const output = (result.stderr ?? '') + (result.stdout ?? '');
+    assert.ok(
+      output.includes('Layout registry drift'),
+      `expected "Layout registry drift" in output, got:\n${output}`,
+    );
+    assert.ok(
+      output.includes('_layout'),
+      `expected the root layout path in the error output, got:\n${output}`,
+    );
+  });
+
+  it('exits 1 and reports Layout registry drift for a deeply-nested group layout absent from PORTAVA_LAYOUT_FILES', () => {
+    const tmp = makeTmpDir();
+    tmps.push(tmp);
+
+    // Register the root layout and a (tabs) layout, but not the (tabs)/(profile) sub-layout
+    writeFileSync(
+      join(tmp, 'src', 'navigation', 'portavaRoutes.ts'),
+      makeRoutesTsWithLayouts(['_layout', '(tabs)/_layout']),
+    );
+    writeFileSync(join(tmp, 'app', 'index.tsx'), 'export default function Index() { return null; }');
+    writeFileSync(join(tmp, 'app', '_layout.tsx'), 'export default function Layout() { return null; }');
+    mkdirSync(join(tmp, 'app', '(tabs)'), { recursive: true });
+    writeFileSync(join(tmp, 'app', '(tabs)', '_layout.tsx'), 'export default function TabsLayout() { return null; }');
+    // Deeply-nested group layout — not registered
+    mkdirSync(join(tmp, 'app', '(tabs)', '(profile)'), { recursive: true });
+    writeFileSync(
+      join(tmp, 'app', '(tabs)', '(profile)', '_layout.tsx'),
+      'export default function ProfileLayout() { return null; }',
+    );
+
+    const result = runGuard(tmp);
+
+    assert.equal(result.status, 1, 'expected exit code 1 for an unregistered deeply-nested group layout');
+
+    const output = (result.stderr ?? '') + (result.stdout ?? '');
+    assert.ok(
+      output.includes('Layout registry drift'),
+      `expected "Layout registry drift" in output, got:\n${output}`,
+    );
+    assert.ok(
+      output.includes('(tabs)/(profile)/_layout'),
+      `expected the deeply-nested layout path in the error output, got:\n${output}`,
     );
   });
 
