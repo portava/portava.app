@@ -44,8 +44,8 @@ type Tab = (typeof TABS)[number]['key'];
 interface RowProps {
   item: PlaceMismatchReport;
   tab: Tab;
-  onAccept: (id: string) => void;
-  onReject: (id: string) => void;
+  onAccept: (item: PlaceMismatchReport) => void;
+  onReject: (item: PlaceMismatchReport) => void;
   actioning: string | null;
 }
 
@@ -112,14 +112,14 @@ function ReportRow({ item, tab, onAccept, onReject, actioning }: RowProps) {
             <>
               <Pressable
                 style={[s.btn, s.btnAccept]}
-                onPress={() => onAccept(item.id)}
+                onPress={() => onAccept(item)}
                 accessibilityLabel="Accept report"
               >
                 <Text style={s.btnAcceptText}>Accept</Text>
               </Pressable>
               <Pressable
                 style={[s.btn, s.btnReject]}
-                onPress={() => onReject(item.id)}
+                onPress={() => onReject(item)}
                 accessibilityLabel="Reject report"
               >
                 <Text style={s.btnRejectText}>Reject</Text>
@@ -197,12 +197,30 @@ export default function PlaceMismatchReportsScreen() {
   // ── Actions ───────────────────────────────────────────────────────────────────
 
   const handleAction = useCallback(
-    async (reportId: string, action: 'accept' | 'reject') => {
+    async (report: PlaceMismatchReport, action: 'accept' | 'reject') => {
+      const reportId = report.id;
       const label = action === 'accept' ? 'accept' : 'reject';
-      const message =
+
+      const postSnippet = report.post_content
+        ? `"${report.post_content.slice(0, 60)}${report.post_content.length > 60 ? '…' : ''}"`
+        : null;
+      const placeLabel = report.place_name ?? null;
+
+      const contextLine =
+        postSnippet && placeLabel
+          ? `Post: ${postSnippet}\nPlace: ${placeLabel}\n\n`
+          : postSnippet
+          ? `Post: ${postSnippet}\n\n`
+          : placeLabel
+          ? `Place: ${placeLabel}\n\n`
+          : '';
+
+      const actionDetail =
         action === 'accept'
           ? "This will clear the post\u2019s place assignment so it can be re-resolved automatically."
           : 'The report will be closed with no change to the post.';
+
+      const message = `${contextLine}${actionDetail}`;
 
       Alert.alert(
         `${label.charAt(0).toUpperCase() + label.slice(1)} report?`,
@@ -297,8 +315,8 @@ export default function PlaceMismatchReportsScreen() {
             <ReportRow
               item={item}
               tab={tab}
-              onAccept={(id) => handleAction(id, 'accept')}
-              onReject={(id) => handleAction(id, 'reject')}
+              onAccept={(item) => handleAction(item, 'accept')}
+              onReject={(item) => handleAction(item, 'reject')}
               actioning={actioning}
             />
           )}
