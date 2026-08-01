@@ -3,9 +3,9 @@
  *
  * The primary goal is to confirm that the lucide-react-native Proxy mock
  * correctly handles icon names relevant to PostEngagementBar.  PostEngagementBar
- * now renders Smile, MessageCircle (and uses StampButton, which has its own
+ * now renders Smile, MessageCircle, and Bookmark (and uses StampButton, which has its own
  * internal icon rendering) — none of which appear in any other component test
- * assertion.
+ * assertion. Bookmark only renders when saveCount > 0 and is covered by its own test below.
  *
  * By intentionally NOT providing an inline jest.mock('lucide-react-native', …)
  * override, these tests rely on the file-level Proxy in
@@ -112,5 +112,20 @@ describe('PostEngagementBar — lucide Proxy mock coverage', () => {
     // genuinely being absent produces a null result, not a false positive.
     const { queryByTestId } = await renderBar({ canComment: false });
     await waitFor(() => expect(queryByTestId('icon-MessageCircle')).toBeNull());
+  });
+
+  it('renders icon-Bookmark when saveCount is positive', async () => {
+    // Bookmark is a third lucide icon in PostEngagementBar, rendered conditionally
+    // when saveCount > 0. A separate test is needed because the default renderBar
+    // fixture uses saveCount=0 (no Bookmark). Confirms the Proxy's get-trap cache
+    // resolves a third distinct icon name without a stale-entry or collision bug.
+    const { getByTestId } = await renderBar({ saveCount: 1 });
+    await waitFor(() => expect(getByTestId('icon-Bookmark')).toBeTruthy());
+  });
+
+  it('does not render icon-Bookmark when saveCount is zero', async () => {
+    // Confirms the Bookmark assertion above is sensitive to render conditions.
+    const { queryByTestId } = await renderBar({ saveCount: 0 });
+    await waitFor(() => expect(queryByTestId('icon-Bookmark')).toBeNull());
   });
 });
