@@ -114,90 +114,91 @@ const SKIP_TABLES = new Set<string>([
 //
 // Burn this list down — every entry is a hole in the check.
 const UNRESOLVED_ALLOWLIST = new Map<string, number>([
-  ["src/routes/admin.ts|select|select list not statically resolvable", 2],
+  // ── Dynamic table names (adminGeocode — runtime table dispatch) ───────────
   ["src/routes/adminGeocode.ts|select|dynamic table name", 2],
   ["src/routes/adminGeocode.ts|update|dynamic table name", 2],
   ["src/routes/adminGeocode.ts|upsert|dynamic table name", 2],
-  ["src/routes/airport.ts|select|select list not statically resolvable", 2],
+
+  // ── Insert/upsert payloads built at runtime ───────────────────────────────
   ["src/routes/circle.ts|upsert|payload not statically resolvable", 1],
-  ["src/routes/compass.ts|select|select list not statically resolvable", 4],
   // 3 sites: feed-section registration + the two /compass/ask uiBlock
-  // registration upserts (chat recommendation tokens) — row arrays are built
-  // dynamically from RecommendationRow, columns verified by the feed paths.
+  // registration upserts (chat recommendation tokens) — row arrays built
+  // dynamically from RecommendationRow; columns verified by the feed paths.
   ["src/routes/compass.ts|upsert|payload not statically resolvable", 3],
   ["src/routes/compass.ts|upsert|payload partially resolvable", 2],
-  ["src/routes/events.ts|select|select list not statically resolvable", 2],
-  ["src/routes/follows.ts|select|select list not statically resolvable", 6],
-  ["src/routes/friends.ts|select|select list not statically resolvable", 4],
-  ["src/routes/geofence.ts|select|select list not statically resolvable", 1],
-  ["src/routes/groupChat.ts|select|select list not statically resolvable", 1],
+  // E2EE key-package upload — payload built from a dynamic array of base64 strings.
+  ["src/routes/keyPackages.ts|insert|payload not statically resolvable", 1],
+  // mediaFeed impression logging — upsert row array built at runtime.
+  ["src/routes/mediaFeed.ts|insert|payload not statically resolvable", 1],
   ["src/routes/meetups.ts|insert|payload not statically resolvable", 2],
   ["src/routes/memories.ts|insert|payload not statically resolvable", 2],
-  ["src/routes/memories.ts|select|select list not statically resolvable", 5],
-  ["src/routes/messaging.ts|select|dynamic table name", 1],
-  ["src/routes/messaging.ts|select|select list not statically resolvable", 2],
-  ["src/routes/messaging.ts|update|payload partially resolvable", 1],
-  ["src/routes/messaging.ts|upsert|payload partially resolvable", 1],
-  ["src/routes/passport.ts|select|select list not statically resolvable", 10],
-  // post_event_links is a new join table (migration 20260731_post_event_links.sql);
-  // the insert uses `as any` cast to avoid database.types.ts drift until types are regenerated.
-  ["src/routes/postcards.ts|insert|dynamic table name", 2],
-  ["src/routes/postcards.ts|select|select list not statically resolvable", 3],
-  ["src/routes/posts.ts|select|select list not statically resolvable", 14],
-  ["src/routes/profile.ts|select|select list not statically resolvable", 4],
-  ["src/routes/profile.ts|upsert|payload partially resolvable", 1],
-  ["src/routes/pulse.ts|select|select list not statically resolvable", 1],
-  // Dynamic array built from AI extraction output — columns verified by the surrounding route logic.
-  ["src/routes/tripReservations.ts|insert|payload not statically resolvable", 1],
   ["src/routes/rentABuddy.ts|insert|payload not statically resolvable", 1],
-  ["src/routes/rentABuddy.ts|select|select list not statically resolvable", 4],
-  ["src/routes/rentABuddy.ts|update|payload partially resolvable", 1],
   ["src/routes/rentABuddyMarketplace.ts|insert|payload not statically resolvable", 1],
   ["src/routes/rentABuddyMarketplace.ts|upsert|payload not statically resolvable", 1],
-  ["src/routes/rentABuddySpec.ts|select|select list not statically resolvable", 2],
   ["src/routes/rentABuddySpec.ts|upsert|payload not statically resolvable", 2],
-  ["src/routes/requests.ts|select|select list not statically resolvable", 1],
+  // Dynamic array built from AI extraction output — columns verified by the surrounding route logic.
+  ["src/routes/tripReservations.ts|insert|payload not statically resolvable", 1],
   ["src/routes/routePlan.ts|insert|payload not statically resolvable", 2],
-  // PENDING_SELECT and HISTORY_SELECT are const string variables — the script cannot
-  // follow variable references. All columns are verified against the generated_visuals
-  // migration (0194_generated_visuals.sql).
-  // adminFeatured: two multi-line string-concatenation selects (posts shortlist
-  // query + portava_featured join). Columns verified against live schema / migration.
-  ["src/routes/adminFeatured.ts|select|select list not statically resolvable", 2],
-  ["src/routes/adminVisuals.ts|select|select list not statically resolvable", 2],
-  ["src/routes/stampCatalog.ts|select|select list not statically resolvable", 4],
   ["src/routes/stampShowcase.ts|insert|payload not statically resolvable", 1],
-  ["src/routes/stampShowcase.ts|select|select list not statically resolvable", 1],
-  ["src/routes/stamps.ts|select|select list not statically resolvable", 11],
-  ["src/services/passport/UnifiedStampService.ts|select|select list not statically resolvable", 1],
-  ["src/routes/stories.ts|select|select list not statically resolvable", 3],
   ["src/routes/telegraphChat.ts|insert|payload not statically resolvable", 1],
   ["src/routes/telegraphChat.ts|update|payload not statically resolvable", 1],
   ["src/routes/trips-expansion.ts|insert|payload not statically resolvable", 1],
   ["src/routes/trips.ts|insert|payload not statically resolvable", 1],
-  ["src/routes/trips.ts|select|select list not statically resolvable", 3],
-  ["src/routes/trust-admin.ts|update|payload partially resolvable", 1],
   ["src/services/groupChatSync.ts|upsert|payload not statically resolvable", 2],
-  ["src/services/hiddenGems/HiddenGemService.ts|select|select list not statically resolvable", 6],
   ["src/services/hiddenGems/HiddenGemService.ts|update|payload not statically resolvable", 2],
-  ["src/services/notifications/NotificationPreferenceService.ts|upsert|payload partially resolvable", 1],
-  ["src/services/rentBuddy/ReliabilityCounters.ts|select|select list not statically resolvable", 1],
-  ["src/services/rentBuddy/ReliabilityCounters.ts|update|payload partially resolvable", 1],
-  ["src/services/safeReturn/SafeReturnService.ts|insert|payload not statically resolvable", 1],
-  ["src/services/trust/TrustAdminService.ts|upsert|payload partially resolvable", 1],
-  ["src/services/trust/TrustEventService.ts|select|select list not statically resolvable", 1],
-  // E2EE key-package upload — payload built from a dynamic array of base64 strings.
-  ["src/routes/keyPackages.ts|insert|payload not statically resolvable", 1],
-  // mediaFeed: three select sites compose column-constant strings (FEED_POST_COLUMNS /
-  // POST_MEDIA_COLUMNS / PROFILE_COLUMNS for Watch, GRID_POST_COLUMNS / GRID_MEDIA_COLUMNS
-  // for Grid); insert payload in impression logging is an array built at runtime.
-  // All columns verified against live schema.
-  ["src/routes/mediaFeed.ts|insert|payload not statically resolvable", 1],
-  ["src/routes/mediaFeed.ts|select|select list not statically resolvable", 7],
-  // MediaFeedRankingService: storeRankingSnapshots builds the upsert row array dynamically
-  // (rows array built at call time with a variable-length ranked list).
+  // MediaFeedRankingService: storeRankingSnapshots builds the upsert row array dynamically.
   // Columns: viewer_id, item_id, surface, session_id, position, final_score, reason_codes, served_at.
   ["src/services/ranking/MediaFeedRankingService.ts|upsert|payload not statically resolvable", 1],
+  ["src/services/safeReturn/SafeReturnService.ts|insert|payload not statically resolvable", 1],
+
+  // ── Partially-resolvable payloads (static keys + dynamic spread/computed) ─
+  ["src/routes/messaging.ts|update|payload partially resolvable", 1],
+  ["src/routes/messaging.ts|upsert|payload partially resolvable", 1],
+  ["src/routes/profile.ts|upsert|payload partially resolvable", 1],
+  ["src/routes/rentABuddy.ts|update|payload partially resolvable", 1],
+  ["src/routes/trust-admin.ts|update|payload partially resolvable", 1],
+  ["src/services/notifications/NotificationPreferenceService.ts|upsert|payload partially resolvable", 1],
+  ["src/services/rentBuddy/ReliabilityCounters.ts|update|payload partially resolvable", 1],
+  ["src/services/trust/TrustAdminService.ts|upsert|payload partially resolvable", 1],
+
+  // ── Dynamic table name (messaging — dispatches to per-channel tables) ─────
+  ["src/routes/messaging.ts|select|dynamic table name", 1],
+
+  // ── Dynamic insert table name ─────────────────────────────────────────────
+  // post_event_links is a new join table (migration 20260731_post_event_links.sql);
+  // the insert uses `as any` cast to avoid database.types.ts drift until types regenerated.
+  ["src/routes/postcards.ts|insert|dynamic table name", 2],
+
+  // ── Partially-resolvable select lists (static prefix + dynamic suffix) ────
+  //
+  // These sites have at least one statically-known column set (now audited
+  // against the live schema) but also a dynamic part that cannot be resolved
+  // (e.g. `+ await stampOverlayCol(sc)` or `+ await artCol(sc)` inside an
+  // embedded resource — embedded columns are skipped by parseSelectList so
+  // artCol drift is harmless to the checker regardless).
+  ["src/routes/mediaFeed.ts|select|payload partially resolvable", 3],
+  ["src/routes/passport.ts|select|payload partially resolvable", 2],
+  // 4 sites: POST_MEDIA_FEED_COLUMNS + await stampOverlayCol (×3) and
+  // "id, media_type, …" + await stampOverlayCol (×1).  The stamp_overlay
+  // column is additive — its presence in the DB is verified separately.
+  // 2 additional sites use OWNER_POSTCARD_COLUMNS (partially resolved).
+  ["src/routes/posts.ts|select|payload partially resolvable", 6],
+  ["src/routes/pulse.ts|select|payload partially resolvable", 1],
+  // rentABuddy: select lists that mix static columns with awaited sub-selects.
+  ["src/routes/rentABuddy.ts|select|payload partially resolvable", 4],
+  // stamps: OWNER_STAMP_COLS / PUBLIC_STAMP_COLS prefix is now audited; the
+  // stamp_definitions embedded resource + artCol suffix are skipped/dynamic.
+  ["src/routes/stamps.ts|select|payload partially resolvable", 9],
+  ["src/services/hiddenGems/HiddenGemService.ts|select|payload partially resolvable", 1],
+
+  // ── Truly unresolvable select lists (dynamic variable / runtime value) ────
+  // stamps.ts: one select via runtime `colSet` variable (owner vs public branch).
+  ["src/routes/stamps.ts|select|select list not statically resolvable", 1],
+  // HiddenGemService: 5 sites use select lists composed at runtime (dynamic
+  // field arrays keyed by gem tier). Columns verified by the surrounding service logic.
+  ["src/services/hiddenGems/HiddenGemService.ts|select|select list not statically resolvable", 5],
+  // ReliabilityCounters: one select list built at runtime from a scoring formula.
+  ["src/services/rentBuddy/ReliabilityCounters.ts|select|select list not statically resolvable", 1],
 ]);
 
 // ── Read-path baseline ────────────────────────────────────────────────────────
@@ -210,7 +211,13 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
 // missing migration or fix the select list, then delete the entry.
 // Applies to `select` sites only — never to writes.
 const READ_BASELINE = new Set<string>([
-  // (none currently — the 2026-07-21 baseline was fully burned down)
+  // rent_buddy_profiles.policy_accepted — column is read by rentABuddySpec.ts
+  // (application-setup checklist + policy-ack mapping) but the migration that
+  // adds it has not yet been applied live.  This was previously hidden inside
+  // the rentABuddySpec|select|select list not statically resolvable allowlist
+  // entry; exposed by the 2026-08-01 resolver upgrade.  Apply the migration
+  // then delete this entry.
+  "rent_buddy_profiles.policy_accepted",
 ]);
 
 // Tables read via `.select()` that do not exist live at all (same baseline
@@ -474,6 +481,93 @@ function findInitializer(
 }
 
 /**
+ * Resolve a `.select(expr)` argument to its string text.
+ *
+ * Handles:
+ *  - string literals and no-substitution template literals → fully resolved
+ *  - identifiers whose same-file const initializer is a resolvable string
+ *  - binary `+` expressions — concatenates both sides; marks unresolved if
+ *    either side could not be statically resolved (e.g. an `await` call)
+ *  - template expressions with `${}` substitutions — extracts the literal
+ *    head/span text and marks unresolved (substitutions are unknowns)
+ *
+ * Returns null when the expression is fundamentally unresolvable (not a
+ * string at all — e.g. a function call result stored in a variable whose
+ * initializer is not a string literal).
+ */
+function resolveSelectString(
+  expr: ts.Expression,
+  sf: ts.SourceFile,
+  usePos: number,
+  depth = 0,
+): { text: string; unresolved: boolean } | null {
+  if (depth > 6) return null;
+
+  // Strip wrapping parens / type assertions
+  if (
+    ts.isParenthesizedExpression(expr) ||
+    ts.isAsExpression(expr) ||
+    ts.isNonNullExpression(expr) ||
+    (ts.isSatisfiesExpression?.(expr) ?? false)
+  ) {
+    return resolveSelectString(
+      (expr as ts.ParenthesizedExpression).expression,
+      sf,
+      usePos,
+      depth,
+    );
+  }
+
+  // Plain string literal or no-substitution template — fully static
+  if (ts.isStringLiteralLike(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) {
+    return { text: expr.text, unresolved: false };
+  }
+
+  // Identifier → try to resolve to its same-file const initializer
+  if (ts.isIdentifier(expr)) {
+    const init = findInitializer(expr.text, sf, usePos);
+    if (init) return resolveSelectString(init, sf, usePos, depth + 1);
+    return null;
+  }
+
+  // Binary `+` — recurse on both sides, concatenate whatever we can resolve
+  if (
+    ts.isBinaryExpression(expr) &&
+    expr.operatorToken.kind === ts.SyntaxKind.PlusToken
+  ) {
+    const left = resolveSelectString(expr.left, sf, usePos, depth + 1);
+    const right = resolveSelectString(expr.right, sf, usePos, depth + 1);
+    if (!left && !right) return null;
+    return {
+      text: (left?.text ?? "") + (right?.text ?? ""),
+      unresolved: !left || !right || left.unresolved || right.unresolved,
+    };
+  }
+
+  // Template expression with ${}  substitutions — extract literal spans
+  if (ts.isTemplateExpression(expr)) {
+    let text = expr.head.text;
+    let unresolved = false;
+    for (const span of expr.templateSpans) {
+      const sub = resolveSelectString(span.expression, sf, usePos, depth + 1);
+      if (sub) {
+        text += sub.text;
+        unresolved = unresolved || sub.unresolved;
+      } else {
+        // Unknown substitution — leave a placeholder that the embedded-resource
+        // parser will skip (it contains a paren, guaranteeing the "(" skip rule)
+        text += "(__unresolved__)";
+        unresolved = true;
+      }
+      text += span.literal.text;
+    }
+    return { text, unresolved };
+  }
+
+  return null;
+}
+
+/**
  * Parse a PostgREST select list into base column names.
  *
  * Splits on TOP-LEVEL commas (respecting parentheses so embedded resources
@@ -581,28 +675,31 @@ function scanFile(path: string): void {
         const arg = node.arguments[0];
         if (arg === undefined) {
           // `.select()` → `*` — nothing to check.
-        } else if (
-          ts.isStringLiteralLike(arg) ||
-          ts.isNoSubstitutionTemplateLiteral(arg)
-        ) {
-          const { columns } = parseSelectList(arg.text);
-          if (columns.length > 0) {
-            sites.push({
+        } else {
+          const resolved = resolveSelectString(arg, sf, node.getStart(sf));
+          if (resolved) {
+            const { columns } = parseSelectList(resolved.text);
+            if (columns.length > 0 || !resolved.unresolved) {
+              sites.push({
+                file: rel,
+                line,
+                table,
+                method: "select",
+                columns: [...new Set(columns)],
+                unresolved: resolved.unresolved,
+              });
+            } else {
+              // Resolved to something but extracted 0 columns (e.g. pure `*`
+              // or only embedded resources) — no columns to audit; skip.
+            }
+          } else {
+            skipped.push({
               file: rel,
               line,
-              table,
               method: "select",
-              columns: [...new Set(columns)],
-              unresolved: false,
+              reason: "select list not statically resolvable",
             });
           }
-        } else {
-          skipped.push({
-            file: rel,
-            line,
-            method: "select",
-            reason: "select list not statically resolvable",
-          });
         }
       }
     }
