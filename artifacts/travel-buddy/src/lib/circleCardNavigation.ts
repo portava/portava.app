@@ -23,8 +23,10 @@ export type CircleCardNavAction =
       contextId: string;
       contextLabel: string;
     }
-  /** Trip/event thread where membership is unknown or false: show informational alert. */
+  /** Trip/event thread where membership is confirmed false: show informational alert. */
   | { action: 'alert'; title: string; message: string }
+  /** Trip/event thread where membership is still being checked (null/undefined): wait silently. */
+  | { action: 'loading' }
   /** No Circle context (direct thread, etc.): do nothing. */
   | { action: 'noop' };
 
@@ -36,7 +38,7 @@ export type CircleCardNavAction =
  * @param threadType     The type string of the current thread ('circle' | 'trip' | 'event' | …).
  * @param contextId      The trip / event id associated with the thread (if any).
  * @param isCircleMember Whether the current viewer is a Circle member for this thread's context.
- *                       `null` means the membership check is still loading (fail-closed → alert).
+ *                       `null` means the membership check is still loading (→ silent noop).
  * @param contextLabel   Display label for the context (e.g. destination city or thread title).
  */
 export function resolveCircleCardNav(
@@ -67,7 +69,12 @@ export function resolveCircleCardNav(
     };
   }
 
-  // Membership unknown (null / undefined) or explicitly false → fail-closed alert.
+  // Membership check still in-flight (null / undefined) → wait silently, do not alert.
+  if (isCircleMember == null) {
+    return { action: 'loading' };
+  }
+
+  // Membership explicitly false → fail-closed alert.
   return {
     action: 'alert',
     title: 'Circle members only',

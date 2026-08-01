@@ -1201,7 +1201,7 @@ export default function TelegraphThread() {
     } else if (nav.action === 'alert') {
       Alert.alert(nav.title, nav.message);
     }
-    // noop: do nothing
+    // 'loading' and 'noop': do nothing
   }, [threadType, contextId, isCircleMember, tripData, title]);
 
   async function toggleHideAiSuggestions() {
