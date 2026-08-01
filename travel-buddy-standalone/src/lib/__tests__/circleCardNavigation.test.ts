@@ -108,18 +108,8 @@ describe('resolveCircleCardNav — event thread, viewer is a member', () => {
 // ── trip/event thread where viewer is NOT a member (fail-closed) ──────────────
 
 describe('resolveCircleCardNav — trip/event thread, viewer not a member', () => {
-  it('returns alert when isCircleMember is false', () => {
+  it('returns alert when isCircleMember is false (confirmed non-member)', () => {
     const result = resolveCircleCardNav('trip', 'trip-abc', false, 'Bali');
-    assert.equal(result.action, 'alert');
-  });
-
-  it('returns alert when isCircleMember is null (still loading)', () => {
-    const result = resolveCircleCardNav('trip', 'trip-abc', null, 'Bali');
-    assert.equal(result.action, 'alert');
-  });
-
-  it('returns alert when isCircleMember is undefined', () => {
-    const result = resolveCircleCardNav('event', 'evt-1', undefined, 'Fest');
     assert.equal(result.action, 'alert');
   });
 
@@ -133,6 +123,25 @@ describe('resolveCircleCardNav — trip/event thread, viewer not a member', () =
     const result = resolveCircleCardNav('trip', 'trip-abc', false, 'Bali');
     assert.ok(result.action === 'alert');
     assert.ok(result.message.length > 0);
+  });
+});
+
+// ── trip/event thread where membership is still loading ───────────────────────
+
+describe('resolveCircleCardNav — trip/event thread, membership still loading', () => {
+  it('returns loading (not alert) when isCircleMember is null', () => {
+    const result = resolveCircleCardNav('trip', 'trip-abc', null, 'Bali');
+    assert.equal(result.action, 'loading');
+  });
+
+  it('returns loading (not alert) when isCircleMember is undefined', () => {
+    const result = resolveCircleCardNav('event', 'evt-1', undefined, 'Fest');
+    assert.equal(result.action, 'loading');
+  });
+
+  it('returns loading for an event thread with null membership', () => {
+    const result = resolveCircleCardNav('event', 'evt-99', null, 'Jazz Night');
+    assert.equal(result.action, 'loading');
   });
 });
 
