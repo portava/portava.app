@@ -306,8 +306,8 @@ export function AppHeader({
   return (
     <>
       <View
-        pointerEvents="box-none"
         style={[s.overlayOuter, { paddingTop: Math.max(insets.top, 54), backgroundColor: overlayBg }]}
+        pointerEvents="box-none"
       >
         <View style={s.bar}>
           {centeredTitle('#fff')}
