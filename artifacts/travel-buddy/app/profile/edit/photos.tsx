@@ -1,14 +1,14 @@
 /**
  * Photos & Appearance — avatar + cover with immediate save flow.
  *
- * Picking is now delegated to useMediaComposer (profileAvatar / profileCover
+ * Picking is delegated to useMediaComposer (profileAvatar / profileCover
  * policies) so that the denied→Settings path, iOS limited-library prompt, and
  * allowsEditing / aspect-ratio crop are handled by the shared kit.
  *
- * pickAvatar / pickCover are replaced by avatarComposer.openSheet() and
- * coverComposer.openSheet(). Two useEffects sync the picked item's URI into
- * local state so the existing handleSave flow (renderAvatarImage → upload →
- * updateMyProfile) is unchanged.
+ * Sheet visibility is managed locally here because the trigger is the whole
+ * avatar / cover tap area, not a MediaPickerButton. Two useEffects sync the
+ * picked item's URI into local state so the existing handleSave flow
+ * (renderAvatarImage → upload → updateMyProfile) is unchanged.
  *
  * NOTE: UpdateProfileInput.avatarUrl / coverUrl are typed `string` (not nullable),
  * so a "Remove" action is not supported by the service and is omitted.
@@ -36,6 +36,9 @@ type PhotoPhase = 'idle' | 'optimizing' | 'uploading';
 
 export default function PhotosScreen() {
   const [loading, setLoading] = useState(true);
+
+  const [avatarSheetVisible, setAvatarSheetVisible] = useState(false);
+  const [coverSheetVisible, setCoverSheetVisible] = useState(false);
 
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [coverUri, setCoverUri] = useState<string | null>(null);
@@ -205,7 +208,7 @@ export default function PhotosScreen() {
       {saveError ? <FieldHint tone="error">{saveError}</FieldHint> : null}
 
       <SettingsSection title="Cover Photo">
-        <Pressable style={st.coverWrap} onPress={coverComposer.openSheet} disabled={busy}>
+        <Pressable style={st.coverWrap} onPress={() => setCoverSheetVisible(true)} disabled={busy}>
           {coverSource ? (
             <Image source={{ uri: coverSource }} style={st.coverImage} />
           ) : (
@@ -220,7 +223,7 @@ export default function PhotosScreen() {
 
       <SettingsSection title="Profile Photo">
         <View style={st.avatarSection}>
-          <Pressable style={st.avatarWrap} onPress={avatarComposer.openSheet} disabled={busy}>
+          <Pressable style={st.avatarWrap} onPress={() => setAvatarSheetVisible(true)} disabled={busy}>
             {avatarSource ? (
               <Image source={{ uri: avatarSource }} style={st.avatar} />
             ) : (
@@ -243,25 +246,23 @@ export default function PhotosScreen() {
         </View>
       ) : null}
 
-      {/* Pickers — rendered unconditionally as Modals so openSheet() always
-          finds a mounted sheet. The profileAvatar/Cover policies supply
-          allowsEditing=true and the correct aspect ratio automatically via
-          MediaSourceSheet ← MediaPickerButton ← useMediaComposer.
-          Here we render MediaSourceSheet directly (no MediaPickerButton)
-          because the trigger is the whole avatar / cover tap area. */}
+      {/* Pickers — rendered unconditionally as Modals so the sheet always
+          finds a mounted component. Sheet visibility is managed by local
+          state because the trigger is the whole avatar / cover tap area,
+          not a MediaPickerButton. */}
       <MediaSourceSheet
-        visible={avatarComposer.sheetVisible}
-        onClose={avatarComposer.closeSheet}
-        onResult={avatarComposer.onPickResult}
+        visible={avatarSheetVisible}
+        onClose={() => setAvatarSheetVisible(false)}
+        onResult={(asset) => { setAvatarSheetVisible(false); avatarComposer.onPickResult(asset); }}
         allowsVideo={false}
         allowsEditing={avatarComposer.policy.allowsEditing}
         aspect={avatarComposer.policy.editAspect}
         title="Profile photo"
       />
       <MediaSourceSheet
-        visible={coverComposer.sheetVisible}
-        onClose={coverComposer.closeSheet}
-        onResult={coverComposer.onPickResult}
+        visible={coverSheetVisible}
+        onClose={() => setCoverSheetVisible(false)}
+        onResult={(asset) => { setCoverSheetVisible(false); coverComposer.onPickResult(asset); }}
         allowsVideo={false}
         allowsEditing={coverComposer.policy.allowsEditing}
         aspect={coverComposer.policy.editAspect}

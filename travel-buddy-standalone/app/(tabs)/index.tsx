@@ -126,11 +126,15 @@ function Pulse() {
   useEffect(() => {
     if (!rentBuddyEnabled || !activeCity) { setBuddyAvailableCount(null); return; }
     let cancelled = false;
-    getLaunchStatus(activeCity).then((res) => {
-      if (cancelled) return;
-      setBuddyAvailableCount(res.ok ? (res.data.availableNowCount ?? 0) : 0);
-    }).catch(() => { if (!cancelled) setBuddyAvailableCount(0); });
-    return () => { cancelled = true; };
+    // Debounce by ~300 ms so rapid city-picker scrolling doesn't fire a
+    // network request for every intermediate city — only the final selection.
+    const timer = setTimeout(() => {
+      getLaunchStatus(activeCity).then((res) => {
+        if (cancelled) return;
+        setBuddyAvailableCount(res.ok ? (res.data.availableNowCount ?? 0) : 0);
+      }).catch(() => { if (!cancelled) setBuddyAvailableCount(0); });
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [rentBuddyEnabled, activeCity]);
 
   // Load learned category affinities from the preference engine so Pulse

@@ -86,9 +86,6 @@ jest.mock('../../hooks/useMediaComposer.ts', () => {
       return {
         policy:        fakePolicy,
         items,
-        sheetVisible:  false,
-        openSheet:     jest.fn(),
-        closeSheet:    jest.fn(),
         onPickResult:  (asset: any) => setItems([{
           id:             'mock-item-1',
           uri:            asset.uri ?? 'file:///test/evidence.jpg',
