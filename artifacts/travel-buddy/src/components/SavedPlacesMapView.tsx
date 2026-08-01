@@ -14,7 +14,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'); } catch { return {}; } })();
+// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+const { Map, Camera, Marker } = _ml as typeof import('@maplibre/maplibre-react-native');
 import type { CameraRef, LngLatBounds } from '@maplibre/maplibre-react-native';
 import { MapPin, Route, X } from 'lucide-react-native';
 import { getPlaceCategoryFallback } from '../utils/placeCategoryFallback.ts';

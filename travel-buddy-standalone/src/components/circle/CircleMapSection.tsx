@@ -14,7 +14,10 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { Map, Camera, GeoJSONSource, Layer, Marker } from '@maplibre/maplibre-react-native';
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'); } catch { return {}; } })();
+// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+const { Map, Camera, GeoJSONSource, Layer, Marker } = _ml as typeof import('@maplibre/maplibre-react-native');
 import { MapPin, Maximize2 } from 'lucide-react-native';
 import { color, radius, space, type as t } from '../../theme/tokens.ts';
 

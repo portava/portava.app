@@ -48,6 +48,7 @@
 - [Discovery perf: two-level cache + SWR](discovery-perf-cache.md) — L1 (in-memory Map) + L2 (Postgres discovery_cache table) with stale-while-revalidate; baseline cold-miss 5–20s, L2 hit ~15–100ms. Client: AsyncStorage counts cache-first + InteractionManager for buddy strip and MapTiler geocode.
 - [Passport stamps single pipeline](passport-stamps-single-pipeline.md) — owner passport fetches stamps once via /api/stamps/me; legacy shapes derived via toLegacyStamp, never a second endpoint.
 - [MapLibre web splits](maplibre-web-splits.md) — any route-reachable maplibre import needs a .web.tsx sibling or the whole web app crashes at startup; full typecheck includes the import-extension guard, bare tsc doesn't.
+- [MapLibre safe-require pattern](maplibre-safe-require.md) — static import of @maplibre/maplibre-react-native crashes route registration if MLRNCameraModule absent; use try-catch require + type-cast instead; all 14 canonical+standalone files patched.
 - [Fake-client builder drift](fake-client-builder-drift.md) — new route builder calls (maybeSingle/gte/order) silently break hand-written test fakes; grep fakes when touching shared query paths.
 - Background `&`/nohup processes die when a ShellExec call ends — run server + client probes inside ONE grouped command `{ ...; }`.
 - [Sentry OpenTelemetry deps not hoisted](sentry-otel-deps.md) — @sentry/node's @opentelemetry/* transitive deps must be explicitly installed in api-server; pnpm won't hoist them.

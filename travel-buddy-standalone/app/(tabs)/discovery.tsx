@@ -89,6 +89,11 @@ const CONTEXT_MODES: ContextModeItem[] = [
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 
+/** How long a city change must settle before quota-limited API calls fire.
+ * Absorbs rapid city-picker scrolling so only the final selection triggers
+ * Foursquare-backed requests. */
+const DEST_DEBOUNCE_MS = 400;
+
 function DiscoveryHubScreen() {
   const insets = useSafeAreaInsets();
   const bottomInset = useLayoverAwareBottomInset();
@@ -138,6 +143,18 @@ function DiscoveryHubScreen() {
     () => finiteOrNull(locationState.coords?.lng)
   );
   const [destinationZoom, setDestinationZoom] = useState<number>(11);
+  // Debounced copies of destination — used by quota-limited API effects so that
+  // rapid city changes (e.g. quickly scrolling the city picker) only trigger one
+  // Foursquare-backed request once the selection settles, not one per tap.
+  const [debouncedDestination, setDebouncedDestination] = useState(
+    () => locationState.place.city ?? 'Paris'
+  );
+  const [debouncedDestLat, setDebouncedDestLat] = useState<number | null>(
+    () => finiteOrNull(locationState.coords?.lat)
+  );
+  const [debouncedDestLng, setDebouncedDestLng] = useState<number | null>(
+    () => finiteOrNull(locationState.coords?.lng)
+  );
   const [contextMode, setContextMode] = useState<DiscoveryContextMode>('in_city');
   const [ageFilter, setAgeFilter] = useState<DiscoveryAgeFilter>('any');
   // Single object so any preset updating both min and max is one setState call →
@@ -322,7 +339,8 @@ function DiscoveryHubScreen() {
 
   // Debounce custom age inputs (500 ms) so that each keystroke while the user
   // is typing a number doesn't fire a batch of 7 parallel API requests.
-  // Destination, contextMode, ageFilter, and activeFilters remain immediate.
+  // contextMode, ageFilter, and activeFilters are immediate; destination is
+  // debounced separately via DEST_DEBOUNCE_MS to protect Foursquare quota.
   // countsLoading is only set to true here when ageFilter === 'custom' — the
   // debounced value is only used in that mode, so there is no reason to show
   // a loading spinner (or cancel an in-flight count fetch) for other filters.
@@ -345,23 +363,34 @@ function DiscoveryHubScreen() {
     };
   }, [customAgeRange]);
 
+  // Settle destination before quota-limited effects run.
+  // On rapid city changes the timer resets so only the final settled value fires.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedDestination(destination);
+      setDebouncedDestLat(destinationLat);
+      setDebouncedDestLng(destinationLng);
+    }, DEST_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [destination, destinationLat, destinationLng]);
+
   // Fetch per-category result counts whenever the destination, filters, context
-  // mode, or age filter changes. Custom age inputs use debounced values to avoid
-  // a count fetch on every keystroke. countsLoading gates tab dimming so no tab
-  // flickers to "dimmed" before the full batch resolves.
-  // Custom age changes use the debounced values so rapid keystrokes don't
-  // trigger redundant fetches.
+  // mode, or age filter changes. Both the city (debouncedDestination) and custom
+  // age inputs use debounced values: city to guard Foursquare quota on rapid
+  // picker scrolling, age to avoid 7 parallel requests per keystroke.
+  // countsLoading gates tab dimming so no tab flickers "dimmed" before the full
+  // batch resolves.
   useEffect(() => {
     setCategoryCounts({});
     setCountsLoading(true);
     let cancelled = false;
-    getDiscoveryCategoryCounts(destination, activeFilters, contextMode, ageFilter, debouncedAgeRange.min, debouncedAgeRange.max).then((counts) => {
+    getDiscoveryCategoryCounts(debouncedDestination, activeFilters, contextMode, ageFilter, debouncedAgeRange.min, debouncedAgeRange.max).then((counts) => {
       if (!cancelled) { setCategoryCounts(counts); setCountsLoading(false); }
     }).catch(() => {
       if (!cancelled) setCountsLoading(false);
     });
     return () => { cancelled = true; };
-  }, [destination, activeFilters, contextMode, ageFilter, debouncedAgeRange]);
+  }, [debouncedDestination, activeFilters, contextMode, ageFilter, debouncedAgeRange]);
 
   // Upgrade to the user's actual trip destination once trips load.
   // Only overrides if the user hasn't set a location yet.

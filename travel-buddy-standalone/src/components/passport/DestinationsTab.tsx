@@ -16,8 +16,11 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { MapPin, List, Map as MapIcon } from 'lucide-react-native';
-import { Map as MapView, Camera, Marker } from '@maplibre/maplibre-react-native';
 import type { CameraRef, LngLat, LngLatBounds } from '@maplibre/maplibre-react-native';
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'); } catch { return {}; } })();
+// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+const { Map: MapView, Camera, Marker } = _ml as typeof import('@maplibre/maplibre-react-native');
 import { MAP_STYLE_URL } from '../../constants/mapStyle.ts';
 import type { PassportMemory } from '../../services/passportStamps.ts';
 import type { PassportStamp, PassportPostcard } from '../../types/models.ts';

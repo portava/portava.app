@@ -15,7 +15,10 @@
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'); } catch { return {}; } })();
+// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+const { Map, Camera, Marker } = _ml as typeof import('@maplibre/maplibre-react-native');
 import { MapPin, Lock, Map as MapIcon } from 'lucide-react-native';
 
 export interface GemMapPreviewProps {

@@ -18,9 +18,14 @@ import {
   Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Map, Camera } from '@maplibre/maplibre-react-native';
 import type { NativeSyntheticEvent } from 'react-native';
 import type { ViewStateChangeEvent } from '@maplibre/maplibre-react-native';
+// Safe require — prevents propagating a native-module-missing crash to route
+// registration when the dev build doesn't include MLRNCameraModule yet.
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'); } catch { return {}; } })();
+// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+const { Map, Camera } = _ml as typeof import('@maplibre/maplibre-react-native');
 import { Ionicons } from '@expo/vector-icons';
 import { reverseGeocodeToPlace } from '../../services/location.ts';
 import { confirmMapCenterAsPlace } from './MapLocationPicker.machine';

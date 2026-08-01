@@ -13,7 +13,10 @@ import {
   StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
-import { Map as MapView, Camera, Marker } from '@maplibre/maplibre-react-native';
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'); } catch { return {}; } })();
+// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+const { Map: MapView, Camera, Marker } = _ml as typeof import('@maplibre/maplibre-react-native');
 import type { CameraRef, LngLatBounds } from '@maplibre/maplibre-react-native';
 import type { PassportPostcard } from '../types/models.ts';
 import type { PassportMapPayload } from '../services/passportStamps.ts';

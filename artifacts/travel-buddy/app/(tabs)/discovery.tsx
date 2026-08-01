@@ -91,6 +91,11 @@ const CONTEXT_MODES: ContextModeItem[] = [
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 
+/** How long a city change must settle before quota-limited API calls fire.
+ * Absorbs rapid city-picker scrolling so only the final selection triggers
+ * Foursquare-backed requests. */
+const DEST_DEBOUNCE_MS = 400;
+
 export default function DiscoveryHub() {
   const insets = useSafeAreaInsets();
   const bottomInset = useLayoverAwareBottomInset();
@@ -148,6 +153,18 @@ export default function DiscoveryHub() {
     () => finiteOrNull(resolvedLocation.coords?.lng)
   );
   const [destinationZoom, setDestinationZoom] = useState<number>(11);
+  // Debounced copies of destination — used by quota-limited API effects so that
+  // rapid city changes (e.g. quickly scrolling the city picker) only trigger one
+  // Foursquare-backed request once the selection settles, not one per tap.
+  const [debouncedDestination, setDebouncedDestination] = useState<string | null>(
+    cityParam ?? resolvedLocation.place.city ?? null
+  );
+  const [debouncedDestLat, setDebouncedDestLat] = useState<number | null>(
+    finiteOrNull(resolvedLocation.coords?.lat)
+  );
+  const [debouncedDestLng, setDebouncedDestLng] = useState<number | null>(
+    finiteOrNull(resolvedLocation.coords?.lng)
+  );
   const [contextMode, setContextMode] = useState<DiscoveryContextMode>('in_city');
   const [ageFilter, setAgeFilter] = useState<DiscoveryAgeFilter>('any');
   // Single object so any preset updating both min and max is one setState call →
@@ -177,18 +194,30 @@ export default function DiscoveryHub() {
   // Set to true on first press; cleared when the picker closes (showCityPicker → false).
   const cityPickerPendingRef = useRef(false);
 
+  // Settle destination before quota-limited effects run.
+  // On rapid city changes the timer resets so only the final settled value fires.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedDestination(destination);
+      setDebouncedDestLat(destinationLat);
+      setDebouncedDestLng(destinationLng);
+    }, DEST_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [destination, destinationLat, destinationLng]);
+
   // ── Event posts fetch — "Live from events" strip ───────────────────────────
   // Fetches from /api/discovery/feed and reads the `posts` array (previously always []).
   // Only fires when a destination is set; renders nothing when posts is empty.
   // Auth token is included so block filtering applies for signed-in users.
   // Fire-and-forget: errors are silently swallowed — the strip is supplementary.
+  // Uses debouncedDestination so rapid city-picker scrolling wastes no quota.
   useEffect(() => {
-    if (!destination) { setEventPosts([]); return; }
+    if (!debouncedDestination) { setEventPosts([]); return; }
     let cancelled = false;
     const base = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-    const params = new URLSearchParams({ city: destination, limit: '20' });
-    if (destinationLat != null && Number.isFinite(destinationLat)) params.set('lat', String(destinationLat));
-    if (destinationLng != null && Number.isFinite(destinationLng)) params.set('lng', String(destinationLng));
+    const params = new URLSearchParams({ city: debouncedDestination, limit: '20' });
+    if (debouncedDestLat != null && Number.isFinite(debouncedDestLat)) params.set('lat', String(debouncedDestLat));
+    if (debouncedDestLng != null && Number.isFinite(debouncedDestLng)) params.set('lng', String(debouncedDestLng));
     freshToken().then((token) => {
       if (cancelled) return;
       const headers: Record<string, string> = {};
@@ -202,7 +231,7 @@ export default function DiscoveryHub() {
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [destination, destinationLat, destinationLng]);
+  }, [debouncedDestination, debouncedDestLat, debouncedDestLng]);
 
   // ── Step-1 instrumentation + Step-4 cache-first paint ─────────────────────
   const mountedAt          = useRef(Date.now());
@@ -295,7 +324,8 @@ export default function DiscoveryHub() {
 
   // Debounce custom age inputs (500 ms) so that each keystroke while the user
   // is typing a number doesn't fire a batch of 7 parallel API requests.
-  // Destination, contextMode, ageFilter, and activeFilters remain immediate.
+  // contextMode, ageFilter, and activeFilters are immediate; destination is
+  // debounced separately via DEST_DEBOUNCE_MS to protect Foursquare quota.
   // countsLoading is only set to true here when ageFilter === 'custom' — the
   // debounced value is only used in that mode, so there is no reason to show
   // a loading spinner (or cancel an in-flight count fetch) for other filters.
@@ -319,9 +349,11 @@ export default function DiscoveryHub() {
   }, [customAgeRange]);
 
   // Fetch per-category result counts whenever the destination, filters, context
-  // mode, or age filter changes. Custom age inputs use debounced values to avoid
-  // a count fetch on every keystroke. countsLoading gates tab dimming so no tab
-  // flickers to "dimmed" before the full batch resolves.
+  // mode, or age filter changes. Both the city (debouncedDestination) and custom
+  // age inputs use debounced values: city to guard Foursquare quota on rapid
+  // picker scrolling, age to avoid 7 parallel requests per keystroke.
+  // countsLoading gates tab dimming so no tab flickers "dimmed" before the full
+  // batch resolves.
   //
   // Key performance decisions:
   //   1. Do NOT reset counts to {} on each run — stale counts stay visible
@@ -330,7 +362,7 @@ export default function DiscoveryHub() {
   //      endpoint instead of 7 parallel /api/discovery requests.
   useEffect(() => {
     // Don't fetch counts until a destination is set — no "Paris" fallback anymore.
-    if (!destination) {
+    if (!debouncedDestination) {
       setCountsLoading(false);
       return;
     }
@@ -345,21 +377,21 @@ export default function DiscoveryHub() {
 
     const usesBatch = ageFilter === 'any';
     const fetchCounts = usesBatch
-      ? getDiscoveryCategoryCountsBatch(destination, activeFilters.radiusKm, latSnap, lngSnap)
-      : getDiscoveryCategoryCounts(destination, activeFilters, contextMode, ageFilter, debouncedAgeRange.min, debouncedAgeRange.max);
+      ? getDiscoveryCategoryCountsBatch(debouncedDestination, activeFilters.radiusKm, latSnap, lngSnap)
+      : getDiscoveryCategoryCounts(debouncedDestination, activeFilters, contextMode, ageFilter, debouncedAgeRange.min, debouncedAgeRange.max);
 
     fetchCounts.then((counts) => {
       if (!cancelled) {
         setCategoryCounts(counts);
         setCountsLoading(false);
         // Step-4: persist for instant second-open (< 300 ms from AsyncStorage).
-        if (destination) void saveCachedCounts(destination, counts);
+        if (debouncedDestination) void saveCachedCounts(debouncedDestination, counts);
         // Step-1: first-content timing (dev only).
         if (!firstContentLogged.current) {
           firstContentLogged.current = true;
           if (__DEV__) {
             console.log(
-              `[discovery] first-content ms: ${Date.now() - mountedAt.current} city=${destination}`,
+              `[discovery] first-content ms: ${Date.now() - mountedAt.current} city=${debouncedDestination}`,
             );
           }
         }
@@ -369,7 +401,7 @@ export default function DiscoveryHub() {
     });
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [destination, activeFilters, contextMode, ageFilter, debouncedAgeRange, refreshNonce]);
+  }, [debouncedDestination, activeFilters, contextMode, ageFilter, debouncedAgeRange, refreshNonce]);
 
   // Upgrade to the user's actual trip destination once trips load.
   // Only overrides if the user hasn't set a location yet.

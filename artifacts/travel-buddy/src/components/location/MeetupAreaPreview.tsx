@@ -11,7 +11,10 @@
  */
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Map, Camera } from '@maplibre/maplibre-react-native';
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'); } catch { return {}; } })();
+// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+const { Map, Camera } = _ml as typeof import('@maplibre/maplibre-react-native');
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
 export interface MeetupAreaPreviewProps {
