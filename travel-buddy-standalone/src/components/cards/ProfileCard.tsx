@@ -17,13 +17,19 @@ export interface ProfileCardProps {
   isVerified?: boolean;
   bio?: string | null;
   isFollowing?: boolean;
+  /** True when this account is private — shows Request/Pending instead of Follow/Following */
+  isPrivate?: boolean;
+  /** True when the viewer has already sent a follow request (pending approval) */
+  requestPending?: boolean;
   onPress: () => void;
   onFollow?: () => void;
+  /** Called when the viewer taps "Request" on a private account */
+  onRequest?: () => void;
 }
 
 export function ProfileCard({
   displayName, handle, avatarUrl, trustScore, isVerified, bio,
-  isFollowing, onPress, onFollow,
+  isFollowing, isPrivate, requestPending, onPress, onFollow, onRequest,
 }: ProfileCardProps) {
   return (
     <Pressable
@@ -53,7 +59,28 @@ export function ProfileCard({
             <Text style={styles.trust}>Trust score: {trustScore}</Text>
           ) : null}
         </View>
-        {onFollow ? (
+
+        {/* Private account: show Request / Pending instead of Follow / Following */}
+        {isPrivate && !isFollowing ? (
+          requestPending ? (
+            <View style={[styles.followBtn, styles.followBtnActive]}>
+              <Text style={[styles.followBtnText, styles.followBtnTextActive]}
+                accessibilityLabel="Pending">
+                Pending
+              </Text>
+            </View>
+          ) : onRequest ? (
+            <Pressable
+              style={({ pressed }) => [styles.followBtn, pressed && { opacity: 0.7 }]}
+              onPress={(e) => { e.stopPropagation?.(); onRequest(); }}
+              accessibilityRole="button"
+              accessibilityLabel="Request to follow"
+            >
+              <Text style={styles.followBtnText}>Request</Text>
+            </Pressable>
+          ) : null
+        ) : onFollow ? (
+          /* Public account (or already following a private one): Follow / Following */
           <Pressable
             style={({ pressed }) => [styles.followBtn, isFollowing && styles.followBtnActive, pressed && { opacity: 0.7 }]}
             onPress={(e) => { e.stopPropagation?.(); onFollow(); }}
