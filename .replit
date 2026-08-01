@@ -229,7 +229,6 @@ SUPABASE_URL = "https://ajrurzioarfkagpuxfnb.supabase.co"
 
 [userenv.production]
 ALLOWED_ORIGINS = "https://app.travel-buddy.io,https://www.travel-buddy.io,https://portava.replit.app"
-SUPABASE_ANON_KEY = "sb_publishable_xp3JiB50mBYHn1S_XjzOAg_rIoEqZKS"
 
 [nix]
 channel = "stable-25_05"

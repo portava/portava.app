@@ -33,68 +33,19 @@ import React, {
 } from 'react';
 import {
   View,
-  Text,
-  Pressable,
   StyleSheet,
-  ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Film, WifiOff } from 'lucide-react-native';
 import { MasonryGrid, type MasonryGridHandle } from './MasonryGrid.tsx';
 import { GridFilterBar } from './GridFilterBar.tsx';
+import { MediaGridSkeleton } from '../loading/MediaGridSkeleton.tsx';
+import { EmptyState } from '../ui/EmptyState.tsx';
 import { useGridFeed } from '../../hooks/useGridFeed.ts';
 import { useMediaStore } from '../../stores/mediaStore.ts';
 import { setViewerContext } from '../../lib/viewerContext.ts';
 import type { MediaGridItem, GridFilter } from '../../types/media.ts';
-import { color, type as t, space } from '../../theme/tokens.ts';
-
-// ── Empty / error states ──────────────────────────────────────────────────────
-
-function EmptyState({
-  icon,
-  title,
-  subtitle,
-  action,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  subtitle?: string;
-  action?: { label: string; onPress: () => void };
-}) {
-  return (
-    <View style={es.wrap}>
-      {icon}
-      <Text style={es.title}>{title}</Text>
-      {subtitle ? <Text style={es.sub}>{subtitle}</Text> : null}
-      {action ? (
-        <Pressable onPress={action.onPress} style={es.btn}>
-          <Text style={es.btnText}>{action.label}</Text>
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
-const es = StyleSheet.create({
-  wrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-    paddingHorizontal: 40,
-    backgroundColor: color.paper,
-  },
-  title: { ...t.heading, color: color.ink, textAlign: 'center' },
-  sub: { ...t.body, color: color.mute, textAlign: 'center' },
-  btn: {
-    marginTop: 8,
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    borderRadius: 20,
-    backgroundColor: color.ink,
-  },
-  btnText: { ...t.small, color: color.onInk, fontWeight: '600' },
-});
+import { color } from '../../theme/tokens.ts';
 
 // ── GridFeed ──────────────────────────────────────────────────────────────────
 
@@ -191,9 +142,7 @@ export function GridFeed() {
     return (
       <View style={styles.container}>
         <GridFilterBar selectedFilter={filter} onFilterChange={handleFilterChange} />
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={color.mute} />
-        </View>
+        <MediaGridSkeleton columns={2} count={6} />
       </View>
     );
   }
@@ -203,18 +152,16 @@ export function GridFeed() {
     return (
       <View style={styles.container}>
         <GridFilterBar selectedFilter={filter} onFilterChange={handleFilterChange} />
-        <EmptyState
-          icon={
-            isNetworkError
-              ? <WifiOff size={32} color={color.mute} />
-              : <Film size={32} color={color.mute} />
-          }
-          title={isNetworkError ? 'No connection' : "Couldn\u2019t load feed"}
-          subtitle={isNetworkError
-            ? 'Check your connection and try again.'
-            : 'Something went wrong on our end.'}
-          action={{ label: 'Try again', onPress: loadFeed }}
-        />
+        <View style={styles.center}>
+          <EmptyState
+            icon={isNetworkError ? WifiOff : Film}
+            title={isNetworkError ? 'No connection' : "Couldn\u2019t load feed"}
+            description={isNetworkError
+              ? 'Check your connection and try again.'
+              : 'Something went wrong on our end.'}
+            primaryAction={{ label: 'Try again', onPress: loadFeed }}
+          />
+        </View>
       </View>
     );
   }
@@ -232,11 +179,9 @@ export function GridFeed() {
     return (
       <View style={styles.container}>
         <GridFilterBar selectedFilter={filter} onFilterChange={handleFilterChange} />
-        <EmptyState
-          icon={<Film size={32} color={color.mute} />}
-          title={msg.title}
-          subtitle={msg.sub}
-        />
+        <View style={styles.center}>
+          <EmptyState icon={Film} title={msg.title} description={msg.sub} />
+        </View>
       </View>
     );
   }
