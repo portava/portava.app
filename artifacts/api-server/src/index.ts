@@ -36,6 +36,7 @@ import { startRankingFatigueSweeper } from "./lib/rankingFatigueSweeper";
 import { startPostPlaceBackfillWorker } from "./lib/places/postPlaceBackfillWorker";
 import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js";
 import { startPlaceCollectionsWorker } from "./lib/places/placeCollectionsWorker.js";
+import { startCompassSearchDecayFlushScheduler } from "./lib/compassSearchDecayFlushScheduler.js";
 
 assertRequiredEnv(logger);
 
@@ -140,6 +141,12 @@ app.listen(port, (err) => {
   // pages are served from precomputed rows in milliseconds.
   // Gated by PLACE_COLLECTIONS_WORKER_ENABLED=true.
   startPlaceCollectionsWorker();
+
+  // Daily search-decay flush — writes post-decay category_weights back to
+  // compass_user_preferences and resets each signal row's search_weight to
+  // the new baseline so repeated profile reads don't each recompute decay.
+  // No-ops when SEARCH_SIGNAL_DECAY_DAYS is disabled in feature_flags.
+  startCompassSearchDecayFlushScheduler();
 
   // Viewer-creator fatigue row cleanup — deletes rows older than 30 days so
   // the viewer_creator_fatigue table doesn't grow unbounded.
