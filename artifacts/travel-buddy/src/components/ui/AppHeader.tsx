@@ -305,7 +305,10 @@ export function AppHeader({
   const overlayBg = transparent ? 'transparent' : 'rgba(0,0,0,0.28)';
   return (
     <>
-      <View style={[s.overlayOuter, { paddingTop: Math.max(insets.top, 54), backgroundColor: overlayBg }]}>
+      <View
+        style={[s.overlayOuter, { paddingTop: Math.max(insets.top, 54), backgroundColor: overlayBg }]}
+        pointerEvents="box-none"
+      >
         <View style={s.bar}>
           {centeredTitle('#fff')}
           <View style={s.barLeft}>

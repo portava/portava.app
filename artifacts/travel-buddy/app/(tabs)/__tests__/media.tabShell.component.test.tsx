@@ -162,4 +162,5 @@ describe('MediaScreen — FAB button', () => {
     expect(screen.getByRole('button', { name: 'Add a Gem' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Create a post' })).toBeNull();
   });
+
 });

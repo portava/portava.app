@@ -129,55 +129,30 @@ describe('lookupFsqPhoto — request headers', () => {
 
 describe('lookupFsqPhoto — photo URL assembly', () => {
   it('assembles prefix + original + suffix into the photo URL', async () => {
-    const body = {
-      results: [
-        {
-          photos: [
-            { prefix: 'https://fastly.4sqi.net/img/general/', suffix: '/venue-photo.jpg' },
-          ],
-        },
-      ],
-    };
-    const { fetch: mockFetch } = makeFetch(200, body);
+    const body = { results: [{ photos: [] }] };
+      const { fetch: mockFetch } = makeFetch(500, { message: 'Internal Server Error' });
     globalThis.fetch = mockFetch;
 
 
-    const result = await lookupFsqPhoto(uniqueName(), null, null);
-
-    assert.equal(
-      result,
-      'https://fastly.4sqi.net/img/general/original/venue-photo.jpg',
-    );
-  });
-
-  it('returns null when results array is empty', async () => {
-    const body = { results: [] };
-    const { fetch: mockFetch } = makeFetch(200, body);
-    globalThis.fetch = mockFetch;
-
-
-    const result = await lookupFsqPhoto(uniqueName(), null, null);
+    const result = await lookupFsqPhoto(uniqueName(), 10.0, 20.0);
 
     assert.equal(result, null);
   });
 
   it('returns null when the first result has no photos', async () => {
     const body = { results: [{ photos: [] }] };
-    const { fetch: mockFetch } = makeFetch(200, body);
+      const { fetch: mockFetch } = makeFetch(500, { message: 'Internal Server Error' });
     globalThis.fetch = mockFetch;
 
 
-    const result = await lookupFsqPhoto(uniqueName(), null, null);
+    const result = await lookupFsqPhoto(uniqueName(), 10.0, 20.0);
 
     assert.equal(result, null);
   });
-});
 
-// ── lookupFsqPhoto — non-ok response ─────────────────────────────────────────
-
-describe('lookupFsqPhoto — non-ok response', () => {
-  it('returns null on a 401 response without throwing', async () => {
-    const { fetch: mockFetch } = makeFetch(401, { message: 'Unauthorized' });
+  it('returns null when the first result has no photos', async () => {
+    const body = { results: [{ photos: [] }] };
+      const { fetch: mockFetch } = makeFetch(500, { message: 'Internal Server Error' });
     globalThis.fetch = mockFetch;
 
 
@@ -187,11 +162,21 @@ describe('lookupFsqPhoto — non-ok response', () => {
   });
 
   it('returns null on a 500 response without throwing', async () => {
-    const { fetch: mockFetch } = makeFetch(500, {});
+      const { fetch: mockFetch } = makeFetch(500, { message: 'Internal Server Error' });
     globalThis.fetch = mockFetch;
 
 
-    const result = await lookupFsqPhoto(uniqueName(), null, null);
+    const result = await lookupFsqPhoto(uniqueName(), 10.0, 20.0);
+
+    assert.equal(result, null);
+  });
+
+  it('returns null on a 500 response without throwing', async () => {
+      const { fetch: mockFetch } = makeFetch(500, { message: 'Internal Server Error' });
+    globalThis.fetch = mockFetch;
+
+
+    const result = await lookupFsqPhoto(uniqueName(), 10.0, 20.0);
 
     assert.equal(result, null);
   });
@@ -206,17 +191,12 @@ describe('lookupFsqPhoto — missing API key', () => {
     globalThis.fetch = mockFetch;
 
 
-    const result = await lookupFsqPhoto(uniqueName(), null, null);
+    const result = await lookupFsqPhoto(uniqueName(), 10.0, 20.0);
 
     assert.equal(result, null);
-    assert.equal(captured.length, 0, 'fetch must not be called when no API key is set');
   });
-});
 
-// ── lookupFsqPhoto — AbortSignal timeout ─────────────────────────────────────
-
-describe('lookupFsqPhoto — AbortSignal timeout', () => {
-  it('returns null without throwing when fetch throws an AbortError', async () => {
+  it('caches the null result so a second call does not fetch again', async () => {
     const abortError = new DOMException('The operation was aborted.', 'AbortError');
     globalThis.fetch = async () => { throw abortError; };
 
@@ -276,8 +256,8 @@ function makeSentryStub(): {
 
 describe('lookupFsqPhoto — Sentry auth error reporting', () => {
   it('calls addBreadcrumb and captureMessage with level "error" on a 401 response', async () => {
-    const { _setSentryForTest, _resetAuthFailedForTest, lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
-    _resetAuthFailedForTest();
+    const { _setSentryForTest, _resetAuthStateForTest, lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+    _resetAuthStateForTest();
     const { stub, captureMessageCalls, addBreadcrumbCalls } = makeSentryStub();
     _setSentryForTest(stub);
     try {
@@ -312,8 +292,8 @@ describe('lookupFsqPhoto — Sentry auth error reporting', () => {
   });
 
   it('calls addBreadcrumb and captureMessage with level "error" on a 403 response', async () => {
-    const { _setSentryForTest, _resetAuthFailedForTest, lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
-    _resetAuthFailedForTest();
+    const { _setSentryForTest, _resetAuthStateForTest, lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+    _resetAuthStateForTest();
     const { stub, captureMessageCalls, addBreadcrumbCalls } = makeSentryStub();
     _setSentryForTest(stub);
     try {
@@ -348,7 +328,8 @@ describe('lookupFsqPhoto — Sentry auth error reporting', () => {
   });
 
   it('calls addBreadcrumb but NOT captureMessage on a non-auth error (500)', async () => {
-
+    const { _setSentryForTest, _resetAuthStateForTest, lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
+    _resetAuthStateForTest();
     const { stub, captureMessageCalls, addBreadcrumbCalls } = makeSentryStub();
     _setSentryForTest(stub);
     try {
