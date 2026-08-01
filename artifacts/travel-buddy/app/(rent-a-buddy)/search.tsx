@@ -9,11 +9,11 @@ import {
   Plane, Camera, Music, BookOpen, HelpCircle, CheckCircle, X, Bell,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../../src/theme/tokens';
-import {
-  TravelEmptyState, TravelErrorState,
-} from '../../src/components/primitives';
 import { Stamp } from '../../src/components/ui';
-import { BuddyCard, BuddyCardSkeleton } from '../../src/components/BuddyCard';
+import { EmptyState } from '../../src/components/ui/EmptyState';
+import { ErrorState } from '../../src/components/ui/ErrorState';
+import { ProfileCard } from '../../src/components/cards/ProfileCard';
+import { ProfileSkeleton } from '../../src/components/loading/ProfileSkeleton';
 import {
   searchBuddies, saveMatchPreferences, runMatch,
   type BuddyProfile, type BuddyCategory, type CoordPair, type MatchPreferences,
@@ -441,42 +441,46 @@ export default function RentABuddySearch() {
             // Distinct from "zero results" — nobody has told this screen
             // where to search yet, so say that plainly instead of implying
             // no Buddies exist anywhere.
-            <TravelEmptyState
+            <EmptyState
+              icon={Search}
               title="Enter a city to search Buddies"
-              sub="Pick a destination and we'll show verified local Buddies there."
-              action="Choose a city"
-              onAction={() => setCityPickerOpen(true)}
+              description="Pick a destination and we'll show verified local Buddies there."
+              primaryAction={{ label: 'Choose a city', onPress: () => setCityPickerOpen(true) }}
             />
           ) : loading && !refreshing ? (
             <View style={{ padding: space.lg }}>
-              <BuddyCardSkeleton />
-              <BuddyCardSkeleton />
-              <BuddyCardSkeleton />
+              <ProfileSkeleton />
+              <ProfileSkeleton />
+              <ProfileSkeleton />
             </View>
           ) : error ? (
-            <TravelErrorState
-              title="Couldn't load Buddies"
-              sub={error}
+            <ErrorState
+              message={error}
               onRetry={() => doSearch(true)}
             />
           ) : buddies.length === 0 ? (
             <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: 40 + insets.bottom }}>
-              <TravelEmptyState
+              <EmptyState
+                icon={Users}
                 title={`No Buddies in ${city} yet`}
-                sub="Join the waitlist and we'll notify you when one becomes available here."
-                action="Join Waitlist"
-                onAction={() => router.push({ pathname: '/(rent-a-buddy)/waitlist' as any, params: { city } })}
+                description="Join the waitlist and we'll notify you when one becomes available here."
+                primaryAction={{ label: 'Join Waitlist', onPress: () => router.push({ pathname: '/(rent-a-buddy)/waitlist' as any, params: { city } }) }}
               />
               {elsewhereLoading ? (
-                <BuddyCardSkeleton />
+                <ProfileSkeleton />
               ) : elsewhereBuddies.length > 0 ? (
                 <View style={{ marginTop: space.lg }}>
                   <Text style={styles.sectionLabel}>BUDDIES AVAILABLE ELSEWHERE</Text>
                   {elsewhereBuddies.map(b => (
-                    <BuddyCard
+                    <ProfileCard
                       key={b.id}
-                      buddy={b}
-                      onBook={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: b.id } })}
+                      id={b.id}
+                      displayName={b.displayName ?? 'Buddy'}
+                      avatarUrl={b.coverPhotoUrl}
+                      trustScore={b.trustScore}
+                      isVerified={b.verified}
+                      bio={b.tagline ?? b.bio}
+                      onPress={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: b.id } })}
                     />
                   ))}
                 </View>
@@ -501,11 +505,14 @@ export default function RentABuddySearch() {
                 </View>
               }
               renderItem={({ item }) => (
-                <BuddyCard
-                  buddy={item.buddy}
-                  compatibilityScore={item.score}
-                  whyMatched={item.why}
-                  onBook={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: item.buddy.id } })}
+                <ProfileCard
+                  id={item.buddy.id}
+                  displayName={item.buddy.displayName ?? 'Buddy'}
+                  avatarUrl={item.buddy.coverPhotoUrl}
+                  trustScore={item.buddy.trustScore}
+                  isVerified={item.buddy.verified}
+                  bio={item.why ?? item.buddy.tagline ?? item.buddy.bio}
+                  onPress={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: item.buddy.id } })}
                 />
               )}
               refreshControl={
@@ -527,14 +534,13 @@ export default function RentABuddySearch() {
         <>
           {quizMatching ? (
             <View style={{ padding: space.lg }}>
-              <BuddyCardSkeleton />
-              <BuddyCardSkeleton />
-              <BuddyCardSkeleton />
+              <ProfileSkeleton />
+              <ProfileSkeleton />
+              <ProfileSkeleton />
             </View>
           ) : quizMatchError ? (
-            <TravelErrorState
-              title="Couldn't run your match"
-              sub={quizMatchError}
+            <ErrorState
+              message={quizMatchError}
               onRetry={() => runQuizMatch(quizAnswers)}
             />
           ) : quizMatches.length > 0 ? (
@@ -556,11 +562,14 @@ export default function RentABuddySearch() {
                 </View>
               }
               renderItem={({ item }) => (
-                <BuddyCard
-                  buddy={item}
-                  compatibilityScore={Math.round(item.compatibilityScore)}
-                  whyMatched={item.verified ? `Matches your quiz answers for ${city}` : undefined}
-                  onBook={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: item.id } })}
+                <ProfileCard
+                  id={item.id}
+                  displayName={item.displayName ?? 'Buddy'}
+                  avatarUrl={item.coverPhotoUrl}
+                  trustScore={item.trustScore}
+                  isVerified={item.verified}
+                  bio={item.verified ? `Matches your quiz answers for ${city}` : item.tagline ?? item.bio}
+                  onPress={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: item.id } })}
                 />
               )}
             />

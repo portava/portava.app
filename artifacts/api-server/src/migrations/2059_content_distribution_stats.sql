@@ -171,3 +171,12 @@ BEGIN
   END IF;
 END;
 $$;
+
+-- Privilege hardening: SECURITY DEFINER functions must not be callable by
+-- untrusted roles.  Revoke the default PUBLIC execute grant and restrict to
+-- service_role only — consistent with all other SECURITY DEFINER RPCs in this
+-- repo.
+REVOKE ALL ON FUNCTION increment_distribution_stats(TEXT, TEXT, BOOLEAN, INTEGER, FLOAT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION increment_distribution_stats(TEXT, TEXT, BOOLEAN, INTEGER, FLOAT) FROM anon;
+REVOKE ALL ON FUNCTION increment_distribution_stats(TEXT, TEXT, BOOLEAN, INTEGER, FLOAT) FROM authenticated;
+GRANT EXECUTE ON FUNCTION increment_distribution_stats(TEXT, TEXT, BOOLEAN, INTEGER, FLOAT) TO service_role;

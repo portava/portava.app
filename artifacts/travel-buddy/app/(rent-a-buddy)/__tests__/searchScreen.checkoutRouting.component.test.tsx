@@ -1,10 +1,10 @@
 /**
  * search.tsx (RentABuddySearch) — results list checkout routing.
  *
- * Verifies that BuddyCard rendered in the results list receives an `onBook`
+ * Verifies that ProfileCard rendered in the results list receives an `onPress`
  * callback that navigates to `/(rent-a-buddy)/checkout` — not to request-buddy.
  *
- * Strategy: stub BuddyCard to capture the `onBook` prop, render the search
+ * Strategy: stub ProfileCard to capture the `onPress` prop, render the search
  * screen in results mode (via params), flush async search, then call the
  * captured callback and assert the destination.
  *
@@ -53,16 +53,30 @@ jest.mock('../../../src/services/rentABuddy', () => ({
   }),
 }));
 
-// ── BuddyCard — prop-capture stub ─────────────────────────────────────────────
-// NOTE: intentional stub — we capture onBook to verify the destination
-// without pressing through BuddyCard's internals.
-let capturedOnBook: (() => void) | undefined;
-jest.mock('../../../src/components/BuddyCard', () => ({
-  BuddyCard: ({ buddy, onBook }: { buddy: { id: string }; onBook?: () => void }) => {
-    if (buddy.id === RESULT_BUDDY.id) capturedOnBook = onBook;
+// ── ProfileCard — prop-capture stub ───────────────────────────────────────────
+// NOTE: intentional stub — we capture onPress to verify the destination
+// without pressing through ProfileCard's internals.
+let capturedOnPress: (() => void) | undefined;
+jest.mock('../../../src/components/cards/ProfileCard', () => ({
+  ProfileCard: ({ id, onPress }: { id: string; onPress?: () => void }) => {
+    if (id === RESULT_BUDDY.id) capturedOnPress = onPress;
     return null;
   },
-  BuddyCardSkeleton: () => null,
+}));
+
+// ── ProfileSkeleton ────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/components/loading/ProfileSkeleton', () => ({
+  ProfileSkeleton: () => null,
+}));
+
+// ── EmptyState / ErrorState ────────────────────────────────────────────────────
+// NOTE: intentional stubs — not under test here.
+jest.mock('../../../src/components/ui/EmptyState', () => ({
+  EmptyState: () => null,
+}));
+jest.mock('../../../src/components/ui/ErrorState', () => ({
+  ErrorState: () => null,
 }));
 
 // ── LocationContext ───────────────────────────────────────────────────────────
@@ -75,11 +89,6 @@ jest.mock('../../../src/context/LocationContext', () => ({
 }));
 
 // ── other components not under test ───────────────────────────────────────────
-// NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/primitives', () => ({
-  TravelEmptyState: () => null,
-  TravelErrorState: () => null,
-}));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ui', () => ({ Stamp: () => null }));
 // NOTE: intentional stub — not under test here.
@@ -105,18 +114,18 @@ import RentABuddySearch from '../search';
 
 beforeEach(() => {
   routerPush.mockClear();
-  capturedOnBook = undefined;
+  capturedOnPress = undefined;
   // Start in results mode with a city pre-filled so doSearch fires on mount.
   mockParams = { city: 'Paris', category: 'culture' };
 });
 
-describe('search.tsx — results list onBook routing', () => {
-  it('BuddyCard in results receives onBook that navigates to checkout', async () => {
+describe('search.tsx — results list onPress routing', () => {
+  it('ProfileCard in results receives onPress that navigates to checkout', async () => {
     await render(<RentABuddySearch />);
     await act(async () => {});
 
-    expect(capturedOnBook).toBeDefined();
-    capturedOnBook!();
+    expect(capturedOnPress).toBeDefined();
+    capturedOnPress!();
 
     expect(routerPush).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -126,11 +135,11 @@ describe('search.tsx — results list onBook routing', () => {
     );
   });
 
-  it('results list onBook does NOT navigate to request-buddy', async () => {
+  it('results list onPress does NOT navigate to request-buddy', async () => {
     await render(<RentABuddySearch />);
     await act(async () => {});
 
-    capturedOnBook?.();
+    capturedOnPress?.();
 
     const wentToRequestBuddy = routerPush.mock.calls.some(([arg]: [any]) =>
       typeof arg === 'object' && String(arg?.pathname ?? '').includes('request-buddy'),
