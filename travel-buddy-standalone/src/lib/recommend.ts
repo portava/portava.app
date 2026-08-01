@@ -13,6 +13,7 @@
  */
 import type { Availability, CityEvent, Interest, PulseBuckets, PulseFeedItem, PulseFilter } from '../types/models.ts';
 import { isWithinAvailability } from './availability.ts';
+import { safeStartMs } from '../hooks/cityPulseUtils.ts';
 
 export function filterPulse(
   events: CityEvent[],
@@ -66,7 +67,7 @@ export function filterPulse(
     if (city !== 0) return city;
     const affinity = combinedAffinity(b) - combinedAffinity(a);
     if (affinity !== 0) return affinity;
-    return new Date(a.startAt).getTime() - new Date(b.startAt).getTime();
+    return safeStartMs(a.startAt) - safeStartMs(b.startAt);
   };
 
   fitsAvailability.sort(sorter);

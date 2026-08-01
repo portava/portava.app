@@ -93,7 +93,7 @@ export function resolveEventsOnError(isDev: boolean, fallback: CityEvent[]): Cit
  * consistently to the END of the list rather than silently breaking the order
  * of events around them.
  */
-function safeStartMs(startAt: string | null | undefined): number {
+export function safeStartMs(startAt: string | null | undefined): number {
   if (!startAt) return Infinity;
   const ms = new Date(startAt).getTime();
   return isNaN(ms) ? Infinity : ms;
