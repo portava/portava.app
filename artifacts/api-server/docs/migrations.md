@@ -144,3 +144,12 @@ Allows search results to carry a direct link to the canonical Living Destination
 Extends the `content_stamps_entity_type_check` constraint to include `'memory'` and `'place'`.
 Required because Task #3049 wired StampButton to memory detail screens using `entityType="memory"`,
 and the place detail screen uses `entityType="place"`. Apply immediately after 2049 lands.
+
+
+## 2059 — stamp_artwork_versions: expand generation_source CHECK to include 'placeholder'
+
+| File | Status |
+|------|--------|
+| `src/migrations/2059_stamp_artwork_generation_source_placeholder.sql` | applied 2026-07-31 |
+
+Drops the old unnamed check constraint (`generation_source IN ('ai_generated','admin_upload')`) and replaces it with a named constraint that also allows `'placeholder'`. Required for the placeholder-provider detection feature (task 2957): when `STAMP_WORKER_ENABLED=true` but no OpenAI key is set, candidates are stored with `generation_source='placeholder'` so the admin review screen can filter them and the `provider_degraded` health flag has persistent evidence to query.

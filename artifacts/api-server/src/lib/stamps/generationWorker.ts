@@ -891,6 +891,25 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
       }));
     }
 
+    // Detect placeholder-only generation: when STAMP_WORKER_ENABLED=true but
+    // the OpenAI key is absent, getStampImageProvider() returns PlaceholderProvider
+    // which emits data:image/svg URLs. These pass through as 'candidate' rows
+    // but isValidUrl in UniversalStampArtwork rejects them, so the stamp always
+    // shows the fallback icon. Emit a clear WARN so operators know the provider
+    // is misconfigured and artwork will not render correctly on device.
+    const allPlaceholders =
+      images.length > 0 &&
+      images.every((img) => classifyCandidateUrl(img.url) === "placeholder");
+    if (allPlaceholders && process.env.STAMP_WORKER_ENABLED === "true") {
+      console.warn(JSON.stringify({
+        event:      "stamp.generation.provider_degraded",
+        job_id:     jobId,
+        catalog_id: catalogId,
+        candidates: images.length,
+        note:       "all candidates are placeholder SVGs — STAMP_WORKER_ENABLED=true but no real image provider is configured; artwork will not render correctly on device",
+      }));
+    }
+
     // Rarity treatment for premium composition (definition-level concept;
     // 'common' when the catalog entry has zero or several linked definitions).
     const compositionRarity = premium ? normalizeRarity(await rarityForCatalog(sc, catalogId)) : "common";
@@ -984,7 +1003,7 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
         status:                  "candidate",
         storage_path:            storagePath!,
         public_url:              publicUrl!,
-        generation_source:       "ai_generated",
+        generation_source:       urlKind === "placeholder" ? "placeholder" : "ai_generated",
         provider:                (img.metadata.model as string) ?? "openai_image",
         model_version:           (img.metadata.model as string) ?? "unknown",
         prompt_used:             prompt,
@@ -1156,6 +1175,12 @@ export interface StampWorkerHealth {
     locked_until: string | null;
     updated_at: string | null;
   }>;
+  /**
+   * True when the worker is enabled but the last N artwork versions are all
+   * placeholders — indicating the image provider (OpenAI) is unconfigured and
+   * artwork will never render correctly on device.
+   */
+  provider_degraded: boolean;
 }
 
 /**
@@ -1174,7 +1199,10 @@ export async function queryStampWorkerHealth(): Promise<StampWorkerHealth | null
 
   const nowIso = new Date().toISOString();
 
-  const [statusRes, lastSuccessRes, stuckRes] = await Promise.all([
+  // How many recent artwork versions to inspect for the provider_degraded check.
+  const PROVIDER_DEGRADED_WINDOW = 5;
+
+  const [statusRes, lastSuccessRes, stuckRes, recentSourcesRes] = await Promise.all([
     sc.from("stamp_generation_queue").select("status"),
     sc
       .from("stamp_artwork_versions")
@@ -1190,6 +1218,11 @@ export async function queryStampWorkerHealth(): Promise<StampWorkerHealth | null
       .lt("locked_until", nowIso)
       .order("locked_until")
       .limit(50),
+    sc
+      .from("stamp_artwork_versions")
+      .select("generation_source")
+      .order("created_at", { ascending: false })
+      .limit(PROVIDER_DEGRADED_WINDOW),
   ]);
 
   if (statusRes.error) {
@@ -1201,13 +1234,21 @@ export async function queryStampWorkerHealth(): Promise<StampWorkerHealth | null
     queueDepth[row.status] = (queueDepth[row.status] ?? 0) + 1;
   }
 
+  const workerEnabled = process.env.STAMP_WORKER_ENABLED === "true";
+  const recentSources = (recentSourcesRes.data ?? []) as Array<{ generation_source: string }>;
+  const providerDegraded =
+    workerEnabled &&
+    recentSources.length > 0 &&
+    recentSources.every((r) => r.generation_source === "placeholder");
+
   return {
-    worker_enabled: process.env.STAMP_WORKER_ENABLED === "true",
+    worker_enabled: workerEnabled,
     worker_running: _workerInterval !== null,
     worker_id: WORKER_ID,
     last_success_at: (lastSuccessRes.data as any)?.created_at ?? null,
     queue_depth: queueDepth,
     stuck_jobs: (stuckRes.data ?? []) as StampWorkerHealth["stuck_jobs"],
+    provider_degraded: providerDegraded,
   };
 }
 
@@ -1218,7 +1259,7 @@ export async function queryStampWorkerHealth(): Promise<StampWorkerHealth | null
 // waiting for the next deploy or a manual hit on the admin endpoint.
 
 export interface HealthWarning {
-  key: "stuck_jobs" | "backlog_growing";
+  key: "stuck_jobs" | "backlog_growing" | "provider_degraded";
   message: string;
   details: Record<string, unknown>;
 }
@@ -1263,6 +1304,17 @@ export function evaluateWorkerHealth(
         queued,
         previous_queued: prevQueuedDepth,
         last_success_at: health.last_success_at,
+      },
+    });
+  }
+
+  if (health.provider_degraded) {
+    warnings.push({
+      key: "provider_degraded",
+      message:
+        "stamp image provider is degraded — all recent artwork generations produced placeholder SVGs; configure AI_INTEGRATIONS_OPENAI_API_KEY / STAMP_IMAGE_MODEL so artwork renders correctly on device",
+      details: {
+        worker_enabled: health.worker_enabled,
       },
     });
   }
