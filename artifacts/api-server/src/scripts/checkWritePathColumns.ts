@@ -84,18 +84,7 @@ const ALLOWLIST = new Set<string>([
 // Tables that are not real live relations and should be skipped entirely
 // (e.g. test doubles or tables owned by another system).
 const SKIP_TABLES = new Set<string>([
-  // E2EE device management tables — migration pending live apply.
-  "devices",
-  "key_packages",
-  // Admin access audit log — migration 2035_admin_access_log.sql pending live apply.
-  "admin_access_log",
-  // DiscoveryRankingService tables — migrations pending live apply.
-  "content_distribution_stats",
-  "ranking_debug_samples",
-  // Ranking config audit log — migration pending live apply.
-  "ranking_config_audit_log",
-  // Worth-It / Skip-It votes — migration pending live apply.
-  "place_votes",
+  // (empty — all previously pending migrations have been applied to the live DB)
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────
