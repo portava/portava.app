@@ -2,13 +2,12 @@
  * useMediaComposer — shared media lifecycle hook used by all composers.
  *
  * Manages:
- *   - Source sheet visibility
- *   - Permission requests (camera + library) with denied→Settings path surfaced
- *     through the MediaSourceSheet component
- *   - iOS limited-library upgrade prompt
  *   - An `items` array with per-item upload state (idle/uploading/done/error)
  *   - Reorder, remove, cover-pick, alt-text setters
  *   - Upload per item, retry, cancel
+ *
+ * Sheet visibility is managed by MediaPickerButton internally; this hook no
+ * longer exposes openSheet / closeSheet / sheetVisible.
  *
  * Usage:
  *   const composer = useMediaComposer('memory');
@@ -62,12 +61,6 @@ export interface UseMediaComposerReturn {
   policy: ContentMediaPolicy;
   /** All currently-selected media items. */
   items: MediaItem[];
-  /** Whether the MediaSourceSheet should be shown. */
-  sheetVisible: boolean;
-  /** Open the source sheet (e.g. on picker button press). */
-  openSheet: () => void;
-  /** Close the source sheet (called by the sheet's onClose). */
-  closeSheet: () => void;
   /**
    * Called by MediaSourceSheet's onResult. Adds the asset to items
    * (if policy allows) and handles limited-library prompt.
@@ -152,7 +145,6 @@ function assetToMediaItem(
 export function useMediaComposer(policyKey: ContentPolicyKey): UseMediaComposerReturn {
   const policy = getPolicy(policyKey);
   const [items, setItems] = useState<MediaItem[]>([]);
-  const [sheetVisible, setSheetVisible] = useState(false);
 
   // Snapshot ref kept fresh via useEffect — lets uploadItem read the current
   // items list without relying on React's eager state evaluation (which is
@@ -164,11 +156,6 @@ export function useMediaComposer(policyKey: ContentPolicyKey): UseMediaComposerR
 
   // Per-item cancel signals: id → ref (cancelled flag)
   const cancelRefs = useRef<Map<string, { cancelled: boolean }>>(new Map());
-
-  // ── Sheet ────────────────────────────────────────────────────────────────
-
-  const openSheet = useCallback(() => setSheetVisible(true), []);
-  const closeSheet = useCallback(() => setSheetVisible(false), []);
 
   // ── iOS limited-library prompt ───────────────────────────────────────────
 
@@ -412,9 +399,6 @@ export function useMediaComposer(policyKey: ContentPolicyKey): UseMediaComposerR
   return {
     policy,
     items,
-    sheetVisible,
-    openSheet,
-    closeSheet,
     onPickResult,
     removeItem,
     reorderItems,

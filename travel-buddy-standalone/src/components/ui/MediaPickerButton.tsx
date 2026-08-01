@@ -3,9 +3,7 @@
  * can choose "Take Photo" or "Choose from Library".
  *
  * Sheet state is managed internally; callers only need to pass `onPickResult`,
- * `policy`, and `canAddMore` from their composer. The legacy sheet-control
- * fields (`sheetVisible`, `openSheet`, `closeSheet`) are accepted for
- * backward compatibility but are no longer required.
+ * `policy`, and `canAddMore` from their composer.
  *
  * All policy behaviour (story-video crop, effectiveAllowsEditing, video max
  * duration, aspect ratio) is forwarded to MediaSourceSheet unchanged.
@@ -29,14 +27,13 @@ import { policyAllowsVideo } from '../../lib/contentMediaPolicy.ts';
 export interface MediaPickerButtonProps {
   /**
    * State + methods from useMediaComposer. Only `policy`, `onPickResult`, and
-   * `canAddMore` are consumed; the legacy sheet-state fields (`sheetVisible`,
-   * `openSheet`, `closeSheet`) are accepted but ignored — sheet state is now
-   * managed internally so callers don't need to thread it through.
+   * `canAddMore` are consumed; sheet state is managed internally by this
+   * component.
    */
   composer: Pick<
     UseMediaComposerReturn,
     'policy' | 'onPickResult' | 'canAddMore'
-  > & Partial<Pick<UseMediaComposerReturn, 'sheetVisible' | 'openSheet' | 'closeSheet'>>;
+  >;
   /** Visual variant. 'icon' = compact row of icons. 'area' = dashed pick zone. */
   variant?: 'icon' | 'area';
   /** Label shown in 'area' variant. */
@@ -62,8 +59,8 @@ export function MediaPickerButton({
   const { policy, onPickResult, canAddMore } = composer;
   const allowsVideo = policyAllowsVideo(policy);
 
-  // Sheet state is managed here so callers don't need to pass sheetVisible /
-  // openSheet / closeSheet through their composer.
+  // Sheet state is managed here so callers don't need to thread it through
+  // their composer.
   const [sheetVisible, setSheetVisible] = useState(false);
 
   const isDisabled = disabled || !canAddMore;

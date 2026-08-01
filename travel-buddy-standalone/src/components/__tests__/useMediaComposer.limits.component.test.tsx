@@ -151,27 +151,6 @@ describe('useMediaComposer — item lifecycle', () => {
   });
 });
 
-// ── Sheet visibility ───────────────────────────────────────────────────────────
-
-describe('useMediaComposer — sheet visibility', () => {
-  it('sheetVisible starts as false', async () => {
-    const { result } = await renderHook(() => useMediaComposer('pulse'));
-    expect(result.current.sheetVisible).toBe(false);
-  });
-
-  it('openSheet sets sheetVisible to true', async () => {
-    const { result } = await renderHook(() => useMediaComposer('pulse'));
-    await act(async () => { result.current.openSheet(); });
-    expect(result.current.sheetVisible).toBe(true);
-  });
-
-  it('closeSheet sets sheetVisible back to false', async () => {
-    const { result } = await renderHook(() => useMediaComposer('pulse'));
-    await act(async () => { result.current.openSheet(); });
-    await act(async () => { result.current.closeSheet(); });
-    expect(result.current.sheetVisible).toBe(false);
-  });
-});
 
 // ── Cover auto-assignment ──────────────────────────────────────────────────────
 
