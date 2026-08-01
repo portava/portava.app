@@ -53,6 +53,8 @@ export interface MediaFeedCreator {
   followersCount: number | null;
   followingCount: number | null;
   bio: string | null;
+  /** True when this user is an @Portava Official account. */
+  isOfficial?: boolean;
 }
 
 export interface MediaFeedMediaItem {
@@ -344,6 +346,7 @@ export function hydrateGemFeedItem(input: HydrateGemInput): MediaFeedItem {
     bio: (!creatorIsPrivate || isFollowing || isOwnItem)
       ? (submitterProfile?.bio ?? null)
       : null,
+    isOfficial: (submitterProfile?.is_official as boolean | undefined) ?? false,
   };
 
   // Determine provenance
@@ -630,6 +633,7 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
     followersCount: viewerCanSeePrivateDetails ? (profile?.followers_count ?? null) : null,
     followingCount: viewerCanSeePrivateDetails ? (profile?.following_count ?? null) : null,
     bio: viewerCanSeePrivateDetails ? (profile?.bio ?? null) : null,
+    isOfficial: (profile?.is_official as boolean | undefined) ?? false,
   };
 
   // ── Media items ────────────────────────────────────────────────────────────

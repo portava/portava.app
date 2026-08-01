@@ -111,6 +111,8 @@ export interface SearchResult {
   startsAt: string | null;
   /** True when the result user holds verified traveler status. Only set for travelers/buddies results. */
   verified?: boolean;
+  /** True when this user is an @Portava Official account. Only set for travelers/buddies results. */
+  isOfficial?: boolean;
 }
 
 // ── Static taxonomic datasets ──────────────────────────────────────────────────
@@ -256,7 +258,7 @@ async function searchTravelers(
     const pat = sqlPattern(q);
     let query = sc
       .from("profiles")
-      .select("id, handle, username, name, avatar_url, is_private, home_city, home_country, account_status, verified")
+      .select("id, handle, username, name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official")
       .or(`name.ilike.${pat},handle.ilike.${pat},username.ilike.${pat}`)
       .neq("id", userId)
       .in("account_status", ["active"])
@@ -352,6 +354,7 @@ async function searchTravelers(
         createdAt: null,
         startsAt: null,
         verified: (p.verified as boolean) ?? false,
+        isOfficial: (p.is_official as boolean) ?? false,
       };
     });
 

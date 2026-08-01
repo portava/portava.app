@@ -132,10 +132,7 @@ function buildDefaultViewer(isMe: boolean, pps: Record<string, any> | null): Rec
  */
 router.get("/users/:username/passport", async (req, res) => {
   const sc = getServiceClient();
-  if (!sc) {
-    sendError(res, "server_not_configured", "Service client not ready");
-    return;
-  }
+  if (!sc) { res.status(404).json({ error: "not_found" }); return; }
 
   const username = req.params.username.replace(/^@/, "").toLowerCase().trim().replace(/[^a-z0-9_]/g, "");
   if (!username || username.length < 1) {
@@ -145,14 +142,14 @@ router.get("/users/:username/passport", async (req, res) => {
 
   const viewerId = await getOptionalViewerId(sc, req);
 
-  let { data, error } = await sc
+  let { data: profile, error } = await sc
     .from("profiles")
     .select(PUBLIC_PROFILE_COLUMNS)
     .eq("handle", username)
     .maybeSingle();
 
   if (error && (error as any).code === "42703") {
-    ({ data, error } = await sc
+    ({ data: profile, error } = await sc
       .from("profiles")
       .select(PUBLIC_PROFILE_COLUMNS_FALLBACK)
       .eq("handle", username)
@@ -164,19 +161,21 @@ router.get("/users/:username/passport", async (req, res) => {
     sendError(res, "db_error", error.message);
     return;
   }
-  if (!data) {
+  if (!profile) {
     sendError(res, "not_found", "User not found");
     return;
   }
 
-  const targetId: string = data.id;
+  const targetId: string = profile.id;
   const isMe = viewerId === targetId;
 
   // ── Visibility guard ───────────────────────────────────────────────────────
+  // resolveProfileVisibility handles account-status, block relationships, and
+  // follower/friend checks — the same pattern used by the passport route.
   let visibility: string;
   let privacySettings: Record<string, any> | null;
   try {
-    const result = await resolveProfileVisibility(sc, viewerId, targetId, data);
+    const result = await resolveProfileVisibility(sc, viewerId, profile.id, profile);
     visibility = result.visibility;
     privacySettings = result.privacySettings as Record<string, any> | null;
   } catch (e: any) {
@@ -230,7 +229,7 @@ router.get("/users/:username/passport", async (req, res) => {
     // toPrivateProfilePreview enforces the exact PrivateProfilePreview shape —
     // no extra fields leak through, regardless of what the DB row contains.
     res.status(200).json(
-      toPrivateProfilePreview(data, {
+      toPrivateProfilePreview(profile, {
         relationshipStatus,
         showRealName: privacySettings?.show_real_name === true,
       }),
@@ -318,8 +317,8 @@ router.get("/users/:username/passport", async (req, res) => {
   const showRealName = isMe || privacySettings?.show_real_name === true;
   const profilePayload =
     isMe || visibility === "followers_only"
-      ? toFullProfileView(data, { showRealName })
-      : toPublicProfilePreview(data, { showRealName });
+      ? toFullProfileView(profile, { showRealName })
+      : toPublicProfilePreview(profile, { showRealName });
 
   // Compute trust score + stamps earned count (both fail-open).
   let trustScore: number | null = null;
@@ -398,18 +397,19 @@ router.get("/users/:username/passport", async (req, res) => {
  */
 router.get("/users/:username/passport/postcards", async (req, res) => {
   const sc = getServiceClient();
-  if (!sc) {
-    sendError(res, "server_not_configured", "Service client not ready");
+  if (!sc) { res.status(404).json({ error: "not_found" }); return; }
+
+  const username = req.params.username.replace(/^@/, "").toLowerCase().trim().replace(/[^a-z0-9_]/g, "");
+  if (!username) {
+    sendError(res, "not_found", "Invalid username");
     return;
   }
 
-  const username = req.params.username.replace(/^@/, "").toLowerCase().trim().replace(/[^a-z0-9_]/g, "");
-
   const { data: profile, error: profileErr } = await sc
-    .from("profiles")
-    .select("id, passport_visibility, is_private, account_status")
-    .eq("handle", username)
-    .maybeSingle();
+      .from("profiles")
+      .select("id, username, display_name, name, avatar_url, passport_visibility, is_private, account_status")
+      .eq("handle", username)
+      .maybeSingle();
 
   if (profileErr || !profile) {
     sendError(res, "not_found", "User not found");
@@ -426,7 +426,7 @@ router.get("/users/:username/passport/postcards", async (req, res) => {
   let visibility: string;
   let resolvedPrivacySettings: { profile_visibility?: string } | null = null;
   try {
-    const result = await resolveProfileVisibility(sc, viewerId, targetId, profile);
+    const result = await resolveProfileVisibility(sc, viewerId, profile.id, profile);
     visibility = result.visibility;
     resolvedPrivacySettings = result.privacySettings;
   } catch (e: any) {
@@ -506,12 +506,11 @@ router.get("/users/:username/passport/postcards", async (req, res) => {
   let publicMediaByPostId: Record<string, any[]> = {};
   if (postIds.length > 0) {
     try {
-      const { data: mediaRows } = await sc
-        .from("post_media")
-        .select("post_id, id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status" + (await stampOverlayCol(sc)))
-        .in("post_id", postIds)
-        .eq("processing_status", "ready")
-        .neq("moderation_status", "rejected");
+        const { data: mediaRows } = await sc
+          .from("post_media")
+          .select("post_id, id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status" + (await stampOverlayCol(sc)))
+          .in("post_id", postIds)
+          .eq("processing_status", "ready");
       for (const m of (mediaRows ?? []) as any[]) {
         if (!publicMediaByPostId[m.post_id]) publicMediaByPostId[m.post_id] = [];
         publicMediaByPostId[m.post_id].push(m);
@@ -547,7 +546,6 @@ router.get("/me/passport/postcards", async (req, res) => {
     .select(OWNER_POSTCARD_COLUMNS)
     .eq("user_id", user.id)
     .neq("status", "deleted")
-    .order("pinned_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
     .limit(100);
 
@@ -573,7 +571,7 @@ router.get("/me/passport/postcards", async (req, res) => {
   const ownerPostIds = (data ?? []).map((r: any) => r.post_id).filter(Boolean) as string[];
   let ownerMediaByPostId: Record<string, any[]> = {};
   if (ownerPostIds.length > 0) {
-    const sc = getServiceClient();
+  const sc = getServiceClient();
     if (sc) {
       try {
         const { data: mediaRows } = await sc
@@ -637,7 +635,7 @@ router.patch("/passport/postcards/:id", async (req, res) => {
 
   const { data: existing, error: loadErr } = await client
     .from("passport_postcards")
-    .select("id, user_id, status")
+    .select("id, user_id")
     .eq("id", postcardId)
     .maybeSingle();
 
@@ -670,8 +668,8 @@ router.patch("/passport/postcards/:id", async (req, res) => {
     .update(patch)
     .eq("id", postcardId)
     .eq("user_id", user.id)
-    .select("id, post_id, media_url, caption, location_city, location_country, location_verified, stamp_eligible, visibility, status, pinned_at, note, created_at")
-    .single();
+    .select()
+    .maybeSingle();
 
   if (error) {
     req.log.error({ err: error }, "Failed to update postcard");
@@ -729,7 +727,7 @@ router.patch("/passport/postcards/:id/remove", async (req, res) => {
  */
 router.get("/users/:username/profile", async (req, res) => {
   const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  if (!sc) { res.status(404).json({ error: "not_found" }); return; }
 
   const username = req.params.username.replace(/^@/, "").toLowerCase().trim().replace(/[^a-z0-9_]/g, "");
   if (!username) {
@@ -739,7 +737,7 @@ router.get("/users/:username/profile", async (req, res) => {
 
   const { data: profile, error: profileErr } = await sc
     .from("profiles")
-    .select("id, username, display_name, name, avatar_url, cover_photo_url, passport_visibility, bio, is_private, featured_count")
+    .select("id, username, display_name, name, avatar_url, cover_photo_url, passport_visibility, bio, is_private, featured_count, is_official")
     .eq("handle", username)
     .maybeSingle();
 
@@ -784,10 +782,10 @@ router.get("/users/:username/profile", async (req, res) => {
     return;
   }
 
-  const [tripResult, stampResult] = await Promise.all([
-    countUserTrips(sc, profile.id),
-    sc.from("passport_stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id).eq("locked", false),
-  ]);
+    const [tripResult, stampResult] = await Promise.all([
+      countUserTrips(sc, profile.id),
+      sc.from("passport_stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id).eq("locked", false),
+    ]);
   const tripCount = tripResult.count;
   let stampCount = (stampResult as any).error?.code === "PGRST205" ? 0 : (stampResult.count ?? 0);
 
@@ -814,6 +812,7 @@ router.get("/users/:username/profile", async (req, res) => {
     stampCount: stampCount ?? 0,
     featuredCount: (profile.featured_count as number | null | undefined) ?? 0,
     visibility: profile.passport_visibility ?? "public",
+    isOfficial: (profile.is_official as boolean | undefined) ?? false,
   });
 });
 
@@ -1173,8 +1172,8 @@ router.get("/users/:username/stamps/:stampId/preview", async (req, res) => {
   if (!sc) { res.status(404).json({ error: "not_found" }); return; }
 
   const username = req.params.username.replace(/^@/, "").toLowerCase().trim().replace(/[^a-z0-9_]/g, "");
-  const stampId = String(req.params.stampId || "");
-  if (!username || !STAMP_UUID_RE.test(stampId)) {
+  const stampId = req.params.stampId ?? null;
+  if (!username || !STAMP_UUID_RE.test(stampId ?? "")) {
     res.status(404).json({ error: "not_found" });
     return;
   }
@@ -1194,7 +1193,7 @@ router.get("/users/:username/stamps/:stampId/preview", async (req, res) => {
       return;
     }
 
-    const stamp = await fetchPublicStampPreview(sc, profile.id, stampId);
+      const stamp = await fetchPublicStampPreview(sc, profile.id, stampId as string);
     if (!stamp) { res.status(404).json({ error: "not_found" }); return; }
 
     // Universal display-name rule: share pages are anonymous — owner's real
@@ -1273,7 +1272,7 @@ router.get("/users/:username/og-image.png", async (req, res) => {
     // ── Stamp variant (?stamp=<id>) — falls back to the passport card ────────
     const stampId = typeof req.query.stamp === "string" ? req.query.stamp : null;
     if (stampId) {
-      const stamp = await fetchPublicStampPreview(sc, profile.id, stampId);
+      const stamp = await fetchPublicStampPreview(sc, profile.id, stampId as string);
       if (stamp) {
         try {
           const artworkDataUri = stamp.artworkUrl ? await fetchImageAsDataUri(stamp.artworkUrl) : null;

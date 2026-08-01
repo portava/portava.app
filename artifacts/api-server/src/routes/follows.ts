@@ -1426,7 +1426,7 @@ async function getSharedDestinationReason(
  * Never returns private posts, trips, circle memberships, or location data.
  */
 const PUBLIC_PASSPORT_FIELDS =
-  "id, handle, name, avatar_url, bio, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, account_status";
+  "id, handle, name, avatar_url, bio, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, account_status, is_official";
 
 /** Build the public passport JSON payload from a profile row + context. */
 function buildPassportResponse(
@@ -1455,6 +1455,7 @@ function buildPassportResponse(
       isFollowing,
       reason,
       memberSince: p.created_at,
+      isOfficial: (p.is_official as boolean) ?? false,
     };
   }
   return {
@@ -1489,6 +1490,7 @@ function buildPassportResponse(
     comfortLevel: p.comfort_level ?? null,
     availabilityTags: p.availability_tags ?? [],
     planningStyle: p.planning_style ?? null,
+    isOfficial: (p.is_official as boolean) ?? false,
   };
 }
 
