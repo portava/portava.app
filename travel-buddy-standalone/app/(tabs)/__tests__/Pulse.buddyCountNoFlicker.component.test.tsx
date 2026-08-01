@@ -217,12 +217,18 @@ jest.mock('../../../src/context/LayoverSessionContext',        () => ({
 
 describe('Pulse screen — buddy card count no-flicker during rapid city changes', () => {
   beforeEach(() => {
+    jest.useFakeTimers();
     mockGetLaunchStatus.mockReset();
     mockActiveCity = 'Alpha City';
+  });
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it('shows "Checking availability…" while the initial request is pending', async () => {
     // Deferred promise — never resolves during this test so count stays null.
+    // With fake timers the 300 ms debounce never fires unless we explicitly
+    // advance time, so getLaunchStatus is never called and count remains null.
     mockGetLaunchStatus.mockReturnValue(new Promise(() => {}));
 
     const Pulse = require('../index.tsx').default;
@@ -240,8 +246,10 @@ describe('Pulse screen — buddy card count no-flicker during rapid city changes
       // Beta  (city B): count=3  → would display "Local buddies available"
       // Gamma (city C): count=0  → must display "No buddies online right now in Gamma City…"
       //
-      // Responses deliberately resolve in stale-first order: A, B, then C.
-      // The cancelled-boolean cleanup on each effect means A and B are no-ops.
+      // Each city change is followed by a 350 ms timer advance so the debounce
+      // fires and getLaunchStatus is actually called for that city. Responses
+      // deliberately resolve in stale-first order: A, B, then C. The
+      // cancelled-boolean cleanup on each effect means A and B are no-ops.
       let resolveAlpha!: (v: any) => void;
       let resolveBeta!:  (v: any) => void;
       let resolveGamma!: (v: any) => void;
@@ -258,18 +266,25 @@ describe('Pulse screen — buddy card count no-flicker during rapid city changes
       mockActiveCity = 'Alpha City';
       const Pulse = require('../index.tsx').default;
       const { rerender, queryByText } = await render(<Pulse />);
-      await act(async () => {});
+      // Advance past the 300 ms debounce so Alpha's getLaunchStatus call fires.
+      await act(async () => { jest.advanceTimersByTime(350); });
 
       // Alpha's request is in-flight — count is null.
       expect(queryByText('Checking availability…')).toBeTruthy();
 
-      // ── Switch to Beta City (cancels Alpha's effect) ───────────────────────
+      // ── Switch to Beta City ────────────────────────────────────────────────
+      // Alpha's effect cleanup sets its `cancelled` flag + clears its (already-
+      // fired) timer. Beta's new debounce timer starts from zero.
       mockActiveCity = 'Beta City';
       await act(async () => { rerender(<Pulse />); });
+      // Advance past the 300 ms debounce so Beta's getLaunchStatus call fires.
+      await act(async () => { jest.advanceTimersByTime(350); });
 
-      // ── Switch to Gamma City (cancels Beta's effect) ───────────────────────
+      // ── Switch to Gamma City ───────────────────────────────────────────────
       mockActiveCity = 'Gamma City';
       await act(async () => { rerender(<Pulse />); });
+      // Advance past the 300 ms debounce so Gamma's getLaunchStatus call fires.
+      await act(async () => { jest.advanceTimersByTime(350); });
 
       // ── Resolve out of order: A first (stale, cancelled) ──────────────────
       await act(async () => {
@@ -312,7 +327,7 @@ describe('Pulse screen — buddy card count no-flicker during rapid city changes
   it(
     'count IS applied when the single active request resolves without any cancellation',
     async () => {
-      // Baseline: one city, one request, resolves immediately. No cancellation.
+      // Baseline: one city, one request, resolves after the debounce fires.
       mockActiveCity = 'Solo City';
       let resolveSolo!: (v: any) => void;
       const soloPromise = new Promise<any>((res) => { resolveSolo = res; });
@@ -320,7 +335,8 @@ describe('Pulse screen — buddy card count no-flicker during rapid city changes
 
       const Pulse = require('../index.tsx').default;
       const { queryByText } = await render(<Pulse />);
-      await act(async () => {});
+      // Advance past the 300 ms debounce so getLaunchStatus is actually called.
+      await act(async () => { jest.advanceTimersByTime(350); });
 
       expect(queryByText('Checking availability…')).toBeTruthy();
 
@@ -332,6 +348,39 @@ describe('Pulse screen — buddy card count no-flicker during rapid city changes
       // Count=4 → "Local buddies available" must appear (count > 0 path).
       expect(queryByText('Local buddies available')).toBeTruthy();
       expect(queryByText('Checking availability…')).toBeNull();
+    },
+  );
+
+  it(
+    'debounce — switching city 3 times rapidly fires getLaunchStatus only once',
+    async () => {
+      // Simulates a user scrolling rapidly through a city picker: A → B → C all
+      // happen within the 300 ms debounce window. Only the final city (C) should
+      // produce a getLaunchStatus call; A and B are swallowed by the debounce.
+      mockGetLaunchStatus.mockReturnValue(new Promise(() => {})); // never resolves
+
+      mockActiveCity = 'Alpha City';
+      const Pulse = require('../index.tsx').default;
+      const { rerender } = await render(<Pulse />);
+      // Time has NOT advanced — Alpha's 300 ms debounce timer is still running.
+
+      // Switch to Beta before 300 ms elapses (cancels Alpha's timer).
+      mockActiveCity = 'Beta City';
+      await act(async () => { rerender(<Pulse />); });
+
+      // Switch to Gamma before 300 ms elapses (cancels Beta's timer).
+      mockActiveCity = 'Gamma City';
+      await act(async () => { rerender(<Pulse />); });
+
+      // No time has passed — getLaunchStatus must not have been called yet.
+      expect(mockGetLaunchStatus).toHaveBeenCalledTimes(0);
+
+      // Advance past the 300 ms debounce — only Gamma's timer fires.
+      await act(async () => { jest.advanceTimersByTime(350); });
+
+      // Exactly one call, for the final city only.
+      expect(mockGetLaunchStatus).toHaveBeenCalledTimes(1);
+      expect(mockGetLaunchStatus).toHaveBeenCalledWith('Gamma City');
     },
   );
 
