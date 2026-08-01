@@ -78,119 +78,24 @@ const PRINT_UNRESOLVED_ALLOWLIST = process.argv.includes(
 // public schema (or that are intentionally written pre-migration).  Keep this
 // list SHORT and annotated — every entry is a hole in the check.
 const ALLOWLIST = new Set<string>([
-  // E2EE columns on existing tables — migration pending live apply.
-  // Remove once the columns are present in the live DB schema.
-  "message_threads.is_e2ee",
-  "messages.ciphertext",
-  // Header-image privacy columns — migration 20260806_header_image_privacy.sql
-  // pending live apply. Remove once the columns are present in the live DB schema.
-  "events.show_header_publicly",
-  "trips.show_header_publicly",
-  "profiles.show_profile_picture_publicly", // column pending live DB migration — allowlisted until applied
-  // Featured by Portava — migration 0106_portava_featured.sql
-  // pending live apply. Remove once the column exists in the live DB schema.
-  "profiles.featured_count",
-  // Official publisher flag — migration 0106_portava_featured.sql adds is_official
-  // alongside featured_count. Remove once the column exists in the live DB schema.
-  "profiles.is_official",
-  // Place-image accuracy/provenance columns — Task 1 migration (20260809_place_image_accuracy.sql)
-  // pending live apply. Remove once the columns are present in the live DB schema.
-  "generated_visuals.accuracy_status",
-  "generated_visuals.canonical_place_id",
-  "generated_visuals.disclaimer_required",
-  "generated_visuals.disclaimer_text",
-  "generated_visuals.generated_with_ai",
-  "generated_visuals.image_source_type",
-  "generated_visuals.last_accuracy_reviewed_at",
-  "generated_visuals.provider_place_id",
-  "generated_visuals.source_url",
-  "generated_visuals.verification_status",
-  "generated_visuals.verified_at",
-  "generated_visuals.verified_by",
-  "places.header_image_generated_id",
-  // viewer_creator_fatigue.expires_at — added by migration
-  // 20260804_creator_fatigue_expires.sql, pending live apply.
-  // Remove once the column is present in the live DB schema.
-  "viewer_creator_fatigue.expires_at",
-  // Canonical venue-level place FK on posts — migration 2045_posts_canonical_place_id.sql
-  // pending live apply. Remove once the column exists in the live posts table.
-  "posts.canonical_place_id",
-  // pHash dedup columns on post_media — migration 2046_phash_dedup.sql
-  // pending live apply. Remove once the columns exist in the live DB schema.
-  "post_media.phash",
-  "post_media.dedup_processed",
-  // Denormalised representative_phash on media_dedup_groups — same migration.
-  // Table is in SKIP_TABLES; this entry covers any static select/write extracted
-  // before the table check runs. Remove once migration 2046 is applied live.
-  "media_dedup_groups.representative_phash",
-  // Add-a-Gem creation flow columns — migration pending live apply.
-  // Remove once the columns exist in the live hidden_gems table.
-  "hidden_gems.accessibility",
-  "hidden_gems.crowd_level",
-  "hidden_gems.source_confirmation",
-  "hidden_gems.visibility",
-  // Place coverage buckets: per-post bucket array + classified flag — migration 2046 pending live apply.
-  // Remove once the columns exist in the live posts table.
-  "posts.post_buckets",
-  "posts.bucket_classified",
+  // (empty — all previously pending migrations have been applied to the live DB)
 ]);
 
 // Tables that are not real live relations and should be skipped entirely
 // (e.g. test doubles or tables owned by another system).
 const SKIP_TABLES = new Set<string>([
   // E2EE device management tables — migration pending live apply.
-  // Remove these entries once the migration is applied to the live DB.
   "devices",
   "key_packages",
-  // Admin access audit log — migration 2035 pending live apply.
-  // Remove once migration 2035_admin_access_log.sql is applied to the live DB.
+  // Admin access audit log — migration 2035_admin_access_log.sql pending live apply.
   "admin_access_log",
-  // DiscoveryRankingService tables — migrations pending live apply (Task 2653).
-  // Remove once the tables exist in the live DB schema.
+  // DiscoveryRankingService tables — migrations pending live apply.
   "content_distribution_stats",
   "ranking_debug_samples",
-  // Place image reports table — Task 1 migration (20260809_place_image_accuracy.sql)
-  // pending live apply. Remove once the table exists in the live DB schema.
-  "place_image_reports",
-  // Ranking config audit log — migration pending live apply (Task 2735).
-  // Remove once the table exists in the live DB schema.
+  // Ranking config audit log — migration pending live apply.
   "ranking_config_audit_log",
-  // Stamp-it reactions on media posts — migration 20260814_media_stamp_reactions.sql
-  // pending live apply. Remove once the table exists in the live DB schema.
-  "media_stamp_reactions",
-  // Event agenda items (places attached to an event) — migration 2043_event_agenda_items.sql
-  // pending live apply. Remove once the table exists in the live DB schema.
-  "event_agenda_items",
-  // Worth-It / Skip-It votes for places and gems — migration 20260808_place_votes.sql
-  // pending live apply. Remove once the table exists in the live DB schema.
+  // Worth-It / Skip-It votes — migration pending live apply.
   "place_votes",
-  // Featured by Portava — migration 0106_portava_featured.sql
-  // pending live apply. Remove once the table exists in the live DB schema.
-  "portava_featured",
-  // Wrong-place mismatch reports — migration 2045_posts_canonical_place_id.sql
-  // pending live apply. Remove once the table exists in the live DB schema.
-  "place_mismatch_reports",
-  // Near-duplicate media dedup groups + memberships — migration 2046_phash_dedup.sql
-  // pending live apply. Remove once the tables exist in the live DB schema.
-  "media_dedup_groups",
-  "media_dedup_memberships",
-  // Place coverage buckets + idempotency ledger — migration 2046 pending live apply.
-  // Remove once the tables exist in the live DB schema.
-  "place_coverage_buckets",
-  "post_bucket_ledger",
-  // Place Living Page tables — migration 2047_place_living_cache.sql pending live apply.
-  // Remove once the tables exist in the live DB schema.
-  "place_living_cache",
-  "place_best_of",
-  "place_top_contributors",
-  "place_ai_summaries",
-  "place_cache_invalidation_queue",
-  // Unified content stamp table — migration 2047_content_stamps.sql
-  // pending live apply. Remove once the table exists in the live DB schema.
-  "content_stamps",
-  // Stamp milestone tracking — migration 2051_stamp_milestones.sql
-  // pending live apply. Remove once the table exists in the live DB schema.
-  "stamp_milestones",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────

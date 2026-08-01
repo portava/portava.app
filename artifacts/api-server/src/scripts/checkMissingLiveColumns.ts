@@ -87,120 +87,6 @@ const ALLOWLIST = new Set<string>([
   "passport_visibility_preferences.map_visibility",    // live: map_visible
   "tags.tagged_at",                     // does not exist live
   "hashtags.normalized_name",           // live: slug
-
-  // ── E2EE Phase E-2 — migration 20260803_messages_ciphertext.sql ─────────────
-  // Applied by hand to fix the Event Chat incident; allowlisted until the
-  // check is first run post-apply and this entry can be confirmed removable.
-  "messages.ciphertext",
-  "message_threads.is_e2ee",
-
-  // ── Pending live migrations ──────────────────────────────────────────────────
-  // Scheduled publishing — migration 20260812_posts_publish_at.sql pending live apply.
-  "posts.publish_at",
-
-  // Age/geo restrictions on posts — migration 20260813_posts_restrictions.sql pending live apply.
-  "posts.geo_restriction",
-  "posts.age_restriction_enabled",
-  "posts.age_min",
-  "posts.age_max",
-
-  // Header-image privacy — migration 20260806_header_image_privacy.sql pending live apply.
-  "events.show_header_publicly",
-  "trips.show_header_publicly",
-  "profiles.show_profile_picture_publicly",
-
-  // Featured by Portava — migration 0106_portava_featured.sql pending live apply.
-  "profiles.featured_count",
-  "profiles.is_official",
-
-  // Place-image accuracy/provenance — migration 20260809_place_image_accuracy.sql pending live apply.
-  "generated_visuals.accuracy_status",
-  "generated_visuals.canonical_place_id",
-  "generated_visuals.disclaimer_required",
-  "generated_visuals.disclaimer_text",
-  "generated_visuals.generated_with_ai",
-  "generated_visuals.image_source_type",
-  "generated_visuals.last_accuracy_reviewed_at",
-  "generated_visuals.provider_place_id",
-  "generated_visuals.source_url",
-  "generated_visuals.verification_status",
-  "generated_visuals.verified_at",
-  "generated_visuals.verified_by",
-  "places.header_image_generated_id",
-
-  // Creator fatigue expiry — migration 20260804_creator_fatigue_expires.sql pending live apply.
-  "viewer_creator_fatigue.expires_at",
-
-  // Canonical venue-level place FK on posts — migration 2045_posts_canonical_place_id.sql pending live apply.
-  "posts.canonical_place_id",
-
-  // pHash dedup — migration 2046_phash_dedup.sql pending live apply.
-  "post_media.phash",
-  "post_media.dedup_processed",
-  "media_dedup_groups.representative_phash",
-
-  // Add-a-Gem creation flow — migration pending live apply.
-  "hidden_gems.accessibility",
-  "hidden_gems.crowd_level",
-  "hidden_gems.source_confirmation",
-  "hidden_gems.visibility",
-
-  // Place coverage buckets — migration 2046 / 2048 pending live apply.
-  "posts.post_buckets",
-  "posts.bucket_classified",
-
-  // Place Living Cache worker columns — migration 2050 pending live apply.
-  "place_living_cache.worker_locked_at",
-  "place_living_cache.worker_lock_expires_at",
-  "place_living_cache.queue_position",
-
-  // Stamp milestones — migration 2051 pending live apply (table may not exist live).
-  "stamp_milestones.user_id",
-  "stamp_milestones.milestone_type",
-  "stamp_milestones.achieved_at",
-  "stamp_milestones.metadata",
-  "stamp_milestones.id",
-  "stamp_milestones.created_at",
-
-  // Content stamps — migration 2049 pending live apply (table may not exist live).
-  "content_stamps.id",
-  "content_stamps.user_id",
-  "content_stamps.target_id",
-  "content_stamps.target_type",
-  "content_stamps.stamp_id",
-  "content_stamps.stamped_at",
-  "content_stamps.created_at",
-  "content_stamps.memory_type",
-
-  // Events cover source — migration 2036 pending live apply.
-  "events.cover_source",
-
-  // Media feed flags — migration 2037 / 2038 / 2039 / 2040 pending live apply.
-  "posts.is_featured_media",
-  "posts.media_tab_enabled",
-  "posts.admin_media_approved",
-  "posts.admin_media_rejected",
-  "posts.media_ranking_boost",
-
-  // Media ranking snapshots — migration 2041 pending live apply.
-  "media_ranking_snapshots.id",
-  "media_ranking_snapshots.post_id",
-  "media_ranking_snapshots.viewer_id",
-  "media_ranking_snapshots.surface",
-  "media_ranking_snapshots.session_id",
-  "media_ranking_snapshots.position",
-  "media_ranking_snapshots.final_score",
-  "media_ranking_snapshots.reason_codes",
-  "media_ranking_snapshots.served_at",
-
-  // Stamp auto-approve artwork flag — migration 2042 pending live apply.
-  "stamp_catalog.auto_approve_artwork",
-
-  // Hidden gems canonical place — migration 2044 pending live apply.
-  "hidden_gems.canonical_place_id",
-
-  // Discovery places canonical location — migration 2053 pending live apply.
-  "discovery_places.canonical_location_id",
 ]);
 
 // ── Superseded / known-drifted migration files ────────────────────────────────
@@ -218,30 +104,18 @@ const SKIP_FILES = new Set<string>([
 // been applied yet).  Columns on these tables are skipped — the table-missing
 // case is already caught by audit:schema.
 const SKIP_TABLES = new Set<string>([
+  // E2EE device management tables — migration pending live apply.
   "devices",
   "key_packages",
+  // Admin access audit log — migration 2035_admin_access_log.sql pending live apply.
   "admin_access_log",
+  // DiscoveryRankingService tables — migrations pending live apply.
   "content_distribution_stats",
   "ranking_debug_samples",
-  "place_image_reports",
+  // Ranking config audit log — migration pending live apply.
   "ranking_config_audit_log",
-  "media_stamp_reactions",
-  "event_agenda_items",
+  // Worth-It / Skip-It votes — migration pending live apply.
   "place_votes",
-  "portava_featured",
-  "place_mismatch_reports",
-  "media_dedup_groups",
-  "media_dedup_memberships",
-  "place_coverage_buckets",
-  "post_bucket_ledger",
-  "place_living_cache",
-  "place_best_of",
-  "place_top_contributors",
-  "place_ai_summaries",
-  "place_cache_invalidation_queue",
-  "content_stamps",
-  "stamp_milestones",
-  "media_ranking_snapshots",
 ]);
 
 // ── Environment ───────────────────────────────────────────────────────────────
