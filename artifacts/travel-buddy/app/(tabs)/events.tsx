@@ -28,7 +28,10 @@ import {
 import {
   todayRange, tomorrowRange, weekendRange, next7Range, upcomingRange,
 } from '../../src/lib/eventDateTime';
-import { EventDiscoveryCard } from '../../src/components/EventDiscoveryCard';
+import { EventCard } from '../../src/components/cards/EventCard';
+import { EventCardSkeleton } from '../../src/components/loading/EventCardSkeleton';
+import { EmptyState } from '../../src/components/ui/EmptyState';
+import { ErrorState } from '../../src/components/ui/ErrorState';
 import { useSession } from '../../src/context/SessionContext';
 import { useLocationContext } from '../../src/context/LocationContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
@@ -419,11 +422,24 @@ function EventsTabScreen() {
           contentContainerStyle={styles.hList}
           renderItem={({ item }) => (
             <View style={styles.hCard}>
-              <EventDiscoveryCard
-                event={item}
-                onPress={() => router.push(`/event/${item.id}` as any)}
+              <EventCard
+                id={item.id}
+                title={item.title}
+                startsAt={item.startsAt}
+                locationName={item.locationName}
+                city={item.city}
+                coverUrl={item.coverUrl}
+                goingCount={item.goingCount}
+                maxAttendees={item.maxAttendees}
+                category={item.category}
+                state={item.state}
+                myRsvp={item.myRsvp ?? undefined}
                 isSaved={savedIds.has(item.id)}
+                coverDisclaimerRequired={item.coverDisclaimerRequired}
+                coverDisclaimerText={item.coverDisclaimerText}
+                onPress={() => router.push(`/event/${item.id}` as any)}
                 onToggleSave={() => handleSaveToggle(item)}
+                onRsvp={() => router.push(`/event/${item.id}` as any)}
               />
             </View>
           )}
@@ -636,19 +652,21 @@ function EventsTabScreen() {
       )}
 
       {loading && !refreshing ? (
-        <View style={styles.center}><ActivityIndicator color={color.signal} /></View>
+        <ScrollView contentContainerStyle={styles.body} scrollEnabled={false}>
+          {[1, 2, 3].map((i) => (
+            <View key={i} style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <View style={[styles.sectionTitleRow, { opacity: 0 }]} />
+              </View>
+              <View style={{ paddingHorizontal: space.lg }}>
+                <EventCardSkeleton />
+                <EventCardSkeleton />
+              </View>
+            </View>
+          ))}
+        </ScrollView>
       ) : error && !hasContent ? (
-        <View style={styles.center}>
-          <Text style={styles.errorText}>{error}</Text>
-          <Pressable
-            onPress={() => load()}
-            style={styles.retryBtn}
-            accessibilityLabel="Retry loading events"
-            accessibilityRole="button"
-          >
-            <Text style={styles.retryText}>Retry</Text>
-          </Pressable>
-        </View>
+        <ErrorState message={error ?? 'Failed to load events'} onRetry={() => load()} />
       ) : (
         <ScrollView
           contentContainerStyle={styles.body}
@@ -859,43 +877,26 @@ function EventsTabScreen() {
           {/* Empty states */}
           {!loading && !hasContent && drafts.length === 0 && (
             error ? (
-              <View style={styles.emptyState}>
-                <CalendarX size={44} color={color.faint} />
-                <Text style={styles.emptyTitle}>Couldn't load events</Text>
-                <Text style={styles.emptySub}>{error}</Text>
-                <Pressable style={styles.emptyBtn} onPress={() => load(false)}>
-                  <Text style={styles.emptyBtnText}>Try again</Text>
-                </Pressable>
-              </View>
+              <ErrorState message={error} onRetry={() => load(false)} />
             ) : !isAuthed ? (
-              <View style={styles.emptyState}>
-                <CalendarX size={44} color={color.faint} />
-                <Text style={styles.emptyTitle}>Sign in to see events</Text>
-                <Text style={styles.emptySub}>Discover events from travellers around you.</Text>
-              </View>
+              <EmptyState
+                icon={CalendarX}
+                title="Sign in to see events"
+                description="Discover events from travellers around you."
+              />
             ) : nearMeRequested && !locationState.coords ? (
-              <View style={styles.emptyState}>
-                <MapPin size={44} color={color.faint} />
-                <Text style={styles.emptyTitle}>Location not available</Text>
-                <Text style={styles.emptySub}>
-                  Enable location in your device settings to find events near you, or browse by city.
-                </Text>
-              </View>
+              <EmptyState
+                icon={MapPin}
+                title="Location not available"
+                description="Enable location in your device settings to find events near you, or browse by city."
+              />
             ) : (
-              <View style={styles.emptyState}>
-                <CalendarX size={44} color={color.faint} />
-                <Text style={styles.emptyTitle}>No events yet</Text>
-                <Text style={styles.emptySub}>
-                  Be the first — create an event for your city.
-                </Text>
-                <Pressable
-                  style={styles.emptyBtn}
-                  onPress={() => router.push('/events/create' as any)}
-                >
-                  <Plus size={16} color={color.onInk} />
-                  <Text style={styles.emptyBtnText}>Create an event</Text>
-                </Pressable>
-              </View>
+              <EmptyState
+                icon={CalendarX}
+                title="No events yet"
+                description="Be the first — create an event for your city."
+                primaryAction={{ label: 'Create an event', onPress: () => router.push('/events/create' as any) }}
+              />
             )
           )}
           {/* Browse all events — always-visible entry point to the full filterable list */}

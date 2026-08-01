@@ -5,7 +5,10 @@ import {
 } from 'react-native';
 import { KeyboardSafeScrollView } from '../src/components/ui/KeyboardSafeView';
 import { useLocalSearchParams, router } from 'expo-router';
-import { Search, X, Clock, Zap, MapPin, AlertCircle } from 'lucide-react-native';
+import { Search, X, Clock, Zap, MapPin, AlertCircle, SearchX } from 'lucide-react-native';
+import { SearchResultsSkeleton } from '../src/components/loading/SearchResultsSkeleton';
+import { EmptyState } from '../src/components/ui/EmptyState';
+import { ErrorState } from '../src/components/ui/ErrorState';
 import { AppHeader } from '../src/components/ui/AppHeader';
 import { SearchResultCard } from '../src/components/search/SearchResultCard';
 import {
@@ -427,26 +430,23 @@ export default function SearchScreen() {
                 onPickResult={handleSuggestionPick}
               />
             ) : loading ? (
-              <View style={styles.center}>
-                <ActivityIndicator color={color.signal} />
-              </View>
+              <SearchResultsSkeleton count={6} />
             ) : error ? (
-              <Pressable style={styles.center} onPress={() => runSearch(query, activeTab)}>
-                <Text style={styles.errorText}>{error}</Text>
-                <Text style={styles.retryHint}>Tap to retry</Text>
-              </Pressable>
+              <ErrorState message={error} onRetry={() => runSearch(query, activeTab)} />
             ) : isEmpty ? (
               /* No results */
-              <View style={[styles.center, { justifyContent: 'flex-start', paddingTop: space.xl }]}>
-                <Text style={styles.emptyTitle}>No results found.</Text>
-                <Text style={styles.emptySub}>
-                  {timeLabel && !needsLocationForNearby
-                    ? `Nothing matched "${query.trim()}" · ${timeLabel}. Try a different term or filter.`
-                    : `Nothing matched "${query.trim()}". Try a different search term or filter.`}
-                </Text>
-
+              <View style={{ paddingTop: space.sm }}>
+                <EmptyState
+                  icon={SearchX}
+                  title="No results found"
+                  description={
+                    timeLabel && !needsLocationForNearby
+                      ? `Nothing matched "${query.trim()}" · ${timeLabel}. Try a different term or filter.`
+                      : `Nothing matched "${query.trim()}". Try a different search term or filter.`
+                  }
+                />
                 {/* Contextual recovery chips */}
-                <View style={[styles.chipsRow, { marginTop: space.lg }]}>
+                <View style={[styles.chipsRow, { marginTop: space.sm }]}>
                   {locationGranted && (
                     <Pressable
                       style={[styles.chip, styles.chipPrimary]}
@@ -473,15 +473,10 @@ export default function SearchScreen() {
                     <Text style={styles.chipText}>Ask Compass</Text>
                   </Pressable>
                 </View>
-
                 <Text style={[styles.chipsLabel, { marginTop: space.xl }]}>Try searching for</Text>
                 <View style={styles.chipsRow}>
                   {recoveryChips.slice(0, 4).map((chip) => (
-                    <Pressable
-                      key={chip}
-                      style={styles.chip}
-                      onPress={() => submitSearch(chip)}
-                    >
+                    <Pressable key={chip} style={styles.chip} onPress={() => submitSearch(chip)}>
                       <Text style={styles.chipText}>{chip}</Text>
                     </Pressable>
                   ))}

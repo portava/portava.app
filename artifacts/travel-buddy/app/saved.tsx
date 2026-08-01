@@ -10,6 +10,8 @@ import {
   View, Text, ScrollView, FlatList, StyleSheet,
   ActivityIndicator, Pressable, Animated, TextInput, Modal, Image,
 } from 'react-native';
+import { EmptyState } from '../src/components/ui/EmptyState';
+import { ErrorState } from '../src/components/ui/ErrorState';
 import { getPlaceCategoryFallback } from '../src/utils/placeCategoryFallback';
 import { useFocusEffect, router } from 'expo-router';
 import { FEED_FOCUS_TTL_MS } from '../src/hooks/usePosts';
@@ -26,7 +28,7 @@ import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
 import {
   Bookmark, FolderPlus, Folder, Trash2, X, ChevronRight,
   ChevronLeft, MapPin, User, Image as ImageIcon, Hash, CalendarDays,
-  Pencil, ChevronRight as NavArrow,
+  Pencil, ChevronRight as NavArrow, BookmarkX,
 } from 'lucide-react-native';
 
 // ── Suggested starter collections ────────────────────────────────────────────
@@ -229,13 +231,11 @@ function CollectionItemsView({ collection, onBack }: CollectionItemsViewProps) {
       ) : items.length === 0 ? (
         <View style={{ flex: 1 }}>
           {subHeader}
-          <View style={s.center}>
-            <Bookmark size={32} color={color.haze} />
-            <Text style={s.emptyTitle}>Nothing saved here yet</Text>
-            <Text style={s.emptySub}>
-              Tap the bookmark icon on posts, places, and more to add items.
-            </Text>
-          </View>
+          <EmptyState
+            icon={BookmarkX}
+            title="Nothing saved here yet"
+            description="Tap the bookmark icon on posts, places, and more to add items."
+          />
         </View>
       ) : (
         <FlatList
@@ -470,15 +470,12 @@ export default function SavedScreen() {
               scrollEventThrottle={16}
             >
               <AppHeader variant="detail" title="Saved" onBack={router.back} />
-              <Bookmark size={40} color={color.haze} />
-              <Text style={s.emptyTitle}>Nothing saved yet</Text>
-              <Text style={s.emptySub}>
-                Save posts, places, events, and more — they&apos;ll appear here in collections.
-              </Text>
-              <Pressable style={s.createFirstBtn} onPress={() => setCreateOpen(true)}>
-                <FolderPlus size={16} color={color.onInk} />
-                <Text style={s.createFirstText}>Create your first collection</Text>
-              </Pressable>
+              <EmptyState
+                icon={Bookmark}
+                title="Nothing saved yet"
+                description="Save posts, places, events, and more — they'll appear here in collections."
+                primaryAction={{ label: 'Create a collection', onPress: () => setCreateOpen(true) }}
+              />
               <Text style={s.suggestLabel}>Starter ideas</Text>
               <View style={s.suggestRow}>
                 {STARTER_SUGGESTIONS.map((name) => (

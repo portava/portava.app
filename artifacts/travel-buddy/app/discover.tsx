@@ -5,11 +5,12 @@ import {
 } from 'react-native';
 import { KeyboardSafeScrollView } from '../src/components/ui/KeyboardSafeView';
 import { router } from 'expo-router';
-import { Search, X, RefreshCw, Sparkles } from 'lucide-react-native';
+import { Search, X, RefreshCw, Sparkles, Users } from 'lucide-react-native';
 import { AppHeader } from '../src/components/ui/AppHeader';
-import { TravelerRow } from '../src/components/TravelerRow';
-import { TravelerRowSkeleton } from '../src/components/TravelerRowSkeleton';
-import { searchUsers, getSuggestedTravelers, clearSuggestionsSeen, type TravelerSearchResult } from '../src/services/follows';
+import { ProfileCard } from '../src/components/cards/ProfileCard';
+import { ProfileSkeleton } from '../src/components/loading/ProfileSkeleton';
+import { EmptyState } from '../src/components/ui/EmptyState';
+import { searchUsers, getSuggestedTravelers, clearSuggestionsSeen, followUser, unfollowUser, type TravelerSearchResult } from '../src/services/follows';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 import { PlainBottomFiller } from '../src/hooks/useBottomInset';
@@ -26,6 +27,11 @@ export default function DiscoverScreen() {
   // Track whether suggestions were ever non-empty so we can distinguish
   // "user ran through the list" from "server returned nothing on first load".
   const [hasHadSuggestions, setHasHadSuggestions] = useState(false);
+  // Optimistic follow overrides — Map<userId, isFollowing>; presence overrides server value
+  const [followOverrides, setFollowOverrides] = useState<Map<string, boolean>>(new Map());
+  // Optimistic request-pending overrides — Map<userId, pending>; for private accounts
+  const [requestPendingOverrides, setRequestPendingOverrides] = useState<Map<string, boolean>>(new Map());
+  const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<TextInput>(null);
 
@@ -94,6 +100,60 @@ export default function DiscoverScreen() {
     setSuggestions((prev) => prev.filter((s) => s.id !== userId));
   }, []);
 
+  // Sends a follow request to a private account. The server converts the follow
+  // call into a pending friend_request row. We track pending state locally so the
+  // button immediately shows "Pending" and reverts on failure.
+  const handleRequest = useCallback(async (userId: string, currentlyPending: boolean) => {
+    if (currentlyPending || togglingIds.has(userId)) return;
+    setTogglingIds((prev) => new Set([...prev, userId]));
+    setRequestPendingOverrides((prev) => new Map(prev).set(userId, true));
+    try {
+      const res = await followUser(userId);
+      if (!res.ok) {
+        setRequestPendingOverrides((prev) => new Map(prev).set(userId, false));
+      }
+      // On success we leave pending=true (server confirmed the request)
+    } catch {
+      setRequestPendingOverrides((prev) => new Map(prev).set(userId, false));
+    } finally {
+      setTogglingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(userId);
+        return next;
+      });
+    }
+  }, [togglingIds]);
+
+  const handleFollow = useCallback(async (userId: string, currentlyFollowing: boolean) => {
+    if (togglingIds.has(userId)) return;
+    setTogglingIds((prev) => new Set([...prev, userId]));
+    // Optimistic update
+    setFollowOverrides((prev) => new Map(prev).set(userId, !currentlyFollowing));
+    try {
+      const res = currentlyFollowing
+        ? await unfollowUser(userId)
+        : await followUser(userId);
+      if (!res.ok) {
+        // Service returned a non-throwing failure — revert optimistic update
+        setFollowOverrides((prev) => new Map(prev).set(userId, currentlyFollowing));
+        return;
+      }
+      // Only remove from suggestions once the server confirmed a follow
+      if (!currentlyFollowing) {
+        handleSuggestionFollowed(userId);
+      }
+    } catch {
+      // Network-level throw — revert optimistic update
+      setFollowOverrides((prev) => new Map(prev).set(userId, currentlyFollowing));
+    } finally {
+      setTogglingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(userId);
+        return next;
+      });
+    }
+  }, [togglingIds, handleSuggestionFollowed]);
+
   const showEmpty = searched && !loading && results.length === 0;
   const showIdle = !searched && !loading && !query.trim();
 
@@ -124,8 +184,10 @@ export default function DiscoverScreen() {
         </View>
 
         {loading && (
-          <View style={styles.center}>
-            <ActivityIndicator color={color.signal} />
+          <View style={styles.list}>
+            <ProfileSkeleton />
+            <ProfileSkeleton />
+            <ProfileSkeleton />
           </View>
         )}
 
@@ -161,61 +223,69 @@ export default function DiscoverScreen() {
                 <>
                   {loadingSuggestions ? (
                     <View style={{ gap: space.sm, marginTop: space.sm }}>
-                      <TravelerRowSkeleton />
-                      <TravelerRowSkeleton />
+                      <ProfileSkeleton />
+                      <ProfileSkeleton />
                     </View>
                   ) : null}
                   <PlainBottomFiller />
                 </>
               }
-              renderItem={({ item }) => (
-                <TravelerRow user={item} onFollowed={handleSuggestionFollowed} />
-              )}
+              renderItem={({ item }) => {
+                const isFollowing = followOverrides.has(item.id) ? followOverrides.get(item.id)! : item.isFollowing;
+                const requestPending = requestPendingOverrides.has(item.id) ? requestPendingOverrides.get(item.id)! : (item.friendRequestPending ?? false);
+                return (
+                  <ProfileCard
+                    id={item.id}
+                    displayName={item.displayName ?? item.username ?? 'Traveler'}
+                    handle={item.username}
+                    avatarUrl={item.avatarUrl}
+                    isVerified={item.verified}
+                    isFollowing={isFollowing}
+                    isPrivate={item.isPrivate}
+                    requestPending={requestPending}
+                    onPress={() => router.push(`/u/${item.id}` as any)}
+                    onFollow={item.isPrivate ? undefined : () => handleFollow(item.id, isFollowing)}
+                    onRequest={item.isPrivate ? () => handleRequest(item.id, requestPending) : undefined}
+                  />
+                );
+              }}
             />
           ) : loadingSuggestions ? (
             <View style={styles.list}>
               <Text style={styles.sectionHeader}>People you may know</Text>
               <View style={{ gap: space.sm }}>
-                <TravelerRowSkeleton />
-                <TravelerRowSkeleton />
-                <TravelerRowSkeleton />
+                <ProfileSkeleton />
+                <ProfileSkeleton />
+                <ProfileSkeleton />
               </View>
             </View>
           ) : hasHadSuggestions ? (
             <View style={styles.center}>
-              <Text style={styles.idleIcon}>👥</Text>
-              <Text style={styles.idleTitle}>You've seen everyone for now</Text>
-              <Text style={styles.idleSub}>Refresh to discover new travelers</Text>
-              <Pressable
-                style={[styles.newFacesBtn, refreshingSuggestions && styles.newFacesBtnDisabled]}
-                onPress={handleRefreshSuggestions}
-                disabled={refreshingSuggestions}
-              >
-                {refreshingSuggestions ? (
-                  <ActivityIndicator size="small" color={color.onInk} />
-                ) : (
-                  <>
-                    <Sparkles size={14} color={color.onInk} />
-                    <Text style={styles.newFacesBtnText}>See new faces</Text>
-                  </>
-                )}
-              </Pressable>
+              <EmptyState
+                icon={Users}
+                title="You've seen everyone for now"
+                description="Refresh to discover new travelers"
+                primaryAction={{
+                  label: refreshingSuggestions ? '…' : 'See new faces',
+                  onPress: handleRefreshSuggestions,
+                }}
+              />
             </View>
           ) : (
-            <View style={styles.center}>
-              <Text style={styles.idleIcon}>🌍</Text>
-              <Text style={styles.idleTitle}>Find your next travel buddy</Text>
-              <Text style={styles.idleSub}>Search by name or @username to discover travelers</Text>
-            </View>
+            <EmptyState
+              icon={Users}
+              title="Find your next travel buddy"
+              description="Search by name or @username to discover travelers"
+            />
           )
         )}
 
         {!loading && showEmpty && (
-          <View style={styles.center}>
-            <Text style={styles.idleIcon}>🔍</Text>
-            <Text style={styles.idleTitle}>No travelers found</Text>
-            <Text style={styles.idleSub}>Try a different name or @username</Text>
-          </View>
+          <EmptyState
+            icon={Users}
+            title="No travelers found"
+            description="Try a different name or @username"
+          />
         )}
 
         {!loading && results.length > 0 && (
@@ -226,7 +296,25 @@ export default function DiscoverScreen() {
             keyboardShouldPersistTaps="handled"
             onScroll={navBarScrollHandler}
             scrollEventThrottle={16}
-            renderItem={({ item }) => <TravelerRow user={item} />}
+            renderItem={({ item }) => {
+              const isFollowing = followOverrides.has(item.id) ? followOverrides.get(item.id)! : item.isFollowing;
+              const requestPending = requestPendingOverrides.has(item.id) ? requestPendingOverrides.get(item.id)! : (item.friendRequestPending ?? false);
+              return (
+                <ProfileCard
+                  id={item.id}
+                  displayName={item.displayName ?? item.username ?? 'Traveler'}
+                  handle={item.username}
+                  avatarUrl={item.avatarUrl}
+                  isVerified={item.verified}
+                  isFollowing={isFollowing}
+                  isPrivate={item.isPrivate}
+                  requestPending={requestPending}
+                  onPress={() => router.push(`/u/${item.id}` as any)}
+                  onFollow={item.isPrivate ? undefined : () => handleFollow(item.id, isFollowing)}
+                  onRequest={item.isPrivate ? () => handleRequest(item.id, requestPending) : undefined}
+                />
+              );
+            }}
             ListFooterComponent={<PlainBottomFiller />}
           />
         )}

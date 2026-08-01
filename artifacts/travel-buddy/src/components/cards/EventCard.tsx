@@ -8,9 +8,12 @@
  */
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { CalendarClock, MapPin, Users } from 'lucide-react-native';
-import { CachedImage } from '../CachedImage.tsx';
+import { CalendarClock, MapPin, Users, Bookmark } from 'lucide-react-native';
+import { CachedImage, withStorageParams } from '../CachedImage.tsx';
 import { useEntityHeaderImage } from '../../hooks/useEntityHeaderImage.ts';
+import { useHydratedMedia } from '../../services/mediaUrl.ts';
+import { usePlaceImage } from '../../hooks/usePlaceImage.ts';
+import { ImageSourceBadge } from '../visuals/ImageSourceBadge.tsx';
 import { color, space, radius, shadow, typography, layout } from '../../theme/tokens.ts';
 
 export interface EventCardProps {
@@ -25,8 +28,14 @@ export interface EventCardProps {
   category?: string | null;
   state?: string;
   myRsvp?: string | null;
+  isSaved?: boolean;
+  /** Whether the cover image requires a provenance disclaimer (AI/illustrative) */
+  coverDisclaimerRequired?: boolean | null;
+  /** Disclaimer copy to show when coverDisclaimerRequired is true */
+  coverDisclaimerText?: string | null;
   onPress: () => void;
   onRsvp?: () => void;
+  onToggleSave?: () => void;
 }
 
 function formatDate(iso: string | null): string {
@@ -50,19 +59,32 @@ const STATE_COLOR: Record<string, string> = {
 
 export function EventCard({
   title, startsAt, locationName, city, coverUrl, goingCount, maxAttendees,
-  category, state, myRsvp, onPress, onRsvp,
+  category, state, myRsvp, isSaved, coverDisclaimerRequired, coverDisclaimerText,
+  onPress, onRsvp, onToggleSave,
 }: EventCardProps) {
   const [imgFailed, setImgFailed] = useState(false);
   const stateColor = (state && STATE_COLOR[state]) ?? color.signal;
   const isOpen = state === 'open' || state === 'started';
   const location = locationName ?? city ?? null;
 
-  // Resolves: coverUrl → event-category fallback (concert, meetup, festival, …)
+  // Signed-URL hydration: ensures cover images still render when the
+  // media_private_buckets_enabled flag is toggled ON (SEC-02 gate).
+  const { resolved: coverResolved } = useHydratedMedia([coverUrl ?? null]);
+  const hydratedCoverUrl = (coverUrl && coverResolved[coverUrl]) ?? coverUrl ?? undefined;
+
+  // Resolves: hydratedCoverUrl → event-category fallback (concert, meetup, …)
   // → generic-event. Never returns null.
   const resolvedImageUrl = useEntityHeaderImage({
-    url: coverUrl,
+    url: hydratedCoverUrl,
     entityType: 'event',
     category: category ?? undefined,
+  });
+
+  // Provenance metadata — drives ImageSourceBadge and disclaimer display.
+  const coverPlaceImage = usePlaceImage({
+    url: hydratedCoverUrl ?? null,
+    disclaimerRequired: coverDisclaimerRequired ?? null,
+    disclaimerText: coverDisclaimerText ?? null,
   });
 
   return (
@@ -77,12 +99,19 @@ export function EventCard({
 
       {/* Cover thumbnail — always shown; falls through to bundled fallback asset */}
       {resolvedImageUrl && !imgFailed ? (
-        <CachedImage
-          source={{ uri: resolvedImageUrl }}
-          style={styles.thumb}
-          resizeMode="cover"
-          onError={() => setImgFailed(true)}
-        />
+        <View style={styles.thumbWrap}>
+          <CachedImage
+            source={{ uri: withStorageParams(resolvedImageUrl, 'width=600&quality=80') }}
+            style={styles.thumb}
+            resizeMode="cover"
+            onError={() => setImgFailed(true)}
+          />
+          <ImageSourceBadge
+            sourceLabel={coverPlaceImage.sourceLabel}
+            disclaimerRequired={coverPlaceImage.disclaimerRequired}
+            disclaimerText={coverPlaceImage.disclaimerText}
+          />
+        </View>
       ) : (
         <View style={[styles.thumb, styles.thumbFallback, { backgroundColor: stateColor + '22' }]}>
           <CalendarClock size={18} color={stateColor} />
@@ -116,6 +145,21 @@ export function EventCard({
             </Text>
           </View>
           <View style={{ flex: 1 }} />
+          {onToggleSave ? (
+            <Pressable
+              style={({ pressed }) => [styles.saveBtn, pressed && { opacity: 0.6 }]}
+              onPress={(e) => { e.stopPropagation?.(); onToggleSave(); }}
+              accessibilityRole="button"
+              accessibilityLabel={isSaved ? 'Unsave event' : 'Save event'}
+              hitSlop={8}
+            >
+              <Bookmark
+                size={16}
+                color={isSaved ? color.signal : color.mute}
+                fill={isSaved ? color.signal : 'transparent'}
+              />
+            </Pressable>
+          ) : null}
           {isOpen && !myRsvp && onRsvp ? (
             <Pressable
               style={({ pressed }) => [styles.rsvpBtn, pressed && { opacity: 0.7 }]}
@@ -148,7 +192,8 @@ const styles = StyleSheet.create({
     borderColor: color.haze,
   },
   stripe: { width: 4 },
-  thumb: { width: 80, alignSelf: 'stretch' },
+  thumbWrap: { width: 80, alignSelf: 'stretch', position: 'relative' },
+  thumb: { width: 80, flex: 1 },
   thumbFallback: { alignItems: 'center', justifyContent: 'center' },
   content: { flex: 1, padding: space.md, gap: 4 },
   category: { ...typography.metadata, color: color.mute, textTransform: 'uppercase' },
@@ -156,6 +201,10 @@ const styles = StyleSheet.create({
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   meta: { ...typography.caption, color: color.mute, flex: 1 },
   footer: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: 2 },
+  saveBtn: {
+    padding: 2,
+    marginRight: 4,
+  },
   rsvpBtn: {
     backgroundColor: color.signal,
     borderRadius: radius.pill,

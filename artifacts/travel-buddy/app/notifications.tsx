@@ -20,7 +20,7 @@ import { secondaryIdentityText } from '../src/lib/displayIdentity';
 import { router, useFocusEffect } from 'expo-router';
 import { FEED_FOCUS_TTL_MS } from '../src/hooks/usePosts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { X, CheckCheck, UserCheck, UserMinus } from 'lucide-react-native';
+import { X, CheckCheck, UserCheck, UserMinus, Bell, Inbox } from 'lucide-react-native';
 import { color, space, type as t, radius, shadow } from '../src/theme/tokens';
 import { useNotifications } from '../src/hooks/useNotifications';
 import type { AppNotification, NotificationCategory } from '../src/services/notifications';
@@ -30,6 +30,8 @@ import { acceptRequest, declineRequest } from '../src/services/requests';
 import type { InboxItem } from '../src/services/requests';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
+import { NotificationCard } from '../src/components/cards/NotificationCard';
+import { EmptyState } from '../src/components/ui/EmptyState';
 
 // ── Tab definitions ───────────────────────────────────────────────────────────
 
@@ -138,7 +140,7 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
-// ── ActivityCard ──────────────────────────────────────────────────────────────
+// ── Notification row: NotificationCard + dismiss overlay ─────────────────────
 
 function ActivityCard({
   notification,
@@ -149,15 +151,12 @@ function ActivityCard({
   onMarkRead: (id: string) => void;
   onDismiss: (id: string) => void;
 }) {
-  const isUnread = !notification.readAt;
-  const badge = PRIORITY_BADGE[notification.priority];
-  const icon = CATEGORY_ICONS[notification.category] ?? '🔔';
   const isFeaturedReq = isFeaturedPermissionRequest(notification);
   const [permBusy, setPermBusy] = useState<'accept' | 'decline' | null>(null);
   const [permDone, setPermDone] = useState<'accepted' | 'declined' | null>(null);
 
   const handlePress = useCallback(() => {
-    if (isUnread) onMarkRead(notification.id);
+    if (!notification.readAt) onMarkRead(notification.id);
     if (notification.actionUrl && !isFeaturedReq) {
       try {
         router.push(notification.actionUrl as any);
@@ -165,17 +164,11 @@ function ActivityCard({
         Alert.alert('Content unavailable', 'This content is no longer available.', [{ text: 'OK' }]);
       }
     }
-  }, [notification, isUnread, onMarkRead, isFeaturedReq]);
+  }, [notification, onMarkRead, isFeaturedReq]);
 
   const handleFeaturedPermission = useCallback(async (action: 'accept' | 'decline') => {
     const postId = getPostIdFromActionUrl(notification.actionUrl);
-    if (!postId) {
-      Alert.alert('Error', 'Could not find post ID for this request.');
-      return;
-    }
-    // Pass featuredId (preferred) or category from notification metadata so the
-    // server can resolve the exact pending_permission row when a post has been
-    // nominated in multiple categories simultaneously.
+    if (!postId) { Alert.alert('Error', 'Could not find post ID for this request.'); return; }
     const meta = (notification as any).metadata as Record<string, unknown> | undefined;
     const disambiguator = {
       featuredId: (meta?.featuredId as string | undefined) || undefined,
@@ -195,107 +188,52 @@ function ActivityCard({
     }
   }, [notification.actionUrl, notification.id, onMarkRead]);
 
+  // Featured permission requests get inline Accept/Decline buttons below the card
+  const actionLabel = isFeaturedReq ? undefined : (notification.actionUrl ? 'View' : undefined);
+  const onAction = isFeaturedReq ? undefined : (notification.actionUrl ? handlePress : undefined);
+
   return (
-    <Pressable
-      style={[styles.card, isUnread && styles.cardUnread]}
-      onPress={handlePress}
-    >
-      {/* Unread dot */}
-      {isUnread && <View style={styles.unreadDot} />}
-
-      {/* Category icon */}
-      <View style={[styles.iconWrap, notification.category === 'safe_return' && styles.iconWrapSafety]}>
-        <Text style={styles.catIcon}>{isFeaturedReq ? '🏆' : icon}</Text>
-      </View>
-
-      {/* Content */}
-      <View style={{ flex: 1, gap: 3 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs, flexWrap: 'wrap' }}>
-          <Text
-            style={[styles.cardTitle, isUnread && styles.cardTitleUnread]}
-            numberOfLines={1}
+    <View style={styles.cardWrap}>
+      <NotificationCard
+        notification={notification}
+        onPress={handlePress}
+        actionLabel={actionLabel}
+        onAction={onAction}
+      />
+      {/* Featured permission inline actions */}
+      {isFeaturedReq && !permDone && (
+        <View style={styles.permActionsRow}>
+          <Pressable
+            style={[styles.permBtn, styles.permBtnDecline]}
+            onPress={() => handleFeaturedPermission('decline')}
+            disabled={permBusy !== null}
+            hitSlop={4}
           >
-            {notification.title}
-          </Text>
-          {badge && (
-            <View style={[styles.priorityBadge, { backgroundColor: badge.bg }]}>
-              <Text style={[styles.priorityBadgeText, { color: badge.text }]}>{badge.label}</Text>
-            </View>
-          )}
+            <Text style={styles.permBtnDeclineText}>{permBusy === 'decline' ? '…' : 'Decline'}</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.permBtn, styles.permBtnAccept]}
+            onPress={() => handleFeaturedPermission('accept')}
+            disabled={permBusy !== null}
+            hitSlop={4}
+          >
+            <Text style={styles.permBtnAcceptText}>{permBusy === 'accept' ? '…' : 'Accept'}</Text>
+          </Pressable>
         </View>
-
-        <Text style={styles.cardBody} numberOfLines={3}>{notification.body}</Text>
-
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
-          <Text style={styles.cardTime}>{relativeTime(notification.createdAt)}</Text>
-
-          {/* Featured permission: Accept / Decline action sheet */}
-          {isFeaturedReq && !permDone ? (
-            <View style={styles.permActionsRow}>
-              <Pressable
-                style={[styles.permBtn, styles.permBtnDecline]}
-                onPress={() => handleFeaturedPermission('decline')}
-                disabled={permBusy !== null}
-                hitSlop={4}
-              >
-                <Text style={styles.permBtnDeclineText}>
-                  {permBusy === 'decline' ? '…' : 'Decline'}
-                </Text>
-              </Pressable>
-              <Pressable
-                style={[styles.permBtn, styles.permBtnAccept]}
-                onPress={() => handleFeaturedPermission('accept')}
-                disabled={permBusy !== null}
-                hitSlop={4}
-              >
-                <Text style={styles.permBtnAcceptText}>
-                  {permBusy === 'accept' ? '…' : 'Accept'}
-                </Text>
-              </Pressable>
-            </View>
-          ) : isFeaturedReq && permDone ? (
-            <Text style={styles.permDoneText}>
-              {permDone === 'accepted' ? '✓ Accepted' : 'Declined'}
-            </Text>
-          ) : (
-            /* Standard action button */
-            notification.actionUrl ? (
-              <Pressable
-                style={styles.actionBtn}
-                onPress={handlePress}
-                hitSlop={4}
-              >
-                <Text style={styles.actionBtnText}>View ›</Text>
-              </Pressable>
-            ) : null
-          )}
-        </View>
-      </View>
-
-      {/* Dismiss */}
+      )}
+      {isFeaturedReq && permDone && (
+        <Text style={styles.permDoneText}>
+          {permDone === 'accepted' ? '✓ Accepted' : 'Declined'}
+        </Text>
+      )}
+      {/* Dismiss button */}
       <Pressable
-        style={styles.dismissBtn}
+        style={styles.dismissOverlay}
         onPress={() => onDismiss(notification.id)}
         hitSlop={8}
       >
         <X size={14} color={color.faint} />
       </Pressable>
-    </Pressable>
-  );
-}
-
-// ── Empty state ───────────────────────────────────────────────────────────────
-
-function EmptyState({ label }: { label: string }) {
-  return (
-    <View style={styles.empty}>
-      <Text style={styles.emptyIcon}>🔔</Text>
-      <Text style={styles.emptyTitle}>All caught up</Text>
-      <Text style={styles.emptyBody}>
-        {label.toLowerCase() === 'all'
-          ? 'No notifications yet.'
-          : `No ${label.toLowerCase()} notifications yet.`}
-      </Text>
     </View>
   );
 }
@@ -433,7 +371,15 @@ export default function ActivityCenter() {
             </>
           }
           ListEmptyComponent={
-            <EmptyState label={activeTabDef.label} />
+            <EmptyState
+              icon={Bell}
+              title="All caught up"
+              description={
+                activeTabDef.label.toLowerCase() === 'all'
+                  ? 'No notifications yet.'
+                  : `No ${activeTabDef.label.toLowerCase()} notifications yet.`
+              }
+            />
           }
         />
       )}
@@ -514,13 +460,11 @@ function SocialRequestsPane({
     return (
       <View style={{ flex: 1 }}>
         {headerComponent}
-        <View style={styles.empty}>
-          <Text style={styles.emptyIcon}>📬</Text>
-          <Text style={styles.emptyTitle}>No pending requests</Text>
-          <Text style={styles.emptyBody}>
-            Friend requests, circle invites, and trip invites will appear here.
-          </Text>
-        </View>
+        <EmptyState
+          icon={Inbox}
+          title="No pending requests"
+          description="Friend requests, circle invites, and trip invites will appear here."
+        />
       </View>
     );
   }
@@ -703,90 +647,27 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingVertical: space.md,
-    paddingHorizontal: space.lg,
   },
-  card: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: space.md,
-    paddingVertical: space.md,
-    paddingHorizontal: space.md,
-    backgroundColor: color.paperRaised,
-    borderRadius: radius.md,
-    ...shadow.card,
+  // Wrapper that positions the dismiss button over the shared NotificationCard
+  cardWrap: {
     position: 'relative',
   },
-  cardUnread: {
-    backgroundColor: '#F0F9FF',
-    borderLeftWidth: 3,
-    borderLeftColor: color.deep,
-  },
-  unreadDot: {
+  dismissOverlay: {
     position: 'absolute',
-    top: space.md,
-    left: -10,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: color.signal,
-  },
-  iconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.sm,
-    backgroundColor: color.haze,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconWrapSafety: {
-    backgroundColor: '#FEE2E2',
-  },
-  catIcon: {
-    fontSize: 20,
-    lineHeight: 24,
-  },
-  cardTitle: {
-    ...t.small,
-    fontWeight: '600',
-    color: color.mute,
-    flex: 1,
-  },
-  cardTitleUnread: {
-    color: color.ink,
-    fontWeight: '700',
-  },
-  priorityBadge: {
-    paddingHorizontal: space.xs,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-  },
-  priorityBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    lineHeight: 14,
-  },
-  cardBody: {
-    ...t.small,
-    color: color.mute,
-    lineHeight: 18,
-  },
-  cardTime: {
-    ...t.stamp,
-    color: color.faint,
-  },
-  actionBtn: {
-    paddingHorizontal: space.sm,
-    paddingVertical: 3,
-    borderRadius: radius.pill,
-    backgroundColor: color.haze,
-  },
-  actionBtnText: {
-    ...t.stamp,
-    color: color.deep,
-    fontWeight: '700',
+    top: space.sm,
+    right: space.sm,
+    padding: space.xs,
+    zIndex: 1,
   },
   permActionsRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: space.lg,
+    paddingBottom: space.sm,
+    backgroundColor: color.paperRaised,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: color.haze,
   },
   permBtn: {
     paddingHorizontal: 10, paddingVertical: 4,
@@ -806,10 +687,10 @@ const styles = StyleSheet.create({
   },
   permDoneText: {
     ...t.stamp, color: color.success, fontWeight: '700',
-  },
-  dismissBtn: {
-    padding: space.xs,
-    marginTop: -2,
+    paddingHorizontal: space.lg, paddingBottom: space.sm,
+    backgroundColor: color.paperRaised,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: color.haze,
   },
   sep: {
     height: space.sm,
@@ -822,25 +703,5 @@ const styles = StyleSheet.create({
   footer: {
     padding: space.xl,
     alignItems: 'center',
-  },
-  empty: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: space.xxl,
-    gap: space.md,
-  },
-  emptyIcon: {
-    fontSize: 48,
-  },
-  emptyTitle: {
-    ...t.heading,
-    color: color.ink,
-    textAlign: 'center',
-  },
-  emptyBody: {
-    ...t.body,
-    color: color.mute,
-    textAlign: 'center',
   },
 });
