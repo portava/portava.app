@@ -46,6 +46,7 @@ import { freshToken } from '../../src/services/apiToken';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 import { PlaceCardSkeleton } from '../../src/components/loading/PlaceCardSkeleton';
 import { EventCardSkeleton } from '../../src/components/loading/EventCardSkeleton';
+import { getFeaturedHub } from '../../src/services/featured';
 
 /** Returns the value only when it is a real, finite number — otherwise null. */
 function finiteOrNull(v: number | null | undefined): number | null {
@@ -189,6 +190,9 @@ export default function DiscoveryHub() {
   const [buddyStripLoading, setBuddyStripLoading] = useState(false);
   const [buddyCityNotAvailable, setBuddyCityNotAvailable] = useState(false);
   const [nudgeHighlighted, setNudgeHighlighted] = useState(false);
+  // Count of featured posts fetched on mount — shown in the banner subtitle.
+  // Null means loading/unavailable; falls back to the static subtitle.
+  const [featuredCount, setFeaturedCount] = useState<number | null>(null);
   const nudgeHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Guard: prevents a rapid double-tap on a dimmed chip from calling openCityPicker twice.
   // Set to true on first press; cleared when the picker closes (showCityPicker → false).
@@ -418,6 +422,26 @@ export default function DiscoveryHub() {
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [isAuthed, locationState.place.city]);
+
+  // Fire-and-forget: fetch the total featured post count on mount.
+  // Uses a short timeout so it never delays the Discover tab render.
+  // Falls back silently — the banner subtitle stays static when this fails.
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      if (!cancelled) setFeaturedCount(null);
+    }, 4000);
+    getFeaturedHub().then((res) => {
+      if (cancelled) return;
+      clearTimeout(timer);
+      if (res.ok && res.data && typeof res.data.total === 'number' && res.data.total > 0) {
+        setFeaturedCount(res.data.total);
+      }
+    }).catch(() => {
+      if (!cancelled) clearTimeout(timer);
+    });
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, []); // mount only
 
   // Re-apply deep-link category if params change (e.g. in-app navigation)
   useEffect(() => {
@@ -699,7 +723,9 @@ export default function DiscoveryHub() {
           <Trophy size={16} color="#D97706" strokeWidth={2.5} />
           <View>
             <Text style={styles.featuredBannerTitle}>Featured by Portava 🏆</Text>
-            <Text style={styles.featuredBannerSub}>This week's top picks</Text>
+            <Text style={styles.featuredBannerSub}>
+              {featuredCount != null ? `${featuredCount} pick${featuredCount === 1 ? '' : 's'} this week` : 'This week\'s top picks'}
+            </Text>
           </View>
         </View>
         <Text style={styles.featuredBannerArrow}>›</Text>

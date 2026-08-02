@@ -11,6 +11,7 @@ import {
   SlidersHorizontal, ChevronDown, X, Search, Trophy,
 } from 'lucide-react-native';
 import { getTrendingHashtags, type TrendingHashtag } from '../../src/services/hashtag';
+import { getFeaturedHub } from '../../src/services/featured';
 import type { DiscoveryAgeFilter } from '../../src/services/discovery';
 import type { Place } from '../../src/lib/location/placeTypes';
 import { useLayoverAwareBottomInset } from '../../src/hooks/useBottomInset';
@@ -200,6 +201,9 @@ function DiscoveryHubScreen() {
   const [communityRefreshKey, setCommunityRefreshKey] = useState(0);
   const [categoryCounts, setCategoryCounts] = useState<Partial<Record<DiscoveryCategory, number>>>({});
   const [countsLoading, setCountsLoading] = useState(false);
+  // Count of featured posts fetched on mount — shown in the banner subtitle.
+  // Null means loading/unavailable; falls back to the static subtitle.
+  const [featuredCount, setFeaturedCount] = useState<number | null>(null);
   const [activeFilters, setActiveFilters] = useState<DiscoveryFilters>(
     () => getCachedFilters() ?? { radiusKm: 10, openNow: false, minRating: null },
   );
@@ -407,6 +411,26 @@ function DiscoveryHubScreen() {
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [isAuthed, locationState.place.city]);
+
+  // Fire-and-forget: fetch the total featured post count on mount.
+  // Uses a short timeout so it never delays the Discover tab render.
+  // Falls back silently — the banner subtitle stays static when this fails.
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      if (!cancelled) setFeaturedCount(null);
+    }, 4000);
+    getFeaturedHub().then((res) => {
+      if (cancelled) return;
+      clearTimeout(timer);
+      if (res.ok && res.data && typeof res.data.total === 'number' && res.data.total > 0) {
+        setFeaturedCount(res.data.total);
+      }
+    }).catch(() => {
+      if (!cancelled) clearTimeout(timer);
+    });
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, []); // mount only
 
   // Re-apply deep-link category if params change (e.g. in-app navigation).
   // Restores the destination category's persisted sort (or null for a fresh tab).
@@ -781,7 +805,9 @@ function DiscoveryHubScreen() {
               <Trophy size={16} color="#D97706" strokeWidth={2.5} />
               <View>
                 <Text style={styles.featuredBannerTitle}>Featured by Portava 🏆</Text>
-                <Text style={styles.featuredBannerSub}>This week's top picks</Text>
+                <Text style={styles.featuredBannerSub}>
+                  {featuredCount != null ? `${featuredCount} pick${featuredCount === 1 ? '' : 's'} this week` : 'This week\'s top picks'}
+                </Text>
               </View>
             </View>
             <Text style={styles.featuredBannerArrow}>›</Text>
