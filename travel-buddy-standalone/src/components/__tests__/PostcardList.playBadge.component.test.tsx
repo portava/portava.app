@@ -1,10 +1,11 @@
 /**
- * PostcardList — video play badge tests
+ * PostcardList — MediaCard rendering tests
  *
  * Confirms that:
- * 1. A video postcard renders VideoThumbnail — play badge is visible.
- * 2. An image postcard renders without the play badge.
+ * 1. A video postcard renders MediaCard with a PlayCircle badge.
+ * 2. An image postcard renders MediaCard without the PlayCircle badge.
  * 3. Both cards are pressable and navigate to /post/:id.
+ * 4. Media URLs are passed through signed-URL hydration (SEC-02 gate).
  *
  * Run with: pnpm test:component
  *
@@ -15,10 +16,12 @@
  * locally so router.push is a jest.fn() we can assert on.
  * lucide-react-native is handled by the global moduleNameMapper (renders
  * each icon as <View testID="icon-<Name>" />).
+ * mediaUrl is mocked to return resolved URLs synchronously so tests can
+ * assert hydration without real network calls.
  */
 
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { PostcardList } from '../PassportSections.tsx';
 import type { Post } from '../../types/models.ts';
 
@@ -63,6 +66,43 @@ jest.mock('expo-image', () => {
   };
 });
 
+// ── mediaUrl mock ─────────────────────────────────────────────────────────────
+// Mirrors the pattern in PassportSections.component.test.tsx.
+// mockHydrateMediaUrls resolves each URL to itself by default; individual
+// tests can override it to assert signed-URL substitution.
+const mockHydrateMediaUrls = jest.fn(async (urls: string[]) => {
+  const result: Record<string, string | null> = {};
+  for (const u of urls) result[u] = u;
+  return result;
+});
+
+jest.mock('../../services/mediaUrl.ts', () => {
+  const React = require('react');
+  return {
+    PRIVATE_BUCKETS: ['post-media', 'profile-media'],
+    hydrateMediaUrls: (...args: any[]) => mockHydrateMediaUrls(...args),
+    useHydratedMedia: (urls: (string | null | undefined)[]) => {
+      const [resolved, setResolved] = React.useState<Record<string, string | null>>({});
+      const [loading, setLoading]   = React.useState(false);
+      const key = React.useMemo(() => {
+        const unique = [...new Set(urls.filter((u: any) => !!u))].sort();
+        return (unique as string[]).join('\0');
+      }, [urls]);
+      React.useEffect(() => {
+        const unique = key ? key.split('\0') : [];
+        if (!unique.length) { setResolved({}); setLoading(false); return; }
+        let cancelled = false;
+        setLoading(true);
+        mockHydrateMediaUrls(unique).then((result: Record<string, string | null>) => {
+          if (!cancelled) { setResolved(result); setLoading(false); }
+        });
+        return () => { cancelled = true; };
+      }, [key]);
+      return { resolved, loading };
+    },
+  };
+});
+
 // Retrieve router.push after the mock factory has run.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { router: mockRouter } = require('expo-router') as { router: { push: jest.Mock } };
@@ -86,7 +126,7 @@ const DESTINATION = {
   slug:    'tokyo-japan',
 };
 
-function makePost(overrides: { id?: string; mediaKind: 'image' | 'video' }): Post {
+function makePost(overrides: { id?: string; mediaKind: 'image' | 'video'; mediaUrl?: string }): Post {
   return {
     id:           overrides.id ?? 'post-1',
     kind:         'standard',
@@ -96,7 +136,7 @@ function makePost(overrides: { id?: string; mediaKind: 'image' | 'video' }): Pos
     media: [
       {
         id:   'm1',
-        url:  'https://example.com/thumb.jpg',
+        url:  overrides.mediaUrl ?? 'https://example.com/thumb.jpg',
         kind: overrides.mediaKind,
       },
     ],
@@ -111,56 +151,77 @@ function makePost(overrides: { id?: string; mediaKind: 'image' | 'video' }): Pos
 
 beforeEach(() => {
   mockRouter.push.mockClear();
+  mockHydrateMediaUrls.mockClear();
 });
 
 describe('PostcardList — video item', () => {
-  it('renders the play badge (VideoThumbnail) for a video media item', async () => {
+  it('renders the PlayCircle badge for a video media item', async () => {
     const post = makePost({ id: 'post-video', mediaKind: 'video' });
     await render(<PostcardList posts={[post]} />);
 
-    // VideoThumbnail exposes accessibilityLabel="Play video" on its Pressable.
-    expect(screen.getByLabelText('Play video')).toBeTruthy();
+    // MediaCard renders a PlayCircle icon inside the type badge for video items.
+    // The lucide mock renders PlayCircle as <View testID="icon-PlayCircle" />.
+    expect(screen.getByTestId('icon-PlayCircle')).toBeTruthy();
   });
 
-  it('shows the play icon inside the VideoThumbnail for a video item', async () => {
+  it('renders the card with video accessibility label', async () => {
     const post = makePost({ id: 'post-video', mediaKind: 'video' });
     await render(<PostcardList posts={[post]} />);
 
-    // The lucide mock renders Play as <View testID="icon-Play" />.
-    expect(screen.getByTestId('icon-Play')).toBeTruthy();
+    // MediaCard sets accessibilityLabel to "Video" when there is no title.
+    expect(screen.getByLabelText('Video')).toBeTruthy();
   });
 
   it('navigates to /post/:id when the video card is pressed', async () => {
     const post = makePost({ id: 'post-video', mediaKind: 'video' });
     await render(<PostcardList posts={[post]} />);
 
-    fireEvent.press(screen.getByText('5 likes · 2 comments'));
+    fireEvent.press(screen.getByLabelText('Video'));
     expect(mockRouter.push).toHaveBeenCalledWith('/post/post-video');
   });
 });
 
 describe('PostcardList — image item', () => {
-  it('renders no play badge for an image media item', async () => {
+  it('renders no PlayCircle badge for an image media item', async () => {
     const post = makePost({ id: 'post-image', mediaKind: 'image' });
     await render(<PostcardList posts={[post]} />);
 
-    // No VideoThumbnail — play badge accessibility label must be absent.
-    expect(screen.queryByLabelText('Play video')).toBeNull();
+    // MediaCard only shows PlayCircle in the badge for video items.
+    expect(screen.queryByTestId('icon-PlayCircle')).toBeNull();
   });
 
-  it('renders no play icon for an image media item', async () => {
+  it('renders the card with image accessibility label', async () => {
     const post = makePost({ id: 'post-image', mediaKind: 'image' });
     await render(<PostcardList posts={[post]} />);
 
-    // The lucide Play icon is only rendered by VideoThumbnail.
-    expect(screen.queryByTestId('icon-Play')).toBeNull();
+    // MediaCard sets accessibilityLabel to "Image" when there is no title.
+    expect(screen.getByLabelText('Image')).toBeTruthy();
   });
 
   it('navigates to /post/:id when the image card is pressed', async () => {
     const post = makePost({ id: 'post-image', mediaKind: 'image' });
     await render(<PostcardList posts={[post]} />);
 
-    fireEvent.press(screen.getByText('5 likes · 2 comments'));
+    fireEvent.press(screen.getByLabelText('Image'));
     expect(mockRouter.push).toHaveBeenCalledWith('/post/post-image');
+  });
+});
+
+describe('PostcardList — signed-URL hydration', () => {
+  it('passes media URLs through useHydratedMedia before rendering', async () => {
+    const RAW_URL    = 'https://example.com/raw.jpg';
+    const SIGNED_URL = 'https://example.com/signed.jpg?token=abc';
+
+    mockHydrateMediaUrls.mockResolvedValueOnce({ [RAW_URL]: SIGNED_URL });
+
+    const post = makePost({ id: 'post-hydrate', mediaKind: 'image', mediaUrl: RAW_URL });
+    await render(<PostcardList posts={[post]} />);
+
+    // Hydration hook must have been invoked with the raw media URL.
+    await waitFor(() => {
+      expect(mockHydrateMediaUrls).toHaveBeenCalledWith(
+        expect.arrayContaining([RAW_URL]),
+      );
+    });
   });
 });
