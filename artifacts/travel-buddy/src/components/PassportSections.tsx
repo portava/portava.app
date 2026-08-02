@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
+import React from 'react';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { AvatarImage } from './ui/DisplayMediaImage.tsx';
 import { useHydratedMedia } from '../services/mediaUrl.ts';
 import { router } from 'expo-router';
@@ -7,7 +7,7 @@ import { ShieldCheck, Lock, ChevronRight } from 'lucide-react-native';
 import type { TrustValue, TravelStats, Plan, Perk, User } from '../types/models.ts';
 import { Stamp } from './ui.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
-import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
+import { MediaCard } from './cards/MediaCard.tsx';
 
 const TIER_LABEL: Record<TrustValue['tier'], string> = {
   new: 'New Traveler', rising: 'Rising', trusted: 'Trusted', pillar: 'Community Pillar',
@@ -85,27 +85,13 @@ export function BuddyPreview({ buddies }: { buddies: User[] }) {
   );
 }
 
-function PostcardMediaImage({ url, kind, durationSeconds }: { url: string; kind: 'image' | 'video'; durationSeconds?: number }) {
-  const [failed, setFailed] = useState(false);
-  // Route post-media URLs through the signed-URL hydration layer so this surface
-  // keeps working when the media_private_buckets_enabled flag is toggled ON.
-  const { resolved } = useHydratedMedia(failed ? [] : [url]);
-  const hydratedUrl = resolved[url] ?? url;
-  if (failed) return <View style={[styles.pcMedia, { backgroundColor: '#E5E7EB' }]} />;
-  if (kind === 'video') {
-    return (
-      <VideoThumbnail
-        posterUri={hydratedUrl}
-        duration={durationSeconds}
-        style={styles.pcMedia}
-      />
-    );
-  }
-  return <Image source={{ uri: hydratedUrl }} style={styles.pcMedia} onError={() => setFailed(true)} />;
-}
-
 /* Postcards/Posts tab — user's posted content with media, caption, location, date. */
 export function PostcardList({ posts }: { posts: import('../types/models').Post[] }) {
+  // Collect all first-media URLs so signed-URL hydration can be batched in one
+  // hook call — keeps the SEC-02 private-buckets gate working when it's toggled ON.
+  const mediaUrls = posts.map((p) => p.media[0]?.url).filter((u): u is string => !!u);
+  const { resolved } = useHydratedMedia(mediaUrls);
+
   if (posts.length === 0) {
     return (
       <View style={styles.pcEmpty}>
@@ -116,23 +102,20 @@ export function PostcardList({ posts }: { posts: import('../types/models').Post[
   }
   return (
     <View style={{ gap: space.md }}>
-      {posts.map((p) => (
-        <Pressable key={p.id} style={styles.pc} onPress={() => router.push(`/post/${p.id}`)}>
-          {p.media[0] ? (
-            <PostcardMediaImage url={p.media[0].url} kind={p.media[0].kind} />
-          ) : null}
-          <View style={styles.pcBody}>
-            <View style={styles.pcMetaRow}>
-              <Stamp label={p.destination.city} tone="deep" />
-              <Text style={styles.pcDate}>{new Date(p.createdAt).toLocaleDateString()}</Text>
-            </View>
-            {(p.title || p.caption) ? (
-              <Text style={styles.pcCaption} numberOfLines={3}>{p.title ?? p.caption}</Text>
-            ) : null}
-            <Text style={styles.pcEngage}>{p.likeCount} likes · {p.commentCount} comments</Text>
-          </View>
-        </Pressable>
-      ))}
+      {posts.map((p) => {
+        const rawUrl = p.media[0]?.url ?? null;
+        const thumbnailUrl = rawUrl ? (resolved[rawUrl] ?? rawUrl) : null;
+        return (
+          <MediaCard
+            key={p.id}
+            id={p.id}
+            thumbnailUrl={thumbnailUrl}
+            mediaType={p.media[0]?.kind ?? null}
+            title={p.title ?? p.caption ?? null}
+            onPress={() => router.push(`/post/${p.id}`)}
+          />
+        );
+      })}
     </View>
   );
 }
@@ -258,13 +241,6 @@ function Ticket() {
 }
 
 const styles = StyleSheet.create({
-  pc: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, overflow: 'hidden' },
-  pcMedia: { width: '100%', height: 180, backgroundColor: color.haze },
-  pcBody: { padding: space.md, gap: space.sm },
-  pcMetaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  pcDate: { ...t.small, color: color.faint, fontFamily: 'Courier' },
-  pcCaption: { ...t.body, color: color.ink },
-  pcEngage: { ...t.small, color: color.mute },
   pcEmpty: { padding: space.xl, borderRadius: radius.md, borderWidth: 1, borderStyle: 'dashed', borderColor: color.haze, alignItems: 'center', gap: 4 },
   pcEmptyTitle: { ...t.bodyStrong, color: color.ink },
   pcEmptySub: { ...t.small, color: color.mute, textAlign: 'center' },
