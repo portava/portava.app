@@ -200,13 +200,7 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
 // missing migration or fix the select list, then delete the entry.
 // Applies to `select` sites only — never to writes.
 const READ_BASELINE = new Set<string>([
-  // rent_buddy_profiles.policy_accepted — column is read by rentABuddySpec.ts
-  // (application-setup checklist + policy-ack mapping) but the migration that
-  // adds it has not yet been applied live.  This was previously hidden inside
-  // the rentABuddySpec|select|select list not statically resolvable allowlist
-  // entry; exposed by the 2026-08-01 resolver upgrade.  Apply the migration
-  // then delete this entry.
-  "rent_buddy_profiles.policy_accepted",
+  // (empty — all previously baselined read-path drifts have been resolved)
 ]);
 
 // Tables read via `.select()` that do not exist live at all (same baseline
