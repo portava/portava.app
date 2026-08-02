@@ -17,6 +17,9 @@ export interface MediaCardProps {
   creatorHandle?: string | null;
   title?: string | null;
   onPress: () => void;
+  onLongPress?: () => void;
+  /** Hide the built-in type/duration badge — use when the caller renders its own overlay badge. */
+  hideBadge?: boolean;
 }
 
 function formatDuration(seconds: number): string {
@@ -26,7 +29,7 @@ function formatDuration(seconds: number): string {
 }
 
 export function MediaCard({
-  thumbnailUrl, mediaType, durationSeconds, creatorName, creatorHandle, title, onPress,
+  thumbnailUrl, mediaType, durationSeconds, creatorName, creatorHandle, title, onPress, onLongPress, hideBadge,
 }: MediaCardProps) {
   const [imgFailed, setImgFailed] = useState(false);
   const isVideo = mediaType === 'video';
@@ -36,6 +39,7 @@ export function MediaCard({
     <Pressable
       style={({ pressed }) => [styles.card, pressed && { opacity: layout.pressedOpacity }]}
       onPress={onPress}
+      onLongPress={onLongPress}
       accessibilityRole="button"
       accessibilityLabel={title ?? (isVideo ? 'Video' : 'Image')}
     >
@@ -58,14 +62,16 @@ export function MediaCard({
         )}
 
         {/* Type + duration badge */}
-        <View style={styles.typeBadge}>
-          {isVideo ? <PlayCircle size={10} color="#fff" /> : null}
-          <Text style={styles.typeBadgeText}>
-            {isVideo && durationSeconds != null
-              ? formatDuration(durationSeconds)
-              : isVideo ? 'Video' : 'Photo'}
-          </Text>
-        </View>
+        {!hideBadge && (
+          <View style={styles.typeBadge}>
+            {isVideo ? <PlayCircle size={10} color="#fff" /> : null}
+            <Text style={styles.typeBadgeText}>
+              {isVideo && durationSeconds != null
+                ? formatDuration(durationSeconds)
+                : isVideo ? 'Video' : 'Photo'}
+            </Text>
+          </View>
+        )}
       </View>
 
       {/* Info */}

@@ -56,17 +56,24 @@ jest.mock('../../services/mediaUrl', () => ({
   useHydratedMedia: () => ({ resolved: {} }),
 }));
 
-// Mock PostcardEmptyState to avoid its animation/Animated.Value complexity.
-jest.mock('../PostcardEmptyState', () => {
+// Mock the shared EmptyState so tests can assert on testID without pulling in
+// lucide icon rendering or theme token complexity.
+jest.mock('../ui/EmptyState', () => {
   const React = require('react');
   const { Text } = require('react-native');
   return {
-    PostcardEmptyState: ({ isOwner }: { isOwner: boolean }) =>
-      React.createElement(Text, { testID: 'postcard-empty-state' },
-        isOwner ? 'Your adventure starts here' : 'No postcards yet',
-      ),
+    EmptyState: ({ title }: { title: string }) =>
+      React.createElement(Text, { testID: 'postcard-empty-state' }, title),
   };
 });
+
+// NOTE: intentional exhaustive stub — MediaCard and MediaGridSkeleton are not
+// rendered in the empty/sentinel paths under test; stubs prevent pulling in
+// CachedImage/ShimmerBox native dependencies that crash the jest-expo runner.
+jest.mock('../cards/MediaCard', () => ({ MediaCard: () => null }));
+// NOTE: intentional exhaustive stub — MediaGridSkeleton is not rendered in the
+// empty/sentinel paths under test; stub prevents ShimmerBox from being loaded.
+jest.mock('../loading/MediaGridSkeleton', () => ({ MediaGridSkeleton: () => null }));
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 

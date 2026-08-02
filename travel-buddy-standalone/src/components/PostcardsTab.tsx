@@ -6,10 +6,12 @@ import {
 import { CachedImage, withStorageParams } from './CachedImage.tsx';
 import { useHydratedMedia } from '../services/mediaUrl.ts';
 import { router } from 'expo-router';
-import { MapPin, Pin, MoreHorizontal, Plus, PlayCircle, Clock, AlertCircle, Layers, ChevronDown, Lock, Ban, EyeOff } from 'lucide-react-native';
+import { MapPin, Pin, MoreHorizontal, Plus, Clock, AlertCircle, Layers, ChevronDown, Lock, Ban, EyeOff, Image as ImageIcon } from 'lucide-react-native';
 import type { PassportPostcard } from '../types/models.ts';
 import { MediaStampOverlay } from './StampOverlayBadge.tsx';
-import { PostcardEmptyState } from './PostcardEmptyState.tsx';
+import { MediaCard } from './cards/MediaCard.tsx';
+import { MediaGridSkeleton } from './loading/MediaGridSkeleton.tsx';
+import { EmptyState } from './ui/EmptyState.tsx';
 import type { usePostcardActions } from '../hooks/usePostcardActions.ts';
 import type { PostcardsSentinel } from '../services/profile.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
@@ -174,25 +176,19 @@ function CardMenu({
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Single postcard tile (photo-grid presentation)              */
-/*                                                             */
-/* Tap opens the existing post viewer (/post/[id]) where       */
-/* caption, note, GPS-verified badge, likes, and comments      */
-/* live. Owners open the CardMenu sheet via the corner button  */
-/* or a long-press on the tile.                                */
+/* Single postcard tile — uses MediaCard as the base renderer  */
+/* with passport-specific overlays layered on top.            */
 /* ────────────────────────────────────────────────────────── */
 function PostcardTile({
   card,
   isOwner,
   actions,
   width,
-  height,
 }: {
   card: PassportPostcard;
   isOwner: boolean;
   actions?: Actions;
   width: number;
-  height: number;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const isPinned = Boolean(card.pinnedAt);
@@ -212,90 +208,83 @@ function PostcardTile({
   // surface keeps working when media_private_buckets_enabled is toggled ON.
   const { resolved: mediaResolved } = useHydratedMedia(displayUri ? [displayUri] : []);
   const hydratedUri = (displayUri && mediaResolved[displayUri]) ?? displayUri;
+  const hydratedWithParams = hydratedUri
+    ? withStorageParams(hydratedUri, 'width=400&quality=80')
+    : null;
 
   const location = [card.locationCity ?? card.locationName, card.locationCountry]
     .filter(Boolean).join(', ');
 
+  // Suppress MediaCard's built-in badge when we're showing our own state badge
+  const hideBadge = hasPending || hasFailed;
+
   return (
-    <Pressable
-      style={[pc.tile, { width, height }]}
-      onPress={() => card.postId && router.push(`/post/${card.postId}` as any)}
-      onLongPress={isOwner && actions ? () => setMenuOpen(true) : undefined}
-      accessibilityRole="button"
-      accessibilityLabel={`Postcard${location ? ` from ${location}` : ''}`}
-    >
-      {hydratedUri ? (
-        <>
-          <CachedImage source={{ uri: withStorageParams(hydratedUri, 'width=400&quality=80') }} style={pc.media} resizeMode="cover" />
-          {/* Passport-stamp overlay — parse-gated; malformed data renders nothing */}
-          {displayItem ? <MediaStampOverlay raw={displayItem.stamp_overlay} /> : null}
-        </>
-      ) : (
-        <View style={[pc.media, pc.noMedia]}>
-          {hasPending ? (
-            <Clock size={20} color={color.mute} />
-          ) : hasFailed ? (
-            <AlertCircle size={20} color={color.mute} />
-          ) : (
-            <MapPin size={20} color={color.mute} strokeWidth={1.6} />
-          )}
-        </View>
-      )}
+    <View style={{ width }}>
+      <MediaCard
+        id={card.id}
+        thumbnailUrl={hydratedWithParams}
+        mediaType={isVideo ? 'video' : 'image'}
+        onPress={() => card.postId && router.push(`/post/${card.postId}` as any)}
+        onLongPress={isOwner && actions ? () => setMenuOpen(true) : undefined}
+        hideBadge={hideBadge}
+      />
 
-      {/* location chip */}
-      {location ? (
-        <View style={pc.locChip}>
-          <Text style={pc.locChipText} numberOfLines={1}>{location}</Text>
-        </View>
-      ) : null}
+      {/* Absolute overlays — stamp, location, pin, status badges */}
+      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+        {/* Passport-stamp overlay — parse-gated; malformed data renders nothing */}
+        {displayItem ? <MediaStampOverlay raw={displayItem.stamp_overlay} /> : null}
 
-      {/* pinned badge — sits beside the menu button when the owner is viewing */}
-      {isPinned && (
-        <View style={[pc.cornerBadge, isOwner && actions ? pc.pinBadge : pc.menuBtn]}>
-          <Pin size={12} color="#fff" strokeWidth={2.2} />
-        </View>
-      )}
+        {/* Location chip */}
+        {location ? (
+          <View style={pc.locChip}>
+            <Text style={pc.locChipText} numberOfLines={1}>{location}</Text>
+          </View>
+        ) : null}
 
-      {/* owner menu button */}
-      {isOwner && actions && (
-        <Pressable
-          style={[pc.cornerBadge, pc.menuBtn]}
-          onPress={() => setMenuOpen(true)}
-          hitSlop={10}
-          accessibilityRole="button"
-          accessibilityLabel="Postcard options"
-        >
-          <MoreHorizontal size={14} color="#fff" />
-        </Pressable>
-      )}
+        {/* Pinned badge */}
+        {isPinned && (
+          <View style={[pc.cornerBadge, isOwner && actions ? pc.pinBadge : pc.menuBtn]}>
+            <Pin size={12} color="#fff" strokeWidth={2.2} />
+          </View>
+        )}
 
-      {/* media-type / processing badges */}
-      {hasPending ? (
-        <View style={pc.stateBadge}>
-          <Clock size={12} color="#fff" />
-          <Text style={pc.stateBadgeText}>Processing…</Text>
-        </View>
-      ) : hasFailed ? (
-        <View style={[pc.stateBadge, pc.stateBadgeFailed]}>
-          <AlertCircle size={12} color="#fff" />
-          <Text style={pc.stateBadgeText}>Failed</Text>
-        </View>
-      ) : isVideo ? (
-        <View style={pc.typeBadge}>
-          <PlayCircle size={13} color="#fff" strokeWidth={2.2} />
-        </View>
-      ) : isCarousel ? (
-        <View style={pc.typeBadge}>
-          <Layers size={13} color="#fff" strokeWidth={2.2} />
-        </View>
-      ) : null}
+        {/* Owner menu button */}
+        {isOwner && actions && (
+          <Pressable
+            style={[pc.cornerBadge, pc.menuBtn]}
+            onPress={() => setMenuOpen(true)}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Postcard options"
+          >
+            <MoreHorizontal size={14} color="#fff" />
+          </Pressable>
+        )}
 
-      {/* owner-only visibility chip (non-public only; yields to processing badges) */}
-      {isOwner && card.visibility !== 'public' && !hasPending && !hasFailed && (
-        <View style={pc.visChip}>
-          <Text style={pc.visChipText}>{card.visibility === 'trip_only' ? 'Trip' : 'Private'}</Text>
-        </View>
-      )}
+        {/* Processing / failed / carousel badges */}
+        {hasPending ? (
+          <View style={pc.stateBadge}>
+            <Clock size={12} color="#fff" />
+            <Text style={pc.stateBadgeText}>Processing…</Text>
+          </View>
+        ) : hasFailed ? (
+          <View style={[pc.stateBadge, pc.stateBadgeFailed]}>
+            <AlertCircle size={12} color="#fff" />
+            <Text style={pc.stateBadgeText}>Failed</Text>
+          </View>
+        ) : isCarousel ? (
+          <View style={pc.typeBadge}>
+            <Layers size={13} color="#fff" strokeWidth={2.2} />
+          </View>
+        ) : null}
+
+        {/* Owner-only visibility chip (non-public; yields to processing badges) */}
+        {isOwner && card.visibility !== 'public' && !hasPending && !hasFailed && (
+          <View style={pc.visChip}>
+            <Text style={pc.visChipText}>{card.visibility === 'trip_only' ? 'Trip' : 'Private'}</Text>
+          </View>
+        )}
+      </View>
 
       {isOwner && actions && (
         <CardMenu
@@ -305,7 +294,7 @@ function PostcardTile({
           actions={actions}
         />
       )}
-    </Pressable>
+    </View>
   );
 }
 
@@ -322,6 +311,7 @@ export function PostcardsTab({
   actions,
   onAddPostcard,
   sentinel,
+  loading,
 }: {
   postcards: PassportPostcard[];
   isOwner: boolean;
@@ -329,6 +319,8 @@ export function PostcardsTab({
   onAddPostcard?: () => void;
   /** Sentinel returned by the postcards endpoint — renders a graceful state instead of the grid. */
   sentinel?: PostcardsSentinel;
+  /** When true, renders a MediaGridSkeleton placeholder instead of the grid. */
+  loading?: boolean;
 }) {
   // Sentinel states take precedence over an empty (or populated) postcard list.
   if (sentinel) return <PostcardSentinelView kind={sentinel} />;
@@ -341,7 +333,6 @@ export function PostcardsTab({
   const gap = width < 350 ? 6 : 8;
   const pad = space.md;
   const tileW = (Math.min(width, 760) - pad * 2 - gap * (columns - 1)) / columns;
-  const tileH = tileW * 1.25; // 4:5 portrait
 
   const sorted = useMemo(() => {
     const list = postcards.slice();
@@ -355,11 +346,25 @@ export function PostcardsTab({
     return list;
   }, [postcards, sort]);
 
+  if (loading) {
+    return <MediaGridSkeleton columns={columns} count={columns * 3} />;
+  }
+
   if (postcards.length === 0) {
     return (
-      <PostcardEmptyState
-        isOwner={isOwner}
-        onAddPostcard={onAddPostcard}
+      <EmptyState
+        icon={ImageIcon}
+        title={isOwner ? 'Your adventure starts here' : 'No postcards yet'}
+        description={
+          isOwner
+            ? 'Every journey has a first moment. Share a place to start your story.'
+            : "This traveler hasn't shared a public postcard yet."
+        }
+        primaryAction={
+          isOwner && onAddPostcard
+            ? { label: 'Post your first postcard', onPress: onAddPostcard }
+            : undefined
+        }
       />
     );
   }
@@ -397,7 +402,6 @@ export function PostcardsTab({
             isOwner={isOwner}
             actions={actions}
             width={tileW}
-            height={tileH}
           />
         ))}
       </View>
@@ -436,15 +440,10 @@ const pc = StyleSheet.create({
   sortText: { ...t.small, fontSize: 12.5, fontWeight: '600', color: color.mute },
 
   grid: { flexDirection: 'row', flexWrap: 'wrap', paddingTop: space.sm },
-  tile: {
-    borderRadius: radius.md, overflow: 'hidden', backgroundColor: color.haze,
-  },
-  media: { width: '100%', height: '100%', backgroundColor: color.haze },
-  noMedia: { alignItems: 'center', justifyContent: 'center' },
 
   locChip: {
-    position: 'absolute', top: 6, left: 6, maxWidth: '78%',
-    minHeight: 24, paddingHorizontal: 8, borderRadius: radius.pill,
+    position: 'absolute', top: space.sm, left: space.sm, maxWidth: '78%',
+    minHeight: 24, paddingHorizontal: space.sm, borderRadius: radius.pill,
     backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center',
   },
   locChipText: { fontSize: 11, fontWeight: '600', color: '#fff' },
@@ -452,22 +451,23 @@ const pc = StyleSheet.create({
     position: 'absolute', width: 26, height: 26, borderRadius: 13,
     backgroundColor: 'rgba(0,0,0,0.48)', alignItems: 'center', justifyContent: 'center',
   },
-  pinBadge: { top: 6, right: 38 },
-  menuBtn: { top: 6, right: 6 },
+  pinBadge: { top: space.sm, right: space.xl + space.sm },
+  menuBtn: { top: space.sm, right: space.sm },
   typeBadge: {
-    position: 'absolute', bottom: 6, right: 6, width: 26, height: 26, borderRadius: 13,
+    position: 'absolute', bottom: space.sm, right: space.sm,
+    width: 26, height: 26, borderRadius: 13,
     backgroundColor: 'rgba(0,0,0,0.48)', alignItems: 'center', justifyContent: 'center',
   },
   stateBadge: {
-    position: 'absolute', bottom: 6, left: 6,
+    position: 'absolute', bottom: space.sm, left: space.sm,
     flexDirection: 'row', alignItems: 'center', gap: 4,
     backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: radius.pill,
-    paddingHorizontal: 8, paddingVertical: 4,
+    paddingHorizontal: space.sm, paddingVertical: 4,
   },
   stateBadgeFailed: { backgroundColor: 'rgba(200,30,30,0.75)' },
   stateBadgeText: { ...t.small, color: '#fff', fontSize: 10, fontWeight: '600' },
   visChip: {
-    position: 'absolute', bottom: 6, left: 6,
+    position: 'absolute', bottom: space.sm, left: space.sm,
     paddingHorizontal: 7, paddingVertical: 3, borderRadius: radius.pill,
     backgroundColor: 'rgba(0,0,0,0.55)',
   },
