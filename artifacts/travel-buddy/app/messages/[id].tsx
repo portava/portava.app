@@ -758,7 +758,7 @@ function MessageBubble({
   if (item.msgType === 'circle_status_card') {
     const payload = (() => { try { return JSON.parse(item.body ?? ''); } catch { return null; } })();
     return (
-      <Pressable onLongPress={onLongPress} delayLongPress={300} onPress={onCircleCardPress}>
+      <Pressable onLongPress={onLongPress} delayLongPress={300} onPress={onCircleCardPress} disabled={isCircleMember === null}>
         <CircleStatusCardMessage
           subtype={payload?.subtype ?? item.subtype ?? null}
           venueLabel={payload?.venueLabel ?? null}

@@ -19,7 +19,7 @@
  * directly covered by the logic unit tests.
  */
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { Users, MapPin, CheckCircle } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { TG } from '../theme/telegraphTokens.ts';
@@ -47,6 +47,8 @@ export function CircleStatusCardMessage({
   isCircleMember,
   onPress,
 }: Props) {
+  const isLoading = isCircleMember === null;
+
   const decision = resolveCardRenderFromProps(
     subtype,
     venueLabel ?? null,
@@ -55,10 +57,23 @@ export function CircleStatusCardMessage({
     senderName ?? null,
   );
 
+  // ── Shared footer: "View Circle →" link or loading spinner ───────────────
+  const linkOrSpinner = onPress ? (
+    isLoading ? (
+      <ActivityIndicator
+        size="small"
+        color={mine ? color.onInk + '99' : color.signal}
+        style={card.spinner}
+      />
+    ) : (
+      <Text style={[card.link, mine && card.linkMine]}>View Circle →</Text>
+    )
+  ) : null;
+
   // ── Privacy / unknown-subtype placeholder ─────────────────────────────────
   if (decision.show === 'placeholder') {
     return (
-      <View style={[card.wrap, mine && card.wrapMine]}>
+      <View style={[card.wrap, mine && card.wrapMine, isLoading && card.wrapLoading]}>
         <View style={card.header}>
           <View style={[card.badge, mine && card.badgeMine]}>
             <Users size={10} color={color.onInk} />
@@ -66,6 +81,13 @@ export function CircleStatusCardMessage({
           <Text style={[card.brand, mine && card.brandMine]}>CIRCLE</Text>
         </View>
         <Text style={[card.body, mine && card.bodyMine]}>{decision.text}</Text>
+        {isLoading ? (
+          <ActivityIndicator
+            size="small"
+            color={mine ? color.onInk + '99' : color.signal}
+            style={card.spinner}
+          />
+        ) : null}
       </View>
     );
   }
@@ -73,7 +95,7 @@ export function CircleStatusCardMessage({
   // ── Meeting-point card ────────────────────────────────────────────────────
   if (decision.show === 'meeting_point') {
     return (
-      <View style={[card.wrap, mine && card.wrapMine]}>
+      <View style={[card.wrap, mine && card.wrapMine, isLoading && card.wrapLoading]}>
         <View style={card.header}>
           <View style={[card.badge, mine && card.badgeMine]}>
             <Users size={10} color={color.onInk} />
@@ -97,16 +119,14 @@ export function CircleStatusCardMessage({
           </Text>
         ) : null}
 
-        {onPress ? (
-          <Text style={[card.link, mine && card.linkMine]}>View Circle →</Text>
-        ) : null}
+        {linkOrSpinner}
       </View>
     );
   }
 
   // ── Check-in card ─────────────────────────────────────────────────────────
   return (
-    <View style={[card.wrap, mine && card.wrapMine]}>
+    <View style={[card.wrap, mine && card.wrapMine, isLoading && card.wrapLoading]}>
       <View style={card.header}>
         <View style={[card.badge, mine && card.badgeMine]}>
           <Users size={10} color={color.onInk} />
@@ -130,9 +150,7 @@ export function CircleStatusCardMessage({
         </Text>
       ) : null}
 
-      {onPress ? (
-        <Text style={[card.link, mine && card.linkMine]}>View Circle →</Text>
-      ) : null}
+      {linkOrSpinner}
     </View>
   );
 }
@@ -196,4 +214,7 @@ const card = StyleSheet.create({
 
   link: { ...t.small, color: color.signal, fontSize: 11, fontWeight: '600', marginTop: 2 },
   linkMine: { color: color.onInk + 'CC' },
+
+  wrapLoading: { opacity: 0.55 },
+  spinner: { alignSelf: 'flex-start', marginTop: 2 },
 });
