@@ -45,6 +45,7 @@ import { sniffMedia, processImage, makeThumbnail, computePHash } from "../lib/me
 import { recordMediaAsset } from "../lib/mediaAssets.js";
 import { resolvePostPlace } from "../lib/places/placeResolve.js";
 import { classifyBuckets, incrementBucketCounts } from "../lib/places/bucketClassifier.js";
+import { ensurePlaceDay, isEligiblePlaceDayPost } from "../lib/places/placeDays.js";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 
 const router = Router();
@@ -743,12 +744,19 @@ router.post("/posts", async (req, res) => {
         city: locationCity ?? null,
         countryCode: locationCountry ?? null,
       }).then(async (result) => {
+        const callbackNow = new Date();
         if (result?.placeId) {
           await placeSc
             .from("posts")
             .update({ canonical_place_id: result.placeId })
             .eq("id", (data as any).id)
             .is("canonical_place_id", null); // guard against race
+          // A day only materializes from activity that is already eligible for
+          // the public place surface. Private, delayed, hidden, or moderated
+          // source content must not reveal an activity anchor.
+          if (isEligiblePlaceDayPost(data)) {
+            void ensurePlaceDay(placeSc, result.placeId, new Date((data as any).created_at ?? callbackNow));
+          }
 
           // Bucket classification — fail-soft, never blocks post creation.
           try {
@@ -758,7 +766,7 @@ router.post("/posts", async (req, res) => {
               caption: content ?? null,
               category: category ?? null,
             });
-            const postedAt = (data as any).created_at ?? new Date().toISOString();
+            const postedAt = (data as any).created_at ?? callbackNow.toISOString();
 
             // Attempt to increment bucket counts in place_coverage_buckets.
             const upsertOk = buckets.length === 0
@@ -1629,6 +1637,7 @@ router.patch("/posts/:postId/location-privacy", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
+  const nowMs = Date.now();
   const { postId } = req.params;
   if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
 
@@ -1641,7 +1650,7 @@ router.patch("/posts/:postId/location-privacy", async (req, res) => {
 
   const { data: existing, error: loadErr } = await client
     .from("posts")
-    .select("id, author_id, post_status, location_sensitivity_level")
+    .select("id, author_id, canonical_place_id, created_at, visibility, status, post_status, location_sensitivity_level")
     .eq("id", postId)
     .eq("status", "active")
     .maybeSingle();
@@ -1670,7 +1679,7 @@ router.patch("/posts/:postId/location-privacy", async (req, res) => {
     patch.publish_after_time = publishAfterTime;
   } else if (newMode === "none" || newMode === "hidden" || newMode === "city_only" || newMode === "trusted_circle_only") {
     patch.post_status = "published";
-    patch.published_at = new Date().toISOString();
+    patch.published_at = new Date(nowMs).toISOString();
     patch.publish_eligible_at = null;
   }
 
@@ -1689,6 +1698,17 @@ router.patch("/posts/:postId/location-privacy", async (req, res) => {
       metadata: { new_mode: newMode, new_status: patch.post_status },
     });
     await invalidateCompassCache(sc, user.id, "post_privacy_change");
+    if (
+      patch.post_status === "published" &&
+      (updated as any)?.canonical_place_id &&
+      isEligiblePlaceDayPost(updated)
+    ) {
+      await ensurePlaceDay(
+        sc,
+        (updated as any).canonical_place_id,
+        new Date((updated as any).created_at ?? nowMs),
+      );
+    }
   }
 
   res.status(200).json(updated);
@@ -1702,12 +1722,13 @@ router.post("/posts/:postId/publish-now-without-location", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
+  const nowMs = Date.now();
   const { postId } = req.params;
   if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
 
   const { data: existing, error: loadErr } = await client
     .from("posts")
-    .select("id, author_id, post_status")
+    .select("id, author_id, canonical_place_id, created_at, visibility, status, post_status")
     .eq("id", postId)
     .eq("status", "active")
     .maybeSingle();
@@ -1718,7 +1739,7 @@ router.post("/posts/:postId/publish-now-without-location", async (req, res) => {
     return;
   }
 
-  const now = new Date().toISOString();
+  const now = new Date(nowMs).toISOString();
   const { data: updated, error: updateErr } = await client
     .from("posts")
     .update({
@@ -1742,6 +1763,16 @@ router.post("/posts/:postId/publish-now-without-location", async (req, res) => {
     await logDelayedEvent(sc, postId, user.id, "publish_without_location", {
       metadata: { published_at: now },
     });
+    if (
+      (updated as any)?.canonical_place_id &&
+      isEligiblePlaceDayPost(updated)
+    ) {
+      await ensurePlaceDay(
+        sc,
+        (updated as any).canonical_place_id,
+        new Date((updated as any).created_at ?? nowMs),
+      );
+    }
   }
 
   res.status(200).json(updated);

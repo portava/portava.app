@@ -73,6 +73,7 @@
   "src/test/passportStampsPagination.test.ts",
   "src/test/placeCategories.test.ts",
   "src/test/placeLiving.test.ts",
+  "src/test/placeDays.test.ts",
   "src/test/placeResolve.test.ts",
   "src/test/placeReviews.test.ts",
   "src/test/portavaFeed.test.ts",

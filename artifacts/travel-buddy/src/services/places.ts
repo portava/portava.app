@@ -18,6 +18,8 @@ import type {
   PlaceLivingResponse,
   PlaceTimelineResponse,
   TimelineSlice,
+  PlaceDayLookupResponse,
+  PlaceDayFeedResponse,
 } from '../types/placeLiving.ts';
 
 // ── Venue contact info (nearby-venue endpoint) ────────────────────────────────
@@ -217,6 +219,51 @@ export async function getPlaceTimeline(
     if (!json || typeof json !== 'object') return null;
     if (typeof (json as any).placeId !== 'string') return null;
     return json as PlaceTimelineResponse;
+  } catch {
+    return null;
+  }
+}
+
+export async function getPlaceDay(
+  placeId: string,
+  date?: string,
+): Promise<PlaceDayLookupResponse | null> {
+  if (!isSupabaseConfigured || !apiBase()) return null;
+  const token = await freshToken();
+  if (!token) return null;
+  try {
+    const query = date ? `?${new URLSearchParams({ date })}` : '';
+    const res = await fetch(`${apiBase()}/api/places/${encodeURIComponent(placeId)}/place-days${query}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const json = await res.json().catch(() => null);
+    return json && typeof json === 'object' && 'day' in json ? json as PlaceDayLookupResponse : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getPlaceDayFeed(
+  placeId: string,
+  date: string,
+  cursor?: string,
+): Promise<PlaceDayFeedResponse | null> {
+  if (!isSupabaseConfigured || !apiBase()) return null;
+  const token = await freshToken();
+  if (!token) return null;
+  try {
+    const params = new URLSearchParams();
+    if (cursor) params.set('cursor', cursor);
+    const res = await fetch(
+      `${apiBase()}/api/places/${encodeURIComponent(placeId)}/place-days/${date}/feed?${params}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!res.ok) return null;
+    const json = await res.json().catch(() => null);
+    return json && typeof json === 'object' && Array.isArray((json as any).items)
+      ? json as PlaceDayFeedResponse
+      : null;
   } catch {
     return null;
   }

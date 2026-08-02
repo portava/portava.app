@@ -17,6 +17,7 @@ import { getServiceClient } from "../supabase.js";
 import { resolvePostPlace } from "./placeResolve.js";
 import { classifyBuckets, incrementBucketCounts } from "./bucketClassifier.js";
 import { enqueueLivingCacheInvalidation } from "./placeCollections.js";
+import { ensurePlaceDay, isEligiblePlaceDayPost } from "./placeDays.js";
 
 const TICK_INTERVAL_MS = 10 * 60 * 1_000; // 10 minutes
 const BATCH_SIZE = 200;
@@ -46,7 +47,7 @@ export async function runBackfillTick(scOverride?: any): Promise<{
   // We only need the post's own stored coordinates and name — no join required.
   const { data: rows, error } = await sc
     .from("posts")
-    .select("id, location_name, location_lat, location_lng, location_city, location_country")
+    .select("id, location_name, location_lat, location_lng, location_city, location_country, created_at, visibility, status, post_status, publish_at")
     .is("canonical_place_id", null)
     .not("canonical_location_id", "is", null)
     .limit(BATCH_SIZE);
@@ -67,6 +68,11 @@ export async function runBackfillTick(scOverride?: any): Promise<{
     location_lng: number | null;
     location_city: string | null;
     location_country: string | null;
+    created_at: string | null;
+    visibility: string | null;
+    status: string | null;
+    post_status: string | null;
+    publish_at: string | null;
   }>;
 
   if (batch.length === 0) {
@@ -109,6 +115,9 @@ export async function runBackfillTick(scOverride?: any): Promise<{
           updated++;
           // Enqueue living cache invalidation for this place (best-effort).
           void enqueueLivingCacheInvalidation(result.placeId, sc);
+          if (isEligiblePlaceDayPost(row)) {
+            void ensurePlaceDay(sc, result.placeId, new Date(row.created_at ?? Date.now()));
+          }
         } else {
           console.warn(JSON.stringify({
             event: "post_place_backfill.update_error",

@@ -211,9 +211,7 @@ const READ_BASELINE = new Set<string>([
 
 // Tables read via `.select()` that do not exist live at all (same baseline
 // semantics as READ_BASELINE).
-const READ_BASELINE_TABLES = new Set<string>([
-  // (none currently)
-]);
+const READ_BASELINE_TABLES = new Set<string>([]);
 
 // ── Environment ───────────────────────────────────────────────────────────────
 

@@ -37,6 +37,7 @@ import { startPostPlaceBackfillWorker } from "./lib/places/postPlaceBackfillWork
 import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js";
 import { startPlaceCollectionsWorker } from "./lib/places/placeCollectionsWorker.js";
 import { startCompassSearchDecayFlushScheduler } from "./lib/compassSearchDecayFlushScheduler.js";
+import { startPlaceDayLifecycleWorker } from "./lib/places/placeDaysWorker.js";
 
 assertRequiredEnv(logger);
 
@@ -141,6 +142,7 @@ app.listen(port, (err) => {
   // pages are served from precomputed rows in milliseconds.
   // Gated by PLACE_COLLECTIONS_WORKER_ENABLED=true.
   startPlaceCollectionsWorker();
+  startPlaceDayLifecycleWorker();
 
   // Daily search-decay flush — writes post-decay category_weights back to
   // compass_user_preferences and resets each signal row's search_weight to

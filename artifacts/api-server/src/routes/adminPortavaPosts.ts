@@ -20,6 +20,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { ensurePlaceDay, isEligiblePlaceDayPost } from "../lib/places/placeDays.js";
 
 const router = Router();
 
@@ -86,7 +87,7 @@ async function resolvePortavaId(sc: any): Promise<string | null> {
 // ── Column lists (static strings required by check:write-path-columns) ────────
 
 const PORTAVA_POST_SELECT_COLUMNS =
-  "id, author_id, content, category, post_status, publish_after_time, published_at, visibility, media_urls, media_type, location_city, location_country, status, created_at, updated_at";
+  "id, author_id, canonical_place_id, content, category, post_status, publish_after_time, published_at, visibility, media_urls, media_type, location_city, location_country, status, created_at, updated_at";
 
 // ── Shared response mapper ────────────────────────────────────────────────────
 
@@ -279,6 +280,7 @@ router.patch("/admin/portava/posts/:id", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
+  const now = new Date();
 
   const { id } = req.params;
   if (!id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
@@ -326,7 +328,7 @@ router.patch("/admin/portava/posts/:id", asyncHandler(async (req, res) => {
     }
   }
 
-  const patch: Record<string, unknown> = { updated_by: admin.userId, updated_at: new Date().toISOString() };
+  const patch: Record<string, unknown> = { updated_by: admin.userId, updated_at: now.toISOString() };
   if (p.content    !== undefined) patch.content    = p.content;
   if (p.category   !== undefined) patch.category   = p.category ?? null;
   if (p.visibility !== undefined) patch.visibility  = p.visibility;
@@ -345,7 +347,7 @@ router.patch("/admin/portava/posts/:id", asyncHandler(async (req, res) => {
       patch.publish_after_time  = null;
       patch.publish_eligible_at = null;
       patch.post_status         = "published";
-      patch.published_at        = new Date().toISOString();
+      patch.published_at        = now.toISOString();
     }
   }
 
@@ -353,13 +355,25 @@ router.patch("/admin/portava/posts/:id", asyncHandler(async (req, res) => {
     .from("posts")
     .update(patch)
     .eq("id", id)
-    .select("id, author_id, content, category, post_status, publish_after_time, published_at, visibility, media_urls, media_type, location_city, location_country, status, created_at, updated_at")
+    .select(PORTAVA_POST_SELECT_COLUMNS)
     .single();
 
   if (error) {
     req.log.error({ err: error }, "Failed to update @portava post");
     sendError(res, "db_error", error.message);
     return;
+  }
+
+  if (
+    patch.post_status === "published" &&
+    (data as any)?.canonical_place_id &&
+    isEligiblePlaceDayPost(data)
+  ) {
+    await ensurePlaceDay(
+      sc,
+      (data as any).canonical_place_id,
+      new Date((data as any).created_at ?? now),
+    );
   }
 
   res.json({ post: mapPost(data as any) });

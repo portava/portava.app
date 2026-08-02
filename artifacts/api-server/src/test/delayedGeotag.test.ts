@@ -128,40 +128,50 @@ interface FakeStore {
   safe_return_sessions?: any[];
   delayed_post_location_events?: any[];
   job_health?: any[];
+  places?: any[];
+  feature_flags?: any[];
+  place_days?: any[];
 }
 
 /** Minimal fake client for worker tests. */
 function makeFakeClient(store: FakeStore = {}) {
   const updates: Array<{ table: string; patch: any; id: string }> = [];
   const inserts: Array<{ table: string; row: any }> = [];
+  const upserts: Array<{ table: string; row: any }> = [];
 
   const client: any = {
     _updates: updates,
     _inserts: inserts,
+    _upserts: upserts,
     from(table: string) {
+      const rowsFor = () => {
+        switch (table) {
+          case "safe_return_sessions": return store.safe_return_sessions ?? [];
+          case "places": return store.places ?? [];
+          case "feature_flags": return store.feature_flags ?? [];
+          case "place_days": return store.place_days ?? [];
+          default: return [];
+        }
+      };
+      const selected = () => {
+        const filters: Array<[string, any]> = [];
+        const filteredRows = () => rowsFor().filter((row) =>
+          filters.every(([column, value]) => row[column] === value),
+        );
+        const builder: any = {
+          eq: (column: string, value: any) => {
+            filters.push([column, value]);
+            return builder;
+          },
+          in: (_column: string, _values: any[]) => builder,
+          lte: (_column: string, _value: any) => Promise.resolve({ data: store.posts ?? [], error: null }),
+          limit: (_count: number) => builder,
+          maybeSingle: async () => ({ data: filteredRows()[0] ?? null, error: null }),
+        };
+        return builder;
+      };
       return {
-        select: (_cols?: string) => ({
-          in: (_col: string, vals: string[]) => ({
-            lte: (_col2: string, _val: string) => Promise.resolve({ data: store.posts ?? [], error: null }),
-          }),
-          eq: (_col: string, _val: any) => ({
-            eq: (_c2: string, _v2: any) => ({
-              limit: (_n: number) => ({
-                maybeSingle: async () => {
-                  if (table === "safe_return_sessions") {
-                    const row = (store.safe_return_sessions ?? []).find(
-                      (r) => r.status === "active"
-                    );
-                    return { data: row ?? null, error: null };
-                  }
-                  return { data: null, error: null };
-                },
-              }),
-            }),
-          }),
-          count: "exact" as const,
-          head: true,
-        }),
+        select: (_cols?: string) => selected(),
         update: (patch: any) => ({
           eq: (_col: string, id: string) => {
             updates.push({ table, patch, id });
@@ -172,7 +182,11 @@ function makeFakeClient(store: FakeStore = {}) {
           inserts.push({ table, row });
           return Promise.resolve({ data: null, error: null });
         },
-        upsert: (_row: any, _opts?: any) => Promise.resolve({ data: null, error: null }),
+        upsert: (row: any, _opts?: any) => {
+          upserts.push({ table, row });
+          if (table === "place_days") (store.place_days ??= []).push(row);
+          return Promise.resolve({ data: null, error: null });
+        },
       };
     },
   };
@@ -214,6 +228,35 @@ describe("runDelayedPostPublisher — publishes eligible post", () => {
     assert.ok(postUpdates.length > 0, "should have updated post");
     const publishUpdate = postUpdates.find((u: any) => u.patch.post_status === "published");
     assert.ok(publishUpdate, "should have set post_status=published");
+    _setTestClient(null);
+  });
+
+  it("materializes a Place Day after a canonical delayed post becomes published", async () => {
+    const client = makeFakeClient({
+      posts: [{
+        id: "post-place-day",
+        author_id: "user-place-day",
+        canonical_place_id: "place-aaa",
+        created_at: "2026-08-02T23:30:00.000Z",
+        visibility: "public",
+        status: "active",
+        post_status: "pending_delay",
+        location_privacy_mode: "delayed_until_time",
+      }],
+      safe_return_sessions: [],
+      places: [{ id: "place-aaa", city: "Cebu City", latitude: 10.3157, longitude: 123.8854, merged_into_place_id: null }],
+      feature_flags: [
+        { flag: "external_places_enabled", enabled: true },
+        { flag: "place_days_enabled", enabled: true },
+      ],
+    });
+    _setTestClient(client);
+    await runDelayedPostPublisher({ client });
+    await new Promise((resolve) => setImmediate(resolve));
+    const placeDay = client._upserts.find((entry: any) => entry.table === "place_days");
+    assert.ok(placeDay, "should create a Place Day after the delayed post publishes");
+    assert.equal(placeDay.row.place_id, "place-aaa");
+    assert.equal(placeDay.row.local_date, "2026-08-03");
     _setTestClient(null);
   });
 });

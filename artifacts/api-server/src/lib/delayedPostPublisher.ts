@@ -18,6 +18,7 @@
 import { getServiceClient, isServiceClientReady } from "./supabase.js";
 import { logger as rootLogger } from "./logger.js";
 import { sendPushWithRetry } from "./pushWithRetry.js";
+import { ensurePlaceDay, isEligiblePlaceDayPost } from "./places/placeDays.js";
 
 const logger = rootLogger.child({ job: "DelayedPostPublisher" });
 
@@ -129,6 +130,12 @@ async function publishPost(db: any, post: any): Promise<boolean> {
   }
 
   logger.info({ postId: post.id, mode: post.location_privacy_mode }, "delayedPostPublisher: post published");
+  // A delayed post may have been canonicalized while it was still private to
+  // the public feed. Materialize the canonical local day only after the
+  // publish transition commits, so pending activity never exposes a day.
+  if (post.canonical_place_id && isEligiblePlaceDayPost({ ...post, ...patch })) {
+    await ensurePlaceDay(db, post.canonical_place_id, new Date(post.created_at ?? now));
+  }
   return true;
 }
 
@@ -174,7 +181,7 @@ export async function runDelayedPostPublisher(opts?: { client?: any }): Promise<
   // Query posts that are ready to publish
   const { data: posts, error: queryErr } = await db
     .from("posts")
-    .select("id, author_id, location_privacy_mode, original_lat, original_lng, post_status, public_location_label, venue_name")
+    .select("id, author_id, canonical_place_id, created_at, visibility, status, publish_at, location_privacy_mode, original_lat, original_lng, post_status, public_location_label, venue_name")
     .in("post_status", ["pending_location_exit", "pending_delay"])
     .lte("publish_eligible_at", now);
 
