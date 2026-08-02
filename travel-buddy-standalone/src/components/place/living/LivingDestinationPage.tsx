@@ -52,6 +52,7 @@ import {
   Camera,
   Image as ImageIcon,
   Award,
+  CalendarDays,
 } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { CachedImage } from '../../CachedImage.tsx';
@@ -1573,9 +1574,10 @@ const tc = StyleSheet.create({
 export interface LivingDestinationPageProps {
   place: CanonicalPlace;
   living: PlaceLivingResponse;
+  placeDaysEnabled?: boolean;
 }
 
-export function LivingDestinationPage({ place, living }: LivingDestinationPageProps) {
+export function LivingDestinationPage({ place, living, placeDaysEnabled = false }: LivingDestinationPageProps) {
   const scrollY = useRef(new Animated.Value(0)).current;
 
   // Compact header opacity — fades in as the hero scrolls away
@@ -1615,6 +1617,20 @@ export function LivingDestinationPage({ place, living }: LivingDestinationPagePr
         {/* ── Directions ── */}
         {living.directionsUrl ? (
           <PlaceDirectionsRow directionsUrl={living.directionsUrl} />
+        ) : null}
+        {placeDaysEnabled ? (
+          <Pressable
+            testID="place-day-entry"
+            style={ld.placeDayEntry}
+            onPress={() => router.push({ pathname: '/place/[id]/day', params: { id: living.placeId } } as any)}
+          >
+            <CalendarDays size={18} color={color.deep} />
+            <View style={{ flex: 1 }}>
+              <Text style={ld.placeDayEntryTitle}>Today at this place</Text>
+              <Text style={ld.placeDayEntryBody}>See community posts from this local day.</Text>
+            </View>
+            <ChevronDown size={18} color={color.mute} />
+          </Pressable>
         ) : null}
 
         {/* ── Official info card ── */}
@@ -1751,6 +1767,20 @@ const ld = StyleSheet.create({
     borderWidth: 1,
     borderColor: color.haze,
   },
+  placeDayEntry: {
+    marginHorizontal: space.lg,
+    marginTop: space.md,
+    padding: space.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    backgroundColor: '#EAF5F5',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#CDE4E3',
+  },
+  placeDayEntryTitle: { ...typography.label, color: color.deep },
+  placeDayEntryBody: { ...typography.caption, color: color.mute, marginTop: 2 },
   beFirstTitle: {
     ...t.heading,
     color: color.ink,

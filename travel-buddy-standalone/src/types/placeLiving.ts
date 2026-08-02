@@ -112,3 +112,39 @@ export interface PlaceTimelineResponse {
   crowdLevel: string | null;
   weatherBrief: string | null;
 }
+
+export type PlaceDayStatus = 'active' | 'closing' | 'archived';
+
+export interface PlaceDay {
+  id: string;
+  placeId: string;
+  placeName: string;
+  localDate: string;
+  timezone: string;
+  status: PlaceDayStatus;
+  openedAt: string;
+  closingAt: string | null;
+  archivedAt: string | null;
+}
+
+export interface PlaceDayLookupResponse {
+  day: PlaceDay | null;
+  navigation: { previousDate: string | null; nextDate: string | null };
+}
+
+export interface PlaceDayFeedItem {
+  id: string;
+  authorId: string;
+  caption: string | null;
+  mediaUrl: string | null;
+  thumbnailUrl: string | null;
+  mediaType: string | null;
+  createdAt: string;
+}
+
+export interface PlaceDayFeedResponse {
+  placeId: string;
+  localDate: string;
+  items: PlaceDayFeedItem[];
+  nextCursor: string | null;
+}

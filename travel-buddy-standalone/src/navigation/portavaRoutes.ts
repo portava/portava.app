@@ -708,6 +708,16 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     featureFlag: 'external_places_enabled',
     deepLink: '/place/[id]',
   },
+  {
+    key: 'place-day',
+    path: 'place/[id]/day',
+    title: 'Place Day',
+    parent: 'place-detail',
+    icon: null,
+    requiresAuth: true,
+    featureFlag: 'place_days_enabled',
+    deepLink: '/place/[id]/day',
+  },
 
   // ── Destinations ──────────────────────────────────────────────────────────
 

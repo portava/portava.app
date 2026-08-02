@@ -382,7 +382,11 @@ export default function PlaceDetailScreen() {
       <>
         <Stack.Screen options={{ title: canonicalPlace.name, headerTransparent: true }} />
         <SafeAreaView style={ps.safeArea} edges={['bottom']}>
-          <LivingDestinationPage place={canonicalPlace} living={living} />
+          <LivingDestinationPage
+            place={canonicalPlace}
+            living={living}
+            placeDaysEnabled={isFlagEnabled('external_places_enabled') && isFlagEnabled('place_days_enabled')}
+          />
         </SafeAreaView>
         <PlaceReportSheet
           visible={reportOpen}
