@@ -119,6 +119,7 @@ function EventsTabScreen() {
   const [categoryRows, setCategoryRows]       = useState<Record<string, EventListItem[]>>({});
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState<string | null>(null);
+  const [myEventsError, setMyEventsError]     = useState(false);
 
   // ── Filters ────────────────────────────────────────────────────────────────
   const [showFilters, setShowFilters]         = useState(false);
@@ -238,7 +239,8 @@ function EventsTabScreen() {
     const rawCircle = circleRes.ok ? (circleRes.data?.events ?? []) : [];
     const dedupedCircle = rawCircle.filter((e) => !myIds.has(e.id));
 
-    if (myRes.ok) setMyEvents(rawMy);
+    if (myRes.ok) { setMyEvents(rawMy); setMyEventsError(false); }
+    else { setMyEventsError(true); setMyEvents([]); }
 
     if (mainRes.ok) setTodayEvents(dedupedToday);
     if (tomorrowRes.ok) setTomorrowEvents(dedupedTomorrow);
@@ -746,19 +748,43 @@ function EventsTabScreen() {
                   undefined,
                   true,
                 )
-              : (todayEvents.length > 0 || tomorrowEvents.length > 0 || weekendEvents.length > 0) && (
-                <View style={styles.section}>
-                  <View style={styles.sectionHeader}>
-                    <View style={styles.sectionTitleRow}>
-                      <Users size={15} color={color.signal} />
-                      <Text style={styles.sectionTitle}>Your events</Text>
+              : myEventsError
+                ? (
+                  <View style={styles.section}>
+                    <View style={styles.sectionHeader}>
+                      <View style={styles.sectionTitleRow}>
+                        <Users size={15} color={color.signal} />
+                        <Text style={styles.sectionTitle}>Your events</Text>
+                      </View>
+                    </View>
+                    <View style={styles.yourEventsErrorRow}>
+                      <Text style={styles.yourEventsErrorText}>
+                        Couldn't load your events.
+                      </Text>
+                      <Pressable
+                        onPress={() => load()}
+                        accessibilityLabel="Retry loading your events"
+                        accessibilityRole="button"
+                        hitSlop={8}
+                      >
+                        <Text style={styles.yourEventsRetryText}>Retry</Text>
+                      </Pressable>
                     </View>
                   </View>
-                  <Text style={styles.yourEventsNote}>
-                    Your upcoming events are listed in the sections below.
-                  </Text>
-                </View>
-              )
+                )
+                : (todayEvents.length > 0 || tomorrowEvents.length > 0 || weekendEvents.length > 0) && (
+                  <View style={styles.section}>
+                    <View style={styles.sectionHeader}>
+                      <View style={styles.sectionTitleRow}>
+                        <Users size={15} color={color.signal} />
+                        <Text style={styles.sectionTitle}>Your events</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.yourEventsNote}>
+                      Your upcoming events are listed in the sections below.
+                    </Text>
+                  </View>
+                )
           )}
 
           {/* Upcoming (or the active date preset) */}
@@ -989,6 +1015,9 @@ const styles = StyleSheet.create({
   browseAllBtn:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, marginHorizontal: space.lg, marginTop: space.lg, marginBottom: space.sm, paddingVertical: space.md, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
   browseAllText:      { ...t.body, color: color.signal, fontWeight: '700' },
   yourEventsNote:     { ...t.small, color: color.mute, paddingHorizontal: space.lg, paddingBottom: space.sm },
+  yourEventsErrorRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, paddingBottom: space.sm },
+  yourEventsErrorText: { ...t.small, color: color.mute, flex: 1 },
+  yourEventsRetryText: { ...t.small, color: color.signal, fontWeight: '600' },
 });
 
 
