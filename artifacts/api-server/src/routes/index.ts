@@ -117,6 +117,7 @@ import featuredRouter from "./featured.js";
 import placeLivingRouter from "./placeLiving.js";
 import placeDaysRouter from "./placeDays.js";
 import contentTranslationRouter from "./contentTranslation.js";
+import sharedMomentsRouter from "./sharedMoments.js";
 
 const router: IRouter = Router();
 
@@ -245,5 +246,6 @@ router.use(featuredRouter);
 router.use(placeLivingRouter);
 router.use(placeDaysRouter);
 router.use(contentTranslationRouter);
+router.use(sharedMomentsRouter);
 
 export default router;
