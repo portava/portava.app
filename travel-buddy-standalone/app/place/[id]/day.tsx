@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
-import { ChevronLeft, ChevronRight, CalendarDays } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, CalendarDays, UsersRound } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getPlaceDay, getPlaceDayFeed } from '../../../src/services/places.ts';
 import type { PlaceDay, PlaceDayFeedItem } from '../../../src/types/placeLiving.ts';
 import { CachedImage } from '../../../src/components/CachedImage.tsx';
 import { color, radius, space, type as t, typography } from '../../../src/theme/tokens.ts';
+import { useFeatureFlags } from '../../../src/context/FeatureFlagsContext.tsx';
 
 function shiftDate(value: string, days: number): string {
   const date = new Date(`${value}T12:00:00Z`);
@@ -21,6 +22,8 @@ export default function PlaceDayScreen() {
   const [items, setItems] = useState<PlaceDayFeedItem[]>([]);
   const [selectedDate, setSelectedDate] = useState(Array.isArray(initialDate) ? initialDate[0] : initialDate);
   const [navigation, setNavigation] = useState<{ previousDate: string | null; nextDate: string | null }>({ previousDate: null, nextDate: null });
+  const { isEnabled } = useFeatureFlags();
+  const momentsEnabled = isEnabled('external_places_enabled') && isEnabled('place_days_enabled') && isEnabled('shared_moments_enabled');
 
   const load = useCallback(async () => {
     if (!placeId) return;
@@ -50,6 +53,7 @@ export default function PlaceDayScreen() {
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
           <Text style={styles.status}>{day.status === 'active' ? 'Happening today' : day.status === 'closing' ? 'Day is closing' : 'Archived day'}</Text>
+           {momentsEnabled ? <Pressable testID="open-shared-moments" style={styles.moments} onPress={() => router.push({ pathname: '/place/[id]/moments', params: { id: placeId, placeDayId: day.id } } as any)}><UsersRound size={16} color={color.deep} /><Text style={styles.momentsText}>Shared Moments</Text></Pressable> : null}
           {items.length === 0 ? <View style={styles.empty}><Text style={styles.emptyTitle}>Nothing shared here yet</Text><Text style={styles.emptyBody}>Posts appear here only when they’re already visible to you.</Text></View> : items.map((item) => <DayPost key={item.id} item={item} timezone={day.timezone} />)}
         </ScrollView>
       )}
@@ -74,6 +78,8 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl },
   content: { padding: space.lg, gap: space.md },
   status: { ...typography.label, color: color.deep, textAlign: 'center' },
+  moments: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: space.sm, borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill, paddingVertical: space.sm },
+  momentsText: { ...t.bodyStrong, color: color.deep },
   empty: { padding: space.xl, alignItems: 'center' },
   emptyTitle: { ...t.bodyStrong, color: color.ink, textAlign: 'center' },
   emptyBody: { ...typography.body, color: color.mute, textAlign: 'center', marginTop: space.sm },

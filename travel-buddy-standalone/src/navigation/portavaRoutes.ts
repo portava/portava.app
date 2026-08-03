@@ -718,6 +718,26 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     featureFlag: 'place_days_enabled',
     deepLink: '/place/[id]/day',
   },
+  {
+    key: 'place-shared-moments',
+    path: 'place/[id]/moments',
+    title: 'Shared Moments',
+    parent: 'place-day',
+    icon: null,
+    requiresAuth: true,
+    featureFlag: 'shared_moments_enabled',
+    deepLink: '/place/[id]/moments',
+  },
+  {
+    key: 'shared-moment-detail',
+    path: 'shared-moments/[id]',
+    title: 'Shared Moment',
+    parent: 'place-shared-moments',
+    icon: null,
+    requiresAuth: true,
+    featureFlag: 'shared_moments_enabled',
+    deepLink: '/shared-moments/[id]',
+  },
 
   // ── Destinations ──────────────────────────────────────────────────────────
 
