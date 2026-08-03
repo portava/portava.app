@@ -777,6 +777,14 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     requiresAuth: true,
   },
   {
+    key: 'gems-bookmark-preview',
+    path: 'gems/bookmark-preview',
+    title: 'Bookmark Comparison Preview',
+    parent: 'gems-directory',
+    icon: null,
+    requiresAuth: false,
+  },
+  {
     key: 'media-add-gem',
     path: 'media/add-gem',
     title: 'Add Gem',
