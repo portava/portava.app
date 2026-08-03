@@ -178,6 +178,8 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
 
   // ── Dynamic table name (messaging — dispatches to per-channel tables) ─────
   ["src/routes/messaging.ts|select|dynamic table name", 1],
+  // Recap parent is explicitly limited to the two canonical parent tables.
+  ["src/routes/placeRecaps.ts|select|dynamic table name", 2],
 
   // ── Dynamic insert table name ─────────────────────────────────────────────
   // post_event_links is a new join table (migration 20260731_post_event_links.sql);

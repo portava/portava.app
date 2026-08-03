@@ -5,6 +5,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { areSharedMomentsEnabled } from "../lib/places/sharedMoments.js";
 import sharedMomentsRouter from "../routes/sharedMoments.js";
+import placeRecapsRouter from "../routes/placeRecaps.js";
 
 function flags(enabled: Record<string, boolean>) {
   return {
@@ -338,5 +339,94 @@ describe("Shared Moments foundation", () => {
     assert.equal(wrongMoment.status, 404);
     assert.equal((await wrongMoment.json() as any).error, "not_found");
     assert.equal(state.shared_moment_audit_events.length, 1);
+  });
+});
+
+describe("Place Recap lifecycle routes", () => {
+  const recapId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const userId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const token = "recap-owner-token";
+  const actions: string[] = [];
+  let recapServer: ReturnType<typeof createServer>;
+  let recapBaseUrl: string;
+
+  function recapClient() {
+    const recap = {
+      id: recapId,
+      owner_id: userId,
+      place_day_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      moment_id: null,
+      status: "published",
+    };
+    return {
+      auth: {
+        getUser: async (authToken: string) =>
+          authToken === token
+            ? { data: { user: { id: userId } }, error: null }
+            : { data: { user: null }, error: { message: "unauthorized" } },
+      },
+      from(table: string) {
+        const filters: Array<(row: any) => boolean> = [];
+        const rows = table === "feature_flags"
+          ? [
+              { flag: "external_places_enabled", enabled: true },
+              { flag: "place_days_enabled", enabled: true },
+              { flag: "place_recaps_enabled", enabled: true },
+            ]
+          : table === "live_place_recaps"
+            ? [recap]
+            : table === "profiles"
+              ? [{ id: userId, account_status: "active" }]
+              : [];
+        const chain: any = {
+          select: () => chain,
+          eq: (column: string, value: unknown) => {
+            filters.push((row) => row[column] === value);
+            return chain;
+          },
+          maybeSingle: async () => ({
+            data: rows.find((row) => filters.every((matches) => matches(row))) ?? null,
+            error: null,
+          }),
+        };
+        return chain;
+      },
+      rpc: async (name: string, args: { p_action: string }) => {
+        assert.equal(name, "transition_live_place_recap");
+        actions.push(args.p_action);
+        return { data: { recap, version: { status: args.p_action } }, error: null };
+      },
+    };
+  }
+
+  before(async () => {
+    _setTestClient(recapClient(), true);
+    const app = express();
+    app.use("/api", placeRecapsRouter);
+    recapServer = createServer(app);
+    await new Promise<void>((resolve) => recapServer.listen(0, "127.0.0.1", resolve));
+    recapBaseUrl = `http://127.0.0.1:${(recapServer.address() as { port: number }).port}/api`;
+  });
+
+  after(() => recapServer.close());
+
+  it("passes explicit archive, restore, and remove actions to the lifecycle RPC", async () => {
+    for (const action of ["archive", "restore", "remove"]) {
+      const response = await fetch(`${recapBaseUrl}/place-recaps/${recapId}/${action}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      assert.equal(response.status, 200);
+      assert.equal((await response.json() as any).version.status, action);
+    }
+    assert.deepEqual(actions, ["archive", "restore", "remove"]);
+  });
+
+  it("returns invalid_payload for a malformed place recap list identifier", async () => {
+    const response = await fetch(`${recapBaseUrl}/places/not-a-uuid/recaps`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json() as any).error, "invalid_payload");
   });
 });
