@@ -58,5 +58,19 @@ module.exports = {
     // Sentry) don't fail with "unexpected token" during the transform step.
     '^@sentry/react-native$':
       '<rootDir>/src/__mocks__/@sentry/react-native.tsx',
+    // @testing-library/react-native v14 imports 'test-renderer' (a separate
+    // package from react-test-renderer).  pnpm does not hoist it to a location
+    // Jest can find automatically; pin to the pnpm store copy so every RNTL
+    // render() call resolves the same instance.
+    '^test-renderer$': '<rootDir>/../node_modules/.pnpm/test-renderer@1.2.0_@types+react@19.1.17_react@19.1.0/node_modules/test-renderer',
+    '^test-renderer/(.*)$': '<rootDir>/../node_modules/.pnpm/test-renderer@1.2.0_@types+react@19.1.17_react@19.1.0/node_modules/test-renderer/$1',
+    // travel-buddy-standalone has a physical (non-symlinked) copy of React in
+    // its own node_modules, while the pnpm-store copy used by test-renderer
+    // above is a different object reference — causing "Cannot read properties of
+    // null (reading 'useState')" in every RNTL render.  Pin all React imports
+    // (including transitive ones inside test-renderer) to the standalone's local
+    // copy so only one React instance exists at runtime.
+    '^react$': '<rootDir>/node_modules/react',
+    '^react/(.*)$': '<rootDir>/node_modules/react/$1',
   },
 };

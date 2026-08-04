@@ -616,11 +616,12 @@ function PlanCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; 
             <Pressable
               style={({ pressed }) => [s.outlineBtn, pressed && { opacity: 0.7 }]}
               hitSlop={8}
+              testID="plan-card-add-to-plan-btn"
               onPress={() => planPicker.open({ id: item.id, type: 'plan', title: item.title ?? 'Meetup', city: item.city, category: 'meeting_point' })}
             >
               <Text style={s.outlineText}>Add to Plan</Text>
             </Pressable>
-            <Pressable style={s.solidBtn} hitSlop={8} onPress={() => router.push((item.relatedTripId ? `/trip/${item.relatedTripId}` : '/(tabs)/trips') as any)}>
+            <Pressable style={s.solidBtn} hitSlop={8} testID="plan-card-join-plan-btn" onPress={() => router.push((item.relatedTripId ? `/trip/${item.relatedTripId}` : '/(tabs)/trips') as any)}>
               <Text style={s.solidText}>Join Plan</Text>
             </Pressable>
             <CompassFeedbackMenu
@@ -725,7 +726,7 @@ function ItineraryCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item:
             </View>
           ) : null}
           <View style={s.actions}>
-            <Pressable style={s.outlineBtn} hitSlop={8} onPress={() => planPicker.open({ id: item.id, type: 'experience', title: item.title ?? 'Itinerary', city: item.city, category: 'Itinerary' })}>
+            <Pressable style={s.outlineBtn} hitSlop={8} testID="itinerary-card-use-this-plan-btn" onPress={() => planPicker.open({ id: item.id, type: 'experience', title: item.title ?? 'Itinerary', city: item.city, category: 'Itinerary' })}>
               <Text style={s.outlineText}>Use this plan</Text>
             </Pressable>
             <View style={{ flex: 1 }} />
@@ -774,7 +775,7 @@ function CircleCard({ item }: { item: PulseFeedItem }) {
           ))}
         </View>
         <View style={{ flex: 1 }} />
-        <Pressable style={s.outlineBtn} hitSlop={8} onPress={() => router.push('/circle')}><Text style={s.outlineText}>See Circle</Text></Pressable>
+        <Pressable style={s.outlineBtn} hitSlop={8} testID="circle-card-see-circle-btn" onPress={() => router.push('/circle')}><Text style={s.outlineText}>See Circle</Text></Pressable>
       </View>
     </View>
   );
@@ -799,9 +800,9 @@ function CompassCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (
       {item.reason ? <View style={s.reasonRow}><Info size={13} color={color.deep} /><Text style={s.reason}>{item.reason}</Text></View> : null}
       {item.isProvisional ? <Text style={s.prov}>Based on starter city notes — provisional</Text> : null}
       <View style={s.actions}>
-        <Pressable style={s.outlineBtn} hitSlop={8} onPress={() => router.push('/(tabs)/ai')}><Text style={s.outlineText}>View Details</Text></Pressable>
+        <Pressable style={s.outlineBtn} hitSlop={8} testID="compass-card-view-details-btn" onPress={() => router.push('/(tabs)/ai')}><Text style={s.outlineText}>View Details</Text></Pressable>
         <View style={{ flex: 1 }} />
-        <Pressable style={s.solidBtn} hitSlop={8} onPress={() => planPicker.open({ id: item.id, type: 'compass_suggestion', title: resolveCompassTitle(item), city: item.city, category: 'Compass' })}><Plus size={POST_ACTION_ICON_SIZE} color={color.onInk} /><Text style={s.solidText}>Add to Plan</Text></Pressable>
+        <Pressable style={s.solidBtn} hitSlop={8} testID="compass-card-add-to-plan-btn" onPress={() => planPicker.open({ id: item.id, type: 'compass_suggestion', title: resolveCompassTitle(item), city: item.city, category: 'Compass' })}><Plus size={POST_ACTION_ICON_SIZE} color={color.onInk} /><Text style={s.solidText}>Add to Plan</Text></Pressable>
         <CompassFeedbackMenu
           recommendationId={item.id}
           itemType={item.type}
