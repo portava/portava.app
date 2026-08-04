@@ -132,6 +132,7 @@ function makeRouteState(): RouteState {
   return {
     feature_flags: [
       { flag: "external_places_enabled", enabled: true },
+      { flag: "live_places_enabled", enabled: true },
       { flag: "place_days_enabled", enabled: true },
       { flag: "shared_moments_enabled", enabled: true },
     ],
@@ -180,15 +181,18 @@ async function invite(userId: string) {
 }
 
 describe("Shared Moments foundation", () => {
-  it("requires Live Places, Place Days, and Shared Moments flags together", async () => {
+  it("requires the Live Places master, Place Days, and Shared Moments flags together", async () => {
     assert.equal(await areSharedMomentsEnabled(flags({
-      external_places_enabled: true, place_days_enabled: true, shared_moments_enabled: true,
+      external_places_enabled: true, live_places_enabled: true, place_days_enabled: true, shared_moments_enabled: true,
     })), true);
     assert.equal(await areSharedMomentsEnabled(flags({
-      external_places_enabled: true, place_days_enabled: true, shared_moments_enabled: false,
+      external_places_enabled: true, live_places_enabled: true, place_days_enabled: true, shared_moments_enabled: false,
     })), false);
     assert.equal(await areSharedMomentsEnabled(flags({
-      external_places_enabled: false, place_days_enabled: true, shared_moments_enabled: true,
+      external_places_enabled: false, live_places_enabled: true, place_days_enabled: true, shared_moments_enabled: true,
+    })), false);
+    assert.equal(await areSharedMomentsEnabled(flags({
+      external_places_enabled: true, live_places_enabled: false, place_days_enabled: true, shared_moments_enabled: true,
     })), false);
   });
 
@@ -370,6 +374,7 @@ describe("Place Recap lifecycle routes", () => {
         const rows = table === "feature_flags"
           ? [
               { flag: "external_places_enabled", enabled: true },
+              { flag: "live_places_enabled", enabled: true },
               { flag: "place_days_enabled", enabled: true },
               { flag: "place_recaps_enabled", enabled: true },
             ]

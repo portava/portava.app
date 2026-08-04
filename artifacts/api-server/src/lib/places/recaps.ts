@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { isFlagEnabled } from "../featureFlags.js";
+import { isLivePlacesCapabilityEnabled } from "../featureFlags.js";
 
 export type RecapSource = {
   id: string;
@@ -14,12 +14,7 @@ export type RecapSource = {
 };
 
 export async function areRecapsEnabled(sc: any, kind: "place" | "moment"): Promise<boolean> {
-  const flags = await Promise.all([
-    isFlagEnabled(sc, "external_places_enabled"), isFlagEnabled(sc, "place_days_enabled"),
-    isFlagEnabled(sc, kind === "place" ? "place_recaps_enabled" : "moment_recaps_enabled"),
-    kind === "moment" ? isFlagEnabled(sc, "shared_moments_enabled") : Promise.resolve(true),
-  ]);
-  return flags.every(Boolean);
+  return isLivePlacesCapabilityEnabled(sc, kind === "place" ? "place_recaps_enabled" : "moment_recaps_enabled");
 }
 
 export function recapSourceHash(sources: RecapSource[]): string {

@@ -738,6 +738,16 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     featureFlag: 'shared_moments_enabled',
     deepLink: '/shared-moments/[id]',
   },
+  {
+    key: 'place-recap-detail',
+    path: 'recaps/[id]',
+    title: 'Travel recap',
+    parent: 'place-day',
+    icon: null,
+    requiresAuth: true,
+    featureFlag: 'place_recaps_enabled',
+    deepLink: '/recaps/[id]',
+  },
 
   // ── Destinations ──────────────────────────────────────────────────────────
 

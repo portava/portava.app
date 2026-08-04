@@ -1,15 +1,9 @@
-import { isFlagEnabled } from "../featureFlags.js";
-import { arePlaceDaysEnabled } from "./placeDays.js";
+import { isLivePlacesCapabilityEnabled } from "../featureFlags.js";
 
 export type MomentRole = "owner" | "manager" | "member";
 
 export async function areSharedMomentsEnabled(sc: any): Promise<boolean> {
-  const [livePlaces, placeDays, moments] = await Promise.all([
-    isFlagEnabled(sc, "external_places_enabled"),
-    arePlaceDaysEnabled(sc),
-    isFlagEnabled(sc, "shared_moments_enabled"),
-  ]);
-  return livePlaces && placeDays && moments;
+  return isLivePlacesCapabilityEnabled(sc, "shared_moments_enabled");
 }
 
 export async function momentRole(sc: any, momentId: string, userId: string): Promise<MomentRole | null> {

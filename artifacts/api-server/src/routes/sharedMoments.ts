@@ -5,7 +5,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { fetchBlockedSet } from "../lib/blocks.js";
 import { excludePrivateAuthorPosts } from "../lib/privacyFilter.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isLivePlacesCapabilityEnabled } from "../lib/featureFlags.js";
 import { appendMomentAudit, areSharedMomentsEnabled, momentRole } from "../lib/places/sharedMoments.js";
 
 const router = Router();
@@ -89,7 +89,10 @@ router.post("/shared-moments", asyncHandler(async (req, res) => {
 
 router.get("/shared-moments/suggestions/mine", asyncHandler(async (req, res) => {
   const ctx = await guard(req, res); if (!ctx) return;
-  const [compass, clustering] = await Promise.all([isFlagEnabled(ctx.sc, "shared_moments_compass_suggestions_enabled"), isFlagEnabled(ctx.sc, "shared_moments_clustering_enabled")]);
+  const [compass, clustering] = await Promise.all([
+    isLivePlacesCapabilityEnabled(ctx.sc, "shared_moments_compass_suggestions_enabled"),
+    isLivePlacesCapabilityEnabled(ctx.sc, "shared_moments_clustering_enabled"),
+  ]);
   if (!compass && !clustering) { res.json({ suggestions: [], labeled: true }); return; }
   const { data } = await ctx.sc.from("shared_moment_suggestions").select("id, moment_id, kind, reason, created_at").eq("recipient_id", ctx.userId).eq("status", "offered").order("created_at", { ascending: false }).limit(20);
   res.json({ suggestions: (data ?? []).filter((s: any) => (s.kind === "compass" ? compass : clustering)).map((s: any) => ({ id: s.id, momentId: s.moment_id, kind: s.kind, reason: s.reason, label: "Suggestion — no one is joined or added automatically.", createdAt: s.created_at })), labeled: true });
@@ -103,7 +106,7 @@ router.get("/shared-moments/:id", asyncHandler(async (req, res) => {
   if (!row) { sendError(res, "not_found"); return; }
   const role = await momentRole(ctx.sc, row.id, ctx.userId);
   if (!role) { sendError(res, "not_member", "Join this Moment to view it"); return; }
-  const chatAvailable = await isFlagEnabled(ctx.sc, "shared_moments_chat_enabled");
+  const chatAvailable = await isLivePlacesCapabilityEnabled(ctx.sc, "shared_moments_chat_enabled");
   const { data: members } = await ctx.sc.from("shared_moment_memberships").select("user_id, role, status").eq("moment_id", row.id).eq("status", "accepted");
   res.json({ moment: mapMoment(row, role), members: (members ?? []).map((m: any) => ({ userId: m.user_id, role: m.role })), chat: { available: chatAvailable, reason: chatAvailable ? null : "Chat is not available for Shared Moments yet." } });
 }));

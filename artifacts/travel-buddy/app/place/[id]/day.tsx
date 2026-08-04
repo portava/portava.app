@@ -23,9 +23,9 @@ export default function PlaceDayScreen() {
   const [items, setItems] = useState<PlaceDayFeedItem[]>([]);
   const [selectedDate, setSelectedDate] = useState(Array.isArray(initialDate) ? initialDate[0] : initialDate);
   const [navigation, setNavigation] = useState<{ previousDate: string | null; nextDate: string | null }>({ previousDate: null, nextDate: null });
-  const { isEnabled } = useFeatureFlags();
-  const momentsEnabled = isEnabled('external_places_enabled') && isEnabled('place_days_enabled') && isEnabled('shared_moments_enabled');
-  const recapsEnabled = isEnabled('external_places_enabled') && isEnabled('place_days_enabled') && isEnabled('place_recaps_enabled');
+  const { isLivePlacesEnabled } = useFeatureFlags();
+  const momentsEnabled = isLivePlacesEnabled('shared_moments_enabled');
+  const recapsEnabled = isLivePlacesEnabled('place_recaps_enabled');
 
   const load = useCallback(async () => {
     if (!placeId) return;

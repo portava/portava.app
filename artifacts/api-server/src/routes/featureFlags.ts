@@ -2,6 +2,7 @@ import { Router } from "express";
 import { getServiceClient } from "../lib/supabase";
 import { sendError } from "../lib/http";
 import { asyncHandler } from "../lib/asyncHandler";
+import { resolveFeatureFlags } from "../lib/featureFlags";
 
 const router = Router();
 
@@ -31,7 +32,7 @@ router.get("/feature-flags", asyncHandler(async (req, res) => {
     flags[row.flag] = row.enabled ?? false;
   }
 
-  return res.json({ flags });
+  return res.json({ flags: resolveFeatureFlags(flags) });
 }));
 
 export default router;

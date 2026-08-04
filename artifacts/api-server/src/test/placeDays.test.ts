@@ -219,6 +219,7 @@ function get(path: string, tok: string | null = VIEWER_TOK) {
 
 const BOTH_FLAGS_ON: State["flags"] = [
   { flag: "external_places_enabled", enabled: true },
+  { flag: "live_places_enabled", enabled: true },
   { flag: "place_days_enabled", enabled: true },
 ];
 
@@ -298,6 +299,7 @@ describe("GET /api/places/:id/place-days — authentication and feature flags", 
     const s = baseState();
     s.flags = [
       { flag: "external_places_enabled", enabled: false },
+      { flag: "live_places_enabled", enabled: true },
       { flag: "place_days_enabled", enabled: true },
     ];
     setup(s);
@@ -311,6 +313,7 @@ describe("GET /api/places/:id/place-days — authentication and feature flags", 
     const s = baseState();
     s.flags = [
       { flag: "external_places_enabled", enabled: true },
+      { flag: "live_places_enabled", enabled: true },
       { flag: "place_days_enabled", enabled: false },
     ];
     setup(s);
@@ -318,6 +321,19 @@ describe("GET /api/places/:id/place-days — authentication and feature flags", 
     assert.equal(r.status, 404);
     const body = await r.json() as any;
     assert.equal(body.error, "feature_disabled");
+  });
+
+  it("returns feature_disabled when the Live Places master flag is off", async () => {
+    const s = baseState();
+    s.flags = [
+      { flag: "external_places_enabled", enabled: true },
+      { flag: "live_places_enabled", enabled: false },
+      { flag: "place_days_enabled", enabled: true },
+    ];
+    setup(s);
+    const r = await get(`/places/${PLACE_ID}/place-days`);
+    assert.equal(r.status, 404);
+    assert.equal((await r.json() as any).error, "feature_disabled");
   });
 
   it("returns 400 for an invalid UUID", async () => {

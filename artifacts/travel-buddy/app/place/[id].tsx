@@ -303,7 +303,7 @@ export default function PlaceDetailScreen() {
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
   const city = Array.isArray(params.city) ? params.city[0] : (params.city ?? null);
 
-  const { isEnabled: isFlagEnabled } = useFeatureFlags();
+  const { isEnabled: isFlagEnabled, isLivePlacesEnabled } = useFeatureFlags();
   const { isAuthed } = useSession();
 
   // undefined = loading, null = not found / flag off
@@ -323,15 +323,16 @@ export default function PlaceDetailScreen() {
       setLiving(null);
       return;
     }
-    // Fetch canonical place and living page data in parallel.
+    // Canonical discovery remains independent; the experiential living page
+    // requires the reversible Live Places master switch.
     void Promise.all([
       getCanonicalPlace(id),
-      getPlaceLiving(id),
+      isLivePlacesEnabled('live_places_enabled') ? getPlaceLiving(id) : Promise.resolve(null),
     ]).then(([place, livingData]) => {
       setCanonicalPlace(place);
       setLiving(livingData);
     });
-  }, [id, isFlagEnabled]);
+  }, [id, isFlagEnabled, isLivePlacesEnabled]);
 
   // ── Place engagement signal — write a place_view rank event on mount ─────────
   // Fire-and-forget: failures are non-fatal. A missed signal never blocks the UI.
@@ -385,7 +386,7 @@ export default function PlaceDetailScreen() {
           <LivingDestinationPage
             place={canonicalPlace}
             living={living}
-            placeDaysEnabled={isFlagEnabled('external_places_enabled') && isFlagEnabled('place_days_enabled')}
+            placeDaysEnabled={isLivePlacesEnabled('place_days_enabled')}
           />
         </SafeAreaView>
         <PlaceReportSheet

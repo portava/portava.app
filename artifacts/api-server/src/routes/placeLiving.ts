@@ -27,6 +27,7 @@ import { toCanonicalPlace } from "../lib/places/placeResolve.js";
 import { getWeatherContext } from "../lib/weatherCache.js";
 import { getBestOf, enqueueLivingCacheInvalidation } from "../lib/places/placeCollections.js";
 import { generateAiSummary } from "../lib/places/placeAiSummary.js";
+import { isLivePlacesCapabilityEnabled } from "../lib/featureFlags.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -378,6 +379,11 @@ router.get("/places/:id/living", asyncHandler(async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
+  if (!(await isLivePlacesCapabilityEnabled(sc, "live_places_enabled"))) {
+    req.log?.info?.({ capability: "live_places_enabled" }, "live-places capability denied");
+    sendError(res, "feature_disabled", "Live Places is unavailable");
+    return;
+  }
 
   const { id } = req.params;
   if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid place id"); return; }
@@ -460,6 +466,11 @@ router.get("/places/:id/living/timeline", asyncHandler(async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
+  if (!(await isLivePlacesCapabilityEnabled(sc, "live_places_enabled"))) {
+    req.log?.info?.({ capability: "live_places_enabled" }, "live-places capability denied");
+    sendError(res, "feature_disabled", "Live Places is unavailable");
+    return;
+  }
 
   const { id } = req.params;
   if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid place id"); return; }

@@ -3,7 +3,7 @@
  * existing source activity, never a copied post or a check-in record.
  */
 import { cityTimezone, timezoneFromCoords } from "../../compass/CompassGraphEngine.js";
-import { isFlagEnabled } from "../featureFlags.js";
+import { isLivePlacesCapabilityEnabled } from "../featureFlags.js";
 import { logger } from "../logger.js";
 
 export type PlaceDayStatus = "active" | "closing" | "archived";
@@ -90,11 +90,7 @@ export function resolvePlaceTimezone(place: any): string {
 }
 
 export async function arePlaceDaysEnabled(sc: any): Promise<boolean> {
-  const [livePlaces, placeDays] = await Promise.all([
-    isFlagEnabled(sc, "external_places_enabled"),
-    isFlagEnabled(sc, "place_days_enabled"),
-  ]);
-  return livePlaces && placeDays;
+  return isLivePlacesCapabilityEnabled(sc, "place_days_enabled");
 }
 
 /** Upserts the local day exactly once, even under concurrent eligible activity. */

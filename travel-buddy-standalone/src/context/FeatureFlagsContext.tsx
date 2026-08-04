@@ -25,6 +25,8 @@ import { AppState, type AppStateStatus } from 'react-native';
 interface FeatureFlagsContextValue {
   /** Returns true only when the named flag is explicitly enabled on the server. */
   isEnabled: (key: string) => boolean;
+  /** Resolves the Live Places parent hierarchy for a capability. */
+  isLivePlacesEnabled: (key: string) => boolean;
   /** True while the initial fetch is in-flight. */
   loading: boolean;
 }
@@ -33,6 +35,7 @@ interface FeatureFlagsContextValue {
 
 const FeatureFlagsContext = createContext<FeatureFlagsContextValue>({
   isEnabled: () => false,
+  isLivePlacesEnabled: () => false,
   loading: false,
 });
 
@@ -80,13 +83,24 @@ export function FeatureFlagsProvider({ children }: { children: React.ReactNode }
     return () => sub.remove();
   }, [fetchFlags]);
 
-  const isEnabled = useCallback(
-    (key: string): boolean => flags[key] === true,
-    [flags],
-  );
+  const isEnabled = useCallback((key: string): boolean => {
+    const requirements: Record<string, string[]> = {
+      live_places_enabled: ['external_places_enabled'],
+      place_days_enabled: ['external_places_enabled', 'live_places_enabled'],
+      shared_moments_enabled: ['external_places_enabled', 'live_places_enabled', 'place_days_enabled'],
+      shared_moments_compass_suggestions_enabled: ['external_places_enabled', 'live_places_enabled', 'place_days_enabled', 'shared_moments_enabled'],
+      shared_moments_clustering_enabled: ['external_places_enabled', 'live_places_enabled', 'place_days_enabled', 'shared_moments_enabled'],
+      place_recaps_enabled: ['external_places_enabled', 'live_places_enabled', 'place_days_enabled'],
+      moment_recaps_enabled: ['external_places_enabled', 'live_places_enabled', 'place_days_enabled', 'shared_moments_enabled'],
+      live_places_world_feed_enabled: ['external_places_enabled', 'live_places_enabled'],
+      place_chat_enabled: ['external_places_enabled', 'live_places_enabled'],
+      shared_moments_chat_enabled: ['external_places_enabled', 'live_places_enabled', 'place_days_enabled', 'shared_moments_enabled'],
+    };
+    return flags[key] === true && (requirements[key] ?? []).every((parent) => flags[parent] === true);
+  }, [flags]);
 
   return (
-    <FeatureFlagsContext.Provider value={{ isEnabled, loading }}>
+    <FeatureFlagsContext.Provider value={{ isEnabled, isLivePlacesEnabled: isEnabled, loading }}>
       {children}
     </FeatureFlagsContext.Provider>
   );

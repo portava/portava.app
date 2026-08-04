@@ -79,6 +79,7 @@
     "test:onboarding-autofollow": "node --import tsx/esm --test src/test/onboardingAutoFollow.test.ts",
     "test:portava-feed": "node --import tsx/esm --test src/test/portavaFeed.test.ts",
     "test:media-dedup-phash": "node --import tsx/esm --test src/test/mediaDedupPhash.test.ts",
+    "test:live-places-flags": "node --import tsx/esm --test src/test/livePlacesFlags.test.ts",
     "test:place-living": "node --import tsx/esm --test src/test/placeLiving.test.ts",
     "test:place-days": "node --import tsx/esm --test src/test/placeDays.test.ts",
     "test:shared-moments": "node --import tsx/esm --test src/test/sharedMoments.test.ts",

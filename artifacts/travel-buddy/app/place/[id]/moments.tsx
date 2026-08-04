@@ -10,8 +10,8 @@ export default function PlaceMomentsScreen() {
   const { id, placeDayId } = useLocalSearchParams<{ id: string; placeDayId?: string }>();
   const placeId = Array.isArray(id) ? id[0] : id;
   const dayId = Array.isArray(placeDayId) ? placeDayId[0] : placeDayId;
-  const { isEnabled } = useFeatureFlags();
-  const available = isEnabled('external_places_enabled') && isEnabled('place_days_enabled') && isEnabled('shared_moments_enabled');
+  const { isLivePlacesEnabled } = useFeatureFlags();
+  const available = isLivePlacesEnabled('shared_moments_enabled');
   const [moments, setMoments] = useState<SharedMoment[] | null>(null);
   const [title, setTitle] = useState('');
   const [creating, setCreating] = useState(false);
