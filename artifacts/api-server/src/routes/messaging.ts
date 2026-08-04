@@ -997,13 +997,15 @@ router.get('/me/unread-counts', async (req, res) => {
 });
 
 /* ---------------------------------------------------------------------------
- * POST /api/me/notifications/read-all
+ * POST /api/me/messaging/inbox-viewed
  * ---------------------------------------------------------------------------
  * Records that the current user has viewed their Inbox by setting
  * profiles.notifications_inbox_viewed_at = now(). The unread-counts endpoint
  * uses this timestamp to compute the notification badge count.
+ * (Renamed from /me/notifications/read-all, which shadowed the real
+ * mark-all-read handler in notifications.ts.)
  */
-router.post('/me/notifications/read-all', async (req, res) => {
+router.post('/me/messaging/inbox-viewed', async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;

@@ -42,10 +42,17 @@ router.post("/meetups/:meetupId/add-to-trip-plan", asyncHandler(async (req, res)
   // Fetch meetup row — we use a meetups table stub (title, starts_at, location_name)
   const { data: meetup } = await client
     .from("meetups")
-    .select("id, title, starts_at, location_name")
+    .select("id, title, starts_at, location_name, trip_id")
     .eq("id", meetupId)
     .maybeSingle();
   if (!meetup) { sendError(res, "not_found", "Meetup not found"); return; }
+
+  // Enforce meetup-trip identity: a trip-scoped meetup may only be added to its own trip
+  // (guard ported from the now-removed duplicate handler in meetups.ts).
+  if ((meetup as any).trip_id && (meetup as any).trip_id !== tripId) {
+    sendError(res, "forbidden", "This meetup is scoped to a different trip");
+    return;
+  }
 
   // Duplicate guard: same meetup already added to this trip (non-removed)
   const { data: existing } = await client

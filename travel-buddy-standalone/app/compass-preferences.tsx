@@ -543,6 +543,23 @@ export default function CompassPreferencesScreen() {
           </Pressable>
         </Section>
 
+        {/* ── Data & Privacy ── */}
+        <Section title="Data & Privacy" Icon={Shield}>
+          <Pressable
+            style={s.expandRow}
+            testID="compass-settings-link"
+            onPress={() => router.push('/compass-settings')}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={s.fieldLabel}>Compass Settings</Text>
+              <Text style={{ ...t.small, color: color.mute }}>
+                Data and privacy controls — manage what Compass stores and how it uses it.
+              </Text>
+            </View>
+            <ChevronDown size={16} color={color.mute} style={{ transform: [{ rotate: '-90deg' }] }} />
+          </Pressable>
+        </Section>
+
         <PlainBottomFiller />
 
       </ScrollView>

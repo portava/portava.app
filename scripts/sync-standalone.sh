@@ -120,6 +120,20 @@ for arg in "$@"; do
 done
 
 # ---------------------------------------------------------------------------
+# The check modes are meaningless without the source tree — a missing $SRC
+# must be a hard failure, not a silent pass (a check that "passes" because
+# there is nothing to compare against is a false green).
+# ---------------------------------------------------------------------------
+if $CHECK_SOURCE || $CHECK_LOCKFILE; then
+  if [[ ! -d "$SRC" ]]; then
+    echo "ERROR: source tree not found: $SRC" >&2
+    echo "       --check-source / --check-lockfile cannot verify drift without it." >&2
+    echo "       Check that artifacts/travel-buddy exists (or set SYNC_STANDALONE_REPO_ROOT correctly)." >&2
+    exit 1
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # Files that are edited directly in travel-buddy-standalone and must NEVER be
 # overwritten by --fix-source or the full sync.
 # Paths are relative to the standalone root (same shape as paths inside $DST),

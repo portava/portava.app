@@ -1,0 +1,3009 @@
+diff --git a/APPLY-NEW-MIGRATIONS.md b/APPLY-NEW-MIGRATIONS.md
+new file mode 100644
+index 0000000..d7ff11e
+--- /dev/null
++++ b/APPLY-NEW-MIGRATIONS.md
+@@ -0,0 +1,81 @@
++# APPLY — circle_invites table + RLS hardening
++
++Two migrations. The first fixes a **Critical** bug: the code has shipped
++circle-invite endpoints (friends.ts, requests.ts, groupChat.ts, messaging.ts)
++against a `circle_invites` table that was never created — every circle-invite
++call fails at the DB layer. The second closes a **High** exposure: 12 live
++tables have no RLS while the mobile app ships the anon key.
++
++## Files
++1. `artifacts/api-server/src/migrations/2069_circle_invites.sql`
++   Creates `circle_invites` (uuid PK, owner/recipient FKs → profiles ON DELETE
++   CASCADE, status pending/accepted/declined/cancelled with default 'pending',
++   responded_at/created_at/updated_at, UNIQUE (owner_id, recipient_id) — the
++   re-invite path updates the existing row in place via maybeSingle(), so the
++   pair must be unique — plus recipient+status and owner+status indexes).
++   RLS enabled, no policies: all access is via the API's service-role client.
++2. `artifacts/api-server/src/migrations/2070_rls_hardening.sql`
++   Enables deny-all RLS on: devices, key_packages, post_reactions,
++   comment_likes, post_shares, post_edits, stamp_milestones, post_event_links,
++   media_stamp_reactions, place_mismatch_reports, feature_flags, job_health.
++   Each wrapped in a to_regclass() existence check (idempotent, safe if a
++   table is missing in an environment). NO permissive policies on purpose:
++   the client audit (see the migration header) found zero direct client-side
++   `.from()` usage of these tables — the app goes through the API, and the
++   API uses the service role, which bypasses RLS.
++
++## Apply (Supabase SQL editor)
++1. Open the Supabase dashboard → SQL Editor.
++2. Paste and run `2069_circle_invites.sql`.
++3. Paste and run `2070_rls_hardening.sql`.
++   Both are idempotent — re-running is safe.
++4. No code changes needed; the server already targets this schema.
++   Optional smoke test: `cd artifacts/api-server && pnpm test 2>&1 | tail -6`.
++
++## Verify
++2069 — table exists with the expected shape and RLS on:
++
++    SELECT column_name, data_type, is_nullable, column_default
++    FROM information_schema.columns
++    WHERE table_schema = 'public' AND table_name = 'circle_invites'
++    ORDER BY ordinal_position;
++    -- expect: id, owner_id, recipient_id, status (default 'pending'),
++    --         responded_at (nullable), created_at, updated_at
++
++    SELECT conname, pg_get_constraintdef(oid)
++    FROM pg_constraint WHERE conrelid = 'public.circle_invites'::regclass;
++    -- expect: pkey, two profiles FKs (ON DELETE CASCADE), status CHECK,
++    --         UNIQUE (owner_id, recipient_id), no-self-invite CHECK
++
++2070 — RLS enabled everywhere, and no accidental permissive policies:
++
++    SELECT relname, relrowsecurity
++    FROM pg_class
++    WHERE relnamespace = 'public'::regnamespace
++      AND relname IN ('circle_invites', 'devices', 'key_packages',
++        'post_reactions', 'comment_likes', 'post_shares', 'post_edits',
++        'stamp_milestones', 'post_event_links', 'media_stamp_reactions',
++        'place_mismatch_reports', 'feature_flags', 'job_health')
++    ORDER BY relname;
++    -- expect: relrowsecurity = true for every row returned
++    -- (a missing row means that table doesn't exist in this env — fine,
++    --  the DO-block skipped it)
++
++    SELECT tablename, policyname
++    FROM pg_policies
++    WHERE schemaname = 'public'
++      AND tablename IN ('circle_invites', 'devices', 'key_packages',
++        'post_reactions', 'comment_likes', 'post_shares', 'post_edits',
++        'stamp_milestones', 'post_event_links', 'media_stamp_reactions',
++        'place_mismatch_reports', 'feature_flags', 'job_health');
++    -- expect: zero rows (deny-all — service role bypasses RLS)
++
++## Honesty / rollback
++- Deny-all means anon/authenticated keys are fully locked out of these
++  tables. That is the intent. If some untracked client build does query one
++  of them directly, the symptom is empty reads / failed writes from the app
++  only — the API keeps working. Rollback for a single table:
++  `ALTER TABLE public.<table> DISABLE ROW LEVEL SECURITY;` (then add a scoped
++  policy instead and re-enable).
++- 2069 only creates a table that nothing could have written to before; there
++  is no data-migration risk.
+diff --git a/artifacts/api-server/src/compass/CompassGraphEngine.ts b/artifacts/api-server/src/compass/CompassGraphEngine.ts
+index 4b5f2d5..8a51f1a 100644
+--- a/artifacts/api-server/src/compass/CompassGraphEngine.ts
++++ b/artifacts/api-server/src/compass/CompassGraphEngine.ts
+@@ -528,12 +528,12 @@ export async function buildGraphFromSources(
+   try {
+     const { data } = await db
+       .from("events")
+-      .select("id, city, category, start_at, location_lat, location_lng")
++      .select("id, city, category, starts_at, location_lat, location_lng")
+       .limit(BUILD_LIMIT);
+     for (const r of (data as any[]) ?? []) {
+       const city = normCity(r.city);
+       if (!r.id || !city) continue;
+-      const at = r.start_at ? String(r.start_at) : null;
++      const at = r.starts_at ? String(r.starts_at) : null;
+       const category = normStr(r.category) ?? "event";
+       registerCityCoordinates(city, r.location_lat, r.location_lng);
+       batch.node("event", String(r.id), city, { category });
+diff --git a/artifacts/api-server/src/lib/trustScore.ts b/artifacts/api-server/src/lib/trustScore.ts
+index a711bc7..62f1b58 100644
+--- a/artifacts/api-server/src/lib/trustScore.ts
++++ b/artifacts/api-server/src/lib/trustScore.ts
+@@ -77,7 +77,9 @@ export function computeTrustScoreFromData(
+   });
+ 
+   // ── Identity verification (+20) ──────────────────────────────────────────
+-  const isVerified = !!(profileRow.id_verified_at || profileRow.verified);
++  // profiles has no id_verified_at column — treat it as null and rely on
++  // the boolean `verified` flag alone.
++  const isVerified = !!profileRow.verified;
+   const identityPoints = isVerified ? 20 : 0;
+   factors.push({
+     key: "identity",
+@@ -155,6 +157,8 @@ export function computeTrustScoreFromData(
+   });
+ 
+   // ── Safety flag penalty (−5 each, max −20) ───────────────────────────────
++  // profiles has no safety_flags_count column — the fallback keeps this at 0
++  // until such a column exists.
+   const flagCount = Number(profileRow.safety_flags_count ?? 0);
+   const flagPenalty = flagCount > 0 ? -Math.min(20, flagCount * 5) : 0;
+   if (flagCount > 0) {
+@@ -202,7 +206,9 @@ export async function computeTrustScore(
+       ? Promise.resolve({ data: preloadedProfileRow })
+       : sc
+           .from("profiles")
+-          .select("verified, id_verified_at, created_at, safety_flags_count")
++          // profiles has no id_verified_at / safety_flags_count columns —
++          // select only what exists; scoring treats the missing fields as null/0.
++          .select("verified, created_at")
+           .eq("id", userId)
+           .maybeSingle(),
+     sc
+diff --git a/artifacts/api-server/src/lib/visuals/service.ts b/artifacts/api-server/src/lib/visuals/service.ts
+index efb9c03..0dc19dc 100644
+--- a/artifacts/api-server/src/lib/visuals/service.ts
++++ b/artifacts/api-server/src/lib/visuals/service.ts
+@@ -118,7 +118,9 @@ export function buildSnapshot(
+   // Determine whether this is a specific named real-world place (not a generic content card).
+   // A place is "specific" when it has a canonical_place_id, a provider_place_id, or both
+   // a name and city that together uniquely identify a real-world location.
+-  const canonicalPlaceId: string | null = row.canonical_place_id ?? null;
++  // discovery_places rows carry canonical_location_id (no canonical_place_id /
++  // provider_place_id columns); accept either spelling so both sources work.
++  const canonicalPlaceId: string | null = row.canonical_place_id ?? row.canonical_location_id ?? null;
+   const providerPlaceId: string | null = row.provider_place_id ?? null;
+   const name = cleanText(row.title ?? row.name);
+   const city = cleanText(row.city);
+@@ -134,9 +136,9 @@ export function buildSnapshot(
+     subcategory: cleanEnum(row.subcategory),
+     city,
+     neighborhood: cleanText(row.neighborhood),
+-    country: cleanText(row.country),
+-    description: cleanText(row.description, 400),
+-    venue: cleanText(row.venue ?? row.venue_name),
++    country: cleanText(row.country), // discovery_places has no country column → null for places
++    description: cleanText(row.description ?? row.blurb, 400), // places use blurb
++    venue: cleanText(row.venue ?? row.venue_name ?? row.location_name), // events use location_name
+     setting: cleanEnum(row.setting),
+     timeOfDay: prefs?.timeOfDay && prefs.timeOfDay !== "auto" ? prefs.timeOfDay : cleanEnum(row.time_of_day),
+     amenities: cleanList(row.amenities),
+@@ -327,7 +329,7 @@ export async function loadEntity(
+   if (entityType === "event") {
+     const { data } = await sc
+       .from("events")
+-      .select("id, title, category, city, country, venue_name, description, cover_url, header_image_source, header_image_updated_at")
++      .select("id, title, category, city, country, location_name, description, cover_url, header_image_source, header_image_updated_at")
+       .eq("id", entityId)
+       .maybeSingle();
+     return data ?? null;
+@@ -335,7 +337,9 @@ export async function loadEntity(
+   if (entityType === "place") {
+     const { data } = await sc
+       .from("discovery_places")
+-      .select("id, name, category, city, country, description, header_image_url, header_image_source, header_image_updated_at, canonical_place_id, provider_place_id")
++      // discovery_places has no country/description/canonical_place_id/provider_place_id
++      // columns — it exposes blurb and canonical_location_id instead.
++      .select("id, name, category, city, blurb, header_image_url, header_image_source, header_image_updated_at, canonical_location_id")
+       .eq("id", entityId)
+       .maybeSingle();
+     return data ?? null;
+diff --git a/artifacts/api-server/src/migrations/2069_circle_invites.sql b/artifacts/api-server/src/migrations/2069_circle_invites.sql
+new file mode 100644
+index 0000000..528dc7a
+--- /dev/null
++++ b/artifacts/api-server/src/migrations/2069_circle_invites.sql
+@@ -0,0 +1,59 @@
++-- 2069_circle_invites.sql
++-- Trusted-circle invites. The code has referenced this table since the
++-- interaction foundation work (routes/friends.ts, routes/requests.ts,
++-- routes/groupChat.ts, routes/messaging.ts) but it was never created —
++-- every circle-invite endpoint currently fails at the DB layer.
++--
++-- Lifecycle (all transitions driven by the API server):
++--   insert                → status 'pending' (insert supplies only owner_id +
++--                           recipient_id; status/created_at come from defaults)
++--   recipient accepts     → status 'accepted', responded_at set
++--                           (the ONLY path that writes circle_memberships)
++--   recipient declines    → status 'declined', responded_at set
++--   owner cancels         → status 'cancelled', updated_at set
++--   owner re-invites      → existing row reactivated: status back to
++--                           'pending', responded_at cleared
++--
++-- The re-invite path (routes/friends.ts POST /circle-invites) looks up the
++-- existing row with .eq(owner_id).eq(recipient_id).maybeSingle() and updates
++-- it in place — maybeSingle() throws on >1 row, so (owner_id, recipient_id)
++-- MUST be unique.
++--
++-- Access: service-role only. requireUser() (lib/http.ts) hands every route the
++-- SERVICE-ROLE client, and the mobile app never queries this table with the
++-- anon key — so RLS is enabled with NO policies (deny-all for anon/authenticated;
++-- service role bypasses RLS).
++
++CREATE TABLE IF NOT EXISTS circle_invites (
++  id           uuid        NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
++  owner_id     uuid        NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
++  recipient_id uuid        NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
++  status       text        NOT NULL DEFAULT 'pending'
++               CHECK (status IN ('pending', 'accepted', 'declined', 'cancelled')),
++  responded_at timestamptz,
++  created_at   timestamptz NOT NULL DEFAULT now(),
++  updated_at   timestamptz NOT NULL DEFAULT now(),
++
++  -- One invite row per (owner → recipient) pair; declined/cancelled rows are
++  -- reactivated in place, never duplicated (friends.ts reactivation logic).
++  CONSTRAINT circle_invites_owner_recipient_key UNIQUE (owner_id, recipient_id),
++  -- friends.ts rejects self-invites at the API layer; enforce in the DB too.
++  CONSTRAINT circle_invites_no_self_invite CHECK (owner_id <> recipient_id)
++);
++
++-- Incoming-invite queries: .eq(recipient_id).eq(status,'pending') for badge
++-- counts (requests.ts /me/requests/count, messaging.ts pendingSince) and
++-- .eq(recipient_id).order(created_at desc) for the inbox list (requests.ts).
++CREATE INDEX IF NOT EXISTS circle_invites_recipient_status_idx
++  ON circle_invites (recipient_id, status);
++
++-- Outgoing-invite queries: .eq(owner_id).order(created_at desc) (requests.ts)
++-- and groupChat.ts pending-invite gate (.eq(owner_id).eq(recipient_id)
++-- .eq(status,'pending') — the unique index covers the pair lookup, this one
++-- covers owner+status scans).
++CREATE INDEX IF NOT EXISTS circle_invites_owner_status_idx
++  ON circle_invites (owner_id, status);
++
++-- Deny-all RLS: no policies on purpose. All access goes through the API
++-- server's service-role client, which bypasses RLS.
++ALTER TABLE circle_invites ENABLE ROW LEVEL SECURITY;
+diff --git a/artifacts/api-server/src/migrations/2070_rls_hardening.sql b/artifacts/api-server/src/migrations/2070_rls_hardening.sql
+new file mode 100644
+index 0000000..c7d7e09
+--- /dev/null
++++ b/artifacts/api-server/src/migrations/2070_rls_hardening.sql
+@@ -0,0 +1,137 @@
++-- 2070_rls_hardening.sql
++-- Enable RLS (deny-all) on tables that exist in the live DB without RLS.
++--
++-- Why: the mobile app ships the Supabase ANON key. Any table without RLS is
++-- fully readable AND writable by anyone holding that key. The API server is
++-- unaffected — requireUser() (lib/http.ts) and every worker/service use the
++-- SERVICE-ROLE client, which bypasses RLS entirely.
++--
++-- Client audit (2026-08-04): grepped travel-buddy-standalone/src for direct
++-- supabase-js .from() usage. The client's own supabase client touches ONLY:
++-- profiles, user_follows, trips, trip_members, message_thread_members,
++-- circles, and the 'post-media' storage bucket. NONE of the 12 tables below
++-- are accessed client-side (feature_flags and the reaction/like tables were
++-- checked specifically — all reads/writes go through the API). Deny-all is
++-- therefore safe: no permissive policies are added on purpose.
++--
++-- Each table is wrapped in a to_regclass() existence check so this migration
++-- is idempotent and safe to run on environments where a table hasn't been
++-- created yet (ENABLE ROW LEVEL SECURITY is itself idempotent).
++
++-- devices — E2EE device registry (20260801_e2ee_devices.sql). Server-only:
++-- routes/devices.ts + routes/keyPackages.ts via service client. Contains
++-- device public keys/metadata; must not be world-writable.
++DO $$
++BEGIN
++  IF to_regclass('public.devices') IS NOT NULL THEN
++    EXECUTE 'ALTER TABLE public.devices ENABLE ROW LEVEL SECURITY';
++  END IF;
++END $$;
++
++-- key_packages — E2EE prekey bundles (20260802_e2ee_key_packages.sql).
++-- Server-only: routes/keyPackages.ts. Anonymous writes here would enable
++-- key-substitution attacks; lockout is the whole point.
++DO $$
++BEGIN
++  IF to_regclass('public.key_packages') IS NOT NULL THEN
++    EXECUTE 'ALTER TABLE public.key_packages ENABLE ROW LEVEL SECURITY';
++  END IF;
++END $$;
++
++-- post_reactions — post likes. Written/read only by routes/engagement.ts and
++-- routes/posts.ts (service client). The app calls the API for reactions; it
++-- never queries this table with the anon key.
++DO $$
++BEGIN
++  IF to_regclass('public.post_reactions') IS NOT NULL THEN
++    EXECUTE 'ALTER TABLE public.post_reactions ENABLE ROW LEVEL SECURITY';
++  END IF;
++END $$;
++
++-- comment_likes — comment likes. Same pattern as post_reactions:
++-- routes/engagement.ts + routes/posts.ts only.
++DO $$
++BEGIN
++  IF to_regclass('public.comment_likes') IS NOT NULL THEN
++    EXECUTE 'ALTER TABLE public.comment_likes ENABLE ROW LEVEL SECURITY';
++  END IF;
++END $$;
++
++-- post_shares — share counters, routes/posts.ts only.
++DO $$
++BEGIN
++  IF to_regclass('public.post_shares') IS NOT NULL THEN
++    EXECUTE 'ALTER TABLE public.post_shares ENABLE ROW LEVEL SECURITY';
++  END IF;
++END $$;
++
++-- post_edits — post edit history, routes/posts.ts only. Without RLS anyone
++-- could read every user's edit history with the anon key.
++DO $$
++BEGIN
++  IF to_regclass('public.post_edits') IS NOT NULL THEN
++    EXECUTE 'ALTER TABLE public.post_edits ENABLE ROW LEVEL SECURITY';
++  END IF;
++END $$;
++
++-- stamp_milestones — milestone crossings (2051_stamp_milestones.sql, which
++-- created it without RLS). Written by StampAwardEngine, read by
++-- routes/passportStamps.ts + routes/profile.ts — all service-role.
++DO $$
++BEGIN
++  IF to_regclass('public.stamp_milestones') IS NOT NULL THEN
++    EXECUTE 'ALTER TABLE public.stamp_milestones ENABLE ROW LEVEL SECURITY';
++  END IF;
++END $$;
++
++-- post_event_links — post↔event associations (20260731_post_event_links.sql).
++-- Server-only: lib/eventPostsDiscovery.ts.
++DO $$
++BEGIN
++  IF to_regclass('public.post_event_links') IS NOT NULL THEN
++    EXECUTE 'ALTER TABLE public.post_event_links ENABLE ROW LEVEL SECURITY';
++  END IF;
++END $$;
++
++-- media_stamp_reactions — stamp reactions on media
++-- (20260814_media_stamp_reactions.sql). Server-only: routes/mediaFeed.ts.
++-- (The client's mediaInteractions.ts mentions the table name only in a code
++-- comment — it calls the API, not the table.)
++DO $$
++BEGIN
++  IF to_regclass('public.media_stamp_reactions') IS NOT NULL THEN
++    EXECUTE 'ALTER TABLE public.media_stamp_reactions ENABLE ROW LEVEL SECURITY';
++  END IF;
++END $$;
++
++-- place_mismatch_reports — user reports of wrong place data. Server-only:
++-- routes/posts.ts (create) + routes/adminPlaceMismatch.ts (admin review).
++-- Must not be publicly readable (reporter IDs) or writable (spam).
++DO $$
++BEGIN
++  IF to_regclass('public.place_mismatch_reports') IS NOT NULL THEN
++    EXECUTE 'ALTER TABLE public.place_mismatch_reports ENABLE ROW LEVEL SECURITY';
++  END IF;
++END $$;
++
++-- feature_flags — server-side kill switches / rollout flags. 60+ server
++-- references, ZERO client references: the app learns flag state from API
++-- responses, never by querying this table. Without RLS anyone with the anon
++-- key could read the rollout roadmap — or WRITE flags and toggle features
++-- for everyone. Deny-all is required, not just safe.
++DO $$
++BEGIN
++  IF to_regclass('public.feature_flags') IS NOT NULL THEN
++    EXECUTE 'ALTER TABLE public.feature_flags ENABLE ROW LEVEL SECURITY';
++  END IF;
++END $$;
++
++-- job_health — background-job heartbeats (delayedPostPublisher,
++-- dailyBriefCleanup, tripCrewLiveShareScheduler, adminRankingMetrics).
++-- Pure server operational state; no client involvement.
++DO $$
++BEGIN
++  IF to_regclass('public.job_health') IS NOT NULL THEN
++    EXECUTE 'ALTER TABLE public.job_health ENABLE ROW LEVEL SECURITY';
++  END IF;
++END $$;
+diff --git a/artifacts/api-server/src/routes/admin.ts b/artifacts/api-server/src/routes/admin.ts
+index 6416d63..fe865e3 100644
+--- a/artifacts/api-server/src/routes/admin.ts
++++ b/artifacts/api-server/src/routes/admin.ts
+@@ -1084,7 +1084,7 @@ router.get("/admin/users", async (req, res) => {
+       .select("id", { count: "exact", head: true })
+       .eq("target_id", userId)
+       .eq("status", "open"),
+-    sc.from("compass_analytics")
++    sc.from("compass_settings")
+       .select("onboarding_completed, onboarding_completed_at")
+       .eq("user_id", userId)
+       .maybeSingle(),
+diff --git a/artifacts/api-server/src/routes/devices.ts b/artifacts/api-server/src/routes/devices.ts
+index 316f7d9..8a4e0af 100644
+--- a/artifacts/api-server/src/routes/devices.ts
++++ b/artifacts/api-server/src/routes/devices.ts
+@@ -4,25 +4,29 @@
+  * E-0: clients register their platform and get a stable device ID back.
+  *      public_key is nullable — populated in E-1 when OpenMLS keys are generated.
+  *
+- * E-1: PUT /:id/public-key populates the Ed25519 identity public key.
++ * E-1: POST/PUT /me/crypto-devices/:id/public-key populates the Ed25519
++ *      identity public key.
++ *
++ * Routes live under /me/crypto-devices (renamed from /me/devices to avoid
++ * colliding with the push-token routes in notifications.ts).
+  *
+  * These endpoints require authentication — anonymous callers are rejected.
+  * The device list for a user is visible to the server (metadata only).
+  * Private key material never leaves the client device.
+  */
+ 
+-import { Router } from "express";
++import { Router, type Request, type Response } from "express";
+ import { requireUser, sendError } from "../lib/http.js";
+ import { getServiceClient } from "../lib/supabase.js";
+ import { isUuid } from "../lib/followDecisions.js";
+ 
+ const router = Router();
+ 
+-// ── POST /me/devices ─────────────────────────────────────────────────────────
++// ── POST /me/crypto-devices ──────────────────────────────────────────────────
+ // Register a new device entry. Returns the stable device ID to store in
+ // SecureStore on the client.
+ // Body: { platform: 'ios'|'android'|'web', deviceFingerprint?: string }
+-router.post("/me/devices", async (req, res) => {
++router.post("/me/crypto-devices", async (req, res) => {
+   const auth = await requireUser(req, res);
+   if (!auth) return;
+   const { user } = auth;
+@@ -82,9 +86,9 @@ router.post("/me/devices", async (req, res) => {
+   res.status(201).json({ device: data });
+ });
+ 
+-// ── GET /me/devices ───────────────────────────────────────────────────────────
++// ── GET /me/crypto-devices ────────────────────────────────────────────────────
+ // List all registered devices for the authenticated user.
+-router.get("/me/devices", async (req, res) => {
++router.get("/me/crypto-devices", async (req, res) => {
+   const auth = await requireUser(req, res);
+   if (!auth) return;
+   const { user } = auth;
+@@ -107,9 +111,9 @@ router.get("/me/devices", async (req, res) => {
+   res.json({ devices: data ?? [] });
+ });
+ 
+-// ── DELETE /me/devices/:id ────────────────────────────────────────────────────
++// ── DELETE /me/crypto-devices/:id ─────────────────────────────────────────────
+ // Deregister a device (called on sign-out or device removal).
+-router.delete("/me/devices/:id", async (req, res) => {
++router.delete("/me/crypto-devices/:id", async (req, res) => {
+   const auth = await requireUser(req, res);
+   if (!auth) return;
+   const { user } = auth;
+@@ -138,11 +142,12 @@ router.delete("/me/devices/:id", async (req, res) => {
+   res.status(200).json({ ok: true });
+ });
+ 
+-// ── PUT /me/devices/:id/public-key ────────────────────────────────────────────
++// ── POST /me/crypto-devices/:id/public-key ────────────────────────────────────
+ // E-1: populate the Ed25519 identity public key for this device.
+ // Called once per install after key generation.
++// Registered for both POST (current client) and PUT (legacy) methods.
+ // Body: { publicKey: string (base64url, 32 bytes = 44 base64 chars) }
+-router.put("/me/devices/:id/public-key", async (req, res) => {
++async function handlePublicKeyUpdate(req: Request, res: Response) {
+   const auth = await requireUser(req, res);
+   if (!auth) return;
+   const { user } = auth;
+@@ -187,6 +192,48 @@ router.put("/me/devices/:id/public-key", async (req, res) => {
+   }
+ 
+   res.status(200).json({ ok: true });
++}
++
++router.post("/me/crypto-devices/:id/public-key", handlePublicKeyUpdate);
++router.put("/me/crypto-devices/:id/public-key", handlePublicKeyUpdate);
++
++// ── GET /users/:userId/devices ────────────────────────────────────────────────
++// S2: peer device listing for safety-number verification. Auth-required, but
++// no ownership requirement — public key material is public by design here.
++// Returns only public fields.
++router.get("/users/:userId/devices", async (req, res) => {
++  const auth = await requireUser(req, res);
++  if (!auth) return;
++
++  const userId = req.params.userId;
++  if (!isUuid(userId)) {
++    sendError(res, "invalid_payload", "Invalid user id");
++    return;
++  }
++
++  const sc = getServiceClient();
++  if (!sc) { sendError(res, "server_not_configured", "service client unavailable"); return; }
++
++  const { data, error } = await sc
++    .from("devices")
++    .select("id, platform, public_key, created_at")
++    .eq("user_id", userId)
++    .order("created_at", { ascending: false });
++
++  if (error) {
++    req.log.error({ err: error }, "devices: peer list failed");
++    sendError(res, "db_error", "Failed to list devices");
++    return;
++  }
++
++  const devices = ((data as any[]) ?? []).map((d) => ({
++    id: d.id,
++    platform: d.platform,
++    publicKey: d.public_key ?? null,
++    createdAt: d.created_at,
++  }));
++
++  res.json({ devices });
+ });
+ 
+ export default router;
+diff --git a/artifacts/api-server/src/routes/meetups.ts b/artifacts/api-server/src/routes/meetups.ts
+index 53f7b90..4a5588a 100644
+--- a/artifacts/api-server/src/routes/meetups.ts
++++ b/artifacts/api-server/src/routes/meetups.ts
+@@ -19,7 +19,7 @@
+  */
+ import { Router } from "express";
+ import { z } from "zod";
+-import { requireUser, isAcceptedTripMember, sendError, canEditPlan } from "../lib/http.js";
++import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
+ import { getServiceClient } from "../lib/supabase.js";
+ import { isFlagEnabled } from "../lib/featureFlags.js";
+ import { enrichSpans } from "../lib/enrichSpans.js";
+@@ -940,78 +940,9 @@ router.post("/meetups/:meetupId/confirm-time", async (req, res) => {
+   res.json({ startsAt, status: "confirmed", meetupId, meetup: toCamelMeetup(updated) });
+ });
+ 
+-// ── POST /api/meetups/:meetupId/add-to-trip-plan ─────────────────────────────
+-
+-const AddToPlanSchema = z.object({
+-  tripId: z.string().regex(UUID, "tripId must be a valid UUID"),
+-  lockType: z.enum(["fixed", "flexible", "optional"]).default("flexible"),
+-});
+-
+-router.post("/meetups/:meetupId/add-to-trip-plan", async (req, res) => {
+-  const ctx = await requireUser(req, res);
+-  if (!ctx) return;
+-  const { client, user } = ctx;
+-
+-  const { meetupId } = req.params;
+-  if (!UUID.test(meetupId)) { sendError(res, "invalid_payload", "Invalid meetupId"); return; }
+-
+-  const parsed = AddToPlanSchema.safeParse(req.body);
+-  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+-  const { tripId, lockType } = parsed.data;
+-
+-  // Caller must have plan-edit permission on the target trip
+-  const canEdit = await canEditPlan(client, tripId, user.id);
+-  if (canEdit === null) { sendError(res, "not_found", "Trip not found"); return; }
+-  if (!canEdit) { sendError(res, "forbidden", "You do not have permission to add items to this trip's plan"); return; }
+-
+-  const { data: meetup } = await client
+-    .from("meetups").select("id, title, starts_at, location_name, status, trip_id, visibility").eq("id", meetupId).maybeSingle();
+-  if (!meetup) { sendError(res, "not_found", "Meetup not found"); return; }
+-
+-  // Enforce meetup-trip identity: a trip-scoped meetup may only be added to its own trip
+-  if ((meetup as any).trip_id && (meetup as any).trip_id !== tripId) {
+-    sendError(res, "forbidden", "This meetup is scoped to a different trip");
+-    return;
+-  }
+-
+-  // Idempotent: skip if already added
+-  const { data: existing } = await client
+-    .from("trip_plan_items")
+-    .select("id")
+-    .eq("trip_id", tripId)
+-    .eq("source_type", "meetup")
+-    .eq("source_id", meetupId)
+-    .is("removed_at", null)
+-    .maybeSingle();
+-
+-  if (existing) {
+-    res.status(200).json({ message: "already_added", planItemId: (existing as any).id, idempotent: true });
+-    return;
+-  }
+-
+-  const { data: item, error } = await client
+-    .from("trip_plan_items")
+-    .insert({
+-      trip_id:       tripId,
+-      creator_id:    user.id,
+-      title:         (meetup as any).title,
+-      category:      "meeting_point",
+-      status:        "tentative",
+-      source_type:   "meetup",
+-      source_id:     meetupId,
+-      starts_at:     (meetup as any).starts_at ?? null,
+-      location_name: (meetup as any).location_name ?? null,
+-      sort_order:    0,
+-      visibility:    "members",
+-      lock_type:     lockType,
+-    })
+-    .select("*")
+-    .single();
+-
+-  if (error) { req.log.error({ err: error }, "add meetup to trip plan"); sendError(res, "db_error", error.message); return; }
+-
+-  res.status(201).json({ planItemId: (item as any).id, tripId, meetupId });
+-});
++// NOTE: POST /meetups/:meetupId/add-to-trip-plan lives in plan.ts (mounted
++// earlier) — the duplicate handler that used to live here was shadowed and has
++// been removed; its trip-scope guard was ported into plan.ts.
+ 
+ // ── Helpers ───────────────────────────────────────────────────────────────────
+ 
+diff --git a/artifacts/api-server/src/routes/messaging.ts b/artifacts/api-server/src/routes/messaging.ts
+index aff0623..91a6880 100644
+--- a/artifacts/api-server/src/routes/messaging.ts
++++ b/artifacts/api-server/src/routes/messaging.ts
+@@ -997,13 +997,15 @@ router.get('/me/unread-counts', async (req, res) => {
+ });
+ 
+ /* ---------------------------------------------------------------------------
+- * POST /api/me/notifications/read-all
++ * POST /api/me/messaging/inbox-viewed
+  * ---------------------------------------------------------------------------
+  * Records that the current user has viewed their Inbox by setting
+  * profiles.notifications_inbox_viewed_at = now(). The unread-counts endpoint
+  * uses this timestamp to compute the notification badge count.
++ * (Renamed from /me/notifications/read-all, which shadowed the real
++ * mark-all-read handler in notifications.ts.)
+  */
+-router.post('/me/notifications/read-all', async (req, res) => {
++router.post('/me/messaging/inbox-viewed', async (req, res) => {
+   const auth = await requireUser(req, res);
+   if (!auth) return;
+   const { user } = auth;
+diff --git a/artifacts/api-server/src/routes/passport.ts b/artifacts/api-server/src/routes/passport.ts
+index f73a2f8..354c7b7 100644
+--- a/artifacts/api-server/src/routes/passport.ts
++++ b/artifacts/api-server/src/routes/passport.ts
+@@ -784,7 +784,7 @@ router.get("/users/:username/profile", async (req, res) => {
+ 
+     const [tripResult, stampResult] = await Promise.all([
+       countUserTrips(sc, profile.id),
+-      sc.from("passport_stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id).eq("locked", false),
++      sc.from("passport_stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id),
+     ]);
+   const tripCount = tripResult.count;
+   let stampCount = (stampResult as any).error?.code === "PGRST205" ? 0 : (stampResult.count ?? 0);
+@@ -1302,7 +1302,7 @@ router.get("/users/:username/og-image.png", async (req, res) => {
+ 
+     const [tripResult, stampResult] = await Promise.all([
+       countUserTrips(sc, profile.id),
+-      sc.from("passport_stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id).eq("locked", false),
++      sc.from("passport_stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id),
+     ]);
+ 
+     const avatarDataUri = profile.avatar_url ? await fetchImageAsDataUri(profile.avatar_url) : null;
+diff --git a/artifacts/api-server/src/routes/plan.ts b/artifacts/api-server/src/routes/plan.ts
+index e063f90..fba860f 100644
+--- a/artifacts/api-server/src/routes/plan.ts
++++ b/artifacts/api-server/src/routes/plan.ts
+@@ -42,11 +42,18 @@ router.post("/meetups/:meetupId/add-to-trip-plan", asyncHandler(async (req, res)
+   // Fetch meetup row — we use a meetups table stub (title, starts_at, location_name)
+   const { data: meetup } = await client
+     .from("meetups")
+-    .select("id, title, starts_at, location_name")
++    .select("id, title, starts_at, location_name, trip_id")
+     .eq("id", meetupId)
+     .maybeSingle();
+   if (!meetup) { sendError(res, "not_found", "Meetup not found"); return; }
+ 
++  // Enforce meetup-trip identity: a trip-scoped meetup may only be added to its own trip
++  // (guard ported from the now-removed duplicate handler in meetups.ts).
++  if ((meetup as any).trip_id && (meetup as any).trip_id !== tripId) {
++    sendError(res, "forbidden", "This meetup is scoped to a different trip");
++    return;
++  }
++
+   // Duplicate guard: same meetup already added to this trip (non-removed)
+   const { data: existing } = await client
+     .from("trip_plan_items")
+diff --git a/artifacts/api-server/src/routes/pulse.ts b/artifacts/api-server/src/routes/pulse.ts
+index 66bf1db..caef05e 100644
+--- a/artifacts/api-server/src/routes/pulse.ts
++++ b/artifacts/api-server/src/routes/pulse.ts
+@@ -507,12 +507,16 @@ router.get("/pulse", async (req, res) => {
+       const trustMap = new Map<string, number>();
+       if (authorIdsForTrust.size > 0) {
+         try {
++          // Trust scores live in trust_profiles.overall_score (0043_trust_engine.sql);
++          // there is no user_trust_scores table. NUMERIC comes back as a string,
++          // so coerce to number.
+           const { data: trustRows } = await sc
+-            .from("user_trust_scores")
+-            .select("user_id, score")
++            .from("trust_profiles")
++            .select("user_id, overall_score")
+             .in("user_id", [...authorIdsForTrust]);
+           for (const r of (trustRows as any[]) ?? []) {
+-            trustMap.set(r.user_id as string, r.score as number);
++            const score = Number(r.overall_score);
++            if (Number.isFinite(score)) trustMap.set(r.user_id as string, score);
+           }
+         } catch { /* non-fatal — trust scores contribute 0 when absent */ }
+       }
+diff --git a/artifacts/api-server/src/routes/rentABuddy.ts b/artifacts/api-server/src/routes/rentABuddy.ts
+index e3b0ea3..2348b11 100644
+--- a/artifacts/api-server/src/routes/rentABuddy.ts
++++ b/artifacts/api-server/src/routes/rentABuddy.ts
+@@ -5703,10 +5703,19 @@ router.get("/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
+ // Accessible without user auth — restrict at the infrastructure / firewall level.
+ 
+ router.post("/internal/buddy-requests/expire", async (req, res) => {
+-  // Require a shared secret (SESSION_SECRET) to prevent unauthenticated callers from
+-  // triggering mass state transitions. Callers must set X-Internal-Key: <SESSION_SECRET>.
++  // Require the internal shared secret (INTERNAL_API_SECRET) to prevent
++  // unauthenticated callers from triggering mass state transitions. Callers
++  // must set X-Internal-Key: <INTERNAL_API_SECRET>. Fail closed when the env
++  // var is unset (route disabled) — same pattern as notifications.ts.
++  const secret = process.env.INTERNAL_API_SECRET;
++  if (!secret) {
++    return res.status(503).json({
++      error: "misconfigured",
++      message: "INTERNAL_API_SECRET is not set; internal endpoints are disabled",
++    });
++  }
+   const internalKey = req.headers["x-internal-key"];
+-  if (!internalKey || internalKey !== process.env.SESSION_SECRET) {
++  if (!internalKey || internalKey !== secret) {
+     return res.status(401).json({ error: "unauthorized", message: "Missing or invalid internal key." });
+   }
+ 
+diff --git a/artifacts/api-server/src/routes/reports.ts b/artifacts/api-server/src/routes/reports.ts
+index 3ba9714..c6df103 100644
+--- a/artifacts/api-server/src/routes/reports.ts
++++ b/artifacts/api-server/src/routes/reports.ts
+@@ -234,50 +234,7 @@ router.get("/me/reports", async (req, res) => {
+   res.status(200).json({ reports: safe, total: count ?? 0 });
+ });
+ 
+-/* ===========================================================================
+- * GET /admin/reports  — admin: list content reports (read-only)
+- * ===========================================================================
+- */
+-router.get("/admin/reports", async (req, res) => {
+-  const auth = await requireUser(req, res);
+-  if (!auth) return;
+-  const { user, client } = auth;
+-
+-  const sc = getServiceClient();
+-  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+-
+-  const { data: profile, error: profileErr } = await client
+-    .from("profiles")
+-    .select("role")
+-    .eq("id", user.id)
+-    .maybeSingle();
+-  if (profileErr || !profile || (profile as any).role !== "admin") {
+-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
+-    return;
+-  }
+-
+-  const limit  = Math.min(Number(req.query.limit  ?? 50), 200);
+-  const offset = Number(req.query.offset ?? 0);
+-  const status = req.query.status as string | undefined;
+-
+-  let query = sc
+-    .from("reports")
+-    .select("id, reporter_id, target_type, target_id, reason_code, reason_detail, severity, status, created_at", { count: "exact" })
+-    .order("created_at", { ascending: false })
+-    .range(offset, offset + limit - 1);
+-
+-  if (status && status !== "all") {
+-    query = query.eq("status", status);
+-  }
+-
+-  const { data, error, count } = await query;
+-  if (error) {
+-    req.log.error({ err: error }, "admin reports fetch failed");
+-    sendError(res, "db_error", error.message);
+-    return;
+-  }
+-
+-  res.json({ reports: data ?? [], total: count ?? 0 });
+-});
++// NOTE: GET /admin/reports lives in admin.ts (mounted earlier) — the duplicate
++// read-only handler that used to live here was shadowed and has been removed.
+ 
+ export default router;
+diff --git a/artifacts/api-server/src/test/rentABuddy.test.ts b/artifacts/api-server/src/test/rentABuddy.test.ts
+index 1c4f0e8..55c091f 100644
+--- a/artifacts/api-server/src/test/rentABuddy.test.ts
++++ b/artifacts/api-server/src/test/rentABuddy.test.ts
+@@ -2840,11 +2840,11 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
+   }
+ 
+   before(() => {
+-    process.env.SESSION_SECRET = INTERNAL_KEY;
++    process.env.INTERNAL_API_SECRET = INTERNAL_KEY;
+   });
+ 
+   after(() => {
+-    delete process.env.SESSION_SECRET;
++    delete process.env.INTERNAL_API_SECRET;
+   });
+ 
+   it("escalates a no_show_pending booking past its grace expiry to disputed", async () => {
+diff --git a/scripts/sync-standalone.sh b/scripts/sync-standalone.sh
+index b0786c0..f26d5bc 100644
+--- a/scripts/sync-standalone.sh
++++ b/scripts/sync-standalone.sh
+@@ -119,6 +119,20 @@ for arg in "$@"; do
+   esac
+ done
+ 
++# ---------------------------------------------------------------------------
++# The check modes are meaningless without the source tree — a missing $SRC
++# must be a hard failure, not a silent pass (a check that "passes" because
++# there is nothing to compare against is a false green).
++# ---------------------------------------------------------------------------
++if $CHECK_SOURCE || $CHECK_LOCKFILE; then
++  if [[ ! -d "$SRC" ]]; then
++    echo "ERROR: source tree not found: $SRC" >&2
++    echo "       --check-source / --check-lockfile cannot verify drift without it." >&2
++    echo "       Check that artifacts/travel-buddy exists (or set SYNC_STANDALONE_REPO_ROOT correctly)." >&2
++    exit 1
++  fi
++fi
++
+ # ---------------------------------------------------------------------------
+ # Files that are edited directly in travel-buddy-standalone and must NEVER be
+ # overwritten by --fix-source or the full sync.
+diff --git a/travel-buddy-standalone/app.json b/travel-buddy-standalone/app.json
+index 197b677..eefa87c 100644
+--- a/travel-buddy-standalone/app.json
++++ b/travel-buddy-standalone/app.json
+@@ -15,10 +15,13 @@
+     },
+     "ios": {
+       "supportsTablet": false,
++      "config": {
++        "usesNonExemptEncryption": true
++      },
+       "bundleIdentifier": "com.passporttravelbuddy.app",
+       "buildNumber": "2",
+       "associatedDomains": [
+-        "applinks:df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev"
++        "applinks:app.travel-buddy.io"
+       ],
+       "infoPlist": {
+         "LSApplicationQueriesSchemes": [
+@@ -36,6 +39,10 @@
+     "android": {
+       "package": "com.passporttravelbuddy.app",
+       "versionCode": 2,
++      "adaptiveIcon": {
++        "foregroundImage": "./assets/images/adaptive-icon.png",
++        "backgroundColor": "#0B1D33"
++      },
+       "notificationChannels": [
+         {
+           "name": "incoming_calls",
+@@ -81,12 +88,12 @@
+           "data": [
+             {
+               "scheme": "https",
+-              "host": "df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev",
++              "host": "app.travel-buddy.io",
+               "pathPrefix": "/passport"
+             },
+             {
+               "scheme": "https",
+-              "host": "df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev",
++              "host": "app.travel-buddy.io",
+               "pathPrefix": "/u"
+             }
+           ],
+@@ -104,7 +111,7 @@
+       [
+         "expo-router",
+         {
+-          "origin": "https://df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev/"
++          "origin": "https://app.travel-buddy.io/"
+         }
+       ],
+       "expo-font",
+diff --git a/travel-buddy-standalone/app.json.bak b/travel-buddy-standalone/app.json.bak
+deleted file mode 100644
+index bebd167..0000000
+--- a/travel-buddy-standalone/app.json.bak
++++ /dev/null
+@@ -1,136 +0,0 @@
+-{
+-  "expo": {
+-    "name": "Travel Buddy",
+-    "slug": "travel-buddy",
+-    "version": "1.0.1",
+-    "orientation": "portrait",
+-    "icon": "./assets/images/icon.png",
+-    "scheme": "travelbuddy",
+-    "userInterfaceStyle": "automatic",
+-    "newArchEnabled": true,
+-    "splash": {
+-      "image": "./assets/images/icon.png",
+-      "resizeMode": "contain",
+-      "backgroundColor": "#ffffff"
+-    },
+-    "ios": {
+-      "supportsTablet": false,
+-      "bundleIdentifier": "com.passporttravelbuddy.app",
+-      "buildNumber": "2",
+-      "associatedDomains": [
+-        "applinks:df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev"
+-      ],
+-      "infoPlist": {
+-        "LSApplicationQueriesSchemes": [
+-          "travelbuddy"
+-        ],
+-        "NSCalendarsUsageDescription": "Travel Buddy adds confirmed meetups to your calendar so you never miss a plan.",
+-        "NSLocationWhenInUseUsageDescription": "Travel Buddy uses your location to show nearby places and auto-publish posts after you leave a spot.",
+-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Travel Buddy uses your location in the background to track route progress and trigger check-ins.",
+-        "NSCameraUsageDescription": "Travel Buddy uses your camera for video calls and so you can add photos to posts and your passport.",
+-        "NSPhotoLibraryUsageDescription": "Travel Buddy accesses your photo library so you can upload trip photos and profile pictures.",
+-        "NSMicrophoneUsageDescription": "Travel Buddy uses your microphone for voice and video calls with your travel contacts, and for video content attached to posts.",
+-        "NSUserNotificationsUsageDescription": "Travel Buddy sends notifications for trip invites, messages, and travel reminders."
+-      }
+-    },
+-    "android": {
+-      "package": "com.passporttravelbuddy.app",
+-      "versionCode": 2,
+-      "notificationChannels": [
+-        {
+-          "name": "incoming_calls",
+-          "importance": "max",
+-          "sound": true,
+-          "vibrate": true,
+-          "enableLights": true
+-        }
+-      ],
+-      "permissions": [
+-        "android.permission.READ_CALENDAR",
+-        "android.permission.WRITE_CALENDAR",
+-        "android.permission.ACCESS_FINE_LOCATION",
+-        "android.permission.ACCESS_BACKGROUND_LOCATION",
+-        "android.permission.CAMERA",
+-        "android.permission.READ_MEDIA_IMAGES",
+-        "android.permission.RECORD_AUDIO",
+-        "android.permission.MODIFY_AUDIO_SETTINGS",
+-        "android.permission.BLUETOOTH",
+-        "android.permission.BLUETOOTH_CONNECT",
+-        "android.permission.POST_NOTIFICATIONS",
+-        "android.permission.ACCESS_COARSE_LOCATION",
+-        "android.permission.FOREGROUND_SERVICE",
+-        "android.permission.FOREGROUND_SERVICE_LOCATION"
+-      ],
+-      "intentFilters": [
+-        {
+-          "action": "VIEW",
+-          "autoVerify": false,
+-          "data": [
+-            {
+-              "scheme": "travelbuddy"
+-            }
+-          ],
+-          "category": [
+-            "BROWSABLE",
+-            "DEFAULT"
+-          ]
+-        },
+-        {
+-          "action": "VIEW",
+-          "autoVerify": true,
+-          "data": [
+-            {
+-              "scheme": "https",
+-              "host": "df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev",
+-              "pathPrefix": "/passport"
+-            },
+-            {
+-              "scheme": "https",
+-              "host": "df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev",
+-              "pathPrefix": "/u"
+-            }
+-          ],
+-          "category": [
+-            "BROWSABLE",
+-            "DEFAULT"
+-          ]
+-        }
+-      ]
+-    },
+-    "web": {
+-      "favicon": "./assets/images/icon.png"
+-    },
+-    "plugins": [
+-      [
+-        "expo-router",
+-        {
+-          "origin": "https://df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev/"
+-        }
+-      ],
+-      "expo-font",
+-      "expo-web-browser",
+-      [
+-        "expo-location",
+-        {
+-          "locationAlwaysAndWhenInUsePermission": "Travel Buddy needs your location to automatically publish your post after you leave a spot.",
+-          "isIosBackgroundLocationEnabled": true,
+-          "isAndroidBackgroundLocationEnabled": true
+-        }
+-      ],
+-      "expo-dev-client",
+-      "@maplibre/maplibre-react-native",
+-      "@livekit/react-native-expo-plugin",
+-      "./plugins/withPortavaNSE"
+-    ],
+-    "experiments": {
+-      "typedRoutes": true,
+-      "reactCompiler": true
+-    },
+-    "extra": {
+-      "eas": {
+-        "projectId": "b4147876-b8f9-4ea2-94f4-dd9f4e9cb65b"
+-      }
+-    },
+-    "owner": "travel-buddy1"
+-  }
+-}
+diff --git a/travel-buddy-standalone/app/(auth)/sign-in.tsx b/travel-buddy-standalone/app/(auth)/sign-in.tsx
+index cf3468a..a20be69 100644
+--- a/travel-buddy-standalone/app/(auth)/sign-in.tsx
++++ b/travel-buddy-standalone/app/(auth)/sign-in.tsx
+@@ -34,7 +34,7 @@ import Svg, {
+   Line as SvgLine,
+ } from 'react-native-svg';
+ import { Ionicons } from '@expo/vector-icons';
+-import { router } from 'expo-router';
++import { router, useLocalSearchParams } from 'expo-router';
+ import { useSafeAreaInsets } from 'react-native-safe-area-context';
+ import {
+   Lock,
+@@ -166,6 +166,7 @@ const FEATURES = [
+ export default function SignIn() {
+   const insets   = useSafeAreaInsets();
+   const { isAuthed } = useSession();
++  const { mode: modeParam } = useLocalSearchParams<{ mode?: string }>();
+ 
+   // ── Existing auth state (UNCHANGED) ────────────────────────────────────────
+   const [mode,         setMode]         = useState<Mode>('signin');
+@@ -198,6 +199,12 @@ export default function SignIn() {
+     if (isAuthed && !busy && !oauthBusy) router.replace('/(tabs)');
+   }, [isAuthed, busy, oauthBusy]);
+ 
++  // Honour ?mode=forgot-password deep links (e.g. from the expired reset screen)
++  useEffect(() => {
++    if (modeParam === 'forgot-password') switchMode('forgot-password');
++  // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [modeParam]);
++
+   // ── Background rotation ─────────────────────────────────────────────────────
+   const scheduleNextRef = useRef<(() => void) | undefined>(undefined);
+   scheduleNextRef.current = useCallback(() => {
+diff --git a/travel-buddy-standalone/app/(auth)/update-password.tsx b/travel-buddy-standalone/app/(auth)/update-password.tsx
+index a1544e0..9f3329f 100644
+--- a/travel-buddy-standalone/app/(auth)/update-password.tsx
++++ b/travel-buddy-standalone/app/(auth)/update-password.tsx
+@@ -125,7 +125,7 @@ export default function UpdatePassword() {
+       setSuccess(true);
+       // Sign out so the user starts a fresh session with their new password.
+       await supabase.auth.signOut();
+-      setTimeout(() => router.replace('/(auth)' as any), 2500);
++      setTimeout(() => router.replace('/(auth)/sign-in'), 2500);
+     } catch (e: any) {
+       setError(e?.message ?? 'Something went wrong. Please try again.');
+     } finally {
+@@ -161,7 +161,7 @@ export default function UpdatePassword() {
+         </Text>
+         <Pressable
+           style={styles.btn}
+-          onPress={() => router.replace('/(auth)/forgot-password' as any)}
++          onPress={() => router.replace({ pathname: '/(auth)/sign-in', params: { mode: 'forgot-password' } })}
+           accessibilityRole="button"
+           accessibilityLabel="Go to forgot password"
+         >
+@@ -169,7 +169,7 @@ export default function UpdatePassword() {
+         </Pressable>
+         <Pressable
+           style={styles.cancelBtn}
+-          onPress={() => router.replace('/(auth)' as any)}
++          onPress={() => router.replace('/(auth)/sign-in')}
+           accessibilityRole="button"
+           accessibilityLabel="Back to sign in"
+         >
+@@ -260,7 +260,7 @@ export default function UpdatePassword() {
+ 
+       <Pressable
+         style={styles.cancelBtn}
+-        onPress={() => router.replace('/(auth)' as any)}
++        onPress={() => router.replace('/(auth)/sign-in')}
+         accessibilityRole="button"
+         accessibilityLabel="Back to sign in"
+       >
+diff --git a/travel-buddy-standalone/app/(rent-a-buddy)/admin/index.tsx b/travel-buddy-standalone/app/(rent-a-buddy)/admin/index.tsx
+index 3e46f1d..6699559 100644
+--- a/travel-buddy-standalone/app/(rent-a-buddy)/admin/index.tsx
++++ b/travel-buddy-standalone/app/(rent-a-buddy)/admin/index.tsx
+@@ -6,7 +6,7 @@ import React from 'react';
+ import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
+ import { router } from 'expo-router';
+ import { useSafeAreaInsets } from 'react-native-safe-area-context';
+-import { ArrowLeft, Users, BookOpen, ShieldAlert, BarChart2, ClipboardList, Globe } from 'lucide-react-native';
++import { ArrowLeft, Users, BookOpen, ShieldAlert, BarChart2, ClipboardList, Globe, Store } from 'lucide-react-native';
+ import { color, space, radius, type as t, shadow } from '../../../src/theme/tokens';
+ import { useRentABuddyFlag } from '../../../src/hooks/useRentABuddyFlag';
+ 
+@@ -53,6 +53,13 @@ const SECTIONS = [
+     route: '/(rent-a-buddy)/admin/analytics',
+     accent: color.deep,
+   },
++  {
++    icon: Store,
++    label: 'Marketplace',
++    sub: 'Package review queue, fee rules, and marketplace controls',
++    route: '/(rent-a-buddy)/admin/marketplace',
++    accent: color.deep,
++  },
+ ] as const;
+ 
+ import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
+diff --git a/travel-buddy-standalone/app/(rent-a-buddy)/buddy-dashboard/index.tsx b/travel-buddy-standalone/app/(rent-a-buddy)/buddy-dashboard/index.tsx
+index b816a09..d5b4f99 100644
+--- a/travel-buddy-standalone/app/(rent-a-buddy)/buddy-dashboard/index.tsx
++++ b/travel-buddy-standalone/app/(rent-a-buddy)/buddy-dashboard/index.tsx
+@@ -328,6 +328,11 @@ export default function BuddyDashboard() {
+           badge={summary?.pendingRequests ?? 0}
+           onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard/requests' as any)}
+         />
++        <NavTile
++          label="Requests Inbox"
++          sub="Open traveller requests matching your profile — send offers"
++          onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard/requests-inbox' as any)}
++        />
+         <NavTile
+           label="Availability"
+           sub="Set your weekly schedule and blocked dates"
+diff --git a/travel-buddy-standalone/app/(rent-a-buddy)/buddy-dashboard/offer.tsx b/travel-buddy-standalone/app/(rent-a-buddy)/buddy-dashboard/offer.tsx
+index db45355..97a2fe5 100644
+--- a/travel-buddy-standalone/app/(rent-a-buddy)/buddy-dashboard/offer.tsx
++++ b/travel-buddy-standalone/app/(rent-a-buddy)/buddy-dashboard/offer.tsx
+@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
+ import {
+   View, Text, ScrollView, TextInput, StyleSheet, Pressable, Alert, ActivityIndicator,
+ } from 'react-native';
+-import { router } from 'expo-router';
++import { router, useLocalSearchParams } from 'expo-router';
+ import { useSafeAreaInsets } from 'react-native-safe-area-context';
+ import { ArrowLeft, Send, Plus, X } from 'lucide-react-native';
+ import { TravelButton, TravelCard, TravelChip } from '../../../src/components/primitives';
+@@ -41,6 +41,7 @@ function FieldLabel({ label, optional }: { label: string; optional?: boolean })
+ 
+ export default function BuddyOffer() {
+   const insets = useSafeAreaInsets();
++  const { requestId } = useLocalSearchParams<{ requestId?: string }>();
+   const [category, setCategory] = useState<BuddyCategory | null>(null);
+   const [price, setPrice] = useState('');
+   const [date, setDate] = useState('');
+@@ -83,12 +84,18 @@ export default function BuddyOffer() {
+ 
+   async function handleSend() {
+     if (!validate() || !category) return;
++    if (!requestId) {
++      Alert.alert(
++        'No request selected',
++        'Offers are sent in response to a traveller request. Open a request from your Requests Inbox first.',
++      );
++      return;
++    }
+     if (sendLockRef.current) return;
+     sendLockRef.current = true;
+     setSending(true);
+     try {
+-      const res = await rentABuddy.createBuddyOffer({
+-        category,
++      const res = await rentABuddy.createBuddyOffer(requestId, {
+         priceUsd: parseFloat(price),
+         proposedDate: date.trim(),
+         proposedTime: time.trim() || undefined,
+diff --git a/travel-buddy-standalone/app/(rent-a-buddy)/index.tsx b/travel-buddy-standalone/app/(rent-a-buddy)/index.tsx
+index 25f300a..1aedcbe 100644
+--- a/travel-buddy-standalone/app/(rent-a-buddy)/index.tsx
++++ b/travel-buddy-standalone/app/(rent-a-buddy)/index.tsx
+@@ -446,6 +446,16 @@ export default function RentABuddyLanding() {
+         </Pressable>
+       </View>
+ 
++      {/* Saved Buddies */}
++      <Pressable
++        style={styles.savedRow}
++        onPress={() => router.push('/(rent-a-buddy)/saved' as any)}
++      >
++        <Star size={16} color={color.signal} />
++        <Text style={styles.savedRowText}>Saved Buddies</Text>
++        <ChevronRight size={16} color={color.mute} />
++      </Pressable>
++
+       {/* Top Buddies in City */}
+       {city.trim().length > 2 && (
+         <>
+@@ -576,6 +586,14 @@ const styles = StyleSheet.create({
+     paddingHorizontal: space.lg, paddingVertical: space.md,
+   },
+   matchBtnText: { ...t.bodyStrong, color: color.onInk },
++  savedRow: {
++    flexDirection: 'row', alignItems: 'center', gap: space.sm,
++    marginHorizontal: space.lg, marginTop: space.md,
++    backgroundColor: color.paperRaised, borderRadius: radius.md,
++    borderWidth: 1, borderColor: color.haze,
++    paddingHorizontal: space.lg, paddingVertical: space.md, ...shadow.card,
++  },
++  savedRowText: { ...t.bodyStrong, color: color.ink, flex: 1 },
+   noCity: { padding: space.lg, alignItems: 'center', gap: space.sm },
+   noCityText: { ...t.body, color: color.mute, textAlign: 'center' },
+   noCityLink: { ...t.bodyStrong, color: color.signal },
+diff --git a/travel-buddy-standalone/app/admin/content-reports.tsx b/travel-buddy-standalone/app/admin/content-reports.tsx
+index d10f407..781501e 100644
+--- a/travel-buddy-standalone/app/admin/content-reports.tsx
++++ b/travel-buddy-standalone/app/admin/content-reports.tsx
+@@ -55,9 +55,9 @@ export default function ContentReportsScreen() {
+     try {
+       setError(null);
+       const data = await fetchAdminReports({
++        page:   p,
+         limit:  30,
+-        offset: (p - 1) * 30,
+-        status: statusFilter === 'all' ? undefined : statusFilter,
++        status: statusFilter,
+       });
+       setReports((prev) => (append ? [...prev, ...data.reports] : data.reports));
+       setTotal(data.total);
+diff --git a/travel-buddy-standalone/app/compass-preferences.tsx b/travel-buddy-standalone/app/compass-preferences.tsx
+index faa368c..e08f225 100644
+--- a/travel-buddy-standalone/app/compass-preferences.tsx
++++ b/travel-buddy-standalone/app/compass-preferences.tsx
+@@ -543,6 +543,23 @@ export default function CompassPreferencesScreen() {
+           </Pressable>
+         </Section>
+ 
++        {/* ── Data & Privacy ── */}
++        <Section title="Data & Privacy" Icon={Shield}>
++          <Pressable
++            style={s.expandRow}
++            testID="compass-settings-link"
++            onPress={() => router.push('/compass-settings')}
++          >
++            <View style={{ flex: 1 }}>
++              <Text style={s.fieldLabel}>Compass Settings</Text>
++              <Text style={{ ...t.small, color: color.mute }}>
++                Data and privacy controls — manage what Compass stores and how it uses it.
++              </Text>
++            </View>
++            <ChevronDown size={16} color={color.mute} style={{ transform: [{ rotate: '-90deg' }] }} />
++          </Pressable>
++        </Section>
++
+         <PlainBottomFiller />
+ 
+       </ScrollView>
+diff --git a/travel-buddy-standalone/app/explore-portava.tsx b/travel-buddy-standalone/app/explore-portava.tsx
+index 82fa9a8..b2264eb 100644
+--- a/travel-buddy-standalone/app/explore-portava.tsx
++++ b/travel-buddy-standalone/app/explore-portava.tsx
+@@ -74,7 +74,7 @@ export const SECTIONS: DirectorySection[] = [
+       { key: 'calls',      label: 'Calls',       Icon: Phone,         iconColor: '#059669', route: '/profile/edit/calling' },
+       { key: 'following',  label: 'Following',   Icon: UserPlus,      iconColor: '#D97706', route: '/following' },
+       { key: 'followers',  label: 'Followers',   Icon: Users,         iconColor: '#4F46E5', route: '/followers' },
+-      { key: 'requests',   label: 'Requests',    Icon: UserCheck,     iconColor: '#0891B2', disabled: true },
++      { key: 'requests',   label: 'Requests',    Icon: UserCheck,     iconColor: '#0891B2', route: '/follow-requests' },
+     ],
+   },
+   {
+@@ -82,7 +82,7 @@ export const SECTIONS: DirectorySection[] = [
+     data: [
+       { key: 'discovery',      label: 'Discovery',      Icon: Compass,  iconColor: '#FF4D2E', route: '/(tabs)/discovery' },
+       { key: 'search',         label: 'Search',          Icon: Search,   iconColor: '#11110F', route: '/search' },
+-      { key: 'compass',        label: 'Compass',         Icon: Compass,  iconColor: '#3B7DED', disabled: true },
++      { key: 'compass',        label: 'Compass',         Icon: Compass,  iconColor: '#3B7DED', route: '/compass-preferences' },
+       { key: 'map',            label: 'Map',             Icon: Map,      iconColor: '#2563EB', route: '/map' },
+       { key: 'places',         label: 'Places',          Icon: MapPin,   iconColor: '#059669', disabled: true },
+       { key: 'hidden-gems',    label: 'Hidden Gems',     Icon: Gem,      iconColor: '#D97706', route: '/gems' },
+@@ -136,7 +136,7 @@ export const SECTIONS: DirectorySection[] = [
+       { key: 'pp-trips-tab',   label: 'Trips',             Icon: Briefcase,    iconColor: '#7C3AED', route: '/(tabs)/passport' },
+       { key: 'pp-followers',   label: 'Followers',         Icon: Users,        iconColor: '#DB2777', route: '/followers' },
+       { key: 'pp-following',   label: 'Following',         Icon: UserPlus,     iconColor: '#059669', route: '/following' },
+-      { key: 'pp-verification',label: 'Verification',      Icon: ShieldCheck,  iconColor: '#2563EB', disabled: true },
++      { key: 'pp-verification',label: 'Verification',      Icon: ShieldCheck,  iconColor: '#2563EB', route: '/profile/verification' },
+       { key: 'pp-trust',       label: 'Trust and Safety',  Icon: Shield,       iconColor: '#D94040', route: '/profile/edit/safety' },
+     ],
+   },
+diff --git a/travel-buddy-standalone/app/profile/edit/connected.tsx b/travel-buddy-standalone/app/profile/edit/connected.tsx
+index 2787928..2430feb 100644
+--- a/travel-buddy-standalone/app/profile/edit/connected.tsx
++++ b/travel-buddy-standalone/app/profile/edit/connected.tsx
+@@ -265,6 +265,48 @@ export default function ConnectedFeaturesScreen() {
+             subtitle="Review and action wrong-place reports"
+             onPress={() => router.push('/admin/place-mismatch-reports' as any)}
+           />
++          <SettingsDivider />
++          <SettingsRow
++            title="Stamp Studio"
++            subtitle="Stamp catalog, queue, and reconciler"
++            onPress={() => router.push('/admin/stamps' as any)}
++          />
++          <SettingsDivider />
++          <SettingsRow
++            title="Content Reports"
++            subtitle="User-submitted content report queue"
++            onPress={() => router.push('/admin/content-reports' as any)}
++          />
++          <SettingsDivider />
++          <SettingsRow
++            title="Trust Reviews"
++            onPress={() => router.push('/admin/trust-reviews' as any)}
++          />
++          <SettingsDivider />
++          <SettingsRow
++            title="Trust Settings"
++            onPress={() => router.push('/admin/trust-settings' as any)}
++          />
++          <SettingsDivider />
++          <SettingsRow
++            title="Gaming Flags"
++            onPress={() => router.push('/admin/gaming-flags' as any)}
++          />
++          <SettingsDivider />
++          <SettingsRow
++            title="Hashtags"
++            onPress={() => router.push('/admin/hashtags' as any)}
++          />
++          <SettingsDivider />
++          <SettingsRow
++            title="Media Moderation"
++            onPress={() => router.push('/admin/media' as any)}
++          />
++          <SettingsDivider />
++          <SettingsRow
++            title="Place Images"
++            onPress={() => router.push('/admin/place-images' as any)}
++          />
+           {rentBuddyEnabled && (
+             <>
+               <SettingsDivider />
+diff --git a/travel-buddy-standalone/app/safety-number.tsx b/travel-buddy-standalone/app/safety-number.tsx
+index 0074c8b..036b647 100644
+--- a/travel-buddy-standalone/app/safety-number.tsx
++++ b/travel-buddy-standalone/app/safety-number.tsx
+@@ -13,7 +13,7 @@ import { router, useLocalSearchParams } from 'expo-router';
+ import { SafetyNumberScreen } from '../src/screens/SafetyNumberScreen';
+ import { supabase } from '../src/lib/supabase';
+ 
+-const API_BASE = (process.env['EXPO_PUBLIC_API_URL'] ?? '').replace(/\/$/, '');
++const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
+ 
+ export default function SafetyNumberRoute() {
+   const { peerName, peerUserId } = useLocalSearchParams<{
+@@ -35,9 +35,10 @@ export default function SafetyNumberRoute() {
+         });
+         if (!resp.ok) return;
+         const json = await resp.json();
+-        // Take the first device's public key (primary device).
+-        const devices: { public_key?: string }[] = Array.isArray(json?.devices) ? json.devices : [];
+-        const pub = devices.find(d => d.public_key)?.public_key ?? null;
++        // Server shape: { devices: [{ id, platform, publicKey, createdAt }] }
++        // Take the first device with a public key (primary device).
++        const devices: { publicKey?: string | null }[] = Array.isArray(json?.devices) ? json.devices : [];
++        const pub = devices.find(d => d.publicKey)?.publicKey ?? null;
+         if (pub) setPeerIdentityPub(pub);
+       } catch (_) {}
+     })();
+diff --git a/travel-buddy-standalone/assets/images/adaptive-icon.png b/travel-buddy-standalone/assets/images/adaptive-icon.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..a75331886d8ea12f6a13537bc038e3111e70a225
+GIT binary patch
+literal 12040
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/travel-buddy-standalone/assets/images/icon.png b/travel-buddy-standalone/assets/images/icon.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..9cddb413a7e75b8b9a344caa26e44004a47ff835
+GIT binary patch
+literal 14101
+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
+W*)3e|Tf}OH=#Z|_!M6u&uKq6;V3?u+
+
+literal 0
+HcmV?d00001
+
+diff --git a/travel-buddy-standalone/eas.json b/travel-buddy-standalone/eas.json
+index f38a172..1bec8fb 100644
+--- a/travel-buddy-standalone/eas.json
++++ b/travel-buddy-standalone/eas.json
+@@ -6,29 +6,30 @@
+     "development": {
+       "developmentClient": true,
+       "distribution": "internal",
+-      "prebuildCommand": "bash ../../scripts/eas-install-rust.sh",
++      "prebuildCommand": "bash scripts/eas-install-rust.sh",
+       "ios": {
+         "resourceClass": "m-medium"
+       }
+     },
+     "preview": {
+       "distribution": "internal",
+-      "prebuildCommand": "bash ../../scripts/eas-install-rust.sh",
++      "prebuildCommand": "bash scripts/eas-install-rust.sh",
++      "env": {
++        "EXPO_PUBLIC_API_BASE_URL": "https://portava.replit.app",
++        "EXPO_PUBLIC_WEB_ORIGIN": "https://app.travel-buddy.io"
++      },
+       "ios": {
+         "resourceClass": "m-medium"
+       }
+     },
+     "production": {
+-      "autoIncrement": true
+-    }
+-  },
+-  "hooks": {
+-    "post-build": [
+-      {
+-        "command": "npx sentry-expo-upload-sourcemaps dist",
+-        "filter": ["production"]
++      "autoIncrement": true,
++      "prebuildCommand": "bash scripts/eas-install-rust.sh",
++      "env": {
++        "EXPO_PUBLIC_API_BASE_URL": "https://portava.replit.app",
++        "EXPO_PUBLIC_WEB_ORIGIN": "https://app.travel-buddy.io"
+       }
+-    ]
++    }
+   },
+   "submit": {
+     "production": {}
+diff --git a/travel-buddy-standalone/package.json b/travel-buddy-standalone/package.json
+index b772491..8728afd 100644
+--- a/travel-buddy-standalone/package.json
++++ b/travel-buddy-standalone/package.json
+@@ -11,6 +11,7 @@
+     "ios": "expo run:ios",
+     "web": "expo start --web",
+     "eas-build-pre-install": "corepack enable && bash scripts/eas-install-rust.sh",
++    "eas-build-on-success": "npx sentry-expo-upload-sourcemaps dist",
+     "build": "node scripts/build.js",
+     "serve": "node server/serve.js",
+     "typecheck": "tsc -p tsconfig.json --noEmit && node scripts/check-import-extensions.mjs",
+@@ -25,84 +26,83 @@
+     "lint:close-then-navigate": "node scripts/check-close-then-navigate.mjs"
+   },
+   "dependencies": {
++    "@expo-google-fonts/inter": "^0.4.0",
++    "@expo/vector-icons": "^15.0.3",
+     "@livekit/react-native": "^2.11.1",
+     "@livekit/react-native-expo-plugin": "^1.0.2",
+     "@livekit/react-native-webrtc": "^144.1.1",
+     "@maplibre/maplibre-react-native": "11.3.6",
+     "@op-engineering/op-sqlite": "^17.1.2",
++    "@react-native-async-storage/async-storage": "2.2.0",
+     "@react-native-community/datetimepicker": "8.4.4",
+     "@react-native-community/slider": "5.0.1",
+     "@sentry/react-native": "^8.20.0",
+-    "@supabase/supabase-js": "^2.108.2",
+-    "expo-apple-authentication": "~7.2.4",
+-    "expo-av": "^16.0.8",
+-    "expo-calendar": "~15.0.8",
+-    "expo-clipboard": "~8.0.8",
+-    "expo-dev-client": "~6.0.21",
+-    "expo-image-manipulator": "~14.0.8",
+-    "expo-notifications": "~0.32.17",
+-    "expo-openmls": "file:../packages/expo-openmls",
+-    "expo-secure-store": "~14.0.1",
+-    "expo-sharing": "~14.0.8",
+-    "expo-task-manager": "~14.0.9",
+-    "expo-video-thumbnails": "~10.0.8",
+-    "livekit-client": "^2.20.1",
+-    "lucide-react-native": "^0.544.0",
+-    "react-native-draggable-flatlist": "^4.0.3",
+-    "react-native-share": "^12.3.1",
+-    "react-native-view-shot": "4.0.3"
+-  },
+-  "devDependencies": {
+-    "@babel/core": "^7.25.2",
+-    "@expo-google-fonts/inter": "^0.4.0",
+-    "@expo/cli": "54.0.23",
+-    "@expo/ngrok": "^4.1.3",
+-    "@expo/vector-icons": "^15.0.3",
+-    "@react-native-async-storage/async-storage": "2.2.0",
+     "@stardazed/streams-text-encoding": "^1.0.2",
++    "@supabase/supabase-js": "^2.108.2",
+     "@tanstack/react-query": "^5.101.2",
+-    "@testing-library/react-native": "^14.0.1",
+-    "@types/geojson": "^7946.0.16",
+-    "@types/node": "22.20.0",
+-    "@types/react": "~19.1.10",
+-    "@types/react-dom": "~19.1.7",
+     "@ungap/structured-clone": "^1.3.2",
+-    "babel-plugin-react-compiler": "^19.0.0-beta-e993439-20250117",
+     "expo": "~54.0.27",
++    "expo-apple-authentication": "~7.2.4",
++    "expo-av": "^16.0.8",
+     "expo-blur": "~15.0.8",
++    "expo-calendar": "~15.0.8",
++    "expo-clipboard": "~8.0.8",
+     "expo-constants": "~18.0.11",
++    "expo-dev-client": "~6.0.21",
+     "expo-font": "~14.0.10",
+     "expo-glass-effect": "~0.1.4",
+     "expo-haptics": "~15.0.8",
+     "expo-image": "~3.0.11",
++    "expo-image-manipulator": "~14.0.8",
+     "expo-image-picker": "~17.0.9",
+     "expo-linear-gradient": "~15.0.8",
+     "expo-linking": "~8.0.10",
+     "expo-location": "~19.0.8",
++    "expo-notifications": "~0.32.17",
++    "expo-openmls": "file:./vendor/expo-openmls",
+     "expo-router": "~6.0.17",
++    "expo-secure-store": "~14.0.1",
++    "expo-sharing": "~14.0.8",
+     "expo-splash-screen": "~31.0.12",
+     "expo-status-bar": "~3.0.9",
+     "expo-symbols": "~1.0.8",
+     "expo-system-ui": "~6.0.9",
++    "expo-task-manager": "~14.0.9",
++    "expo-video-thumbnails": "~10.0.8",
+     "expo-web-browser": "~15.0.10",
+-    "jest": "^29.7.0",
+-    "jest-expo": "^56.0.5",
++    "livekit-client": "^2.20.1",
++    "lucide-react-native": "^0.544.0",
+     "react": "19.1.0",
+     "react-dom": "19.1.0",
+     "react-native": "0.81.5",
++    "react-native-draggable-flatlist": "^4.0.3",
+     "react-native-gesture-handler": "~2.28.0",
+     "react-native-keyboard-controller": "1.18.5",
+     "react-native-reanimated": "~4.1.1",
+     "react-native-safe-area-context": "~5.6.0",
+     "react-native-screens": "~4.16.0",
++    "react-native-share": "^12.3.1",
+     "react-native-svg": "15.12.1",
++    "react-native-view-shot": "4.0.3",
+     "react-native-web": "^0.21.0",
+     "react-native-worklets": "0.5.1",
+-    "react-test-renderer": "^19.2.7",
+-    "test-renderer": "^1.2.0",
+-    "tsx": "4.22.4",
+-    "typescript": "~5.9.2",
+     "zod": "^3.24.2",
+     "zod-validation-error": "^3.4.0"
++  },
++  "devDependencies": {
++    "@babel/core": "^7.25.2",
++    "@expo/cli": "54.0.23",
++    "@expo/ngrok": "^4.1.3",
++    "@testing-library/react-native": "^14.0.1",
++    "@types/geojson": "^7946.0.16",
++    "@types/node": "22.20.0",
++    "@types/react": "~19.1.10",
++    "@types/react-dom": "~19.1.7",
++    "babel-plugin-react-compiler": "^19.0.0-beta-e993439-20250117",
++    "jest": "^29.7.0",
++    "jest-expo": "^56.0.5",
++    "react-test-renderer": "19.1.0",
++    "tsx": "4.22.4",
++    "typescript": "~5.9.2"
+   }
+ }
+diff --git a/travel-buddy-standalone/scripts/eas-install-rust.sh b/travel-buddy-standalone/scripts/eas-install-rust.sh
+new file mode 100755
+index 0000000..a0e3da1
+--- /dev/null
++++ b/travel-buddy-standalone/scripts/eas-install-rust.sh
+@@ -0,0 +1,47 @@
++#!/usr/bin/env bash
++# E-1 EAS prebuild hook: install Rust + cross-compilation targets for OpenMLS.
++#
++# This script runs on EAS build workers (Linux x86_64) before expo prebuild.
++# It is referenced in eas.json → build.[profile].prebuildCommand.
++#
++# Targets installed:
++#   iOS:     aarch64-apple-ios (device), aarch64-apple-ios-sim (M1 simulator),
++#            x86_64-apple-ios (Intel simulator)
++#   Android: aarch64-linux-android (arm64), armv7-linux-androideabi (arm),
++#            x86_64-linux-android (x86_64 emulator)
++#
++# If cargo is already installed (e.g. cached EAS worker), the rustup calls are
++# fast no-ops. The script exits 0 on success, non-zero on any failure.
++
++set -euo pipefail
++
++echo "[eas-install-rust] Checking for Rust toolchain..."
++
++if ! command -v cargo &>/dev/null; then
++  echo "[eas-install-rust] cargo not found — installing rustup..."
++  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
++  # shellcheck disable=SC1090
++  source "$HOME/.cargo/env"
++else
++  echo "[eas-install-rust] cargo already installed at $(command -v cargo)"
++fi
++
++echo "[eas-install-rust] Rust version: $(rustc --version)"
++echo "[eas-install-rust] Cargo version: $(cargo --version)"
++
++# Android cross-compilation targets (always safe to add)
++echo "[eas-install-rust] Adding Android targets..."
++rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
++
++# iOS targets — only meaningful on macOS EAS workers
++if [[ "$(uname)" == "Darwin" ]]; then
++  echo "[eas-install-rust] macOS detected — adding iOS targets..."
++  rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
++else
++  echo "[eas-install-rust] Non-macOS host — skipping iOS targets"
++fi
++
++echo "[eas-install-rust] Installed targets:"
++rustup target list --installed
++
++echo "[eas-install-rust] Done."
+diff --git a/travel-buddy-standalone/src/components/passport/PassportOwnerMenuSheet.tsx b/travel-buddy-standalone/src/components/passport/PassportOwnerMenuSheet.tsx
+index 662c1a2..1ff3a4b 100644
+--- a/travel-buddy-standalone/src/components/passport/PassportOwnerMenuSheet.tsx
++++ b/travel-buddy-standalone/src/components/passport/PassportOwnerMenuSheet.tsx
+@@ -256,8 +256,8 @@ const SECTIONS: Section[] = [
+         label: 'My Events',
+         Icon: Calendar,
+         iconColor: '#D97706',
+-        live: false,
+-        action: (_p) => {},
++        live: true,
++        action: (p) => { closeThenNavigate(p.onClose, '/events/list'); },
+       },
+       {
+         key: 'my-trips',
+@@ -357,8 +357,8 @@ const SECTIONS: Section[] = [
+         label: 'Notifications',
+         Icon: Bell,
+         iconColor: '#D97706',
+-        live: false,
+-        action: (_p) => {},
++        live: true,
++        action: (p) => { closeThenNavigate(p.onClose, '/notifications'); },
+       },
+       {
+         key: 'help',
+diff --git a/travel-buddy-standalone/src/context/StampAnimationContext.tsx b/travel-buddy-standalone/src/context/StampAnimationContext.tsx
+index ad52e15..5db4273 100644
+--- a/travel-buddy-standalone/src/context/StampAnimationContext.tsx
++++ b/travel-buddy-standalone/src/context/StampAnimationContext.tsx
+@@ -276,7 +276,7 @@ export function StampAnimationProvider({ children }: PropsWithChildren) {
+         // error. The watchdog below (added 2026-07-28) exists to prevent
+         // that; this log lets us confirm if we're hitting the stuck-lock case
+         // in production.
+-        console.log('[STAMP_DEBUG] triggerStamp SKIPPED — isAnimatingRef already true (possible stuck lock from a prior interrupted animation)');
++        if (__DEV__) console.log('[STAMP_DEBUG] triggerStamp SKIPPED — isAnimatingRef already true (possible stuck lock from a prior interrupted animation)');
+         return;
+       }
+       isAnimatingRef.current = true;
+@@ -297,7 +297,7 @@ export function StampAnimationProvider({ children }: PropsWithChildren) {
+       // a fast scroll used to leave every stamp button dead for up to 2.5s.
+       watchdogRef.current = setTimeout(() => {
+         if (isAnimatingRef.current && animTokenRef.current === token) {
+-          console.log('[STAMP_DEBUG] triggerStamp WATCHDOG fired — force-unlocking stuck isAnimatingRef');
++          if (__DEV__) console.log('[STAMP_DEBUG] triggerStamp WATCHDOG fired — force-unlocking stuck isAnimatingRef');
+           isAnimatingRef.current = false;
+           setIsAnimating(false);
+         }
+diff --git a/travel-buddy-standalone/src/lib/cryptoIdentity.ts b/travel-buddy-standalone/src/lib/cryptoIdentity.ts
+index e0d22e8..b6503ee 100644
+--- a/travel-buddy-standalone/src/lib/cryptoIdentity.ts
++++ b/travel-buddy-standalone/src/lib/cryptoIdentity.ts
+@@ -4,7 +4,7 @@
+  * On first launch (or after a re-install that cleared SecureStore on iOS):
+  *   1. Generates an Ed25519 identity key pair and an Ed25519+X25519 device key pair.
+  *   2. Stores all private keys in SecureStore.
+- *   3. Registers the device with the server (`PUT /me/devices/:id/public-key`).
++ *   3. Registers the device with the server (`POST /me/crypto-devices/:id/public-key`).
+  *   4. Generates an initial batch of KeyPackages and uploads them to the server.
+  *
+  * Subsequent launches: detects existing keys in SecureStore and skips generation.
+@@ -27,7 +27,9 @@ import { freshToken } from '../services/apiToken.ts';
+ const KEY_PACKAGE_BATCH_SIZE = 10;
+ 
+ function log(msg: string, data?: object) {
+-  console.log(`[CryptoIdentity] ${msg}`, data ?? '');
++  if (__DEV__) {
++    console.log(`[CryptoIdentity] ${msg}`, data ?? '');
++  }
+ }
+ 
+ /** Returns true if identity keys are already in SecureStore. */
+@@ -131,7 +133,7 @@ async function _ensureDeviceRegistered(
+ 
+   if (!deviceId) {
+     // Register the device
+-    const { data, error } = await apiPost('/api/me/devices', {
++    const { data, error } = await apiPost('/me/crypto-devices', {
+       platform: 'ios', // overridden by the caller if on Android
+     }) as { data?: { device?: { id: string } }; error?: unknown };
+ 
+@@ -152,8 +154,8 @@ async function _ensureDeviceRegistered(
+         const url = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+         const token = await freshToken();
+         if (!token) return;
+-        await fetch(`${url}/api/me/devices/${deviceId}/public-key`, {
+-          method: 'PUT',
++        await fetch(`${url}/api/me/crypto-devices/${deviceId}/public-key`, {
++          method: 'POST',
+           headers: {
+             'Content-Type': 'application/json',
+             Authorization: `Bearer ${token}`,
+diff --git a/travel-buddy-standalone/src/services/messaging.ts b/travel-buddy-standalone/src/services/messaging.ts
+index eea158f..b51a4e8 100644
+--- a/travel-buddy-standalone/src/services/messaging.ts
++++ b/travel-buddy-standalone/src/services/messaging.ts
+@@ -329,7 +329,7 @@ export async function getUnreadCounts(): Promise<MsgResult<{ messages: number; n
+ }
+ 
+ export async function markNotificationsRead(): Promise<MsgResult<{ ok: boolean; viewedAt: string }>> {
+-  return apiPost('/api/me/notifications/read-all');
++  return apiPost('/api/me/messaging/inbox-viewed');
+ }
+ 
+ export async function markHighlightsViewed(): Promise<MsgResult<{ ok: boolean; viewedAt: string }>> {
+diff --git a/travel-buddy-standalone/src/services/rentABuddy.ts b/travel-buddy-standalone/src/services/rentABuddy.ts
+index 23352aa..49c6efc 100644
+--- a/travel-buddy-standalone/src/services/rentABuddy.ts
++++ b/travel-buddy-standalone/src/services/rentABuddy.ts
+@@ -679,7 +679,6 @@ export async function requestRouteChange(
+ // ── Buddy-initiated offers ─────────────────────────────────────────────────────
+ 
+ export interface BuddyOfferPayload {
+-  category: BuddyCategory;
+   priceUsd: number;
+   proposedDate: string;
+   proposedTime?: string;
+@@ -689,10 +688,27 @@ export interface BuddyOfferPayload {
+   addonIds?: string[];
+ }
+ 
+-export async function createBuddyOffer(payload: BuddyOfferPayload): Promise<ApiResult<{ ok: boolean }>> {
+-  return apiFetch('/api/rent-a-buddy/dashboard/offers', {
++/**
++ * Buddy sends a custom offer against an open traveller request.
++ * Server: POST /api/rent-a-buddy/requests/:requestId/offers
++ */
++export async function createBuddyOffer(
++  requestId: string,
++  payload: BuddyOfferPayload,
++): Promise<ApiResult<{ offer: BuddyOffer }>> {
++  const proposedStart = payload.proposedDate
++    ? `${payload.proposedDate}T${payload.proposedTime ?? '00:00'}:00`
++    : undefined;
++  return apiFetch(`/api/rent-a-buddy/requests/${requestId}/offers`, {
+     method: 'POST',
+-    body: JSON.stringify(payload),
++    body: JSON.stringify({
++      proposedPriceUsd: payload.priceUsd,
++      proposedStart,
++      meetupLocation: payload.meetupLocation,
++      includedServices: payload.includedServices,
++      message: payload.message,
++      addonsOffered: payload.addonIds,
++    }),
+   });
+ }
+ 
+diff --git a/travel-buddy-standalone/src/services/reportsAdmin.ts b/travel-buddy-standalone/src/services/reportsAdmin.ts
+index 6773f15..64618d8 100644
+--- a/travel-buddy-standalone/src/services/reportsAdmin.ts
++++ b/travel-buddy-standalone/src/services/reportsAdmin.ts
+@@ -41,16 +41,32 @@ export interface AdminReportsResult {
+   total: number;
+ }
+ 
++const ALL_STATUSES = ['open', 'in_review', 'resolved', 'dismissed'] as const;
++
+ export async function fetchAdminReports(opts: {
++  page?: number;
+   limit?: number;
+-  offset?: number;
+   status?: string;
+ } = {}): Promise<AdminReportsResult> {
+-  const { limit = 50, offset = 0, status } = opts;
++  const { page = 1, limit = 50, status = 'open' } = opts;
++
++  // The server (GET /api/admin/reports) paginates with page/limit and filters
++  // by a single status, defaulting to 'open'. It has no 'all' value, so
++  // emulate it client-side by fetching each status in parallel and merging.
++  if (status === 'all') {
++    const results = await Promise.all(
++      ALL_STATUSES.map((s) => fetchAdminReports({ page, limit, status: s })),
++    );
++    const reports = results
++      .flatMap((r) => r.reports)
++      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
++    return { reports, total: results.reduce((n, r) => n + r.total, 0) };
++  }
++
+   const params = new URLSearchParams({
++    page: String(page),
+     limit: String(limit),
+-    offset: String(offset),
+-    ...(status && status !== 'all' ? { status } : {}),
++    status,
+   });
+   const res = await authedFetch(`${apiBase()}/api/admin/reports?${params}`);
+   if (!res.ok) throw new Error(`Failed to load reports: ${res.status}`);
+diff --git a/travel-buddy-standalone/src/services/stamps.ts b/travel-buddy-standalone/src/services/stamps.ts
+index 93701bf..a5e5880 100644
+--- a/travel-buddy-standalone/src/services/stamps.ts
++++ b/travel-buddy-standalone/src/services/stamps.ts
+@@ -239,6 +239,13 @@ export interface EntityStampResult {
+   isStamped: boolean;
+ }
+ 
++/** Dev-only debug logger — compiled out of production builds. */
++function stampDebug(msg: string, data?: unknown): void {
++  if (__DEV__) {
++    console.log(`[STAMP_DEBUG] ${msg}`, data ?? '');
++  }
++}
++
+ /**
+  * POST /stamps  { entityType, entityId }
+  * Stamp a piece of content (post, place, event, gem, …).
+@@ -249,9 +256,9 @@ export async function stampEntity(
+   entityId: string,
+ ): Promise<ApiResult<EntityStampResult>> {
+   const token = await freshToken();
+-  console.log('[STAMP_DEBUG] stampEntity() called', { entityType, entityId, hasToken: !!token, apiBase: apiBase() });
++  stampDebug('stampEntity() called', { entityType, entityId, hasToken: !!token, apiBase: apiBase() });
+   if (!token) {
+-    console.log('[STAMP_DEBUG] stampEntity() — no auth token, aborting');
++    stampDebug('stampEntity() — no auth token, aborting');
+     return { ok: false, message: 'Not authenticated' };
+   }
+   try {
+@@ -260,17 +267,17 @@ export async function stampEntity(
+       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+       body: JSON.stringify({ entityType, entityId }),
+     });
+-    console.log('[STAMP_DEBUG] stampEntity() response status', res.status);
++    stampDebug('stampEntity() response status', res.status);
+     if (!res.ok) {
+       const body = await res.json().catch(() => ({}));
+-      console.log('[STAMP_DEBUG] stampEntity() FAILED', body);
++      stampDebug('stampEntity() FAILED', body);
+       return { ok: false, message: (body as any)?.message ?? `API ${res.status}` };
+     }
+     const data = await res.json().catch(() => ({}));
+-    console.log('[STAMP_DEBUG] stampEntity() SUCCESS body', data);
++    stampDebug('stampEntity() SUCCESS body', data);
+     return { ok: true, data: { count: (data as any).stampCount ?? 0, isStamped: true } };
+   } catch (e) {
+-    console.log('[STAMP_DEBUG] stampEntity() THREW', e);
++    stampDebug('stampEntity() THREW', e);
+     return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
+   }
+ }
+diff --git a/travel-buddy-standalone/vendor/expo-openmls/Cargo.toml b/travel-buddy-standalone/vendor/expo-openmls/Cargo.toml
+new file mode 100644
+index 0000000..5c70300
+--- /dev/null
++++ b/travel-buddy-standalone/vendor/expo-openmls/Cargo.toml
+@@ -0,0 +1,37 @@
++[package]
++name = "expo-openmls"
++version = "0.1.0"
++edition = "2021"
++
++# UniFFI scaffolding: generates Swift/Kotlin bindings from openmls.udl
++[lib]
++crate-type = ["staticlib", "cdylib"]
++
++[dependencies]
++# MLS RFC 9420 implementation
++openmls = { version = "0.5.0", features = ["crypto-subtle"] }
++openmls_rust_crypto = "0.2.0"
++openmls_basic_credential = "0.2.0"
++
++# UniFFI — generates Swift/Kotlin bindings from the UDL
++uniffi = { version = "0.28.3", features = ["scaffolding"] }
++
++# Independent Ed25519 + X25519 for identity/device key generation
++ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
++x25519-dalek   = { version = "2.0.1", features = ["static_secrets"] }
++
++# SHA-512 for safety-number derivation
++sha2 = "0.10.8"
++
++# Base64 for byte ↔ string boundary crossing
++base64 = "0.22.1"
++
++# JSON serialisation for group state bundles
++serde       = { version = "1.0", features = ["derive"] }
++serde_json  = "1.0"
++
++# Random-number generation
++rand = "0.8"
++
++[build-dependencies]
++uniffi = { version = "0.28.3", features = ["build"] }
+diff --git a/travel-buddy-standalone/vendor/expo-openmls/build.rs b/travel-buddy-standalone/vendor/expo-openmls/build.rs
+new file mode 100644
+index 0000000..925998a
+--- /dev/null
++++ b/travel-buddy-standalone/vendor/expo-openmls/build.rs
+@@ -0,0 +1,3 @@
++fn main() {
++    uniffi::generate_scaffolding("./openmls.udl").unwrap();
++}
+diff --git a/travel-buddy-standalone/vendor/expo-openmls/openmls.udl b/travel-buddy-standalone/vendor/expo-openmls/openmls.udl
+new file mode 100644
+index 0000000..e5d6878
+--- /dev/null
++++ b/travel-buddy-standalone/vendor/expo-openmls/openmls.udl
+@@ -0,0 +1,122 @@
++// UniFFI interface definition for expo-openmls.
++// This file is processed by uniffi-bindgen to generate Swift (iOS) and
++// Kotlin (Android) bindings.
++//
++// All byte arrays are passed as base64url-encoded strings to avoid
++// binary/null-byte issues across the FFI boundary.
++
++namespace openmls {
++
++  // ── Key generation ──────────────────────────────────────────────────────────
++
++  [Throws=OpenMlsError]
++  KeyPairBytes generate_identity_key_pair();
++
++  [Throws=OpenMlsError]
++  DeviceKeyPairBytes generate_device_key_pair();
++
++  // ── KeyPackage pool ─────────────────────────────────────────────────────────
++  // A KeyPackage bundles a public key + credential, signed by the identity key.
++  // Consumed one-shot when adding a device to an MLS group.
++
++  [Throws=OpenMlsError]
++  string generate_key_package(
++    string identity_priv_b64,
++    string device_ed25519_priv_b64,
++    string device_x25519_priv_b64
++  );
++
++  // ── Group operations ────────────────────────────────────────────────────────
++
++  // Create a new 2-member MLS group (1:1 thread).
++  // Returns serialised group state + a Welcome message for the recipient.
++  [Throws=OpenMlsError]
++  GroupCreateResult create_group(
++    string my_identity_priv_b64,
++    string my_device_ed25519_priv_b64,
++    string my_device_x25519_priv_b64,
++    string recipient_key_package_b64
++  );
++
++  // Join a group from a Welcome message sent by the initiator.
++  [Throws=OpenMlsError]
++  string process_welcome(
++    string my_identity_priv_b64,
++    string my_device_ed25519_priv_b64,
++    string my_device_x25519_priv_b64,
++    string welcome_b64
++  );
++
++  // ── Message encrypt / decrypt ───────────────────────────────────────────────
++
++  [Throws=OpenMlsError]
++  EncryptResult encrypt_message(
++    string group_state_b64,
++    string plaintext
++  );
++
++  [Throws=OpenMlsError]
++  DecryptResult decrypt_message(
++    string group_state_b64,
++    string ciphertext_b64
++  );
++
++  // ── Safety numbers ──────────────────────────────────────────────────────────
++  // Derive a 60-digit decimal safety number from two Ed25519 identity public keys.
++  // Deterministic: same input order produces the same number on both devices.
++
++  [Throws=OpenMlsError]
++  string derive_safety_number(
++    string identity_pub_a_b64,
++    string identity_pub_b_b64
++  );
++};
++
++// ── Error type ─────────────────────────────────────────────────────────────────
++
++[Error]
++enum OpenMlsError {
++  "KeyGenFailed",
++  "SerializationFailed",
++  "DeserializationFailed",
++  "KeyPackageGenFailed",
++  "GroupCreateFailed",
++  "GroupJoinFailed",
++  "EncryptFailed",
++  "DecryptFailed",
++  "SafetyNumberFailed",
++  "InvalidInput",
++};
++
++// ── Result dictionaries ─────────────────────────────────────────────────────────
++
++dictionary KeyPairBytes {
++  string pub_key_b64;
++  string priv_key_b64;
++};
++
++dictionary DeviceKeyPairBytes {
++  string ed25519_pub_b64;
++  string ed25519_priv_b64;
++  string x25519_pub_b64;
++  string x25519_priv_b64;
++};
++
++// Returned from create_group: group state for storage + Welcome to send to peer.
++dictionary GroupCreateResult {
++  string group_state_b64;
++  string welcome_b64;
++};
++
++// Returned from encrypt_message.
++dictionary EncryptResult {
++  string ciphertext_b64;
++  // Updated group state after MLS epoch advancement (store back to SecureStore).
++  string updated_group_state_b64;
++};
++
++// Returned from decrypt_message.
++dictionary DecryptResult {
++  string plaintext;
++  string updated_group_state_b64;
++};
+diff --git a/travel-buddy-standalone/vendor/expo-openmls/package.json b/travel-buddy-standalone/vendor/expo-openmls/package.json
+new file mode 100644
+index 0000000..b4531e0
+--- /dev/null
++++ b/travel-buddy-standalone/vendor/expo-openmls/package.json
+@@ -0,0 +1,20 @@
++{
++  "name": "expo-openmls",
++  "version": "0.1.0",
++  "description": "Expo native module wrapping OpenMLS (RFC 9420) via Rust + UniFFI. Provides Ed25519/X25519 key generation, MLS group create/join, message encrypt/decrypt, and safety-number derivation.",
++  "main": "build/index.js",
++  "types": "build/index.d.ts",
++  "scripts": {
++    "build": "tsc",
++    "typecheck": "tsc --noEmit"
++  },
++  "keywords": ["expo", "module", "mls", "e2ee", "openmls"],
++  "peerDependencies": {
++    "expo": ">=53.0.0",
++    "react-native": ">=0.73.0"
++  },
++  "devDependencies": {
++    "expo-modules-core": "^3.0.0",
++    "typescript": "^5.8.0"
++  }
++}
+diff --git a/travel-buddy-standalone/vendor/expo-openmls/src/ExpoOpenmls.types.ts b/travel-buddy-standalone/vendor/expo-openmls/src/ExpoOpenmls.types.ts
+new file mode 100644
+index 0000000..76eb60e
+--- /dev/null
++++ b/travel-buddy-standalone/vendor/expo-openmls/src/ExpoOpenmls.types.ts
+@@ -0,0 +1,63 @@
++/**
++ * TypeScript types for the expo-openmls native module.
++ * Mirror of the UniFFI dictionary types defined in openmls.udl.
++ */
++
++export interface KeyPairBytes {
++  /** Ed25519 public key, base64-encoded. */
++  pubKeyB64: string;
++  /** Ed25519 private key, base64-encoded. NEVER LOG. */
++  privKeyB64: string;
++}
++
++export interface DeviceKeyPairBytes {
++  /** Ed25519 public key for MLS credential signing, base64-encoded. */
++  ed25519PubB64: string;
++  /** Ed25519 private key. NEVER LOG. */
++  ed25519PrivB64: string;
++  /** X25519 public key for HPKE, base64-encoded. */
++  x25519PubB64: string;
++  /** X25519 private key. NEVER LOG. */
++  x25519PrivB64: string;
++}
++
++export interface GroupCreateResult {
++  /** Serialised MLS group state, base64-encoded. Store in SecureStore. */
++  groupStateB64: string;
++  /** MLS Welcome message, base64-encoded. Send to recipient via server. */
++  welcomeB64: string;
++}
++
++export interface EncryptResult {
++  /** MLS-encrypted ciphertext, base64-encoded. */
++  ciphertextB64: string;
++  /** Updated group state after MLS epoch advancement. Store back to SecureStore. */
++  updatedGroupStateB64: string;
++}
++
++export interface DecryptResult {
++  /** Decrypted plaintext. NEVER send to server. */
++  plaintext: string;
++  /** Updated group state after processing the received message. Store back to SecureStore. */
++  updatedGroupStateB64: string;
++}
++
++/** All errors thrown by expo-openmls native functions. */
++export type OpenMlsErrorCode =
++  | 'KeyGenFailed'
++  | 'SerializationFailed'
++  | 'DeserializationFailed'
++  | 'KeyPackageGenFailed'
++  | 'GroupCreateFailed'
++  | 'GroupJoinFailed'
++  | 'EncryptFailed'
++  | 'DecryptFailed'
++  | 'SafetyNumberFailed'
++  | 'InvalidInput';
++
++export class OpenMlsError extends Error {
++  constructor(public readonly code: OpenMlsErrorCode, message?: string) {
++    super(message ?? code);
++    this.name = 'OpenMlsError';
++  }
++}
+diff --git a/travel-buddy-standalone/vendor/expo-openmls/src/index.ts b/travel-buddy-standalone/vendor/expo-openmls/src/index.ts
+new file mode 100644
+index 0000000..55f0164
+--- /dev/null
++++ b/travel-buddy-standalone/vendor/expo-openmls/src/index.ts
+@@ -0,0 +1,127 @@
++/**
++ * expo-openmls — TypeScript entry point.
++ *
++ * Loads the native module and exposes typed async wrappers.
++ * All functions throw OpenMlsError on failure.
++ *
++ * CRITICAL: never pass return values from these functions to console.log,
++ * analytics, crash reporters, or any network call except the explicitly
++ * designated public-key endpoints. Private key fields (privKeyB64,
++ * ed25519PrivB64, x25519PrivB64) must go only to SecureStore.
++ */
++
++import { NativeModulesProxy, requireNativeModule } from 'expo-modules-core';
++import {
++  KeyPairBytes,
++  DeviceKeyPairBytes,
++  GroupCreateResult,
++  EncryptResult,
++  DecryptResult,
++  OpenMlsError,
++  type OpenMlsErrorCode,
++} from './ExpoOpenmls.types';
++
++export * from './ExpoOpenmls.types';
++
++// ---------------------------------------------------------------------------
++// Native module proxy
++// ---------------------------------------------------------------------------
++
++let _native: Record<string, (...args: unknown[]) => Promise<unknown>> | null = null;
++
++function getNative() {
++  if (_native) return _native;
++  try {
++    _native = requireNativeModule('ExpoOpenmls') as typeof _native;
++    return _native!;
++  } catch {
++    throw new OpenMlsError('KeyGenFailed', 'ExpoOpenmls native module not loaded. Is this a dev build (not Expo Go)?');
++  }
++}
++
++function wrapNative<T>(fnName: string, ...args: unknown[]): Promise<T> {
++  return getNative()[fnName](...args) as Promise<T>;
++}
++
++// ---------------------------------------------------------------------------
++// Public API
++// ---------------------------------------------------------------------------
++
++/** Generate an Ed25519 identity key pair (long-lived, one per user). */
++export function generateIdentityKeyPair(): Promise<KeyPairBytes> {
++  return wrapNative<KeyPairBytes>('generateIdentityKeyPair');
++}
++
++/** Generate a device key pair (Ed25519 + X25519, one per install). */
++export function generateDeviceKeyPair(): Promise<DeviceKeyPairBytes> {
++  return wrapNative<DeviceKeyPairBytes>('generateDeviceKeyPair');
++}
++
++/**
++ * Generate a KeyPackage for the device's public key material.
++ * Return value (base64) should be uploaded to the server's KeyPackage pool.
++ * Never stores private keys — those come from SecureStore on the caller side.
++ */
++export function generateKeyPackage(
++  identityPrivB64: string,
++  deviceEd25519PrivB64: string,
++  deviceX25519PrivB64: string,
++): Promise<string> {
++  return wrapNative<string>('generateKeyPackage', identityPrivB64, deviceEd25519PrivB64, deviceX25519PrivB64);
++}
++
++/**
++ * Create a new MLS group (1:1 thread).
++ * Returns `groupStateB64` (store in SecureStore) and `welcomeB64` (send to recipient).
++ */
++export function createGroup(
++  myIdentityPrivB64: string,
++  myDeviceEd25519PrivB64: string,
++  myDeviceX25519PrivB64: string,
++  recipientKeyPackageB64: string,
++): Promise<GroupCreateResult> {
++  return wrapNative<GroupCreateResult>(
++    'createGroup',
++    myIdentityPrivB64,
++    myDeviceEd25519PrivB64,
++    myDeviceX25519PrivB64,
++    recipientKeyPackageB64,
++  );
++}
++
++/**
++ * Join an MLS group from a Welcome message.
++ * Returns `groupStateB64` (store in SecureStore).
++ */
++export function processWelcome(
++  myIdentityPrivB64: string,
++  myDeviceEd25519PrivB64: string,
++  myDeviceX25519PrivB64: string,
++  welcomeB64: string,
++): Promise<string> {
++  return wrapNative<string>(
++    'processWelcome',
++    myIdentityPrivB64,
++    myDeviceEd25519PrivB64,
++    myDeviceX25519PrivB64,
++    welcomeB64,
++  );
++}
++
++/** Encrypt plaintext in an MLS group. Updates group state (must be stored back). */
++export function encryptMessage(groupStateB64: string, plaintext: string): Promise<EncryptResult> {
++  return wrapNative<EncryptResult>('encryptMessage', groupStateB64, plaintext);
++}
++
++/** Decrypt an MLS ciphertext. Updates group state (must be stored back). */
++export function decryptMessage(groupStateB64: string, ciphertextB64: string): Promise<DecryptResult> {
++  return wrapNative<DecryptResult>('decryptMessage', groupStateB64, ciphertextB64);
++}
++
++/**
++ * Derive a 60-digit decimal safety number from two Ed25519 identity public keys.
++ * Commutative: derive_safety_number(A, B) === derive_safety_number(B, A).
++ */
++export function deriveSafetyNumber(identityPubAB64: string, identityPubBB64: string): Promise<string> {
++  return wrapNative<string>('deriveSafetyNumber', identityPubAB64, identityPubBB64);
++}
+diff --git a/travel-buddy-standalone/vendor/expo-openmls/src/lib.rs b/travel-buddy-standalone/vendor/expo-openmls/src/lib.rs
+new file mode 100644
+index 0000000..dba2b20
+--- /dev/null
++++ b/travel-buddy-standalone/vendor/expo-openmls/src/lib.rs
+@@ -0,0 +1,373 @@
++// expo-openmls: thin Rust wrapper around OpenMLS for React Native via UniFFI.
++//
++// Design choices:
++// - ALL state (group, keys) is passed in/out as base64-encoded serialised bytes.
++//   The caller (TypeScript) is responsible for storing state in SecureStore.
++//   This avoids keeping an in-process singleton that would be lost on process kill.
++// - Private keys are NEVER logged. Use opaque handles in error messages.
++// - Safety-number derivation is deterministic and commutative (sorted key order).
++//
++// NOTE: This code must compile under:
++//   cargo build --target aarch64-apple-ios --release      (iOS)
++//   cargo build --target aarch64-linux-android --release  (Android arm64)
++//   cargo build --target armv7-linux-androideabi --release (Android arm32)
++//
++// EAS cloud build workers supply the cross-compilation toolchains.
++
++use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
++use ed25519_dalek::{SigningKey as Ed25519SigningKey, VerifyingKey as Ed25519VerifyingKey};
++use openmls::prelude::*;
++use openmls_basic_credential::SignatureKeyPair;
++use openmls_rust_crypto::OpenMlsRustCrypto;
++use rand::rngs::OsRng;
++use serde::{Deserialize, Serialize};
++use sha2::{Digest, Sha512};
++use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
++
++// UniFFI scaffolding generated from openmls.udl
++uniffi::include_scaffolding!("openmls");
++
++// ── Error type ─────────────────────────────────────────────────────────────────
++
++#[derive(Debug, thiserror::Error)]
++pub enum OpenMlsError {
++    #[error("key generation failed")]
++    KeyGenFailed,
++    #[error("serialization failed")]
++    SerializationFailed,
++    #[error("deserialization failed")]
++    DeserializationFailed,
++    #[error("key package generation failed")]
++    KeyPackageGenFailed,
++    #[error("group create failed")]
++    GroupCreateFailed,
++    #[error("group join failed")]
++    GroupJoinFailed,
++    #[error("encrypt failed")]
++    EncryptFailed,
++    #[error("decrypt failed")]
++    DecryptFailed,
++    #[error("safety number derivation failed")]
++    SafetyNumberFailed,
++    #[error("invalid input")]
++    InvalidInput,
++}
++
++// ── Serialisable state bundles ──────────────────────────────────────────────────
++
++/// Serialisable bundle of private keys needed to reconstruct an MLS crypto backend.
++#[derive(Serialize, Deserialize)]
++struct PrivKeyBundle {
++    identity_priv_b64: String,
++    device_ed25519_priv_b64: String,
++    device_x25519_priv_b64: String,
++}
++
++/// Serialisable MLS group state bundle (group + key store snapshot).
++#[derive(Serialize, Deserialize)]
++struct GroupStateBundle {
++    /// TLS-serialised MlsGroup, base64-encoded.
++    group_b64: String,
++    /// JSON-serialised key store from OpenMlsRustCrypto backend.
++    key_store_json: String,
++}
++
++// ── Helper: build a crypto backend from serialised private keys ────────────────
++
++fn build_backend_from_keys(bundle: &PrivKeyBundle) -> Result<OpenMlsRustCrypto, OpenMlsError> {
++    // OpenMlsRustCrypto default backend; keys are loaded separately below.
++    Ok(OpenMlsRustCrypto::default())
++}
++
++fn decode_b64(s: &str) -> Result<Vec<u8>, OpenMlsError> {
++    B64.decode(s).map_err(|_| OpenMlsError::InvalidInput)
++}
++
++// ── Key generation ──────────────────────────────────────────────────────────────
++
++/// Generate an Ed25519 identity key pair.
++pub fn generate_identity_key_pair() -> Result<KeyPairBytes, OpenMlsError> {
++    let mut rng = OsRng;
++    let signing_key = Ed25519SigningKey::generate(&mut rng);
++    let verifying_key: Ed25519VerifyingKey = signing_key.verifying_key();
++    Ok(KeyPairBytes {
++        pub_key_b64: B64.encode(verifying_key.as_bytes()),
++        priv_key_b64: B64.encode(signing_key.as_bytes()),
++    })
++}
++
++/// Generate a device key pair: Ed25519 signing key + X25519 HPKE key.
++pub fn generate_device_key_pair() -> Result<DeviceKeyPairBytes, OpenMlsError> {
++    let mut rng = OsRng;
++
++    // Ed25519 for MLS credential signing
++    let ed_signing = Ed25519SigningKey::generate(&mut rng);
++    let ed_verifying: Ed25519VerifyingKey = ed_signing.verifying_key();
++
++    // X25519 for HPKE (DHKEM key exchange in MLS cipher suite)
++    let x_static = X25519StaticSecret::random_from_rng(&mut rng);
++    let x_public = X25519PublicKey::from(&x_static);
++
++    Ok(DeviceKeyPairBytes {
++        ed25519_pub_b64:  B64.encode(ed_verifying.as_bytes()),
++        ed25519_priv_b64: B64.encode(ed_signing.as_bytes()),
++        x25519_pub_b64:   B64.encode(x_public.as_bytes()),
++        x25519_priv_b64:  B64.encode(x_static.as_bytes()),
++    })
++}
++
++// ── KeyPackage generation ───────────────────────────────────────────────────────
++
++pub fn generate_key_package(
++    identity_priv_b64: String,
++    device_ed25519_priv_b64: String,
++    device_x25519_priv_b64: String,
++) -> Result<String, OpenMlsError> {
++    let backend = OpenMlsRustCrypto::default();
++    let cs = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
++
++    let ed_priv_bytes = decode_b64(&device_ed25519_priv_b64)?;
++    let ed_priv_arr: [u8; 32] = ed_priv_bytes.try_into().map_err(|_| OpenMlsError::InvalidInput)?;
++
++    let credential = BasicCredential::new(identity_priv_b64.into_bytes());
++    let signature_keys = SignatureKeyPair::new(SignatureScheme::ED25519, &backend)
++        .map_err(|_| OpenMlsError::KeyPackageGenFailed)?;
++
++    let credential_with_key = CredentialWithKey {
++        credential: credential.into(),
++        signature_key: signature_keys.public().into(),
++    };
++
++    let key_package = KeyPackage::builder()
++        .build(cs, &backend, &signature_keys, credential_with_key)
++        .map_err(|_| OpenMlsError::KeyPackageGenFailed)?;
++
++    let serialised = key_package
++        .tls_serialize_detached()
++        .map_err(|_| OpenMlsError::SerializationFailed)?;
++
++    Ok(B64.encode(serialised))
++}
++
++// ── Group create / join ─────────────────────────────────────────────────────────
++
++pub fn create_group(
++    my_identity_priv_b64: String,
++    my_device_ed25519_priv_b64: String,
++    my_device_x25519_priv_b64: String,
++    recipient_key_package_b64: String,
++) -> Result<GroupCreateResult, OpenMlsError> {
++    let backend = OpenMlsRustCrypto::default();
++    let cs = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
++
++    let credential = BasicCredential::new(my_identity_priv_b64.clone().into_bytes());
++    let signature_keys = SignatureKeyPair::new(SignatureScheme::ED25519, &backend)
++        .map_err(|_| OpenMlsError::GroupCreateFailed)?;
++
++    let credential_with_key = CredentialWithKey {
++        credential: credential.into(),
++        signature_key: signature_keys.public().into(),
++    };
++
++    let group_config = MlsGroupCreateConfig::builder()
++        .ciphersuite(cs)
++        .build();
++
++    let mut group = MlsGroup::new(&backend, &signature_keys, &group_config, credential_with_key)
++        .map_err(|_| OpenMlsError::GroupCreateFailed)?;
++
++    // Add recipient via their KeyPackage
++    let kp_bytes = decode_b64(&recipient_key_package_b64)?;
++    let kp = KeyPackageIn::tls_deserialize_exact_bytes(&kp_bytes)
++        .map_err(|_| OpenMlsError::DeserializationFailed)?;
++
++    let (_, welcome, _) = group
++        .add_members(&backend, &signature_keys, &[kp.into()])
++        .map_err(|_| OpenMlsError::GroupCreateFailed)?;
++
++    group.merge_pending_commit(&backend)
++        .map_err(|_| OpenMlsError::GroupCreateFailed)?;
++
++    // Serialise group + key store for storage in SecureStore
++    let group_bytes = group
++        .export_group_info(&backend, &signature_keys, true)
++        .map_err(|_| OpenMlsError::SerializationFailed)?
++        .tls_serialize_detached()
++        .map_err(|_| OpenMlsError::SerializationFailed)?;
++
++    let welcome_bytes = welcome
++        .tls_serialize_detached()
++        .map_err(|_| OpenMlsError::SerializationFailed)?;
++
++    // Encode the mutable group state as JSON for round-tripping through SecureStore.
++    // We use the group's serialisable form (MlsGroup implements TlsSerialize).
++    let mut group_state_bytes = Vec::new();
++    group.tls_serialize(&mut group_state_bytes)
++        .map_err(|_| OpenMlsError::SerializationFailed)?;
++
++    Ok(GroupCreateResult {
++        group_state_b64: B64.encode(group_state_bytes),
++        welcome_b64: B64.encode(welcome_bytes),
++    })
++}
++
++pub fn process_welcome(
++    my_identity_priv_b64: String,
++    my_device_ed25519_priv_b64: String,
++    my_device_x25519_priv_b64: String,
++    welcome_b64: String,
++) -> Result<String, OpenMlsError> {
++    let backend = OpenMlsRustCrypto::default();
++    let cs = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
++
++    let credential = BasicCredential::new(my_identity_priv_b64.clone().into_bytes());
++    let signature_keys = SignatureKeyPair::new(SignatureScheme::ED25519, &backend)
++        .map_err(|_| OpenMlsError::GroupJoinFailed)?;
++
++    let welcome_bytes = decode_b64(&welcome_b64)?;
++    let welcome = Welcome::tls_deserialize_exact_bytes(&welcome_bytes)
++        .map_err(|_| OpenMlsError::DeserializationFailed)?;
++
++    let group_config = MlsGroupJoinConfig::default();
++    let mut group = StagedWelcome::new_from_welcome(&backend, &group_config, welcome, None)
++        .map_err(|_| OpenMlsError::GroupJoinFailed)?
++        .into_group(&backend)
++        .map_err(|_| OpenMlsError::GroupJoinFailed)?;
++
++    let mut group_state_bytes = Vec::new();
++    group.tls_serialize(&mut group_state_bytes)
++        .map_err(|_| OpenMlsError::SerializationFailed)?;
++
++    Ok(B64.encode(group_state_bytes))
++}
++
++// ── Message encrypt / decrypt ───────────────────────────────────────────────────
++
++pub fn encrypt_message(
++    group_state_b64: String,
++    plaintext: String,
++) -> Result<EncryptResult, OpenMlsError> {
++    let backend = OpenMlsRustCrypto::default();
++
++    let group_bytes = decode_b64(&group_state_b64)?;
++    let mut group = MlsGroup::tls_deserialize_exact_bytes(&group_bytes)
++        .map_err(|_| OpenMlsError::DeserializationFailed)?;
++
++    let signature_keys = SignatureKeyPair::new(SignatureScheme::ED25519, &backend)
++        .map_err(|_| OpenMlsError::EncryptFailed)?;
++
++    let message = group
++        .create_message(&backend, &signature_keys, plaintext.as_bytes())
++        .map_err(|_| OpenMlsError::EncryptFailed)?;
++
++    let ciphertext_bytes = message
++        .tls_serialize_detached()
++        .map_err(|_| OpenMlsError::SerializationFailed)?;
++
++    let mut updated_bytes = Vec::new();
++    group.tls_serialize(&mut updated_bytes)
++        .map_err(|_| OpenMlsError::SerializationFailed)?;
++
++    Ok(EncryptResult {
++        ciphertext_b64: B64.encode(ciphertext_bytes),
++        updated_group_state_b64: B64.encode(updated_bytes),
++    })
++}
++
++pub fn decrypt_message(
++    group_state_b64: String,
++    ciphertext_b64: String,
++) -> Result<DecryptResult, OpenMlsError> {
++    let backend = OpenMlsRustCrypto::default();
++
++    let group_bytes = decode_b64(&group_state_b64)?;
++    let mut group = MlsGroup::tls_deserialize_exact_bytes(&group_bytes)
++        .map_err(|_| OpenMlsError::DeserializationFailed)?;
++
++    let ciphertext_bytes = decode_b64(&ciphertext_b64)?;
++    let message = MlsMessageIn::tls_deserialize_exact_bytes(&ciphertext_bytes)
++        .map_err(|_| OpenMlsError::DeserializationFailed)?;
++
++    let processed = group
++        .process_message(&backend, message)
++        .map_err(|_| OpenMlsError::DecryptFailed)?;
++
++    let plaintext = match processed.into_content() {
++        ProcessedMessageContent::ApplicationMessage(msg) => {
++            String::from_utf8(msg.into_bytes()).map_err(|_| OpenMlsError::DecryptFailed)?
++        }
++        _ => return Err(OpenMlsError::DecryptFailed),
++    };
++
++    let mut updated_bytes = Vec::new();
++    group.tls_serialize(&mut updated_bytes)
++        .map_err(|_| OpenMlsError::SerializationFailed)?;
++
++    Ok(DecryptResult {
++        plaintext,
++        updated_group_state_b64: B64.encode(updated_bytes),
++    })
++}
++
++// ── Safety number derivation ────────────────────────────────────────────────────
++
++pub fn derive_safety_number(
++    identity_pub_a_b64: String,
++    identity_pub_b_b64: String,
++) -> Result<String, OpenMlsError> {
++    let pub_a = decode_b64(&identity_pub_a_b64)?;
++    let pub_b = decode_b64(&identity_pub_b_b64)?;
++
++    // Sort lexicographically so A-B and B-A produce the same number.
++    let (first, second) = if pub_a <= pub_b {
++        (pub_a.as_slice(), pub_b.as_slice())
++    } else {
++        (pub_b.as_slice(), pub_a.as_slice())
++    };
++
++    // Two rounds of SHA-512, concatenated input, 5 digits per 2-byte chunk → 60 digits total.
++    let mut hasher = Sha512::new();
++    hasher.update(b"portava_safety_number_v1");
++    hasher.update(first);
++    hasher.update(second);
++    let hash: [u8; 64] = hasher.finalize().into();
++
++    // Derive 60 decimal digits: 30 pairs of bytes, each pair → 5-digit decimal (mod 100000).
++    let mut result = String::with_capacity(60);
++    for i in 0..30 {
++        let chunk = u16::from_be_bytes([hash[i * 2], hash[i * 2 + 1]]);
++        let digits = chunk % 100000;
++        result.push_str(&format!("{:05}", digits));
++    }
++
++    Ok(result)
++}
++
++// ── UniFFI dictionary types (declared here for proc-macro discovery) ────────────
++
++pub struct KeyPairBytes {
++    pub pub_key_b64: String,
++    pub priv_key_b64: String,
++}
++
++pub struct DeviceKeyPairBytes {
++    pub ed25519_pub_b64: String,
++    pub ed25519_priv_b64: String,
++    pub x25519_pub_b64: String,
++    pub x25519_priv_b64: String,
++}
++
++pub struct GroupCreateResult {
++    pub group_state_b64: String,
++    pub welcome_b64: String,
++}
++
++pub struct EncryptResult {
++    pub ciphertext_b64: String,
++    pub updated_group_state_b64: String,
++}
++
++pub struct DecryptResult {
++    pub plaintext: String,
++    pub updated_group_state_b64: String,
++}

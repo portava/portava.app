@@ -77,7 +77,9 @@ export function computeTrustScoreFromData(
   });
 
   // ── Identity verification (+20) ──────────────────────────────────────────
-  const isVerified = !!(profileRow.id_verified_at || profileRow.verified);
+  // profiles has no id_verified_at column — treat it as null and rely on
+  // the boolean `verified` flag alone.
+  const isVerified = !!profileRow.verified;
   const identityPoints = isVerified ? 20 : 0;
   factors.push({
     key: "identity",
@@ -155,6 +157,8 @@ export function computeTrustScoreFromData(
   });
 
   // ── Safety flag penalty (−5 each, max −20) ───────────────────────────────
+  // profiles has no safety_flags_count column — the fallback keeps this at 0
+  // until such a column exists.
   const flagCount = Number(profileRow.safety_flags_count ?? 0);
   const flagPenalty = flagCount > 0 ? -Math.min(20, flagCount * 5) : 0;
   if (flagCount > 0) {
@@ -202,7 +206,9 @@ export async function computeTrustScore(
       ? Promise.resolve({ data: preloadedProfileRow })
       : sc
           .from("profiles")
-          .select("verified, id_verified_at, created_at, safety_flags_count")
+          // profiles has no id_verified_at / safety_flags_count columns —
+          // select only what exists; scoring treats the missing fields as null/0.
+          .select("verified, created_at")
           .eq("id", userId)
           .maybeSingle(),
     sc

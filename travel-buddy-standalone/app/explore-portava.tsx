@@ -74,7 +74,7 @@ export const SECTIONS: DirectorySection[] = [
       { key: 'calls',      label: 'Calls',       Icon: Phone,         iconColor: '#059669', route: '/profile/edit/calling' },
       { key: 'following',  label: 'Following',   Icon: UserPlus,      iconColor: '#D97706', route: '/following' },
       { key: 'followers',  label: 'Followers',   Icon: Users,         iconColor: '#4F46E5', route: '/followers' },
-      { key: 'requests',   label: 'Requests',    Icon: UserCheck,     iconColor: '#0891B2', disabled: true },
+      { key: 'requests',   label: 'Requests',    Icon: UserCheck,     iconColor: '#0891B2', route: '/follow-requests' },
     ],
   },
   {
@@ -82,7 +82,7 @@ export const SECTIONS: DirectorySection[] = [
     data: [
       { key: 'discovery',      label: 'Discovery',      Icon: Compass,  iconColor: '#FF4D2E', route: '/(tabs)/discovery' },
       { key: 'search',         label: 'Search',          Icon: Search,   iconColor: '#11110F', route: '/search' },
-      { key: 'compass',        label: 'Compass',         Icon: Compass,  iconColor: '#3B7DED', disabled: true },
+      { key: 'compass',        label: 'Compass',         Icon: Compass,  iconColor: '#3B7DED', route: '/compass-preferences' },
       { key: 'map',            label: 'Map',             Icon: Map,      iconColor: '#2563EB', route: '/map' },
       { key: 'places',         label: 'Places',          Icon: MapPin,   iconColor: '#059669', disabled: true },
       { key: 'hidden-gems',    label: 'Hidden Gems',     Icon: Gem,      iconColor: '#D97706', route: '/gems' },
@@ -136,7 +136,7 @@ export const SECTIONS: DirectorySection[] = [
       { key: 'pp-trips-tab',   label: 'Trips',             Icon: Briefcase,    iconColor: '#7C3AED', route: '/(tabs)/passport' },
       { key: 'pp-followers',   label: 'Followers',         Icon: Users,        iconColor: '#DB2777', route: '/followers' },
       { key: 'pp-following',   label: 'Following',         Icon: UserPlus,     iconColor: '#059669', route: '/following' },
-      { key: 'pp-verification',label: 'Verification',      Icon: ShieldCheck,  iconColor: '#2563EB', disabled: true },
+      { key: 'pp-verification',label: 'Verification',      Icon: ShieldCheck,  iconColor: '#2563EB', route: '/profile/verification' },
       { key: 'pp-trust',       label: 'Trust and Safety',  Icon: Shield,       iconColor: '#D94040', route: '/profile/edit/safety' },
     ],
   },

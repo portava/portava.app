@@ -234,50 +234,7 @@ router.get("/me/reports", async (req, res) => {
   res.status(200).json({ reports: safe, total: count ?? 0 });
 });
 
-/* ===========================================================================
- * GET /admin/reports  — admin: list content reports (read-only)
- * ===========================================================================
- */
-router.get("/admin/reports", async (req, res) => {
-  const auth = await requireUser(req, res);
-  if (!auth) return;
-  const { user, client } = auth;
-
-  const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
-
-  const { data: profile, error: profileErr } = await client
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (profileErr || !profile || (profile as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return;
-  }
-
-  const limit  = Math.min(Number(req.query.limit  ?? 50), 200);
-  const offset = Number(req.query.offset ?? 0);
-  const status = req.query.status as string | undefined;
-
-  let query = sc
-    .from("reports")
-    .select("id, reporter_id, target_type, target_id, reason_code, reason_detail, severity, status, created_at", { count: "exact" })
-    .order("created_at", { ascending: false })
-    .range(offset, offset + limit - 1);
-
-  if (status && status !== "all") {
-    query = query.eq("status", status);
-  }
-
-  const { data, error, count } = await query;
-  if (error) {
-    req.log.error({ err: error }, "admin reports fetch failed");
-    sendError(res, "db_error", error.message);
-    return;
-  }
-
-  res.json({ reports: data ?? [], total: count ?? 0 });
-});
+// NOTE: GET /admin/reports lives in admin.ts (mounted earlier) — the duplicate
+// read-only handler that used to live here was shadowed and has been removed.
 
 export default router;

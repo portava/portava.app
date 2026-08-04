@@ -446,6 +446,16 @@ export default function RentABuddyLanding() {
         </Pressable>
       </View>
 
+      {/* Saved Buddies */}
+      <Pressable
+        style={styles.savedRow}
+        onPress={() => router.push('/(rent-a-buddy)/saved' as any)}
+      >
+        <Star size={16} color={color.signal} />
+        <Text style={styles.savedRowText}>Saved Buddies</Text>
+        <ChevronRight size={16} color={color.mute} />
+      </Pressable>
+
       {/* Top Buddies in City */}
       {city.trim().length > 2 && (
         <>
@@ -576,6 +586,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.lg, paddingVertical: space.md,
   },
   matchBtnText: { ...t.bodyStrong, color: color.onInk },
+  savedRow: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    marginHorizontal: space.lg, marginTop: space.md,
+    backgroundColor: color.paperRaised, borderRadius: radius.md,
+    borderWidth: 1, borderColor: color.haze,
+    paddingHorizontal: space.lg, paddingVertical: space.md, ...shadow.card,
+  },
+  savedRowText: { ...t.bodyStrong, color: color.ink, flex: 1 },
   noCity: { padding: space.lg, alignItems: 'center', gap: space.sm },
   noCityText: { ...t.body, color: color.mute, textAlign: 'center' },
   noCityLink: { ...t.bodyStrong, color: color.signal },

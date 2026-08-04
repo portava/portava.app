@@ -329,6 +329,11 @@ export default function BuddyDashboard() {
           onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard/requests' as any)}
         />
         <NavTile
+          label="Requests Inbox"
+          sub="Open traveller requests matching your profile — send offers"
+          onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard/requests-inbox' as any)}
+        />
+        <NavTile
           label="Availability"
           sub="Set your weekly schedule and blocked dates"
           onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard/availability' as any)}

@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import {
   View, Text, ScrollView, TextInput, StyleSheet, Pressable, Alert, ActivityIndicator,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Send, Plus, X } from 'lucide-react-native';
 import { TravelButton, TravelCard, TravelChip } from '../../../src/components/primitives';
@@ -41,6 +41,7 @@ function FieldLabel({ label, optional }: { label: string; optional?: boolean }) 
 
 export default function BuddyOffer() {
   const insets = useSafeAreaInsets();
+  const { requestId } = useLocalSearchParams<{ requestId?: string }>();
   const [category, setCategory] = useState<BuddyCategory | null>(null);
   const [price, setPrice] = useState('');
   const [date, setDate] = useState('');
@@ -83,12 +84,18 @@ export default function BuddyOffer() {
 
   async function handleSend() {
     if (!validate() || !category) return;
+    if (!requestId) {
+      Alert.alert(
+        'No request selected',
+        'Offers are sent in response to a traveller request. Open a request from your Requests Inbox first.',
+      );
+      return;
+    }
     if (sendLockRef.current) return;
     sendLockRef.current = true;
     setSending(true);
     try {
-      const res = await rentABuddy.createBuddyOffer({
-        category,
+      const res = await rentABuddy.createBuddyOffer(requestId, {
         priceUsd: parseFloat(price),
         proposedDate: date.trim(),
         proposedTime: time.trim() || undefined,

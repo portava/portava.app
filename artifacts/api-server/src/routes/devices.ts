@@ -4,25 +4,29 @@
  * E-0: clients register their platform and get a stable device ID back.
  *      public_key is nullable — populated in E-1 when OpenMLS keys are generated.
  *
- * E-1: PUT /:id/public-key populates the Ed25519 identity public key.
+ * E-1: POST/PUT /me/crypto-devices/:id/public-key populates the Ed25519
+ *      identity public key.
+ *
+ * Routes live under /me/crypto-devices (renamed from /me/devices to avoid
+ * colliding with the push-token routes in notifications.ts).
  *
  * These endpoints require authentication — anonymous callers are rejected.
  * The device list for a user is visible to the server (metadata only).
  * Private key material never leaves the client device.
  */
 
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isUuid } from "../lib/followDecisions.js";
 
 const router = Router();
 
-// ── POST /me/devices ─────────────────────────────────────────────────────────
+// ── POST /me/crypto-devices ──────────────────────────────────────────────────
 // Register a new device entry. Returns the stable device ID to store in
 // SecureStore on the client.
 // Body: { platform: 'ios'|'android'|'web', deviceFingerprint?: string }
-router.post("/me/devices", async (req, res) => {
+router.post("/me/crypto-devices", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -82,9 +86,9 @@ router.post("/me/devices", async (req, res) => {
   res.status(201).json({ device: data });
 });
 
-// ── GET /me/devices ───────────────────────────────────────────────────────────
+// ── GET /me/crypto-devices ────────────────────────────────────────────────────
 // List all registered devices for the authenticated user.
-router.get("/me/devices", async (req, res) => {
+router.get("/me/crypto-devices", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -107,9 +111,9 @@ router.get("/me/devices", async (req, res) => {
   res.json({ devices: data ?? [] });
 });
 
-// ── DELETE /me/devices/:id ────────────────────────────────────────────────────
+// ── DELETE /me/crypto-devices/:id ─────────────────────────────────────────────
 // Deregister a device (called on sign-out or device removal).
-router.delete("/me/devices/:id", async (req, res) => {
+router.delete("/me/crypto-devices/:id", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -138,11 +142,12 @@ router.delete("/me/devices/:id", async (req, res) => {
   res.status(200).json({ ok: true });
 });
 
-// ── PUT /me/devices/:id/public-key ────────────────────────────────────────────
+// ── POST /me/crypto-devices/:id/public-key ────────────────────────────────────
 // E-1: populate the Ed25519 identity public key for this device.
 // Called once per install after key generation.
+// Registered for both POST (current client) and PUT (legacy) methods.
 // Body: { publicKey: string (base64url, 32 bytes = 44 base64 chars) }
-router.put("/me/devices/:id/public-key", async (req, res) => {
+async function handlePublicKeyUpdate(req: Request, res: Response) {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -187,6 +192,48 @@ router.put("/me/devices/:id/public-key", async (req, res) => {
   }
 
   res.status(200).json({ ok: true });
+}
+
+router.post("/me/crypto-devices/:id/public-key", handlePublicKeyUpdate);
+router.put("/me/crypto-devices/:id/public-key", handlePublicKeyUpdate);
+
+// ── GET /users/:userId/devices ────────────────────────────────────────────────
+// S2: peer device listing for safety-number verification. Auth-required, but
+// no ownership requirement — public key material is public by design here.
+// Returns only public fields.
+router.get("/users/:userId/devices", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+
+  const userId = req.params.userId;
+  if (!isUuid(userId)) {
+    sendError(res, "invalid_payload", "Invalid user id");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "service client unavailable"); return; }
+
+  const { data, error } = await sc
+    .from("devices")
+    .select("id, platform, public_key, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    req.log.error({ err: error }, "devices: peer list failed");
+    sendError(res, "db_error", "Failed to list devices");
+    return;
+  }
+
+  const devices = ((data as any[]) ?? []).map((d) => ({
+    id: d.id,
+    platform: d.platform,
+    publicKey: d.public_key ?? null,
+    createdAt: d.created_at,
+  }));
+
+  res.json({ devices });
 });
 
 export default router;

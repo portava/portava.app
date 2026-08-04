@@ -15,10 +15,13 @@
     },
     "ios": {
       "supportsTablet": false,
+      "config": {
+        "usesNonExemptEncryption": true
+      },
       "bundleIdentifier": "com.passporttravelbuddy.app",
       "buildNumber": "2",
       "associatedDomains": [
-        "applinks:df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev"
+        "applinks:app.travel-buddy.io"
       ],
       "infoPlist": {
         "LSApplicationQueriesSchemes": [
@@ -36,6 +39,10 @@
     "android": {
       "package": "com.passporttravelbuddy.app",
       "versionCode": 2,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#0B1D33"
+      },
       "notificationChannels": [
         {
           "name": "incoming_calls",
@@ -81,12 +88,12 @@
           "data": [
             {
               "scheme": "https",
-              "host": "df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev",
+              "host": "app.travel-buddy.io",
               "pathPrefix": "/passport"
             },
             {
               "scheme": "https",
-              "host": "df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev",
+              "host": "app.travel-buddy.io",
               "pathPrefix": "/u"
             }
           ],
@@ -104,7 +111,7 @@
       [
         "expo-router",
         {
-          "origin": "https://df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev/"
+          "origin": "https://app.travel-buddy.io/"
         }
       ],
       "expo-font",

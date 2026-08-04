@@ -6,29 +6,30 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "prebuildCommand": "bash ../../scripts/eas-install-rust.sh",
+      "prebuildCommand": "bash scripts/eas-install-rust.sh",
       "ios": {
         "resourceClass": "m-medium"
       }
     },
     "preview": {
       "distribution": "internal",
-      "prebuildCommand": "bash ../../scripts/eas-install-rust.sh",
+      "prebuildCommand": "bash scripts/eas-install-rust.sh",
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://portava.replit.app",
+        "EXPO_PUBLIC_WEB_ORIGIN": "https://app.travel-buddy.io"
+      },
       "ios": {
         "resourceClass": "m-medium"
       }
     },
     "production": {
-      "autoIncrement": true
-    }
-  },
-  "hooks": {
-    "post-build": [
-      {
-        "command": "npx sentry-expo-upload-sourcemaps dist",
-        "filter": ["production"]
+      "autoIncrement": true,
+      "prebuildCommand": "bash scripts/eas-install-rust.sh",
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://portava.replit.app",
+        "EXPO_PUBLIC_WEB_ORIGIN": "https://app.travel-buddy.io"
       }
-    ]
+    }
   },
   "submit": {
     "production": {}

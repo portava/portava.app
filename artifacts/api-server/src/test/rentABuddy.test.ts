@@ -2840,11 +2840,11 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
   }
 
   before(() => {
-    process.env.SESSION_SECRET = INTERNAL_KEY;
+    process.env.INTERNAL_API_SECRET = INTERNAL_KEY;
   });
 
   after(() => {
-    delete process.env.SESSION_SECRET;
+    delete process.env.INTERNAL_API_SECRET;
   });
 
   it("escalates a no_show_pending booking past its grace expiry to disputed", async () => {

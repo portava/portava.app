@@ -329,7 +329,7 @@ export async function getUnreadCounts(): Promise<MsgResult<{ messages: number; n
 }
 
 export async function markNotificationsRead(): Promise<MsgResult<{ ok: boolean; viewedAt: string }>> {
-  return apiPost('/api/me/notifications/read-all');
+  return apiPost('/api/me/messaging/inbox-viewed');
 }
 
 export async function markHighlightsViewed(): Promise<MsgResult<{ ok: boolean; viewedAt: string }>> {

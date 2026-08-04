@@ -118,7 +118,9 @@ export function buildSnapshot(
   // Determine whether this is a specific named real-world place (not a generic content card).
   // A place is "specific" when it has a canonical_place_id, a provider_place_id, or both
   // a name and city that together uniquely identify a real-world location.
-  const canonicalPlaceId: string | null = row.canonical_place_id ?? null;
+  // discovery_places rows carry canonical_location_id (no canonical_place_id /
+  // provider_place_id columns); accept either spelling so both sources work.
+  const canonicalPlaceId: string | null = row.canonical_place_id ?? row.canonical_location_id ?? null;
   const providerPlaceId: string | null = row.provider_place_id ?? null;
   const name = cleanText(row.title ?? row.name);
   const city = cleanText(row.city);
@@ -134,9 +136,9 @@ export function buildSnapshot(
     subcategory: cleanEnum(row.subcategory),
     city,
     neighborhood: cleanText(row.neighborhood),
-    country: cleanText(row.country),
-    description: cleanText(row.description, 400),
-    venue: cleanText(row.venue ?? row.venue_name),
+    country: cleanText(row.country), // discovery_places has no country column → null for places
+    description: cleanText(row.description ?? row.blurb, 400), // places use blurb
+    venue: cleanText(row.venue ?? row.venue_name ?? row.location_name), // events use location_name
     setting: cleanEnum(row.setting),
     timeOfDay: prefs?.timeOfDay && prefs.timeOfDay !== "auto" ? prefs.timeOfDay : cleanEnum(row.time_of_day),
     amenities: cleanList(row.amenities),
@@ -327,7 +329,7 @@ export async function loadEntity(
   if (entityType === "event") {
     const { data } = await sc
       .from("events")
-      .select("id, title, category, city, country, venue_name, description, cover_url, header_image_source, header_image_updated_at")
+      .select("id, title, category, city, country, location_name, description, cover_url, header_image_source, header_image_updated_at")
       .eq("id", entityId)
       .maybeSingle();
     return data ?? null;
@@ -335,7 +337,9 @@ export async function loadEntity(
   if (entityType === "place") {
     const { data } = await sc
       .from("discovery_places")
-      .select("id, name, category, city, country, description, header_image_url, header_image_source, header_image_updated_at, canonical_place_id, provider_place_id")
+      // discovery_places has no country/description/canonical_place_id/provider_place_id
+      // columns — it exposes blurb and canonical_location_id instead.
+      .select("id, name, category, city, blurb, header_image_url, header_image_source, header_image_updated_at, canonical_location_id")
       .eq("id", entityId)
       .maybeSingle();
     return data ?? null;

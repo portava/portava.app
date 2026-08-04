@@ -528,12 +528,12 @@ export async function buildGraphFromSources(
   try {
     const { data } = await db
       .from("events")
-      .select("id, city, category, start_at, location_lat, location_lng")
+      .select("id, city, category, starts_at, location_lat, location_lng")
       .limit(BUILD_LIMIT);
     for (const r of (data as any[]) ?? []) {
       const city = normCity(r.city);
       if (!r.id || !city) continue;
-      const at = r.start_at ? String(r.start_at) : null;
+      const at = r.starts_at ? String(r.starts_at) : null;
       const category = normStr(r.category) ?? "event";
       registerCityCoordinates(city, r.location_lat, r.location_lng);
       batch.node("event", String(r.id), city, { category });

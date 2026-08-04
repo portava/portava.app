@@ -13,7 +13,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { SafetyNumberScreen } from '../src/screens/SafetyNumberScreen';
 import { supabase } from '../src/lib/supabase';
 
-const API_BASE = (process.env['EXPO_PUBLIC_API_URL'] ?? '').replace(/\/$/, '');
+const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
 
 export default function SafetyNumberRoute() {
   const { peerName, peerUserId } = useLocalSearchParams<{
@@ -35,9 +35,10 @@ export default function SafetyNumberRoute() {
         });
         if (!resp.ok) return;
         const json = await resp.json();
-        // Take the first device's public key (primary device).
-        const devices: { public_key?: string }[] = Array.isArray(json?.devices) ? json.devices : [];
-        const pub = devices.find(d => d.public_key)?.public_key ?? null;
+        // Server shape: { devices: [{ id, platform, publicKey, createdAt }] }
+        // Take the first device with a public key (primary device).
+        const devices: { publicKey?: string | null }[] = Array.isArray(json?.devices) ? json.devices : [];
+        const pub = devices.find(d => d.publicKey)?.publicKey ?? null;
         if (pub) setPeerIdentityPub(pub);
       } catch (_) {}
     })();

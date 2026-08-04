@@ -276,7 +276,7 @@ export function StampAnimationProvider({ children }: PropsWithChildren) {
         // error. The watchdog below (added 2026-07-28) exists to prevent
         // that; this log lets us confirm if we're hitting the stuck-lock case
         // in production.
-        console.log('[STAMP_DEBUG] triggerStamp SKIPPED — isAnimatingRef already true (possible stuck lock from a prior interrupted animation)');
+        if (__DEV__) console.log('[STAMP_DEBUG] triggerStamp SKIPPED — isAnimatingRef already true (possible stuck lock from a prior interrupted animation)');
         return;
       }
       isAnimatingRef.current = true;
@@ -297,7 +297,7 @@ export function StampAnimationProvider({ children }: PropsWithChildren) {
       // a fast scroll used to leave every stamp button dead for up to 2.5s.
       watchdogRef.current = setTimeout(() => {
         if (isAnimatingRef.current && animTokenRef.current === token) {
-          console.log('[STAMP_DEBUG] triggerStamp WATCHDOG fired — force-unlocking stuck isAnimatingRef');
+          if (__DEV__) console.log('[STAMP_DEBUG] triggerStamp WATCHDOG fired — force-unlocking stuck isAnimatingRef');
           isAnimatingRef.current = false;
           setIsAnimating(false);
         }

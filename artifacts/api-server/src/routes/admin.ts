@@ -1084,7 +1084,7 @@ router.get("/admin/users", async (req, res) => {
       .select("id", { count: "exact", head: true })
       .eq("target_id", userId)
       .eq("status", "open"),
-    sc.from("compass_analytics")
+    sc.from("compass_settings")
       .select("onboarding_completed, onboarding_completed_at")
       .eq("user_id", userId)
       .maybeSingle(),

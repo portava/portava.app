@@ -6,7 +6,7 @@ import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Users, BookOpen, ShieldAlert, BarChart2, ClipboardList, Globe } from 'lucide-react-native';
+import { ArrowLeft, Users, BookOpen, ShieldAlert, BarChart2, ClipboardList, Globe, Store } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../../src/theme/tokens';
 import { useRentABuddyFlag } from '../../../src/hooks/useRentABuddyFlag';
 
@@ -51,6 +51,13 @@ const SECTIONS = [
     label: 'Analytics',
     sub: 'Bookings, revenue, supply & demand by city',
     route: '/(rent-a-buddy)/admin/analytics',
+    accent: color.deep,
+  },
+  {
+    icon: Store,
+    label: 'Marketplace',
+    sub: 'Package review queue, fee rules, and marketplace controls',
+    route: '/(rent-a-buddy)/admin/marketplace',
     accent: color.deep,
   },
 ] as const;

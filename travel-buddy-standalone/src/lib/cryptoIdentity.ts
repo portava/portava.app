@@ -4,7 +4,7 @@
  * On first launch (or after a re-install that cleared SecureStore on iOS):
  *   1. Generates an Ed25519 identity key pair and an Ed25519+X25519 device key pair.
  *   2. Stores all private keys in SecureStore.
- *   3. Registers the device with the server (`PUT /me/devices/:id/public-key`).
+ *   3. Registers the device with the server (`POST /me/crypto-devices/:id/public-key`).
  *   4. Generates an initial batch of KeyPackages and uploads them to the server.
  *
  * Subsequent launches: detects existing keys in SecureStore and skips generation.
@@ -27,7 +27,9 @@ import { freshToken } from '../services/apiToken.ts';
 const KEY_PACKAGE_BATCH_SIZE = 10;
 
 function log(msg: string, data?: object) {
-  console.log(`[CryptoIdentity] ${msg}`, data ?? '');
+  if (__DEV__) {
+    console.log(`[CryptoIdentity] ${msg}`, data ?? '');
+  }
 }
 
 /** Returns true if identity keys are already in SecureStore. */
@@ -131,7 +133,7 @@ async function _ensureDeviceRegistered(
 
   if (!deviceId) {
     // Register the device
-    const { data, error } = await apiPost('/api/me/devices', {
+    const { data, error } = await apiPost('/me/crypto-devices', {
       platform: 'ios', // overridden by the caller if on Android
     }) as { data?: { device?: { id: string } }; error?: unknown };
 
@@ -152,8 +154,8 @@ async function _ensureDeviceRegistered(
         const url = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
         const token = await freshToken();
         if (!token) return;
-        await fetch(`${url}/api/me/devices/${deviceId}/public-key`, {
-          method: 'PUT',
+        await fetch(`${url}/api/me/crypto-devices/${deviceId}/public-key`, {
+          method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,

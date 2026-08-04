@@ -265,6 +265,48 @@ export default function ConnectedFeaturesScreen() {
             subtitle="Review and action wrong-place reports"
             onPress={() => router.push('/admin/place-mismatch-reports' as any)}
           />
+          <SettingsDivider />
+          <SettingsRow
+            title="Stamp Studio"
+            subtitle="Stamp catalog, queue, and reconciler"
+            onPress={() => router.push('/admin/stamps' as any)}
+          />
+          <SettingsDivider />
+          <SettingsRow
+            title="Content Reports"
+            subtitle="User-submitted content report queue"
+            onPress={() => router.push('/admin/content-reports' as any)}
+          />
+          <SettingsDivider />
+          <SettingsRow
+            title="Trust Reviews"
+            onPress={() => router.push('/admin/trust-reviews' as any)}
+          />
+          <SettingsDivider />
+          <SettingsRow
+            title="Trust Settings"
+            onPress={() => router.push('/admin/trust-settings' as any)}
+          />
+          <SettingsDivider />
+          <SettingsRow
+            title="Gaming Flags"
+            onPress={() => router.push('/admin/gaming-flags' as any)}
+          />
+          <SettingsDivider />
+          <SettingsRow
+            title="Hashtags"
+            onPress={() => router.push('/admin/hashtags' as any)}
+          />
+          <SettingsDivider />
+          <SettingsRow
+            title="Media Moderation"
+            onPress={() => router.push('/admin/media' as any)}
+          />
+          <SettingsDivider />
+          <SettingsRow
+            title="Place Images"
+            onPress={() => router.push('/admin/place-images' as any)}
+          />
           {rentBuddyEnabled && (
             <>
               <SettingsDivider />

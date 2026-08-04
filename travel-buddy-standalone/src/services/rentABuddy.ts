@@ -679,7 +679,6 @@ export async function requestRouteChange(
 // ── Buddy-initiated offers ─────────────────────────────────────────────────────
 
 export interface BuddyOfferPayload {
-  category: BuddyCategory;
   priceUsd: number;
   proposedDate: string;
   proposedTime?: string;
@@ -689,10 +688,27 @@ export interface BuddyOfferPayload {
   addonIds?: string[];
 }
 
-export async function createBuddyOffer(payload: BuddyOfferPayload): Promise<ApiResult<{ ok: boolean }>> {
-  return apiFetch('/api/rent-a-buddy/dashboard/offers', {
+/**
+ * Buddy sends a custom offer against an open traveller request.
+ * Server: POST /api/rent-a-buddy/requests/:requestId/offers
+ */
+export async function createBuddyOffer(
+  requestId: string,
+  payload: BuddyOfferPayload,
+): Promise<ApiResult<{ offer: BuddyOffer }>> {
+  const proposedStart = payload.proposedDate
+    ? `${payload.proposedDate}T${payload.proposedTime ?? '00:00'}:00`
+    : undefined;
+  return apiFetch(`/api/rent-a-buddy/requests/${requestId}/offers`, {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      proposedPriceUsd: payload.priceUsd,
+      proposedStart,
+      meetupLocation: payload.meetupLocation,
+      includedServices: payload.includedServices,
+      message: payload.message,
+      addonsOffered: payload.addonIds,
+    }),
   });
 }
 

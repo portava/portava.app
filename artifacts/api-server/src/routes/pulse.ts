@@ -507,12 +507,16 @@ router.get("/pulse", async (req, res) => {
       const trustMap = new Map<string, number>();
       if (authorIdsForTrust.size > 0) {
         try {
+          // Trust scores live in trust_profiles.overall_score (0043_trust_engine.sql);
+          // there is no user_trust_scores table. NUMERIC comes back as a string,
+          // so coerce to number.
           const { data: trustRows } = await sc
-            .from("user_trust_scores")
-            .select("user_id, score")
+            .from("trust_profiles")
+            .select("user_id, overall_score")
             .in("user_id", [...authorIdsForTrust]);
           for (const r of (trustRows as any[]) ?? []) {
-            trustMap.set(r.user_id as string, r.score as number);
+            const score = Number(r.overall_score);
+            if (Number.isFinite(score)) trustMap.set(r.user_id as string, score);
           }
         } catch { /* non-fatal — trust scores contribute 0 when absent */ }
       }

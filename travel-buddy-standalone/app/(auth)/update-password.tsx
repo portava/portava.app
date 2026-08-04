@@ -125,7 +125,7 @@ export default function UpdatePassword() {
       setSuccess(true);
       // Sign out so the user starts a fresh session with their new password.
       await supabase.auth.signOut();
-      setTimeout(() => router.replace('/(auth)' as any), 2500);
+      setTimeout(() => router.replace('/(auth)/sign-in'), 2500);
     } catch (e: any) {
       setError(e?.message ?? 'Something went wrong. Please try again.');
     } finally {
@@ -161,7 +161,7 @@ export default function UpdatePassword() {
         </Text>
         <Pressable
           style={styles.btn}
-          onPress={() => router.replace('/(auth)/forgot-password' as any)}
+          onPress={() => router.replace({ pathname: '/(auth)/sign-in', params: { mode: 'forgot-password' } })}
           accessibilityRole="button"
           accessibilityLabel="Go to forgot password"
         >
@@ -169,7 +169,7 @@ export default function UpdatePassword() {
         </Pressable>
         <Pressable
           style={styles.cancelBtn}
-          onPress={() => router.replace('/(auth)' as any)}
+          onPress={() => router.replace('/(auth)/sign-in')}
           accessibilityRole="button"
           accessibilityLabel="Back to sign in"
         >
@@ -260,7 +260,7 @@ export default function UpdatePassword() {
 
       <Pressable
         style={styles.cancelBtn}
-        onPress={() => router.replace('/(auth)' as any)}
+        onPress={() => router.replace('/(auth)/sign-in')}
         accessibilityRole="button"
         accessibilityLabel="Back to sign in"
       >

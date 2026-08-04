@@ -19,7 +19,7 @@
  */
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, isAcceptedTripMember, sendError, canEditPlan } from "../lib/http.js";
+import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { enrichSpans } from "../lib/enrichSpans.js";
@@ -940,78 +940,9 @@ router.post("/meetups/:meetupId/confirm-time", async (req, res) => {
   res.json({ startsAt, status: "confirmed", meetupId, meetup: toCamelMeetup(updated) });
 });
 
-// ── POST /api/meetups/:meetupId/add-to-trip-plan ─────────────────────────────
-
-const AddToPlanSchema = z.object({
-  tripId: z.string().regex(UUID, "tripId must be a valid UUID"),
-  lockType: z.enum(["fixed", "flexible", "optional"]).default("flexible"),
-});
-
-router.post("/meetups/:meetupId/add-to-trip-plan", async (req, res) => {
-  const ctx = await requireUser(req, res);
-  if (!ctx) return;
-  const { client, user } = ctx;
-
-  const { meetupId } = req.params;
-  if (!UUID.test(meetupId)) { sendError(res, "invalid_payload", "Invalid meetupId"); return; }
-
-  const parsed = AddToPlanSchema.safeParse(req.body);
-  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
-  const { tripId, lockType } = parsed.data;
-
-  // Caller must have plan-edit permission on the target trip
-  const canEdit = await canEditPlan(client, tripId, user.id);
-  if (canEdit === null) { sendError(res, "not_found", "Trip not found"); return; }
-  if (!canEdit) { sendError(res, "forbidden", "You do not have permission to add items to this trip's plan"); return; }
-
-  const { data: meetup } = await client
-    .from("meetups").select("id, title, starts_at, location_name, status, trip_id, visibility").eq("id", meetupId).maybeSingle();
-  if (!meetup) { sendError(res, "not_found", "Meetup not found"); return; }
-
-  // Enforce meetup-trip identity: a trip-scoped meetup may only be added to its own trip
-  if ((meetup as any).trip_id && (meetup as any).trip_id !== tripId) {
-    sendError(res, "forbidden", "This meetup is scoped to a different trip");
-    return;
-  }
-
-  // Idempotent: skip if already added
-  const { data: existing } = await client
-    .from("trip_plan_items")
-    .select("id")
-    .eq("trip_id", tripId)
-    .eq("source_type", "meetup")
-    .eq("source_id", meetupId)
-    .is("removed_at", null)
-    .maybeSingle();
-
-  if (existing) {
-    res.status(200).json({ message: "already_added", planItemId: (existing as any).id, idempotent: true });
-    return;
-  }
-
-  const { data: item, error } = await client
-    .from("trip_plan_items")
-    .insert({
-      trip_id:       tripId,
-      creator_id:    user.id,
-      title:         (meetup as any).title,
-      category:      "meeting_point",
-      status:        "tentative",
-      source_type:   "meetup",
-      source_id:     meetupId,
-      starts_at:     (meetup as any).starts_at ?? null,
-      location_name: (meetup as any).location_name ?? null,
-      sort_order:    0,
-      visibility:    "members",
-      lock_type:     lockType,
-    })
-    .select("*")
-    .single();
-
-  if (error) { req.log.error({ err: error }, "add meetup to trip plan"); sendError(res, "db_error", error.message); return; }
-
-  res.status(201).json({ planItemId: (item as any).id, tripId, meetupId });
-});
+// NOTE: POST /meetups/:meetupId/add-to-trip-plan lives in plan.ts (mounted
+// earlier) — the duplicate handler that used to live here was shadowed and has
+// been removed; its trip-scope guard was ported into plan.ts.
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

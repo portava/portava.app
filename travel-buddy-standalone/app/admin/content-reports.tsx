@@ -55,9 +55,9 @@ export default function ContentReportsScreen() {
     try {
       setError(null);
       const data = await fetchAdminReports({
+        page:   p,
         limit:  30,
-        offset: (p - 1) * 30,
-        status: statusFilter === 'all' ? undefined : statusFilter,
+        status: statusFilter,
       });
       setReports((prev) => (append ? [...prev, ...data.reports] : data.reports));
       setTotal(data.total);

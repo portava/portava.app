@@ -5703,10 +5703,19 @@ router.get("/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
 // Accessible without user auth — restrict at the infrastructure / firewall level.
 
 router.post("/internal/buddy-requests/expire", async (req, res) => {
-  // Require a shared secret (SESSION_SECRET) to prevent unauthenticated callers from
-  // triggering mass state transitions. Callers must set X-Internal-Key: <SESSION_SECRET>.
+  // Require the internal shared secret (INTERNAL_API_SECRET) to prevent
+  // unauthenticated callers from triggering mass state transitions. Callers
+  // must set X-Internal-Key: <INTERNAL_API_SECRET>. Fail closed when the env
+  // var is unset (route disabled) — same pattern as notifications.ts.
+  const secret = process.env.INTERNAL_API_SECRET;
+  if (!secret) {
+    return res.status(503).json({
+      error: "misconfigured",
+      message: "INTERNAL_API_SECRET is not set; internal endpoints are disabled",
+    });
+  }
   const internalKey = req.headers["x-internal-key"];
-  if (!internalKey || internalKey !== process.env.SESSION_SECRET) {
+  if (!internalKey || internalKey !== secret) {
     return res.status(401).json({ error: "unauthorized", message: "Missing or invalid internal key." });
   }
 

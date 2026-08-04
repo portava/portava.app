@@ -784,7 +784,7 @@ router.get("/users/:username/profile", async (req, res) => {
 
     const [tripResult, stampResult] = await Promise.all([
       countUserTrips(sc, profile.id),
-      sc.from("passport_stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id).eq("locked", false),
+      sc.from("passport_stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id),
     ]);
   const tripCount = tripResult.count;
   let stampCount = (stampResult as any).error?.code === "PGRST205" ? 0 : (stampResult.count ?? 0);
@@ -1302,7 +1302,7 @@ router.get("/users/:username/og-image.png", async (req, res) => {
 
     const [tripResult, stampResult] = await Promise.all([
       countUserTrips(sc, profile.id),
-      sc.from("passport_stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id).eq("locked", false),
+      sc.from("passport_stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id),
     ]);
 
     const avatarDataUri = profile.avatar_url ? await fetchImageAsDataUri(profile.avatar_url) : null;
