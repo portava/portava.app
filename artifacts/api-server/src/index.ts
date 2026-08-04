@@ -37,6 +37,7 @@ import { startPostPlaceBackfillWorker } from "./lib/places/postPlaceBackfillWork
 import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js";
 import { startPlaceCollectionsWorker } from "./lib/places/placeCollectionsWorker.js";
 import { startCompassSearchDecayFlushScheduler } from "./lib/compassSearchDecayFlushScheduler.js";
+import { startAccountDeletionScheduler } from "./lib/accountDeletionScheduler.js";
 import { startPlaceDayLifecycleWorker } from "./lib/places/placeDaysWorker.js";
 
 assertRequiredEnv(logger);
@@ -81,6 +82,10 @@ app.listen(port, (err) => {
   startCallSweepScheduler();
   startTripReminderScheduler();
   startIntelligenceGraphScheduler();
+  // Executes due user_deletion_requests. Irreversible, so it is gated behind
+  // the `account_deletion_worker_enabled` feature flag and fails closed —
+  // starting it here is safe even before the flag is turned on.
+  startAccountDeletionScheduler();
   startInviteSlotReconciler();
   startInviteSlotSweeper();
   // Reload coordinate-learned city timezones so a restart doesn't reset

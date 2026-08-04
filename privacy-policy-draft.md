@@ -161,17 +161,26 @@ We'll notify you in-app of material changes and update the date above.
   is not blocked and age gates fall back to "dob_missing" for users
   who never set one. Collect DOB at signup before publishing, or the
   16+ statement above is aspirational rather than enforced.
-- ⚠ BLOCKING DISCREPANCY — "Retention and deletion" promises that
-  deleting your account removes profile, content, verification records
-  and message ciphertext. Per the production audit (P1 item 7) account
-  deletion is manual-admin-only: there is no scheduled worker acting on
-  user_deletion_requests.scheduled_at, deletion does not cascade to
-  posts/media/message ciphertext/verification rows, and auth.admin
-  .deleteUser is never called, so the email address persists
-  indefinitely. Either ship the cascading deletion worker before
-  publishing, or soften this section. Do not publish as-is — this is
-  the claim most likely to be relied on by Play Data Safety, Apple, and
-  a GDPR erasure request.
+- "Retention and deletion" — was a BLOCKING DISCREPANCY; now largely
+  closed by audit P1 item 7. services/accountDeletion/
+  AccountDeletionService.ts implements the full cascade (posts and
+  their media as DB rows AND Storage objects, message ciphertext,
+  identity-verification rows, media_assets), anonymises the profile
+  into a "Deleted User" tombstone, and calls auth.admin.deleteUser so
+  the email address no longer persists. Both the manual admin endpoint
+  and the new lib/accountDeletionScheduler.ts share that one code path,
+  so they cannot drift.
+  ⚠ STILL REQUIRED before this section is true in production:
+    1. apply migration 2073_account_deletion_worker_flag.sql; and
+    2. set feature flag `account_deletion_worker_enabled` = true.
+  The worker fails closed, so until step 2 the scheduled date still
+  passes with nothing happening and only a manual admin execution
+  deletes anything. Do not publish this section until the flag is on
+  and one real deletion has been verified end to end.
+  Note the deliberate carve-out already stated above: moderation and
+  report records are retained by design, and the profile row survives
+  as an anonymised tombstone (54 tables reference it with NO ACTION
+  FKs, so a hard row-delete is not possible).
 - STILL REQUIRED before publishing: [COMPANY LEGAL NAME], [ADDRESS],
   [PRIVACY EMAIL] (appears twice: "Your rights" and "Contact"). These
   are legal-entity facts and were deliberately NOT guessed.

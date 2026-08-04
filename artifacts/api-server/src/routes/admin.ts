@@ -25,6 +25,7 @@ import { getServiceClient } from "../lib/supabase";
 import { logger } from "../lib/logger";
 import { clearReminderDedup } from "../lib/tripReminderScheduler";
 import { invalidateCompassHomeCache } from "./compassHome.js";
+import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
 import {
   runSchemaDriftCheck,
   getCachedSchemaDriftResult,
@@ -1812,68 +1813,37 @@ router.post("/admin/deletion-requests/:id/execute", async (req, res) => {
   if (!reqRow) { sendError(res, "not_found", "Deletion request not found or already executed"); return; }
 
   const userId = (reqRow as any).user_id as string;
-  const now = new Date().toISOString();
 
   // Audit first (fail-closed)
   const auditR = await logModerationAction(sc, userId, adminUserId, "account_deleted", "Account deletion executed");
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
-  // Delete existing profile media from Storage before nulling the DB fields
-  try {
-    const { data: profileRow } = await sc
-      .from("profiles")
-      .select("avatar_url, cover_photo_url")
-      .eq("id", userId)
-      .maybeSingle();
-    const avatarUrl: string | null = (profileRow as any)?.avatar_url ?? null;
-    const coverUrl:  string | null = (profileRow as any)?.cover_photo_url ?? null;
-    const pathsToDelete: string[] = [];
-    for (const url of [avatarUrl, coverUrl]) {
-      if (!url) continue;
-      const marker = `/object/public/${PROFILE_MEDIA_BUCKET}/`;
-      const idx = url.indexOf(marker);
-      if (idx !== -1) pathsToDelete.push(url.slice(idx + marker.length));
-    }
-    if (pathsToDelete.length > 0) {
-      await sc.storage.from(PROFILE_MEDIA_BUCKET).remove(pathsToDelete);
-    }
-  } catch { /* fail-open: storage deletion is best-effort during account deletion */ }
-
-  // Anonymise profile: null out PII fields, set status to deleted
-  const { error: profileErr } = await sc.from("profiles").update({
-    handle:          null,
-    username:        null,
-    display_name:    "Deleted User",
-    name:            "Deleted User",
-    bio:             null,
-    avatar_url:      null,
-    cover_photo_url: null,
-    home_city:       null,
-    home_country:    null,
-    current_city:    null,
-    account_status:  "deleted",
-  }).eq("id", userId);
-
-  if (profileErr) { sendError(res, "db_error", profileErr.message); return; }
+  // The full cascade lives in AccountDeletionService so this manual path and
+  // the scheduled worker can never drift apart. It removes posts + media (DB
+  // rows and Storage objects), message ciphertext, verification rows, and the
+  // auth user (the email), then anonymises the profile tombstone.
+  const outcome = await executeAccountDeletion(sc, userId, {
+    actorId: adminUserId,
+    reason: "Account deletion executed",
+  });
 
   // Profile city/visibility changed — drop any cached Compass Home payload
   // so the deleted account never serves stale personalised content.
   invalidateCompassHomeCache(userId);
 
-  // Mark state as deleted
-  await sc.from("user_account_states")
-    .upsert({ user_id: userId, state: "deleted", reason: "Account deletion executed", set_by: adminUserId, created_at: now }, { onConflict: "user_id,state" })
-    .then(undefined, () => {});
+  if (!outcome.ok) {
+    const failed = outcome.steps.filter((s) => !s.ok).map((s) => `${s.step}: ${s.error}`).join("; ");
+    sendError(res, "db_error", `Account deletion did not complete — ${failed}`, { exposeDetail: true });
+    return;
+  }
 
-  // Mark deletion request completed
-  const { error: updateErr } = await sc
-    .from("user_deletion_requests")
-    .update({ status: "completed", executed_at: now })
-    .eq("user_id", userId);
-
-  if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
-
-  res.json({ ok: true, userId, executedAt: now });
+  res.json({
+    ok: true,
+    userId,
+    executedAt: outcome.executedAt,
+    steps: outcome.steps,
+    warnings: outcome.warnings,
+  });
 });
 
 // ── Dev interaction tester ────────────────────────────────────────────────────
