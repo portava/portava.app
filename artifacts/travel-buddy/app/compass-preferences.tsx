@@ -548,7 +548,7 @@ export default function CompassPreferencesScreen() {
           <Pressable
             style={s.expandRow}
             testID="compass-settings-link"
-            onPress={() => router.push('/compass-settings')}
+            onPress={() => router.push('/compass-settings' as any)}
           >
             <View style={{ flex: 1 }}>
               <Text style={s.fieldLabel}>Compass Settings</Text>

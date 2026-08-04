@@ -17,6 +17,7 @@ import { render, screen } from '@testing-library/react-native';
 // requireActual would pull in real Expo Router internals that crash the test renderer.
 jest.mock('expo-router', () => ({
   router: { replace: jest.fn(), push: jest.fn() },
+  useLocalSearchParams: jest.fn().mockReturnValue({}),
 }));
 
 // ── Safe area ─────────────────────────────────────────────────────────────────

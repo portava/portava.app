@@ -636,6 +636,9 @@ const s = StyleSheet.create({
   },
   actionBtn: {
     alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 44,
+    minHeight: 44,
     gap: 4,
   },
   actionCount: {
