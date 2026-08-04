@@ -205,3 +205,65 @@ describe('WatchItemOverlay Save button accessibility label', () => {
     expect(screen.queryByRole('button', { name: 'Unsave' })).toBeNull();
   });
 });
+
+// ── Stamp active-state label tests ────────────────────────────────────────────
+
+describe('WatchItemOverlay stamp button active state', () => {
+  let stampGroupRef: React.RefObject<View | null>;
+
+  function renderWithStampState(stampVisualIsStamped: boolean) {
+    return render(
+      <WatchItemOverlay
+        item={(() => ({
+          id: 'item-stamp',
+          videoUrl: 'https://example.com/video.mp4',
+          posterUrl: null,
+          duration: null,
+          creator: {
+            id: 'user-uuid-123',
+            displayName: 'Jane Doe',
+            username: 'janedoe',
+            avatarUrl: null,
+            isFollowing: false,
+          },
+          caption: null,
+          hashtags: [],
+          place: null,
+          linkedEntity: null,
+          audioLabel: null,
+          likeCount: 0,
+          commentCount: 0,
+          saveCount: 0,
+          likedByMe: false,
+          savedByMe: false,
+        }))()}
+        currentUserId="other-user"
+        isSaved={false}
+        onComment={jest.fn()}
+        onSave={jest.fn()}
+        onMore={jest.fn()}
+        stampGroupRef={stampGroupRef}
+        stampVisualIsStamped={stampVisualIsStamped}
+        stampVisualCount={0}
+        stampButtonStyle={{}}
+        onStampPress={jest.fn()}
+      />,
+    );
+  }
+
+  beforeEach(() => {
+    stampGroupRef = React.createRef<View>();
+  });
+
+  it('shows label "Unstamp" when viewer has already stamped (stampVisualIsStamped=true)', async () => {
+    await renderWithStampState(true);
+    expect(screen.getByRole('button', { name: 'Unstamp' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Stamp' })).toBeNull();
+  });
+
+  it('shows label "Stamp" when viewer has not yet stamped (stampVisualIsStamped=false)', async () => {
+    await renderWithStampState(false);
+    expect(screen.getByRole('button', { name: 'Stamp' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Unstamp' })).toBeNull();
+  });
+});

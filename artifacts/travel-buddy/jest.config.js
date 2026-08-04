@@ -107,5 +107,11 @@ module.exports = {
     // react-native@0.81.5).
     '^expo-modules-core$': '<rootDir>/../../node_modules/.pnpm/expo-modules-core@3.0.30_react-native@0.81.5_@babel+core@7.29.7_@types+react@19.1.17_react@19.1.0__react@19.1.0/node_modules/expo-modules-core',
     '^expo-modules-core/(.*)$': '<rootDir>/../../node_modules/.pnpm/expo-modules-core@3.0.30_react-native@0.81.5_@babel+core@7.29.7_@types+react@19.1.17_react@19.1.0__react@19.1.0/node_modules/expo-modules-core/$1',
+    // @testing-library/react-native v14's compiled dist/render.js requires
+    // 'test-renderer' — a lightweight React 19 test renderer that pnpm does
+    // not hoist to the local node_modules. Pin the resolution to the pnpm
+    // store path so Jest can always find it.
+    '^test-renderer$': '<rootDir>/../../node_modules/.pnpm/test-renderer@1.2.0_@types+react@19.1.17_react@19.1.0/node_modules/test-renderer',
+    '^test-renderer/(.*)$': '<rootDir>/../../node_modules/.pnpm/test-renderer@1.2.0_@types+react@19.1.17_react@19.1.0/node_modules/test-renderer/$1',
   },
 };
