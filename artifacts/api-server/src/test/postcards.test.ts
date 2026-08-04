@@ -125,6 +125,7 @@ function buildFakeClient(tokenToId: Record<string, string>) {
       },
       eq(col: string, val: any)    { filtered = filtered.filter((r) => r[col] === val); return b; },
       neq(col: string, val: any)   { filtered = filtered.filter((r) => r[col] !== val); return b; },
+      is(col: string, val: any)    { filtered = filtered.filter((r) => r[col] === val); return b; },
       in(col: string, vals: any[]) { filtered = filtered.filter((r) => vals.includes(r[col])); return b; },
       ilike(col: string, pattern: string) {
         // Case-insensitive LIKE with % / _ wildcards (enough for these tests)

@@ -81,7 +81,7 @@ router.get("/featured", asyncHandler(async (req, res) => {
   // String must be a literal directly in .select() so the column-drift checker can parse it.
   let query = sc
     .from("portava_featured")
-    .select("id, post_id, category, featured_at, posts!post_id(id, content, location_city, location_country, author_id, post_media(id, media_type, public_url, thumbnail_url, thumbnail_path, sort_order, processing_status, storage_path, storage_bucket), profiles!author_id(id, username, full_name, avatar_url, verified, is_private))")
+    .select("id, post_id, category, featured_at, posts!post_id(id, content, location_city, location_country, author_id, post_media(id, media_type, public_url, thumbnail_url, sort_order, processing_status, storage_path, storage_bucket), profiles!author_id(id, username, full_name, avatar_url, verified, is_private))")
     .eq("status", "live")
     .order("featured_at", { ascending: false })
     .limit(200);
@@ -93,7 +93,8 @@ router.get("/featured", asyncHandler(async (req, res) => {
 
   const { data: rows, error } = await query;
   if (error) {
-    sendError(res, "db_error", error.message);
+    req.log.error({ err: error }, "Featured posts query failed");
+    sendError(res, "db_error", "Featured content is temporarily unavailable. Please try again later.");
     return;
   }
 
@@ -116,7 +117,7 @@ router.get("/featured", asyncHandler(async (req, res) => {
   // or a deployment bug clears portava_featured, rather than showing a blank UI.
   // The mobile client receives isFallback:true so it can display a subtle notice.
   if (visible.length === 0 && !creatorId) {
-    return buildFallbackResponse(sc, res);
+    return buildFallbackResponse(sc, res, req);
   }
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -131,7 +132,7 @@ router.get("/featured", asyncHandler(async (req, res) => {
       .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
     const primaryMedia = sortedMedia[0];
 
-    // Resolve thumbnail URL — prefer public_url, fall back to thumbnail_url
+    // Resolve thumbnail URL from columns that exist in the live post_media schema.
     const thumbnailUrl: string | null = primaryMedia?.thumbnail_url ?? primaryMedia?.public_url ?? null;
     const mediaType: "image" | "video" = (primaryMedia?.media_type as any) ?? "image";
 
@@ -202,7 +203,7 @@ router.get("/featured", asyncHandler(async (req, res) => {
 // posts (by like_count) and returns them as a single "portava_picks" group so
 // the Discovery carousel always has something to display.
 
-async function buildFallbackResponse(sc: any, res: any): Promise<void> {
+async function buildFallbackResponse(sc: any, res: any, req: any): Promise<void> {
   const portavaProfile = await resolvePortavaProfile(sc);
 
   if (!portavaProfile) {
@@ -214,7 +215,7 @@ async function buildFallbackResponse(sc: any, res: any): Promise<void> {
 
   const { data: portavaPosts, error } = await sc
     .from("posts")
-    .select("id, content, location_city, location_country, author_id, like_count, post_media(id, media_type, public_url, thumbnail_url, thumbnail_path, sort_order, processing_status, storage_path, storage_bucket), profiles!author_id(id, username, full_name, avatar_url, verified, is_private)")
+    .select("id, content, location_city, location_country, author_id, like_count, post_media(id, media_type, public_url, thumbnail_url, sort_order, processing_status, storage_path, storage_bucket), profiles!author_id(id, username, full_name, avatar_url, verified, is_private)")
     .eq("author_id", portavaProfile.id)
     .eq("status", "active")
     .eq("post_status", "published")
@@ -222,8 +223,8 @@ async function buildFallbackResponse(sc: any, res: any): Promise<void> {
     .limit(18);
 
   if (error) {
-    // Surface the DB error rather than returning empty — the client can retry.
-    sendError(res, "db_error", error.message);
+    req.log.error({ err: error }, "Featured fallback query failed");
+    sendError(res, "db_error", "Featured content is temporarily unavailable. Please try again later.");
     return;
   }
 

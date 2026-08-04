@@ -196,7 +196,7 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
       <View style={card.engRow}>
         <View style={card.engItem}>
           <StampIcon size={14} active={false} />
-          <Text style={card.engText}>{post.likeCount}</Text>
+           <Text style={card.engText}>{post.stampCount ?? post.likeCount}</Text>
         </View>
         <View style={card.engItem}>
           <MessageCircle size={14} color={color.mute} />

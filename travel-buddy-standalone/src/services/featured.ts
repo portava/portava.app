@@ -79,11 +79,14 @@ export async function getFeaturedHub(creatorId?: string): Promise<FeaturedResult
     const res = await fetch(url.toString());
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
+      const errorKind = (body as any)?.error ?? 'api_error';
       return {
         ok: false,
         data: null,
-        errorKind: (body as any)?.error ?? 'api_error',
-        message: (body as any)?.message ?? `API ${res.status}`,
+        errorKind,
+        message: errorKind === 'db_error'
+          ? 'Featured content is temporarily unavailable. Please try again later.'
+          : (body as any)?.message ?? `API ${res.status}`,
       };
     }
     return { ok: true, data: await res.json() };

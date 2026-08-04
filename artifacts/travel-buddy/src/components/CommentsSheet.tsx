@@ -645,8 +645,11 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
     setLoading(true);
     const data = await listComments(postId);
     setComments(data);
+    // Keep the post detail counter aligned with the comments actually visible
+    // to this viewer, rather than a stale denormalized server counter.
+    onCountChange(data.length);
     setLoading(false);
-  }, [postId]);
+  }, [postId, onCountChange]);
 
   useEffect(() => {
     load();
@@ -984,9 +987,13 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
     // Use a functional update so we can inspect the flag atomically.
     // If a submit raced this load the fetched data is stale — keep the
     // optimistic state rather than overwriting it with the old server snapshot.
-    setComments((prev) => (submittedSinceLoadRef.current ? prev : data));
+    if (!submittedSinceLoadRef.current) {
+      setComments(data);
+      // The detail-screen count should describe the visible server snapshot.
+      onCountChange(data.length);
+    }
     setLoading(false);
-  }, [postId]);
+  }, [postId, onCountChange]);
 
   // ── Open: visible → mount → animate in ─────────────────────────────────────
   useEffect(() => {

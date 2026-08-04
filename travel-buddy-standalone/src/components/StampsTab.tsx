@@ -137,7 +137,6 @@ export function StampsTab({
   const [category, setCategory]       = useState<StampCategory>('');
   const [selected, setSelected]       = useState<PassportStampNew | null>(null);
   const [progress, setProgress]       = useState<StampProgress | null>(null);
-  const [stampsEarned, setStampsEarned] = useState<number | null>(null);
   const [milestones, setMilestones]   = useState<PassportMilestone[]>([]);
   // Showcase: null = feature flag off (no UI change), [] = flag on but empty,
   // items = flag on with curated stamps.
@@ -231,7 +230,6 @@ export function StampsTab({
     if (!isOwner || viewingUsername) return;
     getPassportStats().then((res) => {
       if (res.ok) {
-        setStampsEarned(res.data.stampsEarned);
         setMilestones(res.data.milestones ?? []);
       }
     }).catch(() => {});
@@ -333,10 +331,10 @@ export function StampsTab({
           </View>
         )}
 
-        {isOwner && !viewingUsername && stampsEarned !== null && (
+        {isOwner && !viewingUsername && !effLoading && (
           <View style={styles.earnedRow}>
             <Text style={styles.earnedLabel}>Stamps Earned</Text>
-            <Text style={styles.earnedValue}>{stampsEarned.toLocaleString()}</Text>
+            <Text style={styles.earnedValue}>{totalCount.toLocaleString()}</Text>
           </View>
         )}
 

@@ -1558,7 +1558,7 @@ router.get("/posts/:postId", async (req, res) => {
     return;
   }
 
-  const [{ data: savedRow }, { data: rawMedia }, { count: postStampCount }, { data: myStampRow }, { data: featuredRow }, { data: authorProfile }, allowedNames] = await Promise.all([
+  const [{ data: savedRow }, { data: rawMedia }, { count: postStampCount }, { count: liveCommentCount }, { data: myStampRow }, { data: featuredRow }, { data: authorProfile }, allowedNames] = await Promise.all([
     sc.from("post_saves").select("post_id").eq("post_id", postId).eq("user_id", user.id).maybeSingle(),
     sc.from("post_media")
       .select("id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status" + (await stampOverlayCol(sc)))
@@ -1566,6 +1566,7 @@ router.get("/posts/:postId", async (req, res) => {
       .eq("processing_status", "ready")
       .order("sort_order", { ascending: true }),
     sc.from("content_stamps").select("id", { count: "exact", head: true }).eq("entity_type", "post").eq("entity_id", postId),
+    sc.from("posts_comments").select("id", { count: "exact", head: true }).eq("post_id", postId).is("deleted_at", null),
     sc.from("content_stamps").select("id").eq("user_id", user.id).eq("entity_type", "post").eq("entity_id", postId).maybeSingle(),
     sc.from("portava_featured")
       .select("category, featured_at")
@@ -1613,7 +1614,9 @@ router.get("/posts/:postId", async (req, res) => {
     // likeCount derives from content_stamps so it stays consistent with compat
     // like writes — posts.like_count is no longer updated in this write path.
     likeCount: postStampCount ?? 0,
-    commentCount: post.comment_count ?? 0,
+    // Read the live comments table rather than relying on the cached posts
+    // counter; older comments can exist while that denormalized value is stale.
+    commentCount: liveCommentCount ?? 0,
     saveCount: post.save_count ?? 0,
     likedByMe: !!myStampRow,
     savedByMe: !!savedRow,

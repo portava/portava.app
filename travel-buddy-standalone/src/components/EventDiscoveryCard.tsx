@@ -75,6 +75,13 @@ const CATEGORY_COLORS: Record<string, string> = {
   Tech:      '#0891B2',
 };
 
+const RSVP_LABELS: Record<EventRsvpStatus, string> = {
+  going:     'Going ✅',
+  maybe:     'Maybe 🤔',
+  interested:'Interested 👀',
+  cant_go:   "Can't go ❌",
+};
+
 function formatDate(iso: string | null): string {
   if (!iso) return 'Date TBD';
   const d = new Date(iso);
@@ -270,7 +277,7 @@ export function EventDiscoveryCard({ event, onPress, onHostPress, onRsvp, isSave
           )}
           {isOpen && event.myRsvp && (
             <Pressable style={styles.rsvpDone} onPress={onPress}>
-              <Text style={styles.rsvpDoneText}>{event.myRsvp === 'going' ? 'Going ✅' : 'Maybe 🤔'}</Text>
+              <Text style={styles.rsvpDoneText}>{RSVP_LABELS[event.myRsvp]}</Text>
               <ChevronRight size={11} color={color.signal} />
             </Pressable>
           )}

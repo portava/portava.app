@@ -73,6 +73,8 @@ export interface PostRow {
   locationSensitivityLevel?: string | null;
   author?: PostAuthor | null;
   likeCount: number;
+  /** Explicit stamp count returned by the detail/feed endpoints. */
+  stampCount?: number;
   commentCount: number;
   shareCount: number;
   likedByMe: boolean;
@@ -129,6 +131,7 @@ function mapPost(r: any): PostRow {
       ? { id: r.author.id, handle: r.author.handle, name: r.author.name, avatarUrl: r.author.avatarUrl ?? null, isOfficial: r.author.isOfficial ?? false }
       : null,
     likeCount: r.likeCount ?? r.like_count ?? 0,
+    stampCount: r.stampCount ?? r.stamp_count ?? r.likeCount ?? r.like_count ?? 0,
     commentCount: r.commentCount ?? r.comment_count ?? 0,
     shareCount: r.shareCount ?? r.share_count ?? 0,
     likedByMe: r.likedByMe ?? false,

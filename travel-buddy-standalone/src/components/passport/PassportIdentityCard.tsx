@@ -160,7 +160,7 @@ function WorldTravelerStamp() {
 // iconOnly=true  → icon bg + number, no label text  (scrolled / compact)
 // iconOnly=false → label text + number, no icon bg  (expanded, default)
 
-export function StatTicket({ n, label, onPress, iconOnly }: StatItem & { iconOnly?: boolean }) {
+export function StatTicket({ n, label, onPress, iconOnly, loading }: StatItem & { iconOnly?: boolean; loading?: boolean }) {
   const cfg = STAT_CFG[label] ?? STAT_FALLBACK;
   const { Icon, color, bg } = cfg;
   return (
@@ -170,7 +170,11 @@ export function StatTicket({ n, label, onPress, iconOnly }: StatItem & { iconOnl
           <Icon size={18} color={color} strokeWidth={1.8} />
         </View>
       ) : null}
-      <Text style={[st.statN, { color }]}>{n}</Text>
+      {loading ? (
+        <View testID={`passport-stat-skeleton-${label}`} style={st.statSkeleton} />
+      ) : (
+        <Text style={[st.statN, { color }]}>{n}</Text>
+      )}
       {!iconOnly ? (
         <Text style={st.statL}>{label}</Text>
       ) : null}
@@ -205,9 +209,14 @@ export function PassportStatsRow({ profile, isOwner, overrideStats, onStatPress,
   const onStatsLoadedRef = React.useRef(onStatsLoaded);
   onStatsLoadedRef.current = onStatsLoaded;
   const [liveStats, setLiveStats] = useState<PassportStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(isOwner);
 
   useEffect(() => {
-    if (!isOwner) return;
+    if (!isOwner) {
+      setStatsLoading(false);
+      return;
+    }
+    setStatsLoading(true);
     getPassportStats()
       .then((res) => {
         if (res.ok) {
@@ -215,7 +224,8 @@ export function PassportStatsRow({ profile, isOwner, overrideStats, onStatPress,
           onStatsLoadedRef.current?.(res.data);
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setStatsLoading(false));
   }, [isOwner]);
 
   // liveStats (from getPassportStats) is the authoritative source for all counts
@@ -231,12 +241,13 @@ export function PassportStatsRow({ profile, isOwner, overrideStats, onStatPress,
     { n: liveStats?.totalStamps  ?? 0,                                                                                 label: 'Stamps',    onPress: () => onStatPress?.('Stamps')    },
   ];
   const stats = overrideStats ?? ownStats;
+  const showStatsLoading = isOwner && !overrideStats && statsLoading;
 
   return (
     <View style={st.section}>
       <View style={st.statsRow}>
         {stats.map((item) => (
-          <StatTicket key={item.label} {...item} iconOnly={iconOnly} />
+          <StatTicket key={item.label} {...item} iconOnly={iconOnly} loading={showStatsLoading} />
         ))}
       </View>
     </View>
@@ -861,6 +872,12 @@ const st = StyleSheet.create({
     fontSize: 17,
     fontWeight: '800',
     letterSpacing: -0.5,
+  },
+  statSkeleton: {
+    width: 30,
+    height: 20,
+    borderRadius: 5,
+    backgroundColor: '#E7E1D8',
   },
   statL: {
     fontSize: 11,
