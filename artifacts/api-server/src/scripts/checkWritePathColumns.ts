@@ -78,39 +78,16 @@ const PRINT_UNRESOLVED_ALLOWLIST = process.argv.includes(
 // public schema (or that are intentionally written pre-migration).  Keep this
 // list SHORT and annotated — every entry is a hole in the check.
 const ALLOWLIST = new Set<string>([
-  // Shared Moments is intentionally dark-launched: its migration must be
-  // verified live before the feature flags can be enabled. Keep every new
-  // column explicit here, then remove the entries immediately after apply.
-  "shared_moments.owner_id", "shared_moments.place_day_id", "shared_moments.place_id",
-  "shared_moments.trip_id", "shared_moments.title", "shared_moments.description",
-  "shared_moments.join_policy", "shared_moments.status", "shared_moments.archived_at",
-  "shared_moments.updated_at",
-  "shared_moment_memberships.moment_id", "shared_moment_memberships.user_id",
-  "shared_moment_memberships.role", "shared_moment_memberships.status",
-  "shared_moment_memberships.invited_by", "shared_moment_memberships.responded_at",
-  "shared_moment_memberships.removed_at", "shared_moment_memberships.updated_at",
-  "shared_moment_contributions.id", "shared_moment_contributions.moment_id",
-  "shared_moment_contributions.contributor_id", "shared_moment_contributions.post_id",
-  "shared_moment_contributions.media_asset_id", "shared_moment_contributions.caption",
-  "shared_moment_contributions.status", "shared_moment_contributions.approved_by",
-  "shared_moment_contributions.approved_at", "shared_moment_contributions.removed_at",
-  "shared_moment_contributions.created_at",
-  "shared_moment_suggestions.id", "shared_moment_suggestions.moment_id",
-  "shared_moment_suggestions.kind", "shared_moment_suggestions.reason",
-  "shared_moment_suggestions.created_at",
+  // Add entries here only for columns that are intentionally written
+  // pre-migration and have not yet been applied to the live schema.
+  // Remove each entry immediately after the corresponding migration is verified.
 ]);
 
 // Tables that are not real live relations and should be skipped entirely
 // (e.g. test doubles or tables owned by another system).
 const SKIP_TABLES = new Set<string>([
-  // Shared Moments migration 2064 is intentionally pending live application.
-  // Keep these relations out of the live-schema diff until they exist, then
-  // remove this block immediately after verification.
-  "shared_moments",
-  "shared_moment_memberships",
-  "shared_moment_contributions",
-  "shared_moment_suggestions",
-  "shared_moment_audit_events",
+  // Add entries here only for tables whose migration is intentionally pending
+  // live application. Remove immediately after verification.
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────
