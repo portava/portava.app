@@ -3512,7 +3512,7 @@ router.post("/events/:id/chat", async (req, res) => {
   }
 
   const threadId = await createEventChatThread(sc, id, (ev as any).title, user.id);
-  if (!threadId) { sendError(res, "db_error", "Failed to create chat thread"); return; }
+  if (!threadId) { sendError(res, "db_error", "Failed to create chat thread", { exposeDetail: true }); return; }
 
   res.status(201).json({ threadId, created: true });
 });
@@ -5875,7 +5875,7 @@ router.post("/events/:id/telegraph-thread", async (req, res) => {
 
   // Ensure thread exists (idempotent)
   const threadId = await createEventChatThread(sc, id, (ev as any).title ?? "Event Chat", user.id);
-  if (!threadId) { sendError(res, "db_error", "Failed to create event chat thread"); return; }
+  if (!threadId) { sendError(res, "db_error", "Failed to create event chat thread", { exposeDetail: true }); return; }
 
   // Sync all current Going attendees into the thread, skipping blocked users (fire-and-forget)
   void (async () => {

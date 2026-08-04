@@ -362,7 +362,7 @@ router.get("/admin/stamps/worker-health", async (req, res) => {
   try {
     const health = await queryStampWorkerHealth();
     if (!health) {
-      sendError(res, "db_error", "Service client not configured");
+      sendError(res, "db_error", "Service client not configured", { exposeDetail: true });
       return;
     }
     res.json({ health, warnings: evaluateCurrentWorkerHealth(health) });

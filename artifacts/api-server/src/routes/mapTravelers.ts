@@ -61,7 +61,7 @@ router.get("/map/travelers", async (req, res) => {
     res.json({ travelers, generatedAt: new Date().toISOString() });
   } catch (err) {
     req.log.error({ err }, "map/travelers failed");
-    sendError(res, "db_error", "Could not load map travelers");
+    sendError(res, "db_error", "Could not load map travelers", { exposeDetail: true });
   }
 });
 

@@ -21,7 +21,7 @@
       "bundleIdentifier": "com.passporttravelbuddy.app",
       "buildNumber": "2",
       "associatedDomains": [
-        "applinks:app.travel-buddy.io"
+        "applinks:portava.replit.app"
       ],
       "infoPlist": {
         "LSApplicationQueriesSchemes": [
@@ -88,12 +88,12 @@
           "data": [
             {
               "scheme": "https",
-              "host": "app.travel-buddy.io",
+              "host": "portava.replit.app",
               "pathPrefix": "/passport"
             },
             {
               "scheme": "https",
-              "host": "app.travel-buddy.io",
+              "host": "portava.replit.app",
               "pathPrefix": "/u"
             }
           ],
@@ -111,7 +111,7 @@
       [
         "expo-router",
         {
-          "origin": "https://app.travel-buddy.io/"
+          "origin": "https://portava.replit.app/"
         }
       ],
       "expo-font",

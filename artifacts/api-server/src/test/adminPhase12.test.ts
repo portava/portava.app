@@ -91,7 +91,7 @@ function makeAdminFakeClient(opts: {
   reports?: Record<string, unknown>[];
   modActions?: Record<string, unknown>[];
   posts?: Record<string, unknown>[];
-  compassAnalytics?: Record<string, unknown>[];
+  compassSettings?: Record<string, unknown>[];
 }) {
   const {
     isAdmin = true,
@@ -101,7 +101,7 @@ function makeAdminFakeClient(opts: {
     reports = [],
     modActions = [],
     posts = [{ id: POST_ID, post_status: "published", author_id: TARGET_ID }],
-    compassAnalytics = [],
+    compassSettings = [],
   } = opts;
 
   function builder(_table: string, rows: unknown[]) {
@@ -182,7 +182,7 @@ function makeAdminFakeClient(opts: {
       if (table === "reports")             return builder(table, reports);
       if (table === "moderation_actions")  return builder(table, modActions);
       if (table === "posts")               return builder(table, posts);
-      if (table === "compass_analytics")   return builder(table, compassAnalytics);
+      if (table === "compass_settings")     return builder(table, compassSettings);
       const b2: any = {
         select: () => b2, eq: () => b2, neq: () => b2, is: () => b2,
         ilike: () => b2, in: () => b2, or: () => b2, order: () => b2,
@@ -490,7 +490,7 @@ describe("Admin user lookup by handle", () => {
     const admin = makeAdminFakeClient({
       profiles: [targetProfile],
       accountStates: [{ state: "active", user_id: TARGET_ID }],
-      compassAnalytics: [{ user_id: TARGET_ID, onboarding_completed: true, onboarding_completed_at: "2026-07-01T00:00:00Z" }],
+      compassSettings: [{ user_id: TARGET_ID, onboarding_completed: true, onboarding_completed_at: "2026-07-01T00:00:00Z" }],
     });
     _setTestClient(admin, true);
     _setTestServiceClient(admin);

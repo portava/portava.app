@@ -754,7 +754,7 @@ router.get("/users/:username/profile", async (req, res) => {
     visibility = result.visibility;
   } catch (e: any) {
     req.log.error({ err: e }, "profile card: visibility check failed");
-    sendError(res, "db_error", "Visibility check failed");
+    sendError(res, "db_error", "Visibility check failed", { exposeDetail: true });
     return;
   }
 
@@ -1235,7 +1235,7 @@ router.get("/users/:username/og-image.png", async (req, res) => {
         .send(png);
     } catch (e: any) {
       req.log.error({ err: e }, "og-image: render failed");
-      sendError(res, "db_error", "Could not render preview image");
+      sendError(res, "db_error", "Could not render preview image", { exposeDetail: true });
     }
   };
 

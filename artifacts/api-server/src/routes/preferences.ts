@@ -90,7 +90,7 @@ router.get("/me/preferences", async (req, res) => {
   const { client, user } = auth;
 
   const row = await getOrCreateProfile(client, user.id);
-  if (!row) { sendError(res, "db_error", "Could not load preference profile"); return; }
+  if (!row) { sendError(res, "db_error", "Could not load preference profile", { exposeDetail: true }); return; }
 
   res.json(parseProfile(row));
 });
@@ -109,7 +109,7 @@ router.patch("/me/preferences", async (req, res) => {
   const patch = parsed.data;
 
   const row = await getOrCreateProfile(client, user.id);
-  if (!row) { sendError(res, "db_error", "Could not load preference profile"); return; }
+  if (!row) { sendError(res, "db_error", "Could not load preference profile", { exposeDetail: true }); return; }
 
   const current = (() => { try { return JSON.parse(row.explicit_preferences_json); } catch { return defaultExplicit(); } })();
   const merged = { ...current, ...patch };
@@ -202,7 +202,7 @@ router.get("/me/preferences/summary", async (req, res) => {
   const { client, user } = auth;
 
   const row = await getOrCreateProfile(client, user.id);
-  if (!row) { sendError(res, "db_error", "Could not load preference profile"); return; }
+  if (!row) { sendError(res, "db_error", "Could not load preference profile", { exposeDetail: true }); return; }
 
   const profile = parseProfile(row);
   const topCategories = Object.entries(profile.inferred.categoryAffinities as Record<string, number>)

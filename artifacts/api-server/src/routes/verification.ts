@@ -173,7 +173,7 @@ router.post("/verification/session", asyncHandler(async (req, res) => {
     });
   } catch (err: any) {
     req.log.error({ err }, "verification: createSession failed");
-    sendError(res, "db_error", "Could not create verification session");
+    sendError(res, "db_error", "Could not create verification session", { exposeDetail: true });
     return;
   }
 

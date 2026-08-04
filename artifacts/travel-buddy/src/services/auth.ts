@@ -37,9 +37,53 @@ function networkMessage(e: unknown): string {
   return msg || 'Something went wrong. Please try again.';
 }
 
+/**
+ * Ask the API whether new signups are currently allowed.
+ *
+ * The `disable_signups` / `invite_only_beta` feature flags are enforced by the
+ * server (GET /api/auth/signup-status), but the app creates accounts through
+ * supabase.auth.signUp, which never consults them — so without this check the
+ * kill switches do nothing for the mobile client.
+ *
+ * FAIL-OPEN by design, matching the server handler: an unreachable API or an
+ * unset API base URL must not lock legitimate users out of registration. The
+ * switch is a rollout control, not a security boundary — account creation is
+ * still bounded server-side.
+ */
+async function fetchSignupStatus(): Promise<{ signupsEnabled: boolean; inviteOnly: boolean }> {
+  const allowed = { signupsEnabled: true, inviteOnly: false };
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  if (!apiBase) return allowed;
+
+  try {
+    const res = await fetch(`${apiBase}/api/auth/signup-status`, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return allowed;
+    const body = await res.json();
+    return {
+      signupsEnabled: body?.signupsEnabled !== false,
+      inviteOnly: body?.inviteOnly === true,
+    };
+  } catch {
+    return allowed;
+  }
+}
+
 export async function signUp(email: string, password: string, meta?: { name?: string; handle?: string }): Promise<AuthResult> {
   if (!isSupabaseConfigured) return { userId: null, error: 'Supabase not configured' };
   if (__DEV__) console.log('[Auth] signUp');
+
+  // Kill switch: check before creating the account, not after.
+  const status = await fetchSignupStatus();
+  if (!status.signupsEnabled) {
+    return { userId: null, error: 'New sign-ups are temporarily closed. Please check back soon.' };
+  }
+  if (status.inviteOnly) {
+    return { userId: null, error: 'Portava is invite-only right now. You need an invite to create an account.' };
+  }
+
   let data: any, error: any;
   try {
     ({ data, error } = await supabase.auth.signUp({ email, password, options: { data: meta } }));

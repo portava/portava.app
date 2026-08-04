@@ -736,7 +736,7 @@ router.post("/highlights/:id/reply", async (req, res) => {
       .single();
     if (threadErr || !newThread) {
       req.log.error({ err: threadErr }, "Failed to create DM thread for highlight reply");
-      sendError(res, "db_error", "Could not create message thread");
+      sendError(res, "db_error", "Could not create message thread", { exposeDetail: true });
       return;
     }
     threadId = (newThread as any).id as string;

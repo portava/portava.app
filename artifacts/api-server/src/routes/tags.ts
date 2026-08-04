@@ -90,7 +90,7 @@ router.post('/tags', async (req, res) => {
     perms = await resolveInteractionPermissions(sc, user.id, tagged_user_id);
   } catch (err) {
     req.log.error({ err }, 'permission engine failed for tag create');
-    sendError(res, 'db_error', 'Permission check failed');
+    sendError(res, 'db_error', 'Permission check failed', { exposeDetail: true });
     return;
   }
 

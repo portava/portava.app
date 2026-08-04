@@ -45,7 +45,7 @@ router.post("/users/:userId/restrict", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "permission engine failed for restrict");
-    sendError(res, "db_error", "Permission check failed");
+    sendError(res, "db_error", "Permission check failed", { exposeDetail: true });
     return;
   }
 
@@ -92,7 +92,7 @@ router.delete("/users/:userId/restrict", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "permission engine failed for restrict delete");
-    sendError(res, "db_error", "Permission check failed");
+    sendError(res, "db_error", "Permission check failed", { exposeDetail: true });
     return;
   }
 

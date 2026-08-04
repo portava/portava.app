@@ -79,7 +79,7 @@ router.post("/compass/live/start", asyncHandler(async (req, res) => {
     });
   } catch (err: any) {
     req.log.error({ err, userId: auth.user.id }, "compass/live/start failed");
-    sendError(res, "db_error", "Could not start a live session");
+    sendError(res, "db_error", "Could not start a live session", { exposeDetail: true });
   }
 }));
 

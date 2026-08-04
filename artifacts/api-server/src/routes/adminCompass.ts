@@ -506,7 +506,7 @@ router.get("/admin/compass/dashboard", async (req, res) => {
     });
   } catch (err) {
     req.log.error({ err }, "admin/compass/dashboard: query failed");
-    sendError(res, "db_error", "Dashboard query failed");
+    sendError(res, "db_error", "Dashboard query failed", { exposeDetail: true });
   }
 });
 
@@ -543,7 +543,7 @@ router.post("/admin/compass/weights", async (req, res) => {
     res.status(201).json({ weightSet: data });
   } catch (err) {
     req.log.error({ err }, "admin/compass/weights: create failed");
-    sendError(res, "db_error", "Could not create weight set");
+    sendError(res, "db_error", "Could not create weight set", { exposeDetail: true });
   }
 });
 
@@ -589,7 +589,7 @@ router.patch("/admin/compass/weights/:id", async (req, res) => {
     res.json({ weightSet: data });
   } catch (err) {
     req.log.error({ err }, "admin/compass/weights/:id: update failed");
-    sendError(res, "db_error", "Could not update weight set");
+    sendError(res, "db_error", "Could not update weight set", { exposeDetail: true });
   }
 });
 
@@ -675,7 +675,7 @@ router.post("/admin/compass/version", async (req, res) => {
     res.status(201).json({ version: data, cacheUsersInvalidated: affected });
   } catch (err) {
     req.log.error({ err }, "admin/compass/version: activate failed");
-    sendError(res, "db_error", "Could not activate version");
+    sendError(res, "db_error", "Could not activate version", { exposeDetail: true });
   }
 });
 
@@ -799,7 +799,7 @@ router.post("/admin/compass/rollback", async (req, res) => {
     });
   } catch (err) {
     req.log.error({ err }, "admin/compass/rollback: failed");
-    sendError(res, "db_error", "Rollback failed");
+    sendError(res, "db_error", "Rollback failed", { exposeDetail: true });
   }
 });
 
@@ -820,7 +820,7 @@ router.post("/admin/compass/rebuild-cache", async (req, res) => {
     res.json({ ok: true, message: "Cache cleared", cacheUsersInvalidated: affected });
   } catch (err) {
     req.log.error({ err }, "admin/compass/rebuild-cache: failed");
-    sendError(res, "db_error", "Cache rebuild failed");
+    sendError(res, "db_error", "Cache rebuild failed", { exposeDetail: true });
   }
 });
 
@@ -867,7 +867,7 @@ router.patch("/admin/compass/frontload-rules", async (req, res) => {
     res.json({ updated: results });
   } catch (err) {
     req.log.error({ err }, "admin/compass/frontload-rules: failed");
-    sendError(res, "db_error", "Could not update rules");
+    sendError(res, "db_error", "Could not update rules", { exposeDetail: true });
   }
 });
 
@@ -894,7 +894,7 @@ router.post("/admin/compass/users/:userId/remove-boost-eligibility", async (req,
     res.json({ ok: true, userId: targetUserId, boostEligible: false });
   } catch (err) {
     req.log.error({ err }, "admin/compass/remove-boost-eligibility: failed");
-    sendError(res, "db_error", "Could not update boost eligibility");
+    sendError(res, "db_error", "Could not update boost eligibility", { exposeDetail: true });
   }
 });
 
@@ -921,7 +921,7 @@ router.post("/admin/compass/users/:userId/restore-boost-eligibility", async (req
     res.json({ ok: true, userId: targetUserId, boostEligible: true });
   } catch (err) {
     req.log.error({ err }, "admin/compass/restore-boost-eligibility: failed");
-    sendError(res, "db_error", "Could not update boost eligibility");
+    sendError(res, "db_error", "Could not update boost eligibility", { exposeDetail: true });
   }
 });
 
@@ -951,7 +951,7 @@ router.get("/admin/compass/abuse-flags", async (req, res) => {
     res.json({ flags: data ?? [] });
   } catch (err) {
     req.log.error({ err }, "admin/compass/abuse-flags: query failed");
-    sendError(res, "db_error", "Could not fetch abuse flags");
+    sendError(res, "db_error", "Could not fetch abuse flags", { exposeDetail: true });
   }
 });
 
@@ -986,7 +986,7 @@ router.get("/admin/compass/safety-filters", async (req, res) => {
     res.json({ total: rows.length, byReason, logs: rows });
   } catch (err) {
     req.log.error({ err }, "admin/compass/safety-filters: query failed");
-    sendError(res, "db_error", "Could not fetch safety filter logs");
+    sendError(res, "db_error", "Could not fetch safety filter logs", { exposeDetail: true });
   }
 });
 
@@ -1010,7 +1010,7 @@ router.get("/admin/compass/active-rewards", async (req, res) => {
     res.json({ rewards: data ?? [] });
   } catch (err) {
     req.log.error({ err }, "admin/compass/active-rewards: query failed");
-    sendError(res, "db_error", "Could not fetch active rewards");
+    sendError(res, "db_error", "Could not fetch active rewards", { exposeDetail: true });
   }
 });
 
@@ -1032,7 +1032,7 @@ router.get("/admin/compass/testing-sandbox", async (req, res) => {
     res.json({ scenarios: data ?? [] });
   } catch (err) {
     req.log.error({ err }, "admin/compass/testing-sandbox: query failed");
-    sendError(res, "db_error", "Could not fetch testing scenarios");
+    sendError(res, "db_error", "Could not fetch testing scenarios", { exposeDetail: true });
   }
 });
 
@@ -1090,7 +1090,7 @@ router.post("/admin/compass/testing-sandbox/preview", async (req, res) => {
     res.json(result);
   } catch (err) {
     req.log.error({ err }, "admin/compass/testing-sandbox/preview: failed");
-    sendError(res, "db_error", "Sandbox preview failed");
+    sendError(res, "db_error", "Sandbox preview failed", { exposeDetail: true });
   }
 });
 

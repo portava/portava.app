@@ -777,7 +777,10 @@ router.post("/admin/stamps/catalog/:id/regenerate", asyncHandler(async (req, res
         .in("id", extraIds);
 
       if (archiveExtrasErr) {
-        sendError(res, "db_error", archiveExtrasErr.message);
+        // Admin-only diagnostic route: the operator needs the underlying
+        // failure to tell a constraint violation from a transient error, so
+        // this opts out of the default db_error sanitisation in lib/http.ts.
+        sendError(res, "db_error", archiveExtrasErr.message, { exposeDetail: true });
         return;
       }
     }
@@ -796,7 +799,8 @@ router.post("/admin/stamps/catalog/:id/regenerate", asyncHandler(async (req, res
     // and the subsequent insert would hit the unique index (23505), so the
     // handler could report a misleading result while the job remains stuck.
     if (resetErr) {
-      sendError(res, "db_error", resetErr.message);
+      // Admin-only diagnostic route — see the archive-extras note above.
+      sendError(res, "db_error", resetErr.message, { exposeDetail: true });
       return;
     }
 

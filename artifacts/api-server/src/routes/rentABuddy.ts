@@ -3659,13 +3659,19 @@ router.post("/rent-a-buddy/dashboard/availability", async (req, res) => {
       { buddy_id: (bp as any).id, date: e.date, time_slots: e.timeSlots ?? [], is_available: e.isAvailable ?? true, notes: e.notes ?? null },
       { onConflict: "buddy_id,date" },
     );
-    if (error) failures.push(`${e.date}: ${error.message}`);
+    if (error) {
+      // Log the raw DB error for operators; the client only learns WHICH dates
+      // failed, never the underlying Postgres/PostgREST text.
+      req.log?.error({ err: error, date: e.date }, "rent_buddy_availability upsert failed");
+      failures.push(String(e.date));
+    }
   }
   if (failures.length > 0) {
     return sendError(
       res,
       "db_error",
-      `Failed to save ${failures.length} of ${(entries as any[]).length} availability rows. First error — ${failures[0]}`,
+      `Failed to save ${failures.length} of ${(entries as any[]).length} availability rows. Dates not saved: ${failures.join(", ")}.`,
+      { exposeDetail: true },
     );
   }
   return res.json({ ok: true });

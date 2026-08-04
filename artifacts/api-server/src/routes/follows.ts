@@ -156,7 +156,7 @@ router.post("/users/:userId/follow", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "permission engine failed for follow");
-    sendError(res, "db_error", "Permission check failed");
+    sendError(res, "db_error", "Permission check failed", { exposeDetail: true });
     return;
   }
 
@@ -261,7 +261,7 @@ router.delete("/users/:userId/follow", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "permission engine failed for unfollow");
-    sendError(res, "db_error", "Permission check failed");
+    sendError(res, "db_error", "Permission check failed", { exposeDetail: true });
     return;
   }
 

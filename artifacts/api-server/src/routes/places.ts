@@ -747,7 +747,7 @@ router.post("/me/recent-places", async (req, res) => {
     .eq("place_snapshot->>id", place.id as string);
   if (delError) {
     logger.warn({ err: delError }, "failed to save recent place (delete)");
-    sendError(res, "db_error", "Failed to save recent place");
+    sendError(res, "db_error", "Failed to save recent place", { exposeDetail: true });
     return;
   }
 
@@ -759,7 +759,7 @@ router.post("/me/recent-places", async (req, res) => {
   });
   if (insError) {
     logger.warn({ err: insError }, "failed to save recent place (insert)");
-    sendError(res, "db_error", "Failed to save recent place");
+    sendError(res, "db_error", "Failed to save recent place", { exposeDetail: true });
     return;
   }
 
@@ -846,7 +846,7 @@ router.post("/places/:id/image-report", async (req, res) => {
 
   if (error) {
     logger.warn({ err: error, placeId }, "failed to insert place_image_report");
-    sendError(res, "db_error", "Failed to submit report");
+    sendError(res, "db_error", "Failed to submit report", { exposeDetail: true });
     return;
   }
 
@@ -889,7 +889,7 @@ router.get("/places/:id/dedup-groups", async (req, res) => {
 
   if (error) {
     logger.warn({ err: error, placeId }, "failed to fetch media_dedup_groups");
-    sendError(res, "db_error", "Failed to fetch dedup groups");
+    sendError(res, "db_error", "Failed to fetch dedup groups", { exposeDetail: true });
     return;
   }
 

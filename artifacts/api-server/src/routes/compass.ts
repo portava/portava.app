@@ -849,7 +849,7 @@ router.put("/compass/me/boost-visibility", async (req, res) => {
 
   if (error) {
     req.log.warn({ err: error, userId: user.id }, "compass: boost-visibility upsert failed");
-    sendError(res, "db_error", "Could not save preference");
+    sendError(res, "db_error", "Could not save preference", { exposeDetail: true });
     return;
   }
 
@@ -1902,7 +1902,7 @@ router.post("/compass/feedback", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "compass/feedback: processing failed");
-    sendError(res, "db_error", "Could not process feedback");
+    sendError(res, "db_error", "Could not process feedback", { exposeDetail: true });
   }
 });
 
@@ -1926,7 +1926,7 @@ router.get("/compass/me/preferences", async (req, res) => {
 
   if (error) {
     req.log.warn({ err: error, userId: user.id }, "compass/me/preferences: read failed");
-    sendError(res, "db_error", "Could not load preferences");
+    sendError(res, "db_error", "Could not load preferences", { exposeDetail: true });
     return;
   }
 
@@ -1973,7 +1973,7 @@ router.patch("/compass/me/preferences", async (req, res) => {
 
   if (error) {
     req.log.warn({ err: error, userId: user.id }, "compass/me/preferences: upsert failed");
-    sendError(res, "db_error", "Could not save preferences");
+    sendError(res, "db_error", "Could not save preferences", { exposeDetail: true });
     return;
   }
 
@@ -2009,7 +2009,7 @@ router.get("/compass/me/memories", async (req, res) => {
     res.json({ memories });
   } catch (err) {
     req.log.error({ err, userId: auth.user.id }, "compass/me/memories: list failed");
-    sendError(res, "db_error", "Could not load memories");
+    sendError(res, "db_error", "Could not load memories", { exposeDetail: true });
   }
 });
 
@@ -2046,7 +2046,7 @@ router.post("/compass/me/memories/teach", async (req, res) => {
     res.status(201).json({ memory });
   } catch (err) {
     req.log.error({ err, userId: auth.user.id }, "compass/me/memories/teach failed");
-    sendError(res, "db_error", "Could not save that memory");
+    sendError(res, "db_error", "Could not save that memory", { exposeDetail: true });
   }
 });
 
@@ -2074,7 +2074,7 @@ router.patch("/compass/me/memories/:memoryId", async (req, res) => {
     res.json({ memory });
   } catch (err) {
     req.log.error({ err, userId: auth.user.id }, "compass/me/memories: patch failed");
-    sendError(res, "db_error", "Could not update memory");
+    sendError(res, "db_error", "Could not update memory", { exposeDetail: true });
   }
 });
 
@@ -2090,7 +2090,7 @@ router.delete("/compass/me/memories/:memoryId", async (req, res) => {
     res.json({ forgotten: true });
   } catch (err) {
     req.log.error({ err, userId: auth.user.id }, "compass/me/memories: delete failed");
-    sendError(res, "db_error", "Could not forget memory");
+    sendError(res, "db_error", "Could not forget memory", { exposeDetail: true });
   }
 });
 
@@ -2145,12 +2145,12 @@ router.get("/compass/me/active-reward", async (req, res) => {
 
   if (scoreRes.error) {
     req.log.warn({ err: scoreRes.error, userId: user.id }, "compass/me/active-reward: read failed");
-    sendError(res, "db_error", "Could not load active reward");
+    sendError(res, "db_error", "Could not load active reward", { exposeDetail: true });
     return;
   }
   if (badgeRes.error) {
     req.log.warn({ err: badgeRes.error, userId: user.id }, "compass/me/active-reward: badge read failed");
-    sendError(res, "db_error", "Could not load active reward");
+    sendError(res, "db_error", "Could not load active reward", { exposeDetail: true });
     return;
   }
 
@@ -2196,7 +2196,7 @@ router.get("/compass/context", async (req, res) => {
 
   if (error) {
     req.log.warn({ err: error, userId: user.id }, "compass/context GET: read failed");
-    sendError(res, "db_error", "Could not load context");
+    sendError(res, "db_error", "Could not load context", { exposeDetail: true });
     return;
   }
 
@@ -2251,7 +2251,7 @@ router.post("/compass/context", async (req, res) => {
 
   if (error) {
     req.log.warn({ err: error, userId: user.id }, "compass/context POST: upsert failed");
-    sendError(res, "db_error", "Could not save context");
+    sendError(res, "db_error", "Could not save context", { exposeDetail: true });
     return;
   }
 
@@ -2276,7 +2276,7 @@ router.delete("/compass/context", async (req, res) => {
 
   if (error) {
     req.log.warn({ err: error, userId: user.id }, "compass/context DELETE: delete failed");
-    sendError(res, "db_error", "Could not delete context");
+    sendError(res, "db_error", "Could not delete context", { exposeDetail: true });
     return;
   }
 
@@ -2328,7 +2328,7 @@ router.get("/compass/settings", async (req, res) => {
 
   if (error) {
     req.log.warn({ err: error, userId: user.id }, "compass/settings GET: read failed");
-    sendError(res, "db_error", "Could not load settings");
+    sendError(res, "db_error", "Could not load settings", { exposeDetail: true });
     return;
   }
 
@@ -2393,7 +2393,7 @@ router.patch("/compass/settings", async (req, res) => {
 
   if (error) {
     req.log.warn({ err: error, userId: user.id }, "compass/settings PATCH: upsert failed");
-    sendError(res, "db_error", "Could not save settings");
+    sendError(res, "db_error", "Could not save settings", { exposeDetail: true });
     return;
   }
 
@@ -2604,7 +2604,7 @@ router.post("/compass/report", async (req, res) => {
 
   if (error) {
     req.log.warn({ err: error, userId: user.id }, "compass/report: insert failed");
-    sendError(res, "db_error", "Could not save report");
+    sendError(res, "db_error", "Could not save report", { exposeDetail: true });
     return;
   }
 
@@ -3439,7 +3439,7 @@ router.get("/compass/debug/recommendations", async (req, res) => {
 
   if (error) {
     req.log.warn({ err: error }, "compass/debug/recommendations: read failed");
-    sendError(res, "db_error", "Could not load recommendations");
+    sendError(res, "db_error", "Could not load recommendations", { exposeDetail: true });
     return;
   }
 

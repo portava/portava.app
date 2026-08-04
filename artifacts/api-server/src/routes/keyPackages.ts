@@ -67,7 +67,7 @@ router.post("/me/devices/:deviceId/key-packages", async (req, res) => {
   const { error: insertError } = await sc.from("key_packages").insert(rows);
   if (insertError) {
     req.log.error({ err: insertError }, "key-packages: insert failed");
-    sendError(res, "db_error", "Failed to store KeyPackages");
+    sendError(res, "db_error", "Failed to store KeyPackages", { exposeDetail: true });
     return;
   }
 

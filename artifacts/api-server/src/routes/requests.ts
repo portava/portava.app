@@ -234,7 +234,7 @@ router.post("/me/requests/friend_request/:id/accept", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "permission engine failed for friend request accept");
-    sendError(res, "db_error", "Permission check failed");
+    sendError(res, "db_error", "Permission check failed", { exposeDetail: true });
     return;
   }
 
@@ -290,7 +290,7 @@ router.post("/me/requests/friend_request/:id/decline", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "permission engine failed for friend request decline");
-    sendError(res, "db_error", "Permission check failed");
+    sendError(res, "db_error", "Permission check failed", { exposeDetail: true });
     return;
   }
 
@@ -344,7 +344,7 @@ router.post("/me/requests/friend_request/:id/cancel", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "permission engine failed for friend request cancel");
-    sendError(res, "db_error", "Permission check failed");
+    sendError(res, "db_error", "Permission check failed", { exposeDetail: true });
     return;
   }
 
@@ -554,7 +554,7 @@ router.post("/me/requests/trip_invite/:tripId/decline", async (req, res) => {
 
   const { error: tiDeclineErr } = await sc.from("trip_members")
     .delete().eq("trip_id", tripId).eq("user_id", user.id);
-  if (tiDeclineErr) { sendError(res, "db_error", "Failed to decline trip invite"); return; }
+  if (tiDeclineErr) { sendError(res, "db_error", "Failed to decline trip invite", { exposeDetail: true }); return; }
 
   // Anti-retaliation cooldown: trip owner cannot re-invite for 48 hours after a decline
   const tiPermSc = getServiceClient();

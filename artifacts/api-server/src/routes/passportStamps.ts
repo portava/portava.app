@@ -302,7 +302,7 @@ router.post("/me/passport/memories", async (req, res) => {
   });
 
   if (!id) {
-    sendError(res, "db_error", "Failed to create memory");
+    sendError(res, "db_error", "Failed to create memory", { exposeDetail: true });
     return;
   }
 

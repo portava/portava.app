@@ -94,7 +94,7 @@ router.get("/featured", asyncHandler(async (req, res) => {
   const { data: rows, error } = await query;
   if (error) {
     req.log.error({ err: error }, "Featured posts query failed");
-    sendError(res, "db_error", "Featured content is temporarily unavailable. Please try again later.");
+    sendError(res, "db_error", "Featured content is temporarily unavailable. Please try again later.", { exposeDetail: true });
     return;
   }
 
@@ -224,7 +224,7 @@ async function buildFallbackResponse(sc: any, res: any, req: any): Promise<void>
 
   if (error) {
     req.log.error({ err: error }, "Featured fallback query failed");
-    sendError(res, "db_error", "Featured content is temporarily unavailable. Please try again later.");
+    sendError(res, "db_error", "Featured content is temporarily unavailable. Please try again later.", { exposeDetail: true });
     return;
   }
 

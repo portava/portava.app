@@ -178,7 +178,7 @@ router.get("/trips/:tripId/crew/map", async (req, res) => {
     res.status(200).json({ featureEnabled: true, ...result });
   } catch (err) {
     req.log.error({ err }, "crew/map: failed");
-    sendError(res, "db_error", "Failed to load crew map");
+    sendError(res, "db_error", "Failed to load crew map", { exposeDetail: true });
   }
 });
 
@@ -204,7 +204,7 @@ router.get("/trips/:tripId/crew/location-preferences", async (req, res) => {
     res.status(200).json(prefs);
   } catch (err) {
     req.log.error({ err }, "crew/location-preferences GET: failed");
-    sendError(res, "db_error", "Failed to load preferences");
+    sendError(res, "db_error", "Failed to load preferences", { exposeDetail: true });
   }
 });
 
@@ -394,7 +394,7 @@ router.get("/trips/:tripId/crew/live-shares", async (req, res) => {
     res.status(200).json({ liveShares });
   } catch (err) {
     req.log.error({ err }, "crew/live-shares GET: failed");
-    sendError(res, "db_error", "Failed to load live shares");
+    sendError(res, "db_error", "Failed to load live shares", { exposeDetail: true });
   }
 });
 

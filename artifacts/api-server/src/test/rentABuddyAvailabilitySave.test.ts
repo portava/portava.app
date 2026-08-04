@@ -179,10 +179,15 @@ describe("POST /api/rent-a-buddy/dashboard/availability", () => {
     assert.notEqual(res.status, 200);
     assert.match(res.body.message, /Failed to save 1 of 3 availability rows/);
     assert.match(res.body.message, /2026-07-21/);
-    assert.match(res.body.message, /simulated upsert failure/);
+    // The raw Postgres/PostgREST text is logged server-side only — the client
+    // learns which dates failed, never the underlying DB error.
+    assert.ok(
+      !JSON.stringify(res.body).includes("simulated upsert failure"),
+      `raw DB detail must not leak to the client, got: ${JSON.stringify(res.body)}`,
+    );
   });
 
-  it("reports the failure count when multiple rows fail, citing the first error", async () => {
+  it("reports the failure count when multiple rows fail, naming the failed dates", async () => {
     state.failDates.add("2026-07-20");
     state.failDates.add("2026-07-22");
     const res = await post("/api/rent-a-buddy/dashboard/availability", { entries: ENTRIES });

@@ -317,7 +317,7 @@ router.post('/postcards', async (req, res) => {
     // Full technical detail stays server-side; the client gets a readable
     // sentence, never a raw database error string.
     req.log.error({ err: postErr }, 'postcards: failed to create post');
-    sendError(res, 'db_error', "We couldn't create your postcard. Please try again.");
+    sendError(res, "db_error", "We couldn't create your postcard. Please try again.", { exposeDetail: true });
     return;
   }
 
@@ -415,7 +415,7 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
 
   if (postErr) {
     req.log.error({ err: postErr }, 'postcards: failed to load post for upload-url');
-    sendError(res, 'db_error', "We couldn't prepare your upload. Please try again.");
+    sendError(res, "db_error", "We couldn't prepare your upload. Please try again.", { exposeDetail: true });
     return;
   }
   if (!postRow) { sendError(res, 'not_found', 'Postcard not found'); return; }
@@ -455,7 +455,7 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
 
   if (mediaErr) {
     req.log.error({ err: mediaErr }, 'postcards: failed to create post_media row');
-    sendError(res, 'db_error', "We couldn't prepare your upload. Please try again.");
+    sendError(res, "db_error", "We couldn't prepare your upload. Please try again.", { exposeDetail: true });
     return;
   }
 
@@ -481,7 +481,7 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
       .update({ processing_status: 'failed' })
       .eq('id', mediaId)
       .then(undefined, () => {});
-    sendError(res, 'db_error', "We couldn't prepare your upload. Please try again.");
+    sendError(res, "db_error", "We couldn't prepare your upload. Please try again.", { exposeDetail: true });
     return;
   }
 
@@ -541,7 +541,7 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
 
   if (mediaErr) {
     req.log.error({ err: mediaErr }, 'postcards: failed to load media for complete');
-    sendError(res, 'db_error', "We couldn't finish your upload. Please try again.");
+    sendError(res, "db_error", "We couldn't finish your upload. Please try again.", { exposeDetail: true });
     return;
   }
   if (!mediaRow) { sendError(res, 'not_found', 'Media not found'); return; }
@@ -658,7 +658,7 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
 
   if (updateErr) {
     req.log.error({ err: updateErr }, 'postcards: failed to complete media upload');
-    sendError(res, 'db_error', "We couldn't finish your upload. Please try again.");
+    sendError(res, "db_error", "We couldn't finish your upload. Please try again.", { exposeDetail: true });
     return;
   }
 
@@ -750,7 +750,7 @@ router.delete('/postcards/:id/media/:mediaId', async (req, res) => {
 
   if (loadErr) {
     req.log.error({ err: loadErr }, 'postcards: failed to load media for delete');
-    sendError(res, 'db_error', "We couldn't remove that media. Please try again.");
+    sendError(res, "db_error", "We couldn't remove that media. Please try again.", { exposeDetail: true });
     return;
   }
   if (!mediaRow) { sendError(res, 'not_found', 'Media not found'); return; }
@@ -777,7 +777,7 @@ router.delete('/postcards/:id/media/:mediaId', async (req, res) => {
 
   if (deleteErr) {
     req.log.error({ err: deleteErr }, 'postcards: failed to delete media row');
-    sendError(res, 'db_error', "We couldn't remove that media. Please try again.");
+    sendError(res, "db_error", "We couldn't remove that media. Please try again.", { exposeDetail: true });
     return;
   }
 
@@ -973,7 +973,7 @@ router.put('/postcards/:id/event-link', async (req, res) => {
 
   if (postErr) {
     req.log.error({ err: postErr }, 'postcards event-link: failed to load post');
-    sendError(res, 'db_error', "We couldn't update the event link. Please try again.");
+    sendError(res, "db_error", "We couldn't update the event link. Please try again.", { exposeDetail: true });
     return;
   }
   if (!postRow) { sendError(res, 'not_found', 'Postcard not found'); return; }

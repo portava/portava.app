@@ -1085,9 +1085,13 @@ describe("PATCH /api/me/profile under schema drift (missing newer columns)", () 
     const r = await patchProfile({ bio: "new bio", displayName: "New Name" });
     assert.notEqual(r.status, 200, "a DB error on the fallback retry must not return 200");
     const body = await r.json() as any;
+    // The failure must be reported as db_error, but the raw Postgres text
+    // (SQLSTATE 42P01 / "does not exist") is logged server-side only — see the
+    // db_error sanitisation in lib/http.ts.
+    assert.equal(body.error, "db_error", `expected a db_error body, got: ${JSON.stringify(body)}`);
     assert.ok(
-      body.code === "db_error" || JSON.stringify(body).includes("42P01") || JSON.stringify(body).includes("does not exist"),
-      `response body should surface the DB error — got: ${JSON.stringify(body)}`,
+      !JSON.stringify(body).includes("42P01") && !JSON.stringify(body).includes("does not exist"),
+      `raw DB detail must not leak to the client — got: ${JSON.stringify(body)}`,
     );
   });
 });
@@ -1252,11 +1256,11 @@ describe("GET /api/me/profile under schema drift — fallback retry error is sur
     const r = await getProfile();
     assert.notEqual(r.status, 200, "a DB error on the GET fallback retry must not return 200");
     const body = await r.json() as any;
+    // As above: db_error is reported, raw Postgres detail is not.
+    assert.equal(body.error, "db_error", `expected a db_error body, got: ${JSON.stringify(body)}`);
     assert.ok(
-      body.code === "db_error" ||
-        JSON.stringify(body).includes("42P01") ||
-        JSON.stringify(body).includes("does not exist"),
-      `response body should surface the DB error — got: ${JSON.stringify(body)}`,
+      !JSON.stringify(body).includes("42P01") && !JSON.stringify(body).includes("does not exist"),
+      `raw DB detail must not leak to the client — got: ${JSON.stringify(body)}`,
     );
   });
 

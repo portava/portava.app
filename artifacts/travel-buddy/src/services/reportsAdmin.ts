@@ -41,16 +41,32 @@ export interface AdminReportsResult {
   total: number;
 }
 
+const ALL_STATUSES = ['open', 'in_review', 'resolved', 'dismissed'] as const;
+
 export async function fetchAdminReports(opts: {
+  page?: number;
   limit?: number;
-  offset?: number;
   status?: string;
 } = {}): Promise<AdminReportsResult> {
-  const { limit = 50, offset = 0, status } = opts;
+  const { page = 1, limit = 50, status = 'open' } = opts;
+
+  // The server (GET /api/admin/reports) paginates with page/limit and filters
+  // by a single status, defaulting to 'open'. It has no 'all' value, so
+  // emulate it client-side by fetching each status in parallel and merging.
+  if (status === 'all') {
+    const results = await Promise.all(
+      ALL_STATUSES.map((s) => fetchAdminReports({ page, limit, status: s })),
+    );
+    const reports = results
+      .flatMap((r) => r.reports)
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+    return { reports, total: results.reduce((n, r) => n + r.total, 0) };
+  }
+
   const params = new URLSearchParams({
+    page: String(page),
     limit: String(limit),
-    offset: String(offset),
-    ...(status && status !== 'all' ? { status } : {}),
+    status,
   });
   const res = await authedFetch(`${apiBase()}/api/admin/reports?${params}`);
   if (!res.ok) throw new Error(`Failed to load reports: ${res.status}`);

@@ -256,8 +256,8 @@ const SECTIONS: Section[] = [
         label: 'My Events',
         Icon: Calendar,
         iconColor: '#D97706',
-        live: false,
-        action: (_p) => {},
+        live: true,
+        action: (p) => { closeThenNavigate(p.onClose, '/events/list'); },
       },
       {
         key: 'my-trips',
@@ -357,8 +357,8 @@ const SECTIONS: Section[] = [
         label: 'Notifications',
         Icon: Bell,
         iconColor: '#D97706',
-        live: false,
-        action: (_p) => {},
+        live: true,
+        action: (p) => { closeThenNavigate(p.onClose, '/notifications'); },
       },
       {
         key: 'help',

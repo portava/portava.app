@@ -51,7 +51,7 @@ router.post("/users/:userId/save", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "permission engine failed for save");
-    sendError(res, "db_error", "Permission check failed");
+    sendError(res, "db_error", "Permission check failed", { exposeDetail: true });
     return;
   }
 
@@ -98,7 +98,7 @@ router.delete("/users/:userId/save", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "permission engine failed for save delete");
-    sendError(res, "db_error", "Permission check failed");
+    sendError(res, "db_error", "Permission check failed", { exposeDetail: true });
     return;
   }
 

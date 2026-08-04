@@ -774,11 +774,7 @@ router.patch("/me/profile", async (req, res) => {
         { code: (updateError as any).code, stripped },
         "PATCH /api/me/profile: passport_section_order column appears to be missing from the profiles table (schema drift) — apply migration 0120. Refusing to silently drop the layout save.",
       );
-      sendError(
-        res,
-        "db_error",
-        "Could not save passport layout: the database is missing the passport_section_order column (schema drift). Apply migration 0120_passport_section_order.sql.",
-      );
+      sendError(res, "db_error", "Could not save passport layout: the database is missing the passport_section_order column (schema drift). Apply migration 0120_passport_section_order.sql.", { exposeDetail: true });
       return;
     }
     if (stripped.includes("passport_tab_order")) {
@@ -786,11 +782,7 @@ router.patch("/me/profile", async (req, res) => {
         { code: (updateError as any).code, stripped },
         "PATCH /api/me/profile: passport_tab_order column appears to be missing from the profiles table (schema drift) — apply migration 0143. Refusing to silently drop the tab order save.",
       );
-      sendError(
-        res,
-        "db_error",
-        "Could not save tab order: the database is missing the passport_tab_order column (schema drift). Apply migration 0143_passport_tab_order.sql.",
-      );
+      sendError(res, "db_error", "Could not save tab order: the database is missing the passport_tab_order column (schema drift). Apply migration 0143_passport_tab_order.sql.", { exposeDetail: true });
       return;
     }
 
@@ -804,11 +796,7 @@ router.patch("/me/profile", async (req, res) => {
     if (Object.keys(safeRow).length === 0) {
       // Everything the client asked to change was stripped — nothing would be
       // saved, so a 200 here would be a lie.
-      sendError(
-        res,
-        "db_error",
-        `Could not save profile: the database is missing the required column(s) for every requested field (schema drift). Fields not saved: ${unsavedFields.join(", ")}.`,
-      );
+      sendError(res, "db_error", `Could not save profile: the database is missing the required column(s) for every requested field (schema drift). Fields not saved: ${unsavedFields.join(", ")}.`, { exposeDetail: true });
       return;
     }
 
@@ -1187,7 +1175,7 @@ router.get("/me/account-status", async (req, res) => {
 
   if (profileErr) {
     req.log.error({ err: profileErr }, "account-status: profile query failed");
-    sendError(res, "db_error", "Could not load account status");
+    sendError(res, "db_error", "Could not load account status", { exposeDetail: true });
     return;
   }
   if (!profile) {
@@ -1247,7 +1235,7 @@ router.post("/me/reactivate", async (req, res) => {
 
   if (profileCheckErr) {
     req.log.error({ err: profileCheckErr }, "reactivate: failed to check account status");
-    sendError(res, "db_error", "Could not verify account status");
+    sendError(res, "db_error", "Could not verify account status", { exposeDetail: true });
     return;
   }
   if (!profileRow) {
@@ -1272,7 +1260,7 @@ router.post("/me/reactivate", async (req, res) => {
 
   if (profileUpdateErr) {
     req.log.error({ err: profileUpdateErr }, "reactivate: profile update failed");
-    sendError(res, "db_error", "Failed to reactivate account");
+    sendError(res, "db_error", "Failed to reactivate account", { exposeDetail: true });
     return;
   }
 
@@ -1502,7 +1490,7 @@ router.delete("/me/delete-request", async (req, res) => {
 
   if (profileErr) {
     req.log.error({ err: profileErr }, "delete-request DELETE: failed to restore profile status");
-    sendError(res, "db_error", "Failed to restore account status");
+    sendError(res, "db_error", "Failed to restore account status", { exposeDetail: true });
     return;
   }
 

@@ -72,7 +72,7 @@ router.post("/users/:userId/mute", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "permission engine failed for mute");
-    sendError(res, "db_error", "Permission check failed");
+    sendError(res, "db_error", "Permission check failed", { exposeDetail: true });
     return;
   }
 
@@ -126,7 +126,7 @@ router.delete("/users/:userId/mute", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "permission engine failed for mute delete");
-    sendError(res, "db_error", "Permission check failed");
+    sendError(res, "db_error", "Permission check failed", { exposeDetail: true });
     return;
   }
 

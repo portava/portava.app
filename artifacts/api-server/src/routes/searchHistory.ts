@@ -41,13 +41,13 @@ router.get("/me/search-history", async (req, res) => {
       .limit(limit);
 
     if (error) {
-      sendError(res, "db_error", "Failed to fetch search history");
+      sendError(res, "db_error", "Failed to fetch search history", { exposeDetail: true });
       return;
     }
 
     res.status(200).json({ history: data ?? [] });
   } catch {
-    sendError(res, "db_error", "Failed to fetch search history");
+    sendError(res, "db_error", "Failed to fetch search history", { exposeDetail: true });
   }
 });
 
@@ -94,7 +94,7 @@ router.post("/me/search-history", async (req, res) => {
       .single();
 
     if (upsertErr) {
-      sendError(res, "db_error", "Failed to save search history");
+      sendError(res, "db_error", "Failed to save search history", { exposeDetail: true });
       return;
     }
 
@@ -105,7 +105,7 @@ router.post("/me/search-history", async (req, res) => {
     // synthetic id with the real server id before allowing per-item delete.
     res.status(200).json({ ok: true, id: (upserted as { id: string } | null)?.id ?? null });
   } catch {
-    sendError(res, "db_error", "Failed to save search history");
+    sendError(res, "db_error", "Failed to save search history", { exposeDetail: true });
   }
 });
 
@@ -129,13 +129,13 @@ router.delete("/me/search-history", async (req, res) => {
 
     const { error } = await del;
     if (error) {
-      sendError(res, "db_error", "Failed to clear search history");
+      sendError(res, "db_error", "Failed to clear search history", { exposeDetail: true });
       return;
     }
 
     res.status(200).json({ ok: true });
   } catch {
-    sendError(res, "db_error", "Failed to clear search history");
+    sendError(res, "db_error", "Failed to clear search history", { exposeDetail: true });
   }
 });
 

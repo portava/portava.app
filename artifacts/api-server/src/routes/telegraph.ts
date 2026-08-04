@@ -182,7 +182,7 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
       parsed = JSON.parse(raw);
     } catch {
       req.log.error({ raw }, "Telegraph: AI response not valid JSON");
-      sendError(res, "db_error", "Recommendation engine returned invalid response");
+      sendError(res, "db_error", "Recommendation engine returned invalid response", { exposeDetail: true });
       return;
     }
 
@@ -322,7 +322,7 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
     res.status(200).json({ recommendations: enrichedRecommendations });
   } catch (err) {
     req.log.error({ err }, "Telegraph recommend: OpenAI call failed");
-    sendError(res, "db_error", "Telegraph recommendation service unavailable");
+    sendError(res, "db_error", "Telegraph recommendation service unavailable", { exposeDetail: true });
   }
 });
 

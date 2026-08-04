@@ -84,7 +84,7 @@ router.post("/place-recaps", asyncHandler(async (req, res) => {
   const { data: place } = await ctx.sc.from("places").select("id, name, city").eq("id", parent.place_id).maybeSingle();
   if (!place) { sendError(res, "not_found", "Place not found"); return; }
   const collected = await collectSources(ctx.sc, parent, kind, ctx.userId);
-  if (collected.error) { sendError(res, "db_error", "Eligible recap sources could not be verified"); return; }
+  if (collected.error) { sendError(res, "db_error", "Eligible recap sources could not be verified", { exposeDetail: true }); return; }
   if (kind === "place" && !collected.sources.some((source) => source.contributorId === ctx.userId)) {
     // A Place Day is a shared place/date anchor, not a user-owned record.
     // Its recap owner must therefore be an eligible participant in this exact
@@ -125,7 +125,7 @@ router.post("/place-recaps/:id/regenerate", asyncHandler(async (req, res) => {
   const { data: parent } = await ctx.sc.from(table).select("*").eq("id", parentId).maybeSingle();
   if (!prior || !parent) { sendError(res, "not_found", "Recap parent or version no longer exists"); return; }
   const collected = await collectSources(ctx.sc, parent, ctx.recap.moment_id ? "moment" : "place", ctx.userId);
-  if (collected.error) { sendError(res, "db_error", "Eligible recap sources could not be verified"); return; }
+  if (collected.error) { sendError(res, "db_error", "Eligible recap sources could not be verified", { exposeDetail: true }); return; }
   const chapters = proposeRecapChapters(collected.sources);
   const { data, error } = await ctx.sc.rpc("regenerate_live_place_recap", {
     p_recap_id: ctx.recap.id, p_owner_id: ctx.userId, p_source_hash: recapSourceHash(collected.sources),
@@ -160,7 +160,7 @@ router.get("/place-recaps/:id", asyncHandler(async (req, res) => {
     ctx.sc.from("live_place_recap_chapters").select("*").eq("version_id", ctx.recap.current_version_id).order("ordinal"),
     ctx.sc.from("live_place_recap_snapshots").select("source_id, snapshot_kind, payload").eq("version_id", ctx.recap.current_version_id),
   ]);
-  if (version.error || chapters.error || snapshots.error) { sendError(res, "db_error", "Could not load recap"); return; }
+  if (version.error || chapters.error || snapshots.error) { sendError(res, "db_error", "Could not load recap", { exposeDetail: true }); return; }
   if (!version.data) { sendError(res, "not_found"); return; }
   res.json({ recap: ctx.recap, version: version.data, chapters: chapters.data ?? [], snapshots: snapshots.data ?? [] });
 }));

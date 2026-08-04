@@ -1186,7 +1186,7 @@ router.post("/admin/users/:userId/verify", async (req, res) => {
 
   // Audit first (fail-closed): if audit insert fails, do not apply the action
   const auditR = await logModerationAction(sc, userId, adminUserId, "verify", (req.body as any)?.reason ?? null);
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const now = new Date().toISOString();
   const { error } = await sc.from("profiles")
@@ -1234,7 +1234,7 @@ router.post("/admin/users/:userId/unverify", async (req, res) => {
 
   // Audit first (fail-closed)
   const auditR = await logModerationAction(sc, userId, adminUserId, "unverify", (req.body as any)?.reason ?? null);
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const { error } = await sc.from("profiles")
     .update({ verified: false, verification_status: "unverified", verified_at: null })
@@ -1274,7 +1274,7 @@ router.post("/admin/users/:userId/restrict", async (req, res) => {
 
   // Audit first (fail-closed)
   const auditR = await logModerationAction(sc, userId, adminUserId, "message_limit", reason);
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const { error: stateErr } = await sc.from("user_account_states")
     .upsert({ user_id: userId, state: "restricted", reason, set_by: adminUserId, created_at: new Date().toISOString() }, { onConflict: "user_id,state" });
@@ -1295,7 +1295,7 @@ router.post("/admin/users/:userId/suspend", async (req, res) => {
 
   // Audit first (fail-closed)
   const auditR = await logModerationAction(sc, userId, adminUserId, "temporary_suspension", reason);
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const { error: profileErr } = await sc
     .from("profiles")
@@ -1322,7 +1322,7 @@ router.post("/admin/users/:userId/ban", async (req, res) => {
 
   // Audit first (fail-closed)
   const auditR = await logModerationAction(sc, userId, adminUserId, "permanent_ban", reason);
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const { error: profileErr } = await sc
     .from("profiles")
@@ -1349,7 +1349,7 @@ router.post("/admin/users/:userId/restore", async (req, res) => {
 
   // Audit first (fail-closed)
   const auditR = await logModerationAction(sc, userId, adminUserId, "account_restored", reason);
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const { error: profileErr } = await sc
     .from("profiles")
@@ -1375,7 +1375,7 @@ router.post("/admin/users/:userId/restrict-bio", async (req, res) => {
 
   // Audit first (fail-closed)
   const auditR = await logModerationAction(sc, userId, adminUserId, "bio_restricted", reason ?? "Bio removed by admin");
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const { error } = await sc.from("profiles").update({ bio: null }).eq("id", userId);
   if (error) { sendError(res, "db_error", error.message); return; }
@@ -1392,7 +1392,7 @@ router.post("/admin/users/:userId/restrict-messaging", async (req, res) => {
 
   // Audit first (fail-closed)
   const auditR = await logModerationAction(sc, userId, adminUserId, "messaging_restricted", reason ?? "Messaging restricted by admin");
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const now = new Date().toISOString();
   const { error } = await sc.from("profile_privacy_settings")
@@ -1411,7 +1411,7 @@ router.post("/admin/users/:userId/restrict-visibility", async (req, res) => {
 
   // Audit first (fail-closed)
   const auditR = await logModerationAction(sc, userId, adminUserId, "visibility_restricted", reason ?? "Profile visibility restricted by admin");
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const now = new Date().toISOString();
   const { error } = await sc.from("profile_privacy_settings")
@@ -1430,7 +1430,7 @@ router.post("/admin/users/:userId/hide-posts", async (req, res) => {
 
   // Audit first (fail-closed)
   const auditR = await logModerationAction(sc, userId, adminUserId, "posts_hidden", reason ?? "Posts hidden by admin");
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const now = new Date().toISOString();
   const { error } = await sc.from("profile_privacy_settings")
@@ -1449,7 +1449,7 @@ router.delete("/admin/users/:userId/avatar", async (req, res) => {
 
   // Audit first (fail-closed)
   const auditR = await logModerationAction(sc, userId, adminUserId, "content_removed", reason ?? "Avatar removed by admin");
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   // Fetch existing avatar URL and delete from storage (fail-open)
   try {
@@ -1480,7 +1480,7 @@ router.delete("/admin/users/:userId/cover", async (req, res) => {
 
   // Audit first (fail-closed)
   const auditR = await logModerationAction(sc, userId, adminUserId, "content_removed", reason ?? "Cover photo removed by admin");
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   try {
     const { data: profileRow } = await sc.from("profiles").select("cover_photo_url").eq("id", userId).maybeSingle();
@@ -1633,7 +1633,7 @@ router.post("/admin/reports/:id/resolve", async (req, res) => {
   // Audit first (fail-closed)
   const targetId: string = (reportRow as any).target_id as string;
   const auditR = await logModerationAction(sc, targetId, adminUserId, parsed.data.action, parsed.data.notes ?? null);
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const now = new Date().toISOString();
   const { data, error } = await sc
@@ -1668,7 +1668,7 @@ router.post("/admin/reports/:id/dismiss", async (req, res) => {
   // Audit first (fail-closed)
   const targetId: string = (reportRow as any).target_id as string;
   const auditR = await logModerationAction(sc, targetId, adminUserId, "report_dismissed", notes);
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const now = new Date().toISOString();
   const { data, error } = await sc
@@ -1734,7 +1734,7 @@ router.post("/admin/reports/:id/hide-content", async (req, res) => {
 
   // Audit against the OWNER's profile UUID (fail-closed)
   const auditR = await logModerationAction(sc, ownerUserId, adminUserId, "content_removed", reason);
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   // Apply content mutation based on target type
   let contentHidden = false;
@@ -1816,7 +1816,7 @@ router.post("/admin/deletion-requests/:id/execute", async (req, res) => {
 
   // Audit first (fail-closed)
   const auditR = await logModerationAction(sc, userId, adminUserId, "account_deleted", "Account deletion executed");
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   // Delete existing profile media from Storage before nulling the DB fields
   try {
@@ -1908,7 +1908,7 @@ router.get("/admin/dev/interaction-test", async (req, res) => {
     res.json(permissions);
   } catch (err) {
     req.log.error({ err }, "admin/dev/interaction-test: resolver failed");
-    sendError(res, "db_error", "Failed to resolve interaction permissions");
+    sendError(res, "db_error", "Failed to resolve interaction permissions", { exposeDetail: true });
   }
 });
 
@@ -2242,7 +2242,7 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
   });
   if (auditErr) {
     req.log.error({ err: auditErr, eventId, action }, "event_activity_log insert failed — aborting moderation");
-    sendError(res, "db_error", "Failed to write audit log; no action was applied"); return;
+    sendError(res, "db_error", "Failed to write audit log; no action was applied", { exposeDetail: true }); return;
   }
 
   // Now apply the event mutation (audit already recorded)
@@ -2331,7 +2331,7 @@ router.post("/admin/trips/reconcile-invite-slots", async (req, res) => {
       { err: reconcileResult.error.message },
       "reconcile_invite_link_slots rpc failed"
     );
-    sendError(res, "db_error", "Reconciliation query failed");
+    sendError(res, "db_error", "Reconciliation query failed", { exposeDetail: true });
     return;
   }
 
@@ -2340,7 +2340,7 @@ router.post("/admin/trips/reconcile-invite-slots", async (req, res) => {
       { err: staleResult.error.message },
       "cleanup_stale_invite_link_attempts rpc failed"
     );
-    sendError(res, "db_error", "Stale-attempt cleanup query failed");
+    sendError(res, "db_error", "Stale-attempt cleanup query failed", { exposeDetail: true });
     return;
   }
 
@@ -2436,7 +2436,7 @@ router.get("/admin/health/schema-drift", async (req, res) => {
   }
 
   if (!cached) {
-    sendError(res, "db_error", "Schema drift check did not produce a result");
+    sendError(res, "db_error", "Schema drift check did not produce a result", { exposeDetail: true });
     return;
   }
 

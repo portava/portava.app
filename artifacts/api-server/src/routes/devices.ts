@@ -79,7 +79,7 @@ router.post("/me/crypto-devices", async (req, res) => {
 
   if (error || !data) {
     req.log.error({ err: error }, "devices: insert failed");
-    sendError(res, "db_error", "Failed to register device");
+    sendError(res, "db_error", "Failed to register device", { exposeDetail: true });
     return;
   }
 
@@ -104,7 +104,7 @@ router.get("/me/crypto-devices", async (req, res) => {
 
   if (error) {
     req.log.error({ err: error }, "devices: list failed");
-    sendError(res, "db_error", "Failed to list devices");
+    sendError(res, "db_error", "Failed to list devices", { exposeDetail: true });
     return;
   }
 
@@ -135,7 +135,7 @@ router.delete("/me/crypto-devices/:id", async (req, res) => {
 
   if (error) {
     req.log.error({ err: error }, "devices: delete failed");
-    sendError(res, "db_error", "Failed to deregister device");
+    sendError(res, "db_error", "Failed to deregister device", { exposeDetail: true });
     return;
   }
 
@@ -147,7 +147,11 @@ router.delete("/me/crypto-devices/:id", async (req, res) => {
 // Called once per install after key generation.
 // Registered for both POST (current client) and PUT (legacy) methods.
 // Body: { publicKey: string (base64url, 32 bytes = 44 base64 chars) }
-async function handlePublicKeyUpdate(req: Request, res: Response) {
+// Typed params: inline router handlers get `:id` narrowed to string via
+// express's overloads, but this shared handler is declared standalone (it backs
+// both the POST and PUT registrations below), so the generic must be explicit —
+// otherwise req.params.id widens to `string | string[]`.
+async function handlePublicKeyUpdate(req: Request<{ id: string }>, res: Response) {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -187,7 +191,7 @@ async function handlePublicKeyUpdate(req: Request, res: Response) {
 
   if (error) {
     req.log.error({ err: error }, "devices: public-key update failed");
-    sendError(res, "db_error", "Failed to update public key");
+    sendError(res, "db_error", "Failed to update public key", { exposeDetail: true });
     return;
   }
 
@@ -222,7 +226,7 @@ router.get("/users/:userId/devices", async (req, res) => {
 
   if (error) {
     req.log.error({ err: error }, "devices: peer list failed");
-    sendError(res, "db_error", "Failed to list devices");
+    sendError(res, "db_error", "Failed to list devices", { exposeDetail: true });
     return;
   }
 

@@ -34,7 +34,7 @@ import Svg, {
   Line as SvgLine,
 } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Lock,
@@ -166,6 +166,7 @@ const FEATURES = [
 export default function SignIn() {
   const insets   = useSafeAreaInsets();
   const { isAuthed } = useSession();
+  const { mode: modeParam } = useLocalSearchParams<{ mode?: string }>();
 
   // ── Existing auth state (UNCHANGED) ────────────────────────────────────────
   const [mode,         setMode]         = useState<Mode>('signin');
@@ -197,6 +198,12 @@ export default function SignIn() {
   useEffect(() => {
     if (isAuthed && !busy && !oauthBusy) router.replace('/(tabs)');
   }, [isAuthed, busy, oauthBusy]);
+
+  // Honour ?mode=forgot-password deep links (e.g. from the expired reset screen)
+  useEffect(() => {
+    if (modeParam === 'forgot-password') switchMode('forgot-password');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modeParam]);
 
   // ── Background rotation ─────────────────────────────────────────────────────
   const scheduleNextRef = useRef<(() => void) | undefined>(undefined);

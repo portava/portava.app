@@ -263,7 +263,7 @@ router.post("/me/safe-return/sessions", async (req, res) => {
     if (stillActive) {
       sendError(res, "conflict", "You already have an active Safe Return session");
     } else {
-      sendError(res, "db_error", "Failed to create session");
+      sendError(res, "db_error", "Failed to create session", { exposeDetail: true });
     }
     return;
   }
@@ -508,7 +508,7 @@ router.post("/me/safe-return/sessions/:id/trigger-missed", async (req, res) => {
 
   const session = await markMissed(db, req.params.id, user.id);
   if (!session) {
-    sendError(res, "db_error", "Failed to mark session as missed");
+    sendError(res, "db_error", "Failed to mark session as missed", { exposeDetail: true });
     return;
   }
 
@@ -596,7 +596,7 @@ router.post("/me/safe-return/sessions/:id/live-share/start", async (req, res) =>
   );
 
   if (!share) {
-    sendError(res, "db_error", "Failed to start live share"); return;
+    sendError(res, "db_error", "Failed to start live share", { exposeDetail: true }); return;
   }
 
   res.status(201).json({

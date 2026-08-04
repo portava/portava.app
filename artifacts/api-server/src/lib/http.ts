@@ -85,8 +85,38 @@ const STATUS: Record<ApiErrorCode, number> = {
   no_key_package: 404,
 };
 
-export function sendError(res: Response, code: ApiErrorCode, message?: string) {
-  res.status(STATUS[code]).json({ error: code, message: message ?? code });
+/**
+ * Error codes whose caller-supplied message must never reach the client.
+ *
+ * `db_error` is the problem case: ~750 call sites pass the raw PostgREST/
+ * Postgres `error.message` straight through, which leaks table and column
+ * names, constraint names, and occasionally row values to anyone who can
+ * trigger a failed query. Every one of those call sites already logs the real
+ * error server-side (`req.log.error({ err }, "...")`) immediately before the
+ * send, so replacing the response body loses no operator-facing detail.
+ *
+ * Opt back in per-call with `{ exposeDetail: true }` — reserved for admin-only
+ * diagnostic routes where surfacing the underlying failure is the point.
+ */
+const SANITIZED_CODES: ReadonlySet<ApiErrorCode> = new Set<ApiErrorCode>([
+  "db_error",
+]);
+
+const GENERIC_MESSAGE: Partial<Record<ApiErrorCode, string>> = {
+  db_error: "A database error occurred. Please try again.",
+};
+
+export function sendError(
+  res: Response,
+  code: ApiErrorCode,
+  message?: string,
+  opts?: { exposeDetail?: boolean },
+) {
+  const sanitize = SANITIZED_CODES.has(code) && !opts?.exposeDetail;
+  const body = sanitize
+    ? (GENERIC_MESSAGE[code] ?? code)
+    : (message ?? code);
+  res.status(STATUS[code]).json({ error: code, message: body });
 }
 
 /**

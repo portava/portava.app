@@ -260,6 +260,103 @@ async function serveProfileSharePage(req, res, username, appName, stampId) {
   res.end(html);
 }
 
+// ── Universal / App Links association files ──────────────────────────────────
+//
+// Apple and Google verify deep links by fetching these two files over HTTPS
+// from the web origin baked into app.json (EXPO_PUBLIC_WEB_ORIGIN). They must
+// be served from this server because it owns that origin's root.
+//
+// Both documents need identifiers that live in the EAS credential store, not
+// in the repo, so they are supplied by deployment env vars:
+//
+//   APPLE_APP_ID_PREFIX   Apple Developer Team ID (e.g. "A1B2C3D4E5"). Prefixed
+//                         onto the bundle identifier to form the AASA appID.
+//   ANDROID_CERT_SHA256   Upload/signing certificate SHA-256 fingerprint(s),
+//                         colon-separated hex. Comma-separate multiple certs
+//                         (Play App Signing gives you a distinct one).
+//
+// When a value is missing we return 503 rather than a syntactically valid file
+// with placeholder IDs: a wrong appID/fingerprint makes Apple and Google cache
+// a FAILED verification, which is far harder to recover from than a retry.
+
+/** Read an identifier out of app.json; returns null when absent. */
+function readAppJson(getter) {
+  try {
+    const appJson = JSON.parse(
+      fs.readFileSync(path.resolve(__dirname, "..", "app.json"), "utf-8"),
+    );
+    return getter(appJson.expo || {}) || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Deep-link path prefixes — keep in sync with app.json android.intentFilters. */
+const APP_LINK_PATHS = ["/passport", "/passport/*", "/u", "/u/*"];
+
+function serveAppleAppSiteAssociation(res) {
+  const teamId = (process.env.APPLE_APP_ID_PREFIX || "").trim();
+  const bundleId = readAppJson((e) => e.ios && e.ios.bundleIdentifier);
+
+  if (!teamId || !bundleId) {
+    res.writeHead(503, { "content-type": "application/json" });
+    res.end(JSON.stringify({
+      error: "not_configured",
+      message: "APPLE_APP_ID_PREFIX (Apple Team ID) is not set on this deployment.",
+    }));
+    return;
+  }
+
+  const doc = {
+    applinks: {
+      // `details` supersedes the legacy `apps` key, which must stay empty.
+      apps: [],
+      details: [{ appID: `${teamId}.${bundleId}`, paths: APP_LINK_PATHS }],
+    },
+  };
+
+  // Apple requires application/json even though the path has no extension, and
+  // fetches over HTTPS with no redirects. Short cache: the file is tiny and a
+  // stale copy blocks link verification after a credential rotation.
+  res.writeHead(200, {
+    "content-type": "application/json",
+    "cache-control": "public, max-age=3600",
+  });
+  res.end(JSON.stringify(doc));
+}
+
+function serveAssetLinks(res) {
+  const fingerprints = (process.env.ANDROID_CERT_SHA256 || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const packageName = readAppJson((e) => e.android && e.android.package);
+
+  if (fingerprints.length === 0 || !packageName) {
+    res.writeHead(503, { "content-type": "application/json" });
+    res.end(JSON.stringify({
+      error: "not_configured",
+      message: "ANDROID_CERT_SHA256 (signing certificate fingerprint) is not set on this deployment.",
+    }));
+    return;
+  }
+
+  const doc = [{
+    relation: ["delegate_permission/common.handle_all_urls"],
+    target: {
+      namespace: "android_app",
+      package_name: packageName,
+      sha256_cert_fingerprints: fingerprints,
+    },
+  }];
+
+  res.writeHead(200, {
+    "content-type": "application/json",
+    "cache-control": "public, max-age=3600",
+  });
+  res.end(JSON.stringify(doc));
+}
+
 function serveStaticFile(urlPath, res) {
   const safePath = path.normalize(urlPath).replace(/^(\.\.(\/|\\|$))+/, "");
   const filePath = path.join(STATIC_ROOT, safePath);
@@ -290,6 +387,18 @@ function createRequestHandler(landingPageTemplate, appName) {
 
   if (basePath && pathname.startsWith(basePath)) {
     pathname = pathname.slice(basePath.length) || "/";
+  }
+
+  // Association files must resolve before any basePath/static handling — Apple
+  // and Google fetch them at the domain root with no redirects allowed.
+  if (req.method === "GET" || req.method === "HEAD") {
+    const wellKnown = url.pathname; // deliberately pre-basePath
+    if (wellKnown === "/.well-known/apple-app-site-association") {
+      return serveAppleAppSiteAssociation(res);
+    }
+    if (wellKnown === "/.well-known/assetlinks.json") {
+      return serveAssetLinks(res);
+    }
   }
 
   if (pathname === "/" || pathname === "/manifest") {
@@ -330,6 +439,8 @@ module.exports = {
   serveProfileSharePage,
   createRequestHandler,
   escapeHtml,
+  serveAppleAppSiteAssociation,
+  serveAssetLinks,
 };
 
 if (require.main === module) {

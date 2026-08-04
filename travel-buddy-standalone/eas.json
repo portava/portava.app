@@ -16,7 +16,7 @@
       "prebuildCommand": "bash scripts/eas-install-rust.sh",
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://portava.replit.app",
-        "EXPO_PUBLIC_WEB_ORIGIN": "https://app.travel-buddy.io"
+        "EXPO_PUBLIC_WEB_ORIGIN": "https://portava.replit.app"
       },
       "ios": {
         "resourceClass": "m-medium"
@@ -27,7 +27,7 @@
       "prebuildCommand": "bash scripts/eas-install-rust.sh",
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://portava.replit.app",
-        "EXPO_PUBLIC_WEB_ORIGIN": "https://app.travel-buddy.io"
+        "EXPO_PUBLIC_WEB_ORIGIN": "https://portava.replit.app"
       }
     }
   },

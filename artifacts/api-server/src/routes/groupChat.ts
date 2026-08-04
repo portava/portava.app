@@ -178,7 +178,7 @@ router.get('/trips/:tripId/chat', asyncHandler(async (req, res) => {
   }
 
   const threadId = await syncTripChatMembers(tripId, sc);
-  if (!threadId) { sendError(res, 'db_error', 'Failed to resolve trip chat thread'); return; }
+  if (!threadId) { sendError(res, 'db_error', 'Failed to resolve trip chat thread', { exposeDetail: true }); return; }
 
   const { active, left } = await isActiveThreadMember(sc, threadId, user.id);
 
@@ -240,7 +240,7 @@ router.get('/circles/:circleId/chat', asyncHandler(async (req, res) => {
   }
 
   const threadId = await syncCircleChatMembers(circleOwnerId, sc);
-  if (!threadId) { sendError(res, 'db_error', 'Failed to resolve circle chat thread'); return; }
+  if (!threadId) { sendError(res, 'db_error', 'Failed to resolve circle chat thread', { exposeDetail: true }); return; }
 
   const { active, left } = await isActiveThreadMember(sc, threadId, user.id);
 
@@ -396,7 +396,7 @@ router.post('/trips/:tripId/chat/sync', asyncHandler(async (req, res) => {
   }
 
   const threadId = await syncTripChatMembers(tripId, sc);
-  if (!threadId) { sendError(res, 'db_error', 'Sync failed'); return; }
+  if (!threadId) { sendError(res, 'db_error', 'Sync failed', { exposeDetail: true }); return; }
 
   res.status(200).json({ status: 'synced', threadId });
 }));
@@ -417,7 +417,7 @@ router.post('/circles/:circleId/chat/sync', asyncHandler(async (req, res) => {
   }
 
   const threadId = await syncCircleChatMembers(circleOwnerId, sc);
-  if (!threadId) { sendError(res, 'db_error', 'Sync failed'); return; }
+  if (!threadId) { sendError(res, 'db_error', 'Sync failed', { exposeDetail: true }); return; }
 
   res.status(200).json({ status: 'synced', threadId });
 }));

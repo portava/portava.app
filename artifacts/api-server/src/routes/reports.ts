@@ -103,7 +103,7 @@ router.post("/reports", async (req, res) => {
       }
     } catch (err) {
       req.log.error({ err }, "permission engine failed for report");
-      sendError(res, "db_error", "Permission check failed");
+      sendError(res, "db_error", "Permission check failed", { exposeDetail: true });
       return;
     }
   }

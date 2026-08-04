@@ -37,7 +37,7 @@ router.post("/users/:userId/block", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "permission engine failed for block");
-    sendError(res, "db_error", "Permission check failed");
+    sendError(res, "db_error", "Permission check failed", { exposeDetail: true });
     return;
   }
 
@@ -151,7 +151,7 @@ router.delete("/users/:userId/block", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "permission engine failed for block delete");
-    sendError(res, "db_error", "Permission check failed");
+    sendError(res, "db_error", "Permission check failed", { exposeDetail: true });
     return;
   }
 

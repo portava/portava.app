@@ -137,7 +137,7 @@ router.get("/users/:targetUserId/interaction-context", async (req, res) => {
     });
   } catch (err) {
     req.log.error({ err }, "interaction-context resolver failed");
-    sendError(res, "db_error", "Failed to resolve interaction permissions");
+    sendError(res, "db_error", "Failed to resolve interaction permissions", { exposeDetail: true });
   }
 });
 

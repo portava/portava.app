@@ -75,7 +75,7 @@ router.post("/users/:userId/friend-request", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "permission engine failed for friend request");
-    sendError(res, "db_error", "Permission check failed");
+    sendError(res, "db_error", "Permission check failed", { exposeDetail: true });
     return;
   }
 
@@ -190,7 +190,7 @@ router.post("/friend-requests/:requestId/accept", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "permission engine failed for friend request accept");
-    sendError(res, "db_error", "Permission check failed");
+    sendError(res, "db_error", "Permission check failed", { exposeDetail: true });
     return;
   }
 
@@ -249,7 +249,7 @@ router.post("/friend-requests/:requestId/decline", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "permission engine failed for friend request decline");
-    sendError(res, "db_error", "Permission check failed");
+    sendError(res, "db_error", "Permission check failed", { exposeDetail: true });
     return;
   }
 
@@ -306,7 +306,7 @@ router.post("/friend-requests/:requestId/cancel", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "permission engine failed for friend request cancel");
-    sendError(res, "db_error", "Permission check failed");
+    sendError(res, "db_error", "Permission check failed", { exposeDetail: true });
     return;
   }
 
@@ -819,7 +819,7 @@ router.delete("/me/friends/:friendId", async (req, res) => {
     .eq("user_a", a)
     .eq("user_b", b);
 
-  if (error) { sendError(res, "db_error", "Failed to remove friendship"); return; }
+  if (error) { sendError(res, "db_error", "Failed to remove friendship", { exposeDetail: true }); return; }
 
   res.status(200).json({ status: "removed", friendId });
 });

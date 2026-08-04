@@ -49,7 +49,7 @@ router.get("/me/emergency-contacts", asyncHandler(async (req, res) => {
   const { user } = auth;
 
   const db = getServiceClient();
-  if (!db) { sendError(res, "db_error", "Service client not available"); return; }
+  if (!db) { sendError(res, "db_error", "Service client not available", { exposeDetail: true }); return; }
 
   const { data, error } = await db
     .from("profile_emergency_contacts")
@@ -71,7 +71,7 @@ router.post("/me/emergency-contacts", asyncHandler(async (req, res) => {
   const { user } = auth;
 
   const db = getServiceClient();
-  if (!db) { sendError(res, "db_error", "Service client not available"); return; }
+  if (!db) { sendError(res, "db_error", "Service client not available", { exposeDetail: true }); return; }
 
   const parsed = contactSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -117,7 +117,7 @@ router.patch("/me/emergency-contacts/:id", asyncHandler(async (req, res) => {
   const { user } = auth;
 
   const db = getServiceClient();
-  if (!db) { sendError(res, "db_error", "Service client not available"); return; }
+  if (!db) { sendError(res, "db_error", "Service client not available", { exposeDetail: true }); return; }
 
   const parsed = patchSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -155,7 +155,7 @@ router.delete("/me/emergency-contacts/:id", asyncHandler(async (req, res) => {
   const { user } = auth;
 
   const db = getServiceClient();
-  if (!db) { sendError(res, "db_error", "Service client not available"); return; }
+  if (!db) { sendError(res, "db_error", "Service client not available", { exposeDetail: true }); return; }
 
   const { error, count } = await db
     .from("profile_emergency_contacts")

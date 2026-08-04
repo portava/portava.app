@@ -176,7 +176,7 @@ router.post(
       .eq("thread_id", threadId);
 
     if (error) {
-      sendError(res, "db_error", "Failed to dismiss suggestion");
+      sendError(res, "db_error", "Failed to dismiss suggestion", { exposeDetail: true });
       return;
     }
 
@@ -275,7 +275,7 @@ router.post(
       .single();
 
     if (planErr) {
-      sendError(res, "db_error", "Failed to add to plan");
+      sendError(res, "db_error", "Failed to add to plan", { exposeDetail: true });
       return;
     }
 
@@ -411,7 +411,7 @@ router.post(
       .single();
 
     if (msgErr) {
-      sendError(res, "db_error", "Failed to create poll");
+      sendError(res, "db_error", "Failed to create poll", { exposeDetail: true });
       return;
     }
 
@@ -436,7 +436,7 @@ router.get("/me/telegraph-chat-settings", async (req, res) => {
     .eq("id", user.id)
     .maybeSingle();
   if (error || !data) {
-    sendError(res, "db_error", "Failed to load Telegraph settings");
+    sendError(res, "db_error", "Failed to load Telegraph settings", { exposeDetail: true });
     return;
   }
   res.status(200).json({ ok: true, settings: data });
@@ -472,7 +472,7 @@ router.patch("/me/telegraph-chat-settings", async (req, res) => {
     .eq("id", user.id);
 
   if (error) {
-    sendError(res, "db_error", "Failed to update Telegraph settings");
+    sendError(res, "db_error", "Failed to update Telegraph settings", { exposeDetail: true });
     return;
   }
 

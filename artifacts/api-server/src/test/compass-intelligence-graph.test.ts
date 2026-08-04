@@ -254,9 +254,9 @@ function seedTravelData(store: Record<string, Row[]>) {
     { id: "trip-3", owner_id: USER_B,  destination_city: "Baguio", start_date: "2026-06-10" },
   ];
   store.events = [
-    { id: "evt-1", city: "Cebu", category: "nightlife", start_at: friEvening },
-    { id: "evt-2", city: "Cebu", category: "nightlife", start_at: "2026-07-17T12:00:00Z" }, // Fri 20:00 Cebu — also Fri evening local
-    { id: "evt-3", city: "Cebu", category: "wellness",  start_at: monMorning },
+    { id: "evt-1", city: "Cebu", category: "nightlife", starts_at: friEvening },
+    { id: "evt-2", city: "Cebu", category: "nightlife", starts_at: "2026-07-17T12:00:00Z" }, // Fri 20:00 Cebu — also Fri evening local
+    { id: "evt-3", city: "Cebu", category: "wellness",  starts_at: monMorning },
   ];
   store.compass_outcome_events = [
     { user_id: USER_ID, item_id: "evt-1", item_type: "event", stage: "went", occurred_at: friEvening },

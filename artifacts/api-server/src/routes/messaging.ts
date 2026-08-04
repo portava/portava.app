@@ -289,7 +289,7 @@ router.post('/users/:userId/open-thread', async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, 'permission engine failed for open-thread');
-    sendError(res, 'db_error', 'Permission check failed');
+    sendError(res, 'db_error', 'Permission check failed', { exposeDetail: true });
     return;
   }
 
@@ -414,7 +414,7 @@ router.post('/users/:userId/message-request', async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, 'permission engine failed for message-request');
-    sendError(res, 'db_error', 'Permission check failed');
+    sendError(res, 'db_error', 'Permission check failed', { exposeDetail: true });
     return;
   }
 
@@ -2172,7 +2172,7 @@ router.get('/trips/:tripId/chat', async (req, res) => {
     });
   } catch (e) {
     req.log.error({ err: e }, 'syncTripChatMembers failed in GET /trips/:tripId/chat');
-    sendError(res, 'db_error', 'Failed to open trip chat');
+    sendError(res, 'db_error', 'Failed to open trip chat', { exposeDetail: true });
   }
 });
 
@@ -2231,7 +2231,7 @@ router.get('/circles/:circleOwnerId/chat', async (req, res) => {
     });
   } catch (e) {
     req.log.error({ err: e }, 'syncCircleChatMembers failed in GET /circles/:circleOwnerId/chat');
-    sendError(res, 'db_error', 'Failed to open circle chat');
+    sendError(res, 'db_error', 'Failed to open circle chat', { exposeDetail: true });
   }
 });
 
@@ -2342,7 +2342,7 @@ router.post('/threads/:threadId/report', async (req, res) => {
 
   if (error) {
     req.log.warn({ err: error }, 'thread report insert failed');
-    sendError(res, 'db_error', 'Could not file report');
+    sendError(res, 'db_error', 'Could not file report', { exposeDetail: true });
     return;
   }
 
@@ -2425,7 +2425,7 @@ router.post('/messages/:messageId/report', async (req, res) => {
 
   if (error) {
     req.log.warn({ err: error }, 'message report insert failed');
-    sendError(res, 'db_error', 'Could not file report');
+    sendError(res, 'db_error', 'Could not file report', { exposeDetail: true });
     return;
   }
 

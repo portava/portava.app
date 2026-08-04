@@ -447,7 +447,7 @@ router.post("/airport/sessions", async (req, res) => {
     canonicalCityId,
   });
   if (!session) {
-    sendError(res, "db_error", "Failed to create layover session");
+    sendError(res, "db_error", "Failed to create layover session", { exposeDetail: true });
     return;
   }
 
@@ -759,7 +759,7 @@ router.post("/airport/sessions/:id/return-deadline", async (req, res) => {
   // Persist the reminder instant so the client can (re)schedule local
   // notifications after restarts, and other surfaces can render it.
   const saved = await setReturnReminder(sc, session.id, user.id, remindAt.toISOString());
-  if (!saved) { sendError(res, "db_error", "Could not save the reminder"); return; }
+  if (!saved) { sendError(res, "db_error", "Could not save the reminder", { exposeDetail: true }); return; }
 
   await emitLayoverEvent(sc, session.id, user.id, "return_deadline_set", {
     minutesBefore: parsed.data.minutesBefore,
@@ -1327,7 +1327,7 @@ router.patch("/airport/sessions/:id/share", async (req, res) => {
   if (enabled === null) { sendError(res, "invalid_payload", "enabled (boolean) is required"); return; }
 
   const updated = await setShareStatus(sc, session.id, user.id, enabled);
-  if (!updated) { sendError(res, "db_error", "Could not update sharing"); return; }
+  if (!updated) { sendError(res, "db_error", "Could not update sharing", { exposeDetail: true }); return; }
 
   res.json({ ok: true, session: updated });
 });
