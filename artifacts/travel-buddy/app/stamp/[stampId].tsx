@@ -12,7 +12,8 @@ import {
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Share2, Link } from 'lucide-react-native';
+import { ArrowLeft, Link } from 'lucide-react-native';
+import { PortavaShareIcon } from '../../src/components/icons/PortavaShareIcon';
 import * as Clipboard from 'expo-clipboard';
 import { StampArtwork } from '../../src/components/StampArtwork';
 import { StampShareCard } from '../../src/components/StampShareCard';
@@ -222,7 +223,7 @@ function StampDetailContent({
               {sharing ? (
                 <ActivityIndicator size="small" color={color.ink} />
               ) : (
-                <Share2 size={16} color={color.ink} />
+                <PortavaShareIcon size={16} color={color.ink} />
               )}
               <Text style={styles.shareBtnText}>
                 {sharing ? 'Sharing…' : 'Share'}

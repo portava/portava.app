@@ -37,7 +37,6 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  Share2,
   Link,
   MessageCircle,
   Send,
@@ -47,6 +46,7 @@ import {
   X,
   Search,
 } from 'lucide-react-native';
+import { PortavaShareIcon } from './icons/PortavaShareIcon.tsx';
 import { closeThenNavigate } from '../lib/deferredNavigate.ts';
 import { color, space, radius, shadow } from '../theme/tokens.ts';
 import { getMyThreads, sendMessage, openDirectThread } from '../services/messaging.ts';
@@ -316,7 +316,7 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
             >
               <ShareOption
                 iconBg="#EEF1FF"
-                icon={<Share2 size={20} color="#4A6CF7" />}
+                icon={<PortavaShareIcon size={20} color="#4A6CF7" />}
                 label="Share Post"
                 sub="Open share menu"
                 onPress={handleNativeShare}

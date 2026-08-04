@@ -73,3 +73,4 @@
 - [renderHook must be awaited](renderhook-await.md) — renderHook() returns a Promise in jest-expo; always `await renderHook(...)` or result.current is undefined.
 - [Standalone validation isolation](standalone-validation-hang.md) — if the combined suite stops producing output, isolate the suspected node:test file with a timeout and run components separately.
 - [Shared Moments pagination and approval](shared-moments-pagination-approval.md) — keyset cursors must include created-at plus UUID, and approval audits require a matched pending-row transition.
+- [Portava share icon conventions](portava-share-icon-conventions.md) — genuine-share vs excluded-lookalike icon rules, no SVG rasterizer in sandbox (verify via live preview screenshot), new preview routes need portavaRoutes.ts entry.

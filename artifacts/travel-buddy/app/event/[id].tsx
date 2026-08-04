@@ -33,9 +33,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, MapPin, CalendarClock, Users, Clock, Check,
   ChevronDown, MessageSquare, Shield, Star, Link, Settings,
-  Bookmark, BookmarkCheck, Share2, MoreVertical, Flag,
+  Bookmark, BookmarkCheck, MoreVertical, Flag,
   Bell, Briefcase, Compass, Map, Lock,
 } from 'lucide-react-native';
+import { PortavaShareIcon } from '../../src/components/icons/PortavaShareIcon.tsx';
 import {
   getEvent,
   saveEvent, unsaveEvent, shareEvent, reportEvent, addEventToTrip,
@@ -743,8 +744,14 @@ export default function EventDetailScreen() {
                 </Pressable>
               )}
               {event && (
-                <Pressable style={styles.headerBtn} onPress={handleShare} hitSlop={8}>
-                  <Share2 size={20} color={color.mute} />
+                <Pressable
+                  style={styles.headerBtn}
+                  onPress={handleShare}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Share this event"
+                >
+                  <PortavaShareIcon size={20} color={color.mute} />
                 </Pressable>
               )}
               {isHost ? (

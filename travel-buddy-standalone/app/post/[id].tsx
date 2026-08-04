@@ -9,10 +9,11 @@ import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
 import { navigateToProfile } from '../../src/lib/navigateToProfile.ts';
 import * as Linking from 'expo-linking';
 import {
-  MoreVertical, Share2, Flag, Flag as FlagFill,
+  MoreVertical, Flag, Flag as FlagFill,
   MapPin, MessageCircle, UserCircle, Pencil,
 } from 'lucide-react-native';
 import { StampIcon } from '../../src/components/stamps/StampIcon';
+import { PortavaShareIcon } from '../../src/components/icons/PortavaShareIcon';
 import { AppHeader } from '../../src/components/ui/AppHeader';
 import { OfficialBadge } from '../../src/components/OfficialBadge';
 import { ReportSheet } from '../../src/components/ReportSheet';
@@ -62,7 +63,7 @@ function PostOverflowSheet({
             </>
           )}
           <Pressable style={ov.row} onPress={() => { onClose(); onShare(); }}>
-            <Share2 size={20} color={color.ink} />
+            <PortavaShareIcon size={20} color={color.ink} />
             <Text style={ov.rowLabel}>Share post</Text>
           </Pressable>
           {onWrongPlace && (

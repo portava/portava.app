@@ -18,7 +18,8 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
 import { getMediaFilter, buildCssFilter } from '../lib/media/filters.ts';
-import { X, MessageCircle, Flag, Eye, Share2, Plus, Trash2, Volume2, VolumeX } from 'lucide-react-native';
+import { X, MessageCircle, Flag, Eye, Plus, Trash2, Volume2, VolumeX } from 'lucide-react-native';
+import { PortavaShareIcon } from './icons/PortavaShareIcon.tsx';
 import { StampIcon } from './stamps/StampIcon.tsx';
 import { SaveButton } from './SaveButton.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -503,8 +504,10 @@ export function HighlightViewer({
                 }}
                 style={s.actionBtn}
                 hitSlop={HIT_SLOP}
+                accessibilityRole="button"
+                accessibilityLabel="Share this highlight"
               >
-                <Share2 size={20} color="rgba(255,255,255,0.85)" />
+                <PortavaShareIcon size={20} color="rgba(255,255,255,0.85)" />
               </Pressable>
             )}
 

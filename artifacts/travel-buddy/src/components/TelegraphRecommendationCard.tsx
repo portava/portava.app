@@ -7,7 +7,8 @@
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Zap, MapPin, Clock, DollarSign, X, CalendarPlus, Bookmark, Share2, ThumbsDown } from 'lucide-react-native';
+import { Zap, MapPin, Clock, DollarSign, X, CalendarPlus, Bookmark, ThumbsDown } from 'lucide-react-native';
+import { PortavaShareIcon } from './icons/PortavaShareIcon.tsx';
 import type { TelegraphActivityRecommendation } from '../types/models.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { TG } from '../theme/telegraphTokens.ts';
@@ -112,8 +113,14 @@ export function TelegraphRecommendationCard({ rec, onAddToTrip, onDismiss, onSav
             </Pressable>
           )}
           {onShare && (
-            <Pressable style={styles.iconBtn} onPress={() => onShare(rec)} hitSlop={8}>
-              <Share2 size={15} color={color.mute} />
+            <Pressable
+              style={styles.iconBtn}
+              onPress={() => onShare(rec)}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Share this recommendation"
+            >
+              <PortavaShareIcon size={15} color={color.mute} />
             </Pressable>
           )}
           {onNotInterested && (

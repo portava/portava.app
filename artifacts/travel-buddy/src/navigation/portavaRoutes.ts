@@ -815,6 +815,14 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     requiresAuth: false,
   },
   {
+    key: 'gems-share-icon-preview',
+    path: 'gems/share-icon-preview',
+    title: 'Portava Share Icon Preview',
+    parent: 'gems-directory',
+    icon: null,
+    requiresAuth: false,
+  },
+  {
     key: 'media-add-gem',
     path: 'media/add-gem',
     title: 'Add Gem',

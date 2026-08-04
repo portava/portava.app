@@ -27,7 +27,6 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import {
-  Share2,
   Navigation,
   CalendarPlus,
   CalendarCheck,
@@ -39,6 +38,7 @@ import {
   Ban,
 } from 'lucide-react-native';
 import { StampIcon } from '../stamps/StampIcon.tsx';
+import { PortavaShareIcon } from '../icons/PortavaShareIcon.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import type { MapEntity, MapEntityType } from '../../types/mapTypes.ts';
 import type { ModerationSubjectType } from '../../services/moderation.ts';
@@ -311,7 +311,7 @@ function ActionRowInner({ entity, onBeforeNavigate }: { entity: MapEntity; onBef
         {showShare && (
           <ActionBtn
             testID="map-action-share"
-            icon={<Share2 size={15} color={color.mute} />}
+            icon={<PortavaShareIcon size={15} color={color.mute} />}
             label="Share"
             onPress={handleShare}
           />

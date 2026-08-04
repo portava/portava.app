@@ -8,7 +8,8 @@ import {
   Modal, View, Text, Pressable, StyleSheet, ScrollView, Switch, ActivityIndicator, Image,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
-import { X, Share2, Link } from 'lucide-react-native';
+import { X, Link } from 'lucide-react-native';
+import { PortavaShareIcon } from '../icons/PortavaShareIcon.tsx';
 import { StampArtwork } from '../StampArtwork.tsx';
 import { StampShareCard } from '../StampShareCard.tsx';
 import { useStampShare } from '../../hooks/useStampShare.ts';
@@ -234,7 +235,7 @@ export function StampDetailModal({ stamp, isOwner, visible, onClose, onStampUpda
                   {sharing ? (
                     <ActivityIndicator size="small" color={color.ink} />
                   ) : (
-                    <Share2 size={16} color={color.ink} />
+                    <PortavaShareIcon size={16} color={color.ink} />
                   )}
                   <Text style={styles.shareBtnText}>
                     {sharing ? 'Sharing…' : 'Share'}

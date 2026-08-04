@@ -6,7 +6,8 @@ import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { useLayoverAwareBottomInset } from '../../src/hooks/useBottomInset';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Share2, Clock } from 'lucide-react-native';
+import { Clock } from 'lucide-react-native';
+import { PortavaShareIcon } from '../../src/components/icons/PortavaShareIcon';
 import { uploadAvatar, uploadCover } from '../../src/services/profile';
 import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 import { getPendingPosts } from '../../src/services/posts';
@@ -665,7 +666,7 @@ function PassportContent({
             >
               {sharing
                 ? <ActivityIndicator size="small" color={PP.ink} />
-                : <Share2 size={20} color={PP.ink} strokeWidth={1.5} />}
+                : <PortavaShareIcon size={20} color={PP.ink} />}
             </Pressable>
             <NotificationBell style={s.compactBarBell} />
           </View>
@@ -687,7 +688,7 @@ function PassportContent({
           title="Passport"
           animatedStyle={largeHeaderStyle}
           rightActions={[
-            { icon: <Share2 size={22} color={color.ink} />, onPress: share, accessibilityLabel: 'Share passport' },
+            { icon: <PortavaShareIcon size={22} color={color.ink} />, onPress: share, accessibilityLabel: 'Share passport' },
           ]}
         />
         {sectionOrder.map((sectionKey) => (

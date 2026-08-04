@@ -40,7 +40,6 @@ import {
   X,
   MessageCircle,
   Bookmark,
-  Share2,
   MapPin,
   Volume2,
   VolumeX,
@@ -61,6 +60,7 @@ import {
   type ViewerContextItem,
 } from '../../src/lib/viewerContext.ts';
 import { formatLocationLabel } from '../../src/lib/formatPlaceLabel.ts';
+import { PortavaShareIcon } from '../../src/components/icons/PortavaShareIcon.tsx';
 import { color, space, type as t, radius } from '../../src/theme/tokens.ts';
 import { useSession } from '../../src/context/SessionContext.tsx';
 import { PlaceQuickActions } from '../../src/components/PlaceQuickActions.tsx';
@@ -325,8 +325,8 @@ function ViewerOverlay({
           ) : null}
 
           {/* Share */}
-          <Pressable style={ov.actionBtn} onPress={onShare} hitSlop={6} accessibilityRole="button" accessibilityLabel="Share">
-            <Share2 size={26} color="#fff" strokeWidth={1.8} />
+          <Pressable style={ov.actionBtn} onPress={onShare} hitSlop={6} accessibilityRole="button" accessibilityLabel="Share this media">
+            <PortavaShareIcon size={26} color="#fff" />
           </Pressable>
         </View>
       </View>

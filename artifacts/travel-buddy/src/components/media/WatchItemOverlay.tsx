@@ -42,8 +42,6 @@ import { router } from 'expo-router';
 import {
   MessageCircle,
   Bookmark,
-  Share2,
-  Send,
   MoreVertical,
   Music2,
   MapPin,
@@ -65,6 +63,7 @@ import { StampIcon } from '../stamps/StampIcon.tsx';
 import { VerifiedLocationStamp } from './VerifiedLocationStamp.tsx';
 import { PlaceQuickActions } from '../PlaceQuickActions.tsx';
 import { formatLocationLabel } from '../../lib/formatPlaceLabel.ts';
+import { PortavaShareIcon } from '../icons/PortavaShareIcon.tsx';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -450,15 +449,15 @@ export function WatchItemOverlay({
           />
 
           <ActionBtn
-            icon={<Share2 size={26} color="#fff" strokeWidth={1.8} />}
+            icon={<PortavaShareIcon size={26} color="#fff" />}
             onPress={handleShare}
             label="Share"
           />
 
           <ActionBtn
-            icon={<Send size={26} color="#fff" strokeWidth={1.8} />}
+            icon={<PortavaShareIcon size={26} color="#fff" />}
             onPress={() => setSendSheetVisible(true)}
-            label="Send"
+            label="Send to a chat"
           />
 
           <ActionBtn
