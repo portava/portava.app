@@ -165,3 +165,43 @@ describe('WatchItemOverlay action rail touch targets', () => {
     }
   });
 });
+
+// ── Save button active-state label tests ──────────────────────────────────────
+
+describe('WatchItemOverlay Save button accessibility label', () => {
+  let stampGroupRef: React.RefObject<View | null>;
+
+  beforeEach(() => {
+    stampGroupRef = React.createRef<View>();
+  });
+
+  async function renderOverlayWithSaved(isSaved: boolean) {
+    await render(
+      <WatchItemOverlay
+        item={makeItem()}
+        currentUserId="other-user"
+        isSaved={isSaved}
+        onComment={jest.fn()}
+        onSave={jest.fn()}
+        onMore={jest.fn()}
+        stampGroupRef={stampGroupRef}
+        stampVisualIsStamped={false}
+        stampVisualCount={0}
+        stampButtonStyle={{}}
+        onStampPress={jest.fn()}
+      />,
+    );
+  }
+
+  it('labels the Save button "Unsave" when isSaved=true', async () => {
+    await renderOverlayWithSaved(true);
+    expect(screen.getByRole('button', { name: 'Unsave' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+  });
+
+  it('labels the Save button "Save" when isSaved=false', async () => {
+    await renderOverlayWithSaved(false);
+    expect(screen.getByRole('button', { name: 'Save' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Unsave' })).toBeNull();
+  });
+});

@@ -26,6 +26,7 @@ import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js
 import { endFairExposure } from "../compass/CompassFairExposureEngine.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { checkRentBuddyAccess, invalidateSuggestedCityCache } from "./rentABuddyRollout.js";
+import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
 import { haversineKm } from "../lib/canonicalLocations.js";
 import { isNonNumericCoord } from "../lib/coords.js";
 import { SEED_CITIES } from "../lib/popularCities.js";
@@ -1015,6 +1016,11 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
   const serviceClient = sc(auth.client);
 
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  // KYC gate (audit P1 item 8): no working identity verification means no new
+  // bookings between strangers. Fails closed and is independent of the
+  // launch-control config below, which is admin-editable.
+  if (!await requireBookingKyc(serviceClient, res)) return;
 
   // Emergency flags: honor BOTH admin kill-switch names (FL-06 — `disable_rab_bookings`
   // was an orphan with no reader, so that admin toggle was a silent no-op). Fail-open on DB error.
@@ -6238,6 +6244,12 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
   if (!auth) return;
   const serviceClient = sc(auth.client);
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  // Rebook INSERTs a new rent_buddy_bookings row, so it is a booking-creation
+  // path and gets the same KYC gate as POST /rent-a-buddy/bookings. Without
+  // this it would be a bypass: rebook skips the kill switches, the rollout
+  // check and launch controls entirely.
+  if (!await requireBookingKyc(serviceClient, res)) return;
 
   const { bookingId } = req.params;
   const { bookingDate, startTime, durationH, groupSize } = req.body ?? {};

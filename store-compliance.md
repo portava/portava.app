@@ -81,6 +81,34 @@ parties for advertising — Portava has no ads):
 (ciphertext), verification rows, and triggers provider-side redaction.
 Retention: failed/expired verification rows purged at 90 days.
 
+> ⚠ STATUS (2026-08-04) — do not submit this answer yet.
+> The cascade is implemented and shared by both execution paths
+> (`services/accountDeletion/AccountDeletionService.ts`): posts + media
+> (DB rows and Storage objects), message ciphertext, identity
+> verification rows, `media_assets`, profile anonymised to a "Deleted
+> User" tombstone, and `auth.admin.deleteUser` so the email does not
+> persist. The scheduled worker (`lib/accountDeletionScheduler.ts`)
+> executes requests at `user_deletion_requests.scheduled_at`.
+>
+> Migration 2073 is APPLIED in production, but the worker is gated by
+> feature flag `account_deletion_worker_enabled`, which is **false**.
+> It fails closed, so today a user's scheduled deletion date passes
+> with nothing happening; only a manual admin execution deletes data.
+>
+> Owner decision (2026-08-04): leave the flag OFF until the first real
+> deletion request arrives, execute that one manually via
+> `POST /admin/deletion-requests/:id/execute`, confirm every entry in
+> the returned `steps` array is `ok:true` and that the auth user is
+> gone, then set the flag to true. Rationale: `user_deletion_requests`
+> is currently empty, so there is no production request to validate
+> against, and the cascade has never run against real Storage or a real
+> auth user (its 13 tests use a fake client).
+>
+> Note the deliberate carve-outs: moderation and report records are
+> retained by design, and the profile row survives as an anonymised
+> tombstone because 54 tables reference `profiles.id` with NO ACTION
+> foreign keys, making a hard row-delete impossible.
+
 ---
 
 ## 3. Apple — Privacy Nutrition Labels
@@ -166,3 +194,8 @@ demo — plan for review friction before shipping that phase.
       requirement, not optional
 - [ ] Account deletion flow works end-to-end (both stores require
       in-app account deletion for apps with account creation)
+      - [x] Cascade implemented + shared by manual and scheduled paths
+      - [x] Migration 2073 applied in production
+      - [ ] First real request executed manually and verified clean
+      - [ ] `account_deletion_worker_enabled` flipped to true
+      See the STATUS note in §2 "Data deletion" before ticking this.
