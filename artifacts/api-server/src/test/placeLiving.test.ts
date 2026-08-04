@@ -71,6 +71,10 @@ function makeFakeSc(opts: {
   const capturedUpserts = opts.capturedUpserts ?? [];
 
   const tables: Record<string, any[]> = {
+    feature_flags: [
+      { flag: "external_places_enabled", enabled: true },
+      { flag: "live_places_enabled",     enabled: true },
+    ],
     places:                     place ? [place] : [],
     external_place_references:  [],
     posts:                      posts,

@@ -247,7 +247,8 @@ describe("runDelayedPostPublisher — publishes eligible post", () => {
       places: [{ id: "place-aaa", city: "Cebu City", latitude: 10.3157, longitude: 123.8854, merged_into_place_id: null }],
       feature_flags: [
         { flag: "external_places_enabled", enabled: true },
-        { flag: "place_days_enabled", enabled: true },
+        { flag: "live_places_enabled",     enabled: true },
+        { flag: "place_days_enabled",      enabled: true },
       ],
     });
     _setTestClient(client);

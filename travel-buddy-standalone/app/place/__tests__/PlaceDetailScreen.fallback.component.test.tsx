@@ -42,7 +42,7 @@ jest.mock('../../../src/services/places.ts', () => ({
 // NOTE: intentionally exhaustive — the real module pulls Supabase native deps
 // that are not safe under jest-expo.
 jest.mock('../../../src/context/FeatureFlagsContext.tsx', () => ({
-  useFeatureFlags: () => ({ isEnabled: () => true }),
+  useFeatureFlags: () => ({ isEnabled: () => true, isLivePlacesEnabled: () => true }),
 }));
 
 jest.mock('../../../src/context/SessionContext.tsx', () => ({
