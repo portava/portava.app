@@ -18,6 +18,7 @@ import { CompassWhySheet } from './compass/CompassWhySheet.tsx';
 import { resolveCompassTitle, formatCompassSubtitle } from '../utils/compassFormat.ts';
 import { PostEngagementBar } from './PostEngagementBar.tsx';
 import { POST_ACTION_ICON_SIZE } from './PostActionRow.tsx';
+import { formatCompactCount } from '../lib/counterFormat.ts';
 import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
@@ -554,9 +555,9 @@ function QuestionCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedIt
       actionsSlot={
         <>
           <View style={s.actions}>
-            <View style={s.action}><HelpCircle size={15} color={color.mute} /><Text style={s.actionText}>{item.replyCount ?? 0} answers</Text></View>
+            <View style={s.action}><HelpCircle size={POST_ACTION_ICON_SIZE} color={color.mute} /><Text style={s.actionText}>{formatCompactCount(item.replyCount ?? 0)} answers</Text></View>
             <View style={{ flex: 1 }} />
-            <Pressable style={s.outlineBtn} onPress={() => router.push('/(tabs)/ai')}><Text style={s.outlineText}>Answer</Text></Pressable>
+            <Pressable style={s.outlineBtn} hitSlop={8} onPress={() => router.push('/(tabs)/ai')}><Text style={s.outlineText}>Answer</Text></Pressable>
             <CompassFeedbackMenu
               recommendationId={item.id}
               itemType={item.type}
@@ -610,15 +611,16 @@ function PlanCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; 
           {item.neighborhood || item.city ? <View style={s.line}><MapPin size={13} color={color.mute} /><Text style={s.lineText}>{item.neighborhood ?? item.city}</Text></View> : null}
           {item.availabilityMatch ? <FitBadge /> : null}
           <View style={s.actions}>
-            <Text style={s.going}>{item.attendeeCount ?? 0} going</Text>
+            <Text style={s.going}>{formatCompactCount(item.attendeeCount ?? 0)} going</Text>
             <View style={{ flex: 1 }} />
             <Pressable
               style={({ pressed }) => [s.outlineBtn, pressed && { opacity: 0.7 }]}
+              hitSlop={8}
               onPress={() => planPicker.open({ id: item.id, type: 'plan', title: item.title ?? 'Meetup', city: item.city, category: 'meeting_point' })}
             >
               <Text style={s.outlineText}>Add to Plan</Text>
             </Pressable>
-            <Pressable style={s.solidBtn} onPress={() => router.push((item.relatedTripId ? `/trip/${item.relatedTripId}` : '/(tabs)/trips') as any)}>
+            <Pressable style={s.solidBtn} hitSlop={8} onPress={() => router.push((item.relatedTripId ? `/trip/${item.relatedTripId}` : '/(tabs)/trips') as any)}>
               <Text style={s.solidText}>Join Plan</Text>
             </Pressable>
             <CompassFeedbackMenu
@@ -674,7 +676,7 @@ function GemCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Pulse
             variant="light"
           />
           <View style={{ flex: 1 }} />
-          <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={17} sessionId={sessionId} />
+          <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={POST_ACTION_ICON_SIZE} sessionId={sessionId} />
           <CompassFeedbackMenu
             recommendationId={item.id}
             itemType={item.type}
@@ -723,11 +725,11 @@ function ItineraryCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item:
             </View>
           ) : null}
           <View style={s.actions}>
-            <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'experience', title: item.title ?? 'Itinerary', city: item.city, category: 'Itinerary' })}>
+            <Pressable style={s.outlineBtn} hitSlop={8} onPress={() => planPicker.open({ id: item.id, type: 'experience', title: item.title ?? 'Itinerary', city: item.city, category: 'Itinerary' })}>
               <Text style={s.outlineText}>Use this plan</Text>
             </Pressable>
             <View style={{ flex: 1 }} />
-            <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={17} sessionId={sessionId} />
+            <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={POST_ACTION_ICON_SIZE} sessionId={sessionId} />
             <CompassFeedbackMenu
               recommendationId={item.id}
               itemType={item.type}
@@ -772,7 +774,7 @@ function CircleCard({ item }: { item: PulseFeedItem }) {
           ))}
         </View>
         <View style={{ flex: 1 }} />
-        <Pressable style={s.outlineBtn} onPress={() => router.push('/circle')}><Text style={s.outlineText}>See Circle</Text></Pressable>
+        <Pressable style={s.outlineBtn} hitSlop={8} onPress={() => router.push('/circle')}><Text style={s.outlineText}>See Circle</Text></Pressable>
       </View>
     </View>
   );
@@ -797,9 +799,9 @@ function CompassCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (
       {item.reason ? <View style={s.reasonRow}><Info size={13} color={color.deep} /><Text style={s.reason}>{item.reason}</Text></View> : null}
       {item.isProvisional ? <Text style={s.prov}>Based on starter city notes — provisional</Text> : null}
       <View style={s.actions}>
-        <Pressable style={s.outlineBtn} onPress={() => router.push('/(tabs)/ai')}><Text style={s.outlineText}>View Details</Text></Pressable>
+        <Pressable style={s.outlineBtn} hitSlop={8} onPress={() => router.push('/(tabs)/ai')}><Text style={s.outlineText}>View Details</Text></Pressable>
         <View style={{ flex: 1 }} />
-        <Pressable style={s.solidBtn} onPress={() => planPicker.open({ id: item.id, type: 'compass_suggestion', title: resolveCompassTitle(item), city: item.city, category: 'Compass' })}><Plus size={14} color={color.onInk} /><Text style={s.solidText}>Add to Plan</Text></Pressable>
+        <Pressable style={s.solidBtn} hitSlop={8} onPress={() => planPicker.open({ id: item.id, type: 'compass_suggestion', title: resolveCompassTitle(item), city: item.city, category: 'Compass' })}><Plus size={POST_ACTION_ICON_SIZE} color={color.onInk} /><Text style={s.solidText}>Add to Plan</Text></Pressable>
         <CompassFeedbackMenu
           recommendationId={item.id}
           itemType={item.type}

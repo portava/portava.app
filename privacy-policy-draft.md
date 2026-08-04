@@ -9,7 +9,8 @@ change, change this.
 
 ---
 
-**Last updated: [DATE]**
+**Last updated: 4 August 2026**
+<!-- Reset this to the actual publication date when the policy goes live. -->
 
 Portava ("we", "us") is a social travel platform. This policy explains
 what we collect, why, and the choices you have.
@@ -18,11 +19,11 @@ what we collect, why, and the choices you have.
 
 - Messages in encrypted threads are end-to-end encrypted. **We cannot
   read them.** We store only ciphertext and delivery metadata.
-- Identity verification is handled by a specialist provider. **We never
-  store your ID document, document number, photos of your ID, your
-  selfie, or your date of birth.** We store only the outcome: whether
-  you're verified, whether you're over 18, and the country of your
-  document.
+- If and when you choose to get verified, the ID check is carried out
+  by a specialist verification provider, not by us. **We never store
+  your ID document, document number, photos of your ID, your selfie,
+  or your date of birth.** We store only the outcome: whether you're
+  verified, whether you're over 18, and the country of your document.
 - We use your location to power travel features you use — nearby
   places, events, travelers, and safety check-ins you start. We don't
   sell it. We don't show your precise location to other users.
@@ -51,13 +52,15 @@ surfaces. Precise location is used only while you're using location
 features (maps, check-ins, Safe Return) and is shown to other users
 only as approximate proximity — never exact coordinates.
 
-**Identity verification.** When you choose to get verified, the
-document and selfie capture happens with our verification provider
-[PROVIDER NAME], under their privacy policy [LINK]. They tell us the
-outcome. We store: verification level, an over-18 true/false, the
-document's country, timestamps, and an opaque reference number in the
-provider's system. We do not receive or store the document itself, its
-number, your photo, or your birth date.
+**Identity verification.** Identity verification is an optional
+feature. Where it is offered, the document and selfie capture happens
+with a specialist verification provider under that provider's own
+privacy policy — we identify the provider in-app before you begin, and
+you can decline. The provider tells us only the outcome. We store:
+verification level, an over-18 true/false, the document's country,
+timestamps, and an opaque reference number in the provider's system.
+We do not receive or store the document itself, its number, your
+photo, or your birth date.
 
 **Device and usage data.** Device type, app version, crash reports,
 and interaction events (what features are used) to keep the app
@@ -76,7 +79,8 @@ consent for optional features like precise location and verification.
 
 ## What we share
 
-- **Verification provider** — to perform the check you initiate.
+- **Verification provider** — where identity verification is offered,
+  to perform a check you choose to initiate.
 - **Infrastructure providers** — hosting, storage, push delivery
   (they process data to provide the service to us, under contracts).
 - **Other users** — what you choose to make visible per your privacy
@@ -117,10 +121,11 @@ safety number changes, verify before sharing anything sensitive.
 
 ## Children
 
-Portava is not for users under 18 [or: under 16 with 18+ features
-gated — CHOOSE ONE with counsel; the current product gates 18+
-features by verified age]. We remove accounts we identify as underage;
-report them via the in-app report flow.
+Portava is not for users under 16. Individual experiences on Portava —
+such as meetups and trusted circles — can set their own minimum and
+maximum age, which we enforce against the date of birth on your
+profile. We remove accounts we identify as under 16; report them via
+the in-app report flow.
 
 ## Changes
 
@@ -134,13 +139,42 @@ We'll notify you in-app of material changes and update the date above.
 
 ### Reviewer notes (delete before publishing)
 
-- [PROVIDER NAME]/[LINK] blocks resolve when the Stripe-vs-Persona
-  decision lands (Phase V-6).
-- The "not for under 18 vs 16+" decision needs a call with counsel —
-  it changes the children's-privacy exposure (COPPA/GDPR-K) and both
-  stores' age answers. The current codebase gates 18+ features but
-  does not block <18 registration; align the policy with whichever
-  the product actually enforces.
+- RESOLVED (owner decision): the identity-verification wording is now
+  conditional and names no provider, so the policy is truthful while
+  services/identityVerification/ still ships only mockProvider (the
+  Stripe and Persona adapters are stubs and the factory refuses to run
+  the mock in production — i.e. there is NO working KYC in production
+  today). Name the provider here once Stripe-vs-Persona lands
+  (Phase V-6 / audit P1 item 8).
+- RESOLVED (owner decision): minimum age is 16, with age-restricted
+  features gated by age. NOTE — the audit's "gates 18+ features by
+  verified age" shorthand overstates what the code does. Verified
+  against the tree: lib/ageEligibility.ts is consumed only by
+  routes/meetups.ts, routes/requests.ts (circle requests) and
+  routes/circleAgeSettings.ts, where min_age/max_age are
+  HOST-CONFIGURABLE per meetup/circle. There is no platform-wide 18+
+  gate, and routes/rentABuddy.ts has NO age check at all. The wording
+  above was written to match that reality — do not restore any claim
+  that Rent-a-Buddy is 18+ gated until it actually is.
+- STILL OPEN: routes/auth.ts signup validates only email + password —
+  no date of birth is collected or checked, so under-16 registration
+  is not blocked and age gates fall back to "dob_missing" for users
+  who never set one. Collect DOB at signup before publishing, or the
+  16+ statement above is aspirational rather than enforced.
+- ⚠ BLOCKING DISCREPANCY — "Retention and deletion" promises that
+  deleting your account removes profile, content, verification records
+  and message ciphertext. Per the production audit (P1 item 7) account
+  deletion is manual-admin-only: there is no scheduled worker acting on
+  user_deletion_requests.scheduled_at, deletion does not cascade to
+  posts/media/message ciphertext/verification rows, and auth.admin
+  .deleteUser is never called, so the email address persists
+  indefinitely. Either ship the cascading deletion worker before
+  publishing, or soften this section. Do not publish as-is — this is
+  the claim most likely to be relied on by Play Data Safety, Apple, and
+  a GDPR erasure request.
+- STILL REQUIRED before publishing: [COMPANY LEGAL NAME], [ADDRESS],
+  [PRIVACY EMAIL] (appears twice: "Your rights" and "Contact"). These
+  are legal-entity facts and were deliberately NOT guessed.
 - If Compass Live / background location ships, add a dedicated
   background-location section before release.
 - If Rent-a-Buddy payments ship, add a payments/financial-data section.
