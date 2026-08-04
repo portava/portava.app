@@ -27,6 +27,11 @@ import { postCompassAnalyticsEvent, COMPASS_ENGINE_VERSION } from '../../service
 import { reportContent } from '../../services/reports.ts';
 import type { CompassFeedbackAction } from '../../services/compass.ts';
 
+// Post action row icon-spacing spec: 20-21px icons with a 44x44 minimum
+// touch target via hitSlop. See src/components/PostActionRow.tsx.
+const MORE_ICON_SIZE = 20;
+const MORE_HIT_PAD = 12;
+
 interface Props {
   recommendationId: string;
   /** Underlying entity ID (place/event/user) for moderation reports.
@@ -202,11 +207,11 @@ export function CompassFeedbackMenu({
     <>
       <Pressable
         onPress={() => setOpen(true)}
-        hitSlop={8}
+        hitSlop={MORE_HIT_PAD}
         style={styles.trigger}
         accessibilityLabel="More options"
       >
-        <MoreHorizontal size={18} color={color.faint} />
+        <MoreHorizontal size={MORE_ICON_SIZE} color={color.faint} />
       </Pressable>
 
       <Modal

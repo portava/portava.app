@@ -136,7 +136,7 @@ export function SaveButton({
       <Pressable
         onPress={loading ? undefined : toggle}
         onLongPress={loading ? undefined : () => setPickerOpen(true)}
-        hitSlop={8}
+        hitSlop={12}
         style={({ pressed }) => [s.btn, pressed && { opacity: 0.65 }]}
         accessibilityLabel={saved ? 'Unsave' : 'Save'}
         accessibilityRole="button"

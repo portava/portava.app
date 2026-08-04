@@ -17,6 +17,7 @@
  */
 
 import React from 'react';
+import { View } from 'react-native';
 import { render, waitFor } from '@testing-library/react-native';
 import { PostEngagementBar } from '../PostEngagementBar.tsx';
 
@@ -127,5 +128,60 @@ describe('PostEngagementBar — lucide Proxy mock coverage', () => {
     // Confirms the Bookmark assertion above is sensitive to render conditions.
     const { queryByTestId } = await renderBar({ saveCount: 0 });
     await waitFor(() => expect(queryByTestId('icon-Bookmark')).toBeNull());
+  });
+});
+
+describe('PostEngagementBar — icon-spacing spec (counter formatting + row composition)', () => {
+  it('renders a large comment count compactly, with the exact count preserved in the accessibility label', async () => {
+    // 12345 must render abbreviated per the shared counter-abbreviation
+    // helper, while the accessibility label carries the full, unabbreviated
+    // figure.
+    const { getByText, getByLabelText } = await renderBar({ commentCount: 12345 });
+    await waitFor(() => {
+      expect(getByText('12K')).toBeTruthy();
+      expect(getByLabelText('Comment, 12,345')).toBeTruthy();
+    });
+  });
+
+  it('renders a billion-scale save count compactly', async () => {
+    const { getByText } = await renderBar({ saveCount: 1_234_000_000, isOwner: true });
+    await waitFor(() => expect(getByText('1.2B')).toBeTruthy());
+  });
+
+  it('composes a caller-supplied right-cluster slot (e.g. Save/More) alongside the left actions', async () => {
+    const { getByTestId } = await renderBar({
+      right: [
+        {
+          key: 'more',
+          node: <View key="more" testID="right-cluster-slot" />,
+        },
+      ],
+    });
+    // Confirms PostEngagementBar's `right` prop reaches PostActionRow's
+    // right cluster from a real call site, not just the isolated
+    // PostActionRow unit tests.
+    await waitFor(() => {
+      expect(getByTestId('right-cluster-slot')).toBeTruthy();
+      expect(getByTestId('icon-Smile')).toBeTruthy();
+    });
+  });
+
+  it('still renders a caller-supplied right cluster even when every left action is disabled', async () => {
+    // Regression guard: PostEngagementBar's early `return null` guard must
+    // only fire when there is truly nothing to show. A caller-supplied
+    // `right` cluster (e.g. Save/More) has to keep rendering even when
+    // canStamp/canComment/canShare are all false.
+    const { getByTestId } = await renderBar({
+      canStamp: false,
+      canComment: false,
+      canShare: false,
+      right: [
+        {
+          key: 'more',
+          node: <View key="more" testID="right-cluster-slot" />,
+        },
+      ],
+    });
+    await waitFor(() => expect(getByTestId('right-cluster-slot')).toBeTruthy());
   });
 });

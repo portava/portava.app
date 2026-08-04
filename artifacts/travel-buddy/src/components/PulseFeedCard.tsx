@@ -17,6 +17,7 @@ import { CompassFeedbackMenu } from './compass/CompassFeedbackMenu.tsx';
 import { CompassWhySheet } from './compass/CompassWhySheet.tsx';
 import { resolveCompassTitle, formatCompassSubtitle } from '../utils/compassFormat.ts';
 import { PostEngagementBar } from './PostEngagementBar.tsx';
+import { POST_ACTION_ICON_SIZE } from './PostActionRow.tsx';
 import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
@@ -334,34 +335,44 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
               )}
             </View>
           )}
-          <View style={s.actions}>
-            <View style={{ flex: 1 }}>
-              <PostEngagementBar
-                postId={item.id}
-                commentCount={item.commentCount ?? 0}
-                canStamp={canStamp}
-                canComment={item.canComment !== false}
-                canShare={item.canShare !== false}
-                controlledStamp={postStamp}
-                localBurst
-                onLocalBurst={() => burstRef.current?.play()}
-              />
-            </View>
-            <SaveButton
-              entityType="post"
-              entityId={item.id}
-              initialSaved={item.savedByMe ?? false}
-              size={17}
-              sessionId={sessionId}
-            />
-            <CompassFeedbackMenu
-              recommendationId={item.id}
-              itemType={item.type}
-              category={item.type}
-              onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
-              onDismiss={dismiss}
-            />
-          </View>
+          <PostEngagementBar
+            postId={item.id}
+            commentCount={item.commentCount ?? 0}
+            canStamp={canStamp}
+            canComment={item.canComment !== false}
+            canShare={item.canShare !== false}
+            controlledStamp={postStamp}
+            localBurst
+            onLocalBurst={() => burstRef.current?.play()}
+            right={[
+              {
+                key: 'save',
+                node: (
+                  <SaveButton
+                    key="save"
+                    entityType="post"
+                    entityId={item.id}
+                    initialSaved={item.savedByMe ?? false}
+                    size={POST_ACTION_ICON_SIZE}
+                    sessionId={sessionId}
+                  />
+                ),
+              },
+              {
+                key: 'more',
+                node: (
+                  <CompassFeedbackMenu
+                    key="more"
+                    recommendationId={item.id}
+                    itemType={item.type}
+                    category={item.type}
+                    onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
+                    onDismiss={dismiss}
+                  />
+                ),
+              },
+            ]}
+          />
         </View>
 
         <PostWrongPlaceSheet
@@ -468,34 +479,44 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
             )}
           </View>
         )}
-        <View style={s.actions}>
-          <View style={{ flex: 1 }}>
-            <PostEngagementBar
-              postId={item.id}
-              commentCount={item.commentCount ?? 0}
-              canStamp={canStamp}
-              canComment={item.canComment !== false}
-              canShare={item.canShare !== false}
-              controlledStamp={postStamp}
-              localBurst
-              onLocalBurst={() => burstRef.current?.play()}
-            />
-          </View>
-          <SaveButton
-            entityType="post"
-            entityId={item.id}
-            initialSaved={item.savedByMe ?? false}
-            size={17}
-            sessionId={sessionId}
-          />
-          <CompassFeedbackMenu
-            recommendationId={item.id}
-            itemType={item.type}
-            category={item.type}
-            onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
-            onDismiss={dismiss}
-          />
-        </View>
+        <PostEngagementBar
+          postId={item.id}
+          commentCount={item.commentCount ?? 0}
+          canStamp={canStamp}
+          canComment={item.canComment !== false}
+          canShare={item.canShare !== false}
+          controlledStamp={postStamp}
+          localBurst
+          onLocalBurst={() => burstRef.current?.play()}
+          right={[
+            {
+              key: 'save',
+              node: (
+                <SaveButton
+                  key="save"
+                  entityType="post"
+                  entityId={item.id}
+                  initialSaved={item.savedByMe ?? false}
+                  size={POST_ACTION_ICON_SIZE}
+                  sessionId={sessionId}
+                />
+              ),
+            },
+            {
+              key: 'more',
+              node: (
+                <CompassFeedbackMenu
+                  key="more"
+                  recommendationId={item.id}
+                  itemType={item.type}
+                  category={item.type}
+                  onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
+                  onDismiss={dismiss}
+                />
+              ),
+            },
+          ]}
+        />
       </View>
 
       <PostWrongPlaceSheet

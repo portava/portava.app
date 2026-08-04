@@ -9,10 +9,10 @@
  * Tapping the save count (owner-only) opens PostSaversSheet showing who saved.
  */
 import React, { useState, useCallback, useEffect } from 'react';
-import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, StyleSheet, Alert } from 'react-native';
 import { MessageCircle, Smile, Bookmark } from 'lucide-react-native';
 import { TelegraphSendIcon } from './icons/TelegraphSendIcon.tsx';
-import { color, space, layout } from '../theme/tokens.ts';
+import { color } from '../theme/tokens.ts';
 import {
   getReactions,
   reactToPost,
@@ -28,6 +28,11 @@ import { EngagementUserListSheet } from './EngagementUserListSheet.tsx';
 import { StampButton } from './stamps/StampButton.tsx';
 import type { UseStampReturn } from '../hooks/useStamp.ts';
 import { PostSaversSheet } from './PostSaversSheet.tsx';
+import {
+  PostActionRow, actionSlot, POST_ACTION_ICON_SIZE,
+  type PostActionSlot,
+} from './PostActionRow.tsx';
+import { formatCompactCount } from '../lib/counterFormat.ts';
 
 interface Props {
   postId: string;
@@ -55,6 +60,14 @@ interface Props {
   localBurst?: boolean;
   /** Forwarded to StampButton — see StampButtonProps.onLocalBurst. */
   onLocalBurst?: () => void;
+  /**
+   * Right-anchored cluster (e.g. Save, More) rendered by the caller and
+   * composed into this bar's PostActionRow so the whole post action row
+   * (Stamp/Reaction/Comment/Share left, Save/More right) shares one
+   * left/right-cluster + flexible-spacer layout instead of a separate
+   * sibling row with its own ad hoc spacing.
+   */
+  right?: PostActionSlot[];
 }
 
 export function PostEngagementBar({
@@ -72,6 +85,7 @@ export function PostEngagementBar({
   controlledStamp,
   localBurst = false,
   onLocalBurst,
+  right = [],
 }: Props) {
   const { userId } = useSession();
 
@@ -184,80 +198,82 @@ export function PostEngagementBar({
     setShareOpen(true);
   }, [sharingDisabled]);
 
-  if (!canStamp && !canComment && !canShare) return null;
+  // Only skip rendering entirely when there is truly nothing to show —
+  // a caller-supplied `right` cluster (e.g. Save/More) must still render
+  // even when every left-side engagement action is disabled.
+  if (!canStamp && !canComment && !canShare && saveCount <= 0 && right.length === 0) {
+    return null;
+  }
 
   const totalReactions = reactions.reduce((sum, r) => sum + r.count, 0);
+
+  const left: PostActionSlot[] = [];
+
+  if (canStamp) {
+    left.push({
+      key: 'stamp',
+      gapText: stampCount ? formatCompactCount(stampCount) : undefined,
+      node: (
+        <StampButton
+          key="stamp"
+          entityType="post"
+          entityId={postId}
+          initialCount={stampCount}
+          initialIsStamped={isStampedByViewer}
+          iconSize={POST_ACTION_ICON_SIZE}
+          style={s.stampBtnWrapper}
+          controlledStamp={controlledStamp}
+          localBurst={localBurst}
+          onLocalBurst={onLocalBurst}
+        />
+      ),
+    });
+  }
+
+  left.push(actionSlot({
+    key: 'reaction',
+    icon: <Smile size={POST_ACTION_ICON_SIZE} color={myReaction ? color.signal : color.mute} />,
+    count: totalReactions,
+    accessibilityLabel: 'React',
+    onPress: handleOpenPicker,
+    tint: myReaction ? color.signal : color.mute,
+  }));
+
+  if (canComment) {
+    left.push(actionSlot({
+      key: 'comment',
+      icon: <MessageCircle size={POST_ACTION_ICON_SIZE} color={color.mute} />,
+      count: localCommentCount,
+      accessibilityLabel: 'Comment',
+      onPress: () => setCommentsOpen(true),
+    }));
+  }
+
+  if (canShare) {
+    left.push(actionSlot({
+      key: 'share',
+      icon: <TelegraphSendIcon size={POST_ACTION_ICON_SIZE} color={sharingDisabled ? color.haze : color.mute} />,
+      accessibilityLabel: sharingDisabled ? 'Share (disabled)' : 'Share',
+      onPress: handleShare,
+    }));
+  }
+
+  // Save count chip — visible to everyone; tappable (opens who-saved) for owner only.
+  if (saveCount > 0) {
+    left.push(actionSlot({
+      key: 'save-count',
+      icon: <Bookmark size={POST_ACTION_ICON_SIZE} color={color.mute} />,
+      count: saveCount,
+      accessibilityLabel: 'Saved by',
+      onPress: isOwner ? () => setSaversOpen(true) : undefined,
+      disabled: !isOwner,
+    }));
+  }
 
   return (
     <>
       <View style={s.container}>
-        <View style={s.bar}>
-          {canStamp && (
-            <StampButton
-              entityType="post"
-              entityId={postId}
-              initialCount={stampCount}
-              initialIsStamped={isStampedByViewer}
-              iconSize={17}
-              style={s.stampBtnWrapper}
-              controlledStamp={controlledStamp}
-              localBurst={localBurst}
-              onLocalBurst={onLocalBurst}
-            />
-          )}
-
-          <Pressable
-            style={s.action}
-            onPress={handleOpenPicker}
-            hitSlop={layout.hitSlop}
-          >
-            <Smile
-              size={17}
-              color={myReaction ? color.signal : color.mute}
-            />
-            {totalReactions > 0 && (
-              <Text style={[s.count, myReaction ? s.countActive : null]}>
-                {totalReactions}
-              </Text>
-            )}
-          </Pressable>
-
-          {canComment && (
-            <Pressable
-              style={s.action}
-              onPress={() => setCommentsOpen(true)}
-              hitSlop={layout.hitSlop}
-            >
-              <MessageCircle size={17} color={color.mute} />
-              <Text style={s.count}>
-                {localCommentCount > 0 ? localCommentCount : ''}
-              </Text>
-            </Pressable>
-          )}
-
-          {canShare && (
-            <Pressable
-              style={s.action}
-              onPress={handleShare}
-              hitSlop={layout.hitSlop}
-            >
-              <TelegraphSendIcon size={17} color={sharingDisabled ? color.haze : color.mute} />
-            </Pressable>
-          )}
-
-          {/* Save count chip — visible to everyone; tappable (opens who-saved) for owner only */}
-          {saveCount > 0 && (
-            <Pressable
-              style={s.action}
-              onPress={isOwner ? () => setSaversOpen(true) : undefined}
-              hitSlop={layout.hitSlop}
-              disabled={!isOwner}
-            >
-              <Bookmark size={17} color={color.mute} />
-              <Text style={s.count}>{saveCount}</Text>
-            </Pressable>
-          )}
-        </View>
+        <PostActionRow left={left} right={right} style={s.bar} />
 
         {reactions.length > 0 && (
           <ReactionSummary
@@ -314,30 +330,10 @@ const s = StyleSheet.create({
     gap: 6,
   },
   bar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.lg,
     paddingTop: 2,
   },
   stampBtnWrapper: {
     minHeight: 44,
     justifyContent: 'center',
-  },
-  action: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    minHeight: 44,
-    minWidth: 36,
-    justifyContent: 'center',
-  },
-  count: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: color.mute,
-    minWidth: 16,
-  },
-  countActive: {
-    color: color.signal,
   },
 });

@@ -36,6 +36,7 @@ import {
 } from 'react-native';
 import { recordMediaShare } from '../../services/mediaInteractions.ts';
 import { ShareSheet } from '../ShareSheet.tsx';
+import { formatCompactCount } from '../../lib/counterFormat.ts';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -105,14 +106,6 @@ function FollowButton({ userId, currentUserId }: { userId: string; currentUserId
   );
 }
 
-// ── Count formatter ───────────────────────────────────────────────────────────
-
-function fmtCount(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}K`;
-  return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
-}
-
 // ── Action button ─────────────────────────────────────────────────────────────
 
 interface ActionBtnProps {
@@ -138,7 +131,7 @@ function ActionBtn({ icon, count, onPress, onLongPress, label }: ActionBtnProps)
     >
       {icon}
       {count !== undefined && count > 0 ? (
-        <Text style={s.actionCount}>{fmtCount(count)}</Text>
+        <Text style={s.actionCount}>{formatCompactCount(count)}</Text>
       ) : null}
     </Pressable>
   );
@@ -422,7 +415,7 @@ export function WatchItemOverlay({
             {(item.stampItCount ?? 0) > 0 ? (
               <View style={s.stampRow} pointerEvents="none">
                 <Zap size={9} color="rgba(255,220,80,0.9)" fill="rgba(255,220,80,0.9)" />
-                <Text style={s.stampCount}>{fmtCount(item.stampItCount!)}</Text>
+                <Text style={s.stampCount}>{formatCompactCount(item.stampItCount!)}</Text>
               </View>
             ) : null}
           </View>
