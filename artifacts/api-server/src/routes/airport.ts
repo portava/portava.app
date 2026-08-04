@@ -26,7 +26,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, isAcceptedTripMember, canEditPlan } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { nameVisibilitySet } from "../lib/publicIdentity.js";
+import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 import {
   resolveByIata,
   resolveByGps,
@@ -1480,7 +1480,7 @@ router.get("/airport/pulse", async (req, res) => {
 
   let query = sc
     .from("posts")
-    .select("id, author_id, content, media_urls, created_at, location_city, location_country, profiles!author_id(id, username, full_name, avatar_url)")
+    .select("id, author_id, content, media_urls, created_at, location_city, location_country, profiles!author_id(id, username, display_name, name, full_name, avatar_url)")
     .eq("status", "active")
     .eq("visibility", "public")
     .ilike("location_city", `%${city}%`)
@@ -1509,7 +1509,7 @@ router.get("/airport/pulse", async (req, res) => {
       locationCountry: row.location_country ?? null,
       author: profile ? {
         id: profile.id, username: profile.username,
-        name: nameAllowed ? (profile.full_name ?? null) : null, avatarUrl: profile.avatar_url ?? null,
+        name: presentedName(profile, Boolean(nameAllowed)), avatarUrl: profile.avatar_url ?? null,
       } : null,
     };
   });

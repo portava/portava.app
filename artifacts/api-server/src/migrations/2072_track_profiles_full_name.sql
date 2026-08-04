@@ -42,9 +42,16 @@
 --   lib/publicIdentity.ts:76 display_name ?? name ?? full_name
 --   routes/posts.ts:1078     pr.name ?? pr.full_name
 --
--- This migration deliberately only TRACKS the column. Repointing the two
--- degraded call sites to display_name/name is a behaviour change and is left
--- as a separate, reviewable fix.
+-- STATUS UPDATE (audit fix wave 1): a full audit found 13 such degraded
+-- read-full_name-first call sites, not the 2 originally noted above:
+--   routes/airport.ts, routes/featured.ts (×3), routes/mediaFeed.ts (×2),
+--   routes/posts.ts, routes/profile.ts, routes/pulse.ts,
+--   routes/trips-expansion.ts, lib/mediaFeedItem.ts (×2),
+--   services/tripCrew/TripCrewLocationService.ts
+-- All 13 now resolve through presentedName() in lib/publicIdentity.ts
+-- (display_name ?? name ?? full_name), and each corresponding SELECT was
+-- widened to fetch display_name + name. full_name is retained as the last
+-- fallback, so this migration is still required for a from-scratch rebuild.
 
 ALTER TABLE public.profiles
   ADD COLUMN IF NOT EXISTS full_name text;

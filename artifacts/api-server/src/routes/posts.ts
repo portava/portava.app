@@ -5,7 +5,7 @@ import { enrichSpans } from "../lib/enrichSpans";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 
 const postsLogger = rootLogger.child({ route: "posts" });
-import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity";
+import { nameVisibilitySet, sanitizeIdentity, presentedName } from "../lib/publicIdentity";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import {
   requireUser,
@@ -2190,7 +2190,7 @@ router.get("/posts/:postId/savers", async (req, res) => {
 
   // Parallel: profiles + privacy settings.
   const [profilesRes, privacyRes] = await Promise.all([
-    sc.from("profiles").select("id, username, full_name, avatar_url, is_official").in("id", saverIds),
+    sc.from("profiles").select("id, username, display_name, name, full_name, avatar_url, is_official").in("id", saverIds),
     sc.from("profile_privacy_settings").select("user_id, allow_profile_discovery").in("user_id", saverIds),
   ]);
 
@@ -2206,7 +2206,7 @@ router.get("/posts/:postId/savers", async (req, res) => {
       return {
         userId: r.user_id,
         handle: (p as any)?.username ?? null,
-        name: (p as any)?.full_name ?? null,
+        name: presentedName(p as any, true),
         avatarUrl: (p as any)?.avatar_url ?? null,
         isOfficial: (p as any)?.is_official ?? false,
         savedAt: r.created_at,

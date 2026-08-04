@@ -18,7 +18,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildCrewCard, type RawMemberLocation, type CrewMemberCard } from "../../lib/tripCrewLocation.js";
 import { logger as rootLogger } from "../../lib/logger.js";
-import { nameVisibilitySet } from "../../lib/publicIdentity.js";
+import { nameVisibilitySet, presentedName } from "../../lib/publicIdentity.js";
 import { fetchBlockedSet } from "../../lib/blocks.js";
 
 const logger = rootLogger.child({ service: "TripCrewLocationService" });
@@ -78,7 +78,7 @@ export async function getCrewMap(
   // 2. Load profiles for names/handles/avatars
   const profilesRes = await db
     .from("profiles")
-    .select("id, full_name, username, avatar_url")
+    .select("id, display_name, name, full_name, username, avatar_url")
     .in("id", allUserIds);
   const profileMap = new Map<string, any>(
     ((profilesRes.data as any[]) ?? []).map((p) => [p.id, p]),
@@ -165,7 +165,7 @@ export async function getCrewMap(
 
     const raw: RawMemberLocation = {
       userId: uid,
-      name: allowedCrewNames.has(uid) ? (profile?.full_name ?? null) : null,
+      name: presentedName(profile, allowedCrewNames.has(uid)),
       handle: profile?.username ?? null,
       avatarUrl: profile?.avatar_url ?? null,
       prefs: prefs ? {

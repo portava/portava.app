@@ -43,7 +43,7 @@ import {
 import {
   reportGem,
 } from "../services/hiddenGems/HiddenGemModerationService.js";
-import { nameVisibilitySet } from "../lib/publicIdentity.js";
+import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 import {
   encodeCursor,
   decodeCursor,
@@ -146,7 +146,7 @@ const POST_MEDIA_COLUMNS =
   "width, height, sort_order, processing_status, moderation_status, storage_path, storage_bucket";
 
 const PROFILE_COLUMNS =
-  "id, username, full_name, avatar_url, is_private, verified, bio, account_status, is_official";
+  "id, username, display_name, name, full_name, avatar_url, is_private, verified, bio, account_status, is_official";
 
 // ── Linked entity resolution ──────────────────────────────────────────────────
 
@@ -158,14 +158,14 @@ const PROFILE_COLUMNS =
  */
 const EVENT_LINKED_COLUMNS =
   "id, title, visibility, host_id, cover_url, show_header_publicly, " +
-  "profiles!host_id(username, full_name)";
+  "profiles!host_id(username, display_name, name, full_name)";
 
 /**
  * Columns fetched from the trips table for linked-entity resolution.
  */
 const TRIP_LINKED_COLUMNS =
   "id, title, visibility, owner_id, cover_url, show_header_publicly, " +
-  "profiles!owner_id(username, full_name)";
+  "profiles!owner_id(username, display_name, name, full_name)";
 
 /**
  * Batch-resolve linked entities (events and trips) for a page of posts.
@@ -285,7 +285,7 @@ async function resolveLinkedEntities(
     const hostProfile = Array.isArray(ev.profiles) ? ev.profiles[0] : ev.profiles;
     const entityBase = {
       ...ev,
-      host_display_name: hostProfile?.full_name ?? null,
+      host_display_name: presentedName(hostProfile, true),
       host_username: hostProfile?.username ?? null,
     };
 
@@ -324,7 +324,7 @@ async function resolveLinkedEntities(
     const ownerProfile = Array.isArray(trip.profiles) ? trip.profiles[0] : trip.profiles;
     const entityBase = {
       ...trip,
-      owner_display_name: ownerProfile?.full_name ?? null,
+      owner_display_name: presentedName(ownerProfile, true),
       owner_username: ownerProfile?.username ?? null,
     };
 

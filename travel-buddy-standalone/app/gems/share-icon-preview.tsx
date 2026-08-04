@@ -13,6 +13,7 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { PortavaShareIcon } from '../../src/components/icons/PortavaShareIcon.tsx';
 import { PortavaShareButton } from '../../src/components/share/PortavaShareButton.tsx';
+import { PostEngagementBar } from '../../src/components/PostEngagementBar.tsx';
 import { color, radius, space, type as t } from '../../src/theme/tokens.ts';
 
 const SIZES: { label: string; size: number }[] = [
@@ -95,6 +96,30 @@ export default function ShareIconPreviewScreen() {
         <Swatch background={color.paperRaised} iconColor={color.ink} title="Light surface — ink" />
         <Swatch background={color.ink} iconColor={color.onInk} title="Dark / immersive surface — onInk" />
         <Swatch background="#000000" iconColor="#FFFFFF" title="Full-bleed media overlay — white" />
+
+        <View style={[styles.section, { backgroundColor: color.paperRaised }]}>
+          <Text style={styles.sectionTitle}>
+            Real PostEngagementBar (Pulse / Discovery / standard PostCard)
+          </Text>
+          <Text style={[styles.intro, { marginBottom: 0 }]}>
+            This is the actual shared component — not a recreation. Its Share
+            slot should render PortavaShareIcon, matching every other
+            post-sharing surface.
+          </Text>
+          <View style={{ backgroundColor: color.paper, borderRadius: radius.md, padding: space.md }}>
+            <PostEngagementBar
+              postId="preview-post-id"
+              stampCount={128}
+              commentCount={42}
+              shareCount={7}
+              saveCount={3}
+              isStampedByViewer={false}
+              canStamp
+              canComment
+              canShare
+            />
+          </View>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );

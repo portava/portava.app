@@ -9,6 +9,7 @@ import { invalidateCompassHomeCache } from "./compassHome";
 import { sniffMedia, processImage, type ProcessedImage, type SniffResult } from "../lib/mediaProcessing";
 import { appMediaRef } from "../lib/postSchemas";
 import { computeTrustScore } from "../lib/trustScore.js";
+import { presentedName } from "../lib/publicIdentity.js";
 import { countContentStampsReceived } from "../services/stamps/ContentStampService.js";
 import { countUserTrips } from "../lib/tripCounts.js";
 
@@ -347,7 +348,7 @@ router.get("/me/profile/viewers", async (req, res) => {
   const viewerIds = unique.map((r) => r.viewer_id as string);
 
   const [profilesRes, privacyRes] = await Promise.all([
-    sc.from("profiles").select("id, username, full_name, avatar_url, is_official").in("id", viewerIds),
+    sc.from("profiles").select("id, username, display_name, name, full_name, avatar_url, is_official").in("id", viewerIds),
     sc.from("profile_privacy_settings").select("user_id, allow_profile_discovery").in("user_id", viewerIds),
   ]);
 
@@ -362,7 +363,7 @@ router.get("/me/profile/viewers", async (req, res) => {
       return {
         userId: r.viewer_id,
         handle: (p as any)?.username ?? null,
-        name: (p as any)?.full_name ?? null,
+        name: presentedName(p as any, true),
         avatarUrl: (p as any)?.avatar_url ?? null,
         isOfficial: (p as any)?.is_official ?? false,
         viewedAt: r.viewed_at,

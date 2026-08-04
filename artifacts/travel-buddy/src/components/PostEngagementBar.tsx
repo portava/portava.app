@@ -11,7 +11,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, Alert } from 'react-native';
 import { MessageCircle, Smile, Bookmark } from 'lucide-react-native';
-import { TelegraphSendIcon } from './icons/TelegraphSendIcon.tsx';
+import { PortavaShareIcon } from './icons/PortavaShareIcon.tsx';
 import { color } from '../theme/tokens.ts';
 import {
   getReactions,
@@ -252,7 +252,7 @@ export function PostEngagementBar({
   if (canShare) {
     left.push(actionSlot({
       key: 'share',
-      icon: <TelegraphSendIcon size={POST_ACTION_ICON_SIZE} color={sharingDisabled ? color.haze : color.mute} />,
+      icon: <PortavaShareIcon size={POST_ACTION_ICON_SIZE} color={sharingDisabled ? color.haze : color.mute} />,
       accessibilityLabel: sharingDisabled ? 'Share (disabled)' : 'Share',
       onPress: handleShare,
     }));

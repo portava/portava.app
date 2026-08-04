@@ -16,6 +16,7 @@
  *   4. Location → NEVER contains raw coordinates; only name/city/country.
  */
 import { publicUrlFor } from "./mediaAccess.js";
+import { presentedName } from "./publicIdentity.js";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -320,7 +321,7 @@ export function hydrateGemFeedItem(input: HydrateGemInput): MediaFeedItem {
 
   const displayName =
     (isOwnItem || allowedRealNameIds.has(creatorId))
-      ? (submitterProfile?.full_name ?? submitterProfile?.username ?? "")
+      ? (presentedName(submitterProfile, true) ?? submitterProfile?.username ?? "")
       : (submitterProfile?.username ?? "");
 
   const relationshipStatus: RelationshipStatus = isOwnItem
@@ -615,7 +616,7 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
   // Display name: real name only when opted in
   const displayName =
     (isOwnPost || allowedRealNameIds.has(creatorId))
-      ? (profile?.full_name ?? profile?.username ?? "")
+      ? (presentedName(profile, true) ?? profile?.username ?? "")
       : (profile?.username ?? "");
 
   // Private profile: strip all sensitive fields when viewer is not a follower

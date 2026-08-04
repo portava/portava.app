@@ -3,6 +3,12 @@ modules = ["nodejs-24", "python-base-3.13", "postgresql-16"]
 [deployment]
 router = "application"
 deploymentTarget = "autoscale"
+# The deployment serves the API server (https://portava.replit.app).
+# `build` bundles src/ -> artifacts/api-server/dist/ (esbuild, see build.mjs);
+# `run` boots that bundle. Both mirror the package scripts so a deploy is
+# reproducible from the repo instead of relying on the Replit UI's run field.
+build = ["pnpm", "--filter", "@workspace/api-server", "run", "build"]
+run = ["pnpm", "--filter", "@workspace/api-server", "run", "start"]
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]

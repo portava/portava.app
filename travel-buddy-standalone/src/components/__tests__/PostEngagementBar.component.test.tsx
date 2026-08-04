@@ -92,7 +92,7 @@ async function renderBar(
 describe('PostEngagementBar — lucide Proxy mock coverage', () => {
   it('renders the lucide icons when all actions are enabled', async () => {
     // PostEngagementBar imports { Smile, MessageCircle } from
-    // 'lucide-react-native'.  The share button uses TelegraphSendIcon (react-native-svg),
+    // 'lucide-react-native'.  The share button uses PortavaShareIcon (react-native-svg),
     // not a lucide icon.  This test confirms the Proxy's get trap resolves every
     // lucide named export to <View testID="icon-<Name>" /> — not just the first
     // one it sees.  A regression in the cache or get trap would cause one or

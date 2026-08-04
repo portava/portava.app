@@ -23,19 +23,21 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { presentedName } from "../lib/publicIdentity.js";
 
 const router = Router();
 
 /**
- * Resolve @portava's profile row (id, username, full_name, avatar_url,
- * verified) by handle at request time — never hardcode its UUID. Seeding
+ * Resolve @portava's profile row (id, username, display_name, name,
+ * full_name, avatar_url, verified) by handle at request time — never
+ * hardcode its UUID. Seeding
  * flows can assign @portava a different id per environment, so a fixed
  * constant would silently break the fallback wherever that id doesn't match.
  */
-async function resolvePortavaProfile(sc: any): Promise<{ id: string; username: string | null; full_name: string | null; avatar_url: string | null; verified: boolean } | null> {
+async function resolvePortavaProfile(sc: any): Promise<{ id: string; username: string | null; display_name: string | null; name: string | null; full_name: string | null; avatar_url: string | null; verified: boolean } | null> {
   const { data } = await sc
     .from("profiles")
-    .select("id, username, full_name, avatar_url, verified")
+    .select("id, username, display_name, name, full_name, avatar_url, verified")
     .eq("handle", "portava")
     .maybeSingle();
   return (data as any) ?? null;
@@ -81,7 +83,7 @@ router.get("/featured", asyncHandler(async (req, res) => {
   // String must be a literal directly in .select() so the column-drift checker can parse it.
   let query = sc
     .from("portava_featured")
-    .select("id, post_id, category, featured_at, posts!post_id(id, content, location_city, location_country, author_id, post_media(id, media_type, public_url, thumbnail_url, sort_order, processing_status, storage_path, storage_bucket), profiles!author_id(id, username, full_name, avatar_url, verified, is_private))")
+    .select("id, post_id, category, featured_at, posts!post_id(id, content, location_city, location_country, author_id, post_media(id, media_type, public_url, thumbnail_url, sort_order, processing_status, storage_path, storage_bucket), profiles!author_id(id, username, display_name, name, full_name, avatar_url, verified, is_private))")
     .eq("status", "live")
     .order("featured_at", { ascending: false })
     .limit(200);
@@ -137,7 +139,7 @@ router.get("/featured", asyncHandler(async (req, res) => {
     const mediaType: "image" | "video" = (primaryMedia?.media_type as any) ?? "image";
 
     const username = profile.username ?? null;
-    const displayName = profile.full_name ?? profile.username ?? null;
+    const displayName = presentedName(profile, true) ?? profile.username ?? null;
 
     return {
       id: r.id as string,
@@ -215,7 +217,7 @@ async function buildFallbackResponse(sc: any, res: any, req: any): Promise<void>
 
   const { data: portavaPosts, error } = await sc
     .from("posts")
-    .select("id, content, location_city, location_country, author_id, like_count, post_media(id, media_type, public_url, thumbnail_url, sort_order, processing_status, storage_path, storage_bucket), profiles!author_id(id, username, full_name, avatar_url, verified, is_private)")
+    .select("id, content, location_city, location_country, author_id, like_count, post_media(id, media_type, public_url, thumbnail_url, sort_order, processing_status, storage_path, storage_bucket), profiles!author_id(id, username, display_name, name, full_name, avatar_url, verified, is_private)")
     .eq("author_id", portavaProfile.id)
     .eq("status", "active")
     .eq("post_status", "published")
@@ -251,7 +253,7 @@ async function buildFallbackResponse(sc: any, res: any, req: any): Promise<void>
     const thumbnailUrl: string | null = primaryMedia?.thumbnail_url ?? primaryMedia?.public_url ?? null;
     const mediaType: "image" | "video" = (primaryMedia?.media_type as any) ?? "image";
     const username = profile.username ?? null;
-    const displayName = profile.full_name ?? profile.username ?? null;
+    const displayName = presentedName(profile, true) ?? profile.username ?? null;
 
     return {
       // Use a deterministic synthetic ID so clients can key on it.
@@ -266,7 +268,7 @@ async function buildFallbackResponse(sc: any, res: any, req: any): Promise<void>
       author: {
         id:          (profile.id ?? post.author_id ?? portavaProfile.id) as string,
         username:    (username ?? portavaProfile.username ?? "portava") as string,
-        displayName: (displayName ?? portavaProfile.full_name ?? portavaProfile.username ?? "Portava") as string,
+        displayName: (displayName ?? presentedName(portavaProfile, true) ?? portavaProfile.username ?? "Portava") as string,
         avatarUrl:   (profile.avatar_url ?? portavaProfile.avatar_url ?? null) as string | null,
         verified:    Boolean(profile.verified ?? portavaProfile.verified),
       },

@@ -18,7 +18,7 @@ import {
   type ApiErrorCode,
 } from "../lib/http.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
-import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity.js";
+import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor, presentedName } from "../lib/publicIdentity.js";
 import { truncateDisplayName } from "../lib/displayName.js";
 import {
   toPrivateTripPreview,
@@ -1031,14 +1031,14 @@ router.get("/trips/:tripId/invite-links", async (req, res) => {
   if (allJoinerIds.length > 0) {
     const { data: profiles } = await sc
       .from("profiles")
-      .select("id, full_name, username, avatar_url")
+      .select("id, display_name, name, full_name, username, avatar_url")
       .in("id", allJoinerIds);
     const allowedNames = await nameVisibilitySet(sc, allJoinerIds);
     for (const p of (profiles ?? []) as any[]) {
       const nameAllowed = (p.id as string) === user.id || allowedNames.has(p.id as string);
       profileMap.set(p.id as string, {
         id: p.id as string,
-        name: nameAllowed ? ((p.full_name as string) ?? null) : null,
+        name: presentedName(p, nameAllowed),
         handle: (p.username as string) ?? null,
         avatarUrl: (p.avatar_url as string) ?? null,
       });

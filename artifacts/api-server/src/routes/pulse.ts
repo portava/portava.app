@@ -36,7 +36,7 @@ import { excludePrivateAuthorPosts } from '../lib/privacyFilter';
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
-import { nameVisibilitySet } from "../lib/publicIdentity";
+import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
 import { getServiceClient } from "../lib/supabase";
 import { stampOverlayCol } from "../lib/postMediaOverlay";
 
@@ -153,7 +153,7 @@ router.get("/pulse", async (req, res) => {
 
   let query = sc
     .from("posts")
-    .select(`${POST_SAFE_COLUMNS}, post_media(${POST_MEDIA_COLUMNS}${await stampOverlayCol(sc)}), pulse_geo_tags(${GEO_TAG_COLUMNS}), profiles!author_id(id, username, full_name, avatar_url, verified, is_official)`)
+    .select(`${POST_SAFE_COLUMNS}, post_media(${POST_MEDIA_COLUMNS}${await stampOverlayCol(sc)}), pulse_geo_tags(${GEO_TAG_COLUMNS}), profiles!author_id(id, username, display_name, name, full_name, avatar_url, verified, is_official)`)
     .eq("status", "active")
     .eq("visibility", "public")
     .order("created_at", { ascending: false })
@@ -340,7 +340,7 @@ router.get("/pulse", async (req, res) => {
         id:        profile.id,
         username:  profile.username,
         name:      (row.author_id === user.id || allowedAuthorNames.has(row.author_id as string))
-          ? (profile.full_name ?? profile.username)
+          ? (presentedName(profile, true) ?? profile.username)
           : profile.username,
         avatarUrl:  profile.avatar_url ?? null,
         verified:   (profile.verified as boolean) ?? false,
