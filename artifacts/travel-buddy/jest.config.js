@@ -92,6 +92,10 @@ module.exports = {
     // Without this, Jest cannot find @/components/... imports and test files
     // for screens that use @/ (e.g. Trips, Trip Detail) fail to load.
     '^@/(.*)$': '<rootDir>/$1',
+    // @testing-library/react-native v14 requires the bare package name
+    // "test-renderer" (not "react-test-renderer"). pnpm's nested layout means
+    // Jest cannot resolve it automatically; pin it to the installed copy.
+    '^test-renderer$': '<rootDir>/../../node_modules/.pnpm/test-renderer@1.2.0_@types+react@19.1.17_react@19.1.0/node_modules/test-renderer',
     // react-native-draggable-flatlist pulls gesture-handler / reanimated native
     // modules; stub it out so component tests can assert on list content.
     '^react-native-draggable-flatlist$':
