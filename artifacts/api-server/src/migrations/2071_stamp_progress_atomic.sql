@@ -29,7 +29,22 @@ LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
   RETURNING progress_count;
 $$;
 
--- Server-side only: the API's service-role client is the sole caller.
+-- Server-side only: the API's service-role client is the sole caller
+-- (StampAwardEngine.ts). No client-side RPC use.
+--
+-- The `authenticated` revoke is NOT redundant with the PUBLIC revoke. Supabase
+-- ships ALTER DEFAULT PRIVILEGES granting EXECUTE on new public-schema
+-- functions directly to `authenticated`, so that grant is its own ACL entry and
+-- survives `REVOKE ... FROM PUBLIC`. Without this line the function is left
+-- callable over PostgREST RPC by any signed-in user holding the shipped anon
+-- key — and because it is SECURITY DEFINER (bypasses RLS) and takes p_user_id
+-- as an argument rather than reading auth.uid(), a caller could inflate
+-- stamp_progress for themselves or for any other user, defeating the very
+-- integrity guarantee this migration and 2072 exist to provide.
+--
+-- Applied to the live project on 2026-08-05 after verification found
+-- `authenticated=X` still present from the original apply.
 REVOKE ALL ON FUNCTION increment_stamp_progress(uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION increment_stamp_progress(uuid, uuid) FROM anon;
+REVOKE ALL ON FUNCTION increment_stamp_progress(uuid, uuid) FROM authenticated;
 GRANT EXECUTE ON FUNCTION increment_stamp_progress(uuid, uuid) TO service_role;
