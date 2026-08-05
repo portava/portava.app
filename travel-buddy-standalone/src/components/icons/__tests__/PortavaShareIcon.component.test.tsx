@@ -37,13 +37,14 @@ describe('PortavaShareIcon', () => {
     unmount();
   });
 
-  it('defines a single non-empty compound path with both a ring and an arrow subpath', () => {
+  it('defines a single non-empty closed outline', () => {
     expect(PORTAVA_SHARE_PATH.length).toBeGreaterThan(0);
-    // Two subpaths: the ring (starts with M, closed with Z) and the arrow
-    // (starts with a second M, closed with Z) — i.e. exactly two "M...Z" segments.
+    // v5 is one continuous closed outline traced from the brand art — exactly
+    // one "M...Z" subpath. Guards against blanking the path or accidentally
+    // reintroducing the pre-v5 two-subpath (ring + arrow) compound.
     const moveCommands = PORTAVA_SHARE_PATH.match(/M/g) ?? [];
     const closeCommands = PORTAVA_SHARE_PATH.match(/Z/g) ?? [];
-    expect(moveCommands.length).toBe(2);
-    expect(closeCommands.length).toBe(2);
+    expect(moveCommands.length).toBe(1);
+    expect(closeCommands.length).toBe(1);
   });
 });
