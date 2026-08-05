@@ -9,7 +9,6 @@ import { invalidateCompassHomeCache } from "./compassHome";
 import { sniffMedia, processImage, type ProcessedImage, type SniffResult } from "../lib/mediaProcessing";
 import { appMediaRef } from "../lib/postSchemas";
 import { computeTrustScore } from "../lib/trustScore.js";
-import { presentedName } from "../lib/publicIdentity.js";
 import { countContentStampsReceived } from "../services/stamps/ContentStampService.js";
 import { countUserTrips } from "../lib/tripCounts.js";
 
@@ -348,7 +347,7 @@ router.get("/me/profile/viewers", async (req, res) => {
   const viewerIds = unique.map((r) => r.viewer_id as string);
 
   const [profilesRes, privacyRes] = await Promise.all([
-    sc.from("profiles").select("id, username, display_name, name, full_name, avatar_url, is_official").in("id", viewerIds),
+    sc.from("profiles").select("id, username, full_name, avatar_url, is_official").in("id", viewerIds),
     sc.from("profile_privacy_settings").select("user_id, allow_profile_discovery").in("user_id", viewerIds),
   ]);
 
@@ -363,7 +362,7 @@ router.get("/me/profile/viewers", async (req, res) => {
       return {
         userId: r.viewer_id,
         handle: (p as any)?.username ?? null,
-        name: presentedName(p as any, true),
+        name: (p as any)?.full_name ?? null,
         avatarUrl: (p as any)?.avatar_url ?? null,
         isOfficial: (p as any)?.is_official ?? false,
         viewedAt: r.viewed_at,
@@ -775,7 +774,11 @@ router.patch("/me/profile", async (req, res) => {
         { code: (updateError as any).code, stripped },
         "PATCH /api/me/profile: passport_section_order column appears to be missing from the profiles table (schema drift) — apply migration 0120. Refusing to silently drop the layout save.",
       );
-      sendError(res, "db_error", "Could not save passport layout: the database is missing the passport_section_order column (schema drift). Apply migration 0120_passport_section_order.sql.", { exposeDetail: true });
+      sendError(
+        res,
+        "db_error",
+        "Could not save passport layout: the database is missing the passport_section_order column (schema drift). Apply migration 0120_passport_section_order.sql.",
+      );
       return;
     }
     if (stripped.includes("passport_tab_order")) {
@@ -783,7 +786,11 @@ router.patch("/me/profile", async (req, res) => {
         { code: (updateError as any).code, stripped },
         "PATCH /api/me/profile: passport_tab_order column appears to be missing from the profiles table (schema drift) — apply migration 0143. Refusing to silently drop the tab order save.",
       );
-      sendError(res, "db_error", "Could not save tab order: the database is missing the passport_tab_order column (schema drift). Apply migration 0143_passport_tab_order.sql.", { exposeDetail: true });
+      sendError(
+        res,
+        "db_error",
+        "Could not save tab order: the database is missing the passport_tab_order column (schema drift). Apply migration 0143_passport_tab_order.sql.",
+      );
       return;
     }
 
@@ -797,7 +804,11 @@ router.patch("/me/profile", async (req, res) => {
     if (Object.keys(safeRow).length === 0) {
       // Everything the client asked to change was stripped — nothing would be
       // saved, so a 200 here would be a lie.
-      sendError(res, "db_error", `Could not save profile: the database is missing the required column(s) for every requested field (schema drift). Fields not saved: ${unsavedFields.join(", ")}.`, { exposeDetail: true });
+      sendError(
+        res,
+        "db_error",
+        `Could not save profile: the database is missing the required column(s) for every requested field (schema drift). Fields not saved: ${unsavedFields.join(", ")}.`,
+      );
       return;
     }
 
@@ -1176,7 +1187,7 @@ router.get("/me/account-status", async (req, res) => {
 
   if (profileErr) {
     req.log.error({ err: profileErr }, "account-status: profile query failed");
-    sendError(res, "db_error", "Could not load account status", { exposeDetail: true });
+    sendError(res, "db_error", "Could not load account status");
     return;
   }
   if (!profile) {
@@ -1236,7 +1247,7 @@ router.post("/me/reactivate", async (req, res) => {
 
   if (profileCheckErr) {
     req.log.error({ err: profileCheckErr }, "reactivate: failed to check account status");
-    sendError(res, "db_error", "Could not verify account status", { exposeDetail: true });
+    sendError(res, "db_error", "Could not verify account status");
     return;
   }
   if (!profileRow) {
@@ -1261,7 +1272,7 @@ router.post("/me/reactivate", async (req, res) => {
 
   if (profileUpdateErr) {
     req.log.error({ err: profileUpdateErr }, "reactivate: profile update failed");
-    sendError(res, "db_error", "Failed to reactivate account", { exposeDetail: true });
+    sendError(res, "db_error", "Failed to reactivate account");
     return;
   }
 
@@ -1491,7 +1502,7 @@ router.delete("/me/delete-request", async (req, res) => {
 
   if (profileErr) {
     req.log.error({ err: profileErr }, "delete-request DELETE: failed to restore profile status");
-    sendError(res, "db_error", "Failed to restore account status", { exposeDetail: true });
+    sendError(res, "db_error", "Failed to restore account status");
     return;
   }
 
@@ -1517,52 +1528,97 @@ router.delete("/me/delete-request", async (req, res) => {
 /* ---------------------------------------------------------------------------
  * POST /internal/deletion-requests/execute-due — deletion worker endpoint
  * ---------------------------------------------------------------------------
- * Service-to-service endpoint (NOT user-facing). Executes the deletion cascade
- * for every user_deletion_requests row whose hold has elapsed.
+ * Service-to-service endpoint (NOT user-facing). Executes the full deletion
+ * cascade (services/accountDeletion.ts) for every user_deletion_requests row
+ * whose 30-day hold has elapsed (scheduled_at <= now, status pending/confirmed).
  *
- * This is a thin wrapper over processDueDeletions() in
- * lib/accountDeletionScheduler.ts — the same function the in-process scheduler
- * ticks. Both paths therefore share one implementation, one batch cap, one
- * feature-flag gate, and the same cascade (AccountDeletionService), so an
- * external cron and the internal timer can never drift apart.
+ * Auth: X-Internal-Secret header must match INTERNAL_API_SECRET — the same
+ * fail-closed pattern as routes/notifications.ts requireInternalSecret. When
+ * the env var is unset the endpoint is disabled (503).
  *
- * Auth: X-Internal-Secret must match INTERNAL_API_SECRET — the fail-closed
- * pattern from routes/notifications.ts. Unset env var disables the route (503).
- *
- * SAFETY: processDueDeletions is gated behind the `account_deletion_worker_enabled`
- * feature flag and fails closed. When the flag is off this returns
- * `{ ok: true, skipped: true }` and deletes nothing — that is the expected
- * response until the flag is deliberately turned on.
- *
- * SCHEDULING: hit once a day via a Replit Scheduled Deployment / any cron:
+ * SCHEDULING: hit this endpoint once a day via a Replit Scheduled Deployment
+ * (or any external cron):
  *   curl -X POST "$API_BASE_URL/api/internal/deletion-requests/execute-due" \
  *        -H "X-Internal-Secret: $INTERNAL_API_SECRET"
- * Idempotent: executed rows are marked completed and never re-selected, so
- * overlapping runs (cron + in-process tick) are safe.
+ * Batch is capped at 20 per run; the endpoint is idempotent (executed rows are
+ * marked completed and never re-selected), so overlapping runs are safe.
  */
-router.post("/internal/deletion-requests/execute-due", async (req, res) => {
+function requireInternalSecret(req: any, res: any): boolean {
   const secret = process.env.INTERNAL_API_SECRET;
   if (!secret) {
     res.status(503).json({
       error: "misconfigured",
       message: "INTERNAL_API_SECRET is not set; internal endpoints are disabled",
     });
-    return;
+    return false;
   }
-  if (req.headers["x-internal-secret"] !== secret) {
+  const provided = req.headers["x-internal-secret"];
+  if (provided !== secret) {
     res.status(401).json({ error: "unauthorized", message: "Missing or invalid internal secret" });
+    return false;
+  }
+  return true;
+}
+
+router.post("/internal/deletion-requests/execute-due", async (req, res) => {
+  if (!requireInternalSecret(req, res)) return;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const now = new Date().toISOString();
+  const BATCH_CAP = 20;
+
+  const { data: due, error: dueErr } = await sc
+    .from("user_deletion_requests")
+    .select("user_id, scheduled_at, status")
+    .in("status", ["pending", "confirmed"])
+    .lte("scheduled_at", now)
+    .order("scheduled_at", { ascending: true })
+    .limit(BATCH_CAP);
+
+  if (dueErr) {
+    req.log.error({ err: dueErr }, "deletion worker: failed to query due requests");
+    sendError(res, "db_error", dueErr.message);
     return;
   }
 
-  try {
-    const { processDueDeletions } = await import("../lib/accountDeletionScheduler.js");
-    const result = await processDueDeletions();
-    req.log.info({ ...result }, "deletion worker: execute-due run complete");
-    res.status(200).json({ ok: true, ...result });
-  } catch (err) {
-    req.log.error({ err }, "deletion worker: execute-due threw");
-    sendError(res, "db_error", "Deletion worker run failed");
+  const { executeAccountDeletion } = await import("../services/accountDeletion.js");
+  const summaries: Awaited<ReturnType<typeof executeAccountDeletion>>[] = [];
+
+  for (const row of (due ?? []) as { user_id: string }[]) {
+    const userId = row.user_id;
+    const summary = await executeAccountDeletion(userId, sc);
+    summaries.push(summary);
+
+    const executedAt = new Date().toISOString();
+
+    // Mark deleted in account states (best-effort)
+    await sc
+      .from("user_account_states")
+      .upsert(
+        { user_id: userId, state: "deleted", reason: "Scheduled account deletion executed", set_by: userId, created_at: executedAt },
+        { onConflict: "user_id,state" },
+      )
+      .then(undefined, () => {});
+
+    // Mark the request executed so it is never re-selected
+    const { error: markErr } = await sc
+      .from("user_deletion_requests")
+      .update({ status: "completed", executed_at: executedAt })
+      .eq("user_id", userId);
+    if (markErr) {
+      req.log.error({ err: markErr, userId }, "deletion worker: failed to mark request completed");
+      summary.errors.push({ table: "user_deletion_requests", message: markErr.message });
+    }
+
+    req.log.info(
+      { userId, tablesCleared: summary.tablesCleared.length, errors: summary.errors.length },
+      "deletion worker: executed account deletion",
+    );
   }
+
+  res.status(200).json({ ok: true, processed: summaries.length, executedAt: now, summaries });
 });
 
 /* ---------------------------------------------------------------------------
