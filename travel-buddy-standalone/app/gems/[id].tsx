@@ -299,16 +299,6 @@ export default function GemDetailScreen() {
     }
   }, [gem]);
 
-  if (loading) {
-    return (
-      <SafeAreaView style={styles.root} edges={['top']}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#4C8BF5" />
-        </View>
-      </SafeAreaView>
-    );
-  }
-
   // Log the raw technical error to Sentry once per occurrence, but never
   // render it — a raw DB/network message (e.g. a Postgres column error) is
   // not something a user should ever see. The UI always shows a friendly,
@@ -321,6 +311,16 @@ export default function GemDetailScreen() {
       });
     }
   }, [error, id]);
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.root} edges={['top']}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#4C8BF5" />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (error || !gem) {
     return (
