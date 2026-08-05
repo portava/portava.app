@@ -593,6 +593,14 @@ export default function MediaViewer() {
   // ── Active index tracking ──────────────────────────────────────────────────
   const [activeIndex, setActiveIndex] = useState(initialIndex);
   const flatListRef = useRef<FlatList<ViewerContextItem>>(null);
+  // Hoisted above the early returns below so hook order stays stable across
+  // renders. useRef(fn).current intentionally pins the first callback identity,
+  // which FlatList requires of onViewableItemsChanged.
+  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+    if (viewableItems.length > 0) {
+      setActiveIndex(viewableItems[0].index ?? 0);
+    }
+  }).current;
 
   useEffect(() => {
     if (initialIndex > 0 && flatListRef.current) {
@@ -669,7 +677,7 @@ export default function MediaViewer() {
     const item = items[activeIndex];
     if (!item) return;
     try {
-      await Share.share({ message: 'Check this out on Travel Buddy!' });
+      await Share.share({ message: 'Check this out on Portava!' });
       recordMediaShare(item.id, 'native').catch(() => {});
     } catch { /* dismissed */ }
   }, [activeIndex, items]);
@@ -734,11 +742,7 @@ export default function MediaViewer() {
           index,
         })}
         keyExtractor={(item) => item.id}
-        onViewableItemsChanged={useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
-          if (viewableItems.length > 0) {
-            setActiveIndex(viewableItems[0].index ?? 0);
-          }
-        }).current}
+        onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={{ itemVisiblePercentThreshold: 60 }}
         windowSize={3}
         maxToRenderPerBatch={2}

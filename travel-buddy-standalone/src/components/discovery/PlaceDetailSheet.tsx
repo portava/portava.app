@@ -120,17 +120,17 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
     return haversineKm(coords.lat, coords.lng, place.lat, place.lng);
   }, [place, resolvedLocation]);
 
-  if (!place) return null;
-
   const placeImage = usePlaceImage({
     url: resolvedSheet?.url ?? null,
-    imageSourceType: place.imageSourceType,
-    accuracyStatus: place.accuracyStatus,
-    disclaimerRequired: place.disclaimerRequired,
-    disclaimerText: place.disclaimerText,
+    imageSourceType: place?.imageSourceType,
+    accuracyStatus: place?.accuracyStatus,
+    disclaimerRequired: place?.disclaimerRequired,
+    disclaimerText: place?.disclaimerText,
     isRepresentation: resolvedSheet?.isRepresentation,
-    altText: place.name,
+    altText: place?.name,
   });
+
+  if (!place) return null;
 
   const accent = categoryColor(place.category);
   const fallbackDesc = getPlaceCategoryFallback(place.category);

@@ -149,12 +149,6 @@ export function StampsTab({
   const serverTotalRef = React.useRef(0);
   const loadingMoreRef = React.useRef(false);
 
-  // If either party has blocked the other, hide the section entirely.
-  // Computed after hooks so hook order is stable across renders.
-  const isBlocked = Boolean(viewingUserId && (blockedIds.has(viewingUserId) || blockerIds.has(viewingUserId)));
-
-  if (isBlocked) return null;
-
   const load = useCallback(async () => {
     if (external) return; // parent pipeline owns the data
     setLoading(true);
@@ -175,8 +169,6 @@ export function StampsTab({
       setError(res.message);
     }
   }, [viewingUsername, external]);
-
-  useEffect(() => { load(); }, [load]);
 
   // Fetch the next page of stamps (owner view). Sentinel: server-reported
   // total — when allStamps.length === total there is nothing left to fetch.
@@ -211,6 +203,27 @@ export function StampsTab({
         setLoadingMore(false);
       });
   }, [viewingUsername]);
+
+  const handleStampUpdated = useCallback((updated: PassportStampNew) => {
+    if (external) {
+      onStampUpdated?.(updated);
+    } else {
+      setAllStamps((prev) => {
+        const next = prev.map((s) => s.id === updated.id ? updated : s);
+        allStampsRef.current = next;
+        return next;
+      });
+    }
+    setSelected((prev) => prev?.id === updated.id ? updated : prev);
+  }, [external, onStampUpdated]);
+
+  // If either party has blocked the other, hide the section entirely.
+  // Computed after hooks so hook order is stable across renders.
+  const isBlocked = Boolean(viewingUserId && (blockedIds.has(viewingUserId) || blockerIds.has(viewingUserId)));
+
+  if (isBlocked) return null;
+
+  useEffect(() => { load(); }, [load]);
 
   // Expose loadMore to the parent scroll container. In external mode this is
   // the parent pipeline's own load-more, so scrolling triggers exactly one
@@ -271,19 +284,6 @@ export function StampsTab({
   const totalCount = viewingUsername
     ? effStamps.filter((s) => !s.isRevoked && s.visibility !== 'private').length
     : Math.max(effTotal, effStamps.length);
-
-  const handleStampUpdated = useCallback((updated: PassportStampNew) => {
-    if (external) {
-      onStampUpdated?.(updated);
-    } else {
-      setAllStamps((prev) => {
-        const next = prev.map((s) => s.id === updated.id ? updated : s);
-        allStampsRef.current = next;
-        return next;
-      });
-    }
-    setSelected((prev) => prev?.id === updated.id ? updated : prev);
-  }, [external, onStampUpdated]);
 
   const emptyTitle = category
     ? 'No stamps in this category'

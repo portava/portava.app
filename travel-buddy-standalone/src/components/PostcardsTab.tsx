@@ -322,9 +322,6 @@ export function PostcardsTab({
   /** When true, renders a MediaGridSkeleton placeholder instead of the grid. */
   loading?: boolean;
 }) {
-  // Sentinel states take precedence over an empty (or populated) postcard list.
-  if (sentinel) return <PostcardSentinelView kind={sentinel} />;
-
   const { width } = useWindowDimensions();
   const [sort, setSort] = useState<SortKey>('newest');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -345,6 +342,9 @@ export function PostcardsTab({
     });
     return list;
   }, [postcards, sort]);
+
+  // Sentinel states take precedence over an empty (or populated) postcard list.
+  if (sentinel) return <PostcardSentinelView kind={sentinel} />;
 
   if (loading) {
     return <MediaGridSkeleton columns={columns} count={columns * 3} />;
