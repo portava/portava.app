@@ -223,7 +223,7 @@ function ActionRowInner({ entity, onBeforeNavigate }: { entity: MapEntity; onBef
     const detailPath = (entity as any).detailRoute ?? '';
     try {
       await Share.share({
-        message: `Check out ${entityName} on Travel Buddy!\nhttps://travelbuddy.app${detailPath}`,
+        message: `Check out ${entityName} on Portava!\nhttps://travelbuddy.app${detailPath}`,
       });
     } catch {
       // User cancelled or share unavailable — silent.

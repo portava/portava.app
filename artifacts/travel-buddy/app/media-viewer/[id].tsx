@@ -669,7 +669,7 @@ export default function MediaViewer() {
     const item = items[activeIndex];
     if (!item) return;
     try {
-      await Share.share({ message: 'Check this out on Travel Buddy!' });
+      await Share.share({ message: 'Check this out on Portava!' });
       recordMediaShare(item.id, 'native').catch(() => {});
     } catch { /* dismissed */ }
   }, [activeIndex, items]);

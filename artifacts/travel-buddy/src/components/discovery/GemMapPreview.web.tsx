@@ -63,8 +63,8 @@ export function GemMapPreview({ lat, lng, coordsPrecision, locationLabel }: GemM
       <Text style={s.placeholderTitle}>Map preview on mobile</Text>
       <Text style={s.placeholderBody}>
         {isApprox
-          ? 'Open Travel Buddy on your phone to see the approximate area on the map.'
-          : 'Open Travel Buddy on your phone to see this gem on the map.'}
+          ? 'Open Portava on your phone to see the approximate area on the map.'
+          : 'Open Portava on your phone to see this gem on the map.'}
       </Text>
     </View>
   );

@@ -49,7 +49,7 @@ export function LocationPermissionPrompt() {
           </Text>
           <Text style={s.body}>
             {isDenied
-              ? 'You can still use Travel Buddy by choosing a city manually.'
+              ? 'You can still use Portava by choosing a city manually.'
               : 'Unlock nearby travelers, stamps, postcards, and local discovery.'}
           </Text>
 

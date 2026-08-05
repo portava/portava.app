@@ -193,7 +193,7 @@ export function WatchItemOverlay({
     // still image for photo posts) so the native preview shows real content
     // instead of falling back to a generic app-icon placeholder.
     const previewUrl = item.posterUrl || item.videoUrl || null;
-    const message = item.caption || 'Check this out on Travel Buddy!';
+    const message = item.caption || 'Check this out on Portava!';
     try {
       await Share.share(
         Platform.OS === 'ios'

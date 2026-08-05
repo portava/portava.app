@@ -895,7 +895,7 @@ export const TEMPLATES: NotificationTemplate[] = [
     category: 'admin',
     defaultPriority: 'urgent',
     defaultChannels: ['in_app', 'push'],
-    title: ({ subject }) => subject ?? 'Account notice from Travel Buddy',
+    title: ({ subject }) => subject ?? 'Account notice from Portava',
     body: ({ body }) => body ?? 'Please review your account settings.',
   }),
   tpl({
@@ -911,7 +911,7 @@ export const TEMPLATES: NotificationTemplate[] = [
     category: 'admin',
     defaultPriority: 'normal',
     defaultChannels: ['in_app'],
-    title: () => 'Travel Buddy update',
+    title: () => 'Portava update',
     body: ({ message }) => message ?? 'New features and improvements are available.',
   }),
 

@@ -196,7 +196,7 @@ export default function RentABuddyReview() {
             style={[styles.textArea, { borderColor: color.deep, borderWidth: 1.5 }]}
             value={privateNote}
             onChangeText={setPrivateNote}
-            placeholder="Any concerns or feedback for the Travel Buddy team only…"
+            placeholder="Any concerns or feedback for the Portava team only…"
             placeholderTextColor={color.haze}
             multiline
             numberOfLines={3}

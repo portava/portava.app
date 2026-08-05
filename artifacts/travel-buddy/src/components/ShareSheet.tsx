@@ -226,7 +226,7 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
     onClose();
     try {
       const result = await Share.share({
-        message: `Check out this post on Travel Buddy!\n${postPermalink(postId)}`,
+        message: `Check out this post on Portava!\n${postPermalink(postId)}`,
         ...(Platform.OS === 'ios' ? { url: postPermalink(postId) } : {}),
       });
       if (result.action === Share.sharedAction) {

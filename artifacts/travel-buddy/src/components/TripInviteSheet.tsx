@@ -347,7 +347,7 @@ export function TripInviteSheet({ tripId, visible, onDismiss, onInviteSent }: Pr
                 <Text style={s.emptyBody}>
                   {q
                     ? 'Try a different name or handle.'
-                    : 'Follow people on Travel Buddy to invite them to your trips.'}
+                    : 'Follow people on Portava to invite them to your trips.'}
                 </Text>
               </View>
             )}

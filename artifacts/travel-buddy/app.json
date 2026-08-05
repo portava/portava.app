@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Travel Buddy",
+    "name": "Portava",
     "slug": "travel-buddy",
     "version": "1.0.1",
     "orientation": "portrait",
@@ -27,13 +27,13 @@
         "LSApplicationQueriesSchemes": [
           "travelbuddy"
         ],
-        "NSCalendarsUsageDescription": "Travel Buddy adds confirmed meetups to your calendar so you never miss a plan.",
-        "NSLocationWhenInUseUsageDescription": "Travel Buddy uses your location to show nearby places and auto-publish posts after you leave a spot.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Travel Buddy uses your location in the background to track route progress and trigger check-ins.",
-        "NSCameraUsageDescription": "Travel Buddy uses your camera for video calls and so you can add photos to posts and your passport.",
-        "NSPhotoLibraryUsageDescription": "Travel Buddy accesses your photo library so you can upload trip photos and profile pictures.",
-        "NSMicrophoneUsageDescription": "Travel Buddy uses your microphone for voice and video calls with your travel contacts, and for video content attached to posts.",
-        "NSUserNotificationsUsageDescription": "Travel Buddy sends notifications for trip invites, messages, and travel reminders."
+        "NSCalendarsUsageDescription": "Portava adds confirmed meetups to your calendar so you never miss a plan.",
+        "NSLocationWhenInUseUsageDescription": "Portava uses your location to show nearby places and auto-publish posts after you leave a spot.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Portava uses your location in the background to track route progress and trigger check-ins.",
+        "NSCameraUsageDescription": "Portava uses your camera for video calls and so you can add photos to posts and your passport.",
+        "NSPhotoLibraryUsageDescription": "Portava accesses your photo library so you can upload trip photos and profile pictures.",
+        "NSMicrophoneUsageDescription": "Portava uses your microphone for voice and video calls with your travel contacts, and for video content attached to posts.",
+        "NSUserNotificationsUsageDescription": "Portava sends notifications for trip invites, messages, and travel reminders."
       }
     },
     "android": {
@@ -119,7 +119,7 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Travel Buddy needs your location to automatically publish your post after you leave a spot.",
+          "locationAlwaysAndWhenInUsePermission": "Portava needs your location to automatically publish your post after you leave a spot.",
           "isIosBackgroundLocationEnabled": true,
           "isAndroidBackgroundLocationEnabled": true
         }

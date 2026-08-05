@@ -93,7 +93,7 @@ export default function InviteLinkScreen() {
           <Plane size={44} color={color.deep} />
           <Text style={styles.heading}>Sign in to join</Text>
           <Text style={styles.bodyText}>
-            You need a Travel Buddy account to accept this invite.
+            You need a Portava account to accept this invite.
           </Text>
           <Pressable
             style={styles.primaryBtn}

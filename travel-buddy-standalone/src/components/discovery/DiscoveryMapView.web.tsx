@@ -33,7 +33,7 @@ export function DiscoveryMapView(_props: DiscoveryMapViewProps) {
       </View>
       <Text style={s.title}>Map is available on mobile</Text>
       <Text style={s.body}>
-        Open Travel Buddy on your phone to explore the interactive map. The list
+        Open Portava on your phone to explore the interactive map. The list
         view here shows the same places.
       </Text>
     </View>

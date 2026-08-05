@@ -28,7 +28,7 @@ export function MeetupAreaPreview(_props: MeetupAreaPreviewProps) {
       <Text style={s.title}>Approximate meetup area pinned</Text>
       <Text style={s.body}>
         This buddy has pinned a rough meetup area (never an exact point). Open
-        Travel Buddy on your phone to see it on the map.
+        Portava on your phone to see it on the map.
       </Text>
     </View>
   );

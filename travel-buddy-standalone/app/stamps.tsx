@@ -38,7 +38,7 @@ const SOURCE_LABELS: Record<string, string> = {
   safe_return: 'Completed a verified safe meetup',
   hidden_gem:  'Discovered a hidden gem',
   check_in:    'GPS-verified check-in',
-  system:      'Awarded by Travel Buddy',
+  system:      'Awarded by Portava',
   manual:      'Manually awarded',
   event:       'Attended an event',
 };

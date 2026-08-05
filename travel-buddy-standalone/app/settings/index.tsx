@@ -178,7 +178,7 @@ export default function Settings() {
     if (!live) return;
     Alert.alert(
       'Reset learned preferences?',
-      'Travel Buddy will forget what it learned from your saves and dismissals. Your explicit preferences (interests, pace, avoid list) are kept.',
+      'Portava will forget what it learned from your saves and dismissals. Your explicit preferences (interests, pace, avoid list) are kept.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -365,7 +365,7 @@ export default function Settings() {
             {prefSaving && <ActivityIndicator size="small" color={color.mute} />}
           </View>
           <Text style={styles.sectionDesc}>
-            Travel Buddy learns from what you save, dismiss, and add to trips so suggestions get better over time.
+            Portava learns from what you save, dismiss, and add to trips so suggestions get better over time.
           </Text>
 
           {prefLoading ? (

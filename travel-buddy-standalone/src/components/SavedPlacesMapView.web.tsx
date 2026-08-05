@@ -17,7 +17,7 @@ export function SavedPlacesMapView({ places }: SavedPlacesMapViewProps) {
       </View>
       <Text style={s.title}>Map is available on mobile</Text>
       <Text style={s.body}>
-        Open Travel Buddy on your iOS or Android device to see your{' '}
+        Open Portava on your iOS or Android device to see your{' '}
         {places.length} saved place{places.length === 1 ? '' : 's'} on the map.
       </Text>
     </View>

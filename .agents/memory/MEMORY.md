@@ -75,3 +75,4 @@
 - [Shared Moments pagination and approval](shared-moments-pagination-approval.md) — keyset cursors must include created-at plus UUID, and approval audits require a matched pending-row transition.
 - [Portava share icon conventions](portava-share-icon-conventions.md) — genuine-share vs excluded-lookalike icon rules, no SVG rasterizer in sandbox (verify via live preview screenshot), new preview routes need portavaRoutes.ts entry.
 - [Post action row icon-spacing pattern](post-action-row-icon-spacing.md) — shared PostActionRow/counterFormat primitives live in travel-buddy; which surfaces (WatchItemOverlay rail, PlanCard/GemCard CTAs) were deliberately excluded and why.
+- [Canonical-tree flip + baseline verification](canonical-tree-flip-and-baseline-verify.md) — re-check replit.md's SOURCE OF TRUTH banner every session (it can flip in a day); measure pass/fail baselines via git-stash A/B, never trust a remembered number.

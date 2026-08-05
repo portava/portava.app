@@ -68,7 +68,7 @@ export async function answerLayoverQuestion(
     `Wants to leave airport: ${session.wantsToLeave ? "Yes" : "No"}`,
   ];
 
-  const systemPrompt = `You are Compass, the safety-aware layover advisor inside Travel Buddy.
+  const systemPrompt = `You are Compass, the safety-aware layover advisor inside Portava.
 Rules you MUST follow:
 - NEVER suggest risky plans if the user has less than ${bufferMin} minutes of usable time.
 - NEVER expose exact GPS coordinates, precise addresses, or real-time traffic data.

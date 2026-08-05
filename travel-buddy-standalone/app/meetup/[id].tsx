@@ -943,8 +943,8 @@ export default function MeetupScreen() {
           <CalendarDays size={32} color={color.signal} style={{ alignSelf: 'center', marginBottom: space.sm }} />
           <Text style={s.modalTitle}>Calendar Access Required</Text>
           <Text style={s.modalBody}>
-            Travel Buddy needs calendar permission to add this meetup.
-            Open your device Settings and enable Calendar access for Travel Buddy.
+            Portava needs calendar permission to add this meetup.
+            Open your device Settings and enable Calendar access for Portava.
           </Text>
           <Pressable
             style={s.modalSettingsBtn}

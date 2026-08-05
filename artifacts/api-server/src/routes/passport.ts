@@ -896,7 +896,7 @@ function buildPassportOgSvg(card: OgCardData | null): string {
   const goldSoft = "#E3C566";
   const cream = "#F5EFE0";
 
-  const name = card?.displayName?.trim() || "Travel Buddy Passport";
+  const name = card?.displayName?.trim() || "Portava Passport";
   const handle = card?.username ? `@${card.username}` : null;
   const statsLine = card
     ? `${card.tripCount} ${card.tripCount === 1 ? "trip" : "trips"}  ·  ${card.stampCount} ${card.stampCount === 1 ? "stamp" : "stamps"}`

@@ -152,7 +152,7 @@ export function computeTrustScoreFromData(
     hint: reviewMaxed
       ? null
       : reviewPoints === 0
-        ? "Register as a Travel Buddy and collect reviews to earn up to +30 points"
+        ? "Register as a Portava and collect reviews to earn up to +30 points"
         : "Higher ratings and more reviews increase your score (up to +30 at 5★ avg with 10+ reviews)",
   });
 

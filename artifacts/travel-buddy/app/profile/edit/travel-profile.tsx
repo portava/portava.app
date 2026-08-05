@@ -366,7 +366,7 @@ export default function TravelProfileScreen() {
 
       <SettingsSection
         title="AI Trip Preferences"
-        subtitle="Travel Buddy uses these to tailor its trip suggestions."
+        subtitle="Portava uses these to tailor its trip suggestions."
       >
         <View style={styles.group}>
           <FieldLabel>Interests</FieldLabel>

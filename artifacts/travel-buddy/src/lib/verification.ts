@@ -12,7 +12,7 @@ export function isTravelBuddyVerified(profile?: {
 
 export function getVerificationLabel(status?: string | null): string {
   switch (status) {
-    case 'verified': return 'Travel Buddy Verified';
+    case 'verified': return 'Portava Verified';
     case 'pending':  return 'Verification pending';
     case 'rejected': return 'Verification needs attention';
     case 'expired':  return 'Verification expired';

@@ -49,7 +49,7 @@ function DesktopSidebar({
     <View style={[ds.sidebar, { paddingTop: insets.top + space.xl, paddingBottom: insets.bottom + space.lg }]}>
       <View style={ds.brand}>
         <View style={ds.brandIcon}><Plane size={18} color={color.onInk} /></View>
-        <Text style={ds.brandName}>Travel Buddy</Text>
+        <Text style={ds.brandName}>Portava</Text>
       </View>
 
       <View style={ds.navLinks}>

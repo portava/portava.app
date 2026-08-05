@@ -267,7 +267,7 @@ function EditModal({
             </View>
             <Text style={styles.methodNote}>
               {form.notifyMethod === 'in_app'
-                ? "They'll receive a notification inside Travel Buddy (must have the app)."
+                ? "They'll receive a notification inside Portava (must have the app)."
                 : form.notifyMethod === 'sms'
                 ? 'An SMS will be sent to their phone number when you miss a check-in.'
                 : 'An email will be sent when you miss a check-in.'}

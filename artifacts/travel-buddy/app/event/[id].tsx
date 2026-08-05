@@ -517,7 +517,7 @@ export default function EventDetailScreen() {
     try {
       await Share.share({
         title: event.title,
-        message: `Check out this event on Travel Buddy: ${event.title}\n${url}`,
+        message: `Check out this event on Portava: ${event.title}\n${url}`,
         url,
       });
     } catch { }

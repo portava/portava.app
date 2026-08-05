@@ -121,7 +121,7 @@ function HashtagCard({
     const res = await reportHashtag(data.slug, reason);
     setReportBusy(false);
     if (res.ok) {
-      Alert.alert('Report submitted', 'Thanks for helping keep Travel Buddy safe.');
+      Alert.alert('Report submitted', 'Thanks for helping keep Portava safe.');
     } else {
       Alert.alert('Could not submit report', res.error ?? 'Please try again.');
     }
