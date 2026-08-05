@@ -94,7 +94,7 @@ test('public profile gets personalized OG tags', async () => {
 test('unknown profile gets generic OG tags without leaking the handle in metadata', async () => {
   const res = await rawRequest('/u/ghostuser');
   assert.equal(res.status, 200);
-  assert.match(res.body, /og:title" content="Travel Buddy Passport"/);
+  assert.match(res.body, /og:title" content="Portava Passport"/);
   assert.doesNotMatch(res.body, /og:title" content="[^"]*ghostuser/);
   assert.match(res.body, /users\/_\/og-image\.png/);
 });
