@@ -1,7 +1,8 @@
 /**
  * Settings screen — account activation/deactivation state machine.
  *
- * Pure logic extracted from app/settings/index.tsx so it can be tested
+ * Pure logic backing app/settings/index.tsx (kept outside app/ so expo-router
+ * does not register it as a route) so it can be tested
  * with node:test without rendering the component (RNTL is broken with
  * React 19 + jest-expo; machine-layer is the working alternative).
  *
@@ -10,7 +11,7 @@
  * component, tests will catch the mismatch.
  */
 
-import type { ProfileResult } from '../../src/services/profile';
+import type { ProfileResult } from '../../services/profile.ts';
 
 /** Which account-management button the Settings screen should render. */
 export type AccountButtonMode = 'reactivate' | 'deactivate';

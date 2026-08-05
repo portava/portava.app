@@ -488,6 +488,18 @@ run_check "version-bump" \
     exit $ok
   '
 
+# ── 12. Migration prefix-collision guard ─────────────────────────────────────
+# Fails when two files in artifacts/api-server/src/migrations share the same
+# numeric prefix — migration runners apply files in lexicographic order, so a
+# shared prefix produces an ambiguous apply sequence. Needs no DB credentials.
+# KNOWN PRE-EXISTING COLLISION: the 2059 pair
+# (2059_content_distribution_stats.sql / 2059_stamp_artwork_generation_
+# source_placeholder.sql) predates this guard and its production apply state
+# is unknown — do NOT blindly renumber it; resolve its apply state first.
+run_check "migration-prefixes" \
+  "Migration prefix uniqueness (artifacts/api-server/src/migrations)" \
+  pnpm --dir artifacts/api-server run check:migration-prefixes
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 printf '\n'
 sep
@@ -526,6 +538,18 @@ for entry in "${results[@]}"; do
         ;;
       version-bump)
         printf '     fix: increment ios.buildNumber and android.versionCode in travel-buddy-standalone/app.json\n'
+        ;;
+      migration-prefixes)
+        printf '     fix: two or more files in artifacts/api-server/src/migrations share a numeric\n'
+        printf '          prefix (see the checker output above). Migration runners apply files in\n'
+        printf '          lexicographic order — a shared prefix makes the apply sequence ambiguous.\n'
+        printf '          Renumber the NEWEST, NOT-YET-APPLIED colliding file(s) to unique prefixes.\n'
+        printf '          If a colliding file was already applied to production, rename it anyway and\n'
+        printf '          add an "ALREADY APPLIED under the old name — do not re-apply" header note\n'
+        printf '          (see 2075_stamp_progress_atomic.sql / 2076_user_stamps_unique.sql).\n'
+        printf '          KNOWN ISSUE: the pre-existing 2059 pair (2059_content_distribution_stats.sql /\n'
+        printf '          2059_stamp_artwork_generation_source_placeholder.sql) has an UNKNOWN production\n'
+        printf '          apply state — do NOT blindly renumber it; resolve its apply state first.\n'
         ;;
       engagement-indexes)
         printf '     fix: apply the engagement index migration via the Supabase SQL editor or psql:\n'

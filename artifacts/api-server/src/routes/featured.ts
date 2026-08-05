@@ -23,7 +23,7 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { presentedName } from "../lib/publicIdentity.js";
+import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 
 const router = Router();
 
@@ -124,6 +124,14 @@ router.get("/featured", asyncHandler(async (req, res) => {
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
+  // Universal display-name rule: this endpoint is public (anonymous viewer),
+  // so an author's real name only appears when they opted in via
+  // profile_privacy_settings.show_real_name. One batched lookup, fail-closed.
+  const allowed = await nameVisibilitySet(
+    sc,
+    visible.map((r: any) => ((r.posts as any)?.profiles?.id ?? (r.posts as any)?.author_id) as string | null),
+  );
+
   // Map rows to FeaturedPost objects
   function mapRow(r: any): any {
     const post = r.posts ?? {};
@@ -139,7 +147,8 @@ router.get("/featured", asyncHandler(async (req, res) => {
     const mediaType: "image" | "video" = (primaryMedia?.media_type as any) ?? "image";
 
     const username = profile.username ?? null;
-    const displayName = presentedName(profile, true) ?? profile.username ?? null;
+    const authorId = (profile.id ?? post.author_id ?? null) as string | null;
+    const displayName = presentedName(profile, authorId != null && allowed.has(authorId)) ?? profile.username ?? null;
 
     return {
       id: r.id as string,
@@ -240,6 +249,13 @@ async function buildFallbackResponse(sc: any, res: any, req: any): Promise<void>
 
   const now = new Date().toISOString();
 
+  // Universal display-name rule (same as the main route): real names are
+  // opt-in even for @Portava's own account. Fail-closed batched lookup.
+  const allowed = await nameVisibilitySet(sc, [
+    portavaProfile.id,
+    ...rawPosts.map((p: any) => ((p.profiles as any)?.id ?? p.author_id) as string | null),
+  ]);
+
   // Synthesise FeaturedPost objects — use a synthetic ID so the shape matches
   // the normal response without colliding with real portava_featured PKs.
   const fallbackPosts = rawPosts.map((post: any, idx: number) => {
@@ -253,7 +269,8 @@ async function buildFallbackResponse(sc: any, res: any, req: any): Promise<void>
     const thumbnailUrl: string | null = primaryMedia?.thumbnail_url ?? primaryMedia?.public_url ?? null;
     const mediaType: "image" | "video" = (primaryMedia?.media_type as any) ?? "image";
     const username = profile.username ?? null;
-    const displayName = presentedName(profile, true) ?? profile.username ?? null;
+    const authorId = (profile.id ?? post.author_id ?? null) as string | null;
+    const displayName = presentedName(profile, authorId != null && allowed.has(authorId)) ?? profile.username ?? null;
 
     return {
       // Use a deterministic synthetic ID so clients can key on it.
@@ -268,7 +285,10 @@ async function buildFallbackResponse(sc: any, res: any, req: any): Promise<void>
       author: {
         id:          (profile.id ?? post.author_id ?? portavaProfile.id) as string,
         username:    (username ?? portavaProfile.username ?? "portava") as string,
-        displayName: (displayName ?? presentedName(portavaProfile, true) ?? portavaProfile.username ?? "Portava") as string,
+        displayName: (displayName
+          ?? presentedName(portavaProfile, allowed.has(portavaProfile.id))
+          ?? portavaProfile.username
+          ?? "Portava") as string,
         avatarUrl:   (profile.avatar_url ?? portavaProfile.avatar_url ?? null) as string | null,
         verified:    Boolean(profile.verified ?? portavaProfile.verified),
       },

@@ -496,7 +496,7 @@ router.post('/internal/activity-events', async (req, res) => {
     metadata:   parsed.data.metadata ?? {},
   });
 
-  if (error) { res.status(500).json({ error: 'db_error', message: error.message }); return; }
+  if (error) { req.log.error({ err: error }, 'internal activity-event insert failed'); sendError(res, 'db_error', error.message); return; }
   res.status(201).json({ ok: true });
 });
 

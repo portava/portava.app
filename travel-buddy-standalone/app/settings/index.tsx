@@ -9,7 +9,7 @@ import { color, space, type as t, radius, layout } from '../../src/theme/tokens'
 import { updateTelegraphChatSettings, getTelegraphChatSettings } from '../../src/services/telegraphChat';
 import { fetchPreferences, patchPreferences, resetLearnedPreferences } from '../../src/services/intelligence';
 import { deactivateAccount, requestAccountDeletion, reactivateAccount } from '../../src/services/profile';
-import { resolveAccountButton, applyReactivateResult } from './settings.machine';
+import { resolveAccountButton, applyReactivateResult } from '../../src/screens/settings/settings.machine';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { KILL_SWITCH_FLAGS } from '../../src/screens/admin/featureFlags.machine';
 

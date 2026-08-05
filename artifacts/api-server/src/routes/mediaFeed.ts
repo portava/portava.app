@@ -408,6 +408,14 @@ const GEM_PROFILE_COLUMNS =
 // eslint-disable-next-line max-len
 const GEM_FEED_COLUMNS = "id, name, category, city, country, neighborhood, description, latitude, longitude, approx_latitude, approx_longitude, vibe_tags, price_range, safety_notes, best_time_to_go, local_etiquette, layover_safe, minimum_layover_minutes, sensitivity_level, verification_level, status, moderation_status, submitted_by, guide_verified_by, save_count, visit_count, report_count, image_url, canonical_place_id, source_type, created_at, updated_at";
 
+/**
+ * Strict shape checks for the gems-feed keyset cursor. Its two fields are
+ * interpolated into a PostgREST `.or()` filter string, whose grammar treats
+ * `, ( )` as structure — so only a canonical ISO-8601 timestamp and a UUID
+ * are ever allowed through (same fail-closed stance as lib/mediaCursor.ts).
+ */
+const GEM_CURSOR_TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?$/;
+
 /** km radius used for near_me bounding-box pre-filter. */
 const NEAR_ME_RADIUS_KM = 25;
 
@@ -747,15 +755,26 @@ router.get("/media/gems-feed", asyncHandler(async (req, res) => {
   // areaMode === "all": no city/location filter
 
   // ── DB-level keyset cursor: (created_at DESC, id DESC) ───────────────────
-  // Cursor encodes JSON { ts: ISO string, id: UUID }.
+  // Cursor encodes JSON { ts: ISO string, id: UUID }. Both values are
+  // interpolated into a PostgREST .or() expression below, so they MUST be
+  // strictly validated (mirrors lib/mediaCursor.ts decodeCursor): a tampered
+  // cursor containing or-grammar metacharacters could otherwise inject
+  // arbitrary filters. Malformed → ignore the cursor and serve from the top.
   let cursorTs: string | null = null;
   let cursorId: string | null = null;
   if (parsed.data.cursor) {
     try {
       const rawC = Buffer.from(parsed.data.cursor, "base64url").toString("utf8");
       const c = JSON.parse(rawC) as { ts: string; id: string };
-      cursorTs = c.ts;
-      cursorId = c.id;
+      const tsValid =
+        typeof c.ts === "string" &&
+        GEM_CURSOR_TS_RE.test(c.ts) &&
+        !Number.isNaN(new Date(c.ts).getTime());
+      const idValid = typeof c.id === "string" && UUID_RE.test(c.id);
+      if (tsValid && idValid) {
+        cursorTs = c.ts;
+        cursorId = c.id;
+      }
     } catch { /* invalid cursor — serve from top */ }
   }
 

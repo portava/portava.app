@@ -11,6 +11,7 @@ import { specAliasRewrite } from "./lib/specAliasRewrite";
 import { BOOT_HRTIME } from "./lib/bootTime";
 import { callsWebhookHandler, callsWebhookRawParser } from "./routes/callsWebhook";
 import { webhookHandler as verificationWebhookHandler, webhookRawParser as verificationWebhookRawParser } from "./routes/verification.js";
+import wellKnownShareRouter from "./routes/wellKnownShare.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -123,6 +124,13 @@ app.use(express.json({ limit: "256kb" }));
 app.use(express.urlencoded({ extended: true, limit: "256kb" }));
 
 app.get("/", (_req, res) => { res.sendStatus(200); });
+
+// ── Deep-link association files + share landing pages ─────────────────────────
+// Public, unauthenticated, cookie-free surface served from the app ROOT
+// (/.well-known/*, /u/:username, /passport/:username). Must be mounted BEFORE
+// the /api router and before anything auth-related so Apple/Google verifiers
+// and link-preview crawlers can always reach it.
+app.use(wellKnownShareRouter);
 
 // ── Static assets: category fallback images ───────────────────────────────────
 // Served at /fallbacks/<slug>.webp so the categoryFallbackProvider can construct

@@ -2191,12 +2191,20 @@ router.get("/posts/:postId/savers", async (req, res) => {
   // Parallel: profiles + privacy settings.
   const [profilesRes, privacyRes] = await Promise.all([
     sc.from("profiles").select("id, username, display_name, name, full_name, avatar_url, is_official").in("id", saverIds),
-    sc.from("profile_privacy_settings").select("user_id, allow_profile_discovery").in("user_id", saverIds),
+    sc.from("profile_privacy_settings").select("user_id, allow_profile_discovery, show_real_name").in("user_id", saverIds),
   ]);
 
   const profileMap = new Map(((profilesRes.data ?? []) as any[]).map((p) => [p.id as string, p]));
   // No row in profile_privacy_settings means allow_profile_discovery defaults to true.
   const privacyMap = new Map(((privacyRes.data ?? []) as any[]).map((p) => [p.user_id as string, p.allow_profile_discovery as boolean]));
+  // Universal display-name rule: real names are OPT-IN (show_real_name defaults
+  // to false), so a saver with no privacy row — or a failed lookup — shows
+  // @handle only.
+  const showNameSet = new Set(
+    ((privacyRes.data ?? []) as any[])
+      .filter((p) => p.show_real_name === true)
+      .map((p) => p.user_id as string),
+  );
 
   const savers = (saveRows as any[])
     .filter((r) => privacyMap.get(r.user_id as string) !== false)
@@ -2206,7 +2214,7 @@ router.get("/posts/:postId/savers", async (req, res) => {
       return {
         userId: r.user_id,
         handle: (p as any)?.username ?? null,
-        name: presentedName(p as any, true),
+        name: presentedName(p as any, showNameSet.has(r.user_id as string)),
         avatarUrl: (p as any)?.avatar_url ?? null,
         isOfficial: (p as any)?.is_official ?? false,
         savedAt: r.created_at,

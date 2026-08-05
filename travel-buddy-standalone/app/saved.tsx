@@ -52,6 +52,8 @@ function routeForItem(item: CollectionItem): string | null {
     case 'post':      return `/post/${item.entityId}`;
     case 'event':     return `/event/${item.entityId}`;
     case 'trip':      return `/trip/${item.entityId}`;
+    // entityId is the profile's user id (uuid) — the /u/ route resolves
+    // uuid params to the canonical handle via its UuidHandleRedirect fallback.
     case 'profile':   return `/u/${item.entityId}`;
     case 'place':     return `/place/${item.entityId}`;
     case 'hashtag':   return `/hashtag/${item.title?.startsWith('#') ? item.title.slice(1) : item.entityId}`;

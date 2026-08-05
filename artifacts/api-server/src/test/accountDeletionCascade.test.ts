@@ -4,11 +4,14 @@
  * Under test:
  *   services/accountDeletion/AccountDeletionService.ts  — the cascade
  *   lib/accountDeletionScheduler.ts                     — the due-request worker
+ *   routes/profile.ts POST /internal/deletion-requests/execute-due — worker endpoint
  *
  * Run: node --import tsx/esm --test src/test/accountDeletionCascade.test.ts
  */
-import { describe, it, beforeEach } from "node:test";
+import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import http from "node:http";
+import express from "express";
 import {
   executeAccountDeletion,
   storagePathFromPublicUrl,
@@ -16,6 +19,7 @@ import {
 } from "../services/accountDeletion/AccountDeletionService.js";
 import { processDueDeletions } from "../lib/accountDeletionScheduler.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
+import profileRouter from "../routes/profile.js";
 
 const USER_ID = "11111111-1111-1111-1111-111111111111";
 
@@ -49,6 +53,7 @@ function makeClient(opts: {
       insert(v: any) { q._op = "insert"; q._values = v; return q; },
       eq(c: string, v: any) { q._filters.push(["eq", c, v]); return q; },
       lte(c: string, v: any) { q._filters.push(["lte", c, v]); return q; },
+      in(c: string, v: any[]) { q._filters.push(["in", c, v]); return q; },
       or(expr: string) { q._filters.push(["or", expr]); return q; },
       order() { return q; },
       limit(n: number) { q._limit = n; return q; },
@@ -188,17 +193,24 @@ describe("executeAccountDeletion — full cascade", () => {
     assert.ok(out.steps.some((s) => s.step === "anonymise_profile" && !s.ok));
   });
 
-  it("still completes, but warns loudly, when the auth user cannot be deleted", async () => {
+  it("returns not-ok and leaves the request pending when the auth user cannot be deleted", async () => {
     const c = makeClient({ authDeleteError: "user not found" });
 
     const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
 
-    assert.equal(out.ok, true, "content deletion still counts as done");
+    // The email address is still on file — the deletion is NOT complete, so
+    // callers must leave the request retryable instead of marking it done.
+    assert.equal(out.ok, false, "auth-user failure must fail the outcome");
     assert.ok(
       out.warnings.some((w) => w.includes("email address still on file")),
       "email retention must be surfaced: " + JSON.stringify(out.warnings),
     );
-    assert.equal(opFor(c, "user_deletion_requests", "update")!.values.status, "completed");
+    assert.equal(
+      opFor(c, "user_deletion_requests", "update"),
+      undefined,
+      "request must NOT be marked completed while the auth user survives",
+    );
+    assert.ok(out.steps.some((s) => s.step === "auth_delete_user" && !s.ok));
   });
 
   it("does not abort the run when Storage is unavailable", async () => {
@@ -220,6 +232,92 @@ describe("executeAccountDeletion — full cascade", () => {
     await executeAccountDeletion(c, USER_ID, { actorId: null, contentOnly: true });
 
     assert.ok(opFor(c, "posts", "delete"));
+    assert.equal(opFor(c, "profiles", "update"), undefined);
+    assert.deepEqual(c._authDeleted, []);
+  });
+});
+
+// ── Merged legacy cascade steps (old services/accountDeletion.ts union) ──────
+
+describe("executeAccountDeletion — merged legacy cascade steps", () => {
+  it("clears stories, reviews, gems, saves, follows, notifications and search history", async () => {
+    const c = makeClient();
+
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    assert.equal(out.ok, true, JSON.stringify(out.steps));
+
+    // Stories + engagement rows, scoped to the right column each time.
+    assert.deepEqual(opFor(c, "story_reactions", "delete")!.filters, [["eq", "user_id", USER_ID]]);
+    assert.deepEqual(opFor(c, "story_replies", "delete")!.filters,   [["eq", "user_id", USER_ID]]);
+    assert.deepEqual(opFor(c, "story_views", "delete")!.filters,     [["eq", "viewer_id", USER_ID]]);
+    assert.deepEqual(opFor(c, "stories", "delete")!.filters,         [["eq", "owner_id", USER_ID]]);
+
+    // The user's own interactions on other users' posts.
+    for (const t of ["post_reactions", "posts_comments", "post_shares", "post_saves", "posts_likes", "comment_likes"]) {
+      assert.deepEqual(opFor(c, t, "delete")!.filters, [["eq", "user_id", USER_ID]], `${t} scoped to user`);
+    }
+
+    // Reviews + hidden gems (saves and authored submissions).
+    assert.deepEqual(opFor(c, "reviews", "delete")!.filters,          [["eq", "reviewer_id", USER_ID]]);
+    assert.deepEqual(opFor(c, "hidden_gem_saves", "delete")!.filters, [["eq", "user_id", USER_ID]]);
+    assert.deepEqual(opFor(c, "hidden_gems", "delete")!.filters,      [["eq", "submitted_by", USER_ID]]);
+
+    // Saved items.
+    assert.deepEqual(opFor(c, "saved_places", "delete")!.filters,    [["eq", "user_id", USER_ID]]);
+    assert.deepEqual(opFor(c, "user_saves", "delete")!.filters,      [["eq", "saver_id", USER_ID]]);
+    assert.deepEqual(opFor(c, "wishlist_places", "delete")!.filters, [["eq", "user_id", USER_ID]]);
+    assert.deepEqual(opFor(c, "event_saves", "delete")!.filters,     [["eq", "user_id", USER_ID]]);
+
+    // Follow graph, both directions.
+    const followOps = c._ops.filter((o: Op) => o.table === "user_follows" && o.op === "delete");
+    assert.equal(followOps.length, 2, "user_follows deleted in both directions");
+    assert.ok(followOps.some((o: Op) => o.filters.some((f: any[]) => f[1] === "follower_id" && f[2] === USER_ID)));
+    assert.ok(followOps.some((o: Op) => o.filters.some((f: any[]) => f[1] === "following_id" && f[2] === USER_ID)));
+
+    // Notifications: received AND acting, plus push-device rows + history.
+    const notifOps = c._ops.filter((o: Op) => o.table === "notifications" && o.op === "delete");
+    assert.equal(notifOps.length, 2, "notifications deleted by user_id and actor_id");
+    assert.ok(notifOps.some((o: Op) => o.filters.some((f: any[]) => f[1] === "user_id" && f[2] === USER_ID)));
+    assert.ok(notifOps.some((o: Op) => o.filters.some((f: any[]) => f[1] === "actor_id" && f[2] === USER_ID)));
+    assert.deepEqual(opFor(c, "notification_devices", "delete")!.filters, [["eq", "user_id", USER_ID]]);
+    assert.deepEqual(opFor(c, "search_history", "delete")!.filters,       [["eq", "user_id", USER_ID]]);
+  });
+
+  it("deletes key_packages by device_id BEFORE deleting the devices rows", async () => {
+    const c = makeClient({ rows: { devices: [{ id: "dev-1" }, { id: "dev-2" }] } });
+
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    assert.equal(out.ok, true, JSON.stringify(out.steps));
+
+    const kp = opFor(c, "key_packages", "delete")!;
+    assert.deepEqual(kp.filters, [["in", "device_id", ["dev-1", "dev-2"]]]);
+
+    const idxKp = c._ops.findIndex((o: Op) => o.table === "key_packages" && o.op === "delete");
+    const idxDev = c._ops.findIndex((o: Op) => o.table === "devices" && o.op === "delete");
+    assert.ok(idxKp >= 0 && idxDev >= 0);
+    assert.ok(idxKp < idxDev, "key_packages (FK on devices) must be cleared before devices");
+  });
+
+  it("one failing content table records its step but never aborts the rest", async () => {
+    const c = makeClient({ fail: { "reviews.delete": "permission denied" } });
+
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+
+    assert.ok(out.steps.some((s) => s.step === "delete_reviews" && !s.ok));
+    assert.ok(out.warnings.some((w) => w.includes("reviews")));
+    // Everything after reviews still ran, up to and including the auth user.
+    assert.ok(opFor(c, "search_history", "delete"), "later steps still execute");
+    assert.deepEqual(c._authDeleted, [USER_ID]);
+    assert.equal(opFor(c, "user_deletion_requests", "update")!.values.status, "completed");
+  });
+
+  it("contentOnly also runs the merged content steps", async () => {
+    const c = makeClient();
+    await executeAccountDeletion(c, USER_ID, { actorId: null, contentOnly: true });
+
+    assert.ok(opFor(c, "stories", "delete"));
+    assert.ok(opFor(c, "user_follows", "delete"));
+    assert.ok(opFor(c, "search_history", "delete"));
     assert.equal(opFor(c, "profiles", "update"), undefined);
     assert.deepEqual(c._authDeleted, []);
   });
@@ -296,5 +394,128 @@ describe("accountDeletionScheduler — fails closed", () => {
     assert.equal(r.executed, 0);
     assert.equal(r.failed, 1);
     assert.deepEqual(c._authDeleted, []);
+  });
+});
+
+// ── The internal worker endpoint (routes/profile.ts) ─────────────────────────
+
+describe("POST /internal/deletion-requests/execute-due", () => {
+  let server: http.Server;
+  let base: string;
+  const SECRET = "test-internal-secret";
+  let savedSecret: string | undefined;
+
+  before(async () => {
+    savedSecret = process.env.INTERNAL_API_SECRET;
+    process.env.INTERNAL_API_SECRET = SECRET;
+    await new Promise<void>((resolve) => {
+      const app = express();
+      app.use(express.json());
+      app.use((req: any, _res: any, next: any) => {
+        req.log = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
+        next();
+      });
+      app.use("/api", profileRouter);
+      server = app.listen(0, "127.0.0.1", () => {
+        base = `http://127.0.0.1:${(server.address() as any).port}`;
+        resolve();
+      });
+    });
+  });
+
+  after(async () => {
+    if (savedSecret === undefined) delete process.env.INTERNAL_API_SECRET;
+    else process.env.INTERNAL_API_SECRET = savedSecret;
+    await new Promise<void>((res) => server.close(() => res()));
+  });
+
+  beforeEach(() => _setTestServiceClient(null as any));
+
+  function post(headers: Record<string, string> = {}): Promise<{ status: number; body: any }> {
+    return new Promise((resolve, reject) => {
+      const url = new URL("/api/internal/deletion-requests/execute-due", base);
+      const req = http.request(
+        { hostname: url.hostname, port: Number(url.port), path: url.pathname, method: "POST", headers },
+        (res) => {
+          let raw = "";
+          res.on("data", (ch) => { raw += ch; });
+          res.on("end", () => {
+            let parsed: any;
+            try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+            resolve({ status: res.statusCode ?? 0, body: parsed });
+          });
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+  }
+
+  it("rejects a missing/invalid internal secret", async () => {
+    _setTestServiceClient(makeClient() as any);
+    const noSecret = await post();
+    assert.equal(noSecret.status, 401);
+    const badSecret = await post({ "x-internal-secret": "wrong" });
+    assert.equal(badSecret.status, 401);
+  });
+
+  it("responds 503/skipped and touches nothing when the feature flag is off", async () => {
+    const c = makeClient({
+      rows: {
+        feature_flags: [{ enabled: false }],
+        user_deletion_requests: [{ user_id: USER_ID, status: "pending", scheduled_at: "2020-01-01T00:00:00Z" }],
+      },
+    });
+    _setTestServiceClient(c as any);
+
+    const { status, body } = await post({ "x-internal-secret": SECRET });
+
+    assert.equal(status, 503);
+    assert.equal(body.skipped, true);
+    assert.equal(opFor(c, "user_deletion_requests", "select"), undefined, "must not even query for due rows");
+    assert.deepEqual(c._authDeleted, []);
+  });
+
+  it("executes due requests through the unified cascade when enabled", async () => {
+    const c = makeClient({
+      rows: {
+        feature_flags: [{ enabled: true }],
+        user_deletion_requests: [{ user_id: USER_ID, status: "pending", scheduled_at: "2020-01-01T00:00:00Z" }],
+      },
+    });
+    _setTestServiceClient(c as any);
+
+    const { status, body } = await post({ "x-internal-secret": SECRET });
+
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.equal(body.processed, 1);
+    assert.equal(body.executed, 1);
+    assert.deepEqual(body.failed, []);
+    assert.deepEqual(c._authDeleted, [USER_ID], "cascade actually ran (auth user removed)");
+    assert.equal(opFor(c, "user_deletion_requests", "update")!.values.status, "completed");
+  });
+
+  it("leaves a failed request pending and reports it in `failed`", async () => {
+    const c = makeClient({
+      rows: {
+        feature_flags: [{ enabled: true }],
+        user_deletion_requests: [{ user_id: USER_ID, status: "pending", scheduled_at: "2020-01-01T00:00:00Z" }],
+      },
+      authDeleteError: "auth API down",
+    });
+    _setTestServiceClient(c as any);
+
+    const { status, body } = await post({ "x-internal-secret": SECRET });
+
+    assert.equal(status, 200);
+    assert.equal(body.executed, 0);
+    assert.equal(body.failed.length, 1);
+    assert.equal(body.failed[0].userId, USER_ID);
+    assert.ok(body.failed[0].failedSteps.some((s: any) => s.step === "auth_delete_user"));
+    assert.equal(
+      opFor(c, "user_deletion_requests", "update"),
+      undefined,
+      "request must NOT be marked completed on a failed cascade",
+    );
   });
 });

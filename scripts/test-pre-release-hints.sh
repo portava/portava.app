@@ -130,6 +130,10 @@ declare -A EXPECTED_HINTS=(
   [lockfile-drift]="fix: bash scripts/sync-standalone.sh --fix-lockfile"
   [bundle-id-placeholder]="fix: update ios.bundleIdentifier and android.package in travel-buddy-standalone/app.json"
   [version-bump]="fix: increment ios.buildNumber and android.versionCode in travel-buddy-standalone/app.json"
+  [db-triggers]="fix: apply missing migrations via Supabase dashboard or psql:"
+  [engagement-indexes]="fix: apply the engagement index migration via the Supabase SQL editor or psql:"
+  [schema-audit]="fix: review the missing objects printed above, apply the never-applied"
+  [migration-prefixes]="fix: two or more files in artifacts/api-server/src/migrations share a numeric"
 )
 
 # ── cross-reference: EXPECTED_HINTS keys vs run_check names ──────────────────
@@ -204,7 +208,7 @@ sep
 printf '  Pre-release fix-hint assertions\n'
 sep
 
-for check_name in typecheck typecheck-standalone dependency-drift source-drift api-server-build lockfile-drift bundle-id-placeholder version-bump; do
+for check_name in typecheck typecheck-standalone dependency-drift source-drift api-server-build lockfile-drift bundle-id-placeholder version-bump db-triggers engagement-indexes schema-audit migration-prefixes; do
   expected="${EXPECTED_HINTS[$check_name]}"
   output="$(run_summary_for "$check_name")"
   assert_contains "$check_name" "$expected" "$output"

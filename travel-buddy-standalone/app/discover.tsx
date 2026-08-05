@@ -243,7 +243,7 @@ export default function DiscoverScreen() {
                     isFollowing={isFollowing}
                     isPrivate={item.isPrivate}
                     requestPending={requestPending}
-                    onPress={() => router.push(`/u/${item.id}` as any)}
+                    onPress={() => router.push(`/u/${item.username ?? item.id}` as any)}
                     onFollow={item.isPrivate ? undefined : () => handleFollow(item.id, isFollowing)}
                     onRequest={item.isPrivate ? () => handleRequest(item.id, requestPending) : undefined}
                   />
@@ -309,7 +309,7 @@ export default function DiscoverScreen() {
                   isFollowing={isFollowing}
                   isPrivate={item.isPrivate}
                   requestPending={requestPending}
-                  onPress={() => router.push(`/u/${item.id}` as any)}
+                  onPress={() => router.push(`/u/${item.username ?? item.id}` as any)}
                   onFollow={item.isPrivate ? undefined : () => handleFollow(item.id, isFollowing)}
                   onRequest={item.isPrivate ? () => handleRequest(item.id, requestPending) : undefined}
                 />

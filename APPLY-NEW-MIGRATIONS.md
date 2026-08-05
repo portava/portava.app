@@ -82,6 +82,14 @@ tables have no RLS while the mobile app ships the anon key.
 
 # APPLY — atomic stamp progress + user_stamps uniqueness
 
+> **RENAMED (2026-08-05):** these two files were renamed from
+> `2071_stamp_progress_atomic.sql` / `2072_user_stamps_unique.sql` to
+> `2075_stamp_progress_atomic.sql` / `2076_user_stamps_unique.sql` to resolve
+> duplicate prefixes with `2071_feature_flags_deny_anon.sql` /
+> `2072_track_profiles_full_name.sql`. Both were **ALREADY APPLIED to
+> production Supabase under the old names on 2026-08-05 — do not re-apply.**
+> The apply/verify steps below are kept for the historical record.
+
 Two migrations closing stamp-award concurrency bugs. The first fixes a
 **Med-High** lost-update bug: StampAwardEngine incremented stamp_progress with
 a read-modify-write, so concurrent awards of a repeatable stamp lost counts.
@@ -90,13 +98,17 @@ index, so concurrent awardStamp calls for the same (user, definition, source)
 could both insert.
 
 ## Files
-1. `artifacts/api-server/src/migrations/2071_stamp_progress_atomic.sql`
+1. `artifacts/api-server/src/migrations/2075_stamp_progress_atomic.sql`
+   (renamed from `2071_stamp_progress_atomic.sql` on 2026-08-05; already
+   applied under the old name — do not re-apply)
    Creates `increment_stamp_progress(p_user_id uuid, p_definition_id uuid)` —
    a single-statement INSERT ... ON CONFLICT (user_id, stamp_definition_id)
    DO UPDATE SET progress_count = progress_count + 1 RETURNING progress_count.
    EXECUTE is revoked from PUBLIC/anon and granted to service_role only (the
    API's service-role client is the sole caller).
-2. `artifacts/api-server/src/migrations/2072_user_stamps_unique.sql`
+2. `artifacts/api-server/src/migrations/2076_user_stamps_unique.sql`
+   (renamed from `2072_user_stamps_unique.sql` on 2026-08-05; already applied
+   under the old name — do not re-apply)
    First dedups existing rows: (a) non-repeatable definitions keep only the
    earliest live stamp per (user_id, stamp_definition_id); (b) all definitions
    keep only the earliest live stamp per (user_id, stamp_definition_id,
@@ -106,10 +118,10 @@ could both insert.
    false. COALESCE makes NULL sources collide; the partial predicate keeps the
    revoke → re-award heal path working.
 
-## Apply (Supabase SQL editor)
+## Apply (Supabase SQL editor) — DONE 2026-08-05; do not re-apply
 1. Open the Supabase dashboard → SQL Editor.
-2. Paste and run `2071_stamp_progress_atomic.sql`.
-3. Paste and run `2072_user_stamps_unique.sql`.
+2. Paste and run `2075_stamp_progress_atomic.sql` (applied 2026-08-05 as `2071_…`).
+3. Paste and run `2076_user_stamps_unique.sql` (applied 2026-08-05 as `2072_…`).
    Both are idempotent — re-running is safe (verified against Postgres 16:
    dedup, re-run, 23505 on live duplicates, re-award after revoke all pass).
 4. Code is already deployed-order safe: the engine calls the RPC and falls
@@ -117,14 +129,14 @@ could both insert.
    maps 23505 on the stamp insert to already_earned / already_awarded.
 
 ## Verify
-2071 — function exists and counts atomically:
+2075 (formerly 2071) — function exists and counts atomically:
 
     SELECT increment_stamp_progress('<some-user-uuid>', '<some-def-uuid>');
     -- run twice: expect 1 then 2; clean up the test row afterwards:
     -- DELETE FROM stamp_progress WHERE user_id = '<some-user-uuid>'
     --   AND stamp_definition_id = '<some-def-uuid>';
 
-2072 — index exists and no live duplicates remain:
+2076 (formerly 2072) — index exists and no live duplicates remain:
 
     SELECT indexdef FROM pg_indexes
     WHERE tablename = 'user_stamps' AND indexname = 'user_stamps_live_award_unique';

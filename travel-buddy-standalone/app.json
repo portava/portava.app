@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Travel Buddy",
+    "name": "Portava",
     "slug": "travel-buddy",
     "version": "1.0.1",
     "orientation": "portrait",
@@ -28,6 +28,7 @@
           "travelbuddy"
         ],
         "NSCalendarsUsageDescription": "Portava adds confirmed meetups to your calendar so you never miss a plan.",
+        "NSCalendarsFullAccessUsageDescription": "Portava adds confirmed meetups to your calendar so you never miss a plan.",
         "NSLocationWhenInUseUsageDescription": "Portava uses your location to show nearby places and auto-publish posts after you leave a spot.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Portava uses your location in the background to track route progress, trigger check-ins, and automatically publish your post after you leave a spot.",
         "NSCameraUsageDescription": "Portava uses your camera for video calls and so you can add photos to posts and your passport.",
@@ -115,6 +116,12 @@
       ],
       "expo-font",
       "expo-web-browser",
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "Portava adds confirmed meetups to your calendar so you never miss a plan."
+        }
+      ],
       [
         "expo-location",
         {

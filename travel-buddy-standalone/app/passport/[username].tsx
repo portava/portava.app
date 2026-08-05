@@ -38,12 +38,24 @@ import { PublicStampShowcaseSection } from '../../src/components/stamps/PublicSt
 import { PassportIdentityCard, PassportStatsRow } from '../../src/components/passport/PassportIdentityCard';
 import { PassportDivider } from '../../src/components/passport/PassportDivider';
 import { CircleSection } from '../../src/components/profile/CircleSection';
+import { UuidHandleRedirect, isUuidParam } from '../../src/components/profile/UuidHandleRedirect';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 
 // Tab order is resolved from the owner's saved preference at render time.
 
 export default function PassportDeepLinkScreen() {
+  const { username: rawUsername } = useLocalSearchParams<{ username: string }>();
+  // BETA: /passport/<uuid> links (e.g. traveler map cards falling back to the
+  // raw id for handle-less accounts) resolve to the canonical
+  // /passport/<handle> URL before the document screen fetches anything.
+  if (isUuidParam(rawUsername)) {
+    return <UuidHandleRedirect userId={rawUsername} pathPrefix="/passport" />;
+  }
+  return <PassportDocumentScreenInner />;
+}
+
+function PassportDocumentScreenInner() {
   const { username: rawUsername } = useLocalSearchParams<{ username: string }>();
   const username = (rawUsername ?? '').replace(/^@/, '');
 

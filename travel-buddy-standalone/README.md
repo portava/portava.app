@@ -8,7 +8,7 @@ This folder (`travel-buddy-standalone/`) is a self-contained copy of the Travel 
 
 | Location | Purpose |
 |---|---|
-| `artifacts/travel-buddy/` | Former monorepo app — **deleted 2026-08-04; no longer exists** |
+| `artifacts/travel-buddy/` | Former monorepo app — deleted 2026-08-04, **resurrected 2026-08-05 in a LEGACY-FROZEN state**: do not edit; artifacts→standalone sync is disabled by default (`PORTAVA_ENABLE_LEGACY_SYNC=1` guard); slated for archival |
 | `travel-buddy-standalone/` | **Canonical app tree** (as of 2026-08-04) and EAS build target — this folder |
 
 ---

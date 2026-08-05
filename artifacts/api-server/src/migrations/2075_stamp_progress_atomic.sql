@@ -1,4 +1,7 @@
--- 2071_stamp_progress_atomic.sql
+-- Renamed from 2071_stamp_progress_atomic.sql (2026-08-05) to resolve duplicate
+-- prefix with 2071_feature_flags_deny_anon.sql; ALREADY APPLIED to production
+-- Supabase under the old name on 2026-08-05 — do not re-apply.
+-- 2075_stamp_progress_atomic.sql (formerly 2071_stamp_progress_atomic.sql)
 --
 -- Atomic stamp_progress increment.
 --

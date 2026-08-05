@@ -156,8 +156,9 @@ router.post("/verification/session", asyncHandler(async (req, res) => {
   try {
     provider = getIdentityProvider();
   } catch (err: any) {
+    // Full error server-side only; the raw message can name env vars/config.
     req.log.error({ err }, "verification: provider unavailable");
-    sendError(res, "server_not_configured", err.message);
+    sendError(res, "server_not_configured", "Identity verification is not configured");
     return;
   }
 
@@ -254,8 +255,10 @@ export const webhookHandler = async (req: any, res: any) => {
     });
   } catch (err: any) {
     // Signature failure: the provider MUST throw — we return 400 per spec.
+    // Log the full error server-side; the response stays generic so provider
+    // internals / signature material never leak to whoever hit the webhook.
     req.log?.warn({ err }, "verification webhook: signature failure or parse error");
-    res.status(400).json({ error: "invalid_signature", message: err.message });
+    res.status(400).json({ error: "invalid_signature", message: "Webhook signature verification failed" });
     return;
   }
 

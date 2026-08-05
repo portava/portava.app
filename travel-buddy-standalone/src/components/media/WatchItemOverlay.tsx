@@ -233,7 +233,8 @@ export function WatchItemOverlay({
     const routes: Record<string, string> = {
       event: `/event/${id}`,
       trip: `/trip/${id}`,
-      plan: `/plan/${id}`,
+      // Plans (saved routes) live under app/route/[id] — there is no /plan/ route.
+      plan: `/route/${id}`,
       place: `/place/${id}`,
     };
     router.push((routes[kind] ?? `/place/${id}`) as any);

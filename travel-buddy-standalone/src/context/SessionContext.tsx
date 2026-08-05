@@ -31,6 +31,10 @@ const CRYPTO_SECURE_KEYS = [
   SECURE_KEYS.REGISTERED_DEVICE_ID,
 ] as const;
 
+// How long to wait before re-checking account status after a network-level
+// failure was answered with the fail-open ("assume active") state.
+const OFFLINE_STATUS_RETRY_MS = 15_000;
+
 /**
  * Session context — single source of auth truth for the app. Wraps the auth
  * service. If Supabase isn't configured, userId stays null and the app can fall
@@ -87,14 +91,29 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const userIdRef = useRef<string | null>(null);
   userIdRef.current = userId;
 
-  const fetchAccountStatus = useCallback(async (uid: string | null) => {
+  // Pending background retry for the offline fail-open path below. Cleared
+  // whenever a new fetch starts (any result supersedes the scheduled retry)
+  // and on unmount.
+  const statusRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearStatusRetry = useCallback(() => {
+    if (statusRetryTimerRef.current !== null) {
+      clearTimeout(statusRetryTimerRef.current);
+      statusRetryTimerRef.current = null;
+    }
+  }, []);
+
+  const fetchAccountStatus = useCallback(async (uid: string | null, opts?: { background?: boolean }) => {
+    clearStatusRetry();
     if (!uid) {
       setAccountStatus(null);
       setDeletionScheduledAt(null);
       setAccountStatusLoaded(true);
       return;
     }
-    setAccountStatusLoaded(false);
+    // Background retries keep the already-rendered app visible — flipping
+    // accountStatusLoaded would blank the whole tree behind the gate's
+    // loading screen on every offline retry tick.
+    if (!opts?.background) setAccountStatusLoaded(false);
     const result = await getAccountStatus();
     // Fence: if the signed-in user changed while the request was in flight,
     // discard the result — the effect keyed on userId re-fetches for the new
@@ -103,19 +122,42 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (result.ok && result.data) {
       setAccountStatus(result.data.accountStatus);
       setDeletionScheduledAt(result.data.deletionScheduledAt);
+    } else if (result.errorKind === 'network_unreachable') {
+      // Fail-OPEN: the request never reached the API (offline cold start,
+      // airplane mode, DNS failure) so there is no server verdict to enforce.
+      // Treat the account as active so the app boots, and keep retrying in
+      // the background until a real response lands. Real API responses
+      // (suspended / banned / deactivated / server errors) still fail closed
+      // below.
+      setAccountStatus('active');
+      setDeletionScheduledAt(null);
+      statusRetryTimerRef.current = setTimeout(() => {
+        statusRetryTimerRef.current = null;
+        // Same generation fence: only retry while this user is still signed in.
+        if (userIdRef.current === uid) {
+          void fetchAccountStatusRef.current(uid, { background: true });
+        }
+      }, OFFLINE_STATUS_RETRY_MS);
     } else {
-      // Fail-closed: on any error (network, API) we cannot confirm the account
-      // is active, so keep accountStatus = null (unknown). AccountStatusGate
-      // will block the app and show a retry screen until status is confirmed.
+      // Fail-closed: a real API/server response we cannot interpret as active
+      // (or an auth failure). Keep accountStatus = null (unknown) so
+      // AccountStatusGate blocks the app and shows a retry screen until the
+      // status is confirmed.
       setAccountStatus(null);
       setDeletionScheduledAt(null);
     }
     setAccountStatusLoaded(true);
-  }, []);
+  }, [clearStatusRetry]);
+
+  // Self-reference for the scheduled background retry (avoids a useCallback
+  // self-dependency).
+  const fetchAccountStatusRef = useRef(fetchAccountStatus);
+  fetchAccountStatusRef.current = fetchAccountStatus;
 
   useEffect(() => {
     fetchAccountStatus(userId);
-  }, [userId, fetchAccountStatus]);
+    return clearStatusRetry;
+  }, [userId, fetchAccountStatus, clearStatusRetry]);
 
   // Defensive profile recovery: when a userId becomes available, try to ensure
   // the profile row exists. This covers cases where ensureProfile failed during

@@ -1,4 +1,7 @@
--- 2072_user_stamps_unique.sql
+-- Renamed from 2072_user_stamps_unique.sql (2026-08-05) to resolve duplicate
+-- prefix with 2072_track_profiles_full_name.sql; ALREADY APPLIED to production
+-- Supabase under the old name on 2026-08-05 — do not re-apply.
+-- 2076_user_stamps_unique.sql (formerly 2072_user_stamps_unique.sql)
 --
 -- Close the user_stamps double-award race.
 --

@@ -25,7 +25,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http.js";
+import { requireUser, sendError, safeSecretEquals } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import type { CallerContext } from "../services/passport/PassportPrivacyGuard.js";
 import { filterStampsV2 } from "../services/passport/PassportPrivacyGuard.js";
@@ -135,7 +135,7 @@ function requireInternalSecret(req: any, res: any): boolean {
     return false;
   }
   const provided = req.headers["x-internal-secret"];
-  if (provided !== secret) {
+  if (!safeSecretEquals(provided, secret)) {
     res.status(401).json({ error: "unauthorized", message: "Missing or invalid internal secret" });
     return false;
   }

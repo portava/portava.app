@@ -16,7 +16,7 @@
  */
 
 import { Router } from "express";
-import { requireUser, sendError } from "../lib/http.js";
+import { requireUser, sendError, safeSecretEquals } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
@@ -5727,7 +5727,7 @@ router.post("/internal/buddy-requests/expire", async (req, res) => {
     });
   }
   const internalKey = req.headers["x-internal-key"];
-  if (!internalKey || internalKey !== secret) {
+  if (!safeSecretEquals(internalKey, secret)) {
     return res.status(401).json({ error: "unauthorized", message: "Missing or invalid internal key." });
   }
 

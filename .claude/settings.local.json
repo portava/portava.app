@@ -3,7 +3,9 @@
     "allow": [
       "Bash(unzip *)",
       "Bash(git check-ignore *)",
-      "Bash(env)"
+      "Bash(env)",
+      "Read(//home/runner/workspace/travel-buddy-standalone/assets/images/**)",
+      "Read(//home/runner/workspace/travel-buddy-standalone/**)"
     ]
   }
 }

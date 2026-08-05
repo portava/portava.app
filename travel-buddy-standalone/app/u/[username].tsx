@@ -28,7 +28,8 @@ import { StampsTab } from '../../src/components/StampsTab';
 import { StampButton } from '../../src/components/stamps/StampButton';
 import { AboutTab } from '../../src/components/AboutTab';
 import { MapTab } from '../../src/components/MapTab';
-import { getProfileByHandle, getProfileById } from '../../src/services/friends';
+import { getProfileByHandle } from '../../src/services/friends';
+import { UuidHandleRedirect, isUuidParam } from '../../src/components/profile/UuidHandleRedirect';
 import { followUser } from '../../src/services/follows';
 import { blockUser, getBlockStatus, unblockUser } from '../../src/services/blocks';
 import { muteUser, unmuteUser, getMuteStatus } from '../../src/services/mutes';
@@ -585,6 +586,15 @@ function HostReviewsSummary({ userId }: { userId: string }) {
  * document tab bar. Native in-app profile viewing keeps the full social screen.
  */
 export default function PublicPassportScreen() {
+  const { username } = useLocalSearchParams<{ username: string }>();
+  // BETA: some producers still link /u/<uuid> (saved profile collections,
+  // discovery rows for handle-less accounts, older push payloads). Resolve the
+  // id to the canonical handle and replace the route before rendering either
+  // variant, so every downstream fetch — including the embedded
+  // PassportDocumentScreen on web — sees a handle, never a raw uuid.
+  if (isUuidParam(username)) {
+    return <UuidHandleRedirect userId={username} pathPrefix="/u" />;
+  }
   if (Platform.OS === 'web') {
     return <PassportDocumentScreen />;
   }

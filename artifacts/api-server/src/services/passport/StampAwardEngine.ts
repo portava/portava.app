@@ -453,7 +453,18 @@ async function _awardStampCore(
 
       // PGRST202 = function not found (migration 2071 not applied yet).
       // Degrade to the legacy read-modify-write upsert so progress still moves.
-      if ((rpcErr as any).code !== "PGRST202") return;
+      // Any OTHER RPC failure means a progress increment was silently lost —
+      // log it before bailing so the gap is visible in ops, not invisible.
+      if ((rpcErr as any).code !== "PGRST202") {
+        console.error(JSON.stringify({
+          event:         "stamp.progress.increment_rpc_failed",
+          user_id:       userId,
+          definition_id: definition.id,
+          code:          (rpcErr as any).code ?? null,
+          error:         (rpcErr as any).message ?? String(rpcErr),
+        }));
+        return;
+      }
 
       const { data: prog } = await sc
         .from("stamp_progress")

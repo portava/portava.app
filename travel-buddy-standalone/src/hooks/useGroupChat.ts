@@ -8,6 +8,7 @@
  * otherwise shows original_body. No-op until Task #7 populates translation rows.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert } from 'react-native';
 import {
   getTripChat,
   getCircleChat,
@@ -16,6 +17,7 @@ import {
   deleteMessage,
   getThreadMessages,
   sendTyping,
+  type GroupChatResult,
   type GroupThread,
   type Message,
 } from '../services/messaging.ts';
@@ -95,20 +97,47 @@ export function useGroupChat(
     }
 
     // Guard: apiGet can resolve {ok:true, data:null} (e.g. unconfigured builds)
-    const d = res.data;
-    if (!d?.thread) {
-      setState('error');
-      setErrorMessage('Failed to load chat');
+    const d = res.data as
+      | ({ thread?: GroupThread; messages?: Message[] } & Partial<GroupChatResult> & Record<string, any>)
+      | null;
+
+    if (d?.thread) {
+      // Nested shape: { thread, messages } — thread + first page in one call.
+      setThread(d.thread);
+      setMessages(d.messages ?? []);
+      setState(d.thread.memberAccess === 'removed' ? 'no_access' : 'active');
       return;
     }
-    setThread(d.thread);
-    setMessages(d.messages ?? []);
 
-    if (d.thread.memberAccess === 'removed') {
-      setState('no_access');
-    } else {
+    if (d?.threadId) {
+      // Flat shape: the winning GET /trips/:tripId/chat (and circle) handler
+      // returns { threadId, threadType, title, tripId, circleOwnerId } with no
+      // thread object and no messages. Synthesize the GroupThread and fetch
+      // the first message page via the thread-messages endpoint.
+      const synthesized: GroupThread = {
+        id: d.threadId,
+        threadType: (d.threadType as GroupThread['threadType']) ?? type,
+        tripId: d.tripId ?? (type === 'trip' ? id : null),
+        circleOwnerId: d.circleOwnerId ?? (type === 'circle' ? id : null),
+        title: d.title ?? '',
+        status: (d as any).status ?? 'active',
+        lastMessageAt: (d as any).lastMessageAt ?? null,
+        createdAt: (d as any).createdAt ?? null,
+        // The flat handler only responds 200 to accepted members; removed
+        // members get a forbidden error handled above.
+        memberAccess: 'active',
+      };
+      const msgRes = await getThreadMessages(d.threadId);
+      setThread(synthesized);
+      // Endpoint returns newest-first; reverse into chronological order
+      // (same convention as useThreadMessages / loadMore).
+      setMessages(msgRes.ok && msgRes.data ? [...(msgRes.data.messages ?? [])].reverse() : []);
       setState('active');
+      return;
     }
+
+    setState('error');
+    setErrorMessage('Failed to load chat');
   }, [type, id]);
 
   useEffect(() => {
@@ -278,6 +307,8 @@ export function useGroupChat(
             : m,
         ),
       );
+    } else {
+      Alert.alert('Could not edit message', res.message ?? 'Please try again.');
     }
   }, []);
 
@@ -287,6 +318,8 @@ export function useGroupChat(
       setMessages((prev) =>
         prev.map((m) => (m.id === messageId ? { ...m, deleted: true, body: null } : m)),
       );
+    } else {
+      Alert.alert('Could not delete message', res.message ?? 'Please try again.');
     }
   }, []);
 

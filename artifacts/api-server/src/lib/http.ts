@@ -1,7 +1,22 @@
+import crypto from "node:crypto";
 import type { Request, Response } from "express";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady, _setTestServiceClient } from "./supabase";
 export { _setTestServiceClient } from "./supabase";
+
+/**
+ * Constant-time comparison for shared secrets (internal API keys, webhook
+ * secrets). A plain `===` leaks how many leading characters match through
+ * response timing. Hashing both sides first means timingSafeEqual always
+ * compares equal-length buffers, so length differences leak nothing either.
+ * Returns false (never throws) when either side is not a string.
+ */
+export function safeSecretEquals(provided: unknown, expected: unknown): boolean {
+  if (typeof provided !== "string" || typeof expected !== "string") return false;
+  const a = crypto.createHash("sha256").update(provided).digest();
+  const b = crypto.createHash("sha256").update(expected).digest();
+  return crypto.timingSafeEqual(a, b);
+}
 
 // ---------------------------------------------------------------------------
 // Test-only client injection — lets unit tests pass a fake Supabase client

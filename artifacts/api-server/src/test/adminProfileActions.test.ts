@@ -149,6 +149,12 @@ function makeFakeClient(opts: {
     storage,
     auth: {
       getUser: () => Promise.resolve({ data: { user: { id: ADMIN_USER_ID } }, error: null }),
+      // The deletion cascade removes the Supabase Auth user as a FATAL step —
+      // without this stub the execute endpoint would (correctly) refuse to
+      // mark the request completed.
+      admin: {
+        deleteUser: (_id: string) => Promise.resolve({ data: {}, error: null }),
+      },
     },
   } as any;
 }

@@ -23,6 +23,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, CheckCheck, UserCheck, UserMinus, Bell, Inbox } from 'lucide-react-native';
 import { color, space, type as t, radius, shadow } from '../src/theme/tokens';
 import { useNotifications } from '../src/hooks/useNotifications';
+import { broadcastUnreadCounts } from '../src/hooks/useMessaging';
+import { markNotificationsRead } from '../src/services/messaging';
 import type { AppNotification, NotificationCategory } from '../src/services/notifications';
 import { freshToken } from '../src/services/apiToken';
 import { useRequests } from '../src/hooks/useRequests';
@@ -251,6 +253,19 @@ export default function ActivityCenter() {
   const { notifications, loading, loadingMore, unreadCount, reload, loadMore, markRead, markAllRead, dismiss } =
     useNotifications(activeTabDef.category ? { category: activeTabDef.category } : {});
   const { incoming: incomingRequests, loading: reqLoading, reload: reloadRequests } = useRequests();
+
+  // Stamp the notifications inbox as viewed once per focus. The tab badge is
+  // driven by profiles.notifications_inbox_viewed_at (via useUnreadCounts),
+  // which only this endpoint advances — without it the badge never clears.
+  // Fire-and-forget: optimistically zero the badge in every mounted
+  // useUnreadCounts instance immediately, then refetch after the server ack
+  // so the other counts stay honest. Empty dep list = one call per focus.
+  useFocusEffect(useCallback(() => {
+    broadcastUnreadCounts({ notifications: 0 });
+    markNotificationsRead()
+      .then(() => broadcastUnreadCounts(null))
+      .catch(() => {});
+  }, []));
 
   // Mark all read on focus when Activity Center is opened, gated by a per-tab
   // TTL so navigating back from a detail view doesn't fire an unnecessary API call.

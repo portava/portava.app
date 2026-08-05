@@ -1,6 +1,6 @@
 # Travel Buddy — Architecture & Feature Map
 
-> **SOURCE OF TRUTH (2026-08-04):** `travel-buddy-standalone/` is now the canonical app tree. `artifacts/travel-buddy` has been deleted and no longer exists — references to it below (system map, workflows, sync/mirror notes) are historical.
+> **SOURCE OF TRUTH (updated 2026-08-05):** `travel-buddy-standalone/` is the canonical app tree. `artifacts/travel-buddy` was deleted on 2026-08-04 and **resurrected on 2026-08-05 in a LEGACY-FROZEN state** — it exists on disk again but must not be edited; the artifacts→standalone sync is disabled by default (`PORTAVA_ENABLE_LEGACY_SYNC=1` guard) and the tree is slated for archival. References to it below (system map, workflows, sync/mirror notes) are historical. The API server remains canonical at `artifacts/api-server`.
 
 _Generated for beta-readiness testing. This is a snapshot as of 2026-07-28. Where a feature's status could not be confirmed by direct testing (only by reading code), that is called out explicitly — treat those as "needs manual verification," not "confirmed working."_
 

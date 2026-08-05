@@ -4,8 +4,9 @@
  * Single implementation of "execute an account deletion request", shared by:
  *   - POST /admin/deletion-requests/:id/execute   (routes/admin.ts, manual)
  *   - accountDeletionScheduler                    (lib/accountDeletionScheduler.ts)
+ *   - POST /internal/deletion-requests/execute-due (routes/profile.ts, worker endpoint)
  *
- * Both paths MUST go through executeAccountDeletion() so the manual and the
+ * All paths MUST go through executeAccountDeletion() so the manual and the
  * scheduled path can never drift — a partial cascade in one of them is exactly
  * the kind of gap that turns the privacy policy into a false statement.
  *
@@ -106,11 +107,12 @@ function must<T extends { error?: any }>(res: T, what: string): T {
 /**
  * Execute a deletion request end to end.
  *
- * Fatal steps (profile anonymisation, marking the request completed) fail the
- * whole call. Content and storage steps are recorded but do not abort the run:
- * a user whose media bucket is momentarily unavailable must still lose their
- * posts, their email, and their profile — a stalled deletion is worse than a
- * partial one, and the request stays auditable via `steps`.
+ * Fatal steps (profile anonymisation, auth-user deletion, marking the request
+ * completed) fail the whole call, leaving the request pending so callers retry.
+ * Content and storage steps are recorded but do not abort the run: a user
+ * whose media bucket is momentarily unavailable must still lose their posts,
+ * their email, and their profile — a stalled deletion is worse than a partial
+ * one, and the request stays auditable via `steps`.
  */
 export async function executeAccountDeletion(
   sc: any,
@@ -223,6 +225,77 @@ export async function executeAccountDeletion(
   });
   if (!maOk) warnings.push("media_assets rows may remain");
 
+  // ── 3b. Content the posts/messages cascades do not reach ──────────────────
+  // Because the profile row survives as a tombstone, none of the FK cascades
+  // hanging off profiles(id) ever fire — every one of these tables has to be
+  // cleared by hand (merged from the old services/accountDeletion.ts cascade).
+  // One failing table records its own step and never aborts the rest.
+  const contentDeletes: Array<{ name: string; run: () => PromiseLike<{ error?: any }> }> = [
+    // Stories + engagement the user left on OTHER users' stories.
+    { name: "delete_story_reactions", run: () => sc.from("story_reactions").delete().eq("user_id", userId) },
+    { name: "delete_story_replies",   run: () => sc.from("story_replies").delete().eq("user_id", userId) },
+    { name: "delete_story_views",     run: () => sc.from("story_views").delete().eq("viewer_id", userId) },
+    { name: "delete_stories",         run: () => sc.from("stories").delete().eq("owner_id", userId) },
+    // The user's own interactions on other users' posts (deleting the user's
+    // posts above only cascades children OF those posts, not these rows).
+    { name: "delete_post_reactions",  run: () => sc.from("post_reactions").delete().eq("user_id", userId) },
+    { name: "delete_posts_comments",  run: () => sc.from("posts_comments").delete().eq("user_id", userId) },
+    { name: "delete_post_shares",     run: () => sc.from("post_shares").delete().eq("user_id", userId) },
+    { name: "delete_post_saves",      run: () => sc.from("post_saves").delete().eq("user_id", userId) },
+    { name: "delete_posts_likes",     run: () => sc.from("posts_likes").delete().eq("user_id", userId) },
+    { name: "delete_comment_likes",   run: () => sc.from("comment_likes").delete().eq("user_id", userId) },
+    // Reviews authored by the user.
+    { name: "delete_reviews",         run: () => sc.from("reviews").delete().eq("reviewer_id", userId) },
+    // Hidden gems: saves first (FK), then authored submissions.
+    { name: "delete_hidden_gem_saves", run: () => sc.from("hidden_gem_saves").delete().eq("user_id", userId) },
+    { name: "delete_hidden_gems",      run: () => sc.from("hidden_gems").delete().eq("submitted_by", userId) },
+    // Saved items across the various save surfaces.
+    { name: "delete_saved_places",    run: () => sc.from("saved_places").delete().eq("user_id", userId) },
+    { name: "delete_user_saves",      run: () => sc.from("user_saves").delete().eq("saver_id", userId) },
+    { name: "delete_wishlist_places", run: () => sc.from("wishlist_places").delete().eq("user_id", userId) },
+    { name: "delete_event_saves",     run: () => sc.from("event_saves").delete().eq("user_id", userId) },
+    // Follow graph, both directions.
+    { name: "delete_follows_outgoing", run: () => sc.from("user_follows").delete().eq("follower_id", userId) },
+    { name: "delete_follows_incoming", run: () => sc.from("user_follows").delete().eq("following_id", userId) },
+  ];
+  for (const d of contentDeletes) {
+    const ok = await step(steps, d.name, async () => {
+      must(await d.run(), d.name);
+    });
+    if (!ok) warnings.push(`${d.name.replace(/^delete_/, "")} rows may remain`);
+  }
+
+  // Devices + E2EE key packages. key_packages FKs devices via device_id, so
+  // collect device ids and clear key_packages FIRST, then the devices rows.
+  const kpOk = await step(steps, "delete_key_packages", async () => {
+    const { data, error } = await sc.from("devices").select("id").eq("user_id", userId).limit(5000);
+    if (error) throw new Error(`collect device ids: ${error.message ?? error}`);
+    const deviceIds = ((data ?? []) as any[]).map((r) => r?.id).filter(Boolean);
+    if (deviceIds.length === 0) return 0;
+    must(await sc.from("key_packages").delete().in("device_id", deviceIds), "delete key_packages");
+    return deviceIds.length;
+  });
+  if (!kpOk) warnings.push("key_packages rows may remain");
+  const devOk = await step(steps, "delete_devices", async () => {
+    must(await sc.from("devices").delete().eq("user_id", userId), "delete devices");
+  });
+  if (!devOk) warnings.push("devices rows may remain");
+
+  // Notifications received AND ones naming the user as actor, plus push
+  // registration rows; then search history.
+  const tailDeletes: Array<{ name: string; run: () => PromiseLike<{ error?: any }> }> = [
+    { name: "delete_notifications_user",  run: () => sc.from("notifications").delete().eq("user_id", userId) },
+    { name: "delete_notifications_actor", run: () => sc.from("notifications").delete().eq("actor_id", userId) },
+    { name: "delete_notification_devices", run: () => sc.from("notification_devices").delete().eq("user_id", userId) },
+    { name: "delete_search_history",      run: () => sc.from("search_history").delete().eq("user_id", userId) },
+  ];
+  for (const d of tailDeletes) {
+    const ok = await step(steps, d.name, async () => {
+      must(await d.run(), d.name);
+    });
+    if (!ok) warnings.push(`${d.name.replace(/^delete_/, "")} rows may remain`);
+  }
+
   if (opts.contentOnly) {
     return { ok: steps.every((s) => s.ok), userId, executedAt, steps, warnings };
   }
@@ -263,11 +336,15 @@ export async function executeAccountDeletion(
     if (res?.error) throw new Error(res.error.message ?? String(res.error));
   });
   if (!authOk) {
-    // Loud: the email address is still on file, which is the exact GDPR claim
-    // the policy makes. Surfaced as a warning so the request is still marked
-    // completed and retryable rather than silently stuck pending forever.
+    // Loud AND fatal: the email address is still on file, which is the exact
+    // GDPR claim the policy makes. The request is NOT marked completed below,
+    // so callers (scheduler / worker endpoint / admin) leave it pending and
+    // the whole cascade retries — every content step above is idempotent.
     warnings.push("auth user not deleted — email address still on file");
-    logger.error({ userId }, "executeAccountDeletion: auth.admin.deleteUser failed; email retained");
+    logger.error(
+      { userId },
+      "executeAccountDeletion: auth.admin.deleteUser failed; email retained — leaving request retryable",
+    );
   }
 
   // ── 6. Bookkeeping ────────────────────────────────────────────────────────
@@ -287,17 +364,31 @@ export async function executeAccountDeletion(
     );
   });
 
-  const markedOk = await step(steps, "mark_request_completed", async () => {
-    must(
-      await sc
-        .from("user_deletion_requests")
-        .update({ status: "completed", executed_at: executedAt })
-        .eq("user_id", userId),
-      "mark request completed",
-    );
-  });
+  // Only mark the request completed when the auth user is actually gone —
+  // a "completed" request is never re-selected, so completing it while the
+  // email survives would strand personal data forever.
+  let markedOk = false;
+  if (authOk) {
+    markedOk = await step(steps, "mark_request_completed", async () => {
+      must(
+        await sc
+          .from("user_deletion_requests")
+          .update({ status: "completed", executed_at: executedAt })
+          .eq("user_id", userId),
+        "mark request completed",
+      );
+    });
+  }
 
-  const ok = profileOk && markedOk;
+  // Profile visibility just changed — drop any cached Compass Home payload so
+  // the deleted account never serves stale personalised content. Lazy import
+  // keeps the compass module graph out of this service's import chain.
+  try {
+    const { invalidateCompassHomeCache } = await import("../../routes/compassHome.js");
+    invalidateCompassHomeCache(userId);
+  } catch { /* cache invalidation is best-effort */ }
+
+  const ok = profileOk && authOk && markedOk;
   logger.info(
     { userId, ok, warnings, failedSteps: steps.filter((s) => !s.ok).map((s) => s.step) },
     "executeAccountDeletion: finished",

@@ -120,6 +120,46 @@ for arg in "$@"; do
 done
 
 # ---------------------------------------------------------------------------
+# HARD DEFAULT-OFF GUARD (2026-08-05) — legacy sync is disabled by default.
+#
+# artifacts/travel-buddy was retired on 2026-08-04 (travel-buddy-standalone
+# became THE canonical mobile tree) and was resurrected on 2026-08-05 in a
+# LEGACY-FROZEN state. Every mode of this script that can WRITE (full sync,
+# --apply-deps, --fix-source, --fix-lockfile, and their --dry-run previews)
+# is therefore gated behind an explicit opt-in:
+#
+#     PORTAVA_ENABLE_LEGACY_SYNC=1 bash scripts/sync-standalone.sh …
+#
+# Without it, a sync would overwrite standalone-owned branding/config
+# (app.json, assets/images/icon.png, adaptive-icon/splash/favicon,
+# assets/share-icon.svg, …) with stale legacy copies.
+#
+# The read-only check modes (--check-source / --check-deps / --check-lockfile)
+# are NOT gated — they write nothing, they exit inside their own blocks before
+# any sync code runs, and they keep their hard-fail-when-source-missing
+# behavior below. Exits 0 so hooks that still call this script do not fail.
+# ---------------------------------------------------------------------------
+if [[ "${PORTAVA_ENABLE_LEGACY_SYNC:-}" != "1" ]] \
+   && ! $CHECK_SOURCE && ! $CHECK_DEPS && ! $CHECK_LOCKFILE; then
+  echo "=============================================================================="
+  echo "sync-standalone.sh: LEGACY artifacts -> standalone SYNC IS DISABLED (default-off)."
+  echo ""
+  echo "  * artifacts/travel-buddy was resurrected on 2026-08-05 but is LEGACY-FROZEN"
+  echo "    (do not edit it; it is slated for archival)."
+  echo "  * travel-buddy-standalone/ is the CANONICAL mobile tree (since 2026-08-04)."
+  echo "  * Syncing would overwrite standalone-owned branding/config (app.json,"
+  echo "    assets/images/icon.png, adaptive-icon/splash/favicon, share icons, …)"
+  echo "    with stale legacy copies."
+  echo ""
+  echo "  Nothing was written. Read-only checks remain available:"
+  echo "      bash scripts/sync-standalone.sh --check-source | --check-deps | --check-lockfile"
+  echo "  To run a sync mode DELIBERATELY (you almost certainly should not):"
+  echo "      PORTAVA_ENABLE_LEGACY_SYNC=1 bash scripts/sync-standalone.sh <flags>"
+  echo "=============================================================================="
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # The check modes are meaningless without the source tree — a missing $SRC
 # must be a hard failure, not a silent pass (a check that "passes" because
 # there is nothing to compare against is a false green).
@@ -277,14 +317,38 @@ STANDALONE_OWNED_FILES=(
   # standalone-only node:test files (LivePulseRail, media.upload) that use
   # react-native internals incompatible with esbuild in Node.
   "scripts/run-node-tests.mjs"
+  # ── Portava branding & app config (2026-08-05 — standalone is canonical) ──
+  # The legacy artifacts tree predates the current branding; its copies of
+  # these files must never overwrite the standalone versions. app.json is
+  # synced via sync_file (config files), which also consults this ledger.
+  "app.json"
+  "assets/images/icon.png"
+  "assets/images/adaptive-icon.png"
+  "assets/images/splash.png"
+  "assets/images/favicon.png"
+  "assets/share-icon.svg"
+  "assets/icons/portava-share.svg"
+  # ── Standalone-owned test directories (2026-08-05 audit) ──────────────────
+  # A trailing slash marks a DIRECTORY PREFIX entry: every file under the
+  # directory is protected (see is_standalone_owned). Both dirs are currently
+  # empty on disk; the entries protect any standalone-only suites added later
+  # from being deleted as "stale" by a (legacy, opt-in) sync.
+  "app/media-viewer/__tests__/"
+  "app/memory/__tests__/"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.
+# Entries are exact file paths, except entries ending in "/" which are
+# directory prefixes — every file under that directory is protected.
 is_standalone_owned() {
   local rel_path="$1"
   if [[ ${#STANDALONE_OWNED_FILES[@]} -eq 0 ]]; then return 1; fi
   for owned in "${STANDALONE_OWNED_FILES[@]}"; do
-    [[ "$rel_path" == "$owned" ]] && return 0
+    if [[ "$owned" == */ ]]; then
+      [[ "$rel_path" == "$owned"* ]] && return 0
+    else
+      [[ "$rel_path" == "$owned" ]] && return 0
+    fi
   done
   return 1
 }
@@ -477,6 +541,17 @@ sync_file() {
 
   if [[ ! -f "$from" ]]; then
     echo "    (skipping $name — not present in source)"
+    return
+  fi
+
+  # Standalone-owned config files (e.g. app.json) are sanctioned divergence:
+  # never overwritten, and never counted as config drift.
+  if is_standalone_owned "$name"; then
+    if $DRY_RUN; then
+      echo "    [dry] [protected] $name (standalone-owned — would skip)"
+    else
+      echo "    [protected] $name (standalone-owned — not overwritten)"
+    fi
     return
   fi
 

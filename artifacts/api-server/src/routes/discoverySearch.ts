@@ -145,7 +145,12 @@ function initials(title: string): string {
 }
 
 function sqlPattern(q: string): string {
-  return `%${q.replace(/[%_]/g, "\\$&")}%`;
+  // The pattern is interpolated into PostgREST `.or("col.ilike.<pat>,...")`
+  // filter strings, whose grammar treats `,` `(` `)` as structure — a query
+  // containing them could terminate the ilike value and inject additional
+  // filter clauses. They carry no search meaning here, so strip them outright;
+  // then escape the LIKE wildcards `%` and `_`.
+  return `%${q.replace(/[,()]/g, "").replace(/[%_]/g, "\\$&")}%`;
 }
 
 function decodeCursor(cursor: string | undefined): number {

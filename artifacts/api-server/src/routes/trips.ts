@@ -293,7 +293,7 @@ router.post("/trips", async (req, res) => {
 
   if (error) {
     req.log.error({ err: error }, "Failed to insert trip");
-    res.status(500).json({ error: error.message });
+    sendError(res, "db_error", error.message);
     return;
   }
 
@@ -908,7 +908,7 @@ router.post("/trips/:tripId/invite", async (req, res) => {
   if (existing) { res.status(200).json({ status: "already_member", role: (existing as any).role, idempotent: true }); return; }
 
   const { error } = await client.from("trip_members").insert({ trip_id: tripId, user_id: userId, role: "invited" });
-  if (error) { res.status(500).json({ error: "db_error", message: error.message }); return; }
+  if (error) { req.log.error({ err: error }, "trip invite: insert failed"); sendError(res, "db_error", error.message); return; }
 
   // Fire-and-forget: notify the invitee they've been invited.
   (async () => {
@@ -976,7 +976,7 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
   if ((membership as any).role !== "invited") { res.status(400).json({ error: "invalid_payload", message: `Already a ${(membership as any).role}` }); return; }
 
   const { error } = await client.from("trip_members").update({ role: "member" }).eq("trip_id", tripId).eq("user_id", user.id);
-  if (error) { res.status(500).json({ error: "db_error", message: error.message }); return; }
+  if (error) { req.log.error({ err: error }, "trip invite accept: update failed"); sendError(res, "db_error", error.message); return; }
 
   // Fire-and-forget: sync group chat membership for this trip.
   syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
@@ -1030,7 +1030,7 @@ router.post("/trips/:tripId/decline-invite", async (req, res) => {
   if ((membership as any).role !== "invited") { res.status(400).json({ error: "invalid_payload", message: "Cannot decline — you are already a member" }); return; }
 
   const { error } = await client.from("trip_members").delete().eq("trip_id", tripId).eq("user_id", user.id);
-  if (error) { res.status(500).json({ error: "db_error", message: error.message }); return; }
+  if (error) { req.log.error({ err: error }, "trip invite decline: delete failed"); sendError(res, "db_error", error.message); return; }
 
   // Fire-and-forget: notify trip owner that their invitation was declined.
   (async () => {
@@ -1559,14 +1559,14 @@ router.post("/trips/:tripId/members", async (req, res) => {
 
   if (existing) {
     const { error } = await client.from("trip_members").update({ role }).eq("trip_id", tripId).eq("user_id", userId);
-    if (error) { res.status(500).json({ error: "db_error", message: error.message }); return; }
+    if (error) { req.log.error({ err: error }, "trip member role update failed"); sendError(res, "db_error", error.message); return; }
     syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
     res.status(200).json({ status: "updated", tripId, userId, role });
     return;
   }
 
   const { error } = await client.from("trip_members").insert({ trip_id: tripId, user_id: userId, role });
-  if (error) { res.status(500).json({ error: "db_error", message: error.message }); return; }
+  if (error) { req.log.error({ err: error }, "trip member add: insert failed"); sendError(res, "db_error", error.message); return; }
 
   syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
 
@@ -1602,7 +1602,7 @@ router.delete("/trips/:tripId/members/:userId", async (req, res) => {
   if ((memberRow as any).role === "owner") { res.status(400).json({ error: "invalid_payload", message: "Cannot remove the trip owner" }); return; }
 
   const { error } = await client.from("trip_members").delete().eq("trip_id", tripId).eq("user_id", userId);
-  if (error) { res.status(500).json({ error: "db_error", message: error.message }); return; }
+  if (error) { req.log.error({ err: error }, "trip member remove: delete failed"); sendError(res, "db_error", error.message); return; }
 
   syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
 

@@ -236,7 +236,9 @@ SUPABASE_URL = "https://ajrurzioarfkagpuxfnb.supabase.co"
 [userenv.development]
 
 [userenv.production]
-ALLOWED_ORIGINS = "https://app.travel-buddy.io,https://www.travel-buddy.io,https://portava.replit.app"
+# travel-buddy.io domains retired 2026-08-05 (Portava rebrand) — only the live
+# origin remains. The api-server app.ts fallback list is defense-in-depth only.
+ALLOWED_ORIGINS = "https://portava.replit.app"
 
 [nix]
 channel = "stable-25_05"

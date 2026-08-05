@@ -1,6 +1,6 @@
 # Travel Buddy
 
-> **SOURCE OF TRUTH (2026-08-04):** `travel-buddy-standalone/` is now the canonical app tree. The old canonical tree `artifacts/travel-buddy` has been deleted and no longer exists. Any instructions or docs below (or elsewhere in this repo) that reference `artifacts/travel-buddy` or the canonical→mirror sync workflow are historical — make all mobile app edits directly in `travel-buddy-standalone/`.
+> **SOURCE OF TRUTH (updated 2026-08-05):** `travel-buddy-standalone/` is THE canonical mobile app tree — make all mobile app edits directly there. The old canonical tree `artifacts/travel-buddy` was deleted on 2026-08-04 and **resurrected on 2026-08-05 in a LEGACY-FROZEN state**: it exists on disk again, but do not edit it; the artifacts→standalone auto-sync is disabled by default (`PORTAVA_ENABLE_LEGACY_SYNC=1` guard in `scripts/post-merge.sh` and `scripts/sync-standalone.sh`) and the tree is slated for archival. Any instructions or docs below (or elsewhere in this repo) that call `artifacts/travel-buddy` canonical or describe the canonical→mirror sync workflow are historical. The API server remains canonical at `artifacts/api-server`.
 
 [![Pre-release checks](https://github.com/passporttravelbuddy-ops/travel-buddy/actions/workflows/pre-release.yml/badge.svg?branch=main)](https://github.com/passporttravelbuddy-ops/travel-buddy/actions/workflows/pre-release.yml)
 
@@ -9,18 +9,18 @@ A social travel passport mobile app — log trips, track destinations, and share
 ## Canonical mobile tree (single source of truth)
 
 ```
-~/workspace/artifacts/travel-buddy       ← CANONICAL — all mobile dev work happens here
-~/workspace/travel-buddy-standalone      ← generated EAS build mirror — do not edit directly
+~/workspace/travel-buddy-standalone      ← CANONICAL — all mobile dev work happens here
+~/workspace/artifacts/travel-buddy       ← LEGACY-FROZEN (resurrected 2026-08-05) — do not edit; slated for archival
 ```
 
-**The rule (settled July 2026):** `artifacts/travel-buddy` is the single canonical source tree — every code change lands there. `travel-buddy-standalone` is a build/deploy mirror regenerated from canonical by `scripts/sync-standalone.sh`; it exists only because EAS native builds need a hoisted, workspace-isolated tree. Updates flow OUTWARD from canonical, never backward:
+**The rule (updated 2026-08-05):** `travel-buddy-standalone` is the single canonical mobile source tree — every mobile code change lands there directly, and EAS builds run from it. `artifacts/travel-buddy` is the pre-2026-08-04 canonical tree: deleted 2026-08-04, resurrected 2026-08-05, now legacy-frozen. Do not edit it, and do not sync from it. The API server is unaffected — it remains canonical at `artifacts/api-server`.
 
-- **Web app output** — the Replit preview and web deployments serve the canonical tree directly (Expo web). No sync step; the web app is always current.
-- **Native/EAS output** — the mirror is auto-synced after every task merge (`scripts/post-merge.sh`: apply-deps → full sync → mirror `pnpm install` → drift checks). Manual propagation during device dev: `bash scripts/sync-standalone.sh --fix-source` (fast file copy). EAS builds run from the mirror AFTER checks pass — see [docs/eas-runbook.md](docs/eas-runbook.md).
-- **Never edit the mirror directly.** The only sanctioned divergence is the `STANDALONE_OWNED_FILES` ledger inside `scripts/sync-standalone.sh` (target-specific files + the legacy graduation backlog — inventory in [docs/tree-sync-audit-2026-07-19.md](docs/tree-sync-audit-2026-07-19.md)). Do not add new ledger entries for shared cross-platform code; land shared code in canonical and let the sync propagate it.
-- **Drift gate** — `sync-standalone.sh --check-source / --check-deps / --check-lockfile` fail the pre-release checks and the post-merge hook whenever the mirror unexpectedly diverges.
+- **Legacy sync disabled by default** — the old artifacts→standalone auto-sync (`scripts/post-merge.sh` → `scripts/sync-standalone.sh`) is hard-gated behind `PORTAVA_ENABLE_LEGACY_SYNC=1`; without it the scripts print a warning and exit 0. Running the sync would overwrite standalone-owned branding/config (`app.json`, `assets/images/icon.png`, adaptive-icon/splash/favicon, share icons) with stale legacy copies — that is why the default is off.
+- **Read-only drift checks still work** — `sync-standalone.sh --check-source / --check-deps / --check-lockfile` are not gated (they write nothing) and still run in the pre-release checks; they report how far the frozen legacy tree has fallen behind.
+- **`STANDALONE_OWNED_FILES` ledger** in `scripts/sync-standalone.sh` — the mirror-era divergence inventory (see [docs/tree-sync-audit-2026-07-19.md](docs/tree-sync-audit-2026-07-19.md)); still consulted by the drift checks and by the opt-in legacy sync as a protection list.
+- **Web + native output** — the Replit workflows (dev server, tests, typecheck) and EAS builds all run from the standalone tree — see [docs/eas-runbook.md](docs/eas-runbook.md).
 
-Physical-device dev loop (Metro serves the mirror): edit canonical, run `bash scripts/sync-standalone.sh --fix-source`, and Metro hot-reloads:
+Physical-device dev loop (Metro serves the canonical standalone tree — edit it directly and Metro hot-reloads):
 
 ```bash
 cd ~/workspace/travel-buddy-standalone
@@ -88,9 +88,9 @@ To verify the check scripts themselves are not broken (i.e. they correctly detec
 
 ## Where things live
 
-- `artifacts/travel-buddy/` — **CANONICAL Expo mobile app** (`app/`, `src/services/`, `src/lib/supabase.ts`, `src/context/SessionContext.tsx`) — all edits happen here
-- `travel-buddy-standalone/` — **generated EAS build mirror** — never edit directly; auto-synced from canonical (exceptions: `STANDALONE_OWNED_FILES` ledger in `scripts/sync-standalone.sh`)
-- `artifacts/api-server/` — Express API server (`src/routes/trips.ts`, `src/lib/supabase.ts`, `.env`)
+- `travel-buddy-standalone/` — **CANONICAL Expo mobile app** (`app/`, `src/services/`, `src/lib/supabase.ts`, `src/context/SessionContext.tsx`) — all mobile edits happen here
+- `artifacts/travel-buddy/` — **LEGACY-FROZEN** former canonical tree (resurrected 2026-08-05) — do not edit; sync disabled by default (`PORTAVA_ENABLE_LEGACY_SYNC` guard); slated for archival
+- `artifacts/api-server/` — Express API server, **canonical** (`src/routes/trips.ts`, `src/lib/supabase.ts`, `.env`)
 
 ## Architecture decisions
 

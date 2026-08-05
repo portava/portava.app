@@ -104,9 +104,9 @@ module.exports = {
     '^expo-modules-core$': '<rootDir>/../../node_modules/.pnpm/expo-modules-core@3.0.30_react-native@0.81.5_@babel+core@7.29.7_@types+react@19.1.17_react@19.1.0__react@19.1.0/node_modules/expo-modules-core',
     '^expo-modules-core/(.*)$': '<rootDir>/../../node_modules/.pnpm/expo-modules-core@3.0.30_react-native@0.81.5_@babel+core@7.29.7_@types+react@19.1.17_react@19.1.0__react@19.1.0/node_modules/expo-modules-core/$1',
     // test-renderer is required by @testing-library/react-native v14 under React 19.
-    // pnpm does not hoist it into the RNTL package's local node_modules; pin the
-    // resolution to the pnpm store copy so every jest worker finds it.
-    '^test-renderer$': '<rootDir>/../../node_modules/.pnpm/test-renderer@1.2.0_@types+react@19.1.17_react@19.1.0/node_modules/test-renderer',
-    '^test-renderer/(.*)$': '<rootDir>/../../node_modules/.pnpm/test-renderer@1.2.0_@types+react@19.1.17_react@19.1.0/node_modules/test-renderer/$1',
+    // Resolve it from this package's own node_modules (physical copy, same
+    // layout as travel-buddy-standalone) so every jest worker finds it.
+    '^test-renderer$': '<rootDir>/node_modules/test-renderer',
+    '^test-renderer/(.*)$': '<rootDir>/node_modules/test-renderer/$1',
   },
 };

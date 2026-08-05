@@ -14,6 +14,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SYNC_SCRIPT="$SCRIPT_DIR/sync-standalone.sh"
 
+# The legacy sync is default-off since 2026-08-05 (PORTAVA_ENABLE_LEGACY_SYNC
+# guard in sync-standalone.sh). This harness runs sync modes only against
+# throwaway temp workspaces (SYNC_STANDALONE_REPO_ROOT), so enable the legacy
+# path here to keep exercising the sync logic itself. The real workspace is
+# never touched by these tests.
+export PORTAVA_ENABLE_LEGACY_SYNC=1
+
 PASS=0
 FAIL=0
 ERRORS=()

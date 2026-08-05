@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http";
+import { requireUser, sendError, safeSecretEquals } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
+import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
 import { retranslateForUser } from "../services/messageTranslation";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { isFlagEnabled } from "../lib/featureFlags";
@@ -778,6 +779,8 @@ router.patch("/me/profile", async (req, res) => {
         res,
         "db_error",
         "Could not save passport layout: the database is missing the passport_section_order column (schema drift). Apply migration 0120_passport_section_order.sql.",
+        // Hand-written operator-facing message (names only the drifted column) — safe to expose.
+        { exposeDetail: true },
       );
       return;
     }
@@ -790,6 +793,8 @@ router.patch("/me/profile", async (req, res) => {
         res,
         "db_error",
         "Could not save tab order: the database is missing the passport_tab_order column (schema drift). Apply migration 0143_passport_tab_order.sql.",
+        // Hand-written operator-facing message (names only the drifted column) — safe to expose.
+        { exposeDetail: true },
       );
       return;
     }
@@ -808,6 +813,8 @@ router.patch("/me/profile", async (req, res) => {
         res,
         "db_error",
         `Could not save profile: the database is missing the required column(s) for every requested field (schema drift). Fields not saved: ${unsavedFields.join(", ")}.`,
+        // Hand-written message naming only the client's own requested camelCase fields — safe to expose.
+        { exposeDetail: true },
       );
       return;
     }
@@ -1529,19 +1536,28 @@ router.delete("/me/delete-request", async (req, res) => {
  * POST /internal/deletion-requests/execute-due — deletion worker endpoint
  * ---------------------------------------------------------------------------
  * Service-to-service endpoint (NOT user-facing). Executes the full deletion
- * cascade (services/accountDeletion.ts) for every user_deletion_requests row
- * whose 30-day hold has elapsed (scheduled_at <= now, status pending/confirmed).
+ * cascade (services/accountDeletion/AccountDeletionService.ts — the same
+ * implementation used by the admin execute route and the in-process
+ * scheduler) for every user_deletion_requests row whose 30-day hold has
+ * elapsed (scheduled_at <= now, status pending/confirmed).
  *
  * Auth: X-Internal-Secret header must match INTERNAL_API_SECRET — the same
  * fail-closed pattern as routes/notifications.ts requireInternalSecret. When
  * the env var is unset the endpoint is disabled (503).
  *
+ * SAFETY: like lib/accountDeletionScheduler.ts, execution is additionally
+ * gated behind the `account_deletion_worker_enabled` feature flag and fails
+ * CLOSED — when the flag row is missing, unreadable, or false the endpoint
+ * responds 503/skipped and touches nothing.
+ *
  * SCHEDULING: hit this endpoint once a day via a Replit Scheduled Deployment
  * (or any external cron):
  *   curl -X POST "$API_BASE_URL/api/internal/deletion-requests/execute-due" \
  *        -H "X-Internal-Secret: $INTERNAL_API_SECRET"
- * Batch is capped at 20 per run; the endpoint is idempotent (executed rows are
- * marked completed and never re-selected), so overlapping runs are safe.
+ * Batch is capped at 20 per run; the endpoint is idempotent (a request is
+ * only marked completed when its cascade fully succeeds, and completed rows
+ * are never re-selected — failed ones stay pending for retry), so overlapping
+ * runs are safe.
  */
 function requireInternalSecret(req: any, res: any): boolean {
   const secret = process.env.INTERNAL_API_SECRET;
@@ -1553,7 +1569,7 @@ function requireInternalSecret(req: any, res: any): boolean {
     return false;
   }
   const provided = req.headers["x-internal-secret"];
-  if (provided !== secret) {
+  if (!safeSecretEquals(provided, secret)) {
     res.status(401).json({ error: "unauthorized", message: "Missing or invalid internal secret" });
     return false;
   }
@@ -1565,6 +1581,19 @@ router.post("/internal/deletion-requests/execute-due", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  // Same fail-closed flag gate as lib/accountDeletionScheduler.ts: account
+  // deletion is irreversible and this endpoint acts without a human in the
+  // loop, so it does nothing until the flag is explicitly enabled.
+  if (!(await isFlagEnabled(sc, "account_deletion_worker_enabled"))) {
+    res.status(503).json({
+      ok: false,
+      skipped: true,
+      error: "feature_disabled",
+      message: "account_deletion_worker_enabled feature flag is off; deletion worker is disabled",
+    });
+    return;
+  }
 
   const now = new Date().toISOString();
   const BATCH_CAP = 20;
@@ -1583,42 +1612,49 @@ router.post("/internal/deletion-requests/execute-due", async (req, res) => {
     return;
   }
 
-  const { executeAccountDeletion } = await import("../services/accountDeletion.js");
-  const summaries: Awaited<ReturnType<typeof executeAccountDeletion>>[] = [];
+  let executed = 0;
+  const failed: Array<{ userId: string; failedSteps: { step: string; error?: string }[] }> = [];
+  const outcomes: Array<Awaited<ReturnType<typeof executeAccountDeletion>>> = [];
 
   for (const row of (due ?? []) as { user_id: string }[]) {
     const userId = row.user_id;
-    const summary = await executeAccountDeletion(userId, sc);
-    summaries.push(summary);
-
-    const executedAt = new Date().toISOString();
-
-    // Mark deleted in account states (best-effort)
-    await sc
-      .from("user_account_states")
-      .upsert(
-        { user_id: userId, state: "deleted", reason: "Scheduled account deletion executed", set_by: userId, created_at: executedAt },
-        { onConflict: "user_id,state" },
-      )
-      .then(undefined, () => {});
-
-    // Mark the request executed so it is never re-selected
-    const { error: markErr } = await sc
-      .from("user_deletion_requests")
-      .update({ status: "completed", executed_at: executedAt })
-      .eq("user_id", userId);
-    if (markErr) {
-      req.log.error({ err: markErr, userId }, "deletion worker: failed to mark request completed");
-      summary.errors.push({ table: "user_deletion_requests", message: markErr.message });
+    try {
+      // The service marks the request completed itself — but ONLY when the
+      // cascade outcome is ok (profile anonymised + auth user removed). A
+      // failed cascade leaves the row pending/confirmed so the next run
+      // retries it.
+      const outcome = await executeAccountDeletion(sc, userId, {
+        actorId: null, // executed by the worker, not an admin
+        reason: "Scheduled account deletion executed",
+      });
+      outcomes.push(outcome);
+      if (outcome.ok) {
+        executed += 1;
+        if (outcome.warnings.length > 0) {
+          req.log.warn({ userId, warnings: outcome.warnings }, "deletion worker: completed with warnings");
+        }
+      } else {
+        const failedSteps = outcome.steps.filter((s) => !s.ok).map((s) => ({ step: s.step, error: s.error }));
+        failed.push({ userId, failedSteps });
+        req.log.error(
+          { userId, failedSteps },
+          "deletion worker: deletion did not complete; request left pending for retry",
+        );
+      }
+    } catch (err: any) {
+      failed.push({ userId, failedSteps: [{ step: "execute", error: err?.message ?? String(err) }] });
+      req.log.error({ err, userId }, "deletion worker: executeAccountDeletion threw");
     }
-
-    req.log.info(
-      { userId, tablesCleared: summary.tablesCleared.length, errors: summary.errors.length },
-      "deletion worker: executed account deletion",
-    );
   }
 
-  res.status(200).json({ ok: true, processed: summaries.length, executedAt: now, summaries });
+  res.status(200).json({
+    ok: true,
+    processed: (due ?? []).length,
+    executed,
+    failed,
+    executedAt: now,
+    outcomes,
+  });
 });
 
 /* ---------------------------------------------------------------------------

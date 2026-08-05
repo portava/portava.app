@@ -602,6 +602,26 @@ export function useThreadMessages(threadId: string | null) {
 
 // ── Unread counts (for tab badge) ─────────────────────────────────────────────
 
+/**
+ * Each useUnreadCounts() caller holds independent state (the tab badge in
+ * (tabs)/_layout.tsx is its own instance), so a screen that stamps counts as
+ * viewed (e.g. the Activity Center calling markNotificationsRead) cannot reach
+ * the badge's state directly. This module-level broadcast lets it optimistically
+ * patch every mounted instance (pass a partial counts object) or ask them all
+ * to refetch from the server (pass null).
+ */
+type UnreadCountsPatch = Partial<{
+  messages: number;
+  notifications: number;
+  meetups: number;
+  newHighlights: number;
+}>;
+const unreadCountsListeners = new Set<(patch: UnreadCountsPatch | null) => void>();
+
+export function broadcastUnreadCounts(patch: UnreadCountsPatch | null): void {
+  unreadCountsListeners.forEach((listener) => listener(patch));
+}
+
 export function useUnreadCounts() {
   const [messages, setMessages] = useState(0);
   const [notifications, setNotifications] = useState(0);
@@ -621,6 +641,24 @@ export function useUnreadCounts() {
 
   useEffect(() => {
     refresh();
+  }, [refresh]);
+
+  // Cross-instance sync: apply optimistic patches / refetch requests sent via
+  // broadcastUnreadCounts (e.g. the Activity Center zeroing the notifications
+  // badge the moment it gains focus).
+  useEffect(() => {
+    const listener = (patch: UnreadCountsPatch | null) => {
+      if (patch === null) {
+        void refresh();
+        return;
+      }
+      if (patch.messages !== undefined) setMessages(patch.messages);
+      if (patch.notifications !== undefined) setNotifications(patch.notifications);
+      if (patch.meetups !== undefined) setMeetups(patch.meetups);
+      if (patch.newHighlights !== undefined) setNewHighlights(patch.newHighlights);
+    };
+    unreadCountsListeners.add(listener);
+    return () => { unreadCountsListeners.delete(listener); };
   }, [refresh]);
 
   useEffect(() => {

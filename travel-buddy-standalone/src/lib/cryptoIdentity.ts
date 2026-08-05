@@ -16,6 +16,7 @@
  * NEVER log private key values.
  */
 
+import { Platform } from 'react-native';
 import {
   getSecure,
   setSecure,
@@ -134,7 +135,7 @@ async function _ensureDeviceRegistered(
   if (!deviceId) {
     // Register the device
     const { data, error } = await apiPost('/me/crypto-devices', {
-      platform: 'ios', // overridden by the caller if on Android
+      platform: Platform.OS === 'android' ? 'android' : Platform.OS === 'web' ? 'web' : 'ios',
     }) as { data?: { device?: { id: string } }; error?: unknown };
 
     if (error || !data?.device?.id) {
