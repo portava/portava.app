@@ -224,7 +224,7 @@ export function StampsTab({
   useEffect(() => {
     if (isBlocked) return;
     load();
-  }, [load]);
+  }, [load, isBlocked]);
 
   // Expose loadMore to the parent scroll container. In external mode this is
   // the parent pipeline's own load-more, so scrolling triggers exactly one
@@ -234,13 +234,13 @@ export function StampsTab({
     if (!loadMoreRef) return;
     loadMoreRef.current = external ? (onLoadMore ?? null) : loadMore;
     return () => { loadMoreRef.current = null; };
-  }, [loadMoreRef, loadMore, external, onLoadMore]);
+  }, [loadMoreRef, loadMore, external, onLoadMore, isBlocked]);
 
   useEffect(() => {
     if (isBlocked) return;
     if (!isOwner || viewingUsername) return;
     getMyProgress().then((res) => { if (res.ok) setProgress(res.data); }).catch(() => {});
-  }, [isOwner, viewingUsername]);
+  }, [isOwner, viewingUsername, isBlocked]);
 
   useEffect(() => {
     if (isBlocked) return;
@@ -250,7 +250,7 @@ export function StampsTab({
         setMilestones(res.data.milestones ?? []);
       }
     }).catch(() => {});
-  }, [isOwner, viewingUsername]);
+  }, [isOwner, viewingUsername, isBlocked]);
 
   // Fetch showcase on mount for the owner's own passport only.
   // external mode is intentionally NOT excluded — the main passport tab mounts
@@ -259,7 +259,7 @@ export function StampsTab({
     if (isBlocked) return;
     if (!isOwner || viewingUsername) return;
     getMyShowcase().then((result) => { setShowcase(result); }).catch(() => {});
-  }, [isOwner, viewingUsername]);
+  }, [isOwner, viewingUsername, isBlocked]);
 
   if (isBlocked) return null;
 
