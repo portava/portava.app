@@ -115,7 +115,20 @@ export function DailyBriefCard({ tripId, date, compact = false, onGapDays }: Dai
     );
   }
 
-  if (access === 'access_denied' || !brief) {
+  // QA round 2, bug 3. The server emits a "general" brief whose headline is
+  // "No active trip right now — here's some travel inspiration…"
+  // (api-server/src/lib/dailyBriefEngine.ts) whenever fetchActiveTripForUser
+  // finds no trip starting within 3 days — it is never told WHICH trip page the
+  // card is mounted on. Inside a specific trip's own detail page that copy flatly
+  // contradicts the screen around it, so stay silent instead.
+  //
+  // Both call sites of this component are trip-scoped (app/trip/[id].tsx and
+  // app/trip/chat.tsx), so suppressing here loses nothing. The proper fix is
+  // server-side (scope the brief to the viewed tripId), but that needs the L2
+  // cache re-keyed first: briefCacheKey is `${userId}:${date}` and the cache
+  // table is UNIQUE (user_id, brief_date), so a trip-scoped brief would serve
+  // trip A's brief on trip B's page. Left for a deliberate change.
+  if (access === 'access_denied' || !brief || brief.briefType === 'general') {
     return (
       <View style={s.wrap}>
         <View style={s.deniedRow}>

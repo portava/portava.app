@@ -6,7 +6,8 @@
  * NEVER writes to the database — the client must call the normal trip-create
  * endpoint after the user confirms the draft.
  *
- * Extraction discipline matches reservationExtract: gpt-5-mini, temperature 0,
+ * Extraction discipline matches reservationExtract, but on gpt-4o-mini so
+ * temperature 0 is still available here:
  * strict JSON, UGC-wrapped input treated as data (never instructions), facts
  * only — nothing invented, unknown fields omitted.
  */

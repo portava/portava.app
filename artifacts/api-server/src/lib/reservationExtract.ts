@@ -1,7 +1,7 @@
 /**
  * reservationExtract — LLM extraction of reservations from pasted text.
  *
- * Strict-JSON, temperature-zero gpt-5-mini call (same discipline as
+ * Strict-JSON gpt-5-mini call (same discipline as
  * CompassIntentClassifier). The pasted text is UGC: it is wrapped with
  * wrapUgc() delimiters and the system prompt instructs the model that wrapped
  * content is DATA, never instructions.
@@ -90,8 +90,8 @@ export async function extractReservations(rawText: string): Promise<ExtractionRe
   try {
     const completion = await getOpenAI().chat.completions.create({
       model:                 "gpt-5-mini",
-      temperature:           0,
-      max_completion_tokens: 700,
+      max_completion_tokens: 1500,
+      reasoning_effort:      "minimal" as const,
       messages: [
         { role: "system", content: EXTRACT_SYSTEM },
         {

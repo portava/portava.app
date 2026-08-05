@@ -26,6 +26,7 @@ import { GlobalCalendarPicker } from './selectors/GlobalCalendarPicker.tsx';
 import { GlobalTimePicker } from './selectors/GlobalTimePicker.tsx';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { formatEventLocation } from '../lib/location/formatEventLocation.ts';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 
 interface Props {
@@ -591,8 +592,10 @@ export function EventComposerSheet({ onDismiss, onCreated, initialEvent, onUpdat
                   usedFor="event_location"
                   onSelect={(place) => {
                     setLocationName(place.displayName);
-                    if (place.city) setCity(place.city);
-                    if (place.country) setCountry(place.country);
+                    // QA round 2, bug 6 (same defect as app/events/create/index.tsx):
+                    // never overwrite a city/country the user typed themselves.
+                    if (place.city && !city.trim()) setCity(place.city);
+                    if (place.country && !country.trim()) setCountry(place.country);
                     setLocationPickerVisible(false);
                   }}
                   onClose={() => setLocationPickerVisible(false)}
@@ -772,7 +775,7 @@ export function EventComposerSheet({ onDismiss, onCreated, initialEvent, onUpdat
                   {locationName ? (
                     <View style={s.reviewRow}>
                       <MapPin size={14} color={color.mute} />
-                      <Text style={s.reviewMeta}>{locationName}{city ? `, ${city}` : ''}</Text>
+                      <Text style={s.reviewMeta}>{formatEventLocation(locationName, city)}</Text>
                     </View>
                   ) : null}
 

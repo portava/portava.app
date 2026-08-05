@@ -84,8 +84,8 @@ export class OpenAITranslationProvider implements TranslationProvider {
         },
         { role: 'user', content: snippet },
       ],
-      max_tokens: 20,
-      temperature: 0,
+      max_completion_tokens: 200,
+      reasoning_effort: 'minimal' as const,
     });
     const raw = completion.choices[0]?.message?.content?.trim() ?? '{}';
     try {
@@ -110,8 +110,8 @@ export class OpenAITranslationProvider implements TranslationProvider {
         },
         { role: 'user', content: text },
       ],
-      max_tokens: 1000,
-      temperature: 0.3,
+      max_completion_tokens: 2000,
+      reasoning_effort: 'minimal' as const,
     });
     const translated = completion.choices[0]?.message?.content?.trim();
     if (!translated) throw new Error('empty_response');

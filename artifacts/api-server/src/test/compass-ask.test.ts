@@ -389,7 +389,7 @@ describe("D. Action intent — Phase 4 tool loop, propose-never-execute", () => 
       chat: {
         completions: {
           create: async (opts: any) => {
-            const isClassifierCall = opts.max_completion_tokens === 60 && opts.temperature === 0;
+            const isClassifierCall = opts.max_completion_tokens === 256;
             if (isClassifierCall) {
               return { choices: [{ message: { content: JSON.stringify({ intent: "action", confidence: 0.95 }), role: "assistant" } }] };
             }
@@ -489,7 +489,7 @@ describe("G. Low classifier confidence passthrough", () => {
       chat: {
         completions: {
           create: async (opts: any) => {
-            const isClassifierCall = opts.max_completion_tokens === 60 && opts.temperature === 0;
+            const isClassifierCall = opts.max_completion_tokens === 256;
             if (isClassifierCall) {
               return { choices: [{ message: { content: JSON.stringify({ intent: "question", confidence: 0.3 }), role: "assistant" } }] };
             }
@@ -566,13 +566,13 @@ describe("I. Summarise re-prompt empty content fallback", () => {
 
     // All main LLM calls (the tool-calling loop rounds AND the summarise
     // re-prompt) return null content so finalRaw stays "".
-    // The classifier call (max_completion_tokens=60, temperature=0) gets a
+    // The classifier call (max_completion_tokens=256) gets a
     // valid reply so it doesn't short-circuit the flow.
     _setTestOpenAI({
       chat: {
         completions: {
           create: async (opts: any) => {
-            const isClassifier = opts.max_completion_tokens === 60 && opts.temperature === 0;
+            const isClassifier = opts.max_completion_tokens === 256;
             if (isClassifier) {
               return {
                 choices: [{

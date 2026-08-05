@@ -161,7 +161,7 @@ interface Capture {
 }
 
 /**
- * Classifier calls (max_completion_tokens=60, temperature=0) get the supplied
+ * Classifier calls (max_completion_tokens=256) get the supplied
  * intent reply; main-model calls are captured and answered with mainReply.
  */
 function makeCapturingOpenAI(
@@ -173,7 +173,7 @@ function makeCapturingOpenAI(
     chat: {
       completions: {
         create: async (opts: any) => {
-          const isClassifierCall = opts.max_completion_tokens === 60 && opts.temperature === 0;
+          const isClassifierCall = opts.max_completion_tokens === 256;
           if (isClassifierCall) {
             return { choices: [{ message: { content: JSON.stringify(intent), role: "assistant" } }] };
           }

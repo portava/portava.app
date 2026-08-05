@@ -2,7 +2,8 @@
  * CompassIntentClassifier
  *
  * Classifies a user message into one of five intent buckets using a
- * temperature-zero LLM call (gpt-5-mini, ~60 tokens).
+ * single LLM call (gpt-5-mini, minimal reasoning). gpt-5 reasoning
+ * models reject any non-default temperature, so none is sent.
  *
  * Phase-1 shadow mode: runs alongside the legacy keyword router.
  * Disagreements are logged by the caller; the classifier result does not yet
@@ -62,8 +63,7 @@ export async function classify(
     const oai = getOpenAI();
     const completion = await oai.chat.completions.create({
       model:                 "gpt-5-mini",
-      temperature:           0,
-      max_completion_tokens: 60,
+      max_completion_tokens: 256,
       // Without this, gpt-5-mini can spend the whole token budget on hidden
       // reasoning and return empty content, silently failing classification
       // on every call (caught by the try/catch below, but wastes a full

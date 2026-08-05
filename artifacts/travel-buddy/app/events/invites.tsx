@@ -17,6 +17,7 @@ import {
 } from '../../src/services/events';
 import { Avatar } from '../../src/components/ui';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+import { formatEventLocation } from '../../src/lib/location/formatEventLocation';
 
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return 'Date TBD';
@@ -131,7 +132,7 @@ export default function EventInvitesScreen() {
                       <View style={styles.metaRow}>
                         <MapPin size={12} color={color.mute} />
                         <Text style={styles.metaText} numberOfLines={1}>
-                          {ev.locationName}{ev.city ? `, ${ev.city}` : ''}
+                          {formatEventLocation(ev.locationName, ev.city)}
                         </Text>
                       </View>
                     )}

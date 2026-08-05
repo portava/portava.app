@@ -1695,7 +1695,19 @@ router.post("/events/drafts/:draftId/publish", async (req, res) => {
   // Merge draft data with any body overrides
   const body = { ...(draft as any).data, ...req.body };
   const parsed = PublishDraftSchema.safeParse(body);
-  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid event data"); return; }
+  // QA round 2, bug 5: the zod issue's `path` was being thrown away, so the
+  // client received a bare "Required" with no indication of WHICH field. Prefix
+  // the field path so any future validation gap is self-describing.
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const field = issue?.path?.join(".");
+    sendError(
+      res,
+      "invalid_payload",
+      issue ? `${field ? `${field}: ` : ""}${issue.message}` : "Invalid event data",
+    );
+    return;
+  }
 
   const b = parsed.data;
   if (b.endsAt && b.startsAt && new Date(b.endsAt) <= new Date(b.startsAt)) {

@@ -25,6 +25,31 @@ import { toLegacyStamp } from '../services/passportStampMappers.ts';
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { mockPassport } from '../data/passport.ts';
 
+/**
+ * QA round 2, bug 8 — cross-screen profile staleness signal.
+ *
+ * Saving the identity editor DID persist the new bio (reopening the editor showed
+ * it), but the passport header kept the old one because the focus refetch in
+ * app/(tabs)/passport.tsx is suppressed while the data is younger than
+ * FEED_FOCUS_TTL_MS (5 minutes) — a deliberate anti-scroll-jump guard.
+ *
+ * There is no query cache to invalidate here (@tanstack/react-query is listed in
+ * package.json but has no non-test importer; all state is useState inside bespoke
+ * hooks), so this follows the pub/sub convention the codebase already uses for
+ * exactly this problem: src/lib/commentCountStore.ts.
+ */
+let profileStaleAt = 0;
+
+/** Call after any write that changes what the passport header renders. */
+export function markProfileStale(): void {
+  profileStaleAt = Date.now();
+}
+
+/** True when a stale mark landed after the given load timestamp. */
+export function isProfileStaleSince(loadedAt: number): boolean {
+  return profileStaleAt > loadedAt;
+}
+
 export interface PassportState {
   profile: OwnProfile | null;
   postcards: PassportPostcard[];

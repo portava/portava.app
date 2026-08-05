@@ -383,7 +383,7 @@ function makeToolLoopOpenAI(onMainCall?: (opts: any, mainCalls: number) => void)
     chat: {
       completions: {
         create: async (opts: any) => {
-          const isClassifier = opts.max_completion_tokens === 60 && opts.temperature === 0;
+          const isClassifier = opts.max_completion_tokens === 256;
           if (isClassifier) {
             return { choices: [{ message: { content: JSON.stringify({ intent: "recommendation", confidence: 0.9 }), role: "assistant" } }] };
           }
@@ -445,7 +445,7 @@ describe("G. /compass/ask tool loop", () => {
     // Replace final-answer content: use a dedicated mock emitting blocks.
     _setTestOpenAI({
       chat: { completions: { create: async (opts: any) => {
-        const isClassifier = opts.max_completion_tokens === 60 && opts.temperature === 0;
+        const isClassifier = opts.max_completion_tokens === 256;
         if (isClassifier) {
           return { choices: [{ message: { content: JSON.stringify({ intent: "recommendation", confidence: 0.9 }), role: "assistant" } }] };
         }
@@ -487,7 +487,7 @@ describe("G. /compass/ask tool loop", () => {
     let mainCalls = 0;
     _setTestOpenAI({
       chat: { completions: { create: async (opts: any) => {
-        const isClassifier = opts.max_completion_tokens === 60 && opts.temperature === 0;
+        const isClassifier = opts.max_completion_tokens === 256;
         if (isClassifier) {
           return { choices: [{ message: { content: JSON.stringify({ intent: "recommendation", confidence: 0.9 }), role: "assistant" } }] };
         }
@@ -533,7 +533,7 @@ describe("G. /compass/ask tool loop", () => {
     let mainCalls = 0;
     _setTestOpenAI({
       chat: { completions: { create: async (opts: any) => {
-        if (opts.max_completion_tokens === 60 && opts.temperature === 0) {
+        if (opts.max_completion_tokens === 256) {
           return { choices: [{ message: { content: JSON.stringify({ intent: "action", confidence: 0.95 }), role: "assistant" } }] };
         }
         mainCalls++;
@@ -581,7 +581,7 @@ describe("G2. /compass/ask SSE streaming with tool rounds", () => {
     let mainCalls = 0;
     _setTestOpenAI({
       chat: { completions: { create: async (opts: any) => {
-        const isClassifier = opts.max_completion_tokens === 60 && opts.temperature === 0;
+        const isClassifier = opts.max_completion_tokens === 256;
         if (isClassifier) {
           return { choices: [{ message: { content: JSON.stringify({ intent: "recommendation", confidence: 0.9 }), role: "assistant" } }] };
         }
@@ -649,7 +649,7 @@ describe("G2. /compass/ask SSE streaming with tool rounds", () => {
     let mainCalls = 0;
     _setTestOpenAI({
       chat: { completions: { create: async (opts: any) => {
-        if (opts.max_completion_tokens === 60 && opts.temperature === 0) {
+        if (opts.max_completion_tokens === 256) {
           return { choices: [{ message: { content: JSON.stringify({ intent: "action", confidence: 0.95 }), role: "assistant" } }] };
         }
         mainCalls++;
@@ -696,7 +696,7 @@ describe("G2. /compass/ask SSE streaming with tool rounds", () => {
     let mainCalls = 0;
     _setTestOpenAI({
       chat: { completions: { create: async (opts: any) => {
-        const isClassifier = opts.max_completion_tokens === 60 && opts.temperature === 0;
+        const isClassifier = opts.max_completion_tokens === 256;
         if (isClassifier) {
           return { choices: [{ message: { content: JSON.stringify({ intent: "recommendation", confidence: 0.9 }), role: "assistant" } }] };
         }

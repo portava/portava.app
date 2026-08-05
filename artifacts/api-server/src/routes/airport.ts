@@ -397,6 +397,10 @@ router.post("/airport/sessions", async (req, res) => {
     sendError(res, "invalid_payload", "Departure must be after arrival");
     return;
   }
+  if (departureMs <= Date.now()) {
+    sendError(res, "invalid_payload", "This layover has already departed — set a departure time in the future");
+    return;
+  }
   if (departureMs - arrivalMs > 48 * 3_600_000) {
     sendError(res, "invalid_payload", "A layover window cannot exceed 48 hours");
     return;

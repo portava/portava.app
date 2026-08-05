@@ -398,7 +398,7 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
       <View style={[s.postMedia, { height: mediaHeight }]}>
         {item.media?.[0]?.media_type === 'video' ? (
           <VideoThumbnail
-            posterUri={item.media[0].thumbnail_url ?? item.media[0].url}
+            posterUri={item.media[0].thumbnail_url ?? null}
             duration={item.media[0].duration_seconds ?? undefined}
             style={StyleSheet.absoluteFill}
           />

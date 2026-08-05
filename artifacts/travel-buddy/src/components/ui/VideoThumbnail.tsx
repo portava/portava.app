@@ -7,7 +7,7 @@
  * The poster URL is resolved through useHydratedMedia() so that when
  * `post-media` / `profile-media` buckets go private the thumbnail still loads.
  */
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Pressable,
@@ -43,6 +43,15 @@ export function VideoThumbnail({ posterUri, duration, style, onPress }: VideoThu
     ? (hydratedMap[posterUri] === null ? null : (hydratedMap[posterUri] ?? posterUri))
     : null;
 
+  // QA round 2, bug 11: a poster that fails to decode — most often because the
+  // caller passed the .mp4 URL itself as the poster — left expo-image rendering
+  // nothing over the dark container. That is the "silent black tile" QA saw.
+  // Fall back to the visible placeholder (which still shows the play triangle).
+  // The reset is load-bearing: these render inside recycled FlatList rows, so
+  // without it one dead poster would poison every later item reusing the row.
+  const [posterFailed, setPosterFailed] = useState(false);
+  useEffect(() => { setPosterFailed(false); }, [effectivePosterUri]);
+
   // When no onPress is supplied (e.g. embedded read-only inside a feed card
   // whose own Pressable handles tap/double-tap), render a plain View instead
   // of a Pressable. A nested Pressable — even with onPress=undefined — still
@@ -61,7 +70,7 @@ export function VideoThumbnail({ posterUri, duration, style, onPress }: VideoThu
       style={[s.container, style]}
       {...containerProps}
     >
-      {effectivePosterUri ? (
+      {effectivePosterUri && !posterFailed ? (
         // pointerEvents="none": on web, expo-image renders a real <img> DOM
         // node. A bare <img> can intercept the second click of a rapid
         // double-click as a native drag/selection gesture in some browsers,
@@ -75,6 +84,7 @@ export function VideoThumbnail({ posterUri, duration, style, onPress }: VideoThu
           contentFit="cover"
           transition={150}
           pointerEvents="none"
+          onError={() => setPosterFailed(true)}
         />
       ) : (
         <View style={[StyleSheet.absoluteFill, s.placeholder]} />

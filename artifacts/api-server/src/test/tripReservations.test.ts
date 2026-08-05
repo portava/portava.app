@@ -294,7 +294,8 @@ describe("trip reservations routes", () => {
     assert.ok(userMsg.content.includes("<portava:ugc>"), "pasted text must be UGC-wrapped");
     assert.ok(userMsg.content.includes(pasted));
     assert.equal(sent.model, "gpt-5-mini");
-    assert.equal(sent.temperature, 0);
+    // No temperature assertion: gpt-5 reasoning models reject any
+    // non-default temperature, so the route no longer sends one.
   });
 
   it("extraction failure returns an empty import with error field and inserts nothing", async () => {

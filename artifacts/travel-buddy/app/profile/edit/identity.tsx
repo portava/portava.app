@@ -18,6 +18,7 @@ import { runIdentityGpsFill } from '../../../src/services/identityGpsFill';
 import { ManualCityPicker } from '../../../src/components/ManualCityPicker';
 import { DatePickerField } from '../../../src/components/DatePickerField';
 import type { OwnProfile } from '../../../src/types/models';
+import { markProfileStale } from '../../../src/hooks/usePassport';
 import { PP } from '../../../src/theme/passportTokens';
 import { space } from '../../../src/theme/tokens';
 import {
@@ -291,6 +292,10 @@ export default function IdentityScreen() {
 
       setProfile(res.data);
       setOriginalForm(form);
+      // QA round 2, bug 8: setProfile above is this screen's OWN useState — it
+      // does not touch usePassport(). Tell the passport screen to bypass its
+      // 5-minute focus TTL so the header shows the bio we just saved.
+      markProfileStale();
       savedThenBack();
     } finally {
       saveLockRef.current = false;
