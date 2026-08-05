@@ -221,25 +221,29 @@ export function StampsTab({
   // Computed after hooks so hook order is stable across renders.
   const isBlocked = Boolean(viewingUserId && (blockedIds.has(viewingUserId) || blockerIds.has(viewingUserId)));
 
-  if (isBlocked) return null;
-
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (isBlocked) return;
+    load();
+  }, [load]);
 
   // Expose loadMore to the parent scroll container. In external mode this is
   // the parent pipeline's own load-more, so scrolling triggers exactly one
   // paged request per page (single fetch pipeline).
   useEffect(() => {
+    if (isBlocked) return;
     if (!loadMoreRef) return;
     loadMoreRef.current = external ? (onLoadMore ?? null) : loadMore;
     return () => { loadMoreRef.current = null; };
   }, [loadMoreRef, loadMore, external, onLoadMore]);
 
   useEffect(() => {
+    if (isBlocked) return;
     if (!isOwner || viewingUsername) return;
     getMyProgress().then((res) => { if (res.ok) setProgress(res.data); }).catch(() => {});
   }, [isOwner, viewingUsername]);
 
   useEffect(() => {
+    if (isBlocked) return;
     if (!isOwner || viewingUsername) return;
     getPassportStats().then((res) => {
       if (res.ok) {
@@ -252,9 +256,12 @@ export function StampsTab({
   // external mode is intentionally NOT excluded — the main passport tab mounts
   // StampsTab with data={stampsNew} (external=true) and still needs showcase.
   useEffect(() => {
+    if (isBlocked) return;
     if (!isOwner || viewingUsername) return;
     getMyShowcase().then((result) => { setShowcase(result); }).catch(() => {});
   }, [isOwner, viewingUsername]);
+
+  if (isBlocked) return null;
 
   // Effective values — external mode reads the parent-owned pipeline.
   const effStamps      = external ? data! : allStamps;
