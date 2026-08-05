@@ -5,7 +5,8 @@
   "scripts": {
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm -r run typecheck",
-    "lint": "eslint artifacts/api-server/src scripts/src travel-buddy-standalone/app travel-buddy-standalone/src"
+    "lint": "eslint artifacts/api-server/src scripts/src travel-buddy-standalone/app travel-buddy-standalone/src",
+    "check:hook-order": "node scripts/check-hook-order.mjs"
   },
   "devDependencies": {
     "@types/node": "22.20.0",
