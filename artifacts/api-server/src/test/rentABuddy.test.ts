@@ -3826,13 +3826,18 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     );
 
     // The traveler's notification must still have fired. notifyBookingParty
-    // is fire-and-forget (void async IIFE), so flush pending microtasks
-    // before inspecting state.
-    await new Promise((r) => setImmediate(r));
-    const notifications = (state as any).notifications ?? [];
-    const travelerNotified = notifications.some(
-      (n: any) => n.user_id === USER_ID && n.event_type === "rent_buddy.booking_completed",
-    );
+    // is fire-and-forget (a void async IIFE that starts with dynamic imports),
+    // so poll with a bounded deadline instead of a single setImmediate flush —
+    // under full-suite CPU load the dynamic import can straddle one tick.
+    const deadline = Date.now() + 5000;
+    let travelerNotified = false;
+    while (!travelerNotified && Date.now() < deadline) {
+      const notifications = (state as any).notifications ?? [];
+      travelerNotified = notifications.some(
+        (n: any) => n.user_id === USER_ID && n.event_type === "rent_buddy.booking_completed",
+      );
+      if (!travelerNotified) await new Promise((r) => setTimeout(r, 25));
+    }
     assert.equal(
       travelerNotified,
       true,

@@ -3,8 +3,7 @@ import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, Share, Image, Modal, RefreshControl, type LayoutChangeEvent } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users, BookImage, CalendarClock, MapPin, ShieldCheck, Radio, Link2 } from 'lucide-react-native';
-import { PortavaShareIcon } from '../../src/components/icons/PortavaShareIcon';
+import { ChevronLeft, Share2, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users, BookImage, CalendarClock, MapPin, ShieldCheck, Radio, Link2 } from 'lucide-react-native';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useNextBestAction } from '../../src/hooks/useNextBestAction';
@@ -87,14 +86,14 @@ function TripDetailScreen() {
       .then((place) => { if (!cancelled) setCanonicalTripPlace(place); })
       .catch(() => { if (!cancelled) setCanonicalTripPlace(null); });
     return () => { cancelled = true; };
-  }, [(realTrip as any)?.canonicalPlaceId]);
+  }, [(realTrip as any)?.destinationPlaceId]);
   const { invites } = usePendingTripInvites();
   const isPendingInvite = live ? invites.some((inv) => inv.tripId === id) : false;
   const pageScrollRef    = useRef<ScrollView>(null);
   const commandBarRef    = useRef<ConciergeCommandBarHandle>(null);
   const commandBarY      = useRef<number>(0);
   // Canonical place linked to this trip's destination — loaded when
-  // realTrip.canonicalPlaceId is set.
+  // realTrip.destinationPlaceId is set.
   const [canonicalTripPlace, setCanonicalTripPlace] = useState<CanonicalPlace | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
   const [inviteSheetOpen, setInviteSheetOpen] = useState(false);
@@ -412,7 +411,7 @@ function TripDetailScreen() {
             >
               {shareLoading
                 ? <ActivityIndicator size={14} color={color.ink} />
-                : <PortavaShareIcon size={15} color={color.ink} />}
+                : <Share2 size={15} color={color.ink} />}
               <Text style={styles.topBtnText}>Share Trip</Text>
             </Pressable>
           )}

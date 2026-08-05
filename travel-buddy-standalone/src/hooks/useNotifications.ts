@@ -79,6 +79,9 @@ export function useNotifications(params: ListNotificationsParams = {}) {
     if (res.ok && res.data) {
       setNotifications(res.data.notifications);
       setTotal(res.data.total);
+      // The list now holds exactly page 1, so pagination must restart from 0 —
+      // otherwise the next loadMore would skip the pages the replace dropped.
+      offsetRef.current = 0;
     }
   }, [JSON.stringify(params), limit]);
 

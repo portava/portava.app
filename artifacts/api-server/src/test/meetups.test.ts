@@ -230,10 +230,9 @@ async function startServer(state: State): Promise<TestServer> {
     req.log = { error: () => {}, info: () => {}, warn: () => {} };
     next();
   });
-  // Mount order mirrors routes/index.ts: planRouter is registered BEFORE
-  // meetupsRouter, so plan.ts owns POST /meetups/:meetupId/add-to-trip-plan.
-  // meetups.ts used to declare a duplicate of that route, but it was shadowed
-  // and never ran in production; it has since been removed.
+  // Mirror production mounting order (routes/index.ts): planRouter is mounted
+  // before meetupsRouter, so POST /meetups/:id/add-to-trip-plan is served by
+  // plan.ts (the shadowed duplicate handler in meetups.ts was removed).
   app.use("/api", planRouter);
   app.use("/api", meetupsRouter);
 
@@ -656,15 +655,13 @@ describe("POST /api/meetups/:meetupId/add-to-trip-plan", () => {
     try {
       const r = await httpPost(s.port, `/api/meetups/${MEETUP_ID}/add-to-trip-plan`, "alice-tok", { tripId: TRIP_ID });
       assert.equal(r.status, 201);
-      // plan.ts responds with the camelCased trip_plan_items row (toCamel), so
-      // the meetup is identified by sourceType/sourceId rather than a meetupId key.
       assert.equal(r.body.tripId, TRIP_ID);
       assert.equal(r.body.sourceType, "meetup");
       assert.equal(r.body.sourceId, MEETUP_ID);
     } finally { await s.close(); }
   });
 
-  it("rejects a meetup already in the trip plan with 409 duplicate", async () => {
+  it("duplicate — returns 409 if already added", async () => {
     const state = baseState({
       trip_members: [{ trip_id: TRIP_ID, user_id: ALICE_ID, role: "owner" }],
       trips: [{ id: TRIP_ID, owner_id: ALICE_ID, plan_edit_permission: "all_members" }],
@@ -677,9 +674,6 @@ describe("POST /api/meetups/:meetupId/add-to-trip-plan", () => {
     const s = await startServer(state);
     try {
       const r = await httpPost(s.port, `/api/meetups/${MEETUP_ID}/add-to-trip-plan`, "alice-tok", { tripId: TRIP_ID });
-      // plan.ts treats a re-add as a conflict. The removed meetups.ts duplicate
-      // returned 200 {idempotent:true}, but that handler was shadowed by plan.ts
-      // and never ran in production — 409 is the contract clients actually see.
       assert.equal(r.status, 409);
       assert.equal(r.body.error, "duplicate");
     } finally { await s.close(); }

@@ -1,5 +1,7 @@
 # Travel Buddy
 
+> **SOURCE OF TRUTH (2026-08-04):** `travel-buddy-standalone/` is now the canonical app tree. The old canonical tree `artifacts/travel-buddy` has been deleted and no longer exists. Any instructions or docs below (or elsewhere in this repo) that reference `artifacts/travel-buddy` or the canonical→mirror sync workflow are historical — make all mobile app edits directly in `travel-buddy-standalone/`.
+
 [![Pre-release checks](https://github.com/passporttravelbuddy-ops/travel-buddy/actions/workflows/pre-release.yml/badge.svg?branch=main)](https://github.com/passporttravelbuddy-ops/travel-buddy/actions/workflows/pre-release.yml)
 
 A social travel passport mobile app — log trips, track destinations, and share your travel story.

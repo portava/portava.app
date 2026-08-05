@@ -3,10 +3,12 @@ modules = ["nodejs-24", "python-base-3.13", "postgresql-16"]
 [deployment]
 router = "application"
 deploymentTarget = "autoscale"
-# The deployment serves the API server (https://portava.replit.app).
-# `build` bundles src/ -> artifacts/api-server/dist/ (esbuild, see build.mjs);
-# `run` boots that bundle. Both mirror the package scripts so a deploy is
-# reproducible from the repo instead of relying on the Replit UI's run field.
+# Build/run for the API server (artifacts/api-server) — added by audit Wave 2.
+# Mirrors that package's scripts: "build" runs the Sentry/OTel dep check then
+# esbuild (build.mjs → dist/), "start" boots dist/index.mjs with the Sentry
+# preload. Best-effort: deployment settings configured in the Replit UI
+# override this file, so CONFIRM these commands in the Replit Deployments UI
+# before relying on them.
 build = ["pnpm", "--filter", "@workspace/api-server", "run", "build"]
 run = ["pnpm", "--filter", "@workspace/api-server", "run", "start"]
 
@@ -101,7 +103,7 @@ isValidation = true
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pnpm --filter @workspace/travel-buddy test -- --watchAll=false && pnpm --filter @workspace/travel-buddy run test:component"
+args = "pnpm --dir travel-buddy-standalone test && pnpm --dir travel-buddy-standalone run test:component"
 
 [[workflows.workflow]]
 name = "cross-tree-paths"
@@ -186,7 +188,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pnpm --filter @workspace/travel-buddy run typecheck"
+args = "pnpm --dir travel-buddy-standalone run typecheck"
 
 [workflows.workflow.metadata]
 isValidation = true

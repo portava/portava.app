@@ -344,10 +344,16 @@ async function _awardStampCore(
   }
 
   if (stampErr) {
-    // A unique-constraint violation in the recovery path means a concurrent process
-    // already inserted the missing stamp — treat as a successful heal.
-    if (skipToStampInsert && (stampErr as any).code === "23505") {
-      return { awarded: false, reason: "already_awarded" };
+    // Unique-constraint violation (user_stamps_live_award_unique, migration 2072):
+    // a concurrent process already inserted this stamp.
+    //  - In the recovery path this means the missing stamp was healed elsewhere.
+    //  - In the fresh-award path it means a concurrent award of the same
+    //    (user, definition, source) won the race — the stamp is already earned.
+    if ((stampErr as any).code === "23505") {
+      return {
+        awarded: false,
+        reason: skipToStampInsert ? "already_awarded" : "already_earned",
+      };
     }
     return { awarded: false, reason: `stamp_insert_failed: ${stampErr.message}` };
   }
@@ -436,8 +442,19 @@ async function _awardStampCore(
 
   // 8. Update stamp_progress for repeatable stamps (fire-and-forget, non-fatal)
   if (definition.is_repeatable) {
-    // Read current count, increment, and upsert — wrapped in a real Promise so .catch() is valid.
+    // Atomic DB-side increment (migration 2071) — the previous read-modify-write
+    // lost increments under concurrency. Wrapped in a real Promise so .catch() is valid.
     Promise.resolve().then(async () => {
+      const { error: rpcErr } = await sc.rpc("increment_stamp_progress", {
+        p_user_id:        userId,
+        p_definition_id:  definition.id,
+      });
+      if (!rpcErr) return;
+
+      // PGRST202 = function not found (migration 2071 not applied yet).
+      // Degrade to the legacy read-modify-write upsert so progress still moves.
+      if ((rpcErr as any).code !== "PGRST202") return;
+
       const { data: prog } = await sc
         .from("stamp_progress")
         .select("progress_count")

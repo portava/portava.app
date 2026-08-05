@@ -139,6 +139,10 @@ export function useFollowingFeed() {
   // Skip the first effect run so mounting doesn't double-fetch alongside the
   // explicit initial reload() that callers invoke on mount/focus.
   const versionMounted = useRef(false);
+  // Fetch generation — bumped by every reload so an in-flight loadMore started
+  // against the previous list can't append stale rows (or write a stale cursor)
+  // into the fresh one. Mirrors fetchSeqRef in useRecentNotifications.
+  const fetchGenRef = useRef(0);
 
   const markDeleted = useCallback((id: string) => {
     deletedIds.current.add(id);
@@ -147,6 +151,7 @@ export function useFollowingFeed() {
   }, []);
 
   const reload = useCallback(async () => {
+    fetchGenRef.current += 1; // invalidate any in-flight loadMore
     setLoading(true);
     setError(null);
     setCursor(null);
@@ -220,7 +225,14 @@ export function useFollowingFeed() {
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore || !cursor) return;
     setLoadingMore(true);
+    const gen = fetchGenRef.current;
     const res = await listFollowingFeed({ limit: PAGE_SIZE, before: cursor });
+    // A reload started while this page was in flight — its rows belong to the
+    // old list, so discard them (no append, no cursor write).
+    if (gen !== fetchGenRef.current) {
+      setLoadingMore(false);
+      return;
+    }
     if (res.ok) {
       const rows = res.data ?? [];
       // De-dupe by id and exclude locally-deleted posts

@@ -43,7 +43,7 @@ import {
 import {
   reportGem,
 } from "../services/hiddenGems/HiddenGemModerationService.js";
-import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
+import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import {
   encodeCursor,
   decodeCursor,
@@ -146,7 +146,7 @@ const POST_MEDIA_COLUMNS =
   "width, height, sort_order, processing_status, moderation_status, storage_path, storage_bucket";
 
 const PROFILE_COLUMNS =
-  "id, username, display_name, name, full_name, avatar_url, is_private, verified, bio, account_status, is_official";
+  "id, username, full_name, avatar_url, is_private, verified, bio, account_status, is_official";
 
 // ── Linked entity resolution ──────────────────────────────────────────────────
 
@@ -158,14 +158,14 @@ const PROFILE_COLUMNS =
  */
 const EVENT_LINKED_COLUMNS =
   "id, title, visibility, host_id, cover_url, show_header_publicly, " +
-  "profiles!host_id(username, display_name, name, full_name)";
+  "profiles!host_id(username, full_name)";
 
 /**
  * Columns fetched from the trips table for linked-entity resolution.
  */
 const TRIP_LINKED_COLUMNS =
   "id, title, visibility, owner_id, cover_url, show_header_publicly, " +
-  "profiles!owner_id(username, display_name, name, full_name)";
+  "profiles!owner_id(username, full_name)";
 
 /**
  * Batch-resolve linked entities (events and trips) for a page of posts.
@@ -285,7 +285,7 @@ async function resolveLinkedEntities(
     const hostProfile = Array.isArray(ev.profiles) ? ev.profiles[0] : ev.profiles;
     const entityBase = {
       ...ev,
-      host_display_name: presentedName(hostProfile, true),
+      host_display_name: hostProfile?.full_name ?? null,
       host_username: hostProfile?.username ?? null,
     };
 
@@ -324,7 +324,7 @@ async function resolveLinkedEntities(
     const ownerProfile = Array.isArray(trip.profiles) ? trip.profiles[0] : trip.profiles;
     const entityBase = {
       ...trip,
-      owner_display_name: presentedName(ownerProfile, true),
+      owner_display_name: ownerProfile?.full_name ?? null,
       owner_username: ownerProfile?.username ?? null,
     };
 
@@ -624,10 +624,25 @@ async function handleGridFeed(req: any, res: any): Promise<void> {
   const eligibleGrid = await excludePrivateAuthorPosts(eligible, user.id, sc);
 
   // ── Apply limit + compute next cursor (no ranking — chronological order) ────
+  // The cursor must anchor to the last SERVED item, not the last fetched
+  // candidate: eligibility/privacy filtering can drop most of the candidate
+  // window, and advancing past unserved-but-eligible posts skips them forever.
+  // Chronological order is stable, so resuming from the last served item is
+  // exact. (Fullscreen/ranked mode intentionally keeps the fetch-window cursor
+  // — a documented trade-off there because ranking reorders the page.)
   const page = eligibleGrid.slice(0, limit);
+  const lastServed = page[page.length - 1];
   const lastFetched = candidates[candidates.length - 1];
-  const nextCursor = lastFetched && candidates.length >= candidateLimit
-    ? encodeCursor({ created_at: lastFetched.created_at, id: lastFetched.id })
+  // More content may exist when eligible items overflow this page, or when the
+  // candidate window was full (the DB may hold more rows past it).
+  const mayHaveMore =
+    eligibleGrid.length > limit || candidates.length === candidateLimit;
+  // If nothing on this page survived filtering but the window was full, fall
+  // back to the last fetched candidate so pagination still makes progress
+  // (nothing was served, so nothing can be skipped).
+  const cursorAnchor = lastServed ?? lastFetched;
+  const nextCursor = cursorAnchor && mayHaveMore
+    ? encodeCursor({ created_at: cursorAnchor.created_at, id: cursorAnchor.id })
     : null;
 
   // ── Hydrate into lightweight grid items ─────────────────────────────────────

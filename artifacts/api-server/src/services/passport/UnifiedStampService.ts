@@ -27,6 +27,8 @@ export interface UnifiedStamp {
   source: UnifiedStampSource;
   /** v2 user_stamps.id when source is v2; null for v1 GPS rows. */
   userStampId: string | null;
+  /** v2 user_stamps.stamp_definition_id; null for v1 GPS rows. */
+  definitionId: string | null;
   catalogId: string | null;
   stampType: string | null;
   city: string | null;
@@ -42,10 +44,26 @@ function norm(s: unknown): string {
   return typeof s === "string" ? s.trim().toLowerCase() : "";
 }
 
-/** Dedup key: catalog link first, else the place tuple. */
-function dedupKey(s: { catalogId: string | null; stampType: string | null; country: string | null; city: string | null }): string {
+/**
+ * Dedup key: catalog link first, else the place tuple, else (for location-less
+ * v2 rows) the stamp definition.
+ *
+ * Location-less v2 stamps (badges / social / safety achievements: city and
+ * country both null, catalog_id not yet backfilled) previously all collapsed
+ * into one `loc:{type}||` key, so distinct achievements vanished from the
+ * unified view. Keying them per definition keeps distinct definitions apart
+ * while still collapsing repeat awards of the SAME definition — which matches
+ * the catalog semantics: every award of a location-less definition resolves to
+ * the single "definition:{slug}" catalog entry (StampAwardEngine →
+ * resolveOrEnqueueForDefinition), so once catalog_id is backfilled the `cat:`
+ * key would dedup them identically.
+ */
+function dedupKey(s: { catalogId: string | null; stampType: string | null; country: string | null; city: string | null; definitionId?: string | null }): string {
   if (s.catalogId) return `cat:${s.catalogId}`;
-  return `loc:${norm(s.stampType)}|${norm(s.country)}|${norm(s.city)}`;
+  const country = norm(s.country);
+  const city = norm(s.city);
+  if (!country && !city && s.definitionId) return `def:${s.definitionId}`;
+  return `loc:${norm(s.stampType)}|${country}|${city}`;
 }
 
 function pickDate(row: any): string | null {
@@ -58,7 +76,7 @@ async function readV2(sc: any, userId: string): Promise<UnifiedStamp[]> {
     const { data, error } = await sc
       .from("user_stamps")
       .select(
-        "id, city, country, earned_at, is_revoked, catalog_id, " +
+        "id, stamp_definition_id, city, country, earned_at, is_revoked, catalog_id, " +
         "stamp_definitions(name, rarity, stamp_type)",
       )
       .eq("user_id", userId)
@@ -73,6 +91,7 @@ async function readV2(sc: any, userId: string): Promise<UnifiedStamp[]> {
     return rows.map((r) => ({
       source: "v2_achievement" as const,
       userStampId: r.id ?? null,
+      definitionId: r.stamp_definition_id ?? null,
       catalogId: r.catalog_id ?? null,
       stampType: r.stamp_definitions?.stamp_type ?? null,
       city: r.city ?? null,
@@ -100,6 +119,7 @@ async function readV1(sc: any, userId: string): Promise<UnifiedStamp[]> {
       .map((r) => ({
         source: "v1_gps" as const,
         userStampId: null,
+        definitionId: null,
         catalogId: r.catalog_id ?? null,
         stampType: r.stamp_type ?? null,
         city: r.city ?? null,

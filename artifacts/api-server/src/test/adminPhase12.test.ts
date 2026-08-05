@@ -182,7 +182,7 @@ function makeAdminFakeClient(opts: {
       if (table === "reports")             return builder(table, reports);
       if (table === "moderation_actions")  return builder(table, modActions);
       if (table === "posts")               return builder(table, posts);
-      if (table === "compass_settings")     return builder(table, compassSettings);
+      if (table === "compass_settings")    return builder(table, compassSettings);
       const b2: any = {
         select: () => b2, eq: () => b2, neq: () => b2, is: () => b2,
         ilike: () => b2, in: () => b2, or: () => b2, order: () => b2,

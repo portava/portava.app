@@ -289,7 +289,7 @@ router.post('/users/:userId/open-thread', async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, 'permission engine failed for open-thread');
-    sendError(res, 'db_error', 'Permission check failed', { exposeDetail: true });
+    sendError(res, 'db_error', 'Permission check failed');
     return;
   }
 
@@ -313,15 +313,38 @@ router.post('/users/:userId/open-thread', async (req, res) => {
       membersByThread[m.thread_id].push(m.user_id);
     }
 
+    const candidateIds: string[] = [];
     for (const [threadId, members] of Object.entries(membersByThread)) {
       if (members.length === 2 && members.includes(user.id) && members.includes(recipientId)) {
-        existingThreadId = threadId;
-        break;
+        candidateIds.push(threadId);
       }
+    }
+
+    // Only reuse true DM threads. Trip/circle group threads can also have exactly
+    // two members — matching those would hijack a group chat as the DM. The DM
+    // create path below relies on the DB default thread_type='direct', so accept
+    // 'direct' (or NULL for legacy rows).
+    if (candidateIds.length > 0) {
+      const { data: candidateThreads } = await sc
+        .from('message_threads')
+        .select('id, thread_type')
+        .in('id', candidateIds);
+      const direct = ((candidateThreads ?? []) as any[]).find(
+        (t) => t.thread_type === 'direct' || t.thread_type == null,
+      );
+      if (direct) existingThreadId = direct.id;
     }
   }
 
   if (existingThreadId) {
+    // Reusing a thread one (or both) parties previously left: reset left_at so
+    // the conversation is usable again for both sides.
+    await sc
+      .from('message_thread_members')
+      .update({ left_at: null })
+      .eq('thread_id', existingThreadId)
+      .in('user_id', [user.id, recipientId]);
+
     res.status(200).json({ threadId: existingThreadId, created: false });
     return;
   }
@@ -414,7 +437,7 @@ router.post('/users/:userId/message-request', async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, 'permission engine failed for message-request');
-    sendError(res, 'db_error', 'Permission check failed', { exposeDetail: true });
+    sendError(res, 'db_error', 'Permission check failed');
     return;
   }
 
@@ -566,6 +589,33 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
 
   const now = new Date().toISOString();
 
+  // Compare-and-swap the status transition FIRST so a double-submit (or two
+  // concurrent accepts) can only win once. Only the request that flips
+  // pending → accepted proceeds with thread creation / preview message.
+  const { data: casRows, error: casErr } = await sc
+    .from('message_requests')
+    .update({ status: 'accepted', responded_at: now })
+    .eq('id', requestId)
+    .eq('status', 'pending')
+    .select('id');
+
+  if (casErr) {
+    req.log.error({ err: casErr }, 'message_requests accept update failed');
+    sendError(res, 'db_error', casErr.message);
+    return;
+  }
+
+  if (!casRows || (casRows as any[]).length === 0) {
+    // Lost the race — another submit already transitioned this request.
+    const { data: current } = await sc
+      .from('message_requests')
+      .select('status')
+      .eq('id', requestId)
+      .maybeSingle();
+    sendError(res, 'invalid_payload', `Request is already ${(current as any)?.status ?? 'accepted'}`);
+    return;
+  }
+
   const { data: senderMemberships } = await sc
     .from('message_thread_members')
     .select('thread_id')
@@ -586,15 +636,29 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
       membersByThread[m.thread_id].push(m.user_id);
     }
 
+    const candidateIds: string[] = [];
     for (const [tid, members] of Object.entries(membersByThread)) {
       if (
         members.length === 2 &&
         members.includes(req_.sender_id) &&
         members.includes(req_.recipient_id)
       ) {
-        existingDirectThreadId = tid;
-        break;
+        candidateIds.push(tid);
       }
+    }
+
+    // Only reuse true DM threads — trip/circle group threads can also have
+    // exactly two members. DM threads carry thread_type='direct' (DB default)
+    // or NULL on legacy rows.
+    if (candidateIds.length > 0) {
+      const { data: candidateThreads } = await sc
+        .from('message_threads')
+        .select('id, thread_type')
+        .in('id', candidateIds);
+      const direct = ((candidateThreads ?? []) as any[]).find(
+        (t) => t.thread_type === 'direct' || t.thread_type == null,
+      );
+      if (direct) existingDirectThreadId = direct.id;
     }
   }
 
@@ -602,6 +666,13 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
 
   if (existingDirectThreadId) {
     threadId = existingDirectThreadId;
+    // Reusing a thread one (or both) parties previously left: reset left_at so
+    // the conversation is usable again for both sides.
+    await sc
+      .from('message_thread_members')
+      .update({ left_at: null })
+      .eq('thread_id', threadId)
+      .in('user_id', [req_.sender_id, req_.recipient_id]);
   } else {
     const { data: thread, error: tErr } = await sc
       .from('message_threads')
@@ -622,11 +693,6 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
       { thread_id: threadId, user_id: req_.recipient_id, joined_at: now },
     ]);
   }
-
-  await sc
-    .from('message_requests')
-    .update({ status: 'accepted', responded_at: now })
-    .eq('id', requestId);
 
   res.status(200).json({ status: 'accepted', threadId, requestId });
 
@@ -1692,7 +1758,8 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   // Write-time tagging: extract @mentions, enforce permissions, write rows, dispatch
   // notifications via NotificationService (privacy guard + dedup) + NotificationRouter.
   // Non-fatal — must not block the message write.
-  if (body.trim().length > 0) {
+  // body is null for E2EE threads (server never sees plaintext) — skip tagging entirely.
+  if (body && body.trim().length > 0) {
     try {
       const taggedIds = await processTagging({
         db: sc,
@@ -2172,7 +2239,7 @@ router.get('/trips/:tripId/chat', async (req, res) => {
     });
   } catch (e) {
     req.log.error({ err: e }, 'syncTripChatMembers failed in GET /trips/:tripId/chat');
-    sendError(res, 'db_error', 'Failed to open trip chat', { exposeDetail: true });
+    sendError(res, 'db_error', 'Failed to open trip chat');
   }
 });
 
@@ -2231,7 +2298,7 @@ router.get('/circles/:circleOwnerId/chat', async (req, res) => {
     });
   } catch (e) {
     req.log.error({ err: e }, 'syncCircleChatMembers failed in GET /circles/:circleOwnerId/chat');
-    sendError(res, 'db_error', 'Failed to open circle chat', { exposeDetail: true });
+    sendError(res, 'db_error', 'Failed to open circle chat');
   }
 });
 
@@ -2342,7 +2409,7 @@ router.post('/threads/:threadId/report', async (req, res) => {
 
   if (error) {
     req.log.warn({ err: error }, 'thread report insert failed');
-    sendError(res, 'db_error', 'Could not file report', { exposeDetail: true });
+    sendError(res, 'db_error', 'Could not file report');
     return;
   }
 
@@ -2425,7 +2492,7 @@ router.post('/messages/:messageId/report', async (req, res) => {
 
   if (error) {
     req.log.warn({ err: error }, 'message report insert failed');
-    sendError(res, 'db_error', 'Could not file report', { exposeDetail: true });
+    sendError(res, 'db_error', 'Could not file report');
     return;
   }
 

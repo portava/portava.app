@@ -1,26 +1,41 @@
 /**
- * In-memory sliding-window rate limiter.
+ * Rate limiter — fixed-window counters, optionally backed by Redis.
  *
- * SCOPE — PER-PROCESS, BEST-EFFORT ONLY. Buckets live in this process's
- * memory, so with N server instances a client effectively gets N× the
- * budget, and a restart clears all history. Any limit that must be a hard
- * ceiling across instances MUST be enforced against shared state (e.g. the
- * DB) — see the call-start limit: this limiter is only a cheap first-line
- * backstop there, while the permission engine's DB-counted
- * `startsInLastHour` check (callPermissionEngine.ts) is the authoritative
- * cross-instance ceiling.
+ * BACKENDS
+ *   - In-memory Map (default): per-process, best-effort only. With N server
+ *     instances a client effectively gets N× the budget, and a restart clears
+ *     all history.
+ *   - Redis (when REDIS_URL is set and reachable): shared counters via the
+ *     classic INCR + EXPIRE fixed-window pattern, so all instances count
+ *     against the same budget. Uses the same ioredis dependency as
+ *     routes/crashReport.ts.
  *
- * Each (key, limiterId) pair gets its own bucket: { count, windowStart }.
- * When the elapsed time since windowStart exceeds windowMs the bucket resets.
+ * SYNC API + ASYNC REDIS — the exported functions are synchronous (dozens of
+ * call sites depend on that), so the Redis round-trip cannot block the
+ * decision. Instead each call:
+ *   1. decides synchronously from the local bucket (window-aligned so every
+ *      instance agrees on window boundaries), and
+ *   2. fires INCR/EXPIRE at Redis in the background; when the reply arrives,
+ *      the local bucket adopts the shared count if it is higher.
+ * The result is near-real-time cross-instance enforcement (one round-trip of
+ * lag) with zero added request latency, and a transparent fall back to pure
+ * in-memory behaviour when Redis is absent or down (fail-open, like
+ * crashReport.ts). Any limit that must be an exact hard ceiling across
+ * instances MUST still be enforced against the DB — see the call-start limit:
+ * callPermissionEngine.ts's DB-counted `startsInLastHour` remains the
+ * authoritative cross-instance ceiling.
  *
  * Limits are configurable via environment variables:
- *   REPORT_RATE_LIMIT_PER_HOUR  (default 10)
- *   MUTE_RATE_LIMIT_PER_DAY     (default 50)
+ *   REPORT_RATE_LIMIT_PER_HOUR             (default 10)
+ *   MUTE_RATE_LIMIT_PER_DAY                (default 50)
+ *   MODERATION_REPORT_RATE_LIMIT_PER_DAY   (default 10)
  *
- * The module exports two named limiters (reportRateLimit, muteRateLimit) as
- * thin wrappers, plus a low-level checkRateLimit() for custom limits.
+ * The module exports named limiters (reportRateLimit, muteRateLimit,
+ * moderationReportRateLimit) as thin wrappers, plus a low-level
+ * checkRateLimit() for custom limits.
  *
- * Test helpers: _resetRateLimit() clears buckets so tests start clean.
+ * Test helpers: _resetRateLimit() clears local buckets so tests start clean
+ * (tests run without REDIS_URL, so no Redis state is involved).
  */
 
 export interface RateLimitResult {
@@ -34,6 +49,81 @@ interface Bucket {
 }
 
 const _buckets = new Map<string, Bucket>();
+
+// ── Optional Redis backend (lazy, fail-open) ──────────────────────────────────
+
+type RedisClient = import("ioredis").Redis;
+
+let _redis: RedisClient | null = null;
+let _redisInitInFlight = false;
+let _redisLastAttemptAt = 0;
+const REDIS_RETRY_COOLDOWN_MS = 30_000;
+
+/**
+ * Kick off the Redis connection in the background (never blocks a request).
+ * Mirrors the lazy-import approach in routes/crashReport.ts so the module
+ * still loads when REDIS_URL is unset or ioredis cannot connect. Failed
+ * connections are retried at most every REDIS_RETRY_COOLDOWN_MS.
+ */
+function ensureRedis(): RedisClient | null {
+  const url = process.env.REDIS_URL;
+  if (!url) return null;
+  if (_redis) return _redis;
+  if (_redisInitInFlight) return null;
+  if (Date.now() - _redisLastAttemptAt < REDIS_RETRY_COOLDOWN_MS) return null;
+
+  _redisInitInFlight = true;
+  _redisLastAttemptAt = Date.now();
+  void (async () => {
+    try {
+      const { default: Redis } = await import("ioredis");
+      const client = new Redis(url, {
+        lazyConnect:          true,
+        enableReadyCheck:     true,
+        maxRetriesPerRequest: 1,
+        connectTimeout:       2000,
+        commandTimeout:       1000,
+      });
+      await client.connect();
+      _redis = client;
+    } catch {
+      // fail-open: stay on the in-memory backend; retry after cooldown
+      _redis = null;
+    } finally {
+      _redisInitInFlight = false;
+    }
+  })();
+  return null;
+}
+
+/**
+ * Background sync of one hit into the shared Redis counter. On reply, adopt
+ * the shared count into the local bucket when it is higher, so traffic on
+ * other instances counts against this instance's next decision.
+ */
+function syncHitToRedis(
+  redis: RedisClient,
+  bucketKey: string,
+  windowStart: number,
+  windowMs: number,
+): void {
+  const redisKey = `rl:${bucketKey}:${windowStart}`;
+  const ttlSec = Math.ceil(windowMs / 1000) + 1;
+  void redis
+    .incr(redisKey)
+    .then(async (sharedCount: number) => {
+      if (sharedCount === 1) {
+        await redis.expire(redisKey, ttlSec).catch(() => {});
+      }
+      const bucket = _buckets.get(bucketKey);
+      if (bucket && bucket.windowStart === windowStart && sharedCount > bucket.count) {
+        bucket.count = sharedCount;
+      }
+    })
+    .catch(() => {
+      /* fail-open: Redis unavailable → in-memory behaviour only */
+    });
+}
 
 /**
  * Check and increment the rate limit for a key.
@@ -50,21 +140,33 @@ export function checkRateLimit(
   limit: number,
   windowMs: number,
 ): RateLimitResult {
-  const key    = `${limiterId}:${userId}`;
-  const now    = Date.now();
-  const bucket = _buckets.get(key);
+  const key   = `${limiterId}:${userId}`;
+  const now   = Date.now();
+  const redis = ensureRedis();
 
-  if (!bucket || now - bucket.windowStart >= windowMs) {
-    _buckets.set(key, { count: 1, windowStart: now });
+  // With Redis, align windows to epoch multiples so every instance uses the
+  // same window boundaries (required for a shared fixed-window counter).
+  // Without Redis, keep the original first-hit-anchored window behaviour.
+  const alignedStart = redis ? now - (now % windowMs) : now;
+
+  let bucket = _buckets.get(key);
+  const expired = !bucket ||
+    (redis ? bucket.windowStart !== alignedStart : now - bucket.windowStart >= windowMs);
+
+  if (expired) {
+    bucket = { count: 1, windowStart: alignedStart };
+    _buckets.set(key, bucket);
+    if (redis) syncHitToRedis(redis, key, alignedStart, windowMs);
     return { allowed: true, retryAfterMs: 0 };
   }
 
-  if (bucket.count >= limit) {
-    const retryAfterMs = windowMs - (now - bucket.windowStart);
+  if (bucket!.count >= limit) {
+    const retryAfterMs = windowMs - (now - bucket!.windowStart);
     return { allowed: false, retryAfterMs };
   }
 
-  bucket.count++;
+  bucket!.count++;
+  if (redis) syncHitToRedis(redis, key, bucket!.windowStart, windowMs);
   return { allowed: true, retryAfterMs: 0 };
 }
 
@@ -115,6 +217,8 @@ export function moderationReportRateLimit(userId: string): RateLimitResult {
 /**
  * Clear rate-limit buckets. Pass a limiterId+userId pair to clear one bucket,
  * or call with no arguments to clear all (use between tests).
+ * Only clears LOCAL buckets — tests run without REDIS_URL so there is no
+ * shared state to clear.
  */
 export function _resetRateLimit(limiterId?: string, userId?: string): void {
   if (limiterId && userId) {

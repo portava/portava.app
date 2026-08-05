@@ -1515,6 +1515,57 @@ router.delete("/me/delete-request", async (req, res) => {
 });
 
 /* ---------------------------------------------------------------------------
+ * POST /internal/deletion-requests/execute-due — deletion worker endpoint
+ * ---------------------------------------------------------------------------
+ * Service-to-service endpoint (NOT user-facing). Executes the deletion cascade
+ * for every user_deletion_requests row whose hold has elapsed.
+ *
+ * This is a thin wrapper over processDueDeletions() in
+ * lib/accountDeletionScheduler.ts — the same function the in-process scheduler
+ * ticks. Both paths therefore share one implementation, one batch cap, one
+ * feature-flag gate, and the same cascade (AccountDeletionService), so an
+ * external cron and the internal timer can never drift apart.
+ *
+ * Auth: X-Internal-Secret must match INTERNAL_API_SECRET — the fail-closed
+ * pattern from routes/notifications.ts. Unset env var disables the route (503).
+ *
+ * SAFETY: processDueDeletions is gated behind the `account_deletion_worker_enabled`
+ * feature flag and fails closed. When the flag is off this returns
+ * `{ ok: true, skipped: true }` and deletes nothing — that is the expected
+ * response until the flag is deliberately turned on.
+ *
+ * SCHEDULING: hit once a day via a Replit Scheduled Deployment / any cron:
+ *   curl -X POST "$API_BASE_URL/api/internal/deletion-requests/execute-due" \
+ *        -H "X-Internal-Secret: $INTERNAL_API_SECRET"
+ * Idempotent: executed rows are marked completed and never re-selected, so
+ * overlapping runs (cron + in-process tick) are safe.
+ */
+router.post("/internal/deletion-requests/execute-due", async (req, res) => {
+  const secret = process.env.INTERNAL_API_SECRET;
+  if (!secret) {
+    res.status(503).json({
+      error: "misconfigured",
+      message: "INTERNAL_API_SECRET is not set; internal endpoints are disabled",
+    });
+    return;
+  }
+  if (req.headers["x-internal-secret"] !== secret) {
+    res.status(401).json({ error: "unauthorized", message: "Missing or invalid internal secret" });
+    return;
+  }
+
+  try {
+    const { processDueDeletions } = await import("../lib/accountDeletionScheduler.js");
+    const result = await processDueDeletions();
+    req.log.info({ ...result }, "deletion worker: execute-due run complete");
+    res.status(200).json({ ok: true, ...result });
+  } catch (err) {
+    req.log.error({ err }, "deletion worker: execute-due threw");
+    sendError(res, "db_error", "Deletion worker run failed");
+  }
+});
+
+/* ---------------------------------------------------------------------------
  * GET /me/privacy — fetch caller's privacy settings
  * ---------------------------------------------------------------------------
  * Returns the profile_privacy_settings row, or defaults if none exists yet.

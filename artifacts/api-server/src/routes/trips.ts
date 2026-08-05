@@ -27,6 +27,18 @@ const TRIP_COLUMNS =
   "allow_join_requests, show_exact_dates, show_destination_city, delayed_posting_default, " +
   "precise_location_visible, plan_edit_permission, progress, created_at, updated_at";
 
+/** "Today" as a YYYY-MM-DD string in the given IANA timezone (UTC fallback). */
+function todayInTimezone(timezone: string | null | undefined): string {
+  const opts = { year: "numeric", month: "2-digit", day: "2-digit" } as const;
+  try {
+    // en-CA formats as YYYY-MM-DD, directly comparable to date-column strings.
+    return new Intl.DateTimeFormat("en-CA", { timeZone: timezone ?? "UTC", ...opts }).format(new Date());
+  } catch {
+    // Invalid/unknown timezone string — fall back to UTC.
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", ...opts }).format(new Date());
+  }
+}
+
 /** Canonical trip status — never let clients override this server-side logic. */
 function computeTripStatus(
   title: string | null,
@@ -34,14 +46,17 @@ function computeTripStatus(
   startDate: string | null,
   endDate: string | null,
   currentStatus: string,
+  timezone?: string | null,
 ): string {
   if (currentStatus === "cancelled" || currentStatus === "archived") return currentStatus;
   if (!title || !destinationCity) return "draft";
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
+  // Day boundaries are evaluated in the trip's timezone (not UTC midnight).
+  // start_date/end_date are stored as YYYY-MM-DD date strings, so plain string
+  // comparison against a YYYY-MM-DD "today" is exact.
+  const today = todayInTimezone(timezone);
   if (startDate) {
-    const start = new Date(startDate + "T00:00:00Z");
-    const end   = endDate ? new Date(endDate + "T00:00:00Z") : null;
+    const start = startDate.slice(0, 10);
+    const end   = endDate ? endDate.slice(0, 10) : null;
     if (today < start)          return "upcoming";
     if (!end || today <= end)   return "active";
     return "completed";
@@ -651,7 +666,7 @@ router.patch("/trips/:tripId", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Only the trip owner may change trip settings
-  const { data: trip } = await sc.from("trips").select("id, owner_id, title, destination_city, destination_country, start_date, end_date, status, plan_edit_permission").eq("id", tripId).maybeSingle();
+  const { data: trip } = await sc.from("trips").select("id, owner_id, title, destination_city, destination_country, start_date, end_date, status, timezone, plan_edit_permission").eq("id", tripId).maybeSingle();
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const t = trip as any;
   if (t.owner_id !== user.id) { sendError(res, "forbidden", "Only the trip owner can update this trip"); return; }
@@ -700,7 +715,14 @@ router.patch("/trips/:tripId", async (req, res) => {
   const effectiveTitle = (b.title ?? t.title) as string | null;
   const effectiveCity  = (b.destinationCity ?? t.destination_city) as string | null;
   const effectiveStatus = b.status ?? t.status;
-  patch.status = computeTripStatus(effectiveTitle, effectiveCity, newStart as string | null, newEnd as string | null, effectiveStatus);
+  patch.status = computeTripStatus(
+    effectiveTitle,
+    effectiveCity,
+    newStart as string | null,
+    newEnd as string | null,
+    effectiveStatus,
+    (b.timezone ?? t.timezone ?? null) as string | null,
+  );
 
   const { data: updated, error: patchErr } = await sc
     .from("trips")
@@ -725,18 +747,33 @@ router.patch("/trips/:tripId", async (req, res) => {
   if (patch.status === "completed" && t.status !== "completed") {
     void (async () => {
       try {
-        const { data: members } = await sc.from("trip_members").select("user_id").eq("trip_id", tripId);
+        // Only accepted participants get the review prompt — exclude pending
+        // invitees and removed members (mirrors awardTripCompletionStamps).
+        const { data: members } = await sc
+          .from("trip_members")
+          .select("user_id")
+          .eq("trip_id", tripId)
+          .in("role", ["owner", "member"]);
         if (members && (members as any[]).length > 0) {
           const memberIds: string[] = (members as any[]).map((m: any) => m.user_id);
           const tripTitle: string = (updated as any)?.title ?? "your trip";
+          // Route through NotificationService so the privacy guard + dedup run.
+          // notifRouter.route() is intentionally NOT called here; push is sent
+          // below via sendPushWithRetry to avoid double-delivery.
+          const { NotificationService } = await import("../services/notifications/NotificationService.js");
+          const notifSvc = new NotificationService(sc);
           await Promise.allSettled(
             memberIds.map((uid) =>
-              sc.from("notifications").insert({
-                user_id: uid, actor_id: user.id,
-                event_type: "trip.review_prompt",
+              notifSvc.create({
+                userId: uid,
+                actorId: user.id,
+                eventType: "trip.review_prompt",
                 category: "trips",
                 title: "How was the trip?",
                 body: `Leave a review for "${tripTitle}" — your feedback helps the community.`,
+                sourceType: "trips",
+                sourceId: tripId,
+                tripId,
                 metadata: { entityType: "trip", entityId: tripId, entityName: tripTitle },
               }),
             ),

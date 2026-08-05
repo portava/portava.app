@@ -65,11 +65,14 @@ export class NotificationDeduplicationService {
       }
     }
 
-    // 4. General deduplication on (user, category, sourceType, sourceId)
+    // 4. General deduplication on (user, category, eventType, sourceType, sourceId).
+    // event_type must be part of the match: different events about the same
+    // source (e.g. trip.invite then trip.reminder for one trip) are not
+    // duplicates of each other and must not suppress one another.
     if (sourceType && sourceId) {
-      const isDup = await this.hasRecentNotification(userId, category, sourceType, sourceId, DEFAULT_DEDUP_WINDOW_MS);
+      const isDup = await this.hasRecentNotification(userId, category, sourceType, sourceId, DEFAULT_DEDUP_WINDOW_MS, eventType);
       if (isDup) {
-        logger.debug({ userId, category, sourceType, sourceId }, 'dedup: general dedup hit');
+        logger.debug({ userId, category, eventType, sourceType, sourceId }, 'dedup: general dedup hit');
         return { isDuplicate: true, reason: 'general_dedup' };
       }
     }
@@ -83,16 +86,23 @@ export class NotificationDeduplicationService {
     sourceType: string,
     sourceId: string,
     windowMs: number,
+    eventType?: string,
   ): Promise<boolean> {
     try {
       const since = new Date(Date.now() - windowMs).toISOString();
-      const { data } = await this.db
+      let query = this.db
         .from('notifications')
         .select('id')
         .eq('user_id', userId)
         .eq('category', category)
         .eq('source_type', sourceType)
-        .eq('source_id', sourceId)
+        .eq('source_id', sourceId);
+      // notifications.event_type is NOT NULL (0062_notifications_schema.sql) and
+      // always written by NotificationService.create — safe to match on.
+      if (eventType) {
+        query = query.eq('event_type', eventType);
+      }
+      const { data } = await query
         .gt('created_at', since)
         .limit(1);
       return Array.isArray(data) && data.length > 0;

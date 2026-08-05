@@ -8,12 +8,27 @@ import { pauseOnSessionEnd } from '../services/circle.ts';
 import { clearForUser as clearSavedForUser, primeSaved } from '../services/savedPostsCache.ts';
 import { fetchMySavedPostIds } from '../services/postEngagement.ts';
 import { clearCachedFeed } from '../services/compass.ts';
+import { SECURE_KEYS, deleteSecure } from '../lib/secureStore.ts';
 
 // AsyncStorage keys that may hold private entity data and must be wiped on logout.
 // Using lazy require to avoid circular-dependency issues and to preserve native-only import.
 const PRIVATE_ASYNC_KEYS = [
   // Pending checkpoint arrivals — may contain precise user coordinates.
   '@travel_buddy/pending_checkpoint_arrivals',
+] as const;
+
+// E2EE identity/device key material that must be wiped on logout so the next
+// account signing in on this device cannot inherit the previous user's crypto
+// identity. (MLS per-group state uses a dynamic key prefix and cannot be
+// enumerated through SecureStore; group state is re-established per identity.)
+const CRYPTO_SECURE_KEYS = [
+  SECURE_KEYS.IDENTITY_PRIVATE_KEY,
+  SECURE_KEYS.IDENTITY_PUBLIC_KEY,
+  SECURE_KEYS.DEVICE_ED25519_PRIVATE_KEY,
+  SECURE_KEYS.DEVICE_ED25519_PUBLIC_KEY,
+  SECURE_KEYS.DEVICE_X25519_PRIVATE_KEY,
+  SECURE_KEYS.DEVICE_X25519_PUBLIC_KEY,
+  SECURE_KEYS.REGISTERED_DEVICE_ID,
 ] as const;
 
 /**
@@ -67,6 +82,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       );
   }, [userId]);
 
+  // Tracks the current userId so async completions can detect a sign-out or
+  // account switch that happened while their request was in flight.
+  const userIdRef = useRef<string | null>(null);
+  userIdRef.current = userId;
+
   const fetchAccountStatus = useCallback(async (uid: string | null) => {
     if (!uid) {
       setAccountStatus(null);
@@ -76,6 +96,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
     setAccountStatusLoaded(false);
     const result = await getAccountStatus();
+    // Fence: if the signed-in user changed while the request was in flight,
+    // discard the result — the effect keyed on userId re-fetches for the new
+    // user (or clears state on sign-out).
+    if (userIdRef.current !== uid) return;
     if (result.ok && result.data) {
       setAccountStatus(result.data.accountStatus);
       setDeletionScheduledAt(result.data.deletionScheduledAt);
@@ -170,6 +194,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       await Promise.allSettled(PRIVATE_ASYNC_KEYS.map((k) => AS.removeItem(k)));
     } catch {
       // Non-fatal — native module absent (e.g. web / test environment).
+    }
+    // Wipe E2EE key material from SecureStore so a different account signing
+    // in later on this device cannot use the outgoing user's identity.
+    // Sign-out must never fail on cleanup, so failures are swallowed.
+    try {
+      await Promise.allSettled(CRYPTO_SECURE_KEYS.map((k) => deleteSecure(k)));
+    } catch {
+      // Non-fatal — proceed with sign-out regardless.
     }
     await svcSignOut();
     setUserId(null);

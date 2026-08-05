@@ -79,3 +79,71 @@ tables have no RLS while the mobile app ships the anon key.
   policy instead and re-enable).
 - 2069 only creates a table that nothing could have written to before; there
   is no data-migration risk.
+
+# APPLY — atomic stamp progress + user_stamps uniqueness
+
+Two migrations closing stamp-award concurrency bugs. The first fixes a
+**Med-High** lost-update bug: StampAwardEngine incremented stamp_progress with
+a read-modify-write, so concurrent awards of a repeatable stamp lost counts.
+The second closes a **Med-High** double-award race: user_stamps has no unique
+index, so concurrent awardStamp calls for the same (user, definition, source)
+could both insert.
+
+## Files
+1. `artifacts/api-server/src/migrations/2071_stamp_progress_atomic.sql`
+   Creates `increment_stamp_progress(p_user_id uuid, p_definition_id uuid)` —
+   a single-statement INSERT ... ON CONFLICT (user_id, stamp_definition_id)
+   DO UPDATE SET progress_count = progress_count + 1 RETURNING progress_count.
+   EXECUTE is revoked from PUBLIC/anon and granted to service_role only (the
+   API's service-role client is the sole caller).
+2. `artifacts/api-server/src/migrations/2072_user_stamps_unique.sql`
+   First dedups existing rows: (a) non-repeatable definitions keep only the
+   earliest live stamp per (user_id, stamp_definition_id); (b) all definitions
+   keep only the earliest live stamp per (user_id, stamp_definition_id,
+   source_type, source_id). Then creates partial unique index
+   `user_stamps_live_award_unique` on (user_id, stamp_definition_id,
+   COALESCE(source_type,''), COALESCE(source_id::text,'')) WHERE is_revoked =
+   false. COALESCE makes NULL sources collide; the partial predicate keeps the
+   revoke → re-award heal path working.
+
+## Apply (Supabase SQL editor)
+1. Open the Supabase dashboard → SQL Editor.
+2. Paste and run `2071_stamp_progress_atomic.sql`.
+3. Paste and run `2072_user_stamps_unique.sql`.
+   Both are idempotent — re-running is safe (verified against Postgres 16:
+   dedup, re-run, 23505 on live duplicates, re-award after revoke all pass).
+4. Code is already deployed-order safe: the engine calls the RPC and falls
+   back to the legacy upsert on PGRST202 (function missing), and it already
+   maps 23505 on the stamp insert to already_earned / already_awarded.
+
+## Verify
+2071 — function exists and counts atomically:
+
+    SELECT increment_stamp_progress('<some-user-uuid>', '<some-def-uuid>');
+    -- run twice: expect 1 then 2; clean up the test row afterwards:
+    -- DELETE FROM stamp_progress WHERE user_id = '<some-user-uuid>'
+    --   AND stamp_definition_id = '<some-def-uuid>';
+
+2072 — index exists and no live duplicates remain:
+
+    SELECT indexdef FROM pg_indexes
+    WHERE tablename = 'user_stamps' AND indexname = 'user_stamps_live_award_unique';
+    -- expect: UNIQUE ... WHERE (is_revoked = false)
+
+    SELECT user_id, stamp_definition_id, COALESCE(source_type,''),
+           COALESCE(source_id::text,''), count(*)
+    FROM user_stamps WHERE is_revoked = false
+    GROUP BY 1,2,3,4 HAVING count(*) > 1;
+    -- expect: zero rows
+
+## Honesty / rollback
+- 2072 DELETES duplicate stamp rows (keeping the earliest per key). These rows
+  are the double-awards the migration exists to remove, but if you want a
+  paper trail, snapshot first:
+  `CREATE TABLE user_stamps_pre_2072 AS SELECT * FROM user_stamps;`
+- The index only constrains live (non-revoked) rows; non-repeatable stamps
+  awarded from two DIFFERENT sources are still guarded app-side only (the
+  index predicate cannot join stamp_definitions.is_repeatable).
+- Rollback: `DROP INDEX IF EXISTS user_stamps_live_award_unique;` and
+  `DROP FUNCTION IF EXISTS increment_stamp_progress(uuid, uuid);` — the engine
+  degrades to its legacy paths automatically.

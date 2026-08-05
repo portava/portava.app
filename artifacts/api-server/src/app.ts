@@ -177,11 +177,20 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction): void => {
     logger.warn({ err }, "request error");
   }
 
-  // Do not leak stack traces to the client
+  // Do not leak stack traces to the client. In production, additionally
+  // suppress internal error messages (DB errors, stack-adjacent details) for
+  // 5xx responses — the original error is already logged above. Dev keeps the
+  // real message for debuggability. Response JSON shape is unchanged.
+  const isProd = process.env.NODE_ENV === "production";
+  const clientMessage: string =
+    status >= 500 && isProd
+      ? "An unexpected error occurred."
+      : (err?.message ?? "An unexpected error occurred.");
+
   res.status(status).json({
     error: {
       code:    err?.code    ?? "INTERNAL_ERROR",
-      message: err?.message ?? "An unexpected error occurred.",
+      message: clientMessage,
     },
   });
 });

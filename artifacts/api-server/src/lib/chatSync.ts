@@ -101,7 +101,10 @@ export async function syncTripChatMembers(
         console.error(`syncTripChatMembers: member insert failed for trip ${tripId}: ${insErr.message}`);
         return null;
       }
-    } else if (existing.left_at !== null || existing.role !== role) {
+    } else if (existing.role !== role) {
+      // Only restore (clear left_at) when the trip role actually changed.
+      // A member whose role is unchanged but who has left_at set chose to leave
+      // the chat themselves — do NOT force-rejoin them on every sync.
       const { error: updErr } = await sc
         .from('message_thread_members')
         .update({ left_at: null, role })

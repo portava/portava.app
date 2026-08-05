@@ -48,6 +48,10 @@ export function usePulseFeed(opts: {
   const cursorRef = useRef<string | null>(null);
   // IDs deleted this session — excluded from every reload so they never reappear
   const deletedIds = useRef(new Set<string>());
+  // Fetch generation — bumped by every reload so an in-flight loadMore started
+  // against the previous list can't append stale rows (or write a stale cursor)
+  // into the fresh one.
+  const fetchGenRef = useRef(0);
 
   // Client-side block filter — defense-in-depth on top of server-side block enforcement.
   // When the block list is still loading (empty Set), no items are incorrectly excluded.
@@ -67,6 +71,7 @@ export function usePulseFeed(opts: {
     const ac = new AbortController();
     abortRef.current = ac;
     cursorRef.current = null;
+    fetchGenRef.current += 1; // invalidate any in-flight loadMore
 
     setLoading(true);
     setHasMore(false);
@@ -102,8 +107,12 @@ export function usePulseFeed(opts: {
     if (loadingMore || !hasMore || !cursorRef.current) return;
     setLoadingMore(true);
     const before = cursorRef.current;
+    const gen = fetchGenRef.current;
     getPulseData({ city: opts.city, lat: opts.lat, lng: opts.lng, limit: PAGE_SIZE, before })
       .then((result) => {
+        // A reload started while this page was in flight — its rows belong to
+        // the old list, so discard them (no append, no cursor write).
+        if (gen !== fetchGenRef.current) return;
         if (result.ok) {
           const mapped = result.data.posts.map(pulsePostToFeedItem);
           // De-dupe by id and exclude locally-deleted posts and blocked authors

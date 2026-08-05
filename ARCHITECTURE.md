@@ -1,5 +1,7 @@
 # Travel Buddy — Architecture & Feature Map
 
+> **SOURCE OF TRUTH (2026-08-04):** `travel-buddy-standalone/` is now the canonical app tree. `artifacts/travel-buddy` has been deleted and no longer exists — references to it below (system map, workflows, sync/mirror notes) are historical.
+
 _Generated for beta-readiness testing. This is a snapshot as of 2026-07-28. Where a feature's status could not be confirmed by direct testing (only by reading code), that is called out explicitly — treat those as "needs manual verification," not "confirmed working."_
 
 ---
@@ -8,17 +10,17 @@ _Generated for beta-readiness testing. This is a snapshot as of 2026-07-28. Wher
 
 ```
 ┌─────────────────────────┐      ┌──────────────────────────┐      ┌───────────────────┐
-│ artifacts/travel-buddy   │      │ artifacts/api-server      │      │ Supabase (Postgres)│
+│ travel-buddy-standalone  │      │ artifacts/api-server      │      │ Supabase (Postgres)│
 │ (canonical Expo/RN app)  │─────▶│ Express API                │─────▶│ + Storage + Auth   │
 │ EXPO_PUBLIC_API_BASE_URL │ HTTP │ src/routes/*.ts            │ SQL  │                    │
 └─────────────────────────┘      │ getServiceClient() (service│      └───────────────────┘
             │  auto-synced         role key, bypasses RLS)    │
             ▼  post-merge          getOptionalViewerId(req)   │
 ┌─────────────────────────┐      │ (reads Authorization header│
-│ travel-buddy-standalone  │      │  → resolves viewer identity)│
-│ (mirror; STANDALONE_OWNED│      └──────────────────────────┘
-│  _FILES ledger = manual  │
-│  two-tree porting)       │
+│ [historical: the mirror  │      │  → resolves viewer identity)│
+│  arrangement is retired; │      └──────────────────────────┘
+│  standalone is canonical │
+│  as of 2026-08-04]       │
 └─────────────────────────┘
 ```
 

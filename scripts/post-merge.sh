@@ -23,6 +23,14 @@
 # are the only sanctioned divergence and are skipped by design.
 set -euo pipefail
 
+# Guard: the canonical tree was retired on 2026-08-04. If it is gone, the
+# sync pipeline below must never run — it would overwrite the now-canonical
+# standalone tree with nothing.
+if [ ! -d "artifacts/travel-buddy" ]; then
+  echo "canonical tree retired 2026-08-04; standalone is canonical; aborting sync"
+  exit 0
+fi
+
 echo "=== 1/6: monorepo install ==="
 pnpm install
 

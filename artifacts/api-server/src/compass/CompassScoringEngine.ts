@@ -425,7 +425,10 @@ function computeComponents(
   context: CompassContext,
 ): ScoreComponents {
   const w = TYPE_WEIGHTS[item.type] ?? DEFAULT_WEIGHTS;
-  const viewerStyles = [...profile.travelStyles, ...(profile.preferredLanguages ?? [])];
+  // Travel styles only — languages have their own component (languageMatch).
+  // Mixing preferredLanguages in here diluted interestMatch: language codes
+  // never appear in interestTags, so they only inflated the denominator.
+  const viewerStyles = profile.travelStyles;
 
   return {
     // Positive components
@@ -520,7 +523,10 @@ export function scoreItem(
     if (placeId && context.placeAffinities) {
       const views = context.placeAffinities[placeId] ?? 0;
       if (views >= PLACE_AFFINITY_THRESHOLD) {
-        finalScore = finalScore * PLACE_AFFINITY_BOOST;
+        // Re-clamp after the multiplier: the boost is applied after
+        // finalizeScore's 0–100 clamp, so without this cap boosted scores
+        // could reach 115 and break the 0–100 score contract.
+        finalScore = Math.min(100, finalScore * PLACE_AFFINITY_BOOST);
       }
     }
 

@@ -94,7 +94,13 @@ export function useGroupChat(
       return;
     }
 
-    const d = res.data!;
+    // Guard: apiGet can resolve {ok:true, data:null} (e.g. unconfigured builds)
+    const d = res.data;
+    if (!d?.thread) {
+      setState('error');
+      setErrorMessage('Failed to load chat');
+      return;
+    }
     setThread(d.thread);
     setMessages(d.messages ?? []);
 
@@ -220,7 +226,9 @@ export function useGroupChat(
     }
     setSending(false);
     return { ok: res.ok };
-  }, [thread]);
+    // userId must be a dep: a stale null senderId makes the optimistic
+    // message render as incoming instead of outgoing.
+  }, [thread, userId]);
 
   const retrySend = useCallback(async (clientId: string) => {
     const failed = messages.find((m) => m.clientId === clientId);
@@ -282,13 +290,29 @@ export function useGroupChat(
     }
   }, []);
 
+  // In-flight guard for loadMore — rapid scroll-to-top events would otherwise
+  // fire overlapping fetches for the same page and prepend duplicates.
+  const loadingOlderRef = useRef(false);
+
   const loadMore = useCallback(async () => {
     if (!thread || messages.length === 0) return;
-    const oldest = messages[0];
-    const res = await getThreadMessages(thread.id, oldest.createdAt);
-    if (res.ok && res.data) {
-      const older = [...(res.data.messages ?? [])].reverse();
-      setMessages((prev) => [...older, ...prev]);
+    if (loadingOlderRef.current) return;
+    loadingOlderRef.current = true;
+    try {
+      const oldest = messages[0];
+      const res = await getThreadMessages(thread.id, oldest.createdAt);
+      if (res.ok && res.data) {
+        const older = [...(res.data.messages ?? [])].reverse();
+        setMessages((prev) => {
+          // De-dupe against what's already rendered (silentRefresh or a
+          // concurrent fetch may have delivered some of these messages).
+          const existingIds = new Set(prev.map((m) => m.id));
+          const fresh = older.filter((m) => !existingIds.has(m.id));
+          return fresh.length > 0 ? [...fresh, ...prev] : prev;
+        });
+      }
+    } finally {
+      loadingOlderRef.current = false;
     }
   }, [thread, messages]);
 

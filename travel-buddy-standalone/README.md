@@ -8,8 +8,8 @@ This folder (`travel-buddy-standalone/`) is a self-contained copy of the Travel 
 
 | Location | Purpose |
 |---|---|
-| `artifacts/travel-buddy/` | Original monorepo app — stays **untouched as backup** |
-| `travel-buddy-standalone/` | EAS build target — this folder |
+| `artifacts/travel-buddy/` | Former monorepo app — **deleted 2026-08-04; no longer exists** |
+| `travel-buddy-standalone/` | **Canonical app tree** (as of 2026-08-04) and EAS build target — this folder |
 
 ---
 

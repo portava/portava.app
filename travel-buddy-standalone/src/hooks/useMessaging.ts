@@ -278,11 +278,20 @@ export function useThreadMessages(threadId: string | null) {
   // prevents the snapshot from overwriting fresher network data if AsyncStorage is slow.
   const networkFetchedRef = useRef(false);
   const mountedAtRef = useRef(Date.now());
+  // Tracks the thread currently on screen so fetches started for a previous
+  // thread can discard their results instead of interleaving two conversations.
+  const activeThreadIdRef = useRef(threadId);
+  activeThreadIdRef.current = threadId;
 
   // Reset per-thread tracking whenever the thread changes.
   useEffect(() => {
     networkFetchedRef.current = false;
     mountedAtRef.current = Date.now();
+    // Clear the previous thread's messages immediately — otherwise they stay
+    // visible (and mergeable) until the new thread's fetch resolves.
+    setMessages([]);
+    setLoading(true);
+    setError(null);
   }, [threadId]);
 
   // Paint snapshot immediately when AsyncStorage read completes (second open).
@@ -303,6 +312,9 @@ export function useThreadMessages(threadId: string | null) {
     setLoading(true);
     setError(null);
     const res = await getThreadMessages(threadId);
+    // Fence: the user switched threads while this fetch was in flight — the
+    // result belongs to the old thread, so drop it.
+    if (activeThreadIdRef.current !== threadId) return;
     if (res.ok && res.data) {
       const msgs = [...(res.data.messages ?? [])].reverse();
       setMessages(msgs);
@@ -321,6 +333,8 @@ export function useThreadMessages(threadId: string | null) {
   const silentPoll = useCallback(async () => {
     if (!threadId || appStateRef.current !== 'active' || sendingRef.current) return;
     const res = await getThreadMessages(threadId);
+    // Fence: discard results that arrive after the user switched threads.
+    if (activeThreadIdRef.current !== threadId) return;
     if (!res.ok || !res.data) return;
     const incoming = [...(res.data.messages ?? [])].reverse();
     if (incoming.length === 0) return;
@@ -470,7 +484,9 @@ export function useThreadMessages(threadId: string | null) {
       sendingRef.current = false;
       return res;
     },
-    [threadId],
+    // userId must be a dep: a stale null senderId makes the optimistic
+    // message render as incoming instead of outgoing.
+    [threadId, userId],
   );
 
   /** Resend a previously-failed optimistic message (matched by its clientId). */
@@ -553,6 +569,8 @@ export function useThreadMessages(threadId: string | null) {
     setLoading(true);
     setError(null);
     const res = await getThreadMessages(threadId);
+    // Fence: discard results that arrive after the user switched threads.
+    if (activeThreadIdRef.current !== threadId) return;
     if (res.ok && res.data) {
       const msgs = [...(res.data.messages ?? [])].reverse();
       setMessages(msgs);

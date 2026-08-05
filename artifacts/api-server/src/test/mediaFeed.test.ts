@@ -121,8 +121,7 @@ function makeClient(state: FakeState = {}) {
     const filters: Array<(r: any) => boolean> = [];
     let selectCols = "*";
     let limitVal = 1000;
-    let orderCol: string | null = null;
-    let orderAsc = false;
+    const orderSpecs: Array<{ col: string; asc: boolean }> = [];
     let single = false;
     let maybeSingle_ = false;
     let insertPayload: any = null;
@@ -144,11 +143,14 @@ function makeClient(state: FakeState = {}) {
         table === "compass_user_preferences" ? state.compassPrefs ?? [] :
         [];
       let filtered = src.filter((r: any) => filters.every((f) => f(r)));
-      if (orderCol) {
-        const col = orderCol;
+      if (orderSpecs.length > 0) {
+        // Multi-column ordering, first spec wins ties broken by later specs —
+        // matches PostgREST chained .order() calls (e.g. created_at desc, id desc).
         filtered = filtered.sort((a: any, b: any) => {
-          if (a[col] < b[col]) return orderAsc ? -1 : 1;
-          if (a[col] > b[col]) return orderAsc ? 1 : -1;
+          for (const { col, asc } of orderSpecs) {
+            if (a[col] < b[col]) return asc ? -1 : 1;
+            if (a[col] > b[col]) return asc ? 1 : -1;
+          }
           return 0;
         });
       }
@@ -178,12 +180,25 @@ function makeClient(state: FakeState = {}) {
         filters.push((r) => val === null ? r[col] == null : r[col] === val);
         return b;
       },
-      or() { return b; },
+      or(expr?: string) {
+        // Implements the keyset-cursor shape produced by applyCursorFilter():
+        //   "<col>.lt.<v>,and(<col>.eq.<v>,<col2>.lt.<v2>)"
+        // A no-op here would make paginated grid requests re-serve page 1
+        // rows, so the cursor-stability test would test nothing.
+        const m = typeof expr === "string"
+          ? expr.match(/^(\w+)\.lt\.(.+),and\(\1\.eq\.\2,(\w+)\.lt\.(.+)\)$/)
+          : null;
+        if (m) {
+          const [, col, val, col2, val2] = m;
+          filters.push((r) => r[col] < val || (r[col] === val && r[col2] < val2));
+        }
+        return b;
+      },
       gte(col: string, val: any) { filters.push((r) => r[col] >= val); return b; },
       lte(col: string, val: any) { filters.push((r) => r[col] <= val); return b; },
       gt(col: string, val: any) { filters.push((r) => r[col] > val); return b; },
       lt(col: string, val: any) { filters.push((r) => r[col] < val); return b; },
-      order(col: string, opts: any) { orderCol = col; orderAsc = opts?.ascending ?? true; return b; },
+      order(col: string, opts: any) { orderSpecs.push({ col, asc: opts?.ascending ?? true }); return b; },
       limit(n: number) { limitVal = n; return b; },
       range() { return b; },
       ilike(col: string, pattern: string) {
