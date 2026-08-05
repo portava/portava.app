@@ -10,6 +10,14 @@ import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Alert, ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+// NOTE — deliberate exception to the app-wide Portava share icon.
+// The Share2 usages below are Safe Return *live-location* actions ("Share
+// Location" / "Share Location Now"): a safety broadcast of the traveller's
+// position to their emergency contacts. They are NOT Portava content sharing
+// (posts, media, trips, events, places, stamps), which is the documented scope
+// of PortavaShareIcon. Keeping the generic Lucide glyph here is intentional —
+// it visually separates a safety action from an ordinary share affordance.
+// Do not swap these for PortavaShareIcon in a global share-icon audit.
 import { Shield, CheckCircle, Clock, X, PhoneCall, MapPin, ChevronRight, Share2, MessageCircle } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import {
@@ -250,6 +258,7 @@ export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated
             {shareLoading
               ? <ActivityIndicator size="small" color={color.deep} />
               : <>
+                  {/* Safety live-location action — generic glyph on purpose, not PortavaShareIcon. See note at import. */}
                   <Share2 size={13} color={color.deep} />
                   <Text style={styles.quickBtnText}>Share Location</Text>
                 </>
@@ -329,6 +338,7 @@ function SafeReturnModal({ session, countdown, statusLabel, statusColor, loading
             {shareLoading
               ? <ActivityIndicator size="small" color={color.deep} />
               : <>
+                  {/* Safety live-location action — generic glyph on purpose, not PortavaShareIcon. See note at import. */}
                   <Share2 size={16} color={color.deep} />
                   <Text style={[styles.modalSecondaryBtnText, { color: color.deep }]}>Share Location Now</Text>
                 </>

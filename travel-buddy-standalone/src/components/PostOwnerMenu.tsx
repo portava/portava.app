@@ -250,6 +250,12 @@ export function PostOwnerMenu({
             onPress={() => toggle({ likesHidden: !settings.likesHidden })}
           />
 
+          {/*
+            Deliberate exception to the app-wide Portava share icon: this row is a
+            *permission toggle* governing whether the post may be shared — pressing
+            it shares nothing. PortavaShareIcon is reserved for affordances that
+            actually perform a content share. Do not swap this in a global audit.
+          */}
           <MenuRow
             icon={<Share2 size={20} color={color.ink} />}
             label={settings.sharingDisabled ? 'Allow Sharing' : 'Disable Sharing'}
