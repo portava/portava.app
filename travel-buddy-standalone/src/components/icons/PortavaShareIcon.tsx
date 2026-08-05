@@ -1,6 +1,12 @@
 /**
- * PortavaShareIcon — the single custom Portava symbol for genuine
- * content-share actions (posts, media, trips, events, places, stamps, etc.).
+ * PortavaShareIcon — the single custom Portava symbol for content sharing:
+ * both the share actions themselves (posts, media, trips, events, places,
+ * stamps, etc.) and the settings that govern them (e.g. the post owner's
+ * Allow/Disable Sharing toggle).
+ *
+ * It does NOT cover Safe Return live-location sharing, which is a safety
+ * broadcast rather than content sharing and deliberately keeps a generic
+ * Lucide glyph — see the note in components/safeReturn/ActiveSafeReturnCard.
  *
  * "Modern Open Connected" (v5): an almost-complete circular loop with a
  * lower-right opening, whose inner curve flows directly into a tapered arrow

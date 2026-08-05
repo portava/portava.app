@@ -26,8 +26,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   X, Pencil, Clock, Users, EyeOff, Eye,
-  Share2, Repeat2, Archive, Trash2, ChevronRight,
+  Repeat2, Archive, Trash2, ChevronRight,
 } from 'lucide-react-native';
+import { PortavaShareIcon } from './icons/PortavaShareIcon.tsx';
 import { color, space, shadow } from '../theme/tokens.ts';
 import { updatePostSettings, archivePost, deletePost } from '../services/postEngagement.ts';
 import { EditHistorySheet } from './EditHistorySheet.tsx';
@@ -250,14 +251,8 @@ export function PostOwnerMenu({
             onPress={() => toggle({ likesHidden: !settings.likesHidden })}
           />
 
-          {/*
-            Deliberate exception to the app-wide Portava share icon: this row is a
-            *permission toggle* governing whether the post may be shared — pressing
-            it shares nothing. PortavaShareIcon is reserved for affordances that
-            actually perform a content share. Do not swap this in a global audit.
-          */}
           <MenuRow
-            icon={<Share2 size={20} color={color.ink} />}
+            icon={<PortavaShareIcon size={20} color={color.ink} />}
             label={settings.sharingDisabled ? 'Allow Sharing' : 'Disable Sharing'}
             onPress={() => toggle({ sharingDisabled: !settings.sharingDisabled })}
           />
