@@ -430,10 +430,10 @@ describe("Itinerary timeline + map — 15 scenarios", () => {
     const items: any[] = r.body.items;
     const noCoord = items.find((i: any) => i.title === "Eiffel Tower");
     const withCoord = items.find((i: any) => i.title === "Louvre");
-    assert.ok(noCoord.warnings.includes("missing_location"),
-      "item with location_name but no lat/lng must have missing_location warning");
-    assert.ok(!withCoord.warnings.includes("missing_location"),
-      "item with coordinates must NOT have missing_location warning");
+    assert.ok(noCoord.warnings.includes("unmapped_location"),
+      "item with location_name but no lat/lng must have unmapped_location warning");
+    assert.ok(!withCoord.warnings.includes("unmapped_location"),
+      "item with coordinates must NOT have unmapped_location warning");
   });
 
   it("14. cancelled_source warning: meetup-sourced item from a cancelled meetup", async () => {

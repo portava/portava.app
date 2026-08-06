@@ -80,6 +80,10 @@ const WARN_SHORT: Record<string, string> = {
   duplicate:          '🔁 Duplicate',
   outside_trip_dates: '📅 Off-schedule',
   missing_location:   '📍 No location',
+  // Distinct from missing_location: a location name IS known, it just lacks
+  // coordinates to place on the map. Must never share missing_location's text —
+  // showing "No location" next to a visible location name is self-contradictory.
+  unmapped_location:  '📍 Can\'t map',
   cancelled_source:   '🚫 Cancelled',
 };
 
@@ -527,7 +531,7 @@ function DraggableItemList({
 
 function DayGroup({
   bucket, tripStartDate, tripId, currentUserId, isOwner, canEdit,
-  onItemPress, onEditPress, onItemsChanged, firstWarnedId, warnedItemRef,
+  onItemPress, onEditPress, onItemsChanged, firstWarnedId, warnedItemRef, hideEmptyPlaceholder,
 }: {
   bucket: DayBucket;
   tripStartDate?: string | null;
@@ -540,6 +544,7 @@ function DayGroup({
   onItemsChanged: (updater: (prev: TripPlanItem[]) => TripPlanItem[]) => void;
   firstWarnedId?: string;
   warnedItemRef?: React.RefObject<View | null>;
+  hideEmptyPlaceholder?: boolean;
 }) {
   const label = dayLabel(bucket.key, tripStartDate);
   const isUnscheduled = bucket.key === '__unscheduled__';
@@ -597,7 +602,7 @@ function DayGroup({
       </View>
 
       {bucket.items.length === 0 ? (
-        <Text style={dg.emptyDay}>Nothing planned yet.</Text>
+        hideEmptyPlaceholder ? null : <Text style={dg.emptyDay}>Nothing planned yet.</Text>
       ) : (
         <DraggableItemList
           items={bucket.items}
@@ -634,12 +639,18 @@ export interface TimelineViewProps {
   onItemsChanged: (updater: (prev: TripPlanItem[]) => TripPlanItem[]) => void;
   firstWarnedId?: string;
   warnedItemRef?: React.RefObject<View | null>;
+  /** When true (warnings-only filter active), suppress "Nothing planned yet" placeholders on
+   * days that only look empty because their items were filtered out, and show a shown/total hint. */
+  showWarningsOnly?: boolean;
+  totalItemsCount?: number;
 }
 
 export function TimelineView({
   buckets, tripStartDate, tripId, currentUserId, isOwner, canEdit, onItemPress, onEditPress, onItemsChanged,
-  firstWarnedId, warnedItemRef,
+  firstWarnedId, warnedItemRef, showWarningsOnly, totalItemsCount,
 }: TimelineViewProps) {
+  const visibleItemsCount = buckets.reduce((sum, b) => sum + b.items.length, 0);
+
   if (buckets.length === 0 || buckets.every((b) => b.items.length === 0)) {
     return (
       <View style={tv.empty}>
@@ -650,6 +661,11 @@ export function TimelineView({
 
   return (
     <View style={tv.wrap}>
+      {showWarningsOnly && typeof totalItemsCount === 'number' && (
+        <Text style={tv.filterHint}>
+          {visibleItemsCount} of {totalItemsCount} item{totalItemsCount === 1 ? '' : 's'} shown — filtered by warnings
+        </Text>
+      )}
       {buckets.map((bucket) => (
         <DayGroup
           key={bucket.key}
@@ -664,6 +680,7 @@ export function TimelineView({
           onItemsChanged={onItemsChanged}
           firstWarnedId={firstWarnedId}
           warnedItemRef={warnedItemRef}
+          hideEmptyPlaceholder={showWarningsOnly}
         />
       ))}
     </View>
@@ -738,4 +755,5 @@ const tv = StyleSheet.create({
   wrap:       { gap: 0 },
   empty:      { paddingVertical: 24, alignItems: 'center' },
   emptyTitle: { ...t.small, color: color.faint },
+  filterHint: { ...t.small, color: '#8B6914', backgroundColor: '#FFF3CD', borderRadius: radius.sm, paddingHorizontal: 10, paddingVertical: 6, marginBottom: 8 },
 });

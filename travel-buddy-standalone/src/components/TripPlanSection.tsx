@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
-  View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet, findNodeHandle, Animated, Modal,
+  View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet, Platform, findNodeHandle, Animated, Modal,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -371,7 +371,15 @@ export function TripPlanSection({
     setActiveCat('all');
     // After React re-renders the timeline with filters applied, scroll to the exact item
     setTimeout(() => {
-      if (!warnedItemRef.current || !pageScrollRef?.current) return;
+      if (!warnedItemRef.current) return;
+      if (Platform.OS === 'web') {
+        // findNodeHandle/measureLayout are not supported on react-native-web.
+        // The underlying View ref is a real DOM node there, so use the DOM API instead.
+        const domNode = warnedItemRef.current as unknown as { scrollIntoView?: (opts?: ScrollIntoViewOptions) => void };
+        domNode.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      if (!pageScrollRef?.current) return;
       const nodeHandle = findNodeHandle(pageScrollRef.current);
       if (nodeHandle == null) return;
       warnedItemRef.current.measureLayout(
@@ -611,6 +619,8 @@ export function TripPlanSection({
           onItemsChanged={handleItemsChanged}
           firstWarnedId={firstWarnedId}
           warnedItemRef={warnedItemRef}
+          showWarningsOnly={showWarningsOnly}
+          totalItemsCount={items.length}
         />
       )}
 

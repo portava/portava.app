@@ -124,6 +124,44 @@ function mapTrip(r: any): TripRow {
   };
 }
 
+// GET /api/trips/me serializes rows through toAuthorizedTripView on the
+// server, which already returns camelCase fields (destinationCity,
+// startDate, ...) — NOT raw snake_case DB columns. mapTrip() expects a raw
+// snake_case Supabase row (used by getTrip() below, which selects directly
+// from the `trips` table). Running the API's camelCase payload back through
+// mapTrip() looked up r.destination_city / r.start_date, which are always
+// undefined on that shape, silently blanking the destination and dates on
+// every card in the Trips list while the detail screen (fed by getTrip())
+// rendered the same trip correctly. Map the already-camelCase API row
+// directly instead of re-using the snake_case mapper.
+function mapTripApiRow(r: any): TripRow {
+  return {
+    id: r.id, ownerId: r.ownerId, title: r.title, destinationCity: r.destinationCity,
+    destinationCountry: r.destinationCountry ?? null, neighborhoods: r.neighborhoods ?? [],
+    startDate: r.startDate ?? null, endDate: r.endDate ?? null, status: r.status, visibility: r.visibility,
+    travelStyle: r.travelStyle ?? null, openToMeet: Boolean(r.openToMeet), coverUrl: resolveApiUrl(r.coverUrl),
+    coverMediaType: (r.coverMediaType as 'image' | 'video' | null) ?? null,
+    progress: r.progress ?? 0,
+    tripType: r.tripType ?? null,
+    timezone: r.timezone ?? null,
+    destinationLat: r.destinationLat ?? null,
+    destinationLng: r.destinationLng ?? null,
+    destinationPlaceId: r.destinationPlaceId ?? null,
+    tripNotes: r.tripNotes ?? null,
+    showOnProfile: r.showOnProfile ?? true,
+    showInDiscovery: r.showInDiscovery ?? false,
+    allowFriendSuggestions: r.allowFriendSuggestions ?? true,
+    allowTripCrewInvites: r.allowTripCrewInvites ?? true,
+    allowJoinRequests: r.allowJoinRequests ?? false,
+    showExactDates: r.showExactDates ?? true,
+    showDestinationCity: r.showDestinationCity ?? true,
+    delayedPostingDefault: r.delayedPostingDefault ?? false,
+    preciseLocationVisible: r.preciseLocationVisible ?? false,
+    planEditPermission: r.planEditPermission ?? null,
+    showHeaderPublicly: r.showHeaderPublicly ?? false,
+  };
+}
+
 export async function listMyTrips(): Promise<TripRow[]> {
   if (!isSupabaseConfigured) return [];
   // Must go through GET /api/trips/me, which scopes by trip_members
@@ -142,7 +180,7 @@ export async function listMyTrips(): Promise<TripRow[]> {
   const data = await res.json().catch(() => null);
   const trips = (data?.trips ?? []) as any[];
   return trips
-    .map(mapTrip)
+    .map(mapTripApiRow)
     .sort((a, b) => (a.startDate ?? '').localeCompare(b.startDate ?? ''));
 }
 

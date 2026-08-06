@@ -1242,10 +1242,17 @@ function computeWarnings(
     }
   }
 
-  // 4. Missing location: has a location name but no coordinates (can't appear on map)
+  // 4. Unmapped location: has a location name but no coordinates (can't appear on map).
+  //    An item with NO location info at all (no name, no coordinates) is not warned —
+  //    the user simply hasn't set a location for it, which isn't a data problem.
+  //    This is a distinct code from the old single "missing_location" warning: that
+  //    warning previously fired whenever coordinates were absent regardless of whether
+  //    a location name was known, producing a "No location" badge on items that clearly
+  //    display a location name — a direct self-contradiction in the UI.
   for (const item of items) {
-    if (item.location_name && (item.lat == null || item.lng == null)) {
-      warnMap.get(item.id)!.push("missing_location");
+    const hasCoords = item.lat != null && item.lng != null;
+    if (item.location_name && !hasCoords) {
+      warnMap.get(item.id)!.push("unmapped_location");
     }
   }
 

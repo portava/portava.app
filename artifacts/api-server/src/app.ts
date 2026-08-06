@@ -63,10 +63,16 @@ app.use(
       if (!origin) return callback(null, true);
       if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
       // Allow the Replit workspace domain and any sibling/child subdomains
-      // (e.g. expo. prefix used by port-mapped artifact previews).
+      // (e.g. expo. prefix used by port-mapped artifact previews), including
+      // an explicit :<port> suffix on the dev domain itself (used to reach a
+      // non-artifact dev server bound to an extra exposed port, e.g. the
+      // travel-buddy-standalone web preview on :3000 — that origin string
+      // still starts with the dev domain but doesn't match the plain
+      // endsWith(parent) check above because of the trailing port).
       if (
         _replitParentDomain &&
         (origin === `https://${_replitDevDomain}` ||
+          origin.startsWith(`https://${_replitDevDomain}:`) ||
           origin.endsWith(`.${_replitParentDomain}`))
       ) {
         return callback(null, true);
