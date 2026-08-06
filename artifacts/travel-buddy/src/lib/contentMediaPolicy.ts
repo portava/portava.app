@@ -210,7 +210,7 @@ export const CONTENT_MEDIA_POLICIES: Record<ContentPolicyKey, ContentMediaPolicy
   /**
    * Representative photo OR video for a hidden gem submission (Add a Gem flow).
    * Allows both image and video (≤60 s). The allowed types are further narrowed
-   * at runtime by MEDIA_IMAGE_UPLOAD_ENABLED / MEDIA_VIDEO_UPLOAD_ENABLED flags.
+   * at runtime by MEDIA_UPLOAD_PHOTO_ENABLED / MEDIA_UPLOAD_VIDEO_ENABLED flags.
    */
   hiddenGem: {
     maxItems: 1,

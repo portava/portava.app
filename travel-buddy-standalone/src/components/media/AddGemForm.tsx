@@ -3,8 +3,8 @@
  *
  * Step 1 — Media
  *   Pick one photo or video. Types gated by feature flags:
- *     MEDIA_IMAGE_UPLOAD_ENABLED  → images allowed
- *     MEDIA_VIDEO_UPLOAD_ENABLED  → videos allowed
+ *     MEDIA_UPLOAD_PHOTO_ENABLED  → images allowed
+ *     MEDIA_UPLOAD_VIDEO_ENABLED  → videos allowed
  *
  * Step 2 — Place + details
  *   Required: canonical place (GlobalPlacePicker), place name, place type,
@@ -104,10 +104,10 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
   const { isEnabled } = useFeatureFlags();
 
   // Media flags
-  const imageEnabled = isEnabled('MEDIA_UPLOAD_ENABLED') !== false
-    && isEnabled('MEDIA_IMAGE_UPLOAD_ENABLED') !== false;
-  const videoEnabled = isEnabled('MEDIA_UPLOAD_ENABLED') !== false
-    && isEnabled('MEDIA_VIDEO_UPLOAD_ENABLED') !== false;
+  const imageEnabled = isEnabled('MEDIA_UPLOAD_ENABLED')
+    && isEnabled('MEDIA_UPLOAD_PHOTO_ENABLED');
+  const videoEnabled = isEnabled('MEDIA_UPLOAD_ENABLED')
+    && isEnabled('MEDIA_UPLOAD_VIDEO_ENABLED');
 
   // Media composer (hiddenGem policy: 1 item, images+videos gated above)
   const composer = useMediaComposer('hiddenGem');
