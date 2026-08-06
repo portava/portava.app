@@ -61,6 +61,8 @@ jest.mock('expo-image-picker', () => ({
 // NOTE: intentionally exhaustive — calls Supabase and full network stack.
 jest.mock('../../../src/hooks/usePassport', () => ({
   usePassport: jest.fn(),
+  isProfileStaleSince: jest.fn(() => false),
+  markProfileStale: jest.fn(),
 }));
 
 // ── Tab content stubs — render a unique marker so the active tab is

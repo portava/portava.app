@@ -14,6 +14,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Bell, BellRing, Power, Send } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { ConfirmSheet } from '../../src/components/ui/ConfirmSheet';
 import {
   addStopFromRecommendation,
   endLayoverSession,
@@ -62,6 +63,8 @@ export default function LayoverDashboardScreen() {
   const [addingRecId, setAddingRecId] = useState<string | null>(null);
   const [reminderBusy, setReminderBusy] = useState(false);
   const [endBusy, setEndBusy] = useState(false);
+  // QA round 2, minor F: drives the in-app confirm on web (see confirmEnd).
+  const [endConfirmOpen, setEndConfirmOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const notifIdRef = useRef<string | null>(null);
 
@@ -201,32 +204,37 @@ export default function LayoverDashboardScreen() {
     }
   }, [id, overview, city, router, showToast]);
 
-  const confirmEnd = useCallback(() => {
-    const doEnd = async () => {
-      if (!id) return;
-      setEndBusy(true);
-      try {
-        const ok = await endLayoverSession(id);
-        if (ok) {
-          await cancelScheduledNotification(notifIdRef.current);
-          router.back();
-        } else {
-          showToast('Could not end the layover');
-        }
-      } finally {
-        setEndBusy(false);
+  const doEndLayover = useCallback(async () => {
+    if (!id) return;
+    setEndConfirmOpen(false);
+    setEndBusy(true);
+    try {
+      const ok = await endLayoverSession(id);
+      if (ok) {
+        await cancelScheduledNotification(notifIdRef.current);
+        router.back();
+      } else {
+        showToast('Could not end the layover');
       }
-    };
+    } finally {
+      setEndBusy(false);
+    }
+  }, [id, router, showToast]);
+
+  const confirmEnd = useCallback(() => {
+    // QA round 2, minor F: the web path used a raw window.confirm(), which drops
+    // the user out of the app's visual language and blocks the JS thread while
+    // it is open. ConfirmSheet is the in-app equivalent. Native keeps the OS
+    // alert, which is the platform idiom.
     if (Platform.OS === 'web') {
-      // eslint-disable-next-line no-alert
-      if (typeof window !== 'undefined' && window.confirm('End this layover? Your plan stays saved.')) doEnd();
+      setEndConfirmOpen(true);
     } else {
       Alert.alert('End layover?', 'Your plan stays saved in your history.', [
         { text: 'Keep going', style: 'cancel' },
-        { text: 'End layover', style: 'destructive', onPress: doEnd },
+        { text: 'End layover', style: 'destructive', onPress: doEndLayover },
       ]);
     }
-  }, [id, router, showToast]);
+  }, [doEndLayover]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -349,6 +357,18 @@ export default function LayoverDashboardScreen() {
           </Pressable>
         </View>
       )}
+
+      <ConfirmSheet
+        visible={endConfirmOpen}
+        title="End this layover?"
+        body="Your plan stays saved in your history."
+        confirmLabel="End layover"
+        loadingLabel="Ending…"
+        destructive
+        loading={endBusy}
+        onConfirm={doEndLayover}
+        onCancel={() => setEndConfirmOpen(false)}
+      />
 
       {toast && (
         <View style={[styles.toast, { bottom: insets.bottom + (canEdit ? 108 : 24) }]}>

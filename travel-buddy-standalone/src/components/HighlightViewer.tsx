@@ -82,6 +82,9 @@ export function HighlightViewer({
   // changes, so the choice carries forward as highlights advance and persists
   // for the session (not reset when the viewer reopens).
   const [isMuted, setIsMuted] = useState(false);
+  // QA round 2, bug 11: a highlight whose video fails to load used to sit on a
+  // black frame with a progress bar that never moved and no way to tell why.
+  const [videoError, setVideoError] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const videoRef = useRef<Video>(null);
@@ -165,11 +168,17 @@ export function HighlightViewer({
   // Reset video progress when navigating to a new item
   useEffect(() => {
     if (isVideo) setProgress(0);
+    setVideoError(false); // QA round 2, bug 11: clear per item.
   }, [index, isVideo]);
 
   // Video playback status — drives progress bar and auto-advance for video items
   const handleVideoStatus = useCallback((status: AVPlaybackStatus) => {
-    if (!status.isLoaded) return;
+    if (!status.isLoaded) {
+      // QA round 2, bug 11: the failure branch of AVPlaybackStatus was being
+      // swallowed by this bare early return. Surface it instead.
+      if ((status as { error?: string }).error) setVideoError(true);
+      return;
+    }
     const dur = status.durationMillis;
     if (dur && dur > 0) {
       setProgress(status.positionMillis / dur);
@@ -320,6 +329,7 @@ export function HighlightViewer({
               if (el.duration > 0) setProgress(el.currentTime / el.duration);
             }}
             onEnded={() => goNextRef.current()}
+            onError={() => setVideoError(true)} // QA round 2, bug 11
           />
         ) : isVideo ? (
           <Video
@@ -340,6 +350,16 @@ export function HighlightViewer({
             style={StyleSheet.absoluteFill}
             resizeMode="cover"
           />
+        )}
+
+        {/* QA round 2, bug 11: tell the user the video failed instead of
+            showing an indefinitely black frame. */}
+        {videoError && (
+          <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]} pointerEvents="none">
+            <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '600', textAlign: 'center', paddingHorizontal: 24 }}>
+              Video unavailable
+            </Text>
+          </View>
         )}
 
         {/* Progress bars */}

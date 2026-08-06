@@ -132,6 +132,11 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
 
   const selectAirport = (ap: AirportProfile) => {
     setAirport(ap);
+    // QA round 2, bug 15: "Pick your airport from the search results…" was only
+    // cleared on the next submit (first line of handleCreate), so it stayed on
+    // screen after the airport had been picked. Clear it the moment a selection
+    // lands.
+    setError(null);
     setResults([]);
     setQuery(`${ap.iataCode} — ${ap.name}`);
   };
@@ -443,8 +448,11 @@ const styles = StyleSheet.create({
   searchInput:  { flex: 1, ...t.body, color: color.ink, paddingVertical: space.md },
   resultsBox:   { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, marginTop: space.xs, overflow: 'hidden' },
   resultItem:   { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md, borderBottomWidth: 1, borderBottomColor: color.haze },
-  iataBadge:    { backgroundColor: color.ink, borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 4, minWidth: 46, alignItems: 'center' },
-  iataBadgeText:{ ...t.stamp, color: color.onInk },
+  // QA round 2, bug 15b: a solid color.ink fill is this sheet's SELECTED state
+  // (see segmentActive / chipActive below), so an unselected search result read
+  // as already-picked. Outlined until it is actually chosen.
+  iataBadge:    { backgroundColor: color.paper, borderWidth: 1, borderColor: color.haze, borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 4, minWidth: 46, alignItems: 'center' },
+  iataBadgeText:{ ...t.stamp, color: color.ink },
   resultName:   { ...t.bodyStrong, color: color.ink },
   resultCity:   { ...t.small, color: color.mute },
   selectedCard: { flexDirection: 'row', alignItems: 'center', gap: space.sm, backgroundColor: 'rgba(10,61,74,0.08)', borderRadius: radius.md, padding: space.md, marginTop: space.sm },

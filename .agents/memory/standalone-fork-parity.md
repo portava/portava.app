@@ -1,9 +1,24 @@
 ---
-name: Standalone tree = generated mirror
+name: Standalone tree = generated mirror (SUPERSEDED 2026-08-06)
 description: Canonical-tree rule between artifacts/travel-buddy and travel-buddy-standalone, sanctioned divergence ledger, and how propagation works
 ---
 
-# Standalone tree = generated EAS mirror (rule settled July 2026)
+# ⚠ SUPERSEDED 2026-08-06 — direction flipped
+
+As of 2026-08-06, `travel-buddy-standalone/` is the canonical source tree and
+`artifacts/travel-buddy` is the legacy-frozen one (see `replit.md`'s SOURCE OF
+TRUTH banner and `scripts/post-merge.sh`, which hard-disables the
+legacy-sync-to-standalone direction by default via `PORTAVA_ENABLE_LEGACY_SYNC`).
+The mobile artifact's `artifact.toml` dev/build/run commands were re-pointed to
+run directly out of `travel-buddy-standalone/` (not `pnpm --filter
+@workspace/travel-buddy`), and both dev preview and production deploy now
+serve from the standalone tree. **Everything below this line describes the
+OLD (pre-2026-08-06) direction and is kept only for historical/porting-forensics
+context — do not follow it for new work.** Before trusting any claim below,
+verify against the current `replit.md` banner, since the direction is a policy
+flag that can change again.
+
+# Standalone tree = generated EAS mirror (rule settled July 2026, reversed Aug 2026)
 
 **`artifacts/travel-buddy` is the single canonical source tree. `travel-buddy-standalone` is a generated mirror — never edit it directly.**
 

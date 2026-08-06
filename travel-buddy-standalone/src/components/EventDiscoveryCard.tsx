@@ -101,7 +101,10 @@ export function EventDiscoveryCard({ event, onPress, onHostPress, onRsvp, isSave
   const { resolved: coverResolved } = useHydratedMedia(event.coverUrl && !imgFailed ? [event.coverUrl] : []);
   const hydratedCoverUrl = (event.coverUrl && coverResolved[event.coverUrl]) ?? event.coverUrl ?? undefined;
 
-  const isOpen = ['open', 'started'].includes(event.state);
+  // QA round 2, minor D: an ended event must not still offer RSVP. `displayState`
+  // (line 94) is `effectiveEventState(...)`, which returns 'completed' once endsAt
+  // has passed, so gating on it drops the CTA without touching the stored state.
+  const isOpen = ['open', 'started'].includes(displayState);
   const isFull = event.state === 'full';
   const isWaitlist = event.state === 'waitlist';
 

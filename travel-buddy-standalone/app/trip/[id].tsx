@@ -9,6 +9,7 @@ import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useNextBestAction } from '../../src/hooks/useNextBestAction';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
+import type { ReadinessSummary } from '../../src/services/tripIntel';
 import {
   TripHero, TodayNextUp, SavedIdeas, TripSavedPlacesSection,
   CompassTripBrief, CompassBriefErrorBoundary, TripStamps, TripPostsSection,
@@ -112,6 +113,9 @@ function TripDetailScreen() {
   const [shareLoading, setShareLoading] = useState(false);
   const [pageRefreshing, setPageRefreshing] = useState(false);
   const [readinessRefresh, setReadinessRefresh] = useState(false);
+  // QA round 2, bug 2: single source of truth for BOTH progress gauges on this
+  // page. Populated by TripReadinessCard via onSummary below.
+  const [readiness, setReadiness] = useState<ReadinessSummary | null>(null);
   const [memberRole, setMemberRole] = useState<string | null>(null);
   /** Set when the trip is private and the API returns a minimal preview sentinel. */
   const [privateTrip, setPrivateTrip] = useState<PrivateTripPreview | null>(null);
@@ -332,8 +336,25 @@ function TripDetailScreen() {
     openToMeet: realTrip.openToMeet,
     coverUrl: realTrip.coverUrl ?? '',
     coverMediaType: realTrip.coverMediaType ?? null,
-    progress: realTrip.progress,
-    progressSteps: [],
+    // QA round 2, bug 2: prefer the readiness score — it is the only number that
+    // actually counts plan items, stay, transport, budget, entry, documents and
+    // reservations (api-server/src/lib/tripReadiness.ts). Falls back to the legacy
+    // trips.progress column when the readiness flag is off, in which case the card
+    // renders nothing and never reports a summary.
+    progress: readiness ? readiness.score : (realTrip.progress ?? 0),
+    // The hero's checklist was hard-coded to [] — it never rendered a single step.
+    // Same order/labels as CATEGORIES in TripReadinessCard.tsx and
+    // READINESS_CATEGORIES in api-server/src/lib/tripReadiness.ts.
+    progressSteps: readiness
+      ? ([
+          ['plan', 'Plan'], ['stay', 'Stay'], ['transport', 'Transport'],
+          ['budget', 'Budget'], ['entry', 'Entry'], ['documents', 'Documents'],
+          ['reservations', 'Reservations'],
+        ] as ReadonlyArray<readonly [string, string]>).map(([key, label]) => ({
+          label,
+          done: readiness.categories?.[key] === 'ready',
+        }))
+      : [],
     timeline: [],
     savedIdeas: [],
     safetyStatus: 'unknown',
@@ -477,7 +498,7 @@ function TripDetailScreen() {
 
         {/* ── Trip Readiness — renders nothing when flag is off (null response) ── */}
         {live && trip.id ? (
-          <TripReadinessCard tripId={trip.id} refresh={readinessRefresh} />
+          <TripReadinessCard tripId={trip.id} refresh={readinessRefresh} onSummary={setReadiness} />
         ) : null}
 
         {/* ── FSQ places — renders nothing until city is ingested server-side ── */}

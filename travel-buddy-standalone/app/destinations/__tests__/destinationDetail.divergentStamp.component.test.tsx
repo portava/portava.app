@@ -39,6 +39,8 @@ jest.mock('react-native-safe-area-context', () => ({
 // network stack; only the fields the detail screen reads are provided.
 jest.mock('../../../src/hooks/usePassport', () => ({
   usePassport: jest.fn(),
+  isProfileStaleSince: jest.fn(() => false),
+  markProfileStale: jest.fn(),
 }));
 
 // NOTE: intentional stub — trips service imports Supabase; not under test.

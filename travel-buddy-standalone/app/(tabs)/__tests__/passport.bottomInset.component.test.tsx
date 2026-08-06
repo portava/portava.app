@@ -83,6 +83,8 @@ jest.mock('../../../src/hooks/useBottomInset.ts', () => ({
 // NOTE: intentionally exhaustive — calls Supabase and full network stack.
 jest.mock('../../../src/hooks/usePassport', () => ({
   usePassport: jest.fn(),
+  isProfileStaleSince: jest.fn(() => false),
+  markProfileStale: jest.fn(),
 }));
 
 // ── useCollapsingHeader ───────────────────────────────────────────────────────

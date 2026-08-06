@@ -34,10 +34,6 @@ args = "api-typecheck"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "mobile-test"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
 args = "cross-tree-paths"
 
 [[workflows.workflow.tasks]]
@@ -46,31 +42,15 @@ args = "travel-buddy-standalone: dev"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "check-frozen-dir"
+args = "api-checks"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "standalone-test"
+args = "standalone-checks"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "standalone-typecheck"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "check-async-handlers"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "mobile-typecheck"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "check-write-path-columns"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "check-missing-live-columns"
+args = "check-test-registration"
 
 [[workflows.workflow]]
 name = "api-test"
@@ -95,17 +75,6 @@ task = "shell.exec"
 args = "pnpm --filter @workspace/api-server run typecheck"
 
 [[workflows.workflow]]
-name = "mobile-test"
-author = "agent"
-
-[workflows.workflow.metadata]
-isValidation = true
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm --dir travel-buddy-standalone test && pnpm --dir travel-buddy-standalone run test:component"
-
-[[workflows.workflow]]
 name = "cross-tree-paths"
 author = "agent"
 
@@ -120,23 +89,34 @@ outputType = "console"
 name = "travel-buddy-standalone: dev"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "console"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd travel-buddy-standalone && PORT=3000 pnpm run dev"
+args = "cd travel-buddy-standalone && npx expo start --tunnel --port 9000"
+
+[[workflows.workflow]]
+name = "api-checks"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-server run check:all"
 
 [workflows.workflow.metadata]
 outputType = "console"
 
 [[workflows.workflow]]
-name = "check-frozen-dir"
+name = "standalone-checks"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pnpm --filter @workspace/api-server run check:frozen-dir"
+args = "cd travel-buddy-standalone && pnpm run check:all"
 
 [workflows.workflow.metadata]
-isValidation = true
+outputType = "console"
 
 [[workflows.workflow]]
 name = "check-test-registration"
@@ -147,73 +127,7 @@ task = "shell.exec"
 args = "pnpm --filter @workspace/api-server run check:test-registration"
 
 [workflows.workflow.metadata]
-isValidation = true
-
-[[workflows.workflow]]
-name = "standalone-test"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd travel-buddy-standalone && pnpm test && pnpm run test:component"
-
-[workflows.workflow.metadata]
-isValidation = true
-
-[[workflows.workflow]]
-name = "standalone-typecheck"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd travel-buddy-standalone && pnpm run typecheck"
-
-[workflows.workflow.metadata]
-isValidation = true
-
-[[workflows.workflow]]
-name = "check-async-handlers"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm --filter @workspace/api-server run check:async-handlers"
-
-[workflows.workflow.metadata]
-isValidation = true
-
-[[workflows.workflow]]
-name = "mobile-typecheck"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm --dir travel-buddy-standalone run typecheck"
-
-[workflows.workflow.metadata]
-isValidation = true
-
-[[workflows.workflow]]
-name = "check-write-path-columns"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm --filter @workspace/api-server run check:write-path-columns"
-
-[workflows.workflow.metadata]
-isValidation = true
-
-[[workflows.workflow]]
-name = "check-missing-live-columns"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm --filter @workspace/api-server run check:missing-live-columns"
-
-[workflows.workflow.metadata]
-isValidation = true
+outputType = "console"
 
 [agent]
 stack = "PNPM_WORKSPACE"

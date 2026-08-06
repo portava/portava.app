@@ -39,6 +39,64 @@ import { LayoverSessionProvider } from '../../src/context/LayoverSessionContext'
 
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
 
+/**
+ * QA round 2, bugs 9 and 10.
+ *
+ * Bug 10 first, because it explains bug 9's symptom. QUICK_FILTERS is a strict
+ * subset of PULSE_FILTERS (src/types/models.ts), which also offers Food,
+ * Nightlife, Beach, Culture, Fits My Time and Open Now. Both the chip row and the
+ * filter sheet write the SAME state (`active`) through byte-identical toggles, so
+ * they were never actually out of sync — the chip row simply had no chip to
+ * highlight for a sheet-only filter, which reads as "sheet says Food, chips say
+ * All". `visibleFilters` in the component appends any active sheet-only filter to
+ * the chip row so it is visible and dismissible.
+ *
+ * Bug 9: the feed's filter step was `realItems.filter(() => false)` for every
+ * filter except All and Posts — an unconditional empty list. That is the blank
+ * wall. Real matching lives below.
+ *
+ * Note on the "just send the filter to the server" fix: it does not work.
+ * api-server/src/routes/pulse.ts types `tab` as
+ * z.enum(['all','city','nearby','neighborhood','trip','crew','airport']) — those
+ * are VISIBILITY scopes, not content categories — so `tab=food` is rejected as
+ * invalid_payload. Category filtering has to happen client-side.
+ */
+const FILTER_TYPES: Partial<Record<PulseFilter, ReadonlyArray<PulseFeedItem['type']>>> = {
+  Posts:         ['post'],
+  Questions:     ['question'],
+  Plans:         ['plan'],
+  'Hidden Gems': ['hidden_gem'],
+  Itineraries:   ['itinerary'],
+  Circle:        ['circle_activity'],
+};
+
+/**
+ * Category filters have no column of their own on PulseFeedItem — they match
+ * against `tags`, which is what the category stamp on each card renders from.
+ */
+const FILTER_TAGS: Partial<Record<PulseFilter, ReadonlyArray<string>>> = {
+  Food:      ['food', 'foodie', 'eat', 'eats', 'restaurant', 'cafe', 'coffee', 'dining', 'street food'],
+  Nightlife: ['nightlife', 'night', 'bar', 'bars', 'club', 'clubs', 'party', 'drinks'],
+  Beach:     ['beach', 'beaches', 'island', 'islands', 'sea', 'ocean', 'swim', 'surf', 'coast', 'diving', 'snorkel'],
+  Culture:   ['culture', 'cultural', 'museum', 'museums', 'temple', 'church', 'heritage', 'history', 'historic', 'art', 'gallery'],
+};
+
+function pulseItemMatchesFilter(item: PulseFeedItem, filter: PulseFilter): boolean {
+  if (filter === 'All') return true;
+  const types = FILTER_TYPES[filter];
+  if (types) return types.includes(item.type);
+  const wanted = FILTER_TAGS[filter];
+  if (wanted) {
+    const tags = (item.tags ?? []).map((tag) => tag.trim().toLowerCase());
+    return wanted.some((w) => tags.includes(w));
+  }
+  // 'Fits My Time' and 'Open Now' are availability filters and PulseFeedItem
+  // carries no client-side signal for either. Leave the feed untouched rather
+  // than blanking the wall — an empty result the user cannot explain is the
+  // exact failure this bug was about.
+  return true;
+}
+
 type FeedMode = 'forYou' | 'following';
 
 /** Convert a real PostRow from the API into a PulseFeedItem for the Pulse Wall. */
@@ -266,9 +324,11 @@ function Pulse() {
   }, [pulseFeed.items, pulseFeed.loading, pulseFeed.error, savePulseSnapshot]);
 
   const forYouFeed = useMemo<PulseFeedItem[]>(() => {
-    const filteredReal = active.includes('All') || active.includes('Posts')
+    // QA round 2, bug 9: was `realItems.filter(() => false)` for every filter
+    // other than All/Posts — i.e. the Food filter could only ever return nothing.
+    const filteredReal = active.includes('All')
       ? realItems
-      : realItems.filter(() => false);
+      : realItems.filter((it) => active.some((f) => pulseItemMatchesFilter(it, f)));
     // Place cards only shown in All / default view (not when a specific type filter is active)
     const showPlaceCards = active.includes('All') && realItems.length < 5;
     return [...filteredReal, ...(showPlaceCards ? pulseFeed.placeCards : [])];
@@ -284,7 +344,12 @@ function Pulse() {
   // Inject a synthetic rent_a_buddy feed item (rendered by PulseFeedCard switch) at position 3
   const feed = useMemo<PulseFeedItem[]>(() => {
     let result: PulseFeedItem[];
-    if (!rentBuddyEnabled || feedMode === 'following') {
+    // QA round 2, bug 9: the synthetic rent_a_buddy card was injected even into an
+    // EMPTY feed, so `feed.length` was never 0 and the "No results for these
+    // filters" empty state below could never render — the user saw a blank wall
+    // with one promo card and no explanation. Skip the injection when there is
+    // nothing to interleave it with.
+    if (!rentBuddyEnabled || feedMode === 'following' || baseFeed.length === 0) {
       result = baseFeed;
     } else {
       const buddyItem: PulseFeedItem = {
@@ -313,6 +378,13 @@ function Pulse() {
   }, [baseFeed, rentBuddyEnabled, feedMode, activeCity, commentCountOverrides]);
 
   const filterCount = active.filter((f) => f !== 'All').length;
+  // QA round 2, bug 10: surface any active sheet-only filter (Food, Nightlife,
+  // Beach, Culture, Fits My Time, Open Now) in the chip row, so the two filter
+  // UIs visibly agree and the filter can be cleared from either one.
+  const visibleFilters = useMemo<PulseFilter[]>(
+    () => [...QUICK_FILTERS, ...active.filter((f) => !QUICK_FILTERS.includes(f))],
+    [active],
+  );
 
   function toggleQuick(f: PulseFilter) {
     if (f === 'All') { setActive(['All']); return; }

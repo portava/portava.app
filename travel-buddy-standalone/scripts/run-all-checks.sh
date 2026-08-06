@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Runs standalone test + typecheck validation in one workflow slot.
+# Each step is labeled and runs to completion regardless of earlier
+# failures, so a failure is always attributable to a specific step instead
+# of being buried in one undifferentiated log blob. Exits non-zero if any
+# step failed.
+set -uo pipefail
+cd "$(dirname "$0")/.."
+
+FAILED=0
+
+run_check() {
+  local label="$1"
+  shift
+  echo ""
+  echo "──────────────────────────────────────────────────────────"
+  echo "▶ RUNNING: $label"
+  echo "──────────────────────────────────────────────────────────"
+  "$@"
+  local rc=$?
+  if [ "$rc" -eq 0 ]; then
+    echo "✔ PASSED: $label"
+  else
+    echo "✘ FAILED: $label (exit $rc)"
+    FAILED=1
+  fi
+}
+
+run_check "test" pnpm run test
+run_check "test:component" pnpm run test:component
+run_check "typecheck" pnpm run typecheck
+
+echo ""
+echo "──────────────────────────────────────────────────────────"
+if [ "$FAILED" -eq 0 ]; then
+  echo "✔ ALL CHECKS PASSED"
+else
+  echo "✘ ONE OR MORE CHECKS FAILED — see ✘ FAILED lines above"
+fi
+echo "──────────────────────────────────────────────────────────"
+
+exit $FAILED

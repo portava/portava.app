@@ -38,6 +38,7 @@ import { getMyCircles, type CircleRow } from '../../../src/services/circles';
 import { listMyTrips, type TripRow } from '../../../src/services/trips';
 import { searchUsers, type TravelerSearchResult } from '../../../src/services/follows';
 import { uploadMedia, validateMedia } from '../../../src/services/media';
+import { formatEventLocation } from '../../../src/lib/location/formatEventLocation';
 import { GlobalCalendarPicker } from '../../../src/components/selectors/GlobalCalendarPicker';
 import { GlobalTimePicker } from '../../../src/components/selectors/GlobalTimePicker';
 import {
@@ -507,6 +508,29 @@ export default function CreateEventScreen() {
       { dateStr: endDateStr, timeStr: endTime },
     );
     if (dtErr) { setError(`Date & Time: ${dtErr.message}`); return; }
+
+    // QA round 2, bug 5. PublishDraftSchema (api-server/src/routes/events.ts)
+    // requires title, startsAt and locationName — but buildPayload() drops empty
+    // strings with `|| undefined`, so the key never reaches the server and zod
+    // answers with a bare "Required" that names no field. The user was left on
+    // step 9 (Preview) with no idea that step 3 (Location) was the problem.
+    // Validate here, name the field, and jump the wizard to the owning step.
+    if (!title.trim()) {
+      setError('Title is required.');
+      setStep('basics');
+      return;
+    }
+    if (!startDate) {
+      setError('Start date & time are required.');
+      setStep('datetime');
+      return;
+    }
+    if (!locationName.trim()) {
+      setError('Venue or location is required — pick a place on the Location step.');
+      setStep('location');
+      return;
+    }
+
     setSaving(true);
     setError(null);
     const payload = buildPayload();
@@ -882,7 +906,8 @@ export default function CreateEventScreen() {
           {/* ── Step 3: Location ── */}
           {step === 'location' && (
             <>
-              <Text style={styles.label}>Venue or location</Text>
+              {/* QA round 2, bug 5: the server requires this field; the form never said so. */}
+              <Text style={styles.label}>Venue or location *</Text>
               <Pressable
                 style={[styles.input, styles.locationRow]}
                 onPress={() => setLocationPickerVisible(true)}
@@ -901,8 +926,11 @@ export default function CreateEventScreen() {
                 usedFor="event_location"
                 onSelect={(place) => {
                   setLocationName(place.displayName);
-                  if (place.city) setCity(place.city);
-                  if (place.country) setCountry(place.country);
+                  // QA round 2, bug 6: only auto-fill City/Country when the user has
+                  // not typed their own. Picking a venue used to silently overwrite
+                  // a manually entered city with the picker's guess.
+                  if (place.city && !city.trim()) setCity(place.city);
+                  if (place.country && !country.trim()) setCountry(place.country);
                   if (place.lat != null) setLocationLat(place.lat);
                   if (place.lng != null) setLocationLng(place.lng);
                   if (place.timezone) setLocationTimezone(place.timezone);
@@ -1320,7 +1348,7 @@ export default function CreateEventScreen() {
                 {locationName ? (
                   <View style={styles.reviewRow}>
                     <MapPin size={13} color={color.mute} />
-                    <Text style={styles.reviewMeta}>{locationName}{city ? `, ${city}` : ''}</Text>
+                    <Text style={styles.reviewMeta}>{formatEventLocation(locationName, city)}</Text>
                   </View>
                 ) : null}
 

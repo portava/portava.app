@@ -12,7 +12,7 @@ import { uploadAvatar, uploadCover } from '../../src/services/profile';
 import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 import { getPendingPosts } from '../../src/services/posts';
 import { FEED_FOCUS_TTL_MS } from '../../src/hooks/usePosts';
-import { usePassport } from '../../src/hooks/usePassport';
+import { usePassport, isProfileStaleSince } from '../../src/hooks/usePassport';
 import { usePostcardActions } from '../../src/hooks/usePostcardActions';
 import { NotificationBell } from '../../src/components/NotificationBell';
 import { usePassportShare } from '../../src/hooks/usePassportShare';
@@ -483,7 +483,11 @@ function PassportContent({
     // scroll-position resets caused by unconditional reloads on every tab re-entry.
     // lastLoadedAt is stamped inside usePassport only on a successful fetch, so a
     // failed reload never silences the next focus retry.
-    if (Date.now() - lastLoadedAt.current >= FEED_FOCUS_TTL_MS) {
+    // QA round 2, bug 8: the TTL alone kept a just-saved bio invisible for up to
+    // five minutes. isProfileStaleSince lets a profile write force the next
+    // focus refetch without weakening the guard for ordinary tab re-entry.
+    if (Date.now() - lastLoadedAt.current >= FEED_FOCUS_TTL_MS
+        || isProfileStaleSince(lastLoadedAt.current)) {
       reload();
     }
     // These three fetches are lightweight and don't affect scroll position, so
@@ -640,7 +644,12 @@ function PassportContent({
         trustLabel={profile.trustLabel}
         noSafetyFlags={noSafetyFlags}
         isOwner
-        onPrivacySettings={() => openSettings('safety')}
+        onPrivacySettings={() => {
+          // QA round 2, minor A: 'safety' routes to /profile/edit/safety
+          // ("Safety & Verification"). This link is labelled PRIVACY SETTINGS,
+          // which is 'passport' -> /profile/edit/privacy ("Privacy & Visibility").
+          openSettings('passport');
+        }}
       />
       <PassportTravelInfoSection trips={trips} />
       <View style={{ height: 24 }} />

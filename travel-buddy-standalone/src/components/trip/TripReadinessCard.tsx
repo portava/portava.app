@@ -26,6 +26,16 @@ import { fetchTripReadiness, type ReadinessSummary, type ReadinessItem } from '.
 interface TripReadinessCardProps {
   tripId: string;
   refresh?: boolean;
+  /**
+   * QA round 2, bug 2. The trip header's "Trip Progress" ring used to read
+   * `trips.progress` — a column no client call site ever writes, so it was
+   * permanently 0 — while this card rendered the readiness score (14%). Two
+   * gauges on one screen, two different numbers. Reporting the summary upward
+   * lets the header render the SAME source. Called with `null` when the
+   * readiness feature flag is off or the fetch fails, in which case the header
+   * falls back to the legacy column.
+   */
+  onSummary?: (summary: ReadinessSummary | null) => void;
 }
 
 // The seven standard readiness categories (display order + labels)
@@ -152,7 +162,7 @@ function ScoreHeader({ score, previousScore }: { score: number; previousScore: n
   );
 }
 
-export function TripReadinessCard({ tripId, refresh = false }: TripReadinessCardProps) {
+export function TripReadinessCard({ tripId, refresh = false, onSummary }: TripReadinessCardProps) {
   const [summary, setSummary] = useState<ReadinessSummary | null | undefined>(undefined); // undefined = loading
   const [loading, setLoading] = useState(true);
 
@@ -169,6 +179,14 @@ export function TripReadinessCard({ tripId, refresh = false }: TripReadinessCard
   }, [tripId]);
 
   useEffect(() => { load(refresh); }, [load, refresh]);
+
+  // QA round 2, bug 2: hand the loaded summary to the parent so the trip header's
+  // progress ring can render the same number this card renders. Keyed on
+  // `summary` only on purpose — adding `onSummary` to the deps would re-fire on
+  // every parent render whenever the caller passes an inline lambda.
+  useEffect(() => {
+    if (summary !== undefined) onSummary?.(summary);
+  }, [summary]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading || summary === undefined) {
     return (

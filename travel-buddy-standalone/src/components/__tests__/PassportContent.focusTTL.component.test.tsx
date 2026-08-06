@@ -97,6 +97,8 @@ const mockReload = jest.fn();
 // network stack; pulling requireActual would trigger live network requests.
 jest.mock('../../hooks/usePassport', () => ({
   usePassport: jest.fn(),
+  isProfileStaleSince: jest.fn(() => false),
+  markProfileStale: jest.fn(),
 }));
 
 // ── Services ──────────────────────────────────────────────────────────────────
