@@ -23,6 +23,8 @@ import { MediaStampOverlay } from '../../src/components/StampOverlayBadge';
 import { SharedVideoPlayer } from '../../src/components/ui/SharedVideoPlayer';
 import { getPostById, type PostRow } from '../../src/services/posts';
 import { useSession } from '../../src/context/SessionContext';
+import { primaryIdentityText } from '../../src/lib/displayIdentity.ts';
+import { DisplayMediaImage } from '../../src/components/ui/DisplayMediaImage.tsx';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { emitCommentCount } from '../../src/lib/commentCountStore';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
@@ -124,7 +126,7 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
   const firstMediaItem = post.media?.[0] ?? null;
   const firstMedia = firstMediaItem?.url ?? post.mediaUrls[0] ?? null;
   const loc = post.locationName ?? post.locationCity ?? null;
-  const authorName = post.author?.name ?? 'Traveler';
+  const authorName = primaryIdentityText(post.author ?? undefined);
   const authorAvatar = post.author?.avatarUrl ?? null;
   const ts = new Date(post.createdAt).toLocaleDateString(undefined, {
     month: 'short', day: 'numeric', year: 'numeric',
@@ -169,7 +171,13 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
             />
           ) : (
             <>
-              <Image source={{ uri: firstMedia }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+              <DisplayMediaImage
+                uri={firstMedia}
+                width={width}
+                height={mediaHeight}
+                resizeMode="cover"
+                style={StyleSheet.absoluteFill}
+              />
               <MediaStampOverlay raw={firstMediaItem?.stamp_overlay} />
             </>
           )}

@@ -994,6 +994,7 @@ export type PlanItemWarning =
   | 'duplicate'
   | 'outside_trip_dates'
   | 'missing_location'
+  | 'unmapped_location'
   | 'cancelled_source';
 
 export interface TripPlanItem {
