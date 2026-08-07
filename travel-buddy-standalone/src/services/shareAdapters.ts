@@ -477,8 +477,70 @@ export function toShareableBuddyProfile(buddy: BuddyProfile): ShareableEntity {
   };
 }
 
-// Exported for tests, and for the (not yet built) sheet to resolve the
-// "resolvesTo" hints in metadata. Nothing outside this module should build a
-// share path by hand — that is the point of having one map.
-export { ENTITY_PATHS, entityUrl };
+// ── The in-app mirror of ENTITY_PATHS ────────────────────────────────────────
+//
+// Web paths and expo-router paths are NOT the same strings: /posts and /trips
+// are plural on the web while the screens are app/post/[id] and app/trip/[id].
+// Keeping both maps side by side is the only way that stays true — a single
+// map with a transform would just hide the discrepancy.
+
+const APP_ROUTES: Record<PathKind, (id: string) => string> = {
+  post:         (id) => `/post/${enc(id)}`,          // singular, unlike /posts
+  trip:         (id) => `/trip/${enc(id)}`,          // singular, unlike /trips
+  event:        (id) => `/event/${enc(id)}`,
+  place:        (id) => `/place/${enc(id)}`,
+  memory:       (id) => `/memory/${enc(id)}`,
+  stamp:        (id) => `/stamp/${enc(id)}`,
+  gem:          (id) => `/gems/${enc(id)}`,
+  sharedMoment: (id) => `/shared-moments/${enc(id)}`,
+  buddy:        (id) => `/buddy/${enc(id)}`,         // the (rent-a-buddy) group is transparent
+  plan:         (id) => `/plan/${enc(id)}`,
+  profile:      (u)  => `/u/${enc(u)}`,
+};
+
+/** Which path kind an entity type resolves to, before redirects are applied. */
+const ENTITY_TYPE_KIND: Record<string, PathKind> = {
+  trip: 'trip', place: 'place', event: 'event', memory: 'memory',
+  stamp: 'stamp', shared_moment: 'sharedMoment', buddy_profile: 'buddy',
+  profile: 'profile',
+};
+
+/**
+ * The in-app route to open for an entity, or null when it has no screen.
+ *
+ * Mirrors canonicalUrl exactly, including the two redirects: a postcard opens
+ * its POST, and a compass recommendation opens the item it wraps. Anything
+ * else would mean a shared card and the link in it going to different places.
+ *
+ * A profile routes by handle, not id — /u/:username is the canonical form, and
+ * a handle-less profile gets null for the same reason it gets a null
+ * canonicalUrl.
+ */
+export function appRouteFor(entity: ShareableEntity): string | null {
+  const md = entity.metadata as Record<string, unknown>;
+
+  if (entity.entityType === 'postcard') {
+    const postId = typeof md.postId === 'string' ? md.postId : '';
+    return postId ? APP_ROUTES.post(postId) : null;
+  }
+
+  if (entity.entityType === 'compass_recommendation') {
+    const kind = md.resolvesTo as PathKind | null | undefined;
+    const itemId = typeof md.itemId === 'string' ? md.itemId : '';
+    return kind && itemId && APP_ROUTES[kind] ? APP_ROUTES[kind](itemId) : null;
+  }
+
+  if (entity.entityType === 'profile') {
+    const handle = entity.creator?.username ?? null;
+    return handle ? APP_ROUTES.profile(handle) : null;
+  }
+
+  const kind = ENTITY_TYPE_KIND[entity.entityType];
+  return kind && entity.entityId ? APP_ROUTES[kind](entity.entityId) : null;
+}
+
+// Exported for tests, and so the sheet can resolve the "resolvesTo" hints in
+// metadata. Nothing outside this module should build a share path by hand —
+// that is the point of having one map per target.
+export { ENTITY_PATHS, APP_ROUTES, entityUrl };
 export type { PathKind };
