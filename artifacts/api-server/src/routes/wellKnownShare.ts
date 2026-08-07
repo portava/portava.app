@@ -14,7 +14,7 @@
  *   GET /u/:username
  *   GET /passport/:username
  *   GET /posts/:id  /trips/:id  /event/:id  /place/:id  /memory/:id  /stamp/:id
- *   GET /gems/:id   /buddy/:id  /shared-moments/:id
+ *   GET /gems/:id   /buddy/:id  /shared-moments/:id  /plan/:id
  *
  * Association files
  * ─────────────────
@@ -42,7 +42,7 @@
  * enforces the same visibility rules server-side. All interpolated values are
  * HTML-escaped.
  *
- * The nine entity paths share one handler (see "Entity share landing pages" at
+ * The ten entity paths share one handler (see "Entity share landing pages" at
  * the bottom of this file). They differ from the profile pages in one respect:
  * they never 404. An entity id is a UUID, so distinguishing "no such id" from
  * "private" would leak existence; every non-public outcome renders the same
@@ -442,6 +442,37 @@ const ENTITY_SPECS: EntitySpec[] = [
       return {
         title: `${clamp(data.title, 60) || "Trip"} · ${APP_NAME}`,
         description: where ? `A trip to ${where} on ${APP_NAME}.` : `A trip on ${APP_NAME}.`,
+      };
+    },
+  },
+  {
+    // A plan is not an entity — :id here is a TRIP id, matching
+    // app/plan/[id].tsx, which redirects to /trip/:id?focus=plan. The gate is
+    // therefore the trip's gate, character for character: a plan is exactly as
+    // visible as the trip that owns it, and nothing about the plan's contents
+    // is ever rendered here.
+    //
+    // The destination is deliberately NOT shown even when the trip page would
+    // show it. "Plan for <trip>" is all this card needs, and a plan link is the
+    // one most likely to be forwarded beyond the crew it was meant for.
+    webSegment: "plan",
+    appSegment: "plan",
+    kicker: `${APP_NAME.toUpperCase()} · PLAN`,
+    async resolve(sc, id) {
+      const { data } = await sc
+        .from("trips")
+        .select("title, visibility, status")
+        .eq("id", id)
+        .maybeSingle();
+      if (!data) return null;
+      if (data.visibility !== "public") return null;
+      if (["draft", "cancelled", "archived"].includes(String(data.status))) return null;
+      const title = clamp(data.title, 60);
+      return {
+        title: title ? `Plan for ${title} · ${APP_NAME}` : `Trip plan · ${APP_NAME}`,
+        description: title
+          ? `The day-by-day plan for ${title} on ${APP_NAME}.`
+          : `A trip plan on ${APP_NAME}.`,
       };
     },
   },

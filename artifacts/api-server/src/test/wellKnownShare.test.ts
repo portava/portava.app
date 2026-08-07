@@ -13,7 +13,7 @@
  *   D. /u/:username — 404 for unknown handles; generic (no-leak) card for
  *      private profiles; /passport/:username serves the same page.
  *   E. Entity catch-all (/posts /trips /event /place /memory /stamp /gems
- *      /buddy /shared-moments /:id) —
+ *      /buddy /shared-moments /plan /:id) —
  *      public entity renders its title; private, deleted and unknown-id all
  *      render the identical generic card at 200; never 404, never 500.
  *
@@ -507,7 +507,7 @@ describe("E: entity share landing pages", () => {
 
   it("serves the generic card for an unknown id on every segment", async () => {
     _setTestServiceClient(makeEntitySc({}) as any);
-    for (const seg of ["posts", "trips", "event", "place", "memory", "stamp", "gems", "buddy", "shared-moments"]) {
+    for (const seg of ["posts", "trips", "event", "place", "memory", "stamp", "gems", "buddy", "shared-moments", "plan"]) {
       const { status, text } = await getReq(`/${seg}/${EID}`);
       assertGenericCard(status, text);
     }
@@ -699,6 +699,64 @@ describe("F: shared moment share pages", () => {
     // throwOn every table: resolve() is unconditionally null, so nothing is queried.
     _setTestServiceClient(makeEntitySc({}, "shared_moments") as any);
     const { status, text } = await getReq(`/shared-moments/${EID}`);
+    assertGenericCard(status, text);
+  });
+});
+
+// ── G. /plan/:id — a trip id, gated exactly like the trip (15e) ──────────────
+
+describe("G: plan share pages", () => {
+  const trip = (o: Record<string, any> = {}) => ({
+    id: EID, title: "Luzon loop", visibility: "public", status: "planning",
+    destination_city: "Manila", destination_country: "Philippines",
+    show_destination_city: true, ...o,
+  });
+
+  it('renders "Plan for <trip>" for a public trip', async () => {
+    _setTestServiceClient(makeEntitySc({ trips: [trip()] }) as any);
+    const { status, text } = await getReq(`/plan/${EID}`);
+    assert.equal(status, 200);
+    assert.match(text, /og:title" content="Plan for Luzon loop · Portava"/);
+    assert.match(text, /og:description" content="The day-by-day plan for Luzon loop on Portava\."/);
+    assert.match(text, new RegExp(`href="travelbuddy://plan/${EID}"`));
+    assert.ok(!text.includes("noindex"));
+  });
+
+  it("never prints the destination, even when the trip page would", async () => {
+    // A plan link is the one most likely to travel past the crew it was for.
+    _setTestServiceClient(makeEntitySc({ trips: [trip({ show_destination_city: true })] }) as any);
+    const { text } = await getReq(`/plan/${EID}`);
+    assert.ok(!text.includes("Manila"), "destination is not on the plan card");
+  });
+
+  it("uses the same gate as the trip segment", async () => {
+    for (const o of [
+      { visibility: "buddies" },
+      { visibility: "private" },
+      { status: "draft" },
+      { status: "cancelled" },
+      { status: "archived" },
+    ]) {
+      _setTestServiceClient(makeEntitySc({ trips: [trip(o)] }) as any);
+      const { status, text } = await getReq(`/plan/${EID}`);
+      assertGenericCard(status, text, "Luzon loop");
+    }
+  });
+
+  it("agrees with /trips/:id on every gate input", async () => {
+    // If these two ever diverge, one of them is leaking.
+    for (const o of [{}, { visibility: "private" }, { status: "draft" }, { status: "archived" }]) {
+      _setTestServiceClient(makeEntitySc({ trips: [trip(o)] }) as any);
+      const planPublic = !(await getReq(`/plan/${EID}`)).text.includes("noindex");
+      _setTestServiceClient(makeEntitySc({ trips: [trip(o)] }) as any);
+      const tripPublic = !(await getReq(`/trips/${EID}`)).text.includes("noindex");
+      assert.equal(planPublic, tripPublic, `gate mismatch for ${JSON.stringify(o)}`);
+    }
+  });
+
+  it("generic card for an unknown trip id", async () => {
+    _setTestServiceClient(makeEntitySc({}) as any);
+    const { status, text } = await getReq(`/plan/${EID}`);
     assertGenericCard(status, text);
   });
 });
