@@ -94,7 +94,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd travel-buddy-standalone && npx expo start --tunnel --port 9000"
+args = "cd travel-buddy-standalone && PORT=3000 pnpm run dev"
 
 [[workflows.workflow]]
 name = "api-checks"
