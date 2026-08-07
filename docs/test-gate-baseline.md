@@ -1,0 +1,73 @@
+# Test Gate Baseline
+
+The reference numbers a full verification run must match. A run is green only
+when every check below passes **and** its counts are equal to or greater than
+the reference. A count that moves **down**, or any suite that becomes skipped,
+is a regression — investigate before accepting.
+
+Additive movement (new tests, newly-globbed suites) is fine, but update this
+file in the same commit so the reference never drifts behind reality.
+
+## Current reference — 2026-08-07
+
+Recorded after the five media commits (`50bb012b5` … `db2dd781b`), which fixed
+the blank-media bug. Full run, all green.
+
+| Check | Command | Result | Reference |
+|---|---|---|---|
+| typecheck | `pnpm run typecheck` (travel-buddy-standalone) | PASS | — |
+| rules-of-hooks | `npx eslint 'travel-buddy-standalone/{app,src}/**/*.{ts,tsx}'` | PASS | 0 violations |
+| component tests — native | `pnpm run test:component` | PASS | 1716/1716, 320 suites |
+| component tests — web | `pnpm run test:component` (jest.web.config.js) | PASS | 4/4, 2 suites |
+| standalone node tests | `pnpm run test` (travel-buddy-standalone) | PASS | 3614/3614, 491 suites |
+| api-server tests | `pnpm run test` (artifacts/api-server) | PASS | 6135/6135, 1550 suites |
+
+`fail 0`, `skipped 0`, `todo 0`, `cancelled 0` on every node run.
+
+### Coverage note
+
+`pnpm run check:all` covers only **test**, **test:component** and **typecheck**.
+It does **not** run the api-server suite or the hooks lint — those are separate
+commands and must be run explicitly to complete the gate.
+
+`artifacts/api-server`'s own `check:all` is a *different* set (frozen-dir,
+async-handlers, live-DB column audits) and is not the 6135-test suite.
+
+### Known non-blocking eslint errors
+
+Two severity-2 eslint errors exist and pre-date this baseline. Neither is
+`rules-of-hooks`, which is the gated rule:
+
+- `src/components/events/GenerateHeaderSheet.tsx:249` — malformed
+  `eslint-disable` comment (rule name has a trailing prose fragment, so the
+  rule is "not found").
+- `src/services/compass.ts:690` — `@typescript-eslint/no-empty-object-type`,
+  interface declaring no members.
+
+## Change log
+
+### 2026-08-07 — 3612 → 3614 and 1715/319 → 1716/320
+
+Both deltas additive; zero failures, zero regressions, nothing deleted,
+disabled or skipped. api-server held exactly at 6135/6135.
+
+**standalone node +2** — the sign-path tests were rewritten in `50bb012b5`.
+Each file dropped its obsolete `flag OFF` case and added two real ones, net +1
+apiece:
+
+- `src/lib/__tests__/batchSignMedia.test.ts` — adds *sends the bearer token*
+  and *no session*.
+- `src/services/__tests__/mediaUrl.service.test.ts` — adds *bare post-media ref
+  is signed* and *no session → null*.
+
+**component +1 test, +1 suite** — `deb8c9a86` renamed
+`app/post/__tests__/PostDetailCard.playback.test.tsx` to
+`.component.test.tsx`. `test:component` filters on `\.component\.test\.`, so
+the file had never run; it contains exactly one test. It had been failing
+silently on an RNTL API removed in v12 (`getByAccessibilityLabel`), with no
+gate to catch it.
+
+Three more files sit in the same blind spot and currently pass — they are
+named `.test.tsx` under `app/` and so are never run by `test:component`:
+`livekitBridge.activeSpeakers`, `MapEntityActionRow`, `MapCarousel.cardHeight`.
+Renaming them would raise these counts again.
