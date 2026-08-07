@@ -43,6 +43,7 @@ import { PostWrongPlaceSheet } from './PostWrongPlaceSheet.tsx';
 import { useStamp } from '../hooks/useStamp.ts';
 import { useDoubleTapToStamp } from '../hooks/useDoubleTapToStamp.ts';
 import { PostCardStampBurst, type PostCardStampBurstHandle } from './stamps/PostCardStampBurst.tsx';
+import { canonicalUrl } from '../constants/canonicalUrl.ts';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -91,7 +92,7 @@ function AuthorRow({
     : '';
 
   async function sharePost() {
-    const permalink = `https://travelbuddy.app/posts/${item.id}`;
+    const permalink = canonicalUrl(`/posts/${item.id}`);
     try {
       await Share.share({ message: `Check out this post!\n${permalink}`, url: permalink });
     } catch {

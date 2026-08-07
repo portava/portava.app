@@ -10,6 +10,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { stampToLegacy, makeStampShareMessage, makeStampShareLinks, toFileUri } from '../stampShareUtils.ts';
 import type { PassportStampNew } from '../passportStamps.ts';
+import { CANONICAL_APP_URL } from '../../constants/canonicalUrl.ts';
 
 // ── Minimal stub factory ────────────────────────────────────────────────────
 function makeStamp(overrides: Partial<PassportStampNew> = {}): PassportStampNew {
@@ -168,12 +169,12 @@ describe('makeStampShareLinks', () => {
     assert.match(webUrl, /\/passport/);
   });
 
-  it('falls back to travelbuddy.app domain when no env vars set', () => {
+  it('falls back to CANONICAL_APP_URL when no env vars set', () => {
     const saved = process.env.EXPO_PUBLIC_WEB_ORIGIN;
     delete process.env.EXPO_PUBLIC_WEB_ORIGIN;
     delete process.env.EXPO_PUBLIC_API_BASE_URL;
     const { webUrl } = makeStampShareLinks(makeStamp(), 'bob');
-    assert.match(webUrl, /travelbuddy\.app/);
+    assert.ok(webUrl.startsWith(`${CANONICAL_APP_URL}/`));
     process.env.EXPO_PUBLIC_WEB_ORIGIN = saved;
   });
 

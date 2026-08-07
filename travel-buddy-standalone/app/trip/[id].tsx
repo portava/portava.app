@@ -51,6 +51,7 @@ import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 import { deriveTripDisplayStatus } from '../../src/lib/tripStatus';
+import { canonicalUrl } from '../../src/constants/canonicalUrl';
 
 function TripDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -227,7 +228,7 @@ function TripDetailScreen() {
       const link = await createInviteLink(id);
       const inviteUrl = link
         ? `travelbuddy://invite/${link.token}`
-        : `https://travelbuddy.app/trips/${id}`;
+        : canonicalUrl(`/trips/${id}`);
       const tripName = realTrip.title ?? realTrip.destinationCity ?? 'a trip';
       await Share.share({
         title: `Join my trip${realTrip.title ? ` — ${realTrip.title}` : ''}!`,

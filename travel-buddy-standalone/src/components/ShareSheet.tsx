@@ -48,6 +48,7 @@ import {
 } from 'lucide-react-native';
 import { PortavaShareIcon } from './icons/PortavaShareIcon.tsx';
 import { closeThenNavigate } from '../lib/deferredNavigate.ts';
+import { canonicalUrl } from '../constants/canonicalUrl.ts';
 import { color, space, radius, shadow } from '../theme/tokens.ts';
 import { getMyThreads, sendMessage, openDirectThread } from '../services/messaging.ts';
 import type { ThreadSummary } from '../services/messaging.ts';
@@ -77,7 +78,7 @@ interface PostPreview {
 }
 
 function postPermalink(postId: string): string {
-  return `https://travelbuddy.app/posts/${postId}`;
+  return canonicalUrl(`/posts/${postId}`);
 }
 
 function targetForThread(threadType: ThreadSummary['threadType']): ShareTarget {

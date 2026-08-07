@@ -48,6 +48,7 @@ import { resolve as pathResolve, dirname } from 'node:path';
 // ── Real production imports ───────────────────────────────────────────────────
 
 import { deriveMeetupDates } from './calendarUtils.ts';
+import { CANONICAL_APP_URL } from '../constants/canonicalUrl.ts';
 import {
   addMeetupToCalendar,
   _setTestCalendarDeps,
@@ -609,11 +610,11 @@ describe('react-native-view-shot 4.0.3 — passportShareUtils helpers (real prod
     assert.equal(result, 'https://api.replit.dev/u/bob');
   });
 
-  it('makeWebFallback falls back to travelbuddy.app when no env vars are set', () => {
+  it('makeWebFallback falls back to CANONICAL_APP_URL when no env vars are set', () => {
     delete process.env.EXPO_PUBLIC_WEB_ORIGIN;
     delete process.env.EXPO_PUBLIC_API_BASE_URL;
     const result = makeWebFallback('carol');
-    assert.equal(result, 'https://travelbuddy.app/u/carol');
+    assert.equal(result, `${CANONICAL_APP_URL}/u/carol`);
   });
 
   it('toFileUri adds file:// prefix when missing', () => {

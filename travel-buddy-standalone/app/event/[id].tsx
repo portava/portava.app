@@ -74,6 +74,7 @@ import { fallbackUriFor } from '../../src/lib/visuals/fallbackAssets';
 import { PlaceInfoSection } from '../../src/components/place/PlaceInfoSection';
 import { getVenueInfoByCoords, clearVenueInfoCache, getCanonicalPlace, type VenueContactInfo } from '../../src/services/places';
 import type { CanonicalPlace } from '../../src/types/canonicalPlace';
+import { canonicalUrl } from '../../src/constants/canonicalUrl';
 
 /**
  * Composes the location subtitle line, avoiding a duplicated city when
@@ -513,7 +514,7 @@ export default function EventDetailScreen() {
     const res = await shareEvent(event.id);
     const url = res.ok && res.data?.shareUrl
       ? res.data.shareUrl
-      : `https://travelbuddy.app/event/${event.id}`;
+      : canonicalUrl(`/event/${event.id}`);
     try {
       await Share.share({
         title: event.title,

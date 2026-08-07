@@ -39,6 +39,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { toFileUri, makeDeepLink, makeWebFallback } from './passportShareUtils.ts';
+import { CANONICAL_APP_URL } from '../constants/canonicalUrl.ts';
 
 // ── 1. toFileUri — platform URI shape handling ────────────────────────────────
 //
@@ -355,7 +356,7 @@ describe('Share message content — deep-link and web fallback URLs', () => {
     assert.equal(result, 'https://travel.example.com/u/alice');
   });
 
-  it('makeWebFallback falls back to travelbuddy.app when no env is set', () => {
+  it('makeWebFallback falls back to CANONICAL_APP_URL when no env is set', () => {
     const savedOrigin = process.env.EXPO_PUBLIC_WEB_ORIGIN;
     const savedApi = process.env.EXPO_PUBLIC_API_BASE_URL;
     delete process.env.EXPO_PUBLIC_WEB_ORIGIN;
@@ -363,6 +364,6 @@ describe('Share message content — deep-link and web fallback URLs', () => {
     const result = makeWebFallback('alice');
     if (savedOrigin) process.env.EXPO_PUBLIC_WEB_ORIGIN = savedOrigin;
     if (savedApi) process.env.EXPO_PUBLIC_API_BASE_URL = savedApi;
-    assert.equal(result, 'https://travelbuddy.app/u/alice');
+    assert.equal(result, `${CANONICAL_APP_URL}/u/alice`);
   });
 });

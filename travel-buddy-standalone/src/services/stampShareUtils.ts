@@ -6,6 +6,7 @@
  */
 import type { PassportStampNew } from './passportStamps.ts';
 import type { PassportStamp } from '../types/models.ts';
+import { canonicalUrl } from '../constants/canonicalUrl.ts';
 
 /** Convert the new stamp shape to the legacy PassportStamp used by StampShareCard. */
 export function stampToLegacy(s: PassportStampNew): PassportStamp {
@@ -35,18 +36,6 @@ export function stampToLegacy(s: PassportStampNew): PassportStamp {
 }
 
 /**
- * Resolve the web origin from env vars.
- * Mirrors the logic in passportShareUtils.ts so both share features use the
- * same base URL without creating a circular dependency.
- */
-function resolveWebOrigin(): string {
-  const webOrigin = process.env.EXPO_PUBLIC_WEB_ORIGIN;
-  if (webOrigin) return webOrigin.replace(/\/$/, '');
-  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-  try { return new URL(apiBase).origin; } catch { return ''; }
-}
-
-/**
  * Return a { deepLink, webUrl } pair for a stamp share.
  *
  * Deep link:  travelbuddy://passport/@<username>?stamp=<id>  (with username)
@@ -61,19 +50,18 @@ export function makeStampShareLinks(
   stamp: PassportStampNew,
   username?: string | null,
 ): { deepLink: string; webUrl: string } {
-  const base = resolveWebOrigin() || 'https://travelbuddy.app';
   const id = encodeURIComponent(stamp.id);
 
   if (username) {
     const u = encodeURIComponent(username);
     return {
       deepLink: `travelbuddy://passport/@${u}?stamp=${id}`,
-      webUrl: `${base}/u/${u}?stamp=${id}`,
+      webUrl: canonicalUrl(`/u/${u}?stamp=${id}`),
     };
   }
   return {
     deepLink: `travelbuddy://stamps/${id}`,
-    webUrl: `${base}/passport`,
+    webUrl: canonicalUrl('/passport'),
   };
 }
 

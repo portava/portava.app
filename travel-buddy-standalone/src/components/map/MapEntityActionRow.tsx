@@ -39,6 +39,7 @@ import {
 } from 'lucide-react-native';
 import { StampIcon } from '../stamps/StampIcon.tsx';
 import { PortavaShareIcon } from '../icons/PortavaShareIcon.tsx';
+import { canonicalUrl } from '../../constants/canonicalUrl.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import type { MapEntity, MapEntityType } from '../../types/mapTypes.ts';
 import type { ModerationSubjectType } from '../../services/moderation.ts';
@@ -223,7 +224,7 @@ function ActionRowInner({ entity, onBeforeNavigate }: { entity: MapEntity; onBef
     const detailPath = (entity as any).detailRoute ?? '';
     try {
       await Share.share({
-        message: `Check out ${entityName} on Portava!\nhttps://travelbuddy.app${detailPath}`,
+        message: `Check out ${entityName} on Portava!\n${canonicalUrl(detailPath)}`,
       });
     } catch {
       // User cancelled or share unavailable — silent.
