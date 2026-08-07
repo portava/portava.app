@@ -8,15 +8,23 @@
  *   - Load-error fallback view
  *   - onEnd callback
  *
- * Video URIs are passed through directly — signed URLs are self-authenticating
- * and require no Authorization header injection.
+ * ## URIs must be hydrated before they reach <Video>
+ *
+ * This used to pass `uri` through untouched, on the assumption that it was
+ * already a signed URL. It is not: post-media is a PRIVATE bucket and the
+ * stored value is a bare `post-media/<uid>/<file>.mp4` reference with no
+ * scheme. expo-av cannot report a useful error for a URI it cannot even parse,
+ * so this surface rendered a truly blank box — the worst of the four.
+ *
+ * Both `uri` and `poster` go through useHydratedMedia. A null resolve is
+ * treated exactly like a playback error: the "Video unavailable" state, never
+ * an empty frame.
  */
 import React, { useRef, useCallback, useState } from 'react';
 import {
   View,
   Pressable,
   StyleSheet,
-  Image,
   Text,
   type StyleProp,
   type ViewStyle,
@@ -26,6 +34,8 @@ import { Play, Volume2, VolumeX } from 'lucide-react-native';
 import { color, radius } from '../../theme/tokens.ts';
 import { useSmartVideoFit } from '../../hooks/useSmartVideoFit.ts';
 import { VideoBlurBackdrop } from './VideoBlurBackdrop.tsx';
+import { useHydratedMedia } from '../../services/mediaUrl.ts';
+import { DisplayMediaImage } from './DisplayMediaImage.tsx';
 
 export interface SharedVideoPlayerProps {
   uri: string;
@@ -53,6 +63,18 @@ export function SharedVideoPlayer({
   const [isMuted, setIsMuted] = useState(mutedProp);
   const [hasError, setHasError] = useState(false);
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
+
+  // Private-bucket references resolve to signed URLs here. Until the resolve
+  // lands, `hydrated[uri]` is undefined and the plain value is used, which is
+  // correct for the already-absolute URLs some rows still hold.
+  const { resolved: hydrated } = useHydratedMedia([uri, poster ?? null]);
+  const hydratedUri = hydrated[uri];
+  const playbackUri = typeof hydratedUri === 'string' ? hydratedUri : uri;
+  const posterUri = poster
+    ? (typeof hydrated[poster] === 'string' ? (hydrated[poster] as string) : poster)
+    : undefined;
+  // Server said no: unreadable, same user-visible outcome as a decode failure.
+  const unresolvable = hydratedUri === null;
   const { resizeMode, needsLetterbox, onReadyForDisplay } = useSmartVideoFit(
     containerSize.w,
     containerSize.h,
@@ -90,7 +112,7 @@ export function SharedVideoPlayer({
     await videoRef.current.setStatusAsync({ isMuted: next });
   }, [isMuted]);
 
-  if (hasError) {
+  if (hasError || unresolvable) {
     return (
       <View style={[s.container, s.error, style]}>
         <Text style={s.errorText}>Video unavailable</Text>
@@ -105,10 +127,10 @@ export function SharedVideoPlayer({
         setContainerSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })
       }
     >
-      {needsLetterbox ? <VideoBlurBackdrop uri={poster} /> : null}
+      {needsLetterbox ? <VideoBlurBackdrop uri={posterUri} /> : null}
       <Video
         ref={videoRef}
-        source={{ uri }}
+        source={{ uri: playbackUri }}
         style={StyleSheet.absoluteFill}
         resizeMode={resizeMode}
         shouldPlay={autoplay}
@@ -119,14 +141,19 @@ export function SharedVideoPlayer({
         onReadyForDisplay={onReadyForDisplay}
       />
 
-      {/* Poster shown while paused and poster uri is provided */}
-      {!isPlaying && poster ? (
+      {/* Poster shown while paused and poster uri is provided. DisplayMediaImage
+          rather than a bare <Image>: the poster is a post-media object too, and
+          a failed one must show the designed fallback, not an empty frame. */}
+      {!isPlaying && posterUri ? (
         <View style={StyleSheet.absoluteFill} pointerEvents="none">
-          <Image
+          <DisplayMediaImage
             testID="poster-image"
-            source={{ uri: poster }}
-            style={StyleSheet.absoluteFill}
+            uri={posterUri}
+            width={containerSize.w}
+            height={containerSize.h}
             resizeMode="cover"
+            style={StyleSheet.absoluteFill}
+            fallbackLabel=""
           />
         </View>
       ) : null}

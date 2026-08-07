@@ -174,12 +174,12 @@ describe('PostDetailCard video playback', () => {
 
     // Wait for the post to load and the real SharedVideoPlayer to mount
     await waitFor(() =>
-      expect(screen.getByAccessibilityLabel('Play video')).toBeTruthy(),
+      expect(screen.getByLabelText('Play video')).toBeTruthy(),
     );
 
     // Press the tap zone — this should call playAsync on the Video ref
     await act(async () => {
-      fireEvent.press(screen.getByAccessibilityLabel('Play video'));
+      fireEvent.press(screen.getByLabelText('Play video'));
     });
 
     expect(mockPlayAsync).toHaveBeenCalledTimes(1);
