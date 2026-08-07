@@ -13,6 +13,7 @@
  *   GET /.well-known/assetlinks.json
  *   GET /u/:username
  *   GET /passport/:username
+ *   GET /posts/:id  /trips/:id  /event/:id  /place/:id  /memory/:id  /stamp/:id
  *
  * Association files
  * ─────────────────
@@ -39,6 +40,12 @@
  * (GET /api/users/:username/og-image.png in routes/passport.ts), which
  * enforces the same visibility rules server-side. All interpolated values are
  * HTML-escaped.
+ *
+ * The six entity paths share one handler (see "Entity share landing pages" at
+ * the bottom of this file). They differ from the profile pages in one respect:
+ * they never 404. An entity id is a UUID, so distinguishing "no such id" from
+ * "private" would leak existence; every non-public outcome renders the same
+ * generic card at 200 instead.
  */
 
 import { Router } from "express";
@@ -163,6 +170,10 @@ interface SharePageData {
   deepLink: string;
   /** Generic (private/unavailable) pages are noindex'd. */
   noindex: boolean;
+  /** og:type. Profiles are "profile"; every entity page is "website". */
+  ogType?: string;
+  /** Small caps line above the title, e.g. "PORTAVA · TRIP". */
+  kicker?: string;
 }
 
 function buildSharePageHtml(d: SharePageData): string {
@@ -180,7 +191,7 @@ function buildSharePageHtml(d: SharePageData): string {
 <title>${safeTitle}</title>
 <meta name="description" content="${safeDesc}"/>
 ${robots}
-<meta property="og:type" content="profile"/>
+<meta property="og:type" content="${escapeHtml(d.ogType ?? "profile")}"/>
 <meta property="og:site_name" content="${escapeHtml(APP_NAME)}"/>
 <meta property="og:title" content="${safeTitle}"/>
 <meta property="og:description" content="${safeDesc}"/>
@@ -204,7 +215,7 @@ ${robots}
 </head>
 <body>
 <div class="card">
-  <div class="kicker">${escapeHtml(APP_NAME.toUpperCase())} · PASSPORT</div>
+  <div class="kicker">${escapeHtml(d.kicker ?? `${APP_NAME.toUpperCase()} · PASSPORT`)}</div>
   <h1>${safeTitle}</h1>
   <p>${safeDesc}</p>
   <a class="btn" href="${safeDeepLink}">Open in ${escapeHtml(APP_NAME)}</a>
@@ -322,5 +333,268 @@ const shareHandler = asyncHandler(async (req: any, res: any) => {
 
 router.get("/u/:username", shareHandler);
 router.get("/passport/:username", shareHandler);
+
+// ── Entity share landing pages ───────────────────────────────────────────────
+//
+// Before this, every entity share URL the client emits — /posts/:id, /trips/:id,
+// /event/:id, /place/:id, /memory/:id, /stamp/:id — 404'd at this origin with no
+// SPA fallback. A recipient tapping a shared link got the bare Express 404.
+//
+// These pages are rendered for an ANONYMOUS crawler. There is no viewer, no
+// cookie, no token, so the only thing that can ever be revealed is content that
+// is public to the whole internet. Everything else — private, restricted,
+// deleted, cancelled, unknown id, malformed id, DB down — collapses to one
+// identical generic Portava card at HTTP 200.
+//
+// Uniform 200 is deliberate. 404-ing an unknown id while 200-ing a private one
+// turns this endpoint into an existence oracle: entity ids are UUIDs, so their
+// existence *is* the secret. (The profile pages above may 404 because handles
+// are a public, enumerable namespace — a different trade-off, made earlier.)
+//
+// og:image is the same generic branded render for every entity. Per-entity OG
+// images are explicitly out of scope; /api/users/_/og-image.png resolves no
+// profile and so returns renderOgPng(null), the brand card, cached 600s.
+
+/** Anonymous-visible facts about an entity. Absent ⇒ render the generic card. */
+interface ResolvedEntity {
+  title: string;
+  description: string;
+}
+
+interface EntitySpec {
+  /** Path segment as emitted by the client's share builders (some are plural). */
+  webSegment: string;
+  /** expo-router segment — the screen that renders this entity (all singular). */
+  appSegment: string;
+  kicker: string;
+  /**
+   * Single lookup against the entity's own table. MUST return null unless the
+   * row is public to an anonymous viewer. Never throws — the caller treats a
+   * throw as "unresolvable" anyway, but keeping it total makes that a backstop
+   * rather than the mechanism.
+   */
+  resolve: (sc: any, id: string) => Promise<ResolvedEntity | null>;
+}
+
+/** Collapse whitespace and cap length, for text pulled out of user content. */
+function clamp(s: unknown, max: number): string {
+  const t = String(s ?? "").replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  return t.slice(0, max).trimEnd() + "…";
+}
+
+function isUuid(s: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+}
+
+/** "Lisbon, PT" from the parts that are present; "" when none are. */
+function joinPlace(...parts: Array<string | null | undefined>): string {
+  return parts.map((p) => (p ?? "").trim()).filter(Boolean).join(", ");
+}
+
+const ENTITY_SPECS: EntitySpec[] = [
+  {
+    // Public iff visibility=public AND status=active AND the delayed-posting
+    // state machine has actually published it — the same three-way gate the
+    // public feed uses (routes/posts.ts:1139-1141).
+    webSegment: "posts",
+    appSegment: "post",
+    kicker: `${APP_NAME.toUpperCase()} · POST`,
+    async resolve(sc, id) {
+      const { data } = await sc
+        .from("posts")
+        .select("content, visibility, status, post_status, deleted_at")
+        .eq("id", id)
+        .maybeSingle();
+      if (!data) return null;
+      if (data.deleted_at) return null;
+      if (data.visibility !== "public") return null;
+      if (data.status !== "active") return null;
+      if (data.post_status !== "published") return null;
+      const body = clamp(data.content, 200);
+      return {
+        title: body ? `${clamp(body, 60)} · ${APP_NAME}` : `Post · ${APP_NAME}`,
+        description: body || `A post on ${APP_NAME}.`,
+      };
+    },
+  },
+  {
+    // draft/cancelled/archived trips are not shareable content even when the
+    // owner left visibility=public on them.
+    webSegment: "trips",
+    appSegment: "trip",
+    kicker: `${APP_NAME.toUpperCase()} · TRIP`,
+    async resolve(sc, id) {
+      const { data } = await sc
+        .from("trips")
+        .select("title, visibility, status, destination_city, destination_country, show_destination_city")
+        .eq("id", id)
+        .maybeSingle();
+      if (!data) return null;
+      if (data.visibility !== "public") return null;
+      if (["draft", "cancelled", "archived"].includes(String(data.status))) return null;
+      // show_destination_city is the owner's own toggle for revealing where they
+      // are going; honour it here rather than routing around it.
+      const where = data.show_destination_city === false
+        ? ""
+        : joinPlace(data.destination_city, data.destination_country);
+      return {
+        title: `${clamp(data.title, 60) || "Trip"} · ${APP_NAME}`,
+        description: where ? `A trip to ${where} on ${APP_NAME}.` : `A trip on ${APP_NAME}.`,
+      };
+    },
+  },
+  {
+    webSegment: "event",
+    appSegment: "event",
+    kicker: `${APP_NAME.toUpperCase()} · EVENT`,
+    async resolve(sc, id) {
+      const { data } = await sc
+        .from("events")
+        .select("title, description, visibility, state, city, country, starts_at")
+        .eq("id", id)
+        .maybeSingle();
+      if (!data) return null;
+      if (data.visibility !== "public") return null;
+      if (["draft", "cancelled", "archived"].includes(String(data.state))) return null;
+      const where = joinPlace(data.city, data.country);
+      const blurb = clamp(data.description, 200);
+      return {
+        title: `${clamp(data.title, 60) || "Event"} · ${APP_NAME}`,
+        description: blurb || (where ? `An event in ${where} on ${APP_NAME}.` : `An event on ${APP_NAME}.`),
+      };
+    },
+  },
+  {
+    // Places are a shared catalog, not user content — the row itself carries no
+    // owner and no visibility. Only merged/duplicate rows are withheld, because
+    // their id is a dead end (routes/placesCanonical.ts:125).
+    webSegment: "place",
+    appSegment: "place",
+    kicker: `${APP_NAME.toUpperCase()} · PLACE`,
+    async resolve(sc, id) {
+      const { data } = await sc
+        .from("places")
+        .select("name, city, country_code, status, merged_into_place_id")
+        .eq("id", id)
+        .maybeSingle();
+      if (!data) return null;
+      if (data.status !== "active" || data.merged_into_place_id) return null;
+      const where = joinPlace(data.city, data.country_code);
+      return {
+        title: `${clamp(data.name, 60) || "Place"} · ${APP_NAME}`,
+        description: where ? `${where} — on ${APP_NAME}.` : `A place on ${APP_NAME}.`,
+      };
+    },
+  },
+  {
+    // Mirrors the anonymous arm of canViewMemory (routes/memories.ts:57-68):
+    // no viewer ⇒ published + public, everything else is invisible.
+    webSegment: "memory",
+    appSegment: "memory",
+    kicker: `${APP_NAME.toUpperCase()} · MEMORY`,
+    async resolve(sc, id) {
+      const { data } = await sc
+        .from("memories")
+        .select("title, caption, visibility, state, location_city, location_country")
+        .eq("id", id)
+        .maybeSingle();
+      if (!data) return null;
+      if (data.state !== "published") return null;
+      if (data.visibility !== "public") return null;
+      const where = joinPlace(data.location_city, data.location_country);
+      const name = clamp(data.title, 60) || clamp(data.caption, 60);
+      return {
+        title: `${name || "Memory"} · ${APP_NAME}`,
+        description: clamp(data.caption, 200) || (where ? `A memory from ${where}.` : `A memory on ${APP_NAME}.`),
+      };
+    },
+  },
+  {
+    // Revoked stamps read as never-earned. friends_only stamps are withheld
+    // from an anonymous viewer, same as routes/stamps.ts:593-600.
+    webSegment: "stamp",
+    appSegment: "stamp",
+    kicker: `${APP_NAME.toUpperCase()} · STAMP`,
+    async resolve(sc, id) {
+      const { data } = await sc
+        .from("user_stamps")
+        .select("title_override, visibility, is_revoked, city, country, stamp_definition_id")
+        .eq("id", id)
+        .maybeSingle();
+      if (!data) return null;
+      if (data.is_revoked) return null;
+      if (data.visibility !== "public") return null;
+
+      let name = clamp(data.title_override, 60);
+      if (!name && data.stamp_definition_id) {
+        // One extra primary-key lookup, only for stamps already proven public.
+        const { data: def } = await sc
+          .from("stamp_definitions")
+          .select("name")
+          .eq("id", data.stamp_definition_id)
+          .maybeSingle();
+        name = clamp(def?.name, 60);
+      }
+      const where = joinPlace(data.city, data.country);
+      if (!name) name = where;
+      return {
+        title: `${name || "Stamp"} · ${APP_NAME} Passport`,
+        description: where
+          ? `A passport stamp earned in ${where} on ${APP_NAME}.`
+          : `A passport stamp earned on ${APP_NAME}.`,
+      };
+    },
+  },
+];
+
+function makeEntityShareHandler(spec: EntitySpec) {
+  return asyncHandler(async (req: any, res: any) => {
+    const id = String(req.params.id ?? "");
+    const origin = requestOrigin(req);
+    // Both links keep the raw id: the web path so the URL round-trips, the deep
+    // link so the app can resolve it with the viewer's own credentials — the app
+    // may legitimately show what this anonymous page must not.
+    const pageUrl = `${origin}/${spec.webSegment}/${encodeURIComponent(id)}`;
+    const deepLink = `${APP_SCHEME}://${spec.appSegment}/${encodeURIComponent(id)}`;
+
+    let resolved: ResolvedEntity | null = null;
+    if (isUuid(id)) {
+      try {
+        const sc = getServiceClient();
+        if (sc) resolved = await spec.resolve(sc, id);
+      } catch (e) {
+        // Fail closed. A lookup error must not become a 500 — a crawler that
+        // gets a 500 may cache the failure and never re-fetch the preview.
+        req.log?.warn?.({ err: e, entity: spec.webSegment }, "entity share page: lookup failed");
+        resolved = null;
+      }
+    }
+
+    res
+      .status(200)
+      .set({ "Content-Type": "text/html; charset=utf-8", "Cache-Control": SHARE_PAGE_CACHE })
+      .send(
+        buildSharePageHtml({
+          title: resolved?.title ?? APP_NAME,
+          description:
+            resolved?.description ??
+            `Open this link in ${APP_NAME} to see it. Trips, stamps, events and postcards from travelers around the world.`,
+          pageUrl,
+          imageUrl: `${origin}/api/users/_/og-image.png`,
+          deepLink,
+          noindex: resolved === null,
+          ogType: "website",
+          kicker: resolved ? spec.kicker : APP_NAME.toUpperCase(),
+        }),
+      );
+  });
+}
+
+// Registered per segment rather than as one `/:kind(posts|trips|…)/:id` pattern:
+// Express 5 runs path-to-regexp v8, which dropped inline regex in route paths.
+for (const spec of ENTITY_SPECS) {
+  router.get(`/${spec.webSegment}/:id`, makeEntityShareHandler(spec));
+}
 
 export default router;

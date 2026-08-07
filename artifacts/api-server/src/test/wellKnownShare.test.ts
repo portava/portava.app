@@ -12,6 +12,9 @@
  *      profile, HTML-escaping of attacker-controlled fields, deep-link button.
  *   D. /u/:username — 404 for unknown handles; generic (no-leak) card for
  *      private profiles; /passport/:username serves the same page.
+ *   E. Entity catch-all (/posts /trips /event /place /memory /stamp /:id) —
+ *      public entity renders its title; private, deleted and unknown-id all
+ *      render the identical generic card at 200; never 404, never 500.
  *
  * Run: node --import tsx/esm --test src/test/wellKnownShare.test.ts
  */
@@ -64,6 +67,34 @@ function makeFakeSc(opts: {
       if (table === "profile_privacy_settings") return makeBuilder(privacyRows);
       if (table === "user_account_states") return makeBuilder(accountStates);
       return makeBuilder([]);
+    },
+    auth: { getUser: async () => ({ data: { user: null }, error: { message: "no auth" } }) },
+  };
+}
+
+/**
+ * Fake service client for the entity pages: `tables` maps table name → rows,
+ * filtered by the same eq()/maybeSingle() chain the real client offers.
+ * `throwOn` makes one table's builder blow up, to prove the handler fails
+ * closed to the generic card instead of 500ing.
+ */
+function makeEntitySc(tables: Record<string, any[]>, throwOn?: string) {
+  function makeBuilder(rows: any[]): any {
+    let current = [...rows];
+    const b: any = {
+      select: () => b,
+      eq: (col: string, val: any) => { current = current.filter((r) => r[col] === val); return b; },
+      maybeSingle: async () => ({ data: current[0] ?? null, error: null }),
+      single: async () => ({ data: current[0] ?? null, error: null }),
+      then: (onF: (v: any) => any, onR?: (e: any) => any) =>
+        Promise.resolve({ data: current, error: null }).then(onF, onR),
+    };
+    return b;
+  }
+  return {
+    from: (table: string) => {
+      if (table === throwOn) throw new Error("simulated lookup failure");
+      return makeBuilder(tables[table] ?? []);
     },
     auth: { getUser: async () => ({ data: { user: null }, error: { message: "no auth" } }) },
   };
@@ -286,5 +317,244 @@ describe("D: unknown and non-public profiles", () => {
     assert.ok(!text.includes("Chasing sunsets"), "bio must not leak");
     assert.match(text, /noindex/, "generic pages are noindex'd");
     assert.match(text, /\/api\/users\/_\/og-image\.png/, "username-less generic og-image");
+  });
+});
+
+// ── E. entity catch-all ──────────────────────────────────────────────────────
+
+const EID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+
+/** The generic card, asserted the same way everywhere it must appear. */
+function assertGenericCard(status: number, text: string, secret?: string) {
+  assert.equal(status, 200, "entity pages never 404 — that would leak existence");
+  assert.match(text, /<meta property="og:title" content="Portava"\/>/, "generic og:title");
+  assert.match(text, /noindex/, "generic cards are noindex'd");
+  assert.match(text, /\/api\/users\/_\/og-image\.png/, "generic brand og:image");
+  if (secret) assert.ok(!text.includes(secret), `must not leak: ${secret}`);
+}
+
+describe("E: entity share landing pages", () => {
+  // ── public entities render their own title ────────────────────────────────
+
+  it("renders a public post's content as the title and description", async () => {
+    _setTestServiceClient(makeEntitySc({
+      posts: [{
+        id: EID, content: "Sunrise over Batad rice terraces.",
+        visibility: "public", status: "active", post_status: "published", deleted_at: null,
+      }],
+    }) as any);
+
+    const { status, headers, text } = await getReq(`/posts/${EID}`);
+    assert.equal(status, 200);
+    assert.match(headers["content-type"] ?? "", /text\/html/);
+    assert.match(headers["cache-control"] ?? "", /max-age=300/);
+    assert.match(text, /og:title" content="Sunrise over Batad rice terraces\. · Portava"/);
+    assert.match(text, /og:description" content="Sunrise over Batad rice terraces\."/);
+    assert.match(text, /<meta property="og:type" content="website"\/>/);
+    assert.ok(!text.includes("noindex"), "a public entity page is indexable");
+  });
+
+  it("renders a public trip and points the button at the singular app route", async () => {
+    _setTestServiceClient(makeEntitySc({
+      trips: [{
+        id: EID, title: "Luzon loop", visibility: "public", status: "planning",
+        destination_city: "Manila", destination_country: "Philippines", show_destination_city: true,
+      }],
+    }) as any);
+
+    const { status, text } = await getReq(`/trips/${EID}`);
+    assert.equal(status, 200);
+    assert.match(text, /og:title" content="Luzon loop · Portava"/);
+    assert.match(text, /og:description" content="A trip to Manila, Philippines on Portava\."/);
+    // Web path is plural (/trips/:id), the expo-router screen is app/trip/[id].
+    assert.match(text, new RegExp(`href="travelbuddy://trip/${EID}"`), "deep link uses the app segment");
+    assert.match(text, new RegExp(`og:url" content="http[^"]*/trips/${EID}"`), "og:url keeps the web segment");
+  });
+
+  it("renders a public event, place, memory and stamp", async () => {
+    _setTestServiceClient(makeEntitySc({
+      events: [{ id: EID, title: "Jazz Night", description: "Live sets until 2am.", visibility: "public", state: "open", city: "Lisbon", country: "PT" }],
+    }) as any);
+    let r = await getReq(`/event/${EID}`);
+    assert.match(r.text, /og:title" content="Jazz Night · Portava"/);
+    assert.match(r.text, /og:description" content="Live sets until 2am\."/);
+
+    _setTestServiceClient(makeEntitySc({
+      places: [{ id: EID, name: "Time Out Market", city: "Lisbon", country_code: "PT", status: "active", merged_into_place_id: null }],
+    }) as any);
+    r = await getReq(`/place/${EID}`);
+    assert.match(r.text, /og:title" content="Time Out Market · Portava"/);
+    assert.match(r.text, /og:description" content="Lisbon, PT — on Portava\."/);
+
+    _setTestServiceClient(makeEntitySc({
+      memories: [{ id: EID, title: "First night out", caption: "We got lost twice.", visibility: "public", state: "published", location_city: "Lisbon", location_country: "PT" }],
+    }) as any);
+    r = await getReq(`/memory/${EID}`);
+    assert.match(r.text, /og:title" content="First night out · Portava"/);
+
+    _setTestServiceClient(makeEntitySc({
+      user_stamps: [{ id: EID, title_override: null, visibility: "public", is_revoked: false, city: "Lisbon", country: "PT", stamp_definition_id: "def-1" }],
+      stamp_definitions: [{ id: "def-1", name: "Lisbon Explorer" }],
+    }) as any);
+    r = await getReq(`/stamp/${EID}`);
+    assert.match(r.text, /og:title" content="Lisbon Explorer · Portava Passport"/, "falls back to the catalog name");
+  });
+
+  // ── private entities ──────────────────────────────────────────────────────
+
+  it("serves the generic card for a private post, trip, event, memory and stamp", async () => {
+    _setTestServiceClient(makeEntitySc({
+      posts: [{ id: EID, content: "SECRET-POST", visibility: "private", status: "active", post_status: "published", deleted_at: null }],
+    }) as any);
+    let r = await getReq(`/posts/${EID}`);
+    assertGenericCard(r.status, r.text, "SECRET-POST");
+
+    _setTestServiceClient(makeEntitySc({
+      trips: [{ id: EID, title: "SECRET-TRIP", visibility: "buddies", status: "planning", destination_city: "Manila", destination_country: "PH", show_destination_city: true }],
+    }) as any);
+    r = await getReq(`/trips/${EID}`);
+    assertGenericCard(r.status, r.text, "SECRET-TRIP");
+
+    _setTestServiceClient(makeEntitySc({
+      events: [{ id: EID, title: "SECRET-EVENT", description: null, visibility: "invite_only", state: "open", city: null, country: null }],
+    }) as any);
+    r = await getReq(`/event/${EID}`);
+    assertGenericCard(r.status, r.text, "SECRET-EVENT");
+
+    _setTestServiceClient(makeEntitySc({
+      memories: [{ id: EID, title: "SECRET-MEMORY", caption: null, visibility: "only_me", state: "published", location_city: null, location_country: null }],
+    }) as any);
+    r = await getReq(`/memory/${EID}`);
+    assertGenericCard(r.status, r.text, "SECRET-MEMORY");
+
+    _setTestServiceClient(makeEntitySc({
+      user_stamps: [{ id: EID, title_override: "SECRET-STAMP", visibility: "friends_only", is_revoked: false, city: null, country: null, stamp_definition_id: null }],
+    }) as any);
+    r = await getReq(`/stamp/${EID}`);
+    assertGenericCard(r.status, r.text, "SECRET-STAMP");
+  });
+
+  it("does not reveal a trip's destination when the owner hid it", async () => {
+    _setTestServiceClient(makeEntitySc({
+      trips: [{ id: EID, title: "Luzon loop", visibility: "public", status: "planning", destination_city: "Manila", destination_country: "Philippines", show_destination_city: false }],
+    }) as any);
+    const { status, text } = await getReq(`/trips/${EID}`);
+    assert.equal(status, 200);
+    assert.match(text, /og:title" content="Luzon loop · Portava"/, "the title is still public");
+    assert.ok(!text.includes("Manila"), "show_destination_city=false must be honoured");
+  });
+
+  // ── deleted / withdrawn entities ──────────────────────────────────────────
+
+  it("serves the generic card for deleted, cancelled, revoked and merged entities", async () => {
+    _setTestServiceClient(makeEntitySc({
+      posts: [{ id: EID, content: "DELETED-POST", visibility: "public", status: "active", post_status: "published", deleted_at: "2026-01-01T00:00:00Z" }],
+    }) as any);
+    let r = await getReq(`/posts/${EID}`);
+    assertGenericCard(r.status, r.text, "DELETED-POST");
+
+    _setTestServiceClient(makeEntitySc({
+      posts: [{ id: EID, content: "REMOVED-POST", visibility: "public", status: "deleted", post_status: "published", deleted_at: null }],
+    }) as any);
+    r = await getReq(`/posts/${EID}`);
+    assertGenericCard(r.status, r.text, "REMOVED-POST");
+
+    _setTestServiceClient(makeEntitySc({
+      posts: [{ id: EID, content: "UNPUBLISHED-POST", visibility: "public", status: "active", post_status: "pending_delay", deleted_at: null }],
+    }) as any);
+    r = await getReq(`/posts/${EID}`);
+    assertGenericCard(r.status, r.text, "UNPUBLISHED-POST");
+
+    _setTestServiceClient(makeEntitySc({
+      events: [{ id: EID, title: "CANCELLED-EVENT", description: null, visibility: "public", state: "cancelled", city: null, country: null }],
+    }) as any);
+    r = await getReq(`/event/${EID}`);
+    assertGenericCard(r.status, r.text, "CANCELLED-EVENT");
+
+    _setTestServiceClient(makeEntitySc({
+      trips: [{ id: EID, title: "ARCHIVED-TRIP", visibility: "public", status: "archived", destination_city: null, destination_country: null, show_destination_city: true }],
+    }) as any);
+    r = await getReq(`/trips/${EID}`);
+    assertGenericCard(r.status, r.text, "ARCHIVED-TRIP");
+
+    _setTestServiceClient(makeEntitySc({
+      memories: [{ id: EID, title: "DRAFT-MEMORY", caption: null, visibility: "public", state: "draft", location_city: null, location_country: null }],
+    }) as any);
+    r = await getReq(`/memory/${EID}`);
+    assertGenericCard(r.status, r.text, "DRAFT-MEMORY");
+
+    _setTestServiceClient(makeEntitySc({
+      user_stamps: [{ id: EID, title_override: "REVOKED-STAMP", visibility: "public", is_revoked: true, city: null, country: null, stamp_definition_id: null }],
+    }) as any);
+    r = await getReq(`/stamp/${EID}`);
+    assertGenericCard(r.status, r.text, "REVOKED-STAMP");
+
+    _setTestServiceClient(makeEntitySc({
+      places: [{ id: EID, name: "MERGED-PLACE", city: null, country_code: null, status: "duplicate", merged_into_place_id: "other" }],
+    }) as any);
+    r = await getReq(`/place/${EID}`);
+    assertGenericCard(r.status, r.text, "MERGED-PLACE");
+  });
+
+  // ── unknown / malformed ids, and failure modes ────────────────────────────
+
+  it("serves the generic card for an unknown id on every segment", async () => {
+    _setTestServiceClient(makeEntitySc({}) as any);
+    for (const seg of ["posts", "trips", "event", "place", "memory", "stamp"]) {
+      const { status, text } = await getReq(`/${seg}/${EID}`);
+      assertGenericCard(status, text);
+    }
+  });
+
+  it("byte-identical output for unknown vs private, so existence cannot be probed", async () => {
+    _setTestServiceClient(makeEntitySc({}) as any);
+    const unknown = await getReq(`/posts/${EID}`);
+
+    _setTestServiceClient(makeEntitySc({
+      posts: [{ id: EID, content: "SECRET", visibility: "private", status: "active", post_status: "published", deleted_at: null }],
+    }) as any);
+    const priv = await getReq(`/posts/${EID}`);
+
+    assert.equal(unknown.status, priv.status);
+    assert.equal(unknown.text, priv.text, "the two responses must be indistinguishable");
+  });
+
+  it("serves the generic card for a malformed id without touching the database", async () => {
+    // throwOn: any from() call is a failure — a non-UUID must short-circuit first.
+    _setTestServiceClient(makeEntitySc({}, "posts") as any);
+    const { status, text } = await getReq("/posts/not-a-uuid");
+    assertGenericCard(status, text);
+  });
+
+  it("serves the generic card, not a 500, when the lookup throws", async () => {
+    _setTestServiceClient(makeEntitySc({}, "events") as any);
+    const { status, text } = await getReq(`/event/${EID}`);
+    assertGenericCard(status, text);
+  });
+
+  it("serves the generic card when the service client is unavailable", async () => {
+    _setTestServiceClient(null as any);
+    const { status, text } = await getReq(`/place/${EID}`);
+    assertGenericCard(status, text);
+  });
+
+  it("HTML-escapes entity text pulled from user content", async () => {
+    _setTestServiceClient(makeEntitySc({
+      events: [{
+        id: EID, title: `<script>alert(1)</script>`, description: `"><img src=x onerror=alert(2)>`,
+        visibility: "public", state: "open", city: null, country: null,
+      }],
+    }) as any);
+    const { status, text } = await getReq(`/event/${EID}`);
+    assert.equal(status, 200);
+    assert.ok(!text.includes("<script>alert(1)</script>"), "script tag must be escaped");
+    assert.ok(!text.includes(`"><img src=x onerror=alert(2)>`), "attribute breakout must be escaped");
+    assert.match(text, /&lt;script&gt;/);
+  });
+
+  it("leaves the profile pages' 404 behaviour alone", async () => {
+    _setTestServiceClient(makeFakeSc({ profile: null }) as any);
+    const { status } = await getReq("/u/ghost_handle");
+    assert.equal(status, 404, "handles are an enumerable namespace — unchanged");
   });
 });
