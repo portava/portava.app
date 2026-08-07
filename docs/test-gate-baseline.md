@@ -10,8 +10,8 @@ file in the same commit so the reference never drifts behind reality.
 
 ## Current reference — 2026-08-07
 
-Recorded after the five media commits (`50bb012b5` … `db2dd781b`), which fixed
-the blank-media bug. Full run, all green.
+Recorded after the five media commits (`50bb012b5` … `db2dd781b`) and updated
+after filter centralisation. Full run, all green.
 
 | Check | Command | Result | Reference |
 |---|---|---|---|
@@ -19,7 +19,7 @@ the blank-media bug. Full run, all green.
 | rules-of-hooks | `npx eslint 'travel-buddy-standalone/{app,src}/**/*.{ts,tsx}'` | PASS | 0 violations |
 | component tests — native | `pnpm run test:component` | PASS | 1716/1716, 320 suites |
 | component tests — web | `pnpm run test:component` (jest.web.config.js) | PASS | 4/4, 2 suites |
-| standalone node tests | `pnpm run test` (travel-buddy-standalone) | PASS | 3614/3614, 491 suites |
+| standalone node tests | `pnpm run test` (travel-buddy-standalone) | PASS | 3666/3666, 494 suites |
 | api-server tests | `pnpm run test` (artifacts/api-server) | PASS | 6135/6135, 1550 suites |
 
 `fail 0`, `skipped 0`, `todo 0`, `cancelled 0` on every node run.
@@ -45,6 +45,14 @@ Two severity-2 eslint errors exist and pre-date this baseline. Neither is
   interface declaring no members.
 
 ## Change log
+
+### 2026-08-07 — 3614/491 → 3666/494 (filter centralisation)
+
+Additive only. One new file, `src/lib/media/__tests__/filterStyle.test.ts`,
+contributing 52 tests across 3 suites. It pins the identity-fallback invariant
+for media filters: a missing, unknown or malformed filter must render the image
+unfiltered rather than blank. Component, api-server and typecheck all held
+exactly.
 
 ### 2026-08-07 — 3612 → 3614 and 1715/319 → 1716/320
 

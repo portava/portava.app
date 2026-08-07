@@ -1,10 +1,9 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { MapPin, PlayCircle } from 'lucide-react-native';
 import type { Post } from '../types/models.ts';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
-import { getMediaFilter, buildCssFilter } from '../lib/media/filters.ts';
 import { MediaStampOverlay } from './StampOverlayBadge.tsx';
 import { CachedImage, withStorageParams } from './CachedImage.tsx';
 
@@ -20,12 +19,6 @@ export function PostcardTile({ post, variant = 'square', rotate = 0 }: { post: P
   const date = new Date(post.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   const [imgFailed, setImgFailed] = React.useState(false);
 
-  const isVideo = post.media[0]?.kind === 'video' || post.mediaType?.startsWith('video/');
-  const hasFilterId = post.filterId && post.filterId !== 'original';
-  const shouldApplyCssFilter = isVideo && hasFilterId;
-  const cssFilter = shouldApplyCssFilter
-    ? buildCssFilter(getMediaFilter(post.filterId), post.filterIntensity ?? 100)
-    : 'none';
 
   return (
     <Pressable
@@ -37,11 +30,10 @@ export function PostcardTile({ post, variant = 'square', rotate = 0 }: { post: P
         {post.media[0] && !imgFailed ? (
           <CachedImage
             source={{ uri: withStorageParams(post.media[0].url, 'width=500') }}
-            style={[
-              StyleSheet.absoluteFill,
-              shouldApplyCssFilter && Platform.OS === 'web' ? { filter: cssFilter } as any : undefined,
-            ]}
+            style={StyleSheet.absoluteFill}
             resizeMode="cover"
+            filterId={post.filterId}
+            filterIntensity={post.filterIntensity}
             onError={() => setImgFailed(true)}
           />
         ) : (

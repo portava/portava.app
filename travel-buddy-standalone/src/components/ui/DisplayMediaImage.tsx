@@ -33,6 +33,7 @@ import { type IdentityInput, fallbackInitials } from '../../utils/identity.ts';
 import { resolveDisplayMedia } from '../../lib/displayMedia.ts';
 import { hydrateMediaUrls, useHydratedMedia } from '../../services/mediaUrl.ts';
 import { _evictBatchSignEntry } from '../../lib/batchSignMedia.ts';
+import { resolveFilterStyle, type FilterStyle } from '../../lib/media/filters.ts';
 
 // Only these two buckets can benefit from re-hydration; all other URLs get an
 // immediate error fallback rather than a no-op re-sign attempt.
@@ -107,6 +108,29 @@ const fb = StyleSheet.create({
   label: { ...t.small, color: color.paper, fontWeight: '600', textAlign: 'center', paddingHorizontal: space.sm },
 });
 
+// ── Filter wrapper ──────────────────────────────────────────────────────────
+
+/**
+ * Wrap `node` in a filter-carrying View — or return it completely untouched
+ * when there is no filter to apply.
+ *
+ * The untouched branch is the point: the no-filter render path stays exactly
+ * what it was before filters existed, so a missing or unrecognised filter id
+ * cannot introduce an extra view, change layout, or otherwise become a new way
+ * for an image to fail to appear.
+ */
+function withFilter(
+  filterStyle: FilterStyle | undefined,
+  node: React.ReactElement,
+): React.ReactElement {
+  if (!filterStyle) return node;
+  return (
+    <View style={[StyleSheet.absoluteFill, filterStyle as StyleProp<ViewStyle>]}>
+      {node}
+    </View>
+  );
+}
+
 // ── DisplayMediaImage ───────────────────────────────────────────────────────
 
 type ResizeMode = 'cover' | 'contain' | 'stretch' | 'center';
@@ -143,6 +167,13 @@ export interface DisplayMediaImageProps {
   fallbackIcon?: React.ReactNode;
   /** Optional attribution text line rendered below the image. */
   attribution?: string;
+  /**
+   * Media filter id (see lib/media/filters.ts). Unknown, malformed and absent
+   * values all render the image unfiltered — never blank.
+   */
+  filterId?: string | null;
+  /** Filter strength 0–100. Defaults to full strength when absent. */
+  filterIntensity?: number | null;
   onLoad?: () => void;
   onError?: () => void;
   testID?: string;
@@ -164,6 +195,8 @@ export function DisplayMediaImage({
   fallbackLabel,
   fallbackIcon,
   attribution,
+  filterId,
+  filterIntensity,
   onLoad,
   onError,
   testID,
@@ -241,6 +274,16 @@ export function DisplayMediaImage({
   const label = alt ?? title;
   const contentFit = FIT_MAP[resizeMode] ?? 'cover';
 
+  // undefined for every no-filter case (absent / 'original' / unknown id /
+  // malformed intensity). When it is undefined the tree below is identical to
+  // what it was before filters existed — an unrecognised filter cannot change
+  // how the image mounts, only how it is tinted.
+  const filterStyle = resolveFilterStyle(
+    filterId,
+    filterIntensity,
+    Platform.OS === 'web' ? 'web' : 'native',
+  );
+
   const renderedFallback = fallback ?? (
     <MediaFallback
       icon={fallbackIcon}
@@ -259,20 +302,29 @@ export function DisplayMediaImage({
       {phase === 'error' && renderedFallback}
 
       {/* Image — mounted only once the source has been resolved so the signed
-          URL is available before the first network request */}
+          URL is available before the first network request.
+
+          A filter is carried on a wrapper View, not on the image: RN types
+          `filter` on ViewStyle but NOT on ImageStyle (ImageStyle does not
+          extend ViewStyle), and the wrapper also keeps the skeleton and the
+          fallback — which are siblings — untinted. The wrapper is only
+          introduced when a filter is actually active. */}
       {phase !== 'error' && resolved && resolvedSource && (
-        <ExpoImage
-          source={resolvedSource}
-          style={StyleSheet.absoluteFill}
-          contentFit={contentFit}
-          cachePolicy="memory-disk"
-          transition={200}
-          placeholder={blurhash ? { blurhash } : undefined}
-          accessibilityLabel={label}
-          accessible={!!label}
-          onLoad={() => { setPhase('loaded'); onLoad?.(); }}
-          onError={handleError}
-        />
+        withFilter(
+          filterStyle,
+          <ExpoImage
+            source={resolvedSource}
+            style={StyleSheet.absoluteFill}
+            contentFit={contentFit}
+            cachePolicy="memory-disk"
+            transition={200}
+            placeholder={blurhash ? { blurhash } : undefined}
+            accessibilityLabel={label}
+            accessible={!!label}
+            onLoad={() => { setPhase('loaded'); onLoad?.(); }}
+            onError={handleError}
+          />,
+        )
       )}
 
       {/* Attribution footer */}

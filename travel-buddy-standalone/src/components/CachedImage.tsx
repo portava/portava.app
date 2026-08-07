@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import type { ImageContentFit } from 'expo-image';
-import type { ImageStyle, StyleProp } from 'react-native';
+import type { ImageStyle, StyleProp, ViewStyle } from 'react-native';
 import { useHydratedMedia } from '../services/mediaUrl.ts';
 import { MediaFallback } from './ui/DisplayMediaImage.tsx';
+import { resolveFilterStyle } from '../lib/media/filters.ts';
 
 type ResizeMode = 'cover' | 'contain' | 'stretch' | 'center' | 'repeat';
 
@@ -27,6 +28,13 @@ interface CachedImageProps {
   testID?: string;
   /** Optional blur-hash string shown while the image loads. */
   placeholder?: string;
+  /**
+   * Media filter id (see lib/media/filters.ts). Unknown, malformed and absent
+   * values all render the image unfiltered — never blank.
+   */
+  filterId?: string | null;
+  /** Filter strength 0–100. Defaults to full strength when absent. */
+  filterIntensity?: number | null;
 }
 
 /**
@@ -59,9 +67,19 @@ export function CachedImage({
   onError,
   testID,
   placeholder,
+  filterId,
+  filterIntensity,
 }: CachedImageProps) {
   const contentFit: ImageContentFit = CONTENT_FIT_MAP[resizeMode] ?? 'cover';
   const uri = source?.uri;
+
+  // undefined for every no-filter case (absent / 'original' / unknown id /
+  // malformed intensity). Not a hook — safe to compute before the early return.
+  const filterStyle = resolveFilterStyle(
+    filterId,
+    filterIntensity,
+    Platform.OS === 'web' ? 'web' : 'native',
+  );
 
   const { resolved: hydrated } = useHydratedMedia(uri ? [uri] : []);
   const [failed, setFailed] = useState(false);
@@ -93,10 +111,10 @@ export function CachedImage({
     );
   }
 
-  return (
+  const image = (
     <ExpoImage
       source={resolvedSource}
-      style={style as any}
+      style={filterStyle ? StyleSheet.absoluteFill : (style as any)}
       contentFit={contentFit}
       cachePolicy="disk"
       transition={200}
@@ -105,6 +123,21 @@ export function CachedImage({
       testID={testID}
       placeholder={placeholder ? { blurhash: placeholder } : undefined}
     />
+  );
+
+  // No filter → return the image exactly as this component always has. The
+  // wrapper is introduced ONLY when a filter is active, so the default feed
+  // render path is unchanged and an unknown filter id cannot alter layout.
+  if (!filterStyle) return image;
+
+  // `filter` is typed on ViewStyle but not ImageStyle (ImageStyle does not
+  // extend ViewStyle), so it has to ride on a wrapper. The wrapper takes the
+  // caller's style — including any borderRadius — and clips, while the image
+  // fills it absolutely.
+  return (
+    <View style={[style as StyleProp<ViewStyle>, { overflow: 'hidden' }, filterStyle as StyleProp<ViewStyle>]}>
+      {image}
+    </View>
   );
 }
 

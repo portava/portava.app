@@ -25,11 +25,12 @@ import {
   Dimensions,
   Platform,
 } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { X, RotateCcw, PlayCircle, Check } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
-import { mediaFilters, getMediaFilter, buildCssFilter } from '../lib/media/filters.ts';
+import { mediaFilters, getMediaFilter, resolveFilterStyle } from '../lib/media/filters.ts';
 import { renderFilteredImage } from '../lib/media/renderFilteredImage.ts';
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -70,7 +71,12 @@ export function MediaFilterEditor({
   const [applyError, setApplyError] = useState<string | null>(null);
 
   const currentFilter = getMediaFilter(selectedId);
-  const cssFilter = buildCssFilter(currentFilter, intensity);
+  // Same resolver every rendering surface uses, so the preview here is the
+  // look the feed will actually show. Previously this was a CSS string on web
+  // and a tinted-overlay approximation on native — which, for Noir, was a
+  // fully transparent overlay, i.e. black-and-white previewed as no change.
+  const previewPlatform = Platform.OS === 'web' ? 'web' : 'native';
+  const previewFilterStyle = resolveFilterStyle(selectedId, intensity, previewPlatform);
 
   function handleFilterSelect(id: string) {
     setSelectedId(id);
@@ -156,22 +162,15 @@ export function MediaFilterEditor({
 
         {/* Preview */}
         <View style={s.preview}>
-          <Image
-            source={{ uri: file.uri }}
-            style={[
-              StyleSheet.absoluteFill,
-              cssFilter !== 'none' && Platform.OS === 'web'
-                ? { filter: cssFilter } as any
-                : undefined,
-            ]}
-            resizeMode="contain"
-          />
-          {/* Native: CSS filter overlay using opacity-blended tinted view */}
-          {cssFilter !== 'none' && Platform.OS !== 'web' && (
-            <View style={s.nativeFilterOverlay} pointerEvents="none">
-              <FilterOverlayNative filterId={selectedId} intensity={intensity} />
-            </View>
-          )}
+          {/* file.uri is a local pick, so no hydration is needed here — but the
+              filter must resolve exactly as it will on the feed. */}
+          <View style={[StyleSheet.absoluteFill, previewFilterStyle as StyleProp<ViewStyle>]}>
+            <Image
+              source={{ uri: file.uri }}
+              style={StyleSheet.absoluteFill}
+              resizeMode="contain"
+            />
+          </View>
           {mediaType === 'video' && (
             <View style={s.videoTag} pointerEvents="none">
               <PlayCircle size={28} color="rgba(255,255,255,0.85)" />
@@ -231,21 +230,18 @@ export function MediaFilterEditor({
                 >
                   {/* Thumbnail with filter preview */}
                   <View style={s.thumb}>
-                    <Image
-                      source={{ uri: file.uri }}
+                    <View
                       style={[
                         s.thumbImage,
-                        f.id !== 'original' && Platform.OS === 'web'
-                          ? { filter: buildCssFilter(f, f.defaultIntensity) } as any
-                          : undefined,
+                        resolveFilterStyle(f.id, f.defaultIntensity, previewPlatform) as StyleProp<ViewStyle>,
                       ]}
-                      resizeMode="cover"
-                    />
-                    {f.id !== 'original' && Platform.OS !== 'web' && (
-                      <View style={StyleSheet.absoluteFill} pointerEvents="none">
-                        <FilterOverlayNative filterId={f.id} intensity={f.defaultIntensity} />
-                      </View>
-                    )}
+                    >
+                      <Image
+                        source={{ uri: file.uri }}
+                        style={StyleSheet.absoluteFill}
+                        resizeMode="cover"
+                      />
+                    </View>
                     {isSelected && (
                       <View style={s.thumbSelected} pointerEvents="none">
                         <Check size={16} color="#fff" />
@@ -280,41 +276,6 @@ export function MediaFilterEditor({
   );
 }
 
-/**
- * Native-platform filter overlay. Approximates CSS filter effects using a
- * semi-transparent tinted overlay. Not pixel-perfect but gives a visible
- * preview of the filter direction without requiring canvas or extra packages.
- */
-function FilterOverlayNative({ filterId, intensity }: { filterId: string; intensity: number }) {
-  const filter = getMediaFilter(filterId);
-  if (filter.id === 'original') return null;
-
-  const t = Math.max(0, Math.min(100, intensity)) / 100;
-
-  const OVERLAY_COLORS: Record<string, string> = {
-    wanderlust:   `rgba(255,180,80,${(0.18 * t).toFixed(2)})`,
-    golden_hour:  `rgba(255,160,40,${(0.25 * t).toFixed(2)})`,
-    deep_ocean:   `rgba(30,100,200,${(0.22 * t).toFixed(2)})`,
-    mist:         `rgba(220,215,205,${(0.3 * t).toFixed(2)})`,
-    polaroid:     `rgba(255,240,200,${(0.12 * t).toFixed(2)})`,
-    noir:         `rgba(0,0,0,${(0.0 * t).toFixed(2)})`,
-    safari:       `rgba(180,140,60,${(0.2 * t).toFixed(2)})`,
-    vivid:        `rgba(255,60,100,${(0.1 * t).toFixed(2)})`,
-    sunset:       `rgba(255,100,30,${(0.22 * t).toFixed(2)})`,
-    arctic:       `rgba(180,220,255,${(0.2 * t).toFixed(2)})`,
-    velvet:       `rgba(30,0,40,${(0.3 * t).toFixed(2)})`,
-  };
-
-  const overlayColor = OVERLAY_COLORS[filterId] ?? `rgba(0,0,0,0)`;
-
-  return (
-    <View
-      style={[StyleSheet.absoluteFill, { backgroundColor: overlayColor }]}
-      pointerEvents="none"
-    />
-  );
-}
-
 const PREVIEW_H = SCREEN_W * 0.72;
 
 const s = StyleSheet.create({
@@ -343,7 +304,6 @@ const s = StyleSheet.create({
     backgroundColor: '#000',
     overflow: 'hidden',
   },
-  nativeFilterOverlay: { ...StyleSheet.absoluteFillObject },
   videoTag: {
     position: 'absolute', bottom: space.lg, left: 0, right: 0,
     alignItems: 'center', gap: 6,

@@ -3,9 +3,23 @@
  *
  * 12 named filters expressed as CSS filter component values. Intensity (0–100)
  * linearly interpolates each component between the identity value (no effect)
- * and the preset value (full effect). buildCssFilter() produces a complete CSS
- * filter string suitable for React Native's `style.filter` (web) or an
- * overlay description for native rendering.
+ * and the preset value (full effect).
+ *
+ * ## This module must stay free of react-native imports
+ *
+ * It is exercised by the plain `node:test` runner, which cannot transform
+ * react-native. That is why `resolveFilterStyle()` takes the platform as an
+ * argument instead of reading `Platform.OS` itself — the numeric work stays
+ * pure and node-testable, and only the caller touches react-native.
+ *
+ * ## The identity-fallback invariant
+ *
+ * A missing, unknown, or malformed filter must render the image UNFILTERED —
+ * never blank, never a thrown style. Every entry point here is total: it
+ * returns identity ('none' / undefined) rather than throwing or emitting a
+ * value that could make React Native reject the style. Media disappearing
+ * because of a bad filter id would be a new instance of the blank-media class
+ * of bug this codebase just spent a day removing.
  */
 
 export interface FilterValues {
@@ -151,27 +165,129 @@ export function getMediaFilter(id: string | null | undefined): MediaFilter {
  * At intensity=100 → full preset values.
  */
 export function buildCssFilter(filter: MediaFilter, intensity: number): string {
-  if (filter.id === 'original') return 'none';
-  const t = Math.max(0, Math.min(100, intensity)) / 100;
-
-  const lerp = (identity: number, preset: number) => identity + (preset - identity) * t;
-
-  const b   = lerp(IDENTITY.brightness, filter.values.brightness);
-  const c   = lerp(IDENTITY.contrast,   filter.values.contrast);
-  const s   = lerp(IDENTITY.saturate,   filter.values.saturate);
-  const sep = lerp(IDENTITY.sepia,      filter.values.sepia);
-  const hr  = lerp(IDENTITY.hueRotate,  filter.values.hueRotate);
-  const gr  = lerp(IDENTITY.grayscale,  filter.values.grayscale);
+  const c = computeComponents(filter, intensity);
+  if (!c) return 'none';
 
   const parts: string[] = [];
-  if (Math.abs(b   - 1) > 0.001) parts.push(`brightness(${b.toFixed(3)})`);
-  if (Math.abs(c   - 1) > 0.001) parts.push(`contrast(${c.toFixed(3)})`);
-  if (Math.abs(s   - 1) > 0.001) parts.push(`saturate(${s.toFixed(3)})`);
-  if (sep > 0.001)                parts.push(`sepia(${sep.toFixed(3)})`);
-  if (Math.abs(hr) > 0.1)        parts.push(`hue-rotate(${hr.toFixed(1)}deg)`);
-  if (gr  > 0.001)                parts.push(`grayscale(${gr.toFixed(3)})`);
+  if (Math.abs(c.brightness - 1) > 0.001) parts.push(`brightness(${c.brightness.toFixed(3)})`);
+  if (Math.abs(c.contrast   - 1) > 0.001) parts.push(`contrast(${c.contrast.toFixed(3)})`);
+  if (Math.abs(c.saturate   - 1) > 0.001) parts.push(`saturate(${c.saturate.toFixed(3)})`);
+  if (c.sepia > 0.001)                    parts.push(`sepia(${c.sepia.toFixed(3)})`);
+  if (Math.abs(c.hueRotate) > 0.1)        parts.push(`hue-rotate(${c.hueRotate.toFixed(1)}deg)`);
+  if (c.grayscale > 0.001)                parts.push(`grayscale(${c.grayscale.toFixed(3)})`);
 
   return parts.length > 0 ? parts.join(' ') : 'none';
+}
+
+/**
+ * Interpolated filter components, or null when the result is indistinguishable
+ * from identity — including every malformed-input case.
+ *
+ * Total by construction: a null/undefined filter, one with a missing or
+ * non-numeric `values` block, or a non-finite intensity all return null rather
+ * than throwing or producing NaN components.
+ */
+function computeComponents(filter: MediaFilter | null | undefined, intensity: number): FilterValues | null {
+  if (!filter || filter.id === 'original') return null;
+
+  const v = filter.values;
+  if (!v) return null;
+
+  // A non-finite or non-numeric intensity means "we don't know" — treat it as
+  // full strength rather than propagating NaN into every component. Out-of-range
+  // values clamp instead of extrapolating past the preset.
+  const raw = typeof intensity === 'number' && Number.isFinite(intensity) ? intensity : 100;
+  const t = Math.max(0, Math.min(100, raw)) / 100;
+
+  const lerp = (identity: number, preset: number) =>
+    typeof preset === 'number' && Number.isFinite(preset)
+      ? identity + (preset - identity) * t
+      : identity;
+
+  return {
+    brightness: lerp(IDENTITY.brightness, v.brightness),
+    contrast:   lerp(IDENTITY.contrast,   v.contrast),
+    saturate:   lerp(IDENTITY.saturate,   v.saturate),
+    sepia:      lerp(IDENTITY.sepia,      v.sepia),
+    hueRotate:  lerp(IDENTITY.hueRotate,  v.hueRotate),
+    grayscale:  lerp(IDENTITY.grayscale,  v.grayscale),
+  };
+}
+
+/**
+ * React Native's own filter representation: an array of single-key objects.
+ * This is the canonical native (Fabric) form. Only components that actually
+ * differ from identity are emitted, so an identity filter yields [].
+ */
+export type RNFilterFunction =
+  | { brightness: number }
+  | { contrast: number }
+  | { saturate: number }
+  | { sepia: number }
+  | { hueRotate: string }
+  | { grayscale: number };
+
+export function buildFilterFunctions(filter: MediaFilter, intensity: number): RNFilterFunction[] {
+  const c = computeComponents(filter, intensity);
+  if (!c) return [];
+
+  const out: RNFilterFunction[] = [];
+  if (Math.abs(c.brightness - 1) > 0.001) out.push({ brightness: round3(c.brightness) });
+  if (Math.abs(c.contrast   - 1) > 0.001) out.push({ contrast:   round3(c.contrast) });
+  if (Math.abs(c.saturate   - 1) > 0.001) out.push({ saturate:   round3(c.saturate) });
+  if (c.sepia > 0.001)                    out.push({ sepia:      round3(c.sepia) });
+  if (Math.abs(c.hueRotate) > 0.1)        out.push({ hueRotate:  `${c.hueRotate.toFixed(1)}deg` });
+  if (c.grayscale > 0.001)                out.push({ grayscale:  round3(c.grayscale) });
+  return out;
+}
+
+function round3(n: number): number {
+  return Math.round(n * 1000) / 1000;
+}
+
+/** Style fragment carrying a platform-appropriate `filter` value. */
+export interface FilterStyle {
+  filter: string | RNFilterFunction[];
+}
+
+/**
+ * The single entry point every rendering surface should use.
+ *
+ * Returns `undefined` — meaning "apply no style at all" — for the no-filter
+ * case, which covers: null/undefined/empty id, the `original` preset, an id
+ * that is not in the catalogue, a malformed intensity, and any preset whose
+ * interpolated result equals identity. Returning `undefined` rather than
+ * `{ filter: 'none' }` matters: it keeps the unfiltered render path byte-for-byte
+ * identical to having no filter feature at all, so an unrecognised filter can
+ * never change how an image mounts.
+ *
+ * The two platforms take different shapes. Native (Fabric) consumes the array
+ * form; react-native-web maps the CSS string onto the DOM `filter` property.
+ * Passing the wrong shape is silently ignored by the other platform, which is
+ * exactly the "no-ops on web" failure this needs to avoid — hence the split.
+ *
+ * @param platform 'web' | 'native' — pass `Platform.OS === 'web' ? 'web' : 'native'`.
+ */
+export function resolveFilterStyle(
+  filterId: string | null | undefined,
+  intensity: number | null | undefined,
+  platform: 'web' | 'native',
+): FilterStyle | undefined {
+  if (!filterId || filterId === 'original') return undefined;
+
+  // Unknown ids resolve to the Original preset, whose components are identity.
+  const filter = getMediaFilter(filterId);
+  if (filter.id === 'original') return undefined;
+
+  const resolvedIntensity = intensity ?? 100;
+
+  if (platform === 'web') {
+    const css = buildCssFilter(filter, resolvedIntensity);
+    return css === 'none' ? undefined : { filter: css };
+  }
+
+  const fns = buildFilterFunctions(filter, resolvedIntensity);
+  return fns.length > 0 ? { filter: fns } : undefined;
 }
 
 /** All valid filter IDs — used by API validators. */

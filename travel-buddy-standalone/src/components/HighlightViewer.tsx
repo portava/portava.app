@@ -18,6 +18,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
 import { getMediaFilter, buildCssFilter } from '../lib/media/filters.ts';
+import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
 import { X, MessageCircle, Flag, Eye, Plus, Trash2, Volume2, VolumeX } from 'lucide-react-native';
 import { PortavaShareIcon } from './icons/PortavaShareIcon.tsx';
 import { StampIcon } from './stamps/StampIcon.tsx';
@@ -41,7 +42,7 @@ import { HighlightViewersSheet } from './HighlightViewersSheet.tsx';
 import { EngagementUserListSheet } from './EngagementUserListSheet.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 
-const { width: SCREEN_W } = Dimensions.get('window');
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const ITEM_DURATION_MS = 5000;
 
 const HIT_SLOP = { top: 12, bottom: 12, left: 12, right: 12 };
@@ -345,10 +346,20 @@ export function HighlightViewer({
             onPlaybackStatusUpdate={handleVideoStatus}
           />
         ) : (
-          <Image
-            source={{ uri: current.mediaUrl ?? '' }}
+          // Photo branch. This was a bare RN <Image> bound straight to
+          // current.mediaUrl — a private-bucket post-media reference, which
+          // renders as dead whitespace unhydrated. DisplayMediaImage hydrates
+          // it, gives it a designed failure state, and carries the filter.
+          <DisplayMediaImage
+            uri={current.mediaUrl}
+            width={SCREEN_W}
+            height={SCREEN_H}
             style={StyleSheet.absoluteFill}
             resizeMode="cover"
+            alt={current.caption ?? 'Highlight photo'}
+            fallbackLabel="Photo unavailable"
+            filterId={current.filterId}
+            filterIntensity={current.filterIntensity}
           />
         )}
 
