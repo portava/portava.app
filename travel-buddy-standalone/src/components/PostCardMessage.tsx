@@ -11,11 +11,13 @@
  * - Action row: View Post → opens /post/[id]
  */
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { MapPin, MessageCircle, ExternalLink, User } from 'lucide-react-native';
+import { MapPin, MessageCircle, ExternalLink } from 'lucide-react-native';
 import { StampIcon } from './stamps/StampIcon.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
+import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
+import { Avatar } from './ui/Avatar.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { TG } from '../theme/telegraphTokens.ts';
 
@@ -43,6 +45,11 @@ function parsePayload(body: string): PostCardPayload | null {
     return null;
   }
 }
+
+/** Bubble width cap, shared by the card wrap and its thumbnail. */
+const CARD_MAX_WIDTH = 280;
+const THUMBNAIL_HEIGHT = 110;
+const AVATAR_SIZE = 26;
 
 function locationLabel(p: PostCardPayload): string | null {
   const parts = [p.city, p.country].filter((x): x is string => Boolean(x));
@@ -90,13 +97,10 @@ export function PostCardMessage({ body, mine }: Props) {
         testID="post-card-author-identity"
       >
         <View style={card.authorRow}>
-          {payload.authorAvatar ? (
-            <Image source={{ uri: payload.authorAvatar }} style={card.avatar} />
-          ) : (
-            <View style={card.avatarFallback}>
-              <User size={12} color={mine ? color.onInk : color.mute} />
-            </View>
-          )}
+          {/* Avatar hydrates the private-bucket URL and degrades to initials.
+              The bare <Image> here rendered an empty circle on every shared
+              post once profile-media went private. */}
+          <Avatar uri={payload.authorAvatar} name={authorLabel} kind="person" size={AVATAR_SIZE} />
           <View style={{ flex: 1 }}>
             <Text style={[card.authorName, mine && card.authorNameMine]} numberOfLines={1}>
               {authorLabel}
@@ -110,9 +114,17 @@ export function PostCardMessage({ body, mine }: Props) {
         </View>
       </UserIdentityLink>
 
-      {/* Thumbnail */}
+      {/* Thumbnail — the shared post's own media, so a post-media reference
+          that needs hydrating and a visible state when it cannot be shown. */}
       {payload.thumbnail ? (
-        <Image source={{ uri: payload.thumbnail }} style={card.thumbnail} resizeMode="cover" />
+        <DisplayMediaImage
+          uri={payload.thumbnail}
+          width={CARD_MAX_WIDTH}
+          height={THUMBNAIL_HEIGHT}
+          resizeMode="cover"
+          style={card.thumbnail}
+          alt={payload.snippet ?? 'Shared post'}
+        />
       ) : null}
 
       {/* Snippet */}
@@ -171,7 +183,7 @@ const card = StyleSheet.create({
     borderBottomLeftRadius: 4,
     padding: space.md,
     gap: 6,
-    maxWidth: 280,
+    maxWidth: CARD_MAX_WIDTH,
   },
   wrapMine: {
     backgroundColor: color.signal,
@@ -186,14 +198,12 @@ const card = StyleSheet.create({
   brandLabel: { ...t.stamp, fontFamily: 'Courier', fontSize: 9, color: color.signal, letterSpacing: 1, flex: 1 },
 
   authorRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  avatar: { width: 26, height: 26, borderRadius: 13, backgroundColor: color.haze },
-  avatarFallback: { width: 26, height: 26, borderRadius: 13, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
   authorName: { ...t.bodyStrong, color: color.ink, fontWeight: '700', fontSize: 13 },
   authorNameMine: { color: color.onInk },
   authorHandle: { ...t.small, color: color.mute, fontSize: 11 },
   authorHandleMine: { color: color.onInk + 'BB' },
 
-  thumbnail: { width: '100%', height: 110, borderRadius: radius.sm, backgroundColor: color.haze },
+  thumbnail: { width: '100%', borderRadius: radius.sm, backgroundColor: color.haze },
 
   snippet: { ...t.small, color: color.ink, fontSize: 13, lineHeight: 17 },
   snippetMine: { color: color.onInk },

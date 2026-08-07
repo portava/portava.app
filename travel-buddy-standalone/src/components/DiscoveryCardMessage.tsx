@@ -14,10 +14,10 @@ import {
   Pressable,
   StyleSheet,
   Alert,
-  Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Compass, MapPin, Bookmark, CalendarPlus, ExternalLink } from 'lucide-react-native';
+import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { TG } from '../theme/telegraphTokens.ts';
 import { TripWishlistPicker, type AddToTripPayload } from './discovery/TripWishlistPicker.tsx';
@@ -44,6 +44,10 @@ function parsePayload(body: string): DiscoveryCardPayload | null {
     return null;
   }
 }
+
+/** Bubble width cap, shared by the card wrap and its thumbnail. */
+const CARD_MAX_WIDTH = 280;
+const THUMBNAIL_HEIGHT = 110;
 
 const CATEGORY_COLORS: Record<string, string> = {
   hidden_gem: '#10B981',
@@ -99,12 +103,16 @@ export function DiscoveryCardMessage({ body, mine }: Props) {
           </View>
         </View>
 
-        {/* Thumbnail */}
+        {/* Thumbnail — may be a post-media reference for community photos,
+            so it hydrates and shows a visible state when it cannot load. */}
         {payload.imageUrl ? (
-          <Image
-            source={{ uri: payload.imageUrl }}
-            style={card.thumbnail}
+          <DisplayMediaImage
+            uri={payload.imageUrl}
+            width={CARD_MAX_WIDTH}
+            height={THUMBNAIL_HEIGHT}
             resizeMode="cover"
+            style={card.thumbnail}
+            alt={payload.title}
           />
         ) : null}
 
@@ -206,7 +214,7 @@ const card = StyleSheet.create({
     borderBottomLeftRadius: 4,
     padding: space.md,
     gap: 6,
-    maxWidth: 280,
+    maxWidth: CARD_MAX_WIDTH,
   },
   wrapMine: {
     backgroundColor: color.signal,
@@ -217,7 +225,6 @@ const card = StyleSheet.create({
   fallback: { ...t.small, color: color.mute, fontStyle: 'italic' },
   thumbnail: {
     width: '100%',
-    height: 110,
     borderRadius: radius.sm,
     backgroundColor: color.haze,
   },
