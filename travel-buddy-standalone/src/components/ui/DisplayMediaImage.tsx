@@ -65,20 +65,33 @@ const sk = StyleSheet.create({
 
 // ── Designed fallback (generic content image) ───────────────────────────────
 
+/**
+ * Shown when a label is not supplied. An unlabelled fallback is a grey box
+ * with a dot in it — indistinguishable from dead whitespace, which is how the
+ * blank-media bug read to users on the surfaces that DID degrade correctly.
+ * Every fallback says something.
+ */
+const DEFAULT_FALLBACK_LABEL = 'Image unavailable';
+
 interface FallbackProps {
   /** Icon rendered as the visual affordance. Defaults to a simple placeholder. */
   icon?: React.ReactNode;
-  /** Optional text rendered below the icon. */
+  /**
+   * Text rendered below the icon. Defaults to "Image unavailable"; pass an
+   * empty string only for surfaces too small to fit a caption (badges, tiles
+   * under ~64pt), where the icon alone is the affordance.
+   */
   label?: string;
   style?: StyleProp<ViewStyle>;
   bg?: string;
 }
 
 export function MediaFallback({ icon, label, style, bg }: FallbackProps) {
+  const text = label ?? DEFAULT_FALLBACK_LABEL;
   return (
     <View style={[fb.wrap, bg ? { backgroundColor: bg } : undefined, style]}>
       {icon ?? <View style={fb.dot} />}
-      {label ? <Text style={fb.label} numberOfLines={2}>{label}</Text> : null}
+      {text ? <Text style={fb.label} numberOfLines={2}>{text}</Text> : null}
     </View>
   );
 }
