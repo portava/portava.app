@@ -19,7 +19,7 @@ after filter centralisation. Full run, all green.
 | rules-of-hooks | `npx eslint 'travel-buddy-standalone/{app,src}/**/*.{ts,tsx}'` | PASS | 0 violations |
 | component tests — native | `pnpm run test:component` | PASS | 1729/1729, 321 suites |
 | component tests — web | `pnpm run test:component` (jest.web.config.js) | PASS | 4/4, 2 suites |
-| standalone node tests | `pnpm run test` (travel-buddy-standalone) | PASS | 3666/3666, 494 suites |
+| standalone node tests | `pnpm run test` (travel-buddy-standalone) | PASS | 3694/3694, 499 suites |
 | api-server tests | `pnpm run test` (artifacts/api-server) | PASS | 6135/6135, 1550 suites |
 
 `fail 0`, `skipped 0`, `todo 0`, `cancelled 0` on every node run.
@@ -45,6 +45,19 @@ Two severity-2 eslint errors exist and pre-date this baseline. Neither is
   interface declaring no members.
 
 ## Change log
+
+### 2026-08-07 — 3666/494 → 3694/499 (filter value verification)
+
+Additive only. One new file,
+`src/lib/media/__tests__/filterValues.test.ts`, contributing 28 tests across 5
+suites: value-domain bounds, identity at intensity 0 for every preset, exact
+reproduction at 100, monotonic non-overshooting interpolation, Original as a
+true no-op, and no duplicate or degenerate catalogue entries. Component,
+api-server and typecheck all held exactly.
+
+These tests verify the filter numbers; they do not tune them. The
+Wanderlust/Vivid perceptual-overlap question is explicitly parked for the
+device pass — see the note above `mediaFilters` in `lib/media/filters.ts`.
 
 ### 2026-08-07 — component 1716/320 → 1729/321 (filter editor a11y)
 

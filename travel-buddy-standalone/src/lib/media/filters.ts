@@ -51,6 +51,25 @@ const IDENTITY: FilterValues = {
   grayscale: 0,
 };
 
+/**
+ * The catalogue.
+ *
+ * These numbers are VERIFIED but NOT TUNED. `__tests__/filterValues.test.ts`
+ * pins everything decidable without a screen — every component sits in a valid
+ * domain, intensity 0 is identity for every preset, 100 reproduces the preset,
+ * interpolation is monotonic and never overshoots, Original is a true no-op,
+ * and no two presets carry identical values.
+ *
+ * What none of that establishes is how any of them LOOK. Open question, parked
+ * for the device pass rather than guessed at here: Wanderlust (saturate 1.5)
+ * and Vivid (saturate 2.0) may not be perceptually distinct enough to justify
+ * two carousel slots — the tests prove only that their numbers differ. The
+ * warm set (Golden Hour, Safari, Sunset) also wants checking against real
+ * landscapes, food and daylight skin tones, which is the whole point of the
+ * set in a travel app.
+ *
+ * Do not adjust these values on the strength of a green test run.
+ */
 export const mediaFilters: MediaFilter[] = [
   {
     id: 'original',
