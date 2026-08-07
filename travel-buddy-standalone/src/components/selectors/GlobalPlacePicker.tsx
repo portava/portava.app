@@ -41,6 +41,7 @@ import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 import { X, MapPin, Search, Navigation, Clock, TrendingUp, RefreshCw } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ExpoLocation from 'expo-location';
+import { getCurrentGps } from '../../services/location.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { usePlaceSearch } from '../../hooks/usePlaceSearch.ts';
 import { useRecentPlaces } from '../../hooks/useRecentPlaces.ts';
@@ -205,10 +206,12 @@ export function GlobalPlacePicker({
   async function useGPS() {
     setGpsState('loading');
     try {
-      const { status } = await ExpoLocation.requestForegroundPermissionsAsync();
-      if (status !== 'granted') { setGpsState('denied'); return; }
-      const pos = await ExpoLocation.getCurrentPositionAsync({ accuracy: ExpoLocation.Accuracy.Balanced });
-      const { latitude: lat, longitude: lng } = pos.coords;
+      const gps = await getCurrentGps();
+      if (!gps.granted || gps.lat == null || gps.lng == null) {
+        setGpsState(gps.error === 'permission_denied' ? 'denied' : 'error');
+        return;
+      }
+      const { lat, lng } = gps;
 
       // Reverse geocode via backend
       try {

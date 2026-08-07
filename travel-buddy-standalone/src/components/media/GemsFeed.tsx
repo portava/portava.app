@@ -24,7 +24,7 @@ import {
   useWindowDimensions,
   Platform,
 } from 'react-native';
-import * as ExpoLocation from 'expo-location';
+import { getCurrentGps } from '../../services/location.ts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, type as t } from '../../theme/tokens.ts';
 import { getOverlayHeaderTotalHeight } from '../ui/AppHeader.tsx';
@@ -108,16 +108,15 @@ export function GemsFeed({
   const handleRequestNearMe = useCallback(async () => {
     setNearMeLoading(true);
     try {
-      const { status } = await ExpoLocation.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        // Permission denied — revert to "All"
+      const gps = await getCurrentGps();
+      if (!gps.granted || gps.lat == null || gps.lng == null) {
+        // Permission denied or GPS failed — revert to "All"
         setAreaMode('all');
         setGemsModeState({ areaMode: 'all' });
         return;
       }
-      const pos = await ExpoLocation.getCurrentPositionAsync({ accuracy: ExpoLocation.Accuracy.Balanced });
-      setUserLat(pos.coords.latitude);
-      setUserLng(pos.coords.longitude);
+      setUserLat(gps.lat);
+      setUserLng(gps.lng);
     } catch {
       setAreaMode('all');
       setGemsModeState({ areaMode: 'all' });

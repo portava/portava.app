@@ -8,7 +8,7 @@ import {
   View, Text, Pressable, StyleSheet, ActivityIndicator, Alert,
 } from 'react-native';
 import { MapPin, CheckCircle2, Clock, Navigation, Info } from 'lucide-react-native';
-import * as Location from 'expo-location';
+import { getCurrentGps } from '../../services/location.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { checkIn, type GeofenceData, type AttendanceStatus } from '../../services/geofence.ts';
 
@@ -49,17 +49,18 @@ export function PlanCheckInView({
   const handleCheckIn = async () => {
     setLoading(true);
     try {
-      const { status: permStatus } = await Location.requestForegroundPermissionsAsync();
-      if (permStatus !== 'granted') {
+      const gps = await getCurrentGps();
+      if (!gps.granted || gps.lat == null || gps.lng == null) {
         Alert.alert(
           'Location access needed',
-          'Please allow location access so we can verify you are at the meetup.',
+          gps.error === 'permission_denied'
+            ? 'Please allow location access so we can verify you are at the meetup.'
+            : 'Could not get your location. Please try again.',
         );
         return;
       }
 
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      const result = await checkIn(tripId, loc.coords.latitude, loc.coords.longitude);
+      const result = await checkIn(tripId, gps.lat, gps.lng);
 
       if (result.ok && result.status) {
         const newStatus = result.status as AttendanceStatus;

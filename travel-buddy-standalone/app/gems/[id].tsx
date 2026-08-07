@@ -17,7 +17,7 @@ import { fallbackUriFor } from '../../src/lib/visuals/fallbackAssets';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as Location from 'expo-location';
+import { getCurrentGps } from '../../src/services/location';
 import { useGemDetail, useGemCheckin, useGemReport } from '../../src/hooks/useHiddenGems';
 import { verificationBadge, sensitivityLabel, shareGemToTelegraph } from '../../src/services/hiddenGems';
 import { TripWishlistPicker, type AddToTripPayload } from '../../src/components/discovery/TripWishlistPicker';
@@ -80,13 +80,12 @@ function CheckinModal({
   const { checkin, loading, result } = useGemCheckin();
 
   const handleCheckin = useCallback(async () => {
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
+    const gps = await getCurrentGps();
+    if (!gps.granted || gps.lat == null || gps.lng == null) {
       Alert.alert('Location required', 'Please allow location access to verify your visit.');
       return;
     }
-    const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-    await checkin(gemId, loc.coords.latitude, loc.coords.longitude, tripId);
+    await checkin(gemId, gps.lat, gps.lng, tripId);
   }, [gemId, tripId, checkin]);
 
   const done = result != null;
