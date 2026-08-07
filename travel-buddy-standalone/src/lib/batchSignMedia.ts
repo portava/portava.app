@@ -6,8 +6,23 @@
  * (55 minutes for the current 3600 s server TTL), and silently falls back to the original URL
  * on any error (including 429). Cache hits are served without a network request.
  *
- * When the `media_private_buckets_enabled` flag is OFF the function returns
- * all original URLs immediately (zero network calls).
+ * ## Authorization is mandatory
+ *
+ * POST /api/media/sign runs requireUser. This helper used to send only a
+ * Content-Type header, so every request 401'd, fell into the catch below, and
+ * passed the ORIGINAL url straight through to <Image> — which, since both
+ * buckets went private, is a bare `post-media/…` reference with no scheme.
+ * That rendered as dead whitespace on every media surface in the app. The
+ * bearer token is not optional here; without it this function silently does
+ * nothing useful.
+ *
+ * ## No feature-flag gate
+ *
+ * The `media_private_buckets_enabled` gate that used to short-circuit this
+ * function is gone. The buckets ARE private and the server signs
+ * unconditionally (see api-server routes/mediaFile.ts), so a client-side gate
+ * could only ever turn the one working URL path off. Signing is now the only
+ * behaviour.
  *
  * The cache is LRU-bounded to MAX_CACHE_SIZE entries. On each cache hit the
  * entry is moved to the tail (most-recently-used position). When a new entry
@@ -21,37 +36,35 @@
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
-// ── Feature-flag resolver (moved here from the now-deleted mediaSource.ts) ────
+// ── Token provider (test seam) ───────────────────────────────────────────────
 
-const FLAG_CACHE_TTL_MS = 5 * 60 * 1000;
-let _cachedFlagEnabled: boolean | null = null;
-let _flagCacheTs = 0;
+let _testTokenProvider: (() => Promise<string | null>) | null = null;
 
-/** Reset the module-level flag cache. For use in tests only. */
-export function _resetMediaFlagCache(): void {
-  _cachedFlagEnabled = null;
-  _flagCacheTs = 0;
+/**
+ * Inject a fake token provider. Tests only — pass null to reset.
+ * Mirrors the seam in services/media.ts so signing can be exercised without
+ * standing up a Supabase session.
+ */
+export function _setTestSignTokenProvider(fn: (() => Promise<string | null>) | null): void {
+  _testTokenProvider = fn;
 }
 
 /**
- * Fetch `media_private_buckets_enabled` from /api/feature-flags with a
- * 5-minute module-level cache. Fail-safe: returns false on any error.
+ * apiToken is imported lazily: it reaches lib/supabase.ts, which pulls in
+ * react-native, which the node:test runner cannot transform. Deferring the
+ * import keeps this module importable from plain node tests — they set the
+ * seam above, so the real path is never evaluated there.
  */
-export async function _resolveMediaFlag(apiBase: string, nowMs = Date.now()): Promise<boolean> {
-  if (_cachedFlagEnabled !== null && nowMs - _flagCacheTs < FLAG_CACHE_TTL_MS) {
-    return _cachedFlagEnabled;
-  }
+async function signToken(): Promise<string | null> {
+  if (_testTokenProvider) return _testTokenProvider();
   try {
-    const r = await fetch(`${apiBase}/api/feature-flags`);
-    const body = (await r.json()) as { flags?: Record<string, boolean> };
-    const val = body?.flags?.['media_private_buckets_enabled'] ?? false;
-    _cachedFlagEnabled = val;
-    _flagCacheTs = nowMs;
-    return val;
+    const { freshToken } = await import('../services/apiToken.ts');
+    return await freshToken();
   } catch {
-    return false; // fail-safe: treat as OFF
+    return null;
   }
 }
+
 const BATCH_SIZE = 50;
 /**
  * Safety buffer subtracted from the server-issued signed-URL TTL before the
@@ -133,7 +146,7 @@ function _cacheGet(key: string, now: number): CacheEntry | undefined {
  * - Cache hits: returned immediately, no network call.
  * - Cache misses: batched into ≤50-URL POST requests.
  * - Error/429: falls back to the original URL silently.
- * - Flag OFF: returns all originals without any network call.
+ * - No session: returns all originals (the caller renders its empty state).
  *
  * @returns Map from original URL → signed/relay URL (or original on fallback).
  */
@@ -142,13 +155,6 @@ export async function batchSignUrls(urls: string[]): Promise<Map<string, string>
   if (urls.length === 0) return result;
 
   const now = Date.now();
-
-  // Short-circuit when the private-buckets flag is OFF — no signing needed.
-  const flagOn = await _resolveMediaFlag(API_BASE, now);
-  if (!flagOn) {
-    for (const url of urls) result.set(url, url);
-    return result;
-  }
 
   // Partition: cached vs. needs fetch
   const toFetch: string[] = [];
@@ -163,13 +169,25 @@ export async function batchSignUrls(urls: string[]): Promise<Map<string, string>
 
   if (toFetch.length === 0) return result;
 
+  // The sign endpoint is authenticated. No session → no signed URLs; pass the
+  // originals back so callers fall through to their designed empty state
+  // rather than waiting on a request that can only 401.
+  const token = await signToken();
+  if (!token) {
+    for (const url of toFetch) result.set(url, url);
+    return result;
+  }
+
   // Batch into ≤BATCH_SIZE chunks
   for (let i = 0; i < toFetch.length; i += BATCH_SIZE) {
     const batch = toFetch.slice(i, i + BATCH_SIZE);
     try {
       const r = await fetch(`${API_BASE}/api/media/sign`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ urls: batch }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);

@@ -8,7 +8,10 @@
  *   - cache hit (second call) returns without a network call
  *   - expired entry re-fetches on the next call
  *   - server returns null for a URL → hydrateMediaUrls returns null for that key
- *   - flag OFF → private-bucket URLs returned unchanged, no sign call
+ *   - a BARE `post-media/<path>` reference — the form every upload endpoint
+ *     actually returns — is recognised and signed, not passed through raw
+ *   - no session → private-bucket URLs resolve to null (designed empty state),
+ *     with no sign call
  *
  * Run with: node --import tsx/esm --test src/services/__tests__/mediaUrl.service.test.ts
  */
@@ -16,7 +19,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { hydrateMediaUrls } from '../mediaUrl.ts';
-import { _resetBatchSignCache, _resetMediaFlagCache } from '../../lib/batchSignMedia.ts';
+import { _resetBatchSignCache, _setTestSignTokenProvider } from '../../lib/batchSignMedia.ts';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -24,6 +27,9 @@ const POST_MEDIA_URL = 'https://abc.supabase.co/storage/v1/object/public/post-me
 const PROFILE_MEDIA_URL = 'https://abc.supabase.co/storage/v1/object/public/profile-media/avatar.jpg';
 const STAMP_ART_URL = 'https://abc.supabase.co/storage/v1/object/public/stamp-artwork/cat.png';
 const CDN_URL = 'https://cdn.example.com/image.jpg';
+// What POST /media/upload, /me/avatar/upload and the postcard flow all return:
+// a bare storage reference with no scheme and no host.
+const BARE_POST_MEDIA_REF = 'post-media/user-1/1785413296467.jpg';
 
 const SIGNED_POST = `${POST_MEDIA_URL}?token=signed1`;
 
@@ -59,14 +65,14 @@ beforeEach(() => {
   _origFetch = globalThis.fetch;
   _origDateNow = Date.now;
   _resetBatchSignCache();
-  _resetMediaFlagCache();
+  _setTestSignTokenProvider(async () => 'test-access-token');
 });
 
 afterEach(() => {
   globalThis.fetch = _origFetch;
   Date.now = _origDateNow;
   _resetBatchSignCache();
-  _resetMediaFlagCache();
+  _setTestSignTokenProvider(null);
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -204,21 +210,42 @@ describe('hydrateMediaUrls', () => {
     );
   });
 
-  it('flag OFF → private-bucket URLs returned unchanged, no call to /api/media/sign', async () => {
+  it('a bare post-media/<path> reference is signed, never passed through raw', async () => {
+    // Regression: every upload endpoint returns this form, the buckets are
+    // private, and a bare reference has no scheme — binding it to an <Image>
+    // renders dead whitespace. It must reach the sign endpoint.
+    let sentUrls: string[] = [];
+    stubFetch(true, (body) => {
+      sentUrls = body.urls;
+      return Object.fromEntries(body.urls.map((u) => [u, `${u}?token=signed`]));
+    });
+
+    const result = await hydrateMediaUrls([BARE_POST_MEDIA_REF]);
+
+    assert.deepEqual(sentUrls, [BARE_POST_MEDIA_REF], 'bare ref must be sent for signing');
+    assert.equal(
+      result[BARE_POST_MEDIA_REF],
+      `${BARE_POST_MEDIA_REF}?token=signed`,
+      'bare ref must resolve to the signed URL',
+    );
+  });
+
+  it('no session → private-bucket URLs resolve to null, no call to /api/media/sign', async () => {
+    _setTestSignTokenProvider(async () => null);
     let signCalled = false;
     (globalThis as any).fetch = async (url: string) => {
-      if (url.includes('/api/feature-flags')) {
-        return { ok: true, json: async () => ({ flags: { media_private_buckets_enabled: false } }) };
-      }
       if (url.includes('/api/media/sign')) { signCalled = true; }
       throw new Error(`unexpected: ${url}`);
     };
 
     const result = await hydrateMediaUrls([POST_MEDIA_URL, PROFILE_MEDIA_URL]);
 
-    assert.equal(signCalled, false, 'sign endpoint must NOT be called when flag is OFF');
-    assert.equal(result[POST_MEDIA_URL], POST_MEDIA_URL, 'post-media returned unchanged when flag OFF');
-    assert.equal(result[PROFILE_MEDIA_URL], PROFILE_MEDIA_URL, 'profile-media returned unchanged when flag OFF');
+    assert.equal(signCalled, false, 'sign endpoint must NOT be called without a token');
+    // null, not the raw URL: a private-bucket object is unreadable without a
+    // signature, so the surface must show its designed empty state rather than
+    // bind a URL that can only render as dead whitespace.
+    assert.equal(result[POST_MEDIA_URL], null, 'post-media resolves to null with no session');
+    assert.equal(result[PROFILE_MEDIA_URL], null, 'profile-media resolves to null with no session');
   });
 
   it('empty input returns empty record without any fetch', async () => {

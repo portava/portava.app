@@ -6,7 +6,9 @@
  *   - cache miss fires POST to /api/media/sign
  *   - error falls back to original URL silently
  *   - 429 response falls back to original URL
- *   - flag OFF short-circuits without any network call
+ *   - the request carries a bearer token (without it the server 401s and every
+ *     media surface in the app renders blank — see the media-blank diagnosis)
+ *   - no session short-circuits without any network call
  *   - batches are capped at ≤50 URLs per request
  *   - cache does not grow past MAX_CACHE_SIZE (LRU eviction)
  *   - LRU: the least-recently-used entry is evicted first
@@ -16,7 +18,14 @@
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { batchSignUrls, _resetBatchSignCache, _getCacheSize, _resetMediaFlagCache } from '../batchSignMedia.ts';
+import {
+  batchSignUrls,
+  _resetBatchSignCache,
+  _getCacheSize,
+  _setTestSignTokenProvider,
+} from '../batchSignMedia.ts';
+
+const TOKEN = 'test-access-token';
 
 const API_BASE = 'http://localhost:9999';
 const URL_A = 'https://abc.supabase.co/storage/v1/object/public/media/a.jpg';
@@ -77,7 +86,7 @@ describe('batchSignUrls', () => {
     _origDateNow = Date.now;
     process.env.EXPO_PUBLIC_API_BASE_URL = API_BASE;
     _resetBatchSignCache();
-    _resetMediaFlagCache();
+    _setTestSignTokenProvider(async () => TOKEN);
   });
 
   afterEach(() => {
@@ -85,20 +94,33 @@ describe('batchSignUrls', () => {
     process.env.EXPO_PUBLIC_API_BASE_URL = _origApiBase;
     Date.now = _origDateNow;
     _resetBatchSignCache();
-    _resetMediaFlagCache();
+    _setTestSignTokenProvider(null);
   });
 
-  it('flag OFF: returns originals immediately without any network call to /api/media/sign', async () => {
+  it('sends the bearer token — the whole point of the call', async () => {
+    let seenAuth: string | undefined;
+    (globalThis as any).fetch = async (url: string, opts?: any) => {
+      if (url.includes('/api/media/sign')) {
+        seenAuth = opts?.headers?.Authorization;
+        const body = JSON.parse(opts.body);
+        return { ok: true, json: async () => ({ signed: makeSignedMap(body.urls), ttlSeconds: 3600 }) };
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    };
+    const result = await batchSignUrls([URL_A]);
+    assert.equal(seenAuth, `Bearer ${TOKEN}`, 'sign request must be authenticated');
+    assert.equal(result.get(URL_A), SIGNED_A);
+  });
+
+  it('no session: returns originals without calling the sign endpoint', async () => {
+    _setTestSignTokenProvider(async () => null);
     let signCalled = false;
     (globalThis as any).fetch = async (url: string) => {
-      if (url.includes('/api/feature-flags')) {
-        return { ok: true, json: async () => ({ flags: { media_private_buckets_enabled: false } }) };
-      }
       if (url.includes('/api/media/sign')) signCalled = true;
       throw new Error('unexpected');
     };
     const result = await batchSignUrls([URL_A, URL_B]);
-    assert.equal(signCalled, false, 'sign endpoint should not be called when flag is OFF');
+    assert.equal(signCalled, false, 'sign endpoint should not be called without a token');
     assert.equal(result.get(URL_A), URL_A);
     assert.equal(result.get(URL_B), URL_B);
   });

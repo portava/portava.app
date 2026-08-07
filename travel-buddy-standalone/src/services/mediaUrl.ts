@@ -3,9 +3,16 @@
  *
  * Wraps batchSignUrls so that every rendering surface can resolve
  * `post-media` and `profile-media` URLs through the sign endpoint before
- * they are bound to an <Image source>.  When the
- * `media_private_buckets_enabled` flag is OFF (today) every URL passes
- * through unchanged — zero network calls, zero visible change.
+ * they are bound to an <Image source>.
+ *
+ * Both buckets are PRIVATE, so this is not an optimisation — it is the only
+ * way media renders at all. Upload endpoints return a bare `<bucket>/<path>`
+ * reference and older rows hold full public URLs into those same private
+ * buckets; neither form loads in an <Image>. Both are accepted by the sign
+ * endpoint (see api-server lib/mediaUrl.ts appStorageUrlInfo) and both come
+ * back as self-authenticating signed URLs.
+ *
+ * A surface that binds a URL without going through here renders blank.
  *
  * Exports:
  *   PRIVATE_BUCKETS           — the two buckets going private
@@ -16,13 +23,9 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { batchSignUrls, _resolveMediaFlag } from '../lib/batchSignMedia.ts';
+import { batchSignUrls } from '../lib/batchSignMedia.ts';
 
-function getApiBase(): string {
-  return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-}
-
-/** The two Supabase storage buckets that will be flipped to private. */
+/** The two Supabase storage buckets that are private. */
 export const PRIVATE_BUCKETS: string[] = ['post-media', 'profile-media'];
 
 // Matches: .../storage/v1/object/public/<bucket>/…
@@ -79,16 +82,7 @@ export async function hydrateMediaUrls(
 
   if (privateBucketUrls.length === 0) return result;
 
-  // Short-circuit when the private-buckets flag is OFF — return originals.
-  const flagOn = await _resolveMediaFlag(getApiBase());
-  if (!flagOn) {
-    for (const url of privateBucketUrls) {
-      result[url] = url;
-    }
-    return result;
-  }
-
-  // Flag ON — call batchSignUrls (handles chunking ≤50 per request + LRU cache).
+  // Call batchSignUrls (handles chunking ≤50 per request + LRU cache).
   // batchSignUrls returns the original URL when the server returns null or on
   // error; compare to detect those cases and surface them as null to the caller.
   const signed = await batchSignUrls(privateBucketUrls);

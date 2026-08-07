@@ -14,7 +14,7 @@ import React from 'react';
 import { Text } from 'react-native';
 import { render, screen, waitFor } from '@testing-library/react-native';
 import { useHydratedMedia } from '../mediaUrl.ts';
-import { _resetBatchSignCache, _resetMediaFlagCache } from '../../lib/batchSignMedia.ts';
+import { _resetBatchSignCache, _setTestSignTokenProvider } from '../../lib/batchSignMedia.ts';
 
 // ── Minimal test component ────────────────────────────────────────────────────
 //
@@ -67,13 +67,13 @@ function stubFetch(
 beforeEach(() => {
   _origFetch = globalThis.fetch;
   _resetBatchSignCache();
-  _resetMediaFlagCache();
+  _setTestSignTokenProvider(async () => 'test-access-token');
 });
 
 afterEach(() => {
   globalThis.fetch = _origFetch;
   _resetBatchSignCache();
-  _resetMediaFlagCache();
+  _setTestSignTokenProvider(null);
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
