@@ -52,8 +52,24 @@ export type ShareActionGroup =
 
 export type ShareActionSource = 'spec' | 'spec-label' | 'production';
 
+/**
+ * Which row of the sheet an action belongs to.
+ *
+ *   'contextual'  — an action the entity opts into via allowedActions. What
+ *                   this specific thing can do.
+ *   'destination' — not contextual at all. Copying a link and handing a URL to
+ *                   the OS are things you can do to ANY entity that has a URL,
+ *                   so no adapter declares them. The entity signals them by
+ *                   having a non-null canonicalUrl, which is also what puts
+ *                   'external' in its allowedDestinations. The sheet gets this
+ *                   row from resolveDestinationActions().
+ */
+export type ShareActionTier = 'contextual' | 'destination';
+
 export interface ShareActionDescriptor {
   id: ShareActionId;
+  /** Contextual (declared by an adapter) or destination (universal). */
+  tier: ShareActionTier;
   /** Default copy. Sentence case as §8 writes it, no trailing punctuation. */
   label: string;
   /**
@@ -89,6 +105,7 @@ const DESCRIPTORS: ShareActionDescriptor[] = [
   // ── Send ───────────────────────────────────────────────────────────────────
   {
     id: 'send_to_traveler',
+    tier: 'contextual',
     label: 'Send to Traveler',
     labelByEntity: {
       // §8 gives this action different copy on three entities.
@@ -106,6 +123,7 @@ const DESCRIPTORS: ShareActionDescriptor[] = [
   },
   {
     id: 'send_to_circle',
+    tier: 'contextual',
     label: 'Send to Circle',
     icon: 'Users',
     group: 'send',
@@ -118,6 +136,7 @@ const DESCRIPTORS: ShareActionDescriptor[] = [
   },
   {
     id: 'send_to_trip_crew',
+    tier: 'contextual',
     label: 'Send to Trip Crew',
     icon: 'Users',
     group: 'send',
@@ -132,6 +151,7 @@ const DESCRIPTORS: ShareActionDescriptor[] = [
   // ── Collect ────────────────────────────────────────────────────────────────
   {
     id: 'share_to_pulse',
+    tier: 'contextual',
     label: 'Share to Pulse',
     icon: 'Radio',
     group: 'collect',
@@ -143,6 +163,7 @@ const DESCRIPTORS: ShareActionDescriptor[] = [
   },
   {
     id: 'add_to_trip',
+    tier: 'contextual',
     label: 'Add to Trip',
     icon: 'CalendarPlus',
     group: 'collect',
@@ -154,6 +175,7 @@ const DESCRIPTORS: ShareActionDescriptor[] = [
   },
   {
     id: 'save_to_trip',
+    tier: 'contextual',
     label: 'Save to Trip',
     icon: 'Bookmark',
     group: 'collect',
@@ -165,6 +187,7 @@ const DESCRIPTORS: ShareActionDescriptor[] = [
   },
   {
     id: 'add_to_shared_moment',
+    tier: 'contextual',
     label: 'Add to Shared Moment',
     icon: 'Images',
     group: 'collect',
@@ -178,6 +201,7 @@ const DESCRIPTORS: ShareActionDescriptor[] = [
   // ── Invite ─────────────────────────────────────────────────────────────────
   {
     id: 'invite_to_trip',
+    tier: 'contextual',
     label: 'Invite to Trip',
     icon: 'UserPlus',
     group: 'invite',
@@ -189,6 +213,7 @@ const DESCRIPTORS: ShareActionDescriptor[] = [
   },
   {
     id: 'invite_to_plan',
+    tier: 'contextual',
     label: 'Invite to Plan',
     icon: 'CalendarPlus',
     group: 'invite',
@@ -200,6 +225,7 @@ const DESCRIPTORS: ShareActionDescriptor[] = [
   },
   {
     id: 'invite_traveler',
+    tier: 'contextual',
     label: 'Invite Traveler',
     icon: 'UserPlus',
     group: 'invite',
@@ -213,6 +239,7 @@ const DESCRIPTORS: ShareActionDescriptor[] = [
   // ── Recommend ──────────────────────────────────────────────────────────────
   {
     id: 'recommend_to_traveler',
+    tier: 'contextual',
     label: 'Recommend to someone',
     labelByEntity: {
       profile:       'Recommend Buddy',
@@ -226,11 +253,18 @@ const DESCRIPTORS: ShareActionDescriptor[] = [
     requiresUrl: false,
     source: 'spec-label',
     evidence: '§8 Place "Recommend to someone"; Profile "Recommend Buddy". Kept distinct from send_to_traveler because §8 lists both on Place.',
+    // TODO(share): currently send-shaped — it opens the DM picker and is
+    // indistinguishable from send_to_traveler apart from its copy. There is no
+    // recommendation record in the schema: nothing stores who recommended what
+    // to whom, so a recommendation cannot be listed, counted, acted on or
+    // attributed later. If "recommend" is meant to be more than framing on a
+    // message, it needs a table before an executor is written against it.
   },
 
   // ── Link / OS-level ────────────────────────────────────────────────────────
   {
     id: 'copy_link',
+    tier: 'destination',
     label: 'Copy link',
     labelByEntity: { trip: 'Copy Trip Link' },
     icon: 'Link',
@@ -243,6 +277,7 @@ const DESCRIPTORS: ShareActionDescriptor[] = [
   },
   {
     id: 'share_external',
+    tier: 'destination',
     label: 'Share',
     icon: 'PortavaShareIcon',
     group: 'direct',
@@ -254,6 +289,7 @@ const DESCRIPTORS: ShareActionDescriptor[] = [
   },
   {
     id: 'share_image',
+    tier: 'contextual',
     label: 'Share as image',
     icon: 'Image',
     group: 'direct',
@@ -266,6 +302,7 @@ const DESCRIPTORS: ShareActionDescriptor[] = [
   },
   {
     id: 'share_file',
+    tier: 'contextual',
     label: 'Save to device',
     icon: 'Download',
     group: 'direct',
@@ -279,6 +316,7 @@ const DESCRIPTORS: ShareActionDescriptor[] = [
   // ── Acts on the entity ─────────────────────────────────────────────────────
   {
     id: 'save',
+    tier: 'contextual',
     label: 'Save',
     icon: 'Bookmark',
     group: 'secondary',
@@ -290,6 +328,7 @@ const DESCRIPTORS: ShareActionDescriptor[] = [
   },
   {
     id: 'report',
+    tier: 'contextual',
     label: 'Report',
     icon: 'Flag',
     group: 'secondary',
@@ -357,6 +396,11 @@ export function resolveShareActions(
   return allowedActions
     .map((id) => SHARE_ACTION_REGISTRY[id])
     .filter((d): d is ShareActionDescriptor => Boolean(d))
+    // Destination-tier actions are never contextual. If one shows up in an
+    // entity's allowedActions that is an adapter bug, not a request — drop it
+    // here so it cannot be rendered twice (once contextually, once in the
+    // external row). shareAdapters.test.ts asserts no adapter emits one.
+    .filter((d) => d.tier === 'contextual')
     .filter((d) => (d.requiresUrl ? opts.hasUrl : true))
     .filter((d) =>
       d.destination && opts.allowedDestinations
@@ -366,3 +410,30 @@ export function resolveShareActions(
     .sort((a, b) => GROUP_ORDER[a.group] - GROUP_ORDER[b.group] || a.order - b.order)
     .map((d) => ({ ...d, resolvedLabel: shareActionLabel(d.id, opts.entityType) }));
 }
+
+/**
+ * The sheet's external row: what you can do with any entity that has a URL.
+ *
+ * Not derived from `allowedActions` — destination-tier actions are universal,
+ * so an entity qualifies purely by having a canonical URL. `hasUrl: false`
+ * returns an empty array, which is the correct behaviour for a compass
+ * recommendation wrapping a booking/suggestion/message: nothing to copy,
+ * nothing to hand the OS.
+ *
+ * Labels come back resolved, so a trip's row reads "Copy Trip Link".
+ */
+export function resolveDestinationActions(
+  opts: { hasUrl: boolean; entityType: ShareEntityType },
+): ResolvedShareAction[] {
+  if (!opts.hasUrl) return [];
+  return DESCRIPTORS
+    .filter((d) => d.tier === 'destination')
+    .filter((d) => (d.requiresUrl ? opts.hasUrl : true))
+    .sort((a, b) => a.order - b.order)
+    .map((d) => ({ ...d, resolvedLabel: shareActionLabel(d.id, opts.entityType) }));
+}
+
+/** Ids no adapter may declare. Exported so tests can assert the invariant. */
+export const DESTINATION_TIER_ACTION_IDS: readonly ShareActionId[] = Object.freeze(
+  DESCRIPTORS.filter((d) => d.tier === 'destination').map((d) => d.id),
+);

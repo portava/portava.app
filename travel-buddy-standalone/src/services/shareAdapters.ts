@@ -15,6 +15,12 @@
  *    two disagree.
  * 4. **Never an empty title.** Every adapter falls back to something
  *    presentable rather than emitting ''.
+ * 5. **No destination-tier actions.** No adapter declares copy_link or
+ *    share_external. Those are not contextual actions an entity opts into —
+ *    they are the sheet's external row, available to anything with a URL.
+ *    An entity signals them by having a non-null canonicalUrl, which puts
+ *    'external' in allowedDestinations; the sheet asks
+ *    resolveDestinationActions() for the row. See shareActionRegistry.ts.
  *
  * ## Two adapters point somewhere else on purpose
  *
@@ -191,7 +197,7 @@ export function toShareableTrip(
       planUrl: entityUrl('plan', trip.id),
     },
     allowedDestinations: destinationsFor(url),
-    allowedActions: ['send_to_traveler', 'share_to_pulse', 'invite_traveler', 'copy_link'],
+    allowedActions: ['send_to_traveler', 'share_to_pulse', 'invite_traveler'],
   };
 }
 
@@ -312,7 +318,7 @@ export function toShareableMemory(memory: Memory): ShareableEntity {
       startsAt: memory.startsAt,
     },
     allowedDestinations: destinationsFor(url),
-    allowedActions: ['send_to_traveler', 'copy_link', 'share_external', 'report'],
+    allowedActions: ['send_to_traveler', 'report'],
   };
 }
 
@@ -353,7 +359,7 @@ export function toShareableStamp(
       rarity: stamp.definition?.rarity ?? null,
     },
     allowedDestinations: destinationsFor(url),
-    allowedActions: ['send_to_traveler', 'copy_link', 'share_external', 'share_image'],
+    allowedActions: ['send_to_traveler', 'share_image'],
   };
 }
 
@@ -379,7 +385,7 @@ export function toShareableSharedMoment(
       placeId: moment.placeId,
     },
     allowedDestinations: destinationsFor(url),
-    allowedActions: ['send_to_traveler', 'copy_link', 'share_external', 'report'],
+    allowedActions: ['send_to_traveler', 'report'],
   };
 }
 
@@ -437,7 +443,7 @@ export function toShareableCompassRecommendation(
       resolvesTo: kind ?? null,
     },
     allowedDestinations: destinationsFor(url),
-    allowedActions: ['send_to_traveler', 'add_to_trip', 'save_to_trip', 'copy_link', 'share_external'],
+    allowedActions: ['send_to_traveler', 'add_to_trip', 'save_to_trip'],
   };
 }
 
@@ -467,7 +473,7 @@ export function toShareableBuddyProfile(buddy: BuddyProfile): ShareableEntity {
       averageRating: buddy.averageRating,
     },
     allowedDestinations: destinationsFor(url),
-    allowedActions: ['send_to_traveler', 'recommend_to_traveler', 'copy_link', 'share_external', 'report'],
+    allowedActions: ['send_to_traveler', 'recommend_to_traveler', 'report'],
   };
 }
 

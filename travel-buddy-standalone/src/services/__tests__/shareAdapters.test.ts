@@ -39,7 +39,9 @@ import {
   SHARE_ACTION_REGISTRY,
   ALL_SHARE_ACTION_IDS,
   resolveShareActions,
+  resolveDestinationActions,
   shareActionLabel,
+  DESTINATION_TIER_ACTION_IDS,
 } from '../shareActionRegistry.ts';
 import type { ShareableEntity } from '../../types/models.ts';
 
@@ -413,7 +415,9 @@ describe('E: §8 per-entity action lists', () => {
     ['place',    ['send_to_trip_crew', 'recommend_to_traveler', 'add_to_trip', 'save_to_trip', 'add_to_shared_moment']],
     ['postcard', ['send_to_traveler', 'share_to_pulse', 'add_to_shared_moment', 'add_to_trip']],
     ['profile',  ['send_to_traveler', 'recommend_to_traveler', 'invite_to_trip', 'invite_to_plan']],
-    ['trip',     ['send_to_traveler', 'share_to_pulse', 'invite_traveler', 'copy_link']],
+    // "Copy Trip Link" is destination-tier, so it is NOT in allowedActions;
+    // it comes from resolveDestinationActions with the trip label override.
+    ['trip',     ['send_to_traveler', 'share_to_pulse', 'invite_traveler']],
     ['event',    ['send_to_traveler', 'send_to_circle', 'share_to_pulse', 'invite_traveler']],
   ];
 
@@ -467,11 +471,14 @@ describe('E: per-entity labels', () => {
 });
 
 describe('E: resolveShareActions preconditions', () => {
-  it('drops URL-requiring actions when the entity has no URL', () => {
-    const e = toShareableTrip(trip);
-    const ids = resolveShareActions(e.allowedActions, { hasUrl: false, entityType: 'trip' }).map((d) => d.id);
-    assert.ok(!ids.includes('copy_link'), 'nothing to copy');
-    assert.ok(ids.includes('send_to_traveler'), 'in-app send survives');
+  it('never yields a destination-tier action from allowedActions', () => {
+    // Even if an adapter regressed and declared one, resolveShareActions must
+    // not render it contextually — it would appear twice in the sheet.
+    const ids = resolveShareActions(
+      ['send_to_traveler', 'copy_link', 'share_external'],
+      { hasUrl: true, entityType: 'trip' },
+    ).map((d) => d.id);
+    assert.deepEqual(ids, ['send_to_traveler']);
   });
 
   it('drops a send action whose destination the entity does not permit', () => {
@@ -501,5 +508,80 @@ describe('E: resolveShareActions preconditions', () => {
       { hasUrl: true, entityType: 'trip' },
     ).map((d) => d.id);
     assert.deepEqual(ids, ['send_to_traveler']);
+  });
+});
+
+// ── F. destination tier (14a) ────────────────────────────────────────────────
+
+describe('F: external and copy_link are destinations, not contextual actions', () => {
+  it('no adapter declares a destination-tier action', () => {
+    for (const [name, e] of ALL) {
+      for (const id of DESTINATION_TIER_ACTION_IDS) {
+        assert.ok(
+          !e.allowedActions.includes(id),
+          `${name} must not declare ${id} — it is universal, not contextual`,
+        );
+      }
+    }
+  });
+
+  it('exactly copy_link and share_external are destination-tier', () => {
+    assert.deepEqual([...DESTINATION_TIER_ACTION_IDS].sort(), ['copy_link', 'share_external']);
+    for (const id of ALL_SHARE_ACTION_IDS) {
+      const expected = DESTINATION_TIER_ACTION_IDS.includes(id) ? 'destination' : 'contextual';
+      assert.equal(SHARE_ACTION_REGISTRY[id].tier, expected, `${id} tier`);
+    }
+  });
+
+  it("allowedDestinations includes 'external' exactly when there is a URL", () => {
+    for (const [name, e] of ALL) {
+      assert.equal(
+        e.allowedDestinations.includes('external'),
+        e.canonicalUrl !== null,
+        `${name}: external ⟺ canonicalUrl`,
+      );
+    }
+  });
+
+  it("a linkless compass recommendation has no 'external' and no destination row", () => {
+    for (const t of ['booking', 'suggestion', 'message']) {
+      const e = toShareableCompassRecommendation({ id: ID, type: t, category: 'x' });
+      assert.equal(e.canonicalUrl, null);
+      assert.ok(!e.allowedDestinations.includes('external'), `${t}: no external destination`);
+      assert.deepEqual(
+        resolveDestinationActions({ hasUrl: false, entityType: e.entityType }),
+        [],
+        `${t}: nothing to copy, nothing to hand the OS`,
+      );
+      assert.ok(e.allowedDestinations.includes('dm'), `${t}: still sendable in-app`);
+    }
+  });
+
+  it('every entity with a URL gets the same two-item destination row', () => {
+    for (const [name, e] of ALL) {
+      if (e.canonicalUrl === null) continue;
+      const ids = resolveDestinationActions({ hasUrl: true, entityType: e.entityType }).map((d) => d.id);
+      assert.deepEqual(ids, ['copy_link', 'share_external'], `${name} destination row`);
+    }
+  });
+
+  it('keeps the trip → "Copy Trip Link" label override', () => {
+    const t = toShareableTrip(trip);
+    const row = resolveDestinationActions({ hasUrl: true, entityType: t.entityType });
+    assert.equal(row[0].resolvedLabel, 'Copy Trip Link');
+    // Everything else keeps the default.
+    const s = toShareableStamp(stamp);
+    assert.equal(
+      resolveDestinationActions({ hasUrl: true, entityType: s.entityType })[0].resolvedLabel,
+      'Copy link',
+    );
+  });
+
+  it('recommend_to_traveler carries the unresolved-schema TODO', () => {
+    // 14a: the action is send-shaped and no recommendation record exists.
+    // If this assertion is deleted, the TODO should have been resolved first.
+    const d = SHARE_ACTION_REGISTRY.recommend_to_traveler;
+    assert.equal(d.tier, 'contextual');
+    assert.equal(d.destination, 'dm', 'currently indistinguishable from a DM send');
   });
 });
