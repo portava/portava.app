@@ -592,9 +592,28 @@ export async function getSavedEvents(
 
 // ── Share / report ────────────────────────────────────────────────────────────
 
+/**
+ * The row POST /api/events/:id/share-link returns on success (201).
+ *
+ * Shape is the raw `event_share_links` insert, exactly as the endpoint selects
+ * it — `.select("id, token, max_uses, expires_at, use_count, created_at")`
+ * (artifacts/api-server/src/routes/events.ts:5083). Unlike the rest of the
+ * events API it is *not* run through a camelCase formatter, so the field names
+ * are snake_case, and there is no `shareUrl`: the link is the caller's job to
+ * build, from `token`, via canonicalUrl().
+ */
+export interface EventShareLink {
+  id: string;
+  token: string;
+  max_uses: number | null;
+  expires_at: string | null;
+  use_count: number;
+  created_at: string;
+}
+
 export async function shareEvent(
   eventId: string,
-): Promise<ApiResult<{ shareUrl: string }>> {
+): Promise<ApiResult<EventShareLink>> {
   return apiCall(`/api/events/${eventId}/share-link`, { method: 'POST' });
 }
 

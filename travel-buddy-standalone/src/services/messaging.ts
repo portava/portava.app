@@ -92,6 +92,22 @@ export interface ThreadSummary {
   unreadCount?: number;
   tripCity?: string | null;
   isAiLastMessage?: boolean;
+  /**
+   * True when the thread is end-to-end encrypted.
+   *
+   * Declared ahead of use, deliberately: E2EE threads cannot carry a plaintext
+   * card payload — POST /api/threads/:id/messages rejects a `body` on a thread
+   * with `is_e2ee = true` (artifacts/api-server/src/routes/messaging.ts:1616-1666).
+   * A recipient picker that lists every thread will therefore offer an E2EE
+   * thread happily and only fail *after* the user taps Send.
+   *
+   * `GET /api/me/threads` does not populate this field today, so it reads as
+   * `undefined` → falsy → every thread is treated as plaintext, which is the
+   * current behaviour exactly. Nothing reads it yet; it exists so the picker
+   * can filter on `thread.isE2ee === true` the moment the list endpoint starts
+   * returning it, without a second type change.
+   */
+  isE2ee?: boolean;
 }
 
 export interface GroupChatResult {

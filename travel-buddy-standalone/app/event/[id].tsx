@@ -511,10 +511,14 @@ export default function EventDetailScreen() {
   // ── Share ──────────────────────────────────────────────────────────────────
   async function handleShare() {
     if (!event) return;
+    // The endpoint mints an event_share_links row and returns it raw; it does
+    // not return a URL. Carry the token as ?share= on the event's own landing
+    // path so the link stays addressable when no token could be minted (the
+    // caller may not be host or co-host — that's a 403, not a failure to share).
     const res = await shareEvent(event.id);
-    const url = res.ok && res.data?.shareUrl
-      ? res.data.shareUrl
-      : canonicalUrl(`/event/${event.id}`);
+    const token = res.ok ? res.data?.token : null;
+    const path = `/event/${encodeURIComponent(event.id)}`;
+    const url = canonicalUrl(token ? `${path}?share=${encodeURIComponent(token)}` : path);
     try {
       await Share.share({
         title: event.title,
