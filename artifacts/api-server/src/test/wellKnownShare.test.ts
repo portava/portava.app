@@ -12,7 +12,8 @@
  *      profile, HTML-escaping of attacker-controlled fields, deep-link button.
  *   D. /u/:username — 404 for unknown handles; generic (no-leak) card for
  *      private profiles; /passport/:username serves the same page.
- *   E. Entity catch-all (/posts /trips /event /place /memory /stamp /:id) —
+ *   E. Entity catch-all (/posts /trips /event /place /memory /stamp /gems
+ *      /buddy /shared-moments /:id) —
  *      public entity renders its title; private, deleted and unknown-id all
  *      render the identical generic card at 200; never 404, never 500.
  *
@@ -84,6 +85,12 @@ function makeEntitySc(tables: Record<string, any[]>, throwOn?: string) {
     const b: any = {
       select: () => b,
       eq: (col: string, val: any) => { current = current.filter((r) => r[col] === val); return b; },
+      // nameVisibilitySet() filters with .in("user_id", ids).eq("show_real_name", true).
+      in: (col: string, vals: any[]) => { current = current.filter((r) => vals.includes(r[col])); return b; },
+      neq: (col: string, val: any) => { current = current.filter((r) => r[col] !== val); return b; },
+      is: () => b,
+      order: () => b,
+      limit: (n: number) => { current = current.slice(0, n); return b; },
       maybeSingle: async () => ({ data: current[0] ?? null, error: null }),
       single: async () => ({ data: current[0] ?? null, error: null }),
       then: (onF: (v: any) => any, onR?: (e: any) => any) =>
@@ -500,7 +507,7 @@ describe("E: entity share landing pages", () => {
 
   it("serves the generic card for an unknown id on every segment", async () => {
     _setTestServiceClient(makeEntitySc({}) as any);
-    for (const seg of ["posts", "trips", "event", "place", "memory", "stamp"]) {
+    for (const seg of ["posts", "trips", "event", "place", "memory", "stamp", "gems", "buddy", "shared-moments"]) {
       const { status, text } = await getReq(`/${seg}/${EID}`);
       assertGenericCard(status, text);
     }
@@ -556,5 +563,142 @@ describe("E: entity share landing pages", () => {
     _setTestServiceClient(makeFakeSc({ profile: null }) as any);
     const { status } = await getReq("/u/ghost_handle");
     assert.equal(status, 404, "handles are an enumerable namespace — unchanged");
+  });
+});
+
+// ── F. gems, buddy, shared-moments (14c) ─────────────────────────────────────
+
+describe("F: hidden gem share pages", () => {
+  const gem = (o: Record<string, any> = {}) => ({
+    id: EID, name: "The stairwell bar", description: "Third floor, no sign.",
+    city: "Lisbon", country: "PT", neighborhood: "Alfama",
+    status: "active", visibility: "public", moderation_status: "approved",
+    sensitivity_level: "public", merged_into: null, ...o,
+  });
+
+  it("renders a public, approved, non-protected gem", async () => {
+    _setTestServiceClient(makeEntitySc({ hidden_gems: [gem()] }) as any);
+    const { status, text } = await getReq(`/gems/${EID}`);
+    assert.equal(status, 200);
+    assert.match(text, /og:title" content="The stairwell bar · Portava"/);
+    assert.match(text, /og:description" content="Third floor, no sign\."/);
+    assert.match(text, new RegExp(`href="travelbuddy://gems/${EID}"`));
+    assert.ok(!text.includes("noindex"));
+  });
+
+  it("withholds a protected gem — name and city must never leave the app", async () => {
+    // HiddenGemPrivacyGuard is explicit that a protected gem's name and city
+    // are not LLM/Telegraph safe; an anonymous OG card is no different.
+    _setTestServiceClient(makeEntitySc({ hidden_gems: [gem({ sensitivity_level: "protected" })] }) as any);
+    const { status, text } = await getReq(`/gems/${EID}`);
+    assertGenericCard(status, text, "The stairwell bar");
+    assert.ok(!text.includes("Alfama"), "neighbourhood must not leak either");
+  });
+
+  it("withholds private, unmoderated, inactive and merged gems", async () => {
+    for (const o of [
+      { visibility: "private" },
+      { moderation_status: "pending" },
+      { moderation_status: "rejected" },
+      { status: "removed" },
+      { merged_into: "other-gem" },
+    ]) {
+      _setTestServiceClient(makeEntitySc({ hidden_gems: [gem(o)] }) as any);
+      const { status, text } = await getReq(`/gems/${EID}`);
+      assertGenericCard(status, text, "The stairwell bar");
+    }
+  });
+
+  it("generic card for an unknown gem id", async () => {
+    _setTestServiceClient(makeEntitySc({}) as any);
+    const { status, text } = await getReq(`/gems/${EID}`);
+    assertGenericCard(status, text);
+  });
+});
+
+describe("F: buddy profile share pages", () => {
+  const BUDDY_USER = "99999999-8888-7777-6666-555555555555";
+  const buddy = (o: Record<string, any> = {}) => ({
+    id: EID, user_id: BUDDY_USER, display_name: "Ana Sousa",
+    tagline: "Fado and food tours", bio: "Lisbon born.",
+    city: "Lisbon", country: "PT",
+    status: "active", admin_status: "active", risk_hold: false, ...o,
+  });
+  /** nameVisibleFor reads profile_privacy_settings. */
+  const optedIn  = [{ user_id: BUDDY_USER, show_real_name: true }];
+  const optedOut: any[] = [];
+
+  it("renders an active buddy who opted in to showing their name", async () => {
+    _setTestServiceClient(makeEntitySc({
+      rent_buddy_profiles: [buddy()], profile_privacy_settings: optedIn,
+    }) as any);
+    const { status, text } = await getReq(`/buddy/${EID}`);
+    assert.equal(status, 200);
+    assert.match(text, /og:title" content="Ana Sousa · Portava Buddy"/);
+    assert.match(text, /og:description" content="Fado and food tours"/);
+    assert.match(text, new RegExp(`href="travelbuddy://buddy/${EID}"`));
+  });
+
+  it("falls back to the city when the buddy has not opted in", async () => {
+    _setTestServiceClient(makeEntitySc({
+      rent_buddy_profiles: [buddy()], profile_privacy_settings: optedOut,
+    }) as any);
+    const { status, text } = await getReq(`/buddy/${EID}`);
+    assert.equal(status, 200);
+    assert.match(text, /og:title" content="Lisbon, PT · Portava Buddy"/);
+    assert.ok(!text.includes("Ana Sousa"), "real name must not leak without opt-in");
+  });
+
+  it("withholds a buddy held on any one of the three switches", async () => {
+    for (const o of [
+      { status: "paused" },
+      { admin_status: "disabled" },
+      { risk_hold: true },
+    ]) {
+      _setTestServiceClient(makeEntitySc({
+        rent_buddy_profiles: [buddy(o)], profile_privacy_settings: optedIn,
+      }) as any);
+      const { status, text } = await getReq(`/buddy/${EID}`);
+      assertGenericCard(status, text, "Ana Sousa");
+    }
+  });
+
+  it("generic card for an unknown buddy id", async () => {
+    _setTestServiceClient(makeEntitySc({}) as any);
+    const { status, text } = await getReq(`/buddy/${EID}`);
+    assertGenericCard(status, text);
+  });
+});
+
+describe("F: shared moment share pages", () => {
+  it("always renders the generic card — there is no public shared moment", async () => {
+    // join_policy is only invite_only | approval_required, and every read in
+    // routes/sharedMoments.ts requires an accepted membership row. An active
+    // moment is still not public.
+    _setTestServiceClient(makeEntitySc({
+      shared_moments: [{
+        id: EID, title: "Rooftop sunset", description: "Bring something.",
+        join_policy: "invite_only", status: "active",
+      }],
+    }) as any);
+    const { status, text } = await getReq(`/shared-moments/${EID}`);
+    assertGenericCard(status, text, "Rooftop sunset");
+  });
+
+  it("still serves the page and the deep link instead of a 404", async () => {
+    // The point of the route: a member following a shared link used to get
+    // Express's 404. Now they get a way into the app.
+    _setTestServiceClient(makeEntitySc({}) as any);
+    const { status, text } = await getReq(`/shared-moments/${EID}`);
+    assert.equal(status, 200);
+    assert.match(text, new RegExp(`href="travelbuddy://shared-moments/${EID}"`));
+    assert.match(text, /Open in Portava/);
+  });
+
+  it("makes no database call at all", async () => {
+    // throwOn every table: resolve() is unconditionally null, so nothing is queried.
+    _setTestServiceClient(makeEntitySc({}, "shared_moments") as any);
+    const { status, text } = await getReq(`/shared-moments/${EID}`);
+    assertGenericCard(status, text);
   });
 });

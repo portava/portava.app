@@ -14,6 +14,7 @@
  *   GET /u/:username
  *   GET /passport/:username
  *   GET /posts/:id  /trips/:id  /event/:id  /place/:id  /memory/:id  /stamp/:id
+ *   GET /gems/:id   /buddy/:id  /shared-moments/:id
  *
  * Association files
  * ─────────────────
@@ -41,7 +42,7 @@
  * enforces the same visibility rules server-side. All interpolated values are
  * HTML-escaped.
  *
- * The six entity paths share one handler (see "Entity share landing pages" at
+ * The nine entity paths share one handler (see "Entity share landing pages" at
  * the bottom of this file). They differ from the profile pages in one respect:
  * they never 404. An entity id is a UUID, so distinguishing "no such id" from
  * "private" would leak existence; every non-public outcome renders the same
@@ -544,6 +545,90 @@ const ENTITY_SPECS: EntitySpec[] = [
           ? `A passport stamp earned in ${where} on ${APP_NAME}.`
           : `A passport stamp earned on ${APP_NAME}.`,
       };
+    },
+  },
+  {
+    // A hidden gem is public only when it has cleared moderation AND is not
+    // sensitivity_level='protected'. The coordinate guard is explicit that a
+    // protected gem's name and city must never leave the app
+    // (services/hiddenGems/HiddenGemPrivacyGuard.ts:12, isGemLlmSafe), so an
+    // anonymous OG card is exactly the wrong place to print them. Coordinates
+    // never appear on a share card at any sensitivity level.
+    webSegment: "gems",
+    appSegment: "gems",
+    kicker: `${APP_NAME.toUpperCase()} · HIDDEN GEM`,
+    async resolve(sc, id) {
+      const { data } = await sc
+        .from("hidden_gems")
+        .select("name, description, city, country, neighborhood, status, visibility, moderation_status, sensitivity_level, merged_into")
+        .eq("id", id)
+        .maybeSingle();
+      if (!data) return null;
+      if (data.merged_into) return null;
+      if (data.status !== "active") return null;
+      if (data.visibility !== "public") return null;
+      if (data.moderation_status !== "approved") return null;
+      if (data.sensitivity_level === "protected") return null;
+      const where = joinPlace(data.neighborhood, data.city, data.country);
+      return {
+        title: `${clamp(data.name, 60) || "Hidden gem"} · ${APP_NAME}`,
+        description:
+          clamp(data.description, 200) ||
+          (where ? `A hidden gem in ${where}, on ${APP_NAME}.` : `A hidden gem on ${APP_NAME}.`),
+      };
+    },
+  },
+  {
+    // Marketplace listing. Withheld unless the buddy is live on all three
+    // switches: their own status, the admin one, and the risk hold. The
+    // display name goes through nameVisibleFor, the same universal rule the
+    // passport page uses — a buddy who has not opted in shows as their city.
+    webSegment: "buddy",
+    appSegment: "buddy",
+    kicker: `${APP_NAME.toUpperCase()} · BUDDY`,
+    async resolve(sc, id) {
+      const { data } = await sc
+        .from("rent_buddy_profiles")
+        .select("user_id, display_name, tagline, bio, city, country, status, admin_status, risk_hold")
+        .eq("id", id)
+        .maybeSingle();
+      if (!data) return null;
+      if (data.status !== "active") return null;
+      if (data.admin_status !== "active") return null;
+      if (data.risk_hold === true) return null;
+
+      const where = joinPlace(data.city, data.country);
+      let name = "";
+      if (data.user_id) {
+        const allowName = await nameVisibleFor(sc, data.user_id as string);
+        if (allowName) name = clamp(data.display_name, 60);
+      }
+      return {
+        title: `${name || where || "Buddy"} · ${APP_NAME} Buddy`,
+        description:
+          clamp(data.tagline, 200) ||
+          clamp(data.bio, 200) ||
+          (where ? `A local buddy in ${where}, on ${APP_NAME}.` : `A local buddy on ${APP_NAME}.`),
+      };
+    },
+  },
+  {
+    // Shared moments have NO public state. join_policy is only 'invite_only'
+    // or 'approval_required', and every read in routes/sharedMoments.ts goes
+    // through an accepted shared_moment_memberships row. There is therefore no
+    // version of this page that can show a title to an anonymous crawler, and
+    // no query worth making — resolve() is unconditionally null.
+    //
+    // The route still exists, and that is the point: /shared-moments/:id used
+    // to 404, so a member who followed a shared link got Express's error page
+    // instead of a way into the app. Now they get the generic card and the
+    // "Open in Portava" button, and the app resolves the moment with their own
+    // credentials.
+    webSegment: "shared-moments",
+    appSegment: "shared-moments",
+    kicker: `${APP_NAME.toUpperCase()} · SHARED MOMENT`,
+    async resolve() {
+      return null;
     },
   },
 ];
