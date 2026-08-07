@@ -69,7 +69,7 @@ jest.mock('../../services/adminStamps', () => ({
 const mockGetCatalog = getAdminStampCatalog as jest.Mock;
 
 /** Defer mock resolution to the next macrotask so continuations fire outside act(). */
-const deferred = <T>(value: T): Promise<T> =>
+const deferred = <T,>(value: T): Promise<T> =>
   new Promise(resolve => setTimeout(() => resolve(value), 0));
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

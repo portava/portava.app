@@ -38,7 +38,7 @@ const mockSubmitReport = submitModerationReport as jest.Mock;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const deferred = <T>(value: T): Promise<T> =>
+const deferred = <T,>(value: T): Promise<T> =>
   new Promise((resolve) => setTimeout(() => resolve(value), 0));
 
 const PLACE_ID = 'place-xyz-99';

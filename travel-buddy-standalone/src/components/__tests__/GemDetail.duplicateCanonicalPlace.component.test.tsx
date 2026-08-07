@@ -82,7 +82,7 @@ const { useGemDetail } = require('../../hooks/useHiddenGems.ts');
 const mockGetCanonicalPlace = getCanonicalPlace as jest.Mock;
 
 /** Defer resolution to the next macrotask so continuations fire outside act(). */
-const deferred = <T>(value: T): Promise<T> =>
+const deferred = <T,>(value: T): Promise<T> =>
   new Promise(resolve => setTimeout(() => resolve(value), 0));
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────

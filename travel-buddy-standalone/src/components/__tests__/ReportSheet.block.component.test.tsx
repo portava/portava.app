@@ -58,7 +58,7 @@ const mockSubmitReport  = submitModerationReport as jest.Mock;
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 /** Resolves on the next macrotask so async continuations fire outside the current act() scope. */
-const deferred = <T>(value: T): Promise<T> =>
+const deferred = <T,>(value: T): Promise<T> =>
   new Promise(resolve => setTimeout(() => resolve(value), 0));
 
 const SUBJECT_USER_ID = 'user-target-42';
