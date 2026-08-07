@@ -1025,3 +1025,113 @@ export interface TripPlanItem {
   createdAt: ISODate;
   updatedAt: ISODate;
 }
+
+/* ───────────────────────────────────────────────────────────────────────
+ * Universal Share — the one shape every shareable thing is normalized into
+ * ─────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Everything the app can share. One member per entity adapter in
+ * src/services/shareAdapters.ts.
+ *
+ * `postcard` and `compass_recommendation` are kept as their own types even
+ * though neither has a route: a postcard resolves to its post's URL and a
+ * compass recommendation unwraps to the entity it recommends. The type is
+ * what preview copy and analytics key off, so it must survive the redirect.
+ */
+export type ShareEntityType =
+  | 'postcard'
+  | 'trip'
+  | 'place'
+  | 'profile'
+  | 'event'
+  | 'memory'
+  | 'stamp'
+  | 'shared_moment'
+  | 'compass_recommendation'
+  | 'buddy_profile';
+
+/**
+ * Where a share can be sent. Mirrors the `ShareTarget` union ShareSheet.tsx
+ * has used since before this layer existed, minus `copy_link` — copying is an
+ * action performed on the entity, not a place the entity is sent to.
+ */
+export type ShareDestination =
+  | 'dm'
+  | 'group_chat'
+  | 'trip_crew'
+  | 'circle'
+  | 'external';
+
+/**
+ * What can be done with a shared entity.
+ *
+ * DERIVED, NOT SPECCED: this list was reconstructed from the 28 trigger
+ * points inventoried in docs/UNIVERSAL-SHARE-AUDIT.md §1a, because the brief's
+ * §8 list is not in the repo. Each id below is backed by a real trigger that
+ * exists today; see shareActionRegistry.ts for the citation on each. Reconcile
+ * against §8 before any of these is wired to an executor.
+ */
+export type ShareActionId =
+  | 'send_in_app'
+  | 'copy_link'
+  | 'share_external'
+  | 'share_image'
+  | 'share_file'
+  | 'invite_link'
+  | 'add_to_trip'
+  | 'save'
+  | 'report';
+
+/** Who made the thing. Omitted entirely for ownerless entities (places). */
+export interface ShareableEntityCreator {
+  id: ID;
+  /** Handle without a leading '@'. Null when the account has no handle. */
+  username: string | null;
+  /**
+   * Already resolved for display. Adapters do NOT apply the show-real-name
+   * rule themselves — they pass through what the caller's data layer already
+   * decided, so this layer never becomes a second privacy authority.
+   */
+  displayName: string | null;
+  avatarUrl: string | null;
+}
+
+/** Coarse location only — city/country. Never coordinates. */
+export interface ShareableEntityLocation {
+  city: string | null;
+  country: string | null;
+  /** Venue or place name when the entity has one. */
+  name: string | null;
+}
+
+/**
+ * The normalized share payload. Produced only by the adapters in
+ * src/services/shareAdapters.ts, consumed by the share controller, the
+ * (not yet built) sheet, and analytics.
+ */
+export interface ShareableEntity {
+  entityType: ShareEntityType;
+  /** The entity's own id, even when canonicalUrl points at another entity. */
+  entityId: ID;
+  /** One line. Never empty — adapters fall back rather than emit ''. */
+  title: string;
+  /** Second line: location, date, or author. Null when there is nothing to add. */
+  subtitle: string | null;
+  /** Body copy for the preview card. Null when the entity has none. */
+  description: string | null;
+  imageUrl: string | null;
+  /** Null for ownerless entities (place) and for compass recommendations. */
+  creator: ShareableEntityCreator | null;
+  location: ShareableEntityLocation | null;
+  /**
+   * Absolute https URL, always built through canonicalUrl(). Null only when
+   * the entity genuinely has no addressable destination — a compass
+   * recommendation wrapping an unshareable item type, for instance.
+   */
+  canonicalUrl: string | null;
+  /** Entity-specific extras. Free-form by design; nothing type-switches on it. */
+  metadata: Record<string, unknown>;
+  allowedDestinations: ShareDestination[];
+  allowedActions: ShareActionId[];
+}
