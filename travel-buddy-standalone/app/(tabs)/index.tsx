@@ -23,7 +23,6 @@ import type { PulseFilter, PulseFeedItem } from '../../src/types/models';
 import type { PostRow } from '../../src/services/posts';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import { useLocationContext } from '../../src/context/LocationContext';
-import { LocationPermissionPrompt } from '../../src/components/LocationPermissionPrompt';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { ActiveLayoverPill } from '../../src/components/layover/ActiveLayoverPill';
@@ -655,8 +654,9 @@ function Pulse() {
           tab-bar POST button and the various "Add Post" CTAs); the feed
           refreshes via the focus-effect reload when the page pops back. */}
 
-      {/* Location overlays */}
-      <LocationPermissionPrompt />
+      {/* Location overlays — the permission prompt itself is now mounted
+          globally in app/(tabs)/_layout.tsx so it fires regardless of which
+          tab the user lands on after login; only the city picker stays here. */}
       <ManualCityPicker />
 
       {/* Layover Mode */}

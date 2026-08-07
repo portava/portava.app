@@ -20,6 +20,7 @@ import { navBarProgress } from '../../src/hooks/useNavBarCollapse';
 import { CreateHubSheet } from '../../src/components/create/CreateHubSheet';
 import { useLocationContext } from '../../src/context/LocationContext';
 import { getDiscoveryCategoryCountsBatch, getDiscoveryPlaces } from '../../src/services/discovery';
+import { LocationPermissionPrompt } from '../../src/components/LocationPermissionPrompt';
 
 const NAV_ITEMS = [
   { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
@@ -443,6 +444,7 @@ export default function TabLayout() {
           pendingTripInvites={pendingTripInvites}
           unreadNotifications={unreadNotifications}
         />
+        <LocationPermissionPrompt />
       </View>
     </GestureDetector>
   );
