@@ -35,7 +35,6 @@ import {
   FlatList,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Link,
   MessageCircle,
@@ -50,6 +49,9 @@ import { PortavaShareIcon } from './icons/PortavaShareIcon.tsx';
 import { closeThenNavigate } from '../lib/deferredNavigate.ts';
 import { canonicalUrl } from '../constants/canonicalUrl.ts';
 import { color, space, radius, shadow } from '../theme/tokens.ts';
+import { PortavaSheet } from './ui/PortavaSheet.tsx';
+import { Avatar } from './ui/Avatar.tsx';
+import { SectionHeader } from './ui/SectionHeader.tsx';
 import { getMyThreads, sendMessage, openDirectThread } from '../services/messaging.ts';
 import type { ThreadSummary } from '../services/messaging.ts';
 import { getPostById } from '../services/posts.ts';
@@ -88,7 +90,6 @@ function targetForThread(threadType: ThreadSummary['threadType']): ShareTarget {
 }
 
 export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) {
-  const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<'menu' | 'picker'>('menu');
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [loadingThreads, setLoadingThreads] = useState(false);
@@ -292,15 +293,13 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
   }, [selectedId, threads, postId, preview, caption, onClose, onShareSuccess]);
 
   return (
-    <Modal
+    <PortavaSheet
       visible={visible}
-      animationType="slide"
-      transparent
-      onRequestClose={onClose}
-      statusBarTranslucent
+      onClose={onClose}
+      accessibilityLabel="Share post"
+      closeAccessibilityLabel="Close share sheet"
+      testID="share-sheet"
     >
-      <Pressable style={s.backdrop} onPress={onClose} />
-      <View style={[s.sheet, { paddingBottom: insets.bottom + space.md }]}>
         {mode === 'menu' ? (
           <>
             <View style={s.header}>
@@ -331,9 +330,7 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
                 onPress={handleCopyLink}
               />
 
-              <View style={s.sectionLabel}>
-                <Text style={s.sectionLabelText}>Share in app</Text>
-              </View>
+              <SectionHeader>Share in app</SectionHeader>
 
               <ShareOption
                 iconBg="#FFF3EE"
@@ -528,8 +525,7 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
             </Pressable>
           </>
         )}
-      </View>
-    </Modal>
+    </PortavaSheet>
   );
 }
 
@@ -546,23 +542,16 @@ function ThreadRow({
   const other = thread.otherMembers[0];
   const displayName = thread.title ?? (isDirect && other ? other.name : 'Chat');
   const avatarUrl = isDirect && other ? other.avatarUrl : null;
-  const initials = displayName[0]?.toUpperCase() ?? '?';
 
   return (
     <Pressable style={[s.threadRow, selected && s.threadRowSelected]} onPress={onPress}>
-      {avatarUrl ? (
-        <Image source={{ uri: avatarUrl }} style={s.avatar} />
-      ) : (
-        <View style={[s.avatarFallback, selected && s.avatarFallbackSelected]}>
-          {thread.threadType === 'trip' ? (
-            <Globe size={14} color={selected ? color.onInk : color.signal} />
-          ) : thread.threadType === 'circle' ? (
-            <Users size={14} color={selected ? color.onInk : color.signal} />
-          ) : (
-            <Text style={[s.avatarInitial, selected && { color: color.onInk }]}>{initials}</Text>
-          )}
-        </View>
-      )}
+      <Avatar
+        uri={avatarUrl}
+        name={displayName}
+        kind={thread.threadType === 'trip' ? 'trip' : thread.threadType === 'circle' ? 'circle' : 'person'}
+        size={36}
+        selected={selected}
+      />
       <View style={{ flex: 1 }}>
         <Text style={[s.threadName, selected && s.threadNameSelected]} numberOfLines={1}>
           {displayName}
@@ -593,17 +582,10 @@ function UserResultRow({
 }) {
   const handle = user.username ? `@${user.username}` : null;
   const displayName = user.displayName ?? handle ?? 'Unknown';
-  const initials = displayName[0]?.toUpperCase() ?? '?';
 
   return (
     <Pressable style={s.threadRow} onPress={onPress}>
-      {user.avatarUrl ? (
-        <Image source={{ uri: user.avatarUrl }} style={s.avatar} />
-      ) : (
-        <View style={s.avatarFallback}>
-          <Text style={s.avatarInitial}>{initials}</Text>
-        </View>
-      )}
+      <Avatar uri={user.avatarUrl} name={displayName} kind="person" size={36} />
       <View style={{ flex: 1 }}>
         <Text style={s.threadName} numberOfLines={1}>{displayName}</Text>
         {handle ? <Text style={s.threadSub} numberOfLines={1}>{handle}</Text> : null}
@@ -640,22 +622,6 @@ function ShareOption({
 }
 
 const s = StyleSheet.create({
-  backdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(17,17,15,0.45)',
-  },
-  sheet: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: color.paperRaised,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingTop: space.md,
-    maxHeight: '80%',
-    ...shadow.card,
-  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -677,18 +643,6 @@ const s = StyleSheet.create({
   },
   scrollContent: {
     gap: 0,
-  },
-  sectionLabel: {
-    paddingHorizontal: space.lg,
-    paddingTop: space.md,
-    paddingBottom: space.xs,
-  },
-  sectionLabelText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: color.faint,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
   },
   option: {
     flexDirection: 'row',
@@ -792,10 +746,6 @@ const s = StyleSheet.create({
   },
   threadRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingHorizontal: space.md, paddingVertical: 12 },
   threadRowSelected: { backgroundColor: color.signal + '0A' },
-  avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: color.haze },
-  avatarFallback: { width: 36, height: 36, borderRadius: 18, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
-  avatarFallbackSelected: { backgroundColor: color.signal + '22' },
-  avatarInitial: { fontSize: 14, fontWeight: '700', color: color.signal },
   threadName: { fontSize: 14, fontWeight: '700', color: color.ink },
   threadNameSelected: { color: color.signal },
   threadSub: { fontSize: 11, color: color.mute, marginTop: 1 },
