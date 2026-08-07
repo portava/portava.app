@@ -1066,20 +1066,39 @@ export type ShareDestination =
 /**
  * What can be done with a shared entity.
  *
- * DERIVED, NOT SPECCED: this list was reconstructed from the 28 trigger
- * points inventoried in docs/UNIVERSAL-SHARE-AUDIT.md §1a, because the brief's
- * §8 list is not in the repo. Each id below is backed by a real trigger that
- * exists today; see shareActionRegistry.ts for the citation on each. Reconcile
- * against §8 before any of these is wired to an executor.
+ * Five ids come verbatim from §8: add_to_trip, send_to_circle, share_to_pulse,
+ * add_to_shared_moment, invite_to_trip. The rest are transcribed from the §8
+ * per-entity labels using the same convention, or retained from the production
+ * inventory in docs/UNIVERSAL-SHARE-AUDIT.md §1a for the five entity types §8
+ * does not cover. shareActionRegistry.ts records the provenance of each one in
+ * its `source` field — check there before adding or renaming.
+ *
+ * Note there is no single `send_in_app`: §8 names `send_to_circle` as an id,
+ * so sending is modelled as one action per conversation target rather than one
+ * action parameterised by target.
  */
 export type ShareActionId =
-  | 'send_in_app'
+  // ── Send: one per conversation target (§8 shape) ──
+  | 'send_to_traveler'
+  | 'send_to_circle'
+  | 'send_to_trip_crew'
+  // ── Publish / collect ──
+  | 'share_to_pulse'
+  | 'add_to_trip'
+  | 'save_to_trip'
+  | 'add_to_shared_moment'
+  // ── Invite ──
+  | 'invite_to_trip'
+  | 'invite_to_plan'
+  | 'invite_traveler'
+  // ── Recommend ──
+  | 'recommend_to_traveler'
+  // ── Link / OS-level ──
   | 'copy_link'
   | 'share_external'
   | 'share_image'
   | 'share_file'
-  | 'invite_link'
-  | 'add_to_trip'
+  // ── Acts on the entity ──
   | 'save'
   | 'report';
 

@@ -161,7 +161,7 @@ export function toShareablePostcard(
       resolvesTo: 'post',
     },
     allowedDestinations: destinationsFor(url),
-    allowedActions: ['send_in_app', 'copy_link', 'share_external', 'save', 'report'],
+    allowedActions: ['send_to_traveler', 'share_to_pulse', 'add_to_shared_moment', 'add_to_trip'],
   };
 }
 
@@ -191,7 +191,7 @@ export function toShareableTrip(
       planUrl: entityUrl('plan', trip.id),
     },
     allowedDestinations: destinationsFor(url),
-    allowedActions: ['send_in_app', 'copy_link', 'share_external', 'invite_link', 'report'],
+    allowedActions: ['send_to_traveler', 'share_to_pulse', 'invite_traveler', 'copy_link'],
   };
 }
 
@@ -211,7 +211,7 @@ export function toShareablePlace(place: CanonicalPlace): ShareableEntity {
     canonicalUrl: url,
     metadata: { category: place.category, status: place.status },
     allowedDestinations: destinationsFor(url),
-    allowedActions: ['send_in_app', 'copy_link', 'share_external', 'add_to_trip'],
+    allowedActions: ['send_to_trip_crew', 'recommend_to_traveler', 'add_to_trip', 'save_to_trip', 'add_to_shared_moment'],
   };
 }
 
@@ -249,7 +249,7 @@ export function toShareableProfile(profile: PublicProfile): ShareableEntity {
       travelStyle: profile.travelStyle,
     },
     allowedDestinations: destinationsFor(url),
-    allowedActions: ['send_in_app', 'copy_link', 'share_external', 'share_image', 'save', 'report'],
+    allowedActions: ['send_to_traveler', 'recommend_to_traveler', 'invite_to_trip', 'invite_to_plan'],
   };
 }
 
@@ -279,7 +279,7 @@ export function toShareableEvent(event: EventSummary): ShareableEntity {
       category: event.category,
     },
     allowedDestinations: destinationsFor(url),
-    allowedActions: ['send_in_app', 'copy_link', 'share_external', 'add_to_trip', 'save', 'report'],
+    allowedActions: ['send_to_traveler', 'send_to_circle', 'share_to_pulse', 'invite_traveler'],
   };
 }
 
@@ -312,7 +312,7 @@ export function toShareableMemory(memory: Memory): ShareableEntity {
       startsAt: memory.startsAt,
     },
     allowedDestinations: destinationsFor(url),
-    allowedActions: ['send_in_app', 'copy_link', 'share_external', 'report'],
+    allowedActions: ['send_to_traveler', 'copy_link', 'share_external', 'report'],
   };
 }
 
@@ -353,7 +353,7 @@ export function toShareableStamp(
       rarity: stamp.definition?.rarity ?? null,
     },
     allowedDestinations: destinationsFor(url),
-    allowedActions: ['send_in_app', 'copy_link', 'share_external', 'share_image'],
+    allowedActions: ['send_to_traveler', 'copy_link', 'share_external', 'share_image'],
   };
 }
 
@@ -379,7 +379,7 @@ export function toShareableSharedMoment(
       placeId: moment.placeId,
     },
     allowedDestinations: destinationsFor(url),
-    allowedActions: ['send_in_app', 'copy_link', 'share_external', 'report'],
+    allowedActions: ['send_to_traveler', 'copy_link', 'share_external', 'report'],
   };
 }
 
@@ -437,7 +437,7 @@ export function toShareableCompassRecommendation(
       resolvesTo: kind ?? null,
     },
     allowedDestinations: destinationsFor(url),
-    allowedActions: ['send_in_app', 'copy_link', 'share_external', 'add_to_trip', 'save'],
+    allowedActions: ['send_to_traveler', 'add_to_trip', 'save_to_trip', 'copy_link', 'share_external'],
   };
 }
 
@@ -467,7 +467,7 @@ export function toShareableBuddyProfile(buddy: BuddyProfile): ShareableEntity {
       averageRating: buddy.averageRating,
     },
     allowedDestinations: destinationsFor(url),
-    allowedActions: ['send_in_app', 'copy_link', 'share_external', 'save', 'report'],
+    allowedActions: ['send_to_traveler', 'recommend_to_traveler', 'copy_link', 'share_external', 'report'],
   };
 }
 

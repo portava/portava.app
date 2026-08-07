@@ -39,6 +39,7 @@ import {
   SHARE_ACTION_REGISTRY,
   ALL_SHARE_ACTION_IDS,
   resolveShareActions,
+  shareActionLabel,
 } from '../shareActionRegistry.ts';
 import type { ShareableEntity } from '../../types/models.ts';
 
@@ -365,7 +366,7 @@ describe('D: fallbacks', () => {
   });
 });
 
-// ── E. registry consistency ──────────────────────────────────────────────────
+// ── E. registry consistency + the §8 action lists ────────────────────────────
 
 describe('E: action registry', () => {
   it('every declared id has a descriptor and every descriptor is reachable', () => {
@@ -375,37 +376,130 @@ describe('E: action registry', () => {
       assert.equal(d.id, id);
       assert.ok(d.label.trim(), `${id} has a label`);
       assert.ok(d.icon.trim(), `${id} has an icon`);
-      assert.ok(d.evidence.trim(), `${id} cites the trigger it came from`);
+      assert.ok(d.evidence.trim(), `${id} cites its source line or call site`);
+      assert.ok(['spec', 'spec-label', 'production'].includes(d.source), `${id} declares provenance`);
     }
     assert.equal(Object.keys(SHARE_ACTION_REGISTRY).length, ALL_SHARE_ACTION_IDS.length);
+  });
+
+  it('carries the five ids §8 names verbatim, marked source=spec', () => {
+    const named = ['add_to_trip', 'send_to_circle', 'share_to_pulse', 'add_to_shared_moment', 'invite_to_trip'] as const;
+    for (const id of named) {
+      assert.ok(SHARE_ACTION_REGISTRY[id], `${id} is registered`);
+      assert.equal(SHARE_ACTION_REGISTRY[id].source, 'spec', `${id} is spec-named`);
+    }
+    const specNamed = ALL_SHARE_ACTION_IDS.filter((id) => SHARE_ACTION_REGISTRY[id].source === 'spec');
+    assert.equal(specNamed.length, named.length, 'exactly five ids claim to be spec-named');
   });
 
   it('every action an adapter declares is in the registry', () => {
     const used = new Set(ALL.flatMap(([, e]) => e.allowedActions));
     for (const id of used) assert.ok(SHARE_ACTION_REGISTRY[id], `${id} is registered`);
-    assert.ok(used.has('send_in_app'), 'send_in_app is the core action');
   });
 
+  it('every send action targets a real destination', () => {
+    for (const id of ALL_SHARE_ACTION_IDS) {
+      const d = SHARE_ACTION_REGISTRY[id];
+      if (d.group !== 'send') continue;
+      assert.ok(d.destination, `${id} declares a destination`);
+      assert.ok(d.requiresRecipient, `${id} needs a recipient picked`);
+    }
+  });
+});
+
+describe('E: §8 per-entity action lists', () => {
+  // The five entity types §8 covers, transcribed literally.
+  const SPEC: Array<[string, string[]]> = [
+    ['place',    ['send_to_trip_crew', 'recommend_to_traveler', 'add_to_trip', 'save_to_trip', 'add_to_shared_moment']],
+    ['postcard', ['send_to_traveler', 'share_to_pulse', 'add_to_shared_moment', 'add_to_trip']],
+    ['profile',  ['send_to_traveler', 'recommend_to_traveler', 'invite_to_trip', 'invite_to_plan']],
+    ['trip',     ['send_to_traveler', 'share_to_pulse', 'invite_traveler', 'copy_link']],
+    ['event',    ['send_to_traveler', 'send_to_circle', 'share_to_pulse', 'invite_traveler']],
+  ];
+
+  const byType = new Map(ALL.map(([, e]) => [e.entityType, e]));
+
+  for (const [type, expected] of SPEC) {
+    it(`${type} declares exactly the §8 actions`, () => {
+      const e = byType.get(type as never)!;
+      assert.ok(e, `${type} adapter exists`);
+      assert.deepEqual([...e.allowedActions].sort(), [...expected].sort());
+    });
+  }
+
+  it('place keeps add_to_trip and save_to_trip distinct', () => {
+    // §8 lists both on Place: one writes a trip_plan_items row, the other a
+    // saved idea. Collapsing them would silently drop a specced action.
+    const e = toShareablePlace(place);
+    assert.ok(e.allowedActions.includes('add_to_trip'));
+    assert.ok(e.allowedActions.includes('save_to_trip'));
+  });
+
+  it('profile invite_to_trip and trip invite_traveler are inverse directions', () => {
+    // Entity is the person → pick a trip. Entity is the trip → pick a person.
+    assert.ok(toShareableProfile(profile).allowedActions.includes('invite_to_trip'));
+    assert.ok(toShareableTrip(trip).allowedActions.includes('invite_traveler'));
+    assert.ok(!toShareableTrip(trip).allowedActions.includes('invite_to_trip'));
+  });
+});
+
+describe('E: per-entity labels', () => {
+  it('applies the §8 copy overrides', () => {
+    assert.equal(shareActionLabel('send_to_traveler', 'trip'), 'Send to Traveler');
+    assert.equal(shareActionLabel('send_to_traveler', 'profile'), 'Send Profile');
+    assert.equal(shareActionLabel('send_to_traveler', 'postcard'), 'Send through Telegraph');
+    assert.equal(shareActionLabel('recommend_to_traveler', 'place'), 'Recommend to someone');
+    assert.equal(shareActionLabel('recommend_to_traveler', 'profile'), 'Recommend Buddy');
+    assert.equal(shareActionLabel('copy_link', 'trip'), 'Copy Trip Link');
+    assert.equal(shareActionLabel('copy_link', 'stamp'), 'Copy link', 'falls back to the default');
+  });
+
+  it('resolveShareActions hands the sheet a ready label', () => {
+    const e = toShareableProfile(profile);
+    const resolved = resolveShareActions(e.allowedActions, {
+      hasUrl: e.canonicalUrl !== null,
+      entityType: e.entityType,
+      allowedDestinations: e.allowedDestinations,
+    });
+    const labels = resolved.map((d) => d.resolvedLabel);
+    assert.deepEqual(labels, ['Send Profile', 'Recommend Buddy', 'Invite to Trip', 'Invite to Plan']);
+  });
+});
+
+describe('E: resolveShareActions preconditions', () => {
   it('drops URL-requiring actions when the entity has no URL', () => {
-    const linkless = toShareableCompassRecommendation({ id: ID, type: 'booking', category: 'x' });
-    const resolved = resolveShareActions(linkless.allowedActions, { hasUrl: false });
-    const ids = resolved.map((d) => d.id);
+    const e = toShareableTrip(trip);
+    const ids = resolveShareActions(e.allowedActions, { hasUrl: false, entityType: 'trip' }).map((d) => d.id);
     assert.ok(!ids.includes('copy_link'), 'nothing to copy');
-    assert.ok(!ids.includes('share_external'), 'nothing to hand the OS');
-    assert.ok(ids.includes('send_in_app'), 'in-app send survives');
+    assert.ok(ids.includes('send_to_traveler'), 'in-app send survives');
   });
 
-  it('keeps them when there is a URL, and sorts send → direct → secondary', () => {
+  it('drops a send action whose destination the entity does not permit', () => {
     const e = toShareableEvent(event);
-    const ids = resolveShareActions(e.allowedActions, { hasUrl: true }).map((d) => d.id);
-    assert.deepEqual(ids, ['send_in_app', 'copy_link', 'share_external', 'add_to_trip', 'save', 'report']);
+    const ids = resolveShareActions(e.allowedActions, {
+      hasUrl: true,
+      entityType: 'event',
+      allowedDestinations: ['dm', 'external'],   // no circle
+    }).map((d) => d.id);
+    assert.ok(ids.includes('send_to_traveler'), 'dm is permitted');
+    assert.ok(!ids.includes('send_to_circle'), 'circle is not');
+  });
+
+  it('sorts send → collect → invite → direct → secondary', () => {
+    const e = toShareableEvent(event);
+    const ids = resolveShareActions(e.allowedActions, {
+      hasUrl: true,
+      entityType: 'event',
+      allowedDestinations: e.allowedDestinations,
+    }).map((d) => d.id);
+    assert.deepEqual(ids, ['send_to_traveler', 'send_to_circle', 'share_to_pulse', 'invite_traveler']);
   });
 
   it('ignores unknown ids instead of throwing', () => {
     const ids = resolveShareActions(
-      ['send_in_app', 'not_an_action' as never],
-      { hasUrl: true },
+      ['send_to_traveler', 'not_an_action' as never],
+      { hasUrl: true, entityType: 'trip' },
     ).map((d) => d.id);
-    assert.deepEqual(ids, ['send_in_app']);
+    assert.deepEqual(ids, ['send_to_traveler']);
   });
 });
