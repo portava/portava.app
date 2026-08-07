@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, ScrollView, Pressable, Modal, Share, StyleSheet,
-  Image, ActivityIndicator, useWindowDimensions,
+  ActivityIndicator, useWindowDimensions,
   Keyboard,
 } from 'react-native';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
@@ -10,7 +10,7 @@ import { navigateToProfile } from '../../src/lib/navigateToProfile.ts';
 import * as Linking from 'expo-linking';
 import {
   MoreVertical, Flag, Flag as FlagFill,
-  MapPin, MessageCircle, UserCircle, Pencil,
+  MapPin, MessageCircle, Pencil,
 } from 'lucide-react-native';
 import { StampIcon } from '../../src/components/stamps/StampIcon';
 import { PortavaShareIcon } from '../../src/components/icons/PortavaShareIcon';
@@ -24,13 +24,15 @@ import { SharedVideoPlayer } from '../../src/components/ui/SharedVideoPlayer';
 import { getPostById, type PostRow } from '../../src/services/posts';
 import { useSession } from '../../src/context/SessionContext';
 import { primaryIdentityText } from '../../src/lib/displayIdentity.ts';
-import { DisplayMediaImage } from '../../src/components/ui/DisplayMediaImage.tsx';
+import { DisplayMediaImage, AvatarImage } from '../../src/components/ui/DisplayMediaImage.tsx';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { emitCommentCount } from '../../src/lib/commentCountStore';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 
 const UNDO_WINDOW_MS = 5000;
+/** Author avatar diameter. AvatarImage sizes itself, so no style is needed. */
+const AVATAR_SIZE = 38;
 
 // ── Small overflow action sheet ─────────────────────────────────────────────
 
@@ -138,13 +140,14 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
         style={card.authorRow}
         onPress={post.author?.handle ? () => navigateToProfile(post.author!.handle, post.author!.id, currentUserId) : undefined}
       >
-        {authorAvatar ? (
-          <Image source={{ uri: authorAvatar }} style={card.avatar} />
-        ) : (
-          <View style={[card.avatar, card.avatarPlaceholder]}>
-            <UserCircle size={20} color={color.mute} />
-          </View>
-        )}
+        {/* AvatarImage, not a bare <Image>: the avatar lives in the private
+            profile-media bucket, so the stored URL needs hydrating, and a
+            failed load must land on initials rather than an empty circle. */}
+        <AvatarImage
+          uri={authorAvatar}
+          user={post.author ?? undefined}
+          size={AVATAR_SIZE}
+        />
         <View style={{ flex: 1 }}>
           <View style={card.authorNameRow}>
             <Text style={card.authorName}>{authorName}</Text>
@@ -411,12 +414,6 @@ const card = StyleSheet.create({
     alignItems: 'center',
     gap: space.md,
     padding: space.md,
-  },
-  avatar: { width: 38, height: 38, borderRadius: 19 },
-  avatarPlaceholder: {
-    backgroundColor: color.haze,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   authorNameRow: { flexDirection: 'row', alignItems: 'center' },
   authorName: { ...t.bodyStrong, color: color.ink },

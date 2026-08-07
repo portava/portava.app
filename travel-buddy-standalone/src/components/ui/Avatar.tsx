@@ -20,10 +20,12 @@
  * `selected` is kept because the recipient pickers need it, and it deliberately
  * changes the border AND the fill, never colour alone.
  */
-import React from 'react';
-import { View, Text, Image, StyleSheet } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { Globe, Users } from 'lucide-react-native';
 import { color, type as t } from '../../theme/tokens.ts';
+import { useHydratedMedia } from '../../services/mediaUrl.ts';
 
 /** What the avatar stands for. Drives the fallback glyph, not just the tint. */
 export type AvatarKind = 'person' | 'trip' | 'circle' | 'group';
@@ -70,11 +72,39 @@ export function Avatar({
 
   const box = { width: size, height: size, borderRadius: size / 2 };
 
-  if (uri) {
+  // Avatars live in profile-media, which is private: the stored value is a
+  // bare `profile-media/…` reference (or a legacy public URL into the now
+  // private bucket) and neither loads in an <Image>. Hydration turns either
+  // form into a signed URL; a null result means "not viewable", which lands on
+  // the glyph/initials fallback below rather than an empty circle.
+  const { resolved: hydrated } = useHydratedMedia(uri ? [uri] : []);
+  const [failed, setFailed] = useState(false);
+
+  const prevUri = useRef(uri);
+  if (prevUri.current !== uri) {
+    prevUri.current = uri;
+    setFailed(false);
+  }
+
+  const [source, setSource] = useState<{ uri: string } | null>(uri ? { uri } : null);
+  useEffect(() => {
+    if (!uri) { setSource(null); return; }
+    const next = hydrated[uri];
+    if (typeof next === 'string') setSource({ uri: next });
+    else if (next === null) { setSource(null); setFailed(true); }
+    // undefined = still resolving; keep the plain URI so the common case paints
+    // immediately and component tests see a mounted image.
+  }, [uri, hydrated]);
+
+  if (uri && !failed && source) {
     return (
-      <Image
-        source={{ uri }}
+      <ExpoImage
+        source={source}
         style={[box, selected && s.selectedRing]}
+        contentFit="cover"
+        cachePolicy="memory-disk"
+        transition={150}
+        onError={() => setFailed(true)}
         accessible
         accessibilityRole="image"
         accessibilityLabel={label}
