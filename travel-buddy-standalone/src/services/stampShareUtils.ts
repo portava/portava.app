@@ -39,12 +39,20 @@ export function stampToLegacy(s: PassportStampNew): PassportStamp {
  * Return a { deepLink, webUrl } pair for a stamp share.
  *
  * Deep link:  travelbuddy://passport/@<username>?stamp=<id>  (with username)
- *             travelbuddy://stamps/<id>                      (without username)
+ *             travelbuddy://stamp/<id>                       (without username)
  * Web URL:    <origin>/u/<username>?stamp=<id>               (with username)
- *             <origin>/passport                              (without username)
+ *             <origin>/stamp/<id>                            (without username)
  *
  * The ?stamp=<id> query on the web URL lets the share-page server render a
  * stamp-specific Open Graph preview (label + artwork) in chat apps.
+ *
+ * The username-less pair used to be `travelbuddy://stamps/<id>` and
+ * `<origin>/passport`, and neither resolved. `/stamps/<id>` is not a route —
+ * app/stamps.tsx is the stamp *list* and the detail screen is
+ * app/stamp/[stampId].tsx — so the deep link landed on +not-found. `/passport`
+ * with no username is not a server route either (wellKnownShare registers
+ * /passport/:username), so the web fallback 404'd. Both now point at the
+ * stamp itself, whose landing page exists.
  */
 export function makeStampShareLinks(
   stamp: PassportStampNew,
@@ -60,8 +68,8 @@ export function makeStampShareLinks(
     };
   }
   return {
-    deepLink: `travelbuddy://stamps/${id}`,
-    webUrl: canonicalUrl('/passport'),
+    deepLink: `travelbuddy://stamp/${id}`,
+    webUrl: canonicalUrl(`/stamp/${id}`),
   };
 }
 

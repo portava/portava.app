@@ -154,9 +154,12 @@ describe('makeStampShareLinks', () => {
     assert.match(deepLink, /stamp=abc/);
   });
 
-  it('deep link uses stamps/ path when no username', () => {
+  it('deep link uses the singular stamp/ path when no username', () => {
+    // Regression: this was travelbuddy://stamps/<id>, which has no route —
+    // app/stamps.tsx is the list, the detail screen is app/stamp/[stampId].tsx
+    // — so the link landed on +not-found.
     const { deepLink } = makeStampShareLinks(makeStamp({ id: 'abc' }), null);
-    assert.match(deepLink, /travelbuddy:\/\/stamps\/abc/);
+    assert.equal(deepLink, 'travelbuddy://stamp/abc');
   });
 
   it('webUrl includes username in path when present', () => {
@@ -164,9 +167,12 @@ describe('makeStampShareLinks', () => {
     assert.match(webUrl, /\/u\/alice/);
   });
 
-  it('webUrl falls back to /passport when no username', () => {
-    const { webUrl } = makeStampShareLinks(makeStamp(), null);
-    assert.match(webUrl, /\/passport/);
+  it('webUrl falls back to the stamp landing page when no username', () => {
+    // Was `/passport` with no handle, which is not a server route either —
+    // wellKnownShare registers /passport/:username. /stamp/:id is a real
+    // landing page, so the recipient gets a card instead of a 404.
+    const { webUrl } = makeStampShareLinks(makeStamp({ id: 'abc' }), null);
+    assert.equal(webUrl, `${CANONICAL_APP_URL}/stamp/abc`);
   });
 
   it('falls back to CANONICAL_APP_URL when no env vars set', () => {

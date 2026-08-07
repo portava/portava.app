@@ -54,7 +54,10 @@ import { deriveTripDisplayStatus } from '../../src/lib/tripStatus';
 import { canonicalUrl } from '../../src/constants/canonicalUrl';
 
 function TripDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  // `focus` lets another route deep-link into a section of this screen rather
+  // than the top of it. Today the only value is 'plan', used by app/plan/[id]
+  // — a trip's plan has no route of its own, it is a section here.
+  const { id, focus } = useLocalSearchParams<{ id: string; focus?: string }>();
   const insets = useSafeAreaInsets();
   const { configured, isAuthed, userId } = useSession();
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
@@ -140,6 +143,22 @@ function TripDetailScreen() {
     // Small delay lets the scroll animation start before the keyboard appears
     setTimeout(() => { commandBarRef.current?.focus(); }, 350);
   }, []);
+
+  // ── ?focus=plan — scroll the plan section into view once, after load ────────
+  // Same mechanism as handleGapDayChipPress: the section records its y offset
+  // via onLayout and we scroll the page ScrollView to it. Gated on realTrip so
+  // the offset is measured against the fully rendered page, and latched so a
+  // re-render (or the user scrolling away) does not yank them back.
+  const planSectionY = useRef<number>(0);
+  const focusHandled = useRef(false);
+  useEffect(() => {
+    if (focus !== 'plan' || !realTrip || focusHandled.current) return;
+    focusHandled.current = true;
+    const t = setTimeout(() => {
+      pageScrollRef.current?.scrollTo({ y: Math.max(0, planSectionY.current - 16), animated: true });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [focus, realTrip]);
 
   const handleSafeReturnClose = useCallback(() => setSafeReturnSetupOpen(false), []);
 
@@ -534,15 +553,17 @@ function TripDetailScreen() {
           </View>
         ) : null}
 
-        <TripPlanSection
-          tripId={trip.id}
-          currentUserId={userId ?? ''}
-          isOwner={realTrip ? userId === realTrip.ownerId : false}
-          isPendingInvite={isPendingInvite}
-          tripStartDate={realTrip?.startDate ?? undefined}
-          tripEndDate={realTrip?.endDate ?? undefined}
-          pageScrollRef={pageScrollRef}
-        />
+        <View onLayout={(e: LayoutChangeEvent) => { planSectionY.current = e.nativeEvent.layout.y; }}>
+          <TripPlanSection
+            tripId={trip.id}
+            currentUserId={userId ?? ''}
+            isOwner={realTrip ? userId === realTrip.ownerId : false}
+            isPendingInvite={isPendingInvite}
+            tripStartDate={realTrip?.startDate ?? undefined}
+            tripEndDate={realTrip?.endDate ?? undefined}
+            pageScrollRef={pageScrollRef}
+          />
+        </View>
         {live && trip.id ? (
           <TripReservationsSection tripId={trip.id} />
         ) : null}
