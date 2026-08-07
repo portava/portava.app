@@ -17,7 +17,7 @@ after filter centralisation. Full run, all green.
 |---|---|---|---|
 | typecheck | `pnpm run typecheck` (travel-buddy-standalone) | PASS | — |
 | rules-of-hooks | `npx eslint 'travel-buddy-standalone/{app,src}/**/*.{ts,tsx}'` | PASS | 0 violations |
-| component tests — native | `pnpm run test:component` | PASS | 1716/1716, 320 suites |
+| component tests — native | `pnpm run test:component` | PASS | 1729/1729, 321 suites |
 | component tests — web | `pnpm run test:component` (jest.web.config.js) | PASS | 4/4, 2 suites |
 | standalone node tests | `pnpm run test` (travel-buddy-standalone) | PASS | 3666/3666, 494 suites |
 | api-server tests | `pnpm run test` (artifacts/api-server) | PASS | 6135/6135, 1550 suites |
@@ -45,6 +45,21 @@ Two severity-2 eslint errors exist and pre-date this baseline. Neither is
   interface declaring no members.
 
 ## Change log
+
+### 2026-08-07 — component 1716/320 → 1729/321 (filter editor a11y)
+
+Additive only. One new file,
+`src/components/__tests__/MediaFilterEditor.a11y.component.test.tsx`,
+contributing 13 tests in 1 suite: accessible names, screen-reader selection
+state, 44pt touch targets, and announced disabled state. Node, api-server and
+typecheck all held exactly.
+
+Note for anyone writing component tests here: RNTL v14's `render` is **async**
+(it awaits `act` internally). Calling it synchronously returns a Promise with
+no query methods and leaves the `screen` singleton unbound, which surfaces as
+the misleading "`render` function has not been called". `await render(...)`,
+and wrap `fireEvent.press` in `await act(async () => …)` when asserting on the
+resulting state.
 
 ### 2026-08-07 — 3614/491 → 3666/494 (filter centralisation)
 

@@ -145,21 +145,39 @@ export function MediaFilterEditor({
       <View style={[s.container, { paddingTop: insets.top }]}>
         {/* Header */}
         <View style={s.header}>
-          <Pressable style={s.headerBtn} onPress={onCancel} hitSlop={8}>
+          <Pressable
+            style={s.headerBtn}
+            onPress={onCancel}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Close filter editor"
+          >
             <X size={20} color={color.onInk} />
           </Pressable>
-          <Text style={s.headerTitle}>Filters</Text>
+          <Text style={s.headerTitle} maxFontSizeMultiplier={2}>Filters</Text>
           <Pressable
             style={[s.applyBtn, applying && s.applyBtnDisabled]}
             onPress={handleApply}
             disabled={applying}
+            accessibilityRole="button"
+            accessibilityLabel={applying ? 'Applying filter' : `Apply ${currentFilter.name} filter`}
+            accessibilityState={{ disabled: applying, busy: applying }}
           >
             {applying
               ? <ActivityIndicator size="small" color="#fff" />
-              : <><Check size={15} color="#fff" /><Text style={s.applyBtnText}>Apply</Text></>}
+              : <><Check size={15} color="#fff" /><Text style={s.applyBtnText} maxFontSizeMultiplier={1.6}>Apply</Text></>}
           </Pressable>
         </View>
 
+        {/* Everything between the header and the footer scrolls vertically.
+            Without this the column is fixed height: as text scales the carousel
+            grows and pushes "Reset to Original" off the bottom of the screen
+            with no way to reach it. */}
+        <ScrollView
+          style={s.body}
+          contentContainerStyle={s.bodyContent}
+          showsVerticalScrollIndicator={false}
+        >
         {/* Preview */}
         <View style={s.preview}>
           {/* file.uri is a local pick, so no hydration is needed here — but the
@@ -189,7 +207,12 @@ export function MediaFilterEditor({
         {applyError && (
           <View style={s.errorRow}>
             <Text style={s.errorText} numberOfLines={2}>{applyError}</Text>
-            <Pressable onPress={handleApplyAsOriginal}>
+            <Pressable
+              onPress={handleApplyAsOriginal}
+              style={s.errorActionBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Post as Original, without a filter"
+            >
               <Text style={s.errorAction}>Post as Original</Text>
             </Pressable>
           </View>
@@ -197,7 +220,7 @@ export function MediaFilterEditor({
 
         {/* Intensity slider */}
         <View style={s.sliderRow}>
-          <Text style={s.sliderLabel}>Intensity</Text>
+          <Text style={s.sliderLabel} maxFontSizeMultiplier={1.8} numberOfLines={1}>Intensity</Text>
           <Slider
             style={s.slider}
             minimumValue={0}
@@ -209,8 +232,16 @@ export function MediaFilterEditor({
             maximumTrackTintColor={color.haze}
             thumbTintColor={color.onInk}
             disabled={isOriginal}
+            accessibilityLabel="Filter intensity"
+            accessibilityHint={
+              isOriginal
+                ? 'Unavailable while Original is selected. Choose a filter first.'
+                : 'Adjusts how strongly the selected filter is applied'
+            }
+            accessibilityState={{ disabled: isOriginal }}
+            accessibilityValue={{ min: 0, max: 100, now: Math.round(intensity) }}
           />
-          <Text style={s.sliderValue}>{Math.round(intensity)}</Text>
+          <Text style={s.sliderValue} maxFontSizeMultiplier={1.8}>{Math.round(intensity)}</Text>
         </View>
 
         {/* Filter carousel */}
@@ -227,6 +258,14 @@ export function MediaFilterEditor({
                   key={f.id}
                   style={[s.filterItem, isSelected && s.filterItemSelected]}
                   onPress={() => handleFilterSelect(f.id)}
+                  // Visually, selection is already carried by the Check glyph and
+                  // the bolder name, not by the border colour alone. This is the
+                  // non-visual half of that: without accessibilityState a screen
+                  // reader announces twelve filter names and no current choice.
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: isSelected, checked: isSelected }}
+                  accessibilityLabel={f.name}
+                  accessibilityHint={f.description}
                 >
                   {/* Thumbnail with filter preview */}
                   <View style={s.thumb}>
@@ -250,7 +289,11 @@ export function MediaFilterEditor({
                   </View>
                   <Text
                     style={[s.filterName, isSelected && s.filterNameSelected]}
-                    numberOfLines={1}
+                    numberOfLines={2}
+                    // The name is the only text identifying a filter, so it must
+                    // stay readable as text scales. Two lines plus a capped
+                    // multiplier keeps "Golden Hour" legible instead of "Gol…".
+                    maxFontSizeMultiplier={1.8}
                   >
                     {f.name}
                   </Text>
@@ -259,6 +302,7 @@ export function MediaFilterEditor({
             })}
           </ScrollView>
         </View>
+        </ScrollView>
 
         {/* Reset button */}
         <View style={[s.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
@@ -266,9 +310,19 @@ export function MediaFilterEditor({
             style={[s.resetBtn, isOriginal && s.resetBtnDisabled]}
             onPress={handleReset}
             disabled={isOriginal}
+            accessibilityRole="button"
+            accessibilityLabel="Reset to Original"
+            accessibilityHint={isOriginal ? 'Already showing the unfiltered original' : undefined}
+            accessibilityState={{ disabled: isOriginal }}
           >
             <RotateCcw size={14} color={isOriginal ? color.faint : color.ink} />
-            <Text style={[s.resetText, isOriginal && s.resetTextDisabled]}>Reset to Original</Text>
+            <Text
+              style={[s.resetText, isOriginal && s.resetTextDisabled]}
+              maxFontSizeMultiplier={1.8}
+              numberOfLines={2}
+            >
+              Reset to Original
+            </Text>
           </Pressable>
         </View>
       </View>
@@ -278,8 +332,14 @@ export function MediaFilterEditor({
 
 const PREVIEW_H = SCREEN_W * 0.72;
 
+/** iOS HIG minimum is 44pt, Android Material is 48dp; 44 is the shared floor. */
+const MIN_TOUCH = 44;
+
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0B0B0A' },
+
+  body: { flex: 1 },
+  bodyContent: { flexGrow: 1 },
 
   header: {
     flexDirection: 'row', alignItems: 'center',
@@ -292,9 +352,11 @@ const s = StyleSheet.create({
   },
   headerTitle: { ...t.heading, color: '#fff', flex: 1, textAlign: 'center' },
   applyBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,
     backgroundColor: color.signal, borderRadius: radius.pill,
     paddingHorizontal: space.md, paddingVertical: 8,
+    // 8 + 18 line-height + 8 = 34pt without this — under the 44pt minimum.
+    minHeight: MIN_TOUCH,
   },
   applyBtnDisabled: { opacity: 0.5 },
   applyBtnText: { ...t.small, color: '#fff', fontWeight: '700' },
@@ -325,15 +387,19 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: space.sm,
   },
   errorText: { ...t.small, color: '#FF9B85', flex: 1 },
+  // Was a bare Text in a Pressable — an 18pt tap target.
+  errorActionBtn: { minHeight: MIN_TOUCH, justifyContent: 'center', paddingHorizontal: space.xs },
   errorAction: { ...t.small, color: color.signal, fontWeight: '700', textDecorationLine: 'underline' },
 
   sliderRow: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: space.lg, paddingVertical: 8, gap: space.sm,
   },
-  sliderLabel: { ...t.small, color: 'rgba(255,255,255,0.6)', width: 60 },
-  slider: { flex: 1 },
-  sliderValue: { ...t.small, color: 'rgba(255,255,255,0.7)', width: 28, textAlign: 'right', fontFamily: 'Courier', fontSize: 12 },
+  // minWidth, not width: at 2x "Intensity" needs roughly twice the old 60pt and
+  // was previously clipped. flexShrink lets it give ground to the slider first.
+  sliderLabel: { ...t.small, color: 'rgba(255,255,255,0.6)', minWidth: 60, flexShrink: 1 },
+  slider: { flex: 1, minWidth: 80 },
+  sliderValue: { ...t.small, color: 'rgba(255,255,255,0.7)', minWidth: 28, textAlign: 'right', fontFamily: 'Courier', fontSize: 12 },
 
   carouselWrap: { paddingTop: 4 },
   carousel: { paddingHorizontal: space.lg, gap: space.sm, paddingBottom: 4 },
@@ -359,7 +425,7 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
 
-  filterName: { ...t.small, color: 'rgba(255,255,255,0.6)', fontSize: 10, width: 68, textAlign: 'center' },
+  filterName: { ...t.small, color: 'rgba(255,255,255,0.6)', fontSize: 10, lineHeight: 13, width: 68, textAlign: 'center' },
   filterNameSelected: { color: color.signal, fontWeight: '700' },
 
   footer: {
@@ -367,9 +433,11 @@ const s = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(255,255,255,0.1)',
   },
   resetBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
     paddingHorizontal: space.lg, paddingVertical: 10,
     borderRadius: radius.pill, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+    // 10 + 18 + 10 = 38pt without this — under the 44pt minimum.
+    minHeight: MIN_TOUCH,
   },
   resetBtnDisabled: { borderColor: 'rgba(255,255,255,0.08)' },
   resetText: { ...t.small, color: color.onInk, fontWeight: '700' },
