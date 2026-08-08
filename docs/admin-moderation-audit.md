@@ -56,6 +56,14 @@ audit row **fail-closed** (aborts if the audit write fails), then hides the
 content. That is the best-built moderation path in the codebase and is the
 pattern the others should follow.
 
+**The admin UI cannot act on any of it.** `app/admin/content-reports.tsx` (201
+lines) calls `fetchAdminReports` → `GET /api/admin/reports` and renders a
+filterable list. Its only interactive elements are the back button, the status
+filter chips and a retry button. There is **no resolve, no dismiss, no
+hide-content, no assign** control. So the third brief requirement — "act on
+complaints" — is **backend yes, UI no**: an admin can read the queue in the app
+and must fall back to direct API calls to do anything about it.
+
 **Missing:** no SLA/ageing, no assignment or claim mechanism (two admins can
 work the same report), no dedupe of many reports against one target, no
 reporter-reputation weighting.
@@ -90,7 +98,26 @@ references to `user_account_states`.
 
 **Consequence: a user banned through the moderation-action endpoint keeps
 having their content served in the media feed.** Verified by reading both
-write paths and the read path. See §6.
+write paths and the read path.
+
+**But it is latent, not live, and I did not fix it.** Three things qualify it:
+
+1. **Nothing calls it.** No client code references `moderation-action`,
+   `/suspend` or `/ban`, and there is no admin user-moderation screen at all
+   (`app/admin/` has no user/profile/moderation screen). The whole
+   user-moderation surface is backend-only.
+2. **The split may be deliberate.** The comment above the convenience routes
+   reads: *"Convenience endpoints that wrap the existing PATCH
+   /admin/users/:userId/moderation-action with a structured audit log +
+   targeted account_status mutation."* That can be read as: the PATCH endpoint
+   is the audit API, and `account_status` is intentionally the convenience
+   routes' job.
+3. Changing ban semantics on ambiguous intent, with no caller to validate
+   against, is a policy decision — §8.6.
+
+I had intended to fix this as an "unambiguous" item and stopped when (1) and (2)
+turned up. Recording that, because assuming intent from a function name is how
+this codebase accumulated thirteen assumed-done items.
 
 ## 5. Content deletion — three signals, and no admin path to media
 
@@ -242,6 +269,26 @@ Written up rather than guessed.
    and needs a decision.
 
 ---
+
+## 8b. Why nothing was built in this pass
+
+The brief said to build the parts that are unambiguous. Having read the code,
+the honestly-unambiguous set is close to empty, and I would rather say so than
+manufacture a change:
+
+- **The account_status divergence** looked unambiguous and is not — see §4.
+- **Extracting one shared `requireAdmin`** is behaviour-neutral and clearly
+  right, but it edits 30 route files. That is a refactor, and "no opportunistic
+  refactors" is a standing rail. Proposed in §7a; not done.
+- **Action controls on the reports screen** need decisions first: which actions
+  appear, whether a reason is mandatory, whether actions confirm, what an admin
+  sees after acting. That is design, not plumbing.
+- **`DELETE /admin/media/:id`** is the clearest genuine gap, but its semantics
+  depend on §8.1 (hard vs soft delete) and on whether `post_media` gains a
+  `deleted_at` column — a schema change, which is a standing rail.
+
+Each of these is ready to build the moment the corresponding decision in §8
+lands.
 
 ## 9. Verification note
 
