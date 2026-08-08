@@ -16,8 +16,9 @@
  */
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, Image,
+  View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator,
 } from 'react-native';
+import { CachedImage } from '../CachedImage.tsx';
 import { Sparkles, CheckCircle, Navigation, Settings2, MapPin, Calendar, User, Map, Users } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
@@ -158,7 +159,7 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
     <Pressable style={({ pressed }) => [s.card, pressed && { opacity: 0.85 }]} onPress={navigateToItem}>
       {/* Hero image when the server provides one; emoji+colour header for all items */}
       {imageUrl && !imageError ? (
-        <Image
+        <CachedImage
           source={{ uri: imageUrl }}
           style={s.heroImage}
           resizeMode="cover"

@@ -3,7 +3,9 @@
  * Rent-a-Buddy surfacing (booking stays in the marketplace flow).
  */
 import React from 'react';
-import { View, Text, StyleSheet, Pressable, Switch, Image, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Switch, ScrollView } from 'react-native';
+import { Avatar } from '../ui/Avatar.tsx';
+import { CachedImage } from '../CachedImage.tsx';
 import { Users, Star, BadgeCheck } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import type { LayoverBuddy, PresenceTraveler } from '../../services/layover.ts';
@@ -61,9 +63,7 @@ export function LayoverPeopleSection({
               <View style={styles.avatarRow}>
                 {travelers.slice(0, 6).map((p) => (
                   <View key={p.id} style={styles.avatarWrap}>
-                    {p.avatarUrl
-                      ? <Image source={{ uri: p.avatarUrl }} style={styles.avatar} />
-                      : <View style={[styles.avatar, styles.avatarFallback]}><Text style={styles.avatarInitials}>{initials(p.name, p.handle)}</Text></View>}
+                    <Avatar uri={p.avatarUrl} name={p.name ?? p.handle} size={32} style={styles.avatarRing} />
                   </View>
                 ))}
               </View>
@@ -86,7 +86,7 @@ export function LayoverPeopleSection({
             {buddies.map((b) => (
               <Pressable key={b.id} style={styles.buddyCard} onPress={() => onOpenBuddy(b)}>
                 {b.coverPhotoUrl
-                  ? <Image source={{ uri: b.coverPhotoUrl }} style={styles.buddyPhoto} />
+                  ? <CachedImage source={{ uri: b.coverPhotoUrl }} style={styles.buddyPhoto} />
                   : <View style={[styles.buddyPhoto, styles.buddyPhotoFallback]}>
                       <Text style={styles.buddyPhotoInitials}>{initials(b.displayName, null)}</Text>
                     </View>}
@@ -129,9 +129,8 @@ const styles = StyleSheet.create({
   presenceBox: { backgroundColor: color.paper, borderRadius: radius.md, padding: space.md, gap: space.sm },
   avatarRow: { flexDirection: 'row' },
   avatarWrap:{ marginRight: -8 },
-  avatar:    { width: 32, height: 32, borderRadius: 16, borderWidth: 2, borderColor: color.paperRaised },
-  avatarFallback: { backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center' },
-  avatarInitials: { ...t.stamp, color: color.onInk },
+  // Sizing/shape come from <Avatar size>; this is the separation ring only.
+  avatarRing: { borderWidth: 2, borderColor: color.paperRaised },
   presenceText: { ...t.small, color: color.mute },
 
   buddyHead: { ...t.bodyStrong, color: color.ink, marginTop: space.sm },

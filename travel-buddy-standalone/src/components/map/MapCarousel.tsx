@@ -25,13 +25,14 @@ import {
   View,
   Text,
   Pressable,
-  Image,
   StyleSheet,
   Dimensions,
   AccessibilityInfo,
   NativeSyntheticEvent,
   NativeScrollEvent,
 } from 'react-native';
+import { CachedImage } from '../CachedImage.tsx';
+import { Avatar } from '../ui/Avatar.tsx';
 import Animated, {
   useAnimatedScrollHandler,
   useSharedValue,
@@ -229,7 +230,7 @@ function BuddyCardBody({ entity }: { entity: MapEntity<BuddyProfile> }) {
       <View style={cs.topRow}>
         <View style={[cs.iconCircle, { backgroundColor: cfg.color }]}>
           {buddy.coverPhotoUrl
-            ? <Image source={{ uri: buddy.coverPhotoUrl }} style={cs.iconImg} />
+            ? <CachedImage source={{ uri: buddy.coverPhotoUrl }} style={cs.iconImg} fallbackLabel="" />
             : <Users size={18} color="#fff" />}
         </View>
         <View style={cs.topText}>
@@ -338,7 +339,7 @@ function GemCardBody({ entity }: { entity: MapEntity<HiddenGem> }) {
       <View style={cs.topRow}>
         <View style={[cs.iconCircle, { backgroundColor: MAP_LAYER_CONFIG.gems.color }]}>
           {gem.imageUrl
-            ? <Image source={{ uri: gem.imageUrl }} style={cs.iconImg} />
+            ? <CachedImage source={{ uri: gem.imageUrl }} style={cs.iconImg} fallbackLabel="" />
             : <Sparkles size={18} color="#fff" />}
         </View>
         <View style={cs.topText}>
@@ -377,7 +378,7 @@ function TripCardBody({ entity }: { entity: MapEntity<TripRow> }) {
       <View style={cs.topRow}>
         <View style={[cs.iconCircle, { backgroundColor: MAP_LAYER_CONFIG.trips.color }]}>
           {trip.coverUrl
-            ? <Image source={{ uri: trip.coverUrl }} style={cs.iconImg} />
+            ? <CachedImage source={{ uri: trip.coverUrl }} style={cs.iconImg} fallbackLabel="" />
             : <Plane size={18} color="#fff" />}
         </View>
         <View style={cs.topText}>
@@ -400,10 +401,11 @@ function TripCardBody({ entity }: { entity: MapEntity<TripRow> }) {
         {memberAvatars.length > 0 && (
           <View style={cs.memberAvatarsRow}>
             {memberAvatars.map((url, i) => (
-              <Image
+              <Avatar
                 key={i}
-                source={{ uri: url }}
-                style={[cs.memberAvatar, { marginLeft: i === 0 ? 0 : -8 }]}
+                uri={url}
+                size={20}
+                style={[cs.memberAvatarRing, { marginLeft: i === 0 ? 0 : -8 }]}
               />
             ))}
           </View>
@@ -423,7 +425,7 @@ function FriendCardBody({ entity }: { entity: MapEntity<CircleMemberLocation> })
       <View style={cs.topRow}>
         <View style={[cs.avatarWrap, { borderColor: cfg.color }]}>
           {loc.avatarUrl
-            ? <Image source={{ uri: loc.avatarUrl }} style={cs.avatarImg} />
+            ? <CachedImage source={{ uri: loc.avatarUrl }} style={cs.avatarImg} fallbackLabel="" />
             : (
               <View style={[cs.avatarFallback, { backgroundColor: cfg.color }]}>
                 <Heart size={14} color="#fff" />
@@ -1465,10 +1467,8 @@ const cs = StyleSheet.create({
     alignItems: 'center',
     marginLeft: 4,
   },
-  memberAvatar: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+  // Sizing/shape come from <Avatar size>; this is the overlap ring only.
+  memberAvatarRing: {
     borderWidth: 1.5,
     borderColor: color.paperRaised,
   },

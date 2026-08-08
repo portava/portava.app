@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, Image, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { Avatar } from './ui/Avatar.tsx';
 import { router } from 'expo-router';
 import { MapPin, ChevronRight } from 'lucide-react-native';
 import type { CityEvent } from '../types/models.ts';
@@ -40,7 +41,7 @@ function HostAvatar({ host }: { host: NonNullable<CityEvent['host']> }) {
         gap={1.5}
         onPress={ringState?.hasActive ? () => setViewerOpen(true) : undefined}
       >
-        <Image source={{ uri: host.avatarUrl }} style={styles.hostAvatar} />
+        <Avatar uri={host.avatarUrl} name={host.name} size={20} />
       </HighlightRing>
       {ringState?.highlights && (
         <HighlightViewer
@@ -143,7 +144,6 @@ const styles = StyleSheet.create({
   loc: { ...t.small, color: color.mute },
   title: { ...t.heading, color: color.ink, fontSize: 16 },
   hostRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  hostAvatar: { width: 20, height: 20, borderRadius: 10, backgroundColor: color.haze },
   host: { ...t.small, color: color.mute },
   metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
   stack: { flexDirection: 'row', alignItems: 'center' },

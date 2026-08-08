@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, Pressable, Image, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { CachedImage } from './CachedImage.tsx';
 import Animated, { useAnimatedStyle, interpolate } from 'react-native-reanimated';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -98,7 +99,7 @@ export function PulseHeader({
           accessibilityLabel="Your profile"
         >
           {avatarUrl ? (
-            <Image source={{ uri: avatarUrl }} style={styles.avatar} />
+            <CachedImage source={{ uri: avatarUrl }} style={styles.avatar} />
           ) : (
             <View style={[styles.avatar, styles.avatarFallback]}>
               <CircleUserRound size={20} color={pv.textMute} />

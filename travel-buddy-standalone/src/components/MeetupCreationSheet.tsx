@@ -25,8 +25,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator,
-  ScrollView, Image,
+  ScrollView,
 } from 'react-native';
+import { Avatar } from './ui/Avatar.tsx';
 import {
   X, MapPin, CalendarClock, Users, Check, ChevronDown, ChevronUp,
   Plus, Trash2, Search, ChevronRight,
@@ -66,13 +67,8 @@ interface Props {
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function PersonAvatar({ user }: { user: FriendUser }) {
-  if (user.avatarUrl) return <Image source={{ uri: user.avatarUrl }} style={sub.avatar} />;
   return (
-    <View style={[sub.avatar, sub.avatarFallback]}>
-      <Text style={sub.avatarInitial}>
-        {(user.name?.[0] ?? user.handle?.[0] ?? '?').toUpperCase()}
-      </Text>
-    </View>
+    <Avatar uri={user.avatarUrl} name={user.name ?? user.handle} size={32} />
   );
 }
 
@@ -850,9 +846,6 @@ export function MeetupCreationSheet({
 // ── Sub-styles ────────────────────────────────────────────────────────────────
 
 const sub = StyleSheet.create({
-  avatar:           { width: 32, height: 32, borderRadius: 16 },
-  avatarFallback:   { backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
-  avatarInitial:    { ...t.small, fontWeight: '700', color: color.ink, fontSize: 13 },
   chips:            { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginBottom: space.sm },
   chip:             { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.sm, paddingVertical: 5, borderRadius: radius.pill, borderWidth: 1, borderColor: color.signal, backgroundColor: color.paperRaised, maxWidth: 150 },
   chipName:         { ...t.small, color: color.signal, fontWeight: '700', fontSize: 11, flex: 1 },

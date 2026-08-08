@@ -15,8 +15,9 @@
  */
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, ScrollView, Pressable, StyleSheet, Image, Alert,
+  View, Text, ScrollView, Pressable, StyleSheet, Alert,
 } from 'react-native';
+import { Avatar } from '../ui/Avatar.tsx';
 import { router } from 'expo-router';
 import { Users, Sparkles, CheckCircle, MapPin, MoreHorizontal } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
@@ -145,13 +146,7 @@ function TravelerCard({ item }: { item: CompassTravelerResult }) {
     >
       {/* Avatar */}
       <View style={s.avatarWrap}>
-        {d.avatarUrl ? (
-          <Image source={{ uri: d.avatarUrl }} style={s.avatar} />
-        ) : (
-          <View style={[s.avatar, s.avatarPlaceholder]}>
-            <Text style={s.avatarInitial}>{initials}</Text>
-          </View>
-        )}
+        <Avatar uri={d.avatarUrl} name={initials} size={48} />
         {d.verified && (
           <View style={s.verifiedBadge}>
             <CheckCircle size={11} color={color.success} fill={color.paper} />
@@ -317,21 +312,6 @@ const s = StyleSheet.create({
   avatarWrap: {
     position: 'relative',
     marginBottom: space.xs,
-  },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-  },
-  avatarPlaceholder: {
-    backgroundColor: color.signal + '20',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitial: {
-    ...t.bodyStrong,
-    color: color.signal,
-    fontSize: 16,
   },
   verifiedBadge: {
     position: 'absolute',

@@ -9,9 +9,10 @@
  */
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
-  View, Text, Pressable, ScrollView, Image,
+  View, Text, Pressable, ScrollView,
   StyleSheet, ActivityIndicator,
 } from 'react-native';
+import { Avatar } from './ui/Avatar.tsx';
 import { router } from 'expo-router';
 // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
 const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'); } catch { return {}; } })();
@@ -65,15 +66,7 @@ function NearbyUserChip({ user }: { user: NearbyUser }) {
           gap={2}
           onPress={ringState?.hasActive ? () => setViewerOpen(true) : undefined}
         >
-          {user.avatarUrl ? (
-            <Image source={{ uri: user.avatarUrl }} style={mp.chipAvatar} />
-          ) : (
-            <View style={[mp.chipAvatar, mp.chipAvatarFallback]}>
-              <Text style={mp.chipAvatarInitial}>
-                {user.name.charAt(0).toUpperCase()}
-              </Text>
-            </View>
-          )}
+          <Avatar uri={user.avatarUrl} name={user.name} size={44} />
         </HighlightRing>
         <Text style={mp.chipName} numberOfLines={1}>
           {user.name.split(' ')[0]}
@@ -546,9 +539,6 @@ const mp = StyleSheet.create({
   loadingRow: { height: 72, justifyContent: 'center', alignItems: 'center', marginBottom: space.lg },
   nearbyStrip: { gap: space.md, paddingBottom: space.lg, paddingRight: space.md },
   chip: { alignItems: 'center', gap: 4, width: 60 },
-  chipAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: color.haze },
-  chipAvatarFallback: { justifyContent: 'center', alignItems: 'center', backgroundColor: color.haze },
-  chipAvatarInitial: { fontSize: 18, fontWeight: '600', color: color.deep },
   chipName: { ...t.small, color: color.ink, fontWeight: '600', fontSize: 10, textAlign: 'center' },
 
   // City chips

@@ -11,7 +11,8 @@
  * collapse to a count bubble in the layer's accent colour.
  */
 import React, { useMemo } from 'react';
-import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { CachedImage } from '../CachedImage.tsx';
 // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
 const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'); } catch { return {}; } })();
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -133,7 +134,7 @@ function BuddyMarker({ entity, onPress }: { entity: MapEntity<BuddyProfile>; onP
     <Pressable onPress={() => onPress(entity)} hitSlop={6}>
       <View style={[pin.wrap, { backgroundColor: cfg.color }]}>
         {buddy.coverPhotoUrl ? (
-          <Image source={{ uri: buddy.coverPhotoUrl }} style={pin.avatarImg} />
+          <CachedImage source={{ uri: buddy.coverPhotoUrl }} style={pin.avatarImg} fallbackLabel="" />
         ) : (
           <Users size={12} color="#fff" />
         )}
@@ -194,7 +195,7 @@ function FriendMarker({ entity, onPress }: { entity: MapEntity<CircleMemberLocat
     <Pressable onPress={() => onPress(entity)} hitSlop={6}>
       <View style={[pin.avatarWrap, { borderColor: cfg.color }]}>
         {loc.avatarUrl ? (
-          <Image source={{ uri: loc.avatarUrl }} style={pin.friendImg} />
+          <CachedImage source={{ uri: loc.avatarUrl }} style={pin.friendImg} fallbackLabel="" />
         ) : (
           <View style={[pin.friendFallback, { backgroundColor: cfg.color }]}>
             <Heart size={11} color="#fff" />

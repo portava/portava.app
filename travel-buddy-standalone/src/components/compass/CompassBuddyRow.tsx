@@ -11,8 +11,9 @@
  */
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, Image,
+  View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator,
 } from 'react-native';
+import { Avatar } from '../ui/Avatar.tsx';
 import { router } from 'expo-router';
 import { Sparkles, Star, CheckCircle, MapPin, Globe } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
@@ -59,15 +60,7 @@ function BuddyCard({ item }: { item: CompassBuddyResult }) {
     >
       {/* Avatar / cover photo */}
       <View style={s.avatarWrap}>
-        {d.coverPhotoUrl ? (
-          <Image source={{ uri: d.coverPhotoUrl }} style={s.avatar} />
-        ) : (
-          <View style={[s.avatar, s.avatarPlaceholder]}>
-            <Text style={s.avatarInitial}>
-              {(resolveCompassTitle(item)).charAt(0).toUpperCase()}
-            </Text>
-          </View>
-        )}
+        <Avatar uri={d.coverPhotoUrl} name={resolveCompassTitle(item)} size={52} />
         {d.verified && (
           <View style={s.verifiedBadge}>
             <CheckCircle size={11} color={color.success} fill={color.paper} />
@@ -239,21 +232,6 @@ const s = StyleSheet.create({
   avatarWrap: {
     alignSelf: 'center',
     marginBottom: space.xs,
-  },
-  avatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-  },
-  avatarPlaceholder: {
-    backgroundColor: color.signal + '20',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitial: {
-    ...t.bodyStrong,
-    color: color.signal,
-    fontSize: 20,
   },
   verifiedBadge: {
     position: 'absolute',

@@ -35,6 +35,18 @@ interface CachedImageProps {
   filterId?: string | null;
   /** Filter strength 0–100. Defaults to full strength when absent. */
   filterIntensity?: number | null;
+  /**
+   * Caption for the fallback. Pass '' on surfaces too small to fit one —
+   * map pins, badges, tiles under roughly 64pt — where the icon alone is the
+   * affordance and "Image unavailable" would just be clipped. See MediaFallback.
+   */
+  fallbackLabel?: string;
+  /**
+   * Forwarded to the image. Set it whenever the image carries meaning the
+   * surrounding text does not already state — callers that swapped in from a
+   * bare <Image> must not silently drop the label they had.
+   */
+  accessibilityLabel?: string;
 }
 
 /**
@@ -69,6 +81,8 @@ export function CachedImage({
   placeholder,
   filterId,
   filterIntensity,
+  fallbackLabel,
+  accessibilityLabel,
 }: CachedImageProps) {
   const contentFit: ImageContentFit = CONTENT_FIT_MAP[resizeMode] ?? 'cover';
   const uri = source?.uri;
@@ -106,7 +120,7 @@ export function CachedImage({
   if (!uri || failed || !resolvedSource) {
     return (
       <View style={style as any} testID={testID}>
-        <MediaFallback style={{ flex: 1 }} />
+        <MediaFallback style={{ flex: 1 }} label={fallbackLabel} />
       </View>
     );
   }
@@ -122,6 +136,9 @@ export function CachedImage({
       onError={() => { setFailed(true); onError?.(); }}
       testID={testID}
       placeholder={placeholder ? { blurhash: placeholder } : undefined}
+      accessible={!!accessibilityLabel}
+      accessibilityRole={accessibilityLabel ? 'image' : undefined}
+      accessibilityLabel={accessibilityLabel}
     />
   );
 

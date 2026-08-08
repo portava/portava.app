@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Image, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
+import { Avatar } from './ui/Avatar.tsx';
 import { CachedImage } from './CachedImage.tsx';
 import { useEntityHeaderImage } from '../hooks/useEntityHeaderImage.ts';
 import { router } from 'expo-router';
@@ -299,10 +300,7 @@ function DiscoveryUserAvatar({ userId, avatarUrl, size, handle }: { userId?: str
         gap={1.5}
         onPress={onPress}
       >
-        <Image
-          source={{ uri: avatarUrl }}
-          style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color.haze }}
-        />
+        <Avatar uri={avatarUrl} name={handle} size={size} />
       </HighlightRing>
       {ringState?.highlights && (
         <HighlightViewer
