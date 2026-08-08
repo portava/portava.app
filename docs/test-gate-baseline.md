@@ -21,7 +21,7 @@ sweep. Full run, all green.
 | bare-image guard | `pnpm run lint:bare-image` (travel-buddy-standalone) | PASS | 0 bindings |
 | component tests — native | `pnpm run test:component` | PASS | 1744/1744, 323 suites |
 | component tests — web | `pnpm run test:component` (jest.web.config.js) | PASS | 4/4, 2 suites |
-| standalone node tests | `pnpm run test` (travel-buddy-standalone) | PASS | 3734/3734, 499 suites |
+| standalone node tests | `pnpm run test` (travel-buddy-standalone) | PASS | 3738/3738, 499 suites |
 | api-server tests | `pnpm run test` (artifacts/api-server) | PASS | 6135/6135, 1550 suites |
 
 `fail 0`, `skipped 0`, `todo 0`, `cancelled 0` on every node run.

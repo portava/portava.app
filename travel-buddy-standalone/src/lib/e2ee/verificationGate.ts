@@ -27,3 +27,42 @@
  * and nothing to change in production to keep it off.
  */
 export const E2EE_VERIFICATION_UI_ENABLED = false;
+
+/**
+ * Whether the UI may *claim* a thread is end-to-end encrypted at all.
+ *
+ * FALSE, deliberately, and distinct from the gate above.
+ *
+ * `E2EE_VERIFICATION_UI_ENABLED` gates the *verification affordance* — the
+ * tappable safety number. It does not gate the **claim**. With that flag off,
+ * the thread header still rendered a padlock carrying the accessibility label
+ * "End-to-end encrypted". A padlock is read by every user as "this is secure",
+ * and screen readers were literally announcing the claim. So the app asserted
+ * verified E2EE while the verification path was switched off for not being
+ * trustworthy — the claim outlived the thing that was supposed to substantiate
+ * it.
+ *
+ * Two conditions are unmet, and either alone is sufficient to keep this false:
+ *
+ *   1. **FFI bar 2 is unproven.** No instrumented test has loaded the produced
+ *      .so in an Android runtime and crossed the UniFFI boundary. See issue
+ *      #3556 and `travel-buddy-standalone/vendor/expo-openmls/android/src/androidTest/`,
+ *      whose header records that the test has never been executed.
+ *   2. **The client E2EE UX gap is open.** `app/messages/[id].tsx` still offers
+ *      the attachment control on encrypted threads with no `isE2ee` branch. The
+ *      server now fail-closes that path, so the send surfaces as a hard error
+ *      rather than a silent plaintext write.
+ *
+ * This does NOT reopen, redefine or downgrade finding 14. That finding was the
+ * *server-side* plaintext-media bypass; it is fixed (`9b1f49bdc`) and its status
+ * is accurate. This constant addresses the separate client/product claim gap.
+ *
+ * Scope: with zero `is_e2ee` threads in production (schema evidence,
+ * 2026-08-08), this is preventive rather than corrective — no user is currently
+ * being shown a false claim. It closes the hole before the first encrypted
+ * thread exists.
+ *
+ * FLIP THIS ONLY AFTER both conditions above are met. It is a source constant,
+ * not a server feature flag — nothing to configure in production to keep it off.
+ */
+export const E2EE_CLAIM_UI_ENABLED = false;

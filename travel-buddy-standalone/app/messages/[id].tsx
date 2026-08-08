@@ -76,7 +76,7 @@ import * as Clipboard from 'expo-clipboard';
 import { RentABuddyThreadHeader } from '../../src/components/rentabuddy/BookingThreadHeader';
 import { MessageEntrance, useMessageEntranceGate } from '../../src/components/MessageEntrance';
 import { BookingMilestoneMessage } from '../../src/components/rentabuddy/BookingMilestoneMessage';
-import { E2EE_VERIFICATION_UI_ENABLED } from '../../src/lib/e2ee/verificationGate';
+import { E2EE_VERIFICATION_UI_ENABLED, E2EE_CLAIM_UI_ENABLED } from '../../src/lib/e2ee/verificationGate';
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
@@ -1636,11 +1636,21 @@ export default function TelegraphThread() {
               <CheckCircle size={13} color={color.signal} />
             )}
             {/* E-2: lock badge.
-                Non-interactive until the native path is proven on a device —
-                see lib/e2ee/verificationGate.ts. Tapping through to a safety
-                number the FFI has never actually produced would invite exactly
-                the trust the previous (theatre) implementation invited. */}
-            {isE2ee && (
+                Suppressed entirely while E2EE_CLAIM_UI_ENABLED is false — the
+                padlock and its "End-to-end encrypted" label ARE the claim, and
+                the app must not assert verified E2EE until FFI bar 2 is proven
+                AND the client attachment-control gap is closed. See
+                lib/e2ee/verificationGate.ts for both conditions.
+
+                This is not about finding 14: that server-side plaintext-media
+                bypass is fixed (9b1f49bdc) and its status stands.
+
+                When the claim gate is reopened, the badge is still
+                non-interactive until E2EE_VERIFICATION_UI_ENABLED — tapping
+                through to a safety number the FFI has never produced would
+                invite exactly the trust the previous (theatre) implementation
+                invited. */}
+            {E2EE_CLAIM_UI_ENABLED && isE2ee && (
               E2EE_VERIFICATION_UI_ENABLED ? (
                 <Pressable
                   hitSlop={8}
