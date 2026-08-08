@@ -36,6 +36,7 @@ import {
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { SafetyNumberScreen } from '../screens/SafetyNumberScreen.tsx';
 import { ReportSheet } from './ReportSheet.tsx';
+import { E2EE_VERIFICATION_UI_ENABLED } from '../lib/e2ee/verificationGate.ts';
 
 interface Props {
   visible: boolean;
@@ -128,7 +129,7 @@ export function ThreadSafetySheet({
   }
 
   // SafetyNumberScreen is a full-screen modal layered on top of this sheet.
-  if (showSafetyNumber && threadId) {
+  if (E2EE_VERIFICATION_UI_ENABLED && showSafetyNumber && threadId) {
     return (
       <Modal visible={visible} animationType="slide" onRequestClose={() => setShowSafetyNumber(false)}>
         <SafetyNumberScreen
@@ -195,7 +196,7 @@ export function ThreadSafetySheet({
           </View>
 
           {/* Verify safety number — E2EE 1:1 DM only */}
-          {isE2ee && threadType === 'direct' && threadId && (
+          {E2EE_VERIFICATION_UI_ENABLED && isE2ee && threadType === 'direct' && threadId && (
             <Pressable style={sh.row} onPress={() => setShowSafetyNumber(true)}>
               <ShieldCheck size={18} color="#2A7A4B" />
               <View style={sh.rowTextBlock}>

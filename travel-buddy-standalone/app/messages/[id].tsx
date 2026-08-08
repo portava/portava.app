@@ -76,6 +76,7 @@ import * as Clipboard from 'expo-clipboard';
 import { RentABuddyThreadHeader } from '../../src/components/rentabuddy/BookingThreadHeader';
 import { MessageEntrance, useMessageEntranceGate } from '../../src/components/MessageEntrance';
 import { BookingMilestoneMessage } from '../../src/components/rentabuddy/BookingMilestoneMessage';
+import { E2EE_VERIFICATION_UI_ENABLED } from '../../src/lib/e2ee/verificationGate';
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
@@ -1634,26 +1635,28 @@ export default function TelegraphThread() {
             {isDirect && dmProfile?.name && (
               <CheckCircle size={13} color={color.signal} />
             )}
-            {/* E-2: lock badge — taps open safety number modal */}
+            {/* E-2: lock badge.
+                Non-interactive until the native path is proven on a device —
+                see lib/e2ee/verificationGate.ts. Tapping through to a safety
+                number the FFI has never actually produced would invite exactly
+                the trust the previous (theatre) implementation invited. */}
             {isE2ee && (
-              <Pressable
-                hitSlop={8}
-                accessibilityLabel="End-to-end encrypted. Tap to verify safety number."
-                onPress={() => {
-                  // Navigate to the safety number screen.
-                  // Derived from the thread's live MLS group, not from a
-                  // server-supplied key — see SafetyNumberScreen.
-                  router.push({
-                    pathname: '/safety-number',
-                    params: {
-                      peerName: displayName,
-                      threadId: String(id ?? ''),
-                    },
-                  });
-                }}
-              >
-                <Lock size={13} color={color.signal} />
-              </Pressable>
+              E2EE_VERIFICATION_UI_ENABLED ? (
+                <Pressable
+                  hitSlop={8}
+                  accessibilityLabel="End-to-end encrypted. Tap to verify safety number."
+                  onPress={() => {
+                    router.push({
+                      pathname: '/safety-number',
+                      params: { peerName: displayName, threadId: String(id ?? '') },
+                    });
+                  }}
+                >
+                  <Lock size={13} color={color.signal} />
+                </Pressable>
+              ) : (
+                <Lock size={13} color={color.signal} accessibilityLabel="End-to-end encrypted" />
+              )
             )}
           </View>
           <View style={styles.headerTagRow}>
