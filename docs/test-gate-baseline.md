@@ -8,27 +8,30 @@ is a regression — investigate before accepting.
 Additive movement (new tests, newly-globbed suites) is fine, but update this
 file in the same commit so the reference never drifts behind reality.
 
-## Current reference — 2026-08-07
+## Current reference — 2026-08-08
 
-Recorded after the five media commits (`50bb012b5` … `db2dd781b`) and updated
-after filter centralisation. Full run, all green.
+Recorded after the five media commits (`50bb012b5` … `db2dd781b`), updated
+after filter centralisation and again after the bare-image guard and its
+sweep. Full run, all green.
 
 | Check | Command | Result | Reference |
 |---|---|---|---|
 | typecheck | `pnpm run typecheck` (travel-buddy-standalone) | PASS | — |
 | rules-of-hooks | `npx eslint 'travel-buddy-standalone/{app,src}/**/*.{ts,tsx}'` | PASS | 0 violations |
+| bare-image guard | `pnpm run lint:bare-image` (travel-buddy-standalone) | PASS | 0 bindings |
 | component tests — native | `pnpm run test:component` | PASS | 1737/1737, 322 suites |
 | component tests — web | `pnpm run test:component` (jest.web.config.js) | PASS | 4/4, 2 suites |
-| standalone node tests | `pnpm run test` (travel-buddy-standalone) | PASS | 3695/3695, 499 suites |
+| standalone node tests | `pnpm run test` (travel-buddy-standalone) | PASS | 3696/3696, 499 suites |
 | api-server tests | `pnpm run test` (artifacts/api-server) | PASS | 6135/6135, 1550 suites |
 
 `fail 0`, `skipped 0`, `todo 0`, `cancelled 0` on every node run.
 
 ### Coverage note
 
-`pnpm run check:all` covers only **test**, **test:component** and **typecheck**.
-It does **not** run the api-server suite or the hooks lint — those are separate
-commands and must be run explicitly to complete the gate.
+`pnpm run check:all` covers **test**, **test:component**, **typecheck** and, as
+of 2026-08-08, **lint:bare-image**. It does **not** run the api-server suite or
+the hooks lint — those are separate commands and must be run explicitly to
+complete the gate.
 
 `artifacts/api-server`'s own `check:all` is a *different* set (frozen-dir,
 async-handlers, live-DB column audits) and is not the 6135-test suite.
@@ -45,6 +48,50 @@ Two severity-2 eslint errors exist and pre-date this baseline. Neither is
   interface declaring no members.
 
 ## Change log
+
+### 2026-08-08 — bare-image guard added and swept to zero; node 3695 → 3696
+
+A new gated check, `pnpm run lint:bare-image` (`scripts/check-bare-image.mjs`),
+now part of `check:all`. It fails on a raw image element bound to a
+private-bucket media URL — the blank-media bug class fixed in `50bb012b5`…
+`db2dd781b`, which had been quietly reappearing one screen at a time.
+
+**Reference for this check is 0 bindings.** It was committed BEFORE any fixing,
+so the record of what it caught is honest: **102 bindings across 73 files**. An
+earlier manual scan estimated 55 files — it looked only five lines past each
+`<Image` and missed multi-line JSX plus whole surfaces (the admin queues,
+GemsItemOverlay, DestinationsTab.web, PrivateEventCard, invite/[token], saved,
+memory/[id]). Do not hand-count this; run the rule.
+
+The check has a documented blind spot: it reads the opening tag only, so a
+media URL reaching `<Image>` through a `.map()` callback, a generic `uri` prop,
+or a plural `mediaUrls[0]` is invisible to it. Five such sites were found by
+reading the flagged files and fixed alongside. If this rule passes clean on a
+surface you know renders blank, look for that shape first.
+
+`ALLOWED_BINDINGS` is keyed by file AND expression rather than line number, so
+it survives edits and cannot exempt a second binding in the same file by
+accident — MemoriesTab's local picker `previewUri` is exempt while
+`memory.photoUrl` in the same file is not. Every entry carries a NOTE.
+
+**node 3695 → 3696.** Additive, and not a new test file: the
+`getSession.bypassGuard` suite enumerates source files, and the one new source
+file — `src/components/calls/CallAvatar.tsx` — adds exactly one case. Same
+mechanism as `ActionRowIcon.tsx` below. Component, api-server and typecheck all
+held exactly.
+
+Two shared components gained props during the sweep, each to prevent a
+regression rather than for convenience:
+- `ui/Avatar` takes `style` — layout only; sizing stays with `size` so the
+  image and fallback branches cannot drift apart in shape.
+- `CachedImage` takes `fallbackLabel` (pass `''` under ~64pt, where
+  "Image unavailable" is clipped) and `accessibilityLabel` (a call site
+  swapping in from a bare `<Image>` must not silently drop the label it had —
+  typecheck caught exactly that on CompassPicksSection).
+
+Nine hand-rolled avatar components were deleted in favour of `ui/Avatar`. One
+was added: `components/calls/CallAvatar.tsx`, because the call screens are a
+genuinely different palette (#1F2937 / #9CA3AF on near-black) rather than drift.
 
 ### 2026-08-08 — component 1729/321 → 1737/322, node 3694 → 3695 (action-row icon sizing)
 
