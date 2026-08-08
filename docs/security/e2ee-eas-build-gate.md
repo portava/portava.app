@@ -189,6 +189,9 @@ Running the build early was the right call. It found three more.
 |---|---|---|---|
 | `581b033a`, `e13073e9` | `5ca920fe` | errored in **Prebuild**, 46s / 47s | Nothing. `prebuildCommand` was expanded into `npx expo bash scripts/... --platform android`. See §2. |
 | `0ff04c94` | `da562281` | errored in **Build success hook**, 24m — *after* producing an APK | Prebuild is fixed and Rust 1.97.1 installs on the worker. Nothing about the FFI boundary. |
+| `21bfc992` | `7cf1a2d1c` | errored in **Run gradlew**, 166s | The module reached the worker for the first time. Its `build.gradle` used plugin id `expo-module`, which does not exist in SDK 54. |
+| `64ceecce` | `fbb9e6db0` | errored in **Run gradlew**, 968s | **Rust cross-compiled for all three ABIs and uniffi-bindgen ran.** The generated Kotlin then failed: 108 errors, all JNA symbols. No JNA dependency was declared. |
+| `698fe963` | `4b4e6b63e` | **FINISHED**, 1135s | **The gate is passed — see §7.** |
 
 **Build `0ff04c94` is the one to understand.** It produced a complete 323 MB
 APK and was still marked ERRORED, because `eas-build-on-success` ran
@@ -243,3 +246,81 @@ curl -s -X POST https://api.expo.dev/graphql \
 ```
 
 The returned URL serves brotli-encoded JSON lines — fetch with `curl --compressed`.
+
+---
+
+## 7. The gate is passed — build `698fe963`, 2026-08-08
+
+**Status FINISHED. First green build in this workstream's history.**
+
+Per §6's own rule, this was **verified against the artefact**, not accepted
+from the status field. The APK (330 MB) contains:
+
+| Path | Bytes |
+|---|---|
+| `lib/arm64-v8a/libexpo_openmls.so` | 2,318,664 |
+| `lib/armeabi-v7a/libexpo_openmls.so` | 1,542,080 |
+| `lib/x86_64/libexpo_openmls.so` | 2,711,048 |
+| `lib/{arm64-v8a,armeabi-v7a,x86,x86_64}/libjnidispatch.so` | JNA dispatch |
+
+The `libjnidispatch.so` set is the evidence that the `@aar` classifier on the
+JNA dependency was necessary and correct — the plain jar ships none of them,
+and the app would have compiled and then thrown `UnsatisfiedLinkError` on
+device.
+
+All eight FFI entry points are present in the dex, alongside `UniffiLib`,
+`FfiConverterTypeOpenMlsError`, `uniffiRustCall*` and 39 references to
+`expo/modules/openmls`:
+
+```
+create_group            decrypt_message         derive_safety_number
+encrypt_message         generate_device_key_pair generate_identity_key_pair
+generate_key_package    process_welcome
+```
+
+### What this DOES prove — genuinely new
+
+- The Rust cross-compiles for real mobile targets (arm64, armv7, x86_64), not
+  just x86-64 Linux.
+- `uniffi-bindgen` runs in the real build and emits Kotlin.
+- **The generated bindings compile under Kotlin.** They had only ever been
+  generated, never compiled.
+- The shared libraries link and are packaged into the APK for every ABI.
+- Expo autolinking finds and builds the module.
+
+### What this does NOT prove — unchanged from §4
+
+**A green build means the bindings are compiled and packaged. It does not mean
+they load, and it certainly does not mean encryption works.**
+
+Note the precision: earlier drafts of this document said a green build proves
+the bindings "load". It does not. Loading happens at runtime via
+`System.loadLibrary` on a device, and nothing here has run on a device. Every
+item in §4 stands untouched — the FFI round trip, two devices exchanging an MLS
+message, state surviving an app lifecycle, the safety number matching.
+
+**The build was the gate. The two-device runbook
+(`docs/security/e2ee-verification-runbook.md`) is the proof, and it can now
+finally be attempted.**
+
+### Blocking issue for that runbook
+
+`docs/security/e2ee-finding-14-media-bypass.md` — `POST /threads/:id/media`
+bypasses the E2EE plaintext guard entirely and stores captions, media URLs and
+thumbnails in plaintext on encrypted threads. That is a confidentiality gap in
+the design, independent of whether the native path works, and it needs a
+decision before encrypted DMs are put in front of anyone.
+
+### Findings closed by this build
+
+- **11** (NDK linkers) — committed as PREDICTED, now **observed correct**:
+  cargo linked all three ABIs.
+- **12** (jniLibs ABI layout) — the three `.so` files are in the APK at the
+  right paths.
+- **9** (`preBuild.dependsOn`) — `:expo-openmls:buildRustAndroid` executed.
+- **6** (`expo-module.config.json`) — Gradle listed `expo-openmls` among
+  autolinked modules.
+- **The Sentry hook fix** — ran for the first time, skipped loudly, exited 0,
+  and the build completed instead of being marked errored.
+
+iOS remains unwired (§2).
