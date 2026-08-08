@@ -1,6 +1,8 @@
 # The EAS build — the gate between "wired" and "works"
 
-**Status: not triggered. Requires an owner decision and an Expo account.**
+**Status: triggered. Three Android builds run on 2026-08-08. None has yet
+produced a verdict on the FFI boundary — see §6 for what each one actually
+proved.**
 Date: 2026-08-08
 
 Everything from the Rust module to the UI call sites is wired and green in CI.
@@ -62,35 +64,62 @@ Expect the **first** build to fail. Nothing in this toolchain has ever run.
 
 ---
 
-## 2. One change to `eas.json` you must make — I have not made it
+## 2. `eas.json` — what must NOT go in it
 
-`eas.json` is deployment config and is outside what I was permitted to change,
-so this is specified rather than applied.
+> **This section previously told you to set `prebuildCommand`, and to extend it
+> with a second script. That advice was wrong. Every build that followed it
+> died in 46 seconds.** It is corrected below rather than deleted, because the
+> wrong version was acted on and the reasoning matters.
 
-All three profiles currently run:
+**Do not set `prebuildCommand`. It is not a shell command.**
+
+All three profiles used to carry:
 
 ```json
 "prebuildCommand": "bash scripts/eas-install-rust.sh"
 ```
 
-That script installs the Rust toolchain and cross-compilation targets. **It does
-not build anything.** Android is fine — `android/build.gradle` runs `cargo build`
-and then `uniffi-bindgen` itself. **iOS has no equivalent**: the podspec expects
-`ios/Rust/libexpo_openmls.a` and `ios/Rust/uniffi/openmls/*.swift`, and nothing
-produces them.
+`prebuildCommand` overrides the *arguments passed to `expo`* — it does not give
+you a shell to run in. eas-cli's own schema
+(`packages/eas-json/schema/eas.schema.json`) states it plainly:
 
-`scripts/build-rust-ios.sh` (added this session) does produce them. For the iOS
-build to work, the prebuild command must also run it:
+> Optional override of the prebuild command used by EAS. For example, you can
+> specify `prebuild --template example-template`. `--platform` and
+> `--non-interactive` will be added automatically by the build engine.
 
-```json
-"prebuildCommand": "bash scripts/eas-install-rust.sh && bash scripts/build-rust-ios.sh"
+So the worker actually ran:
+
+```
+npx expo bash scripts/eas-install-rust.sh --platform android --non-interactive
 ```
 
-`build-rust-ios.sh` exits 0 immediately on non-macOS, so this is safe to apply
-to all profiles — the Android worker will skip it.
+which is not a command. Builds `e13073e9` and `581b033a` errored in the
+**Prebuild** phase after 46 and 47 seconds, before a line of Rust compiled.
+Neither was evidence about the FFI boundary; they never reached it.
 
-**Do the Android build first without this change** — it isolates the Rust
-compile from the iOS packaging, so a failure points at one thing rather than two.
+**Where the toolchain install actually belongs:** the `eas-build-pre-install`
+npm lifecycle hook in `travel-buddy-standalone/package.json`. It runs before
+dependency install, and therefore before both prebuild and Gradle. It is
+already there, and it is the only place it should be. Do not duplicate it.
+
+### iOS is still not wired — and `prebuildCommand` is not the way to wire it
+
+`scripts/eas-install-rust.sh` installs the toolchain and cross-compilation
+targets. **It builds nothing.**
+
+Android is covered: `vendor/expo-openmls/android/build.gradle` runs
+`cargo build` and then `uniffi-bindgen` — and as of 2026-08-08 it is actually
+attached to `preBuild`, so it runs at all. Before that it was a declared task
+nothing depended on, and it had never executed.
+
+**iOS has no equivalent.** The podspec expects `ios/Rust/libexpo_openmls.a` and
+`ios/Rust/uniffi/openmls/*.swift`; `scripts/build-rust-ios.sh` produces them,
+and nothing invokes it. It has to be hooked from the iOS build itself — a
+podspec `script_phase`, or an Expo config plugin — **not** from
+`prebuildCommand`.
+
+**Do the Android build first.** It isolates the Rust compile from iOS
+packaging, so a failure points at one thing rather than two.
 
 ---
 
@@ -149,3 +178,68 @@ Both were found by reading the build path rather than by running anything, and
 there is no reason to believe the list is complete — which is the argument for
 running the Android build early and cheaply rather than perfecting more layers
 first.
+
+---
+
+## 6. Build record — 2026-08-08
+
+Running the build early was the right call. It found three more.
+
+| Build | Commit | Result | What it proved |
+|---|---|---|---|
+| `581b033a`, `e13073e9` | `5ca920fe` | errored in **Prebuild**, 46s / 47s | Nothing. `prebuildCommand` was expanded into `npx expo bash scripts/... --platform android`. See §2. |
+| `0ff04c94` | `da562281` | errored in **Build success hook**, 24m — *after* producing an APK | Prebuild is fixed and Rust 1.97.1 installs on the worker. Nothing about the FFI boundary. |
+
+**Build `0ff04c94` is the one to understand.** It produced a complete 323 MB
+APK and was still marked ERRORED, because `eas-build-on-success` ran
+`npx sentry-expo-upload-sourcemaps dist` and exited 1. Three separate facts,
+which must not be merged:
+
+1. The `prebuildCommand` fix worked — Prebuild passed, the toolchain installed.
+2. The native build succeeded; the *build status* was errored by an unrelated
+   post-build telemetry hook.
+3. **The APK contained none of the E2EE code.** Had the hook not failed, this
+   would have been a green build proving nothing.
+
+Point 3 was established from the artefact, not inferred: no
+`libexpo_openmls.so` among its 136 native libraries, and zero `openmls` or
+`uniffi` symbols across its ten dex files (control: `expo/modules/av`, 253
+hits). In the 594 KB build log, `cargo build` appears **zero** times and
+`openmls` appears **once** — inside the echoed `package.json`.
+
+Three more assumed-done-that-wasn't, all found this way:
+
+8. **The module's native code was never committed.**
+   `travel-buddy-standalone/.gitignore` carried bare `ios/` and `android/`
+   patterns, which match a directory of that name at *any* depth — including
+   `vendor/expo-openmls/ios/` and `vendor/expo-openmls/android/`.
+   `git log --all` over those paths returned nothing. EAS uploaded the tracked
+   part of the module, autolinking found a module declaring an Android target
+   with no `android/` directory, and skipped it in silence.
+9. **`buildRustAndroid` was declared but never scheduled.** Nothing depended on
+   it. A task that exists is not a task that runs.
+10. **Its `cargo not found` branch printed a message and returned 0** — the same
+    false-green as the install script in §5's lineage.
+
+### Reading a build result honestly
+
+- A failure in **Prebuild**, **Install dependencies** or the **success hook** is
+  a configuration failure. It says nothing about Rust or the FFI boundary.
+- Only a failure inside `cargo build`, `uniffi-bindgen`, or the Kotlin/Swift
+  compile of the generated bindings is a verdict on the integration approach.
+- **A green build is not sufficient evidence on its own.** Confirm the artefact
+  contains `lib/*/libexpo_openmls.so` and that `uniffi` symbols are present in
+  the dex before believing it. Build `0ff04c94` is the reason that check exists.
+- `eas build:view` lagged reality by roughly two hours on `0ff04c94`, reporting
+  `in progress` long after the build finished. **Treat the artefact and the
+  build logs as authoritative**, not the CLI status.
+
+Build logs are fetchable without a browser:
+
+```bash
+curl -s -X POST https://api.expo.dev/graphql \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $EXPO_TOKEN" \
+  -d '{"query":"query($id:ID!){builds{byId(buildId:$id){status logFiles}}}","variables":{"id":"<build-id>"}}'
+```
+
+The returned URL serves brotli-encoded JSON lines — fetch with `curl --compressed`.
