@@ -251,6 +251,21 @@ style) a strong plus.
 
 ## What we already know is imperfect (so review time goes to the unknown)
 
+- **CRITICAL, found 2026-08-08 while preparing the module for review: the
+  identity PRIVATE key is used as the MLS credential identity**
+  (`lib.rs:132/163/223`, `BasicCredential::new(identity_priv_b64.into_bytes())`).
+  Credentials are public — they travel in the KeyPackage published to our server
+  and in the Welcome sent to the peer. This has **never executed** (the module
+  has never compiled), so there is no live exposure, but it tells you what kind
+  of review attention the key-handling code needs. Being fixed before the
+  engagement; disclosed so you can judge the surrounding code accordingly.
+- **The caller's keys are discarded at every entry point.** All four
+  `SignatureKeyPair::new(...)` sites mint a fresh random signer and ignore the
+  device key passed in; `build_backend_from_keys` ignores its argument
+  entirely. **Consequence we would like you to confirm or refute: safety
+  numbers currently verify nothing**, since they derive from identity keys the
+  MLS session never uses. Both are being fixed; the safety-number derivation
+  and its binding to the actual session is a priority-6 target regardless.
 - **A known defect in `encrypt_message`** (`packages/expo-openmls/src/lib.rs`):
   it currently generates a fresh random `SignatureKeyPair` per call instead of
   using the member's leaf signature key. We expect this to fail signature

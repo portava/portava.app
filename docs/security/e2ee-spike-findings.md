@@ -131,6 +131,69 @@ Recorded so it is not decided by momentum: the estimate went 2–3 wk → 4.5–
 → 6.5–8.5 wk across three passes, each time because something assumed-done was
 not. That trend is itself worth weighing.
 
+## STOP — findings from reading the module for Phase 1 (2026-08-08)
+
+Phase 1 (bring `vendor/expo-openmls` to green) was **halted before any edit**.
+Reading the module end to end found problems of a different kind from the
+compile errors. `vendor/` is unmodified.
+
+### CRITICAL — the identity PRIVATE key is placed in the MLS credential
+
+`lib.rs:132`, `:163`, `:223`:
+
+```rust
+let credential = BasicCredential::new(my_identity_priv_b64.clone().into_bytes());
+```
+
+The first argument is the caller's Ed25519 **identity private key**. Traced:
+`secureStore.ts` `IDENTITY_PRIVATE_KEY` → `mlsSession.ts` `loadPrivKeys()` →
+`ExpoOpenmls.createGroup(keys.identityPrivB64, …)` → this line.
+
+An MLS credential is **public**. It sits in the leaf node, is carried in the
+KeyPackage published to the server (`key_packages.key_package_b64`, which the
+server serves to other users via `GET /users/:userId/key-packages/consume`),
+and is sent to the peer in the Welcome.
+
+Had this ever run, every user's identity private key would have been uploaded
+to the server and handed to their conversation partners.
+
+**It has never run — the module has never compiled — so there is no live
+exposure and nothing to revoke.** That is luck, not design. The credential
+identity must be a public identifier (user id / handle), never key material.
+
+### SYSTEMIC — the caller's keys are discarded at every entry point
+
+All four sites (`lib.rs:133`, `:164`, `:224`, `:256`) call
+`SignatureKeyPair::new(...)`, minting a **fresh random** signing key, and never
+use the `device_ed25519_priv_b64` argument. `build_backend_from_keys` (`:77`)
+takes a `PrivKeyBundle` and ignores it, returning a default backend.
+
+Two consequences beyond the disclosed `encrypt_message` defect:
+
+- The identity and device keys the client generates and registers with the
+  server have **no relationship to the keys MLS actually uses**.
+- Therefore **safety numbers verify nothing.** They are derived from identity
+  public keys that the MLS session never touches, so a matching safety number
+  would not detect a MitM at group establishment. The one user-facing
+  verification affordance is currently theatre.
+
+The disclosed defect was one line in `encrypt_message`. It is really four
+sites, and the shape is "the module ignores its inputs".
+
+Fix is feasible: `SignatureKeyPair::from_raw(scheme, private, public)` exists
+in `openmls_basic_credential` 0.3, so the caller's Ed25519 key can be imported
+rather than minted.
+
+### Why this is a rewrite, not a repair
+
+Every public function needs rework: key handling (import, not mint), credential
+construction, persistence (provider snapshot, not `MlsGroup::tls_serialize`),
+plus the 0.5→0.6 API migration. That is 8 of 8 entry points in a ~370-line
+module. The earlier "days, not weeks" judgement was made about migrating an API
+surface; it did not account for the module ignoring its own inputs.
+
+Escalated per the standing instruction rather than absorbed.
+
 ## Reproducing
 
 ```bash
