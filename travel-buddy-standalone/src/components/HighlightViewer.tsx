@@ -12,13 +12,14 @@
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  View, Text, Image, Pressable, Modal, StyleSheet,
+  View, Text, Pressable, Modal, StyleSheet,
   Alert, Dimensions, ActivityIndicator, TextInput, Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
 import { getMediaFilter, buildCssFilter } from '../lib/media/filters.ts';
-import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
+import { DisplayMediaImage, AvatarImage } from './ui/DisplayMediaImage.tsx';
+import { useHydratedMedia } from '../services/mediaUrl.ts';
 import { X, MessageCircle, Flag, Eye, Plus, Trash2, Volume2, VolumeX } from 'lucide-react-native';
 import { PortavaShareIcon } from './icons/PortavaShareIcon.tsx';
 import { StampIcon } from './stamps/StampIcon.tsx';
@@ -43,6 +44,9 @@ import { EngagementUserListSheet } from './EngagementUserListSheet.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+
+/** Author avatar diameter. AvatarImage needs this as a number, not a style. */
+const AVATAR_SIZE = 36;
 const ITEM_DURATION_MS = 5000;
 
 const HIT_SLOP = { top: 12, bottom: 12, left: 12, right: 12 };
@@ -97,6 +101,26 @@ export function HighlightViewer({
   const current = localHighlights[index];
   const isOwner = current?.ownerId === currentUserId;
   const isVideo = (current?.mediaType ?? '').startsWith('video/');
+
+  // Video sources hydrate exactly as SharedVideoPlayer's do (deb8c9a86).
+  // post-media is a PRIVATE bucket, so the stored value is a bare
+  // `post-media/<uid>/<file>.mp4` reference with no scheme — neither expo-av's
+  // <Video> nor the HTML <video> can load it, and expo-av cannot raise a useful
+  // error for a URI it cannot parse, so the surface just sat blank.
+  //
+  // This applies to the web branch too. The comment that used to sit there
+  // argued the original URL had to be used because <video> cannot attach a
+  // Bearer header — true but beside the point: a signed URL is
+  // self-authenticating and needs no header, which is exactly what hydration
+  // returns.
+  const videoSourceUrl = isVideo ? (current?.mediaUrl ?? null) : null;
+  const { resolved: hydratedVideo } = useHydratedMedia(videoSourceUrl ? [videoSourceUrl] : []);
+  const hydratedVideoUri = videoSourceUrl ? hydratedVideo[videoSourceUrl] : undefined;
+  // Until the resolve lands this is the raw value, which is correct for the
+  // absolute URLs some older rows still hold.
+  const playbackUri = typeof hydratedVideoUri === 'string' ? hydratedVideoUri : (videoSourceUrl ?? '');
+  // Server said no: unreadable. Same user-visible outcome as a decode failure.
+  const videoUnresolvable = hydratedVideoUri === null;
 
   // Reset when visible/startIndex changes; mark all circle highlights read when viewer opens.
   useEffect(() => {
@@ -166,11 +190,17 @@ export function HighlightViewer({
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [visible, index, paused, isVideo]);
 
-  // Reset video progress when navigating to a new item
+  // Reset video progress when navigating to a new item.
+  //
+  // playbackUri is in the deps deliberately. The first render passes the raw
+  // bare reference, which expo-av rejects and latches into videoError; when
+  // hydration lands a moment later the URL is valid but the latch would keep
+  // "Video unavailable" on screen until the user navigated away. Clearing on
+  // the URI change lets the resolved source actually get a chance to play.
   useEffect(() => {
     if (isVideo) setProgress(0);
     setVideoError(false); // QA round 2, bug 11: clear per item.
-  }, [index, isVideo]);
+  }, [index, isVideo, playbackUri]);
 
   // Video playback status — drives progress bar and auto-advance for video items
   const handleVideoStatus = useCallback((status: AVPlaybackStatus) => {
@@ -306,13 +336,12 @@ export function HighlightViewer({
         {isVideo && Platform.OS === 'web' ? (
           // Web video fallback: HTML <video> element with progress/auto-advance wired
           // via onTimeUpdate / onEnded; paused and muted are synced via useEffect above.
-          // HTML <video> cannot attach Bearer auth headers, so the original URL is used
-          // directly. When the flag is ON and buckets are private, a web-compatible
-          // auth mechanism (e.g. cookie session) would be needed — out of scope here.
+          // src is the hydrated URL — signed URLs are self-authenticating, so no
+          // Authorization header is needed here (see the note at playbackUri).
           <video
-            key={current.id}
+            key={`${current.id}:${playbackUri}`}
             ref={webVideoRef}
-            src={current.mediaUrl}
+            src={playbackUri}
             style={{
               position: 'absolute',
               top: 0,
@@ -334,9 +363,12 @@ export function HighlightViewer({
           />
         ) : isVideo ? (
           <Video
-            key={current.id}
+            // The URI is part of the key so the player remounts against the
+            // signed URL once hydration resolves, rather than depending on
+            // expo-av noticing a changed source prop mid-playback.
+            key={`${current.id}:${playbackUri}`}
             ref={videoRef}
-            source={{ uri: current.mediaUrl ?? '' }}
+            source={{ uri: playbackUri }}
             style={StyleSheet.absoluteFill}
             resizeMode={ResizeMode.COVER}
             shouldPlay={!paused}
@@ -365,7 +397,7 @@ export function HighlightViewer({
 
         {/* QA round 2, bug 11: tell the user the video failed instead of
             showing an indefinitely black frame. */}
-        {videoError && (
+        {(videoError || videoUnresolvable) && (
           <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]} pointerEvents="none">
             <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '600', textAlign: 'center', paddingHorizontal: 24 }}>
               Video unavailable
@@ -397,7 +429,15 @@ export function HighlightViewer({
               testID="highlight-author-identity"
             >
               <View style={s.authorRow}>
-                <Image source={{ uri: current.author.avatarUrl ?? undefined }} style={s.avatar} />
+                {/* Was a bare RN <Image> on a profile-media URL — same private-
+                    bucket class as the photo branch, rendering an empty grey
+                    circle. AvatarImage hydrates and degrades to initials. */}
+                <AvatarImage
+                  uri={current.author.avatarUrl}
+                  user={current.author}
+                  size={AVATAR_SIZE}
+                  style={s.avatar}
+                />
                 <View>
                   <Text style={s.authorName}>{current.author.name}</Text>
                   {locLabel ? <Text style={s.locText}>{locLabel}</Text> : null}
@@ -617,7 +657,9 @@ const s = StyleSheet.create({
     zIndex: 10,
   },
   authorRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, flex: 1 },
-  avatar: { width: 36, height: 36, borderRadius: 18, borderWidth: 1.5, borderColor: '#fff', backgroundColor: '#333' },
+  // Size lives in AVATAR_SIZE and is passed to AvatarImage, which needs the
+  // number to lay out its initials fallback; only the ring is styled here.
+  avatar: { borderWidth: 1.5, borderColor: '#fff' },
   authorName: { color: '#fff', fontWeight: '700', fontSize: 14 },
   locText: { color: 'rgba(255,255,255,0.8)', fontSize: 11, marginTop: 1 },
   timeChip: { backgroundColor: 'rgba(17,17,15,0.5)', paddingHorizontal: 7, paddingVertical: 3, borderRadius: radius.sm },
