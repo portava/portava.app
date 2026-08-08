@@ -6,14 +6,12 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "prebuildCommand": "bash scripts/eas-install-rust.sh",
       "ios": {
         "resourceClass": "m-medium"
       }
     },
     "preview": {
       "distribution": "internal",
-      "prebuildCommand": "bash scripts/eas-install-rust.sh",
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://portava.replit.app",
         "EXPO_PUBLIC_WEB_ORIGIN": "https://portava.replit.app"
@@ -24,7 +22,6 @@
     },
     "production": {
       "autoIncrement": true,
-      "prebuildCommand": "bash scripts/eas-install-rust.sh",
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://portava.replit.app",
         "EXPO_PUBLIC_WEB_ORIGIN": "https://portava.replit.app"
