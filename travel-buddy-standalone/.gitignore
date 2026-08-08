@@ -10,8 +10,16 @@ web-build/
 expo-env.d.ts
 
 # Native
+# These are bare patterns: they match a directory named ios/ or android/ at ANY
+# depth, not just the prebuild output at the app root. That silently swallowed
+# the whole native surface of the vendored OpenMLS module — build.gradle, the
+# Kotlin module, the podspec and the Swift module were never committed, so EAS
+# built and shipped an APK with no E2EE code in it at all. Re-include them
+# below; they are hand-written source, not prebuild output.
 ios/
 android/
+!vendor/expo-openmls/ios/
+!vendor/expo-openmls/android/
 *.orig.*
 *.jks
 *.p8

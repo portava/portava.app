@@ -1,0 +1,70 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+apply plugin: 'expo-module'
+
+// Trigger Rust cross-compilation for Android targets before the Kotlin build.
+// EAS cloud build workers have the Android NDK and Rust cross-compilation targets
+// installed. Local builds will skip this if cargo is not available.
+task buildRustAndroid {
+  doLast {
+    def cargoExists = exec {
+      commandLine 'which', 'cargo'
+      ignoreExitValue = true
+    }.exitValue == 0
+
+    if (!cargoExists) {
+      println "[expo-openmls] cargo not found — skipping Rust build (EAS will compile)"
+      return
+    }
+
+    def targets = [
+      'aarch64-linux-android',
+      'armv7-linux-androideabi',
+      'x86_64-linux-android',
+    ]
+
+    targets.each { target ->
+      exec {
+        workingDir '../'
+        commandLine 'cargo', 'build', '--release', '--target', target
+      }
+    }
+
+    // Generate the Kotlin bindings. THIS STEP DID NOT EXIST: the Rust was
+    // cross-compiled but uniffi-bindgen was never run, so uniffi/openmls/*.kt
+    // was never produced and ExpoOpenmlsModule.kt had nothing to import.
+    exec {
+      workingDir '../'
+      commandLine 'cargo', 'run', '--quiet', '--bin', 'uniffi-bindgen', '--',
+                  'generate', 'src/openmls.udl',
+                  '--language', 'kotlin',
+                  '--out-dir', 'android/src/main/java'
+    }
+  }
+}
+
+android {
+  compileSdkVersion safeExtGet("compileSdkVersion", 35)
+  defaultConfig {
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    targetSdkVersion safeExtGet("targetSdkVersion", 35)
+    versionCode 1
+    versionName "0.1.0"
+  }
+
+  sourceSets {
+    main {
+      // Include Rust-generated JNI libraries
+      jniLibs.srcDirs = ['../target/aarch64-linux-android/release', '../target/armv7-linux-androideabi/release']
+    }
+  }
+}
+
+repositories {
+  mavenCentral()
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:${kotlinVersion}"
+}
