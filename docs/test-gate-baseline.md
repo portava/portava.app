@@ -17,9 +17,9 @@ after filter centralisation. Full run, all green.
 |---|---|---|---|
 | typecheck | `pnpm run typecheck` (travel-buddy-standalone) | PASS | — |
 | rules-of-hooks | `npx eslint 'travel-buddy-standalone/{app,src}/**/*.{ts,tsx}'` | PASS | 0 violations |
-| component tests — native | `pnpm run test:component` | PASS | 1729/1729, 321 suites |
+| component tests — native | `pnpm run test:component` | PASS | 1737/1737, 322 suites |
 | component tests — web | `pnpm run test:component` (jest.web.config.js) | PASS | 4/4, 2 suites |
-| standalone node tests | `pnpm run test` (travel-buddy-standalone) | PASS | 3694/3694, 499 suites |
+| standalone node tests | `pnpm run test` (travel-buddy-standalone) | PASS | 3695/3695, 499 suites |
 | api-server tests | `pnpm run test` (artifacts/api-server) | PASS | 6135/6135, 1550 suites |
 
 `fail 0`, `skipped 0`, `todo 0`, `cancelled 0` on every node run.
@@ -45,6 +45,28 @@ Two severity-2 eslint errors exist and pre-date this baseline. Neither is
   interface declaring no members.
 
 ## Change log
+
+### 2026-08-08 — component 1729/321 → 1737/322, node 3694 → 3695 (action-row icon sizing)
+
+Additive only. One new file,
+`src/components/ui/__tests__/ActionRowIcon.component.test.tsx`, contributing 8
+tests in 1 suite: viewBox guards for both custom icon families, the letterbox
+mechanism, token identity, rendered ink parity across families, a guard that
+the custom icons are scaled *up* rather than set equal to the token, layout
+containment, and the 44pt touch minimum.
+
+The node +1 is not a new test file. `src/services/__tests__/getSession.bypassGuard.test.ts`
+enumerates source files and asserts each one does not wrap `getSession()`
+locally; the new `src/components/ui/ActionRowIcon.tsx` adds exactly one case to
+that enumeration. Any new file under the scanned tree will do the same — expect
+this counter to track file count, not test intent. api-server and typecheck
+held exactly.
+
+Note for anyone asserting on icon sizes: the global lucide mock
+(`src/__mocks__/lucide-react-native.tsx`) renders every icon as a bare `<View>`
+and used to drop all props, so no test could observe a lucide icon's size at
+all. It now forwards `size`. `View`'s prop types reject unknown props, hence the
+`ProbeView` cast — the test renderer records the prop regardless.
 
 ### 2026-08-07 — 3666/494 → 3694/499 (filter value verification)
 

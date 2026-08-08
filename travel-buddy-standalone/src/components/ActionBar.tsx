@@ -3,7 +3,8 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { MessageCircle, Bookmark } from 'lucide-react-native';
 import { color, space, type as t } from '../theme/tokens.ts';
 import { StampButton } from './stamps/StampButton.tsx';
-import { PortavaShareIcon } from './icons/PortavaShareIcon.tsx';
+import { ActionShareIcon, ACTION_STAMP_NOMINAL } from './ui/ActionRowIcon.tsx';
+import { POST_ACTION_ICON_SIZE } from './PostActionRow.tsx';
 
 function compact(n: number) {
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
@@ -46,9 +47,10 @@ export function ActionBar({
         entityId={entityId}
         initialCount={initialStampCount}
         initialIsStamped={initialIsStamped}
-        iconSize={20}
+        iconSize={ACTION_STAMP_NOMINAL}
+        iconBoxSize={POST_ACTION_ICON_SIZE}
       />
-      <Action icon={<MessageCircle size={20} color={tint} />}
+      <Action icon={<MessageCircle size={POST_ACTION_ICON_SIZE} color={tint} />}
         label={compact(commentCount)} onPress={onComment} tint={tint} />
       {renderSave ? (
         <View style={styles.action}>
@@ -56,12 +58,12 @@ export function ActionBar({
           <Text style={[styles.count, { color: tint }]}>{compact(saveCount)}</Text>
         </View>
       ) : (
-        <Action icon={<Bookmark size={20} color={tint} fill={saved ? tint : 'transparent'} />}
+        <Action icon={<Bookmark size={POST_ACTION_ICON_SIZE} color={tint} fill={saved ? tint : 'transparent'} />}
           label={compact(saveCount)} onPress={onSave} tint={tint} />
       )}
       <View style={{ flex: 1 }} />
       <Pressable onPress={onShare} hitSlop={8} accessibilityRole="button" accessibilityLabel="Share">
-        <PortavaShareIcon size={20} color={tint} />
+        <ActionShareIcon color={tint} />
       </Pressable>
     </View>
   );

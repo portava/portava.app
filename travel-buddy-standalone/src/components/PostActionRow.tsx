@@ -25,12 +25,17 @@
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
-import { color, type as t } from '../theme/tokens.ts';
+import { color, icon as iconToken, type as t } from '../theme/tokens.ts';
 import { formatCompactCount, actionAccessibilityLabel } from '../lib/counterFormat.ts';
 import { computeActionGap } from '../lib/actionRowGap.ts';
 
-/** Per the spec: icons render at 20-21px; 20 is the shared default. */
-export const POST_ACTION_ICON_SIZE = 20;
+/**
+ * The canonical action-row icon size (spec §2), aliased from the design token
+ * so there is exactly one number. This is the size lucide icons take directly;
+ * the two custom icon families need `ActionStampIcon` / `ActionShareIcon` from
+ * components/ui/ActionRowIcon.tsx to render at the same *visible* size.
+ */
+export const POST_ACTION_ICON_SIZE = iconToken.action;
 export const POST_ACTION_MIN_TOUCH = 44;
 const INTERNAL_GAP = 4;
 // hitSlop padding so a POST_ACTION_ICON_SIZE icon reaches the 44x44 minimum

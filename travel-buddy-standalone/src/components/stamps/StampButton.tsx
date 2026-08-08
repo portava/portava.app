@@ -71,6 +71,14 @@ export interface StampButtonProps {
   theme?: StampTheme;
   /** Size of the StampIcon glyph in px (default 22). */
   iconSize?: number;
+  /**
+   * Pins the icon's layout box independently of `iconSize`. Only needed in an
+   * action row, where the stamp must be scaled past its nominal size to reach
+   * the same *visible* size as the lucide icons beside it (see
+   * components/ui/ActionRowIcon.tsx) without that larger viewport widening or
+   * heightening the row. Defaults to `iconSize`, i.e. no change.
+   */
+  iconBoxSize?: number;
   /** Extra styles for the outer wrapper View. */
   style?: StyleProp<ViewStyle>;
   /**
@@ -104,6 +112,7 @@ export function StampButton({
   initialIsStamped = false,
   theme = 'Default',
   iconSize = 22,
+  iconBoxSize,
   style,
   controlledStamp,
   localBurst = false,
@@ -241,7 +250,18 @@ export function StampButton({
         disabled={isLoading || isAnimating}
       >
         <Animated.View style={[s.row, buttonStyle as AnimatedStyle<ViewStyle>]}>
-          <StampIcon size={iconSize} active={visualIsStamped} />
+          {/* Box defaults to iconSize, so the layout is unchanged unless a
+              caller explicitly pins it (action rows — see iconBoxSize). */}
+          <View
+            style={{
+              width: iconBoxSize ?? iconSize,
+              height: iconBoxSize ?? iconSize,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <StampIcon size={iconSize} active={visualIsStamped} />
+          </View>
 
           {visualCount > 0 && (
             <Animated.View style={countStyle as AnimatedStyle<ViewStyle>}>

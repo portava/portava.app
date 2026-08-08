@@ -11,7 +11,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, Alert } from 'react-native';
 import { MessageCircle, Smile, Bookmark } from 'lucide-react-native';
-import { PortavaShareIcon } from './icons/PortavaShareIcon.tsx';
+import { ActionShareIcon, ACTION_STAMP_NOMINAL } from './ui/ActionRowIcon.tsx';
 import { color } from '../theme/tokens.ts';
 import {
   getReactions,
@@ -220,7 +220,8 @@ export function PostEngagementBar({
           entityId={postId}
           initialCount={stampCount}
           initialIsStamped={isStampedByViewer}
-          iconSize={POST_ACTION_ICON_SIZE}
+          iconSize={ACTION_STAMP_NOMINAL}
+          iconBoxSize={POST_ACTION_ICON_SIZE}
           style={s.stampBtnWrapper}
           controlledStamp={controlledStamp}
           localBurst={localBurst}
@@ -252,7 +253,7 @@ export function PostEngagementBar({
   if (canShare) {
     left.push(actionSlot({
       key: 'share',
-      icon: <PortavaShareIcon size={POST_ACTION_ICON_SIZE} color={sharingDisabled ? color.haze : color.mute} />,
+      icon: <ActionShareIcon color={sharingDisabled ? color.haze : color.mute} />,
       accessibilityLabel: sharingDisabled ? 'Share (disabled)' : 'Share',
       onPress: handleShare,
     }));

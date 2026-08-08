@@ -6,7 +6,8 @@
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { MapPin, MessageCircle, Bookmark } from 'lucide-react-native';
-import { StampIcon } from '../stamps/StampIcon.tsx';
+import { ActionStampIcon } from '../ui/ActionRowIcon.tsx';
+import { POST_ACTION_ICON_SIZE } from '../PostActionRow.tsx';
 import { CachedImage } from '../CachedImage.tsx';
 import { color, space, radius, shadow, typography, layout } from '../../theme/tokens.ts';
 import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
@@ -163,20 +164,20 @@ export function PostCard({
           <View style={styles.engagementBar}>
             {onLike ? (
               <Pressable style={styles.engagementBtn} onPress={(e) => { e.stopPropagation?.(); onLike(); }} hitSlop={8}>
-                <StampIcon size={15} active={likedByMe} />
+                <ActionStampIcon active={likedByMe} />
                 {likeCount != null ? <Text style={styles.engagementCount}>{likeCount}</Text> : null}
               </Pressable>
             ) : null}
             {onComment ? (
               <Pressable style={styles.engagementBtn} onPress={(e) => { e.stopPropagation?.(); onComment(); }} hitSlop={8}>
-                <MessageCircle size={15} color={color.mute} />
+                <MessageCircle size={POST_ACTION_ICON_SIZE} color={color.mute} />
                 {commentCount != null ? <Text style={styles.engagementCount}>{commentCount}</Text> : null}
               </Pressable>
             ) : null}
             <View style={{ flex: 1 }} />
             {onSave ? (
               <Pressable style={styles.engagementBtn} onPress={(e) => { e.stopPropagation?.(); onSave(); }} hitSlop={8}>
-                <Bookmark size={15} color={savedByMe ? color.signal : color.mute} fill={savedByMe ? color.signal : 'none'} />
+                <Bookmark size={POST_ACTION_ICON_SIZE} color={savedByMe ? color.signal : color.mute} fill={savedByMe ? color.signal : 'none'} />
               </Pressable>
             ) : null}
           </View>

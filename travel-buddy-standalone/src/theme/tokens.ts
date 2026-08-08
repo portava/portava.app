@@ -82,8 +82,16 @@ export const shadow = {
   },
 } as const;
 
-/** Normalized sizing tokens for the design-layer pass. */
-export const icon = { sm: 14, md: 18, lg: 22, xl: 26 } as const;
+/**
+ * Normalized sizing tokens for the design-layer pass.
+ *
+ * `action` is the one canonical size for icons in a post/media action row
+ * (Stamp, Comment, Share, Save, More) per icon-spacing spec §2. Note the spec
+ * specifies a *visible* size — see components/ui/ActionRowIcon.tsx, which is
+ * what turns this number into a matching rendered glyph for icon families whose
+ * artwork fills its viewBox differently.
+ */
+export const icon = { sm: 14, md: 18, lg: 22, xl: 26, action: 20 } as const;
 
 /**
  * Named typography roles — every text element in the app maps to exactly one

@@ -21,8 +21,8 @@ import { getMediaFilter, buildCssFilter } from '../lib/media/filters.ts';
 import { DisplayMediaImage, AvatarImage } from './ui/DisplayMediaImage.tsx';
 import { useHydratedMedia } from '../services/mediaUrl.ts';
 import { X, MessageCircle, Flag, Eye, Plus, Trash2, Volume2, VolumeX } from 'lucide-react-native';
-import { PortavaShareIcon } from './icons/PortavaShareIcon.tsx';
-import { StampIcon } from './stamps/StampIcon.tsx';
+import { ActionStampIcon, ActionShareIcon } from './ui/ActionRowIcon.tsx';
+import { POST_ACTION_ICON_SIZE } from './PostActionRow.tsx';
 import { SaveButton } from './SaveButton.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { closeThenNavigate } from '../lib/deferredNavigate.ts';
@@ -530,8 +530,7 @@ export function HighlightViewer({
                   onLongPress={() => setLikerHighlightId(current.id)}
                   hitSlop={HIT_SLOP}
                 >
-                  <StampIcon
-                    size={24}
+                  <ActionStampIcon
                     active={likeState.liked}
                     color={likeState.liked ? color.signal : '#fff'}
                   />
@@ -546,20 +545,20 @@ export function HighlightViewer({
 
             {!isOwner && !replyOpen && (
               <Pressable onPress={() => setReplyOpen(true)} style={s.actionBtn} hitSlop={HIT_SLOP}>
-                <MessageCircle size={24} color="#fff" />
+                <MessageCircle size={POST_ACTION_ICON_SIZE} color="#fff" />
               </Pressable>
             )}
 
             {isOwner && (
               <Pressable onPress={() => setViewersOpen(true)} style={s.actionBtn}>
-                <Eye size={22} color="#fff" />
+                <Eye size={POST_ACTION_ICON_SIZE} color="#fff" />
                 <Text style={s.actionCount}>{current.viewCount}</Text>
               </Pressable>
             )}
 
             {isOwner && (
               <Pressable onPress={handleDelete} style={s.actionBtn} hitSlop={HIT_SLOP}>
-                <Trash2 size={20} color="rgba(255,255,255,0.7)" />
+                <Trash2 size={POST_ACTION_ICON_SIZE} color="rgba(255,255,255,0.7)" />
               </Pressable>
             )}
 
@@ -578,17 +577,17 @@ export function HighlightViewer({
                 accessibilityRole="button"
                 accessibilityLabel="Share this highlight"
               >
-                <PortavaShareIcon size={20} color="rgba(255,255,255,0.85)" />
+                <ActionShareIcon color="rgba(255,255,255,0.85)" />
               </Pressable>
             )}
 
             {!isOwner && current && (
-              <SaveButton entityType="highlight" entityId={current.id} size={20} tint="rgba(255,255,255,0.85)" />
+              <SaveButton entityType="highlight" entityId={current.id} size={POST_ACTION_ICON_SIZE} tint="rgba(255,255,255,0.85)" />
             )}
 
             {!isOwner && (
               <Pressable onPress={handleReport} style={s.actionBtn} hitSlop={HIT_SLOP}>
-                <Flag size={20} color="rgba(255,255,255,0.7)" />
+                <Flag size={POST_ACTION_ICON_SIZE} color="rgba(255,255,255,0.7)" />
               </Pressable>
             )}
           </View>

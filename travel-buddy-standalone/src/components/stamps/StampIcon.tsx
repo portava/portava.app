@@ -15,14 +15,15 @@ export interface StampIconProps {
   active?: boolean;
   /** Override stroke/fill color. Defaults to signal (active) or mute (idle). */
   color?: string;
+  testID?: string;
 }
 
-export function StampIcon({ size = 24, active = false, color: colorProp }: StampIconProps) {
+export function StampIcon({ size = 24, active = false, color: colorProp, testID }: StampIconProps) {
   const c = colorProp ?? (active ? tokens.signal : tokens.mute);
   const strokeW = 1.6;
 
   return (
-    <Svg width={size} height={size} viewBox="0 0 40 36" fill="none">
+    <Svg width={size} height={size} viewBox="0 0 40 36" fill="none" testID={testID}>
       <G
         stroke={c}
         strokeLinecap="round"
