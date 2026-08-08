@@ -16,6 +16,7 @@ import {
   TextInput,
   type AppStateStatus,
 } from 'react-native';
+import { Avatar } from '../../src/components/ui/Avatar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -319,16 +320,7 @@ const RSVP_BTNS: { key: RsvpAction; label: string; emoji: string }[] = [
 ];
 
 function CreatorAvatar({ creator }: { creator: MeetupCreator | null }) {
-  const size = 20;
-  if (creator?.avatarUrl) {
-    return <Image source={{ uri: creator.avatarUrl }} style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color.haze }} />;
-  }
-  const initial = creator?.displayName?.charAt(0)?.toUpperCase() ?? '?';
-  return (
-    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color.signal + '33', alignItems: 'center', justifyContent: 'center' }}>
-      <Text style={{ fontSize: 10, fontWeight: '700', color: color.signal }}>{initial}</Text>
-    </View>
-  );
+  return <Avatar uri={creator?.avatarUrl} name={creator?.displayName} size={20} />;
 }
 
 const AVATAR_SIZE = 26;
@@ -340,15 +332,7 @@ function AttendeeAvatar({ attendee }: { attendee: AttendeePreview }) {
   };
   return (
     <Pressable onPress={onPress} style={as.avatarWrap}>
-      {attendee.avatarUrl ? (
-        <Image source={{ uri: attendee.avatarUrl }} style={as.avatar} />
-      ) : (
-        <View style={[as.avatar, as.avatarFallback]}>
-          <Text style={as.avatarInitial}>
-            {(attendee.displayName ?? '?').charAt(0).toUpperCase()}
-          </Text>
-        </View>
-      )}
+      <Avatar uri={attendee.avatarUrl} name={attendee.displayName} size={AVATAR_SIZE} style={as.avatarRing} />
     </Pressable>
   );
 }
@@ -377,9 +361,8 @@ const as = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   avatarSlot: { zIndex: 1 },
   avatarWrap: {},
-  avatar: { width: AVATAR_SIZE, height: AVATAR_SIZE, borderRadius: AVATAR_SIZE / 2, borderWidth: 2, borderColor: color.paperRaised, backgroundColor: color.haze },
-  avatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: color.signal + '22' },
-  avatarInitial: { fontSize: 10, fontWeight: '700', color: color.signal },
+  // Sizing/shape come from <Avatar size>; this is the overlap ring only.
+  avatarRing: { borderWidth: 2, borderColor: color.paperRaised },
   overflowBadge: { width: AVATAR_SIZE, height: AVATAR_SIZE, borderRadius: AVATAR_SIZE / 2, borderWidth: 2, borderColor: color.paperRaised, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center', zIndex: 1 },
   overflowText: { fontSize: 9, fontWeight: '700', color: color.mute },
   goingLabel: { fontSize: 10, color: color.mute, fontWeight: '500', marginLeft: 2 },
@@ -966,7 +949,7 @@ function MessageBubble({
       {mine && readerAvatars && readerAvatars.length > 0 && deliveryStatus !== 'sending' && deliveryStatus !== 'failed' && (
         <View style={styles.readerAvatarRow}>
           {readerAvatars.map((uri, i) => (
-            <Image key={i} source={{ uri }} style={styles.readerAvatar} />
+            <Avatar key={i} uri={uri} size={14} />
           ))}
         </View>
       )}
@@ -1625,15 +1608,7 @@ export default function TelegraphThread() {
             disabled={!dmProfile?.handle || isDmBlocked}
             hitSlop={4}
           >
-            {dmProfile?.avatarUrl ? (
-              <Image source={{ uri: dmProfile.avatarUrl }} style={styles.dmAvatar} />
-            ) : (
-              <View style={styles.dmAvatarFallback}>
-                <Text style={styles.dmAvatarInitial}>
-                  {(displayName[0] ?? '?').toUpperCase()}
-                </Text>
-              </View>
-            )}
+            <Avatar uri={dmProfile?.avatarUrl} name={displayName} size={36} />
           </Pressable>
         )}
 
@@ -2529,9 +2504,6 @@ const styles = StyleSheet.create({
   },
   // DM avatar in header
   dmAvatarWrap: { flexShrink: 0 },
-  dmAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: color.haze },
-  dmAvatarFallback: { width: 36, height: 36, borderRadius: 18, backgroundColor: color.signal + '22', alignItems: 'center', justifyContent: 'center' },
-  dmAvatarInitial: { fontSize: 14, fontWeight: '700', color: color.signal },
 
   // Header right-side action row
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 0 },
@@ -2545,7 +2517,6 @@ const styles = StyleSheet.create({
   // Read receipt
   receiptRow: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
   readerAvatarRow: { flexDirection: 'row', alignItems: 'center', gap: 2, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
-  readerAvatar: { width: 14, height: 14, borderRadius: 7, backgroundColor: color.haze },
   receiptSent: { fontSize: 10, color: color.signal, fontFamily: 'Courier' },
   receiptFailRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   receiptFail: { fontSize: 10, color: '#EF4444', fontFamily: 'Courier' },

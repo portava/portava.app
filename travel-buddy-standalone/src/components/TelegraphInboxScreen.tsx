@@ -3,6 +3,7 @@ import {
   View, Text, FlatList, Image, Pressable, StyleSheet,
   ScrollView, TextInput, ActivityIndicator, Alert, Modal,
 } from 'react-native';
+import { Avatar } from './ui/Avatar.tsx';
 import { router, useFocusEffect } from 'expo-router';
 import { Zap, Users, Globe, BellOff, Search, MessageCirclePlus, Compass, Bot, ShieldOff, Flag, UserCheck, UserMinus } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -122,7 +123,7 @@ function TypeBadge({ threadType }: { threadType: string }) {
 function SkeletonRow() {
   return (
     <View style={s.row}>
-      <View style={[s.avatar, { backgroundColor: color.haze }]} />
+      <View style={s.avatarSkeleton} />
       <View style={{ flex: 1, gap: 7 }}>
         <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
           <View style={{ height: 13, width: '50%', backgroundColor: color.haze, borderRadius: 6 }} />
@@ -139,13 +140,14 @@ function DmThreadAvatar({ item, currentUserId }: { item: ThreadSummary; currentU
   const ringState = useHighlightRingState(other?.id ?? null);
   const [viewerOpen, setViewerOpen] = useState(false);
 
-  const inner = other?.avatarUrl
-    ? <Image source={{ uri: other.avatarUrl }} style={s.avatar} />
-    : (
-      <View style={[s.avatar, s.avatarPlaceholder]}>
-        <Text style={s.avatarInitial}>{(primaryIdentityText({ name: other?.name, handle: other?.handle }).replace(/^@/, '')[0] ?? '?').toUpperCase()}</Text>
-      </View>
-    );
+  const inner = (
+    <Avatar
+      uri={other?.avatarUrl}
+      name={primaryIdentityText({ name: other?.name, handle: other?.handle }).replace(/^@/, '')}
+      size={48}
+      style={s.avatarBox}
+    />
+  );
 
   if (!ringState?.hasActive) return inner;
 
@@ -642,13 +644,12 @@ function RequestCard({
           handle={sender?.handle ?? null}
           testID={`request-sender-identity-${sender?.id ?? 'unknown'}`}
         >
-          {sender?.avatarUrl ? (
-            <Image source={{ uri: sender.avatarUrl }} style={rc.avatar} />
-          ) : (
-            <View style={[rc.avatar, rc.avatarFallback]}>
-              <Text style={rc.avatarInitial}>{initial}</Text>
-            </View>
-          )}
+          <Avatar
+            uri={sender?.avatarUrl}
+            name={primaryIdentityText({ name: sender?.name, handle: sender?.handle }).replace(/^@/, '')}
+            size={52}
+            style={rc.avatarBox}
+          />
         </UserIdentityLink>
         <UserIdentityLink
           userId={sender?.id ?? ''}
@@ -784,7 +785,8 @@ const rc = StyleSheet.create({
     gap: space.sm,
   },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: color.haze, flexShrink: 0 },
+  // Sizing/shape come from <Avatar size>; this carries layout only.
+  avatarBox: { flexShrink: 0 },
   safetyBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -797,8 +799,6 @@ const rc = StyleSheet.create({
     borderRadius: radius.md,
   },
   safetyText: { ...t.small, color: color.mute, fontSize: 11, flex: 1, lineHeight: 15 },
-  avatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#E8E5DE' },
-  avatarInitial: { ...t.bodyStrong, color: color.ink, fontSize: 18 },
   name: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
   handle: { ...t.small, color: color.mute, fontSize: 12, marginTop: 1 },
   time: { ...t.small, color: color.faint, fontSize: 11 },
@@ -986,10 +986,11 @@ const s = StyleSheet.create({
   },
   rowPressed: { opacity: 0.6 },
 
-  avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: color.haze, flexShrink: 0 },
+  // Sizing/shape come from <Avatar size>; this carries layout only.
+  avatarBox: { flexShrink: 0 },
+  // The loading skeleton has no Avatar to size it, so it keeps its own.
+  avatarSkeleton: { width: 48, height: 48, borderRadius: 24, backgroundColor: color.haze, flexShrink: 0 },
   groupAvatar: { borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  avatarPlaceholder: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#E8E5DE' },
-  avatarInitial: { ...t.bodyStrong, color: color.ink },
 
   nameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
   nameLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 5, flexShrink: 1 },

@@ -5,7 +5,8 @@
  * ring timeout and connect failures are handled by CallContext.
  */
 import React from 'react';
-import { View, Text, Image, StyleSheet, Modal, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Modal, ActivityIndicator } from 'react-native';
+import { CallAvatar } from './CallAvatar.tsx';
 import type { CallPhase } from '../../context/CallContext.tsx';
 import { CallControls } from './CallControls.tsx';
 
@@ -51,13 +52,7 @@ export function OutgoingCallScreen({
         <View style={s.mediaLayer} />
 
         <View style={s.top}>
-          {peerAvatarUrl ? (
-            <Image source={{ uri: peerAvatarUrl }} style={s.avatar} />
-          ) : (
-            <View style={[s.avatar, s.avatarFallback]}>
-              <Text style={s.initials}>{peerName.slice(0, 2).toUpperCase()}</Text>
-            </View>
-          )}
+          <CallAvatar uri={peerAvatarUrl} name={peerName} size={118} initialsSize={34} />
           <Text style={s.name} numberOfLines={1}>{peerName}</Text>
           <View style={s.statusRow}>
             {(phase === 'connecting' || phase === 'reconnecting') ? (
@@ -91,9 +86,6 @@ const s = StyleSheet.create({
   },
   mediaLayer: { ...StyleSheet.absoluteFillObject },
   top: { alignItems: 'center', gap: 10 },
-  avatar: { width: 110, height: 110, borderRadius: 55, backgroundColor: '#1F2937' },
-  avatarFallback: { alignItems: 'center', justifyContent: 'center' },
-  initials: { fontSize: 34, fontWeight: '700', color: '#9CA3AF' },
   name: { fontSize: 24, fontWeight: '800', color: '#fff', maxWidth: 280, marginTop: 6 },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 24 },
   status: { fontSize: 15, color: '#D1D5DB', fontVariant: ['tabular-nums'] },

@@ -5,8 +5,9 @@
  */
 import React from 'react';
 import {
-  View, Text, Image, StyleSheet, Modal, ActivityIndicator, FlatList,
+  View, Text, StyleSheet, Modal, ActivityIndicator, FlatList,
 } from 'react-native';
+import { CallAvatar } from './CallAvatar.tsx';
 import type { CallPhase } from '../../context/CallContext.tsx';
 import type { CallParticipantDto } from '../../services/calls.ts';
 import { CallControls } from './CallControls.tsx';
@@ -70,13 +71,7 @@ export function GroupCallScreen({
             return (
               <View style={s.row} accessibilityLabel={`${participantLabel(item)}${isSpeaking ? ', speaking' : ''}`}>
                 <View style={[s.avatarWrap, isSpeaking && s.avatarSpeaking]}>
-                  {item.avatarUrl ? (
-                    <Image source={{ uri: item.avatarUrl }} style={s.avatar} />
-                  ) : (
-                    <View style={[s.avatar, s.avatarFallback]}>
-                      <Text style={s.initials}>{participantLabel(item).replace('@', '').slice(0, 2).toUpperCase()}</Text>
-                    </View>
-                  )}
+                  <CallAvatar uri={item.avatarUrl} name={participantLabel(item)} size={46} initialsSize={16} />
                 </View>
                 <Text style={s.rowName} numberOfLines={1}>{participantLabel(item)}</Text>
                 {isSpeaking ? <Text style={s.speakingTag}>Speaking</Text> : null}
@@ -118,9 +113,6 @@ const s = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   avatarWrap: { borderRadius: 27, borderWidth: 2, borderColor: 'transparent', padding: 2 },
   avatarSpeaking: { borderColor: '#34D399' },
-  avatar: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#1F2937' },
-  avatarFallback: { alignItems: 'center', justifyContent: 'center' },
-  initials: { fontSize: 16, fontWeight: '700', color: '#9CA3AF' },
   rowName: { flex: 1, fontSize: 16, fontWeight: '600', color: '#F3F4F6' },
   speakingTag: { fontSize: 12, fontWeight: '700', color: '#34D399' },
   empty: { textAlign: 'center', color: '#6B7280', fontSize: 14, marginTop: 30 },

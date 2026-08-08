@@ -4,7 +4,8 @@
  * Accept Video — the camera never turns on without explicit action.
  */
 import React from 'react';
-import { View, Text, Image, Pressable, StyleSheet, Modal } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Modal } from 'react-native';
+import { CallAvatar } from './CallAvatar.tsx';
 import { Phone, PhoneOff, Video } from 'lucide-react-native';
 import type { IncomingCallInfo } from '../../context/CallContext.tsx';
 import { PassportVerificationStamp } from '../PassportVerificationStamp.tsx';
@@ -27,13 +28,7 @@ export function IncomingCallScreen({
     <Modal visible={visible} animationType="fade" onRequestClose={onDecline}>
       <View style={s.root}>
         <View style={s.top}>
-          {info.caller.avatarUrl ? (
-            <Image source={{ uri: info.caller.avatarUrl }} style={s.avatar} />
-          ) : (
-            <View style={[s.avatar, s.avatarFallback]}>
-              <Text style={s.initials}>{displayName.slice(0, 2).toUpperCase()}</Text>
-            </View>
-          )}
+          <CallAvatar uri={info.caller.avatarUrl} name={displayName} size={118} initialsSize={36} />
           <View style={s.nameRow}>
             <Text style={s.name} numberOfLines={1}>{displayName}</Text>
             {info.caller.verified ? <PassportVerificationStamp status="verified" /> : null}
@@ -88,9 +83,6 @@ const s = StyleSheet.create({
     justifyContent: 'space-between', paddingVertical: 90, paddingHorizontal: 24,
   },
   top: { alignItems: 'center', gap: 10 },
-  avatar: { width: 118, height: 118, borderRadius: 59, backgroundColor: '#1F2937' },
-  avatarFallback: { alignItems: 'center', justifyContent: 'center' },
-  initials: { fontSize: 36, fontWeight: '700', color: '#9CA3AF' },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
   name: { fontSize: 26, fontWeight: '800', color: '#fff', maxWidth: 260 },
   kind: { fontSize: 15, color: '#D1D5DB' },

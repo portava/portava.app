@@ -13,6 +13,7 @@ import React, { useEffect, useState } from 'react';
 import {
   Modal, View, Text, Pressable, StyleSheet, ActivityIndicator, Image, Alert,
 } from 'react-native';
+import { Avatar } from './ui/Avatar.tsx';
 import { closeThenNavigate } from '../lib/deferredNavigate.ts';
 import {
   X, Hash, User, Plane, Users, Calendar, MapPin, Flag,
@@ -179,13 +180,7 @@ function UserCard({ data, onNavigate }: { data: UserPreview; onNavigate: () => v
   return (
     <View style={s.card}>
       <View style={s.userRow}>
-        {data.avatarUrl ? (
-          <Image source={{ uri: data.avatarUrl }} style={s.avatar} />
-        ) : (
-          <View style={[s.avatar, s.avatarFallback]}>
-            <Text style={s.avatarInitial}>{initials}</Text>
-          </View>
-        )}
+        <Avatar uri={data.avatarUrl} name={data.name ?? data.handle} size={56} />
         <View style={s.userInfo}>
           <Text style={s.userName}>{data.name ?? data.handle}</Text>
           <Text style={s.userHandle}>@{data.handle}</Text>
@@ -444,8 +439,6 @@ const s = StyleSheet.create({
 
   userRow: { flexDirection: 'row', gap: space.md, alignItems: 'center', alignSelf: 'stretch' },
   avatar: { width: 56, height: 56, borderRadius: 28, backgroundColor: color.haze },
-  avatarFallback: { backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center' },
-  avatarInitial: { fontSize: 20, fontWeight: '700', color: color.onInk },
   userInfo: { flex: 1, gap: 2 },
   userName: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
   userHandle: { ...t.small, color: color.mute },

@@ -22,6 +22,7 @@ import {
   ScrollView,
   Image,
 } from 'react-native';
+import { CachedImage } from './CachedImage.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Compass, X, MapPin, Send, Zap } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
@@ -212,7 +213,7 @@ function CardRow({
     >
       {/* Image (optional) */}
       {card.imageUrl ? (
-        <Image source={{ uri: card.imageUrl }} style={cr.image} resizeMode="cover" />
+        <CachedImage source={{ uri: card.imageUrl }} style={cr.image} resizeMode="cover" />
       ) : (
         <View style={[cr.imageFallback, { backgroundColor: bg }]}>
           <Compass size={22} color={tc} />
