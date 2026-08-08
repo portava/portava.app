@@ -182,6 +182,9 @@ export type MsgErrorKind =
   | 'network_unreachable'
   | 'config_error';
 
+import { buildOutgoingPayload } from '../lib/e2ee/threadCrypto.ts';
+import { realCryptoPort } from '../lib/e2ee/realPort.ts';
+
 export interface MsgResult<T> {
   ok: boolean;
   data: T | null;
@@ -414,9 +417,27 @@ export async function getThreadMessages(
 export async function sendMessage(
   threadId: string,
   body: string,
-  opts?: { msgType?: string; subtype?: string; clientId?: string; replyToId?: string },
+  opts?: {
+    msgType?: string;
+    subtype?: string;
+    clientId?: string;
+    replyToId?: string;
+    /**
+     * True for threads with `is_e2ee`. When set, the body is encrypted and the
+     * request carries `ciphertext` with NO `body`.
+     *
+     * If encryption cannot happen this THROWS E2eeSendBlockedError rather than
+     * posting plaintext. That is deliberate and is the whole contract: a
+     * message that quietly goes out in the clear on a thread the user has been
+     * shown a lock on is worse than a visible failure. Callers must surface the
+     * error; they must not catch it and retry without the flag.
+     */
+    isE2ee?: boolean;
+  },
 ): Promise<MsgResult<Message>> {
-  return apiPost(`/api/threads/${threadId}/messages`, { body, ...opts });
+  const { isE2ee, ...rest } = opts ?? {};
+  const payload = await buildOutgoingPayload(realCryptoPort, threadId, body, isE2ee === true);
+  return apiPost(`/api/threads/${threadId}/messages`, { ...payload, ...rest });
 }
 
 export async function saveMessage(

@@ -21,7 +21,7 @@ sweep. Full run, all green.
 | bare-image guard | `pnpm run lint:bare-image` (travel-buddy-standalone) | PASS | 0 bindings |
 | component tests — native | `pnpm run test:component` | PASS | 1744/1744, 323 suites |
 | component tests — web | `pnpm run test:component` (jest.web.config.js) | PASS | 4/4, 2 suites |
-| standalone node tests | `pnpm run test` (travel-buddy-standalone) | PASS | 3696/3696, 499 suites |
+| standalone node tests | `pnpm run test` (travel-buddy-standalone) | PASS | 3718/3718, 499 suites |
 | api-server tests | `pnpm run test` (artifacts/api-server) | PASS | 6135/6135, 1550 suites |
 
 `fail 0`, `skipped 0`, `todo 0`, `cancelled 0` on every node run.
@@ -48,6 +48,20 @@ Two severity-2 eslint errors exist and pre-date this baseline. Neither is
   interface declaring no members.
 
 ## Change log
+
+### 2026-08-08 — node 3696 → 3718 (E2EE send-path seam)
+
+Additive. One new file, `src/lib/e2ee/__tests__/threadCrypto.test.ts`,
+contributing 18 tests. The other +4 is the `getSession.bypassGuard`
+enumeration, which asserts twice per source file and picked up the two new
+files (`lib/e2ee/threadCrypto.ts`, `lib/e2ee/realPort.ts`). Verified by running
+both suites in isolation — 18 and 1100 (was 1096) — rather than inferred from
+the delta. Suites held at 499 because the new file uses bare `test()` with no
+`describe`.
+
+The suite is deliberately failure-path-first: it sweeps every way encryption
+can fail and asserts none of them returns a plaintext body on an E2EE thread.
+
 
 ### 2026-08-08 — component 1737/322 → 1744/323 (action-row touch targets)
 
