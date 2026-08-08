@@ -1165,6 +1165,98 @@ router.post('/threads/:threadId/read', async (req, res) => {
 });
 
 /* ---------------------------------------------------------------------------
+ * POST /api/threads/:threadId/e2ee
+ * ---------------------------------------------------------------------------
+ * Mark a 1:1 thread end-to-end encrypted.
+ *
+ * ORDERING IS ENFORCED HERE, NOT TRUSTED.
+ *
+ * An MLS Welcome must already exist in the thread before it can be flagged.
+ * The send handler refuses a plaintext body on an E2EE thread, and the Welcome
+ * IS a plaintext system message — so flipping the flag first makes the Welcome
+ * permanently undeliverable and strands a thread that nobody, including its
+ * members, can ever read.
+ *
+ * The client sequences this correctly, but the client is not the only possible
+ * caller and a retry or a crash between steps could invert it. Checking the
+ * precondition server-side makes the wrong order impossible rather than merely
+ * tested.
+ *
+ * Idempotent, direct threads only, members only. Never un-sets the flag: going
+ * back to plaintext on a thread users were shown a lock on is not a transition
+ * this endpoint should be able to make.
+ */
+router.post('/threads/:threadId/e2ee', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { threadId } = req.params;
+  if (!isUuid(threadId)) { sendError(res, 'invalid_payload', 'Invalid thread id'); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  // Membership — thread access is gated only by message_thread_members.
+  const { data: member } = await sc
+    .from('message_thread_members')
+    .select('user_id')
+    .eq('thread_id', threadId)
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (!member) { sendError(res, 'not_found', 'Thread not found'); return; }
+
+  const { data: thread } = await sc
+    .from('message_threads')
+    .select('id, thread_type, is_e2ee')
+    .eq('id', threadId)
+    .maybeSingle();
+  if (!thread) { sendError(res, 'not_found', 'Thread not found'); return; }
+
+  // Already encrypted — idempotent success so a retry is safe.
+  if ((thread as any).is_e2ee === true) {
+    res.status(200).json({ ok: true, threadId, isE2ee: true });
+    return;
+  }
+
+  if ((thread as any).thread_type !== 'direct') {
+    sendError(res, 'invalid_payload', 'Only 1:1 threads can be end-to-end encrypted');
+    return;
+  }
+
+  // THE PRECONDITION. No Welcome, no flag.
+  const { data: welcome } = await sc
+    .from('messages')
+    .select('id')
+    .eq('thread_id', threadId)
+    .eq('msg_type', 'system')
+    .eq('subtype', 'e2ee_welcome')
+    .limit(1)
+    .maybeSingle();
+
+  if (!welcome) {
+    sendError(
+      res,
+      'invalid_payload',
+      'Cannot enable encryption before the key-exchange message has been delivered',
+    );
+    return;
+  }
+
+  const { error } = await sc
+    .from('message_threads')
+    .update({ is_e2ee: true })
+    .eq('id', threadId);
+
+  if (error) {
+    req.log.error({ err: error }, 'mark thread e2ee failed');
+    sendError(res, 'db_error', error.message);
+    return;
+  }
+
+  res.status(200).json({ ok: true, threadId, isE2ee: true });
+});
+
+/* ---------------------------------------------------------------------------
  * GET /api/me/threads
  * ---------------------------------------------------------------------------
  */
