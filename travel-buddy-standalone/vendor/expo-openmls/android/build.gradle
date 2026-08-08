@@ -1,6 +1,7 @@
-apply plugin: 'com.android.library'
-apply plugin: 'kotlin-android'
-apply plugin: 'expo-module'
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
 
 // Trigger Rust cross-compilation for Android targets before the Kotlin build.
 //
@@ -86,10 +87,8 @@ afterEvaluate {
 }
 
 android {
-  compileSdkVersion safeExtGet("compileSdkVersion", 35)
+  namespace "expo.modules.openmls"
   defaultConfig {
-    minSdkVersion safeExtGet("minSdkVersion", 24)
-    targetSdkVersion safeExtGet("targetSdkVersion", 35)
     versionCode 1
     versionName "0.1.0"
   }
@@ -102,11 +101,3 @@ android {
   }
 }
 
-repositories {
-  mavenCentral()
-}
-
-dependencies {
-  implementation project(':expo-modules-core')
-  implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:${kotlinVersion}"
-}
