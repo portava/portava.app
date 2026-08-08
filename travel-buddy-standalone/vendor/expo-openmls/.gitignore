@@ -1,1 +1,8 @@
 target/
+
+# Generated build output, not source. android/ and ios/ under this module are
+# deliberately tracked now (see travel-buddy-standalone/.gitignore), so the
+# generated artefacts that land inside them must be excluded explicitly or the
+# next commit sweeps them in.
+android/src/main/java/uniffi/
+ios/Rust/

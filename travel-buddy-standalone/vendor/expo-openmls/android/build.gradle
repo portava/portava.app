@@ -3,19 +3,47 @@ apply plugin: 'kotlin-android'
 apply plugin: 'expo-module'
 
 // Trigger Rust cross-compilation for Android targets before the Kotlin build.
-// EAS cloud build workers have the Android NDK and Rust cross-compilation targets
-// installed. Local builds will skip this if cargo is not available.
+//
+// The EAS pre-install hook installs rustup with `--no-modify-path`, so
+// ~/.cargo/bin is NOT on PATH by the time Gradle runs in a later build phase.
+// Resolve cargo explicitly and put its bin dir on PATH for every invocation
+// below, rather than trusting an inherited environment.
+def cargoHome = System.getenv('CARGO_HOME') ?: "${System.getProperty('user.home')}/.cargo"
+def cargoBinDir = new File(cargoHome, 'bin')
+def cargoBinary = new File(cargoBinDir, 'cargo')
+def cargoExecutable = cargoBinary.exists() ? cargoBinary.absolutePath : 'cargo'
+def cargoPath = "${cargoBinDir.absolutePath}${File.pathSeparator}${System.getenv('PATH') ?: ''}"
+
 task buildRustAndroid {
   doLast {
-    def cargoExists = exec {
-      commandLine 'which', 'cargo'
+    // Verify cargo actually runs before anything else.
+    //
+    // This block used to println "cargo not found — skipping Rust build" and
+    // return. That is how you ship an app with no encryption in it: the Rust
+    // is skipped, no .so is produced, Kotlin never sees the bindings, and the
+    // build goes green. A missing Rust toolchain must fail the build here,
+    // where the cause is one line of output, rather than surface as an
+    // UnsatisfiedLinkError on a device or as a silently crypto-free APK.
+    def probe = new ByteArrayOutputStream()
+    def cargoOk = exec {
+      commandLine cargoExecutable, '--version'
+      environment 'PATH', cargoPath
+      standardOutput = probe
+      errorOutput = probe
       ignoreExitValue = true
     }.exitValue == 0
 
-    if (!cargoExists) {
-      println "[expo-openmls] cargo not found — skipping Rust build (EAS will compile)"
-      return
+    if (!cargoOk) {
+      throw new GradleException(
+        "[expo-openmls] cargo is required to build this module and is not usable.\n" +
+        "  tried:  ${cargoExecutable}\n" +
+        "  PATH:   ${cargoPath}\n" +
+        "  output: ${probe.toString().trim()}\n" +
+        "Install Rust — scripts/eas-install-rust.sh on EAS workers, rustup locally.\n" +
+        "This is deliberately fatal: skipping it produces an app with no E2EE."
+      )
     }
+    println "[expo-openmls] using ${cargoExecutable} — ${probe.toString().trim()}"
 
     def targets = [
       'aarch64-linux-android',
@@ -24,22 +52,36 @@ task buildRustAndroid {
     ]
 
     targets.each { target ->
+      println "[expo-openmls] cargo build --release --target ${target}"
       exec {
         workingDir '../'
-        commandLine 'cargo', 'build', '--release', '--target', target
+        commandLine cargoExecutable, 'build', '--release', '--target', target
+        environment 'PATH', cargoPath
       }
     }
 
     // Generate the Kotlin bindings. THIS STEP DID NOT EXIST: the Rust was
     // cross-compiled but uniffi-bindgen was never run, so uniffi/openmls/*.kt
     // was never produced and ExpoOpenmlsModule.kt had nothing to import.
+    println "[expo-openmls] uniffi-bindgen: generating Kotlin bindings"
     exec {
       workingDir '../'
-      commandLine 'cargo', 'run', '--quiet', '--bin', 'uniffi-bindgen', '--',
+      commandLine cargoExecutable, 'run', '--quiet', '--bin', 'uniffi-bindgen', '--',
                   'generate', 'src/openmls.udl',
                   '--language', 'kotlin',
                   '--out-dir', 'android/src/main/java'
+      environment 'PATH', cargoPath
     }
+  }
+}
+
+// Nothing depended on buildRustAndroid, so Gradle never scheduled it. The task
+// existed, looked like the Rust build was wired, and ran zero times in the
+// cloud — `cargo build` appears nowhere in the EAS build log. Declaring a task
+// is not running it.
+afterEvaluate {
+  tasks.matching { it.name == 'preBuild' }.configureEach {
+    dependsOn buildRustAndroid
   }
 }
 
