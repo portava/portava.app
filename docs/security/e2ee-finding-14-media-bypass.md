@@ -97,7 +97,7 @@ ciphertext blob, put the key in the encrypted payload, decrypt on fetch.
 - Substantially more work: a new upload path, key handling, client-side
   decrypt-then-render, thumbnail generation moved client-side, and a cache
   story. It also permanently forecloses server-side transcoding for DM media
-  (see `docs/media-4k-pipeline-scoping.md`).
+  (see `docs/media/4k-pipeline-scoping.md`).
 
 **Interim mitigation, if neither lands soon:** stop claiming encryption on
 threads where it does not hold — the verification UI is already gated off
