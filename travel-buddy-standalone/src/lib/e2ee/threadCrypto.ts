@@ -70,6 +70,8 @@ export interface CryptoPort {
     welcomeB64: string,
     pendingStateB64: string,
   ): Promise<boolean>;
+  /** The device's Ed25519 signing pair, or null before crypto identity exists. */
+  getDeviceSigningKeys(): Promise<{ priv: string; pub: string } | null>;
   getPendingKeyPackageState(): Promise<string | null>;
   setPendingKeyPackageState(stateB64: string): Promise<void>;
   clearPendingKeyPackageState(): Promise<void>;

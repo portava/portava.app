@@ -440,6 +440,38 @@ export async function sendMessage(
   return apiPost(`/api/threads/${threadId}/messages`, { ...payload, ...rest });
 }
 
+/**
+ * Consume one of a peer's published MLS KeyPackages. One-shot: the server
+ * deletes it. A `no_key_package` error means the peer has no device keys
+ * registered, or their pool is empty — both are visible negotiation failures,
+ * never a reason to fall back to plaintext.
+ */
+export async function consumePeerKeyPackage(
+  userId: string,
+): Promise<MsgResult<{ keyPackageB64: string; deviceId: string }>> {
+  return apiGet(`/api/users/${encodeURIComponent(userId)}/key-packages/consume`);
+}
+
+/**
+ * Publish KeyPackages to this device's pool so others can start E2EE threads.
+ */
+export async function publishKeyPackages(
+  deviceId: string,
+  keyPackages: string[],
+): Promise<MsgResult<{ ok: boolean }>> {
+  return apiPost(`/api/me/devices/${encodeURIComponent(deviceId)}/key-packages`, { keyPackages });
+}
+
+/**
+ * Mark a 1:1 thread end-to-end encrypted.
+ *
+ * The server refuses unless the Welcome is already in the thread, so calling
+ * this too early fails loudly instead of stranding a thread nobody can read.
+ */
+export async function markThreadE2ee(threadId: string): Promise<MsgResult<{ ok: boolean }>> {
+  return apiPost(`/api/threads/${threadId}/e2ee`, {});
+}
+
 export async function saveMessage(
   threadId: string,
   messageId: string,

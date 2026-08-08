@@ -29,6 +29,13 @@ export const realCryptoPort: CryptoPort = {
   decryptFromThread,
   initGroupAsInitiator,
   initGroupAsRecipient,
+  getDeviceSigningKeys: async () => {
+    const [priv, pub] = await Promise.all([
+      getSecure(SECURE_KEYS.DEVICE_ED25519_PRIVATE_KEY),
+      getSecure(SECURE_KEYS.DEVICE_ED25519_PUBLIC_KEY),
+    ]);
+    return priv && pub ? { priv, pub } : null;
+  },
   getPendingKeyPackageState: () => getSecure(PENDING_KP_KEY),
   setPendingKeyPackageState: async (stateB64: string) => { await setSecure(PENDING_KP_KEY, stateB64); },
   clearPendingKeyPackageState: async () => { await deleteSecure(PENDING_KP_KEY); },

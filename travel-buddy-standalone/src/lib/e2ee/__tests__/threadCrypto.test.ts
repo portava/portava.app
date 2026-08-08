@@ -67,6 +67,7 @@ const port = {
   },
   initGroupAsInitiator: async () => state.initiatorResult,
   initGroupAsRecipient: async () => state.joinResult,
+  getDeviceSigningKeys: async () => ({ priv: 'PRIV', pub: 'PUB' }),
   getPendingKeyPackageState: async () => pending.get('k') ?? null,
   setPendingKeyPackageState: async (v: string) => { pending.set('k', v); },
   clearPendingKeyPackageState: async () => { pending.delete('k'); },
