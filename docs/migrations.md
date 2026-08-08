@@ -8,6 +8,32 @@ All migrations have been applied to production Supabase unless noted otherwise.
 
 > **Contributing reminder:** When you apply a new migration to Supabase, immediately append a row to this table before merging. Include the filename, a plain-English description of every table/column/index/policy created or altered, and the date applied. Skipping this step is the primary cause of log drift.
 
+## Migration directory map
+
+The repo has **three** SQL migration directories. Only one is canonical. Knowing which tree owns each table prevents the class of bug where a column exists in one tree's file but never in the live schema.
+
+| Directory | Status | Audited by |
+|-----------|--------|------------|
+| `artifacts/api-server/src/migrations/` | **Canonical** — all new migrations go here | `auditMigrationsVsLive.ts` (always) |
+| `artifacts/api-server/migrations/` | **Frozen legacy** — frozen 2026-07-17, no new files permitted | Frozen-dir guard in `auditMigrationsVsLive.ts` and `checkFrozenDir.ts`; audited against live with `--include-legacy` flag |
+| `migrations/` (repo root) | **Archived historical** — archived 2026-08-08, no new files permitted | Frozen-dir guard in `auditMigrationsVsLive.ts` and `checkFrozenDir.ts`; **not** included in live-schema audit |
+
+### Which tree is the source of truth when they disagree?
+
+The **live schema is always authoritative**. When two trees contain files with the same number that create conflicting columns, whichever column actually exists live wins — the other tree's file is wrong. Known divergences:
+
+- `tags.created_at` — exists live; comes from **root** `0043_tags_hashtags.sql`.  
+  The **canonical** `0043_tags_hashtags.sql` created `tags.tagged_at`, which was never applied and does not exist live. `tagged_at` is in the audit allowlist.
+- `user_location_state.lat/lng/accuracy_meters/source` — live column names; the canonical `0025_location_system.sql` used `latitude/longitude/accuracy/location_source` (in allowlist).
+- `passport_stamps.awarded_at` — live name; canonical file used `earned_at` (in allowlist).
+- `hashtags.slug` — live name; canonical file used `normalized_name` (in allowlist).
+
+### Why the root `migrations/` tree is not included in the live-schema audit
+
+The root tree partially overlaps with both the canonical and legacy chains and contains a mix of files that were applied in the very early production schema, files superseded by later migrations, and files that would produce massive false-positive drift if mechanically compared against live. Including it would require a large allowlist expansion and could mask genuine canonical-chain regressions. The correct fix for any drift found in the root tree is to add the affected column to the canonical chain's allowlist (with a comment), not to add a new audit pass over the root tree.
+
+The frozen-dir guard (run in CI via `check:frozen-dir` and at startup of `audit:schema`) ensures no one silently adds new files to the root tree.
+
 ## Automated audit
 
 The full audit is committed as `artifacts/api-server/src/scripts/auditMigrationsVsLive.ts`. Run it on demand from `artifacts/api-server`:

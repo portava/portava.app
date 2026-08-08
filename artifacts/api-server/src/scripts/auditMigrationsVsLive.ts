@@ -35,6 +35,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FROZEN_LEGACY_FILES } from "./frozenLegacyFiles.js";
+import { FROZEN_ROOT_FILES } from "./frozenRootFiles.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -49,44 +50,54 @@ if (process.argv.includes("--include-legacy")) {
   MIGRATION_DIRS.push(resolve(__dir, "../../migrations"));
 }
 
-// ── Legacy-dir freeze guard ───────────────────────────────────────────────────
+// ── Frozen-dir guards ─────────────────────────────────────────────────────────
 //
-// The legacy migrations/ dir (artifacts/api-server/migrations/) is frozen as of
-// 2026-07-17.  New database changes must go into src/migrations/.  Any .sql
-// file that appears in the legacy dir beyond the known set causes an immediate
-// failure — no DB credentials required.
+// Two migration directories are frozen / archived; neither should receive new
+// .sql files.  Both are checked here (no DB credentials required) so that the
+// full audit never silently starts against a tampered frozen dir.
 //
-// FROZEN_LEGACY_FILES is imported from ./frozenLegacyFiles.ts — the single
-// source of truth shared with checkFrozenDir.ts.
+// FROZEN_LEGACY_FILES / FROZEN_ROOT_FILES are the single sources of truth,
+// shared with checkFrozenDir.ts.
 
-{
-  const legacyDir = resolve(__dir, "../../migrations");
-  // Scan recursively so a .sql file tucked in a sub-directory is also caught.
-  // readdirSync with { recursive: true } returns relative paths (e.g.
-  // "subdir/0999_sneak.sql") — any path that is not an exact top-level match
-  // against FROZEN_LEGACY_FILES is therefore rogue.
-  let legacyEntries: string[] = [];
+function checkFrozenDirGuard(dir: string, frozenSet: Set<string>, label: string): void {
+  let entries: string[] = [];
   try {
-    legacyEntries = (
-      readdirSync(legacyDir, { recursive: true }) as string[]
+    entries = (
+      readdirSync(dir, { recursive: true }) as string[]
     ).filter((f) => f.endsWith(".sql"));
   } catch {
     // dir not present — nothing to check
+    return;
   }
-  // A frozen file is stored in the set as a bare filename (no path separator).
+  // A frozen file is stored as a bare filename (no path separator).
   // Anything that contains a "/" (nested) or is not in the known set is rogue.
-  const rogueFiles = legacyEntries.filter((f) => !FROZEN_LEGACY_FILES.has(f));
+  const rogueFiles = entries.filter((f) => !frozenSet.has(f));
   if (rogueFiles.length > 0) {
     console.error(
-      "\nERROR: The legacy migrations directory (artifacts/api-server/migrations/) is frozen.\n" +
-        "       New database changes must go into artifacts/api-server/src/migrations/ instead.\n" +
-        "       See artifacts/api-server/migrations/README.md for details.\n\n" +
-        "       Unexpected file(s) found in the frozen directory:\n" +
+      `\nERROR: ${label} is frozen/archived.\n` +
+        "       New database changes must go into artifacts/api-server/src/migrations/ instead.\n\n" +
+        "       Unexpected file(s) found:\n" +
         rogueFiles.map((f) => `         • ${f}`).join("\n"),
     );
     process.exit(1);
   }
 }
+
+// 1. Legacy dir: artifacts/api-server/migrations/ (frozen 2026-07-17)
+checkFrozenDirGuard(
+  resolve(__dir, "../../migrations"),
+  FROZEN_LEGACY_FILES,
+  "The legacy migrations directory (artifacts/api-server/migrations/)\n" +
+    "       See artifacts/api-server/migrations/README.md for details.",
+);
+
+// 2. Repo-root dir: migrations/ (archived 2026-08-08)
+checkFrozenDirGuard(
+  resolve(__dir, "../../../../migrations"),
+  FROZEN_ROOT_FILES,
+  "The repo-root migrations/ directory\n" +
+    "       See migrations/README.md for details.",
+);
 
 /** Migration files skipped entirely (superseded or known-drifted). */
 const SKIP_FILES = new Set([
