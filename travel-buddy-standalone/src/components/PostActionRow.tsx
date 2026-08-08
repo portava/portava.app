@@ -38,9 +38,19 @@ import { computeActionGap } from '../lib/actionRowGap.ts';
 export const POST_ACTION_ICON_SIZE = iconToken.action;
 export const POST_ACTION_MIN_TOUCH = 44;
 const INTERNAL_GAP = 4;
-// hitSlop padding so a POST_ACTION_ICON_SIZE icon reaches the 44x44 minimum
-// touch target without inflating the visual layout box.
-const TOUCH_PAD = (POST_ACTION_MIN_TOUCH - POST_ACTION_ICON_SIZE) / 2;
+/**
+ * hitSlop padding so a POST_ACTION_ICON_SIZE icon reaches the 44x44 minimum
+ * touch target without inflating the visual layout box.
+ *
+ * Exported because ActionBar, cards/PostCard and HighlightViewer build their
+ * action rows by hand rather than through PostActionGroup, and were each
+ * carrying their own smaller number (8, 8, and nothing at all). Visible icon
+ * size and touch size are independent: this is the ONLY dial that closes the
+ * gap to 44. Do not reach it by growing the icon — see ui/ActionRowIcon.tsx,
+ * which exists to hold every action-row icon at one visible size.
+ */
+export const POST_ACTION_TOUCH_PAD = (POST_ACTION_MIN_TOUCH - POST_ACTION_ICON_SIZE) / 2;
+const TOUCH_PAD = POST_ACTION_TOUCH_PAD;
 
 export interface PostActionItemConfig {
   key: string;

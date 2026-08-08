@@ -19,7 +19,7 @@ sweep. Full run, all green.
 | typecheck | `pnpm run typecheck` (travel-buddy-standalone) | PASS | — |
 | rules-of-hooks | `npx eslint 'travel-buddy-standalone/{app,src}/**/*.{ts,tsx}'` | PASS | 0 violations |
 | bare-image guard | `pnpm run lint:bare-image` (travel-buddy-standalone) | PASS | 0 bindings |
-| component tests — native | `pnpm run test:component` | PASS | 1737/1737, 322 suites |
+| component tests — native | `pnpm run test:component` | PASS | 1744/1744, 323 suites |
 | component tests — web | `pnpm run test:component` (jest.web.config.js) | PASS | 4/4, 2 suites |
 | standalone node tests | `pnpm run test` (travel-buddy-standalone) | PASS | 3696/3696, 499 suites |
 | api-server tests | `pnpm run test` (artifacts/api-server) | PASS | 6135/6135, 1550 suites |
@@ -48,6 +48,37 @@ Two severity-2 eslint errors exist and pre-date this baseline. Neither is
   interface declaring no members.
 
 ## Change log
+
+### 2026-08-08 — component 1737/322 → 1744/323 (action-row touch targets)
+
+Additive only. One new file,
+`src/components/__tests__/ActionRowTouchTargets.a11y.component.test.tsx`,
+contributing 7 tests in 1 suite. Node, api-server and typecheck all held
+exactly.
+
+It gates the 44pt floor on the three action rows that build their controls by
+hand instead of through `PostActionGroup`: ActionBar (was 36pt), cards/PostCard
+(was 36pt) and HighlightViewer's viewers button (was 20pt with no hitSlop at
+all). All three now use `POST_ACTION_TOUCH_PAD`, exported from PostActionRow so
+there is one number.
+
+**Do not "simplify" this suite by enumerating controls via `hitSlop`.** The
+first draft did, and it was vacuous against the very bug it was written for:
+the HighlightViewer control had *no* hitSlop, so a hitSlop-keyed walk skipped
+it and the suite passed by not looking. It enumerates Pressables via
+`onStartShouldSetResponder` instead, and filters to leaf controls holding an
+action-row icon — which keeps flex-sized tap zones and PostCard's whole-card
+Pressable out of a floor meant for icon buttons. Confirmed by mutation:
+reverting each of the three fixes fails 2, 2 and 1 test respectively.
+
+The suite deliberately asserts the floor **and** that `POST_ACTION_ICON_SIZE`
+is still `icon.action`. Either alone is insufficient — "icon + 2*slop >= 44"
+can also be satisfied by growing the icon, which would undo the one-visible-size
+normalisation in `ui/ActionRowIcon.tsx`. Keep both assertions.
+
+Height is measured across each control's whole subtree, because the sizing is
+not always on the node carrying the hitSlop — StampButton puts `minHeight: 44`
+on the Animated.View inside its Pressable.
 
 ### 2026-08-08 — bare-image guard added and swept to zero; node 3695 → 3696
 

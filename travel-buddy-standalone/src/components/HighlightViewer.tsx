@@ -550,7 +550,7 @@ export function HighlightViewer({
             )}
 
             {isOwner && (
-              <Pressable onPress={() => setViewersOpen(true)} style={s.actionBtn}>
+              <Pressable onPress={() => setViewersOpen(true)} style={s.actionBtn} hitSlop={HIT_SLOP}>
                 <Eye size={POST_ACTION_ICON_SIZE} color="#fff" />
                 <Text style={s.actionCount}>{current.viewCount}</Text>
               </Pressable>

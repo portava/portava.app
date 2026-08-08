@@ -4,7 +4,7 @@ import { MessageCircle, Bookmark } from 'lucide-react-native';
 import { color, space, type as t } from '../theme/tokens.ts';
 import { StampButton } from './stamps/StampButton.tsx';
 import { ActionShareIcon, ACTION_STAMP_NOMINAL } from './ui/ActionRowIcon.tsx';
-import { POST_ACTION_ICON_SIZE } from './PostActionRow.tsx';
+import { POST_ACTION_ICON_SIZE, POST_ACTION_TOUCH_PAD } from './PostActionRow.tsx';
 
 function compact(n: number) {
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
@@ -62,7 +62,7 @@ export function ActionBar({
           label={compact(saveCount)} onPress={onSave} tint={tint} />
       )}
       <View style={{ flex: 1 }} />
-      <Pressable onPress={onShare} hitSlop={8} accessibilityRole="button" accessibilityLabel="Share">
+      <Pressable onPress={onShare} hitSlop={POST_ACTION_TOUCH_PAD} accessibilityRole="button" accessibilityLabel="Share">
         <ActionShareIcon color={tint} />
       </Pressable>
     </View>
@@ -71,7 +71,7 @@ export function ActionBar({
 
 function Action({ icon, label, onPress, tint }: { icon: React.ReactNode; label: string; onPress?: () => void; tint: string }) {
   return (
-    <Pressable onPress={onPress} style={styles.action} hitSlop={8} accessibilityRole="button">
+    <Pressable onPress={onPress} style={styles.action} hitSlop={POST_ACTION_TOUCH_PAD} accessibilityRole="button">
       {icon}
       <Text style={[styles.count, { color: tint }]}>{label}</Text>
     </Pressable>
