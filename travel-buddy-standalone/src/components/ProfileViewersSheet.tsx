@@ -5,9 +5,10 @@
  */
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, Image, Pressable, Modal, ScrollView,
+  View, Text, Pressable, Modal, ScrollView,
   StyleSheet, ActivityIndicator,
 } from 'react-native';
+import { Avatar } from './ui/Avatar.tsx';
 import { X, Eye } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
@@ -60,10 +61,7 @@ export function ProfileViewersSheet({ visible, onClose }: Props) {
           <ScrollView contentContainerStyle={s.list} showsVerticalScrollIndicator={false}>
             {viewers.map((v) => (
               <View key={v.userId} style={s.row}>
-                <Image
-                  source={v.avatarUrl ? { uri: v.avatarUrl } : undefined}
-                  style={s.avatar}
-                />
+                <Avatar uri={v.avatarUrl} name={v.name ?? v.handle} size={40} />
                 <View style={s.info}>
                   <Text style={s.name}>{v.name ?? v.handle}</Text>
                   <Text style={s.handle}>@{v.handle}</Text>
@@ -116,7 +114,6 @@ const s = StyleSheet.create({
   emptyText: { ...t.body, color: color.mute },
   list: { paddingHorizontal: space.lg, paddingBottom: space.md, gap: space.md },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.haze },
   info: { flex: 1 },
   name: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   handle: { ...t.small, color: color.mute, fontSize: 12, marginTop: 1 },

@@ -4,7 +4,6 @@ import {
   Text,
   FlatList,
   Pressable,
-  Image,
   StyleSheet,
   ActivityIndicator,
   Alert,
@@ -12,6 +11,7 @@ import {
 import { useFocusEffect, router } from 'expo-router';
 import { ShieldOff } from 'lucide-react-native';
 import { AppHeader } from '../src/components/ui/AppHeader';
+import { Avatar } from '../src/components/ui/Avatar';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { getBlockList, unblockUser } from '../src/services/blocks';
 import type { BlockedUser } from '../src/services/blocks';
@@ -79,15 +79,12 @@ export default function BlockedUsersScreen() {
           ListFooterComponent={<NavBarFiller />}
           renderItem={({ item }) => (
             <View style={s.row}>
-              {item.avatarUrl ? (
-                <Image source={{ uri: item.avatarUrl }} style={s.avatar} />
-              ) : (
-                <View style={[s.avatar, s.avatarPlaceholder]}>
-                  <Text style={s.avatarInitial}>
-                    {(item.name?.[0] ?? item.handle?.[0] ?? '?').toUpperCase()}
-                  </Text>
-                </View>
-              )}
+              <Avatar
+                uri={item.avatarUrl}
+                name={item.name ?? item.handle}
+                size={44}
+                style={s.avatarBox}
+              />
               <View style={{ flex: 1 }}>
                 <Text style={s.name} numberOfLines={1}>
                   {item.name ?? item.handle ?? 'Unknown'}
@@ -129,9 +126,8 @@ const s = StyleSheet.create({
     borderRadius: radius.md,
     padding: space.md,
   },
-  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: color.haze, flexShrink: 0 },
-  avatarPlaceholder: { alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
-  avatarInitial: { ...t.body, color: color.mute, fontWeight: '700' },
+  // Sizing/shape now come from <Avatar size>; this carries layout only.
+  avatarBox: { flexShrink: 0 },
   name: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   handle: { ...t.small, color: color.mute },
   unblockBtn: {

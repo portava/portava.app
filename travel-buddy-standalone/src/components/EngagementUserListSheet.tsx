@@ -30,10 +30,10 @@ import {
   Modal,
   Pressable,
   FlatList,
-  Image,
   StyleSheet,
   ActivityIndicator,
 } from 'react-native';
+import { Avatar } from './ui/Avatar.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { closeThenNavigate } from '../lib/deferredNavigate.ts';
 import { X } from 'lucide-react-native';
@@ -53,7 +53,6 @@ interface LikerRowProps {
 function LikerRow({ user, onClose }: LikerRowProps) {
   const [isFollowing, setIsFollowing] = useState(user.isFollowing);
   const [toggling, setToggling] = useState(false);
-  const [imgErr, setImgErr] = useState(false);
 
   async function handleToggle() {
     if (toggling) return;
@@ -71,27 +70,13 @@ function LikerRow({ user, onClose }: LikerRowProps) {
     closeThenNavigate(onClose, `/u/${user.handle}`);
   }
 
-  const initials = primaryIdentityText({ displayName: user.displayName, handle: user.handle })
-    .replace(/^@/, '')
-    .split(' ')
-    .map((w) => w[0] ?? '')
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
-
   return (
     <Pressable style={s.row} onPress={handlePress} android_ripple={{ color: color.haze }}>
-      {user.avatarUrl && !imgErr ? (
-        <Image
-          source={{ uri: user.avatarUrl }}
-          style={s.avatar}
-          onError={() => setImgErr(true)}
-        />
-      ) : (
-        <View style={[s.avatar, s.avatarFallback]}>
-          <Text style={s.avatarInitials}>{initials}</Text>
-        </View>
-      )}
+      <Avatar
+        uri={user.avatarUrl}
+        name={primaryIdentityText({ displayName: user.displayName, handle: user.handle }).replace(/^@/, '')}
+        size={AVATAR_SIZE}
+      />
 
       <View style={s.info}>
         <View style={s.nameRow}>
@@ -348,22 +333,6 @@ const s = StyleSheet.create({
     paddingHorizontal: space.lg,
     paddingVertical: space.sm,
     gap: space.md,
-  },
-  avatar: {
-    width: AVATAR_SIZE,
-    height: AVATAR_SIZE,
-    borderRadius: AVATAR_SIZE / 2,
-    backgroundColor: color.haze,
-  },
-  avatarFallback: {
-    backgroundColor: color.deep,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitials: {
-    fontSize: AVATAR_SIZE * 0.36,
-    fontWeight: '700',
-    color: color.onInk,
   },
   nameRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 3 },
   info: {

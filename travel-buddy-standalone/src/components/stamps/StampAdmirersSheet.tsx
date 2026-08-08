@@ -7,8 +7,9 @@
  */
 import React, { useState } from 'react';
 import {
-  Modal, View, Text, Pressable, FlatList, Image, StyleSheet,
+  Modal, View, Text, Pressable, FlatList, StyleSheet,
 } from 'react-native';
+import { Avatar } from '../ui/Avatar.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
 import { X } from 'lucide-react-native';
@@ -32,7 +33,6 @@ interface RowProps {
 }
 
 function AdmirerRow({ item, onClose }: RowProps) {
-  const [imgErr, setImgErr] = useState(false);
 
   const identity = { displayName: item.displayName, username: item.username };
   const primary = primaryIdentityText(identity);
@@ -45,21 +45,9 @@ function AdmirerRow({ item, onClose }: RowProps) {
     closeThenNavigate(onClose, `/passport/${item.username}`);
   }
 
-  const initials = primary.replace(/^@/, '').split(' ').map((w) => w[0] ?? '').slice(0, 2).join('').toUpperCase();
-
   return (
     <Pressable style={s.row} onPress={handlePress} android_ripple={{ color: color.haze }}>
-      {item.avatarUrl && !imgErr ? (
-        <Image
-          source={{ uri: item.avatarUrl }}
-          style={s.avatar}
-          onError={() => setImgErr(true)}
-        />
-      ) : (
-        <View style={[s.avatar, s.avatarFallback]}>
-          <Text style={s.avatarInitials}>{initials || '?'}</Text>
-        </View>
-      )}
+      <Avatar uri={item.avatarUrl} name={primary.replace(/^@/, '')} size={AVATAR_SIZE} />
 
       <View style={s.info}>
         <View style={s.nameRow}>
@@ -155,17 +143,6 @@ const s = StyleSheet.create({
     paddingHorizontal: space.xl,
     paddingVertical: space.sm + 2,
   },
-  avatar: {
-    width: AVATAR_SIZE,
-    height: AVATAR_SIZE,
-    borderRadius: AVATAR_SIZE / 2,
-  },
-  avatarFallback: {
-    backgroundColor: color.haze,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitials: { ...t.small, color: color.mute, fontWeight: '700' },
   info: { flex: 1, gap: 2 },
   name: { ...t.bodyStrong, color: color.ink },
   handle: { ...t.small, color: color.mute },

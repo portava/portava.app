@@ -18,10 +18,10 @@ import {
   Text,
   FlatList,
   Pressable,
-  Image,
   ActivityIndicator,
   StyleSheet,
 } from 'react-native';
+import { CachedImage } from './CachedImage.tsx';
 import { Hash, User, Briefcase, MapPin, Users, Calendar } from 'lucide-react-native';
 import {
   type AnyMentionSuggestion,
@@ -85,7 +85,7 @@ function EntityRow({
     <Pressable style={styles.row} onPress={onPress}>
       <View style={styles.avatarWrap}>
         {item.avatarUrl ? (
-          <Image source={{ uri: item.avatarUrl }} style={styles.avatar} />
+          <CachedImage source={{ uri: item.avatarUrl }} style={styles.avatar} />
         ) : (
           <View style={[styles.avatar, styles.avatarFallback]}>
             <TypeIcon type={item.type} size={14} />

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, Image, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { AppHeader } from '../src/components/ui/AppHeader';
+import { Avatar } from '../src/components/ui/Avatar';
 import { getRestrictList, unrestrictUser, type RestrictedUser } from '../src/services/restrict';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
@@ -51,13 +52,11 @@ export default function RestrictedUsersScreen() {
             ListFooterComponent={<NavBarFiller />}
             renderItem={({ item }) => (
               <View style={s.row}>
-                {item.avatarUrl ? (
-                  <Image source={{ uri: item.avatarUrl }} style={s.avatar} />
-                ) : (
-                  <View style={[s.avatar, s.avatarEmpty]}>
-                    <Text style={{ fontSize: 18 }}>👤</Text>
-                  </View>
-                )}
+                <Avatar
+                  uri={item.avatarUrl}
+                  name={item.name ?? item.handle}
+                  size={40}
+                />
                 <View style={{ flex: 1 }}>
                   <Text style={s.name} numberOfLines={1}>{item.name ?? item.handle ?? 'Unknown'}</Text>
                   {item.handle ? <Text style={s.handle}>@{item.handle}</Text> : null}
@@ -87,8 +86,6 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: color.haze,
   },
-  avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.haze },
-  avatarEmpty: { alignItems: 'center', justifyContent: 'center' },
   name: { ...t.bodyStrong, fontSize: 14, color: color.ink },
   handle: { fontSize: 12, color: color.mute, fontFamily: 'Courier' },
   actionBtn: {

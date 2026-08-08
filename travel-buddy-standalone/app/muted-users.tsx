@@ -1,11 +1,12 @@
 import React, { useCallback, useState } from 'react';
 import {
-  View, Text, FlatList, Pressable, Image, StyleSheet,
+  View, Text, FlatList, Pressable, StyleSheet,
   ActivityIndicator, Alert,
 } from 'react-native';
 import { useFocusEffect, router } from 'expo-router';
 import { VolumeX } from 'lucide-react-native';
 import { AppHeader } from '../src/components/ui/AppHeader';
+import { Avatar } from '../src/components/ui/Avatar';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { getMuteList, unmuteUser } from '../src/services/mutes';
 import type { MutedUser } from '../src/services/mutes';
@@ -83,15 +84,11 @@ export default function MutedUsersScreen() {
           ListFooterComponent={<NavBarFiller />}
           renderItem={({ item }) => (
             <View style={s.row}>
-              {item.avatarUrl ? (
-                <Image source={{ uri: item.avatarUrl }} style={s.avatar} />
-              ) : (
-                <View style={[s.avatar, s.avatarPlaceholder]}>
-                  <Text style={s.avatarInitial}>
-                    {(item.name ?? item.handle ?? '?')[0].toUpperCase()}
-                  </Text>
-                </View>
-              )}
+              <Avatar
+                uri={item.avatarUrl}
+                name={item.name ?? item.handle}
+                size={44}
+              />
               <View style={s.info}>
                 <Text style={s.name} numberOfLines={1}>
                   {item.name ?? item.handle ?? 'Unknown'}
@@ -137,11 +134,6 @@ const s = StyleSheet.create({
     backgroundColor: color.paperRaised, borderRadius: radius.md,
     borderWidth: 1, borderColor: color.haze, padding: space.md,
   },
-  avatar: { width: 44, height: 44, borderRadius: 22 },
-  avatarPlaceholder: {
-    backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center',
-  },
-  avatarInitial: { fontSize: 18, fontWeight: '700', color: color.mute },
   info: { flex: 1, gap: 2 },
   name: { ...t.bodyStrong, fontSize: 14, color: color.ink },
   handle: { fontSize: 12, color: color.mute, fontFamily: 'Courier' },

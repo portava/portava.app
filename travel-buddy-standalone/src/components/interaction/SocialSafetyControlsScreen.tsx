@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, Image, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { Avatar } from '../ui/Avatar.tsx';
 import { router } from 'expo-router';
 import { AppHeader } from '../ui/AppHeader.tsx';
 import { getBlockList, unblockUser, type BlockedUser } from '../../services/blocks.ts';
@@ -52,13 +53,7 @@ export function SocialSafetyControlsScreen() {
             ListFooterComponent={<PlainBottomFiller />}
             renderItem={({ item }) => (
               <View style={s.row}>
-                {item.avatarUrl ? (
-                  <Image source={{ uri: item.avatarUrl }} style={s.avatar} />
-                ) : (
-                  <View style={[s.avatar, s.avatarEmpty]}>
-                    <Text style={{ fontSize: 18 }}>👤</Text>
-                  </View>
-                )}
+                <Avatar uri={item.avatarUrl} name={item.name ?? item.handle} size={40} />
                 <View style={{ flex: 1 }}>
                   <Text style={s.name} numberOfLines={1}>{item.name ?? item.handle ?? 'Unknown'}</Text>
                   {item.handle ? <Text style={s.handle}>@{item.handle}</Text> : null}
@@ -89,8 +84,6 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: color.haze,
   },
-  avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.haze },
-  avatarEmpty: { alignItems: 'center', justifyContent: 'center' },
   name: { ...t.bodyStrong, fontSize: 14, color: color.ink },
   handle: { fontSize: 12, color: color.mute, fontFamily: 'Courier' },
   unblockBtn: {

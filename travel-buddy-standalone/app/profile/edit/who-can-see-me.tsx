@@ -8,9 +8,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet,
-  ActivityIndicator, Image, Alert,
+  ActivityIndicator, Alert,
 } from 'react-native';
 import { router } from 'expo-router';
+import { Avatar } from '../../../src/components/ui/Avatar';
 import { ArrowLeft, Users, Settings, PauseCircle, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
@@ -35,26 +36,11 @@ interface ContextGroup {
   turningOff?: boolean;
 }
 
-function AvatarFallback({ name, size = 36 }: { name: string; size?: number }) {
-  const initials = name.split(' ').map((w) => w[0] ?? '').slice(0, 2).join('').toUpperCase();
-  return (
-    <View style={[af.wrap, { width: size, height: size, borderRadius: size / 2 }]}>
-      <Text style={[af.text, { fontSize: size * 0.4 }]}>{initials || '?'}</Text>
-    </View>
-  );
-}
-const af = StyleSheet.create({
-  wrap: { backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
-  text: { color: color.mute, fontWeight: '700' },
-});
 
 function WatcherRow({ watcher }: { watcher: CircleWatcher }) {
   return (
     <View style={s.watcherRow}>
-      {watcher.avatarUrl
-        ? <Image source={{ uri: watcher.avatarUrl }} style={s.avatar} />
-        : <AvatarFallback name={watcher.displayName || watcher.username} />
-      }
+      <Avatar uri={watcher.avatarUrl} name={watcher.displayName || watcher.username} size={36} />
       <View style={{ flex: 1 }}>
         <Text style={s.watcherName}>{watcher.displayName || watcher.username}</Text>
         {watcher.username ? <Text style={s.watcherHandle}>@{watcher.username}</Text> : null}
@@ -396,7 +382,6 @@ const s = StyleSheet.create({
     paddingHorizontal: space.lg, paddingVertical: space.md,
     borderBottomWidth: 1, borderBottomColor: color.haze,
   },
-  avatar: { width: 36, height: 36, borderRadius: 18 },
   watcherName: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   watcherHandle: { ...t.small, color: color.mute, marginTop: 1 },
   bottomActions: { marginHorizontal: space.lg, marginTop: space.xl, gap: space.sm },

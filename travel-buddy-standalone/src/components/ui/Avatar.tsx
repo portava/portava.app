@@ -21,7 +21,7 @@
  * changes the border AND the fill, never colour alone.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, type ImageStyle, type StyleProp, type ViewStyle } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { Globe, Users } from 'lucide-react-native';
 import { color, type as t } from '../../theme/tokens.ts';
@@ -37,6 +37,13 @@ export interface AvatarProps {
   kind?: AvatarKind;
   size?: number;
   selected?: boolean;
+  /**
+   * LAYOUT ONLY — margins, `flexShrink`, absolute positioning, an extra ring.
+   * Sizing comes from `size`, so that the image branch and the fallback branch
+   * are always the same shape; passing width/height here would desynchronise
+   * them. Applied to whichever branch renders.
+   */
+  style?: StyleProp<ViewStyle>;
   /** Overrides the derived label. Give one whenever the name is not the whole story. */
   accessibilityLabel?: string;
   testID?: string;
@@ -62,6 +69,7 @@ export function Avatar({
   kind = 'person',
   size = 38,
   selected = false,
+  style,
   accessibilityLabel,
   testID,
 }: AvatarProps) {
@@ -100,7 +108,10 @@ export function Avatar({
     return (
       <ExpoImage
         source={source}
-        style={[box, selected && s.selectedRing]}
+        // Layout-only by contract (see AvatarProps.style), so the ViewStyle /
+        // ImageStyle split — which is only about `overflow: 'scroll'` — cannot
+        // bite here. One prop has to serve both branches.
+        style={[box, selected && s.selectedRing, style as StyleProp<ImageStyle>]}
         contentFit="cover"
         cachePolicy="memory-disk"
         transition={150}
@@ -118,7 +129,7 @@ export function Avatar({
 
   return (
     <View
-      style={[box, s.fallback, selected && s.fallbackSelected, selected && s.selectedRing]}
+      style={[box, s.fallback, selected && s.fallbackSelected, selected && s.selectedRing, style]}
       accessible
       accessibilityRole="image"
       accessibilityLabel={label}

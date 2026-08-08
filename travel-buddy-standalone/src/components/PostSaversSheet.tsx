@@ -5,9 +5,10 @@
  */
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, Image, Pressable, Modal, ScrollView,
+  View, Text, Pressable, Modal, ScrollView,
   StyleSheet, ActivityIndicator,
 } from 'react-native';
+import { Avatar } from './ui/Avatar.tsx';
 import { X, Bookmark } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
@@ -63,10 +64,7 @@ export function PostSaversSheet({ visible, postId, onClose }: Props) {
           <ScrollView contentContainerStyle={s.list} showsVerticalScrollIndicator={false}>
             {savers.map((sv) => (
               <View key={sv.userId} style={s.row}>
-                <Image
-                  source={sv.avatarUrl ? { uri: sv.avatarUrl } : undefined}
-                  style={s.avatar}
-                />
+                <Avatar uri={sv.avatarUrl} name={sv.name ?? sv.handle} size={40} />
                 <View style={s.info}>
                   <Text style={s.name}>{sv.name ?? sv.handle}</Text>
                   <Text style={s.handle}>@{sv.handle}</Text>
@@ -119,7 +117,6 @@ const s = StyleSheet.create({
   emptyText: { ...t.body, color: color.mute },
   list: { paddingHorizontal: space.lg, paddingBottom: space.md, gap: space.md },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.haze },
   info: { flex: 1 },
   name: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   handle: { ...t.small, color: color.mute, fontSize: 12, marginTop: 1 },
