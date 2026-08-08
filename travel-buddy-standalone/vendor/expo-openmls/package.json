@@ -2,13 +2,19 @@
   "name": "expo-openmls",
   "version": "0.1.0",
   "description": "Expo native module wrapping OpenMLS (RFC 9420) via Rust + UniFFI. Provides Ed25519/X25519 key generation, MLS group create/join, message encrypt/decrypt, and safety-number derivation.",
-  "main": "build/index.js",
-  "types": "build/index.d.ts",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit"
   },
-  "keywords": ["expo", "module", "mls", "e2ee", "openmls"],
+  "keywords": [
+    "expo",
+    "module",
+    "mls",
+    "e2ee",
+    "openmls"
+  ],
   "peerDependencies": {
     "expo": ">=53.0.0",
     "react-native": ">=0.73.0"

@@ -21,7 +21,7 @@ sweep. Full run, all green.
 | bare-image guard | `pnpm run lint:bare-image` (travel-buddy-standalone) | PASS | 0 bindings |
 | component tests — native | `pnpm run test:component` | PASS | 1744/1744, 323 suites |
 | component tests — web | `pnpm run test:component` (jest.web.config.js) | PASS | 4/4, 2 suites |
-| standalone node tests | `pnpm run test` (travel-buddy-standalone) | PASS | 3732/3732, 499 suites |
+| standalone node tests | `pnpm run test` (travel-buddy-standalone) | PASS | 3734/3734, 499 suites |
 | api-server tests | `pnpm run test` (artifacts/api-server) | PASS | 6135/6135, 1550 suites |
 
 `fail 0`, `skipped 0`, `todo 0`, `cancelled 0` on every node run.
@@ -48,6 +48,13 @@ Two severity-2 eslint errors exist and pre-date this baseline. Neither is
   interface declaring no members.
 
 ## Change log
+
+### 2026-08-08 — node 3732 → 3734 (E2EE verification gate)
+
+Additive, no new tests. Both come from `getSession.bypassGuard` picking up one
+new source file (`lib/e2ee/verificationGate.ts`) at its two-assertions-per-file
+rate.
+
 
 ### 2026-08-08 — node 3718 → 3732 (E2EE negotiation sequences)
 
