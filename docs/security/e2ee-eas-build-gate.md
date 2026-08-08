@@ -1,13 +1,15 @@
 # The EAS build — the gate between "wired" and "works"
 
-**Status: triggered. Three Android builds run on 2026-08-08. None has yet
-produced a verdict on the FFI boundary — see §6 for what each one actually
-proved.**
+**Status: PASSED. Five Android builds run on 2026-08-08; `698fe963` is green
+and its APK is verified to contain the compiled crypto — see §7. Six config
+defects had to be cleared first; §6 records what each build proved.**
 Date: 2026-08-08
 
-Everything from the Rust module to the UI call sites is wired and green in CI.
-None of it has ever executed. This build is the single thing standing between
-those two states.
+Everything from the Rust module to the UI call sites was wired and green in CI,
+and none of it had ever executed. The build was the single thing standing
+between those two states. It has now been cleared — **but read §4 before
+concluding anything from that.** The bindings are compiled and packaged; they
+have still never run on a device.
 
 ---
 
@@ -136,8 +138,16 @@ packaging, so a failure points at one thing rather than two.
 
 ## 4. What a green build does NOT prove
 
-**A green build means "the bindings load", not "encryption works."** It is
-necessary and nowhere near sufficient. Specifically it does not prove:
+**A green build means the bindings COMPILE AND ARE PACKAGED, not that
+encryption works.**
+
+An earlier version of this line said a green build proves the bindings "load".
+That is wrong and worth correcting rather than quietly rewording: loading
+happens at runtime via `System.loadLibrary` on a device, and as of build
+`698fe963` nothing has run on a device. Being present in the APK is not being
+loaded, and being loaded is not being correct.
+
+It is necessary and nowhere near sufficient. Specifically it does not prove:
 
 - That `generate_key_package` → `create_group` → `process_welcome` →
   `encrypt_message` → `decrypt_message` works **across the FFI boundary**. The
