@@ -31,7 +31,9 @@ are therefore *mostly already made in code*. The real question is no longer
 here, or deliberately replace it?"** I recommend finishing it. See §5.
 
 There is also **one security-relevant defect** and **one dangerous
-duplication** to be aware of before any of this ships — §1.5 and §1.6. The
+duplication** to be aware of before any of this ships — §1.5 and §1.6. Neither
+had been caught, because the Rust has never been compiled in this workspace
+(no `cargo`/`rustup`) and the two-device runbook has never been run. The
 defect would cause every encrypted message to fail signature verification at
 the peer, so it would be caught the first time two devices talked to each
 other. It is not a silent-data-loss risk, but it does mean "the code exists"
@@ -64,8 +66,11 @@ confirming, I say so.
 | Server: send path | `routes/messaging.ts:1580-1671` | **Implemented.** Accepts `ciphertext`, enforces `body=null` on E2EE threads, rejects plaintext into an E2EE thread, 64 KB cap |
 | Tests | `src/lib/__tests__/{secureStore.e0,localMessageDb.e0,cryptoIdentity.e1,mlsSession.e2}.test.ts` | Present and **already running in the standalone node gate** (part of the green 3696) |
 
-The phase naming (E-0 … E-5) is consistent throughout, so this was executed as
-a planned programme, not accreted.
+This was executed as a planned programme, not accreted — there are design,
+execution-plan and completion-report documents for it (§1.8). Note however that
+**the phase numbering is NOT consistent between those documents**: design-phase
+E-4 is media encryption, completion-report E-4 is multi-device. Always name the
+document alongside the phase.
 
 ### 1.2 How DMs are stored today, and what the server can read
 
@@ -120,7 +125,7 @@ current code rather than assuming.
 | **Off-app-contact detection** (`OFF_APP_PATTERNS`, `messaging.ts:1694`) | Yes | **Already handled** — explicitly skipped for E2EE |
 | **Moderation of reported DMs** (`routes/moderation.ts`) | Reads `sender_id` only, not body | **Partially ready.** Header already says "For E2EE message reports: subject_id=messageId, thread_id stored for future attachment flow" — the attachment flow does not exist yet. §3. |
 | **Message search** | **No server-side DM search exists.** No `ilike`/`tsvector`/`to_tsquery` in `messaging.ts` | **Nothing to break.** Search is already intended to be local (FTS5 in `localMessageDb`). |
-| **DM attachments** (`media_url`) | Yes — media stays a plain URL | **Not covered by the current design.** See §1.7 — this needs a decision. |
+| **DM attachments** (`media_url`) | Yes — media stays a plain URL | **Designed but unimplemented.** Envelope encryption is specified in `e2ee-design.md` §3.2 (design-phase E-4); not built, not in the first increment. See §1.7. |
 | Spam detection | No dedicated DM content scanner found | Nothing found to break |
 
 **Two of the four features you were most worried about — unread counts and
@@ -148,6 +153,12 @@ silent weakening. But it means the "two-device verification runbook" in the repo
 has **never been run green** — and it must be, before anything ships. I have not
 fixed this (no implementation this pass).
 
+**Why it survived, confirmed by the completion report:** `cargo`/`rustup` are
+not installed in this workspace, so `e2ee-completion-report.md` §3 states the
+Rust "cannot be verified locally" and requires an EAS build. **This code has
+never been compiled, let alone run.** Treat every claim about the Rust — mine
+included — as unexecuted until an EAS build succeeds.
+
 ### 1.6 Duplication that will bite
 
 `package.json` resolves the module as `expo-openmls: file:./vendor/expo-openmls`
@@ -156,33 +167,73 @@ fixed this (no implementation this pass).
 clean), so a fix applied to `packages/` — the one you would naturally open —
 would not reach the app. Worth collapsing to one before any Rust work.
 
-### 1.7 DM attachments vs public media
+### 1.7 DM attachments vs public media — CORRECTED 2026-08-08
 
 DM media currently rides `messages.media_url` as an ordinary URL into the same
 private-bucket infrastructure as everything else (signed on read, per the media
 work in this branch). Your standing decision covers *public and shared* media.
-**DM attachments are neither**, and the existing E2EE design does not encrypt
-them — only the text body. So today's design would ship encrypted DM *text*
-alongside server-readable DM *photos*.
+**DM attachments are neither.**
 
-That may be an acceptable first increment, but it should be a choice rather
-than a surprise, and it is the kind of thing a privacy-policy claim gets wrong.
-Flagged for §5 sequencing.
+**Correction to an earlier revision of this document:** I wrote that "the
+existing E2EE design does not encrypt them — only the text body". That was
+wrong about the *design*. `e2ee-design.md` §3.2 specifies media envelope
+encryption in detail — a random 256-bit content key per item, AES-256-GCM or
+ChaCha20-Poly1305, ciphertext to object storage, content key and nonce carried
+*inside* the MLS-encrypted message body, encrypted thumbnails. It is listed
+there as design-phase **E-4 Media E2EE**.
 
-### 1.8 Documentation that exists but is loose and stale
+So the design is complete on this point. What is true is that **it is not
+implemented**, and it is not in the first increment. The practical consequence
+is unchanged and is the thing that matters:
 
-`crypto-review-brief.md` and `e2ee-verification-runbook.md` sit **untracked-in-
-spirit at the workspace root**, not in `docs/`. Both say "Suggested repo
-location: `docs/security/...`" and neither was ever moved there. They also
-reference internal docs (`docs/security/e2ee-design.md`, an execution plan, a
-completion report) **that do not exist in this repo** — so the authoritative
-design document is already lost, exactly the Step-17 failure mode.
+> As currently built, DM text would be encrypted while DM photos stay
+> server-readable. That is **defensible as v1 but not as a marketing claim.**
 
-The brief is also stale: it claims `openmls 0.6 / openmls_rust_crypto 0.3`,
-while `Cargo.toml` pins `0.5.0 / 0.2.0`.
+That sentence is the one that should stop anyone putting "end-to-end encrypted"
+on a landing page before design-phase E-4 ships.
 
-Recommend (not done in this pass): move both into `docs/security/` alongside
-this file.
+### 1.8 Documentation — CORRECTED 2026-08-08
+
+**An earlier revision of this document claimed that `e2ee-design.md`, the
+execution plan and the completion report "do not exist in this repo". That was
+wrong. All three exist, are tracked, and are substantial:**
+
+| Document | Lines |
+|---|---|
+| `docs/security/e2ee-design.md` | 226 |
+| `docs/security/e2ee-execution-plan.md` | 301 |
+| `docs/security/e2ee-completion-report.md` | 146 |
+| `docs/security/crypto-review-brief.md` | 110 |
+| `docs/security/e2ee-verification-runbook.md` | 169 |
+| `.agents/memory/e2ee-conventions.md` | 39 |
+
+The error came from listing `travel-buddy-standalone/docs/` and concluding
+about the repo-root `docs/` — the same working-directory confusion that made
+the repo root itself hard to find earlier in this session. Absence was asserted
+from a search that had never been run at the right path. Recorded here rather
+than quietly amended, because "the design doc is lost" would have been acted on.
+
+The brief and the runbook were loose at the workspace root; they were moved
+into `docs/security/` alongside everything else. The move also *fixed* one
+reference: the runbook's pointer to `docs/security/crypto-review-brief.md` is
+now correct, where before it pointed at a path that did not exist.
+
+Two real documentation hazards remain, and these are the ones worth knowing:
+
+1. **The phase numbering conflicts between documents.** In `e2ee-design.md`,
+   **E-4 is media encryption**. In `e2ee-completion-report.md`, **E-4 is
+   multi-device pairing** (media is not in its deferred list under that name).
+   Any conversation that says "E-4" without naming the document is ambiguous.
+2. **The completion report is stale in one direction that matters.** It marks
+   Phase E-2 "1:1 E2EE Messaging" complete, and its own "Known gaps" section
+   lists epoch rotation, multi-device and push — but **not** the fact that
+   nothing ever activates E2EE (§1.3). The report is defensible read narrowly:
+   every row in its E-2 table describes a *capability* that genuinely was
+   built. It is misleading read quickly, because "E-2 complete" reads as
+   "1:1 DMs are encrypted", and they are not.
+
+The brief is also stale on versions: it claims `openmls 0.6 / openmls_rust_crypto
+0.3`, while `Cargo.toml` pins `0.5.0 / 0.2.0`.
 
 ---
 
@@ -329,13 +380,18 @@ in the existing code.
 8. **Search** — no server-side DM search exists ✅. Local FTS5 is already the
    plan and partly built.
 9. **Not on your list, and it matters: DM attachments** (§1.7) remain
-   server-readable under the current design. Encrypted text next to plaintext
-   photos is a defensible v1 but an indefensible marketing claim.
-10. **Not on your list: message edit/delete and reactions.** `messages` has
-    `edited_at` and there is an edit path that touches `body`
-    (`messaging.ts:2163` notifies that "the message body changed"). Edits of
-    encrypted messages need the same ciphertext treatment as sends; I have not
-    traced this fully and it is a known unknown.
+   server-readable **as built**. Envelope encryption for them IS specified in
+   `e2ee-design.md` §3.2 (design-phase E-4) but is not implemented and is not
+   in the first increment. Encrypted text beside server-readable photos is
+   **defensible as v1 but not as a marketing claim.**
+10. **OPEN QUESTION — message edit/delete.** `messages` has `edited_at` and
+    there is an edit path that touches `body` (`messaging.ts:2163` notifies
+    that "the message body changed"). Edits of encrypted messages need the same
+    ciphertext treatment as sends. **I have not traced this path, and it is
+    absent from `e2ee-design.md` as well** — searching that document for
+    edit/delete/redact returns nothing on the subject. So this is not merely
+    untraced by me; it appears genuinely unspecified. Recorded as an open
+    question, not an assumption.
 
 ---
 
