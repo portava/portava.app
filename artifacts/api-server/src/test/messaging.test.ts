@@ -420,3 +420,65 @@ describe("POST /api/users/:userId/open-thread", () => {
     assert.equal(status, 403);
   });
 });
+
+describe("POST /api/threads/:threadId/media — Finding 14: E2EE plaintext-media bypass", () => {
+  const SB = process.env.SUPABASE_URL ?? "http://localhost:54321";
+  const MEDIA_URL = `${SB}/storage/v1/object/public/post-media/dm/photo.jpg`;
+  // isUuid() requires actual hex digits — the shared THREAD_ID fixture
+  // ("tttttttt-...") only ever reaches endpoints that don't validate the
+  // path param, so this endpoint needs its own valid-format id.
+  const E2EE_THREAD_ID = "eeeeeeee-0000-0000-0000-000000000099";
+
+  function threadFixture(isE2ee: boolean) {
+    return {
+      message_threads: [
+        {
+          id: E2EE_THREAD_ID,
+          thread_type: "direct",
+          trip_id: null,
+          circle_owner_id: null,
+          title: null,
+          is_e2ee: isE2ee,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          last_message_at: new Date().toISOString(),
+          status: "active",
+        },
+      ],
+      message_thread_members: [
+        { user_id: ALICE_ID, thread_id: E2EE_THREAD_ID, muted_at: null, archived_at: null, left_at: null, last_read_at: null },
+        { user_id: BOB_ID,   thread_id: E2EE_THREAD_ID, muted_at: null, archived_at: null, left_at: null, last_read_at: null },
+      ],
+    };
+  }
+
+  it("rejects a media message on an E2EE thread instead of inserting a plaintext body/media_url", async () => {
+    const client = makeClient(threadFixture(true), ALICE_ID);
+    _setTestClient(client as any, true);
+
+    const { status, body } = await callApi("POST", `/api/threads/${E2EE_THREAD_ID}/media`, {
+      mediaUrl: MEDIA_URL,
+      mediaType: "image",
+      body: "look at this view",
+    });
+
+    // e2ee_thread maps to 422, same convention as the translate/retry endpoint's E2EE guard.
+    assert.equal(status, 422, `expected the E2EE guard to reject the request, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.error, "e2ee_thread");
+    void client;
+  });
+
+  it("still accepts a media message on a non-E2EE thread (no regression to the normal photo-send flow)", async () => {
+    _setTestClient(makeClient(threadFixture(false), ALICE_ID) as any, true);
+
+    const { status, body } = await callApi("POST", `/api/threads/${E2EE_THREAD_ID}/media`, {
+      mediaUrl: MEDIA_URL,
+      mediaType: "image",
+      body: "look at this view",
+    });
+
+    assert.equal(status, 201, `expected a normal thread to still accept media, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.mediaUrl, MEDIA_URL);
+    assert.equal(body.body, "look at this view");
+  });
+});

@@ -2025,6 +2025,19 @@ router.post('/threads/:threadId/media', async (req, res) => {
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
   if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
 
+  // Finding #14 fix: E2EE threads must never accept plaintext media messages.
+  // This endpoint has no attachment-encryption path yet, so fail closed —
+  // same posture as the text handler's ciphertext-required guard above.
+  const { data: threadMetaForMedia } = await client
+    .from('message_threads')
+    .select('is_e2ee')
+    .eq('id', threadId)
+    .maybeSingle();
+  if ((threadMetaForMedia as any)?.is_e2ee === true) {
+    sendError(res, 'e2ee_thread', 'Media messages are not supported on end-to-end encrypted threads');
+    return;
+  }
+
   const sc = client;
   const now = new Date().toISOString();
 
