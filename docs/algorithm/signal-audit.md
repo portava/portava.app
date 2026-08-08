@@ -424,9 +424,15 @@ rank_events_surface_check:
 ```
 
 Migration 0153 defines six outcome values and three surfaces; 0154 adds
-`compass`. **Live has seven and eleven.** Something widened both outside the
-migration files this audit read — most likely 0197
-(`rank_events_analytics_columns`), unverified.
+`compass`. **Live has seven and eleven.**
+
+> **Resolved — this was not drift.** Migration
+> `0197_rank_events_analytics_columns.sql` declares *both* widenings, plus the
+> `event_type` / `content_type` columns and the nullable `item_kind` /
+> `position`. Live matches 0197 exactly. The migration was applied; this audit
+> had read only 0153 and 0154 and inferred drift from their silence. **There is
+> no governance issue here** — see `docs/schema-reconciliation-2026-08-08.md`
+> §3. The decision-ready item below is withdrawn.
 
 Consequences for §7:
 - Item 6 (extend outcome vocabulary) — still a migration, but the baseline is
@@ -458,8 +464,13 @@ of attribution.
 
 ### 10f. Decision-ready — not acted on
 
-1. **Live schema has drifted from the migration files for `rank_events`, in the
-   same way it did for `tags` (finding 16).** Two CHECK constraints differ.
-   Nobody has recorded which change widened them or when. This is migration
-   ownership and is explicitly out of scope here — flagged, not touched.
+1. ~~**Live schema has drifted from the migration files for `rank_events`.**~~
+   **WITHDRAWN.** Migration 0197 declares both widenings and live matches it.
+   Not drift, not a governance issue — see §10d and
+   `docs/schema-reconciliation-2026-08-08.md` §3.
 2. **Do not fit v2 weights on this corpus** (§10a). It needs real traffic.
+3. **Five geo indexes declared by `0186_geo_indexes.sql` do not exist live**,
+   including `posts_geo_idx`, `events_geo_idx` and `user_location_state_geo_idx`.
+   Location/Trip Relevance is 20% of the Portava Score (§2) and those queries
+   are running unindexed. Found by the reconciliation, not by this audit;
+   recorded there as decision-ready.
