@@ -292,3 +292,59 @@ gate the others.
   re-measure before committing budget.
 - **Not verified:** current upload volume, average clip length and view
   distribution. Decision 2 cannot be answered without them.
+
+---
+
+## 8. Production evidence (2026-08-08)
+
+Read-only queries via the Supabase Management API, resolving §7's unverified
+volume items. **No writes, no schema changes.**
+
+### 8a. There is no 4K content, and nothing close to it
+
+`post_media`, by `media_type`:
+
+| Type | Rows | Avg duration | Max duration | Avg size | Max resolution |
+|---|---|---|---|---|---|
+| `video` | 101 | 35.0 s | 60 s | 1.00 MB | **1280 × 720** |
+| `image` | 15 | — | — | 1.39 MB | 3060 × 4080 |
+
+**The largest video in production is 720p.** Not one 1080p asset exists, let
+alone 2160p. Average clip is 35 seconds at 1 MB — roughly 0.23 Mbps, far below
+even §2b's 360p rung.
+
+This reframes §6 decision 1 ("is 2160p actually required?"). The question is not
+whether to build a 4K ladder for existing content — **there is no content the
+ladder would improve.** Any 4K pipeline would be built for hypothetical future
+uploads, and the ingest cap is currently doing the work a ladder would do.
+
+### 8b. Cost projections in §3 are unanchored — deliberately restated
+
+§3's multipliers assume a 4K source. With a 720p corpus averaging 1 MB, the
+absolute costs today are negligible regardless of option chosen. **The
+multipliers remain the right shape for the decision; they are not a forecast of
+current spend.** §7 already said the figures are planning numbers rather than
+measurements — 8a is the measurement, and it says the premise (4K sources) does
+not yet exist.
+
+### 8c. DM media: zero encrypted threads
+
+| Measure | Count |
+|---|---|
+| `message_threads` | 32 |
+| `message_threads` where `is_e2ee` | **0** |
+
+§5's constraint is currently **entirely theoretical in production**. No thread
+is flagged encrypted, so the finding-14 guard (`9b1f49bdc`) rejects nothing
+today, and no user is losing DM media to it. The constraint becomes real the
+moment the first E2EE thread exists.
+
+### 8d. Decision-ready — not acted on
+
+1. **§6 decision 1 is now cheap to defer.** With no 1080p content and no 4K
+   content, deferring the 2160p rung costs nothing measurable today. If "4K" is
+   a creator-acquisition claim rather than a playback goal (§4 Option 3), that
+   distinction is now the whole decision.
+2. **The real near-term question is ingest, not transcode** — what is capping
+   uploads at 720p, and is that deliberate? Not investigated; outside the
+   read-only scope agreed for this pass.

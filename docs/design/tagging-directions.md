@@ -337,3 +337,72 @@ run:**
   and a default of `'approved'`, the approval path may never have been
   exercised — which would make Direction B's reuse of it less proven than §3
   assumes.
+
+---
+
+## 8. Production evidence (2026-08-08)
+
+Read-only queries via the Supabase Management API, resolving §7's unverified
+items. **No writes, no schema changes.**
+
+### 8a. Finding 16 was latent, not exploited
+
+```sql
+select count(*), count(distinct tagger_id), min(created_at), max(created_at) from tags;
+→ total_tags: 0 | distinct_taggers: 0 | earliest: null | latest: null
+```
+
+**The `tags` table is empty. Zero rows, ever.**
+
+So the unenforced 20-tags/hour limit (§1, finding 16) was **never exercised in
+production**. No abuse occurred because no tagging occurred. The control was
+broken, but the exposure was nil — the bug was latent, not live. That is the
+answer to §7's open question, and it downgrades the *urgency* of finding 16
+without changing the fact that the control did not work.
+
+The query used `created_at`, the column that actually exists live — which is
+itself the demonstration that finding 16's diagnosis was correct.
+
+### 8b. `tags.status` has never been exercised
+
+```sql
+select status, suppressed, count(*) from tags group by status, suppressed;
+→ (no rows)
+```
+
+§7 flagged the risk that Direction B's reuse of `status` was less proven than
+§3 assumed. **Confirmed: it is entirely unproven.** With zero rows, no tag has
+ever been `pending` or `rejected`, and the approval path has never run. There
+is also no `CHECK` constraint on the column (§1). Direction B should treat the
+approval workflow as **untested code**, not as working infrastructure.
+
+### 8c. Direction A's context line — available on ~15% of posts
+
+| Measure | Count | of 138 posts |
+|---|---|---|
+| `trip_id` set | 20 | 14.5% |
+| `location_place_id` set | 23 | 16.7% |
+| `canonical_place_id` set | **0** | 0% |
+| `venue_id` set | **0** | 0% |
+| **trip AND some place** | **20** | **14.5%** |
+
+§2's risk was that Direction A degrades to "IG with rounder corners" when a
+post has no place or trip. **On this corpus that is the majority case: ~85% of
+posts would show the bare avatar row.**
+
+Note `canonical_place_id` is null on every post *and* every `post_media` row —
+the column §2 proposed deriving place from is entirely unpopulated. The place
+data that does exist is in `location_place_id`. **Any Direction A build should
+target `location_place_id`, not `canonical_place_id`.**
+
+### 8d. Decision-ready — not acted on
+
+1. **Direction A's premise is weaker than §2 assumed** (8c). Either accept that
+   the context line is a minority affordance, or treat populating place/trip on
+   posts as a prerequisite. That is a product call.
+2. **`canonical_place_id` is dead everywhere it appears** — posts and
+   post_media both 100% null, while `location_place_id` carries the real data.
+   Whether that column is abandoned or merely not backfilled is unknown, and it
+   is referenced across the codebase. Flagged, not investigated.
+3. **Finding 16's fix remains correct and remains worth having** (8a) — an
+   abuse control that has never been under load is still an abuse control.

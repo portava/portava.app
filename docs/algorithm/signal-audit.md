@@ -90,6 +90,14 @@ CREATE TABLE IF NOT EXISTS rank_events (
 `surface` is `pulse|discovery|events`; migration 0154 widens it to add
 `compass`.
 
+> **Superseded by production evidence (§10).** The two paragraphs above quote
+> the *migration files*. The **live** constraints are wider than either file:
+> `outcome` also permits `analytics`, and `surface` permits eleven values. The
+> structural claim — that the vocabulary is DB-constrained and extending it
+> needs a migration — still holds. The specific value lists above do not.
+> This document warned against trusting migration files over live schema and
+> then did exactly that here; §10 has the live definitions.
+
 ---
 
 ## 2. Portava Score — component by component
@@ -350,3 +358,108 @@ whether the `rank_events` rows in production actually carry a non-null
 outcome upgrade. Both need a query against live data. They determine whether
 the time-window attribution stopgap (§3a item 3) has enough signal to be worth
 running before the call sites are wired.
+
+---
+
+## 10. Production evidence (2026-08-08)
+
+Read-only queries via the Supabase Management API, resolving the items §9 left
+unverified. **No writes, no schema changes.**
+
+### 10a. Corpus caveat — read everything below through this
+
+| Measure | Value |
+|---|---|
+| `profiles` | 56 |
+| Distinct users in `rank_events` | **5** |
+| Distinct posting users | 24 |
+| `trips` | 43 |
+| `posts` | 138 |
+
+**This is a dev/QA corpus, not production traffic.** Five users generated
+195,612 rank events. Ratios below are real, but they describe how the *system*
+behaves, not how *users* behave. Do not fit weights on this data.
+
+### 10b. `session_id` is populated — attribution's missing half is the other side
+
+| Measure | Value |
+|---|---|
+| `rank_events` rows | 195,612 |
+| Non-null `session_id` | 183,577 (**93.8%**) |
+| Range | 2026-07-20 → 2026-08-08 |
+
+**§3a's concern is half-resolved.** `session_id` is reliably written on the
+serving side. The gap is entirely on the outcome side: no domain outcome table
+records it, so there is still nothing to join *to*.
+
+### 10c. The funnel is empirically dead
+
+| `outcome` | Rows |
+|---|---|
+| `analytics` | 140,331 |
+| `impression` | 55,265 |
+| `tap` | 15 |
+| `save` | 1 |
+| `join` / `rsvp` / `attended` | **0** |
+
+**Outcome upgrade rate: 16 of 55,281 impression-family rows ever received an
+`outcome_at` — 0.03%.**
+
+This is §3b's watch-time bias, measured. `join`, `rsvp` and `attended` are
+valid values that have never once been written. The 15 `tap` rows are
+consistent with §3b's fork finding: `tap` is wired only in
+`artifacts/travel-buddy`, not in this tree.
+
+Surfaces actually serving: `pulse` 177,906 · `compass` 12,506 · `events` 5,200.
+
+### 10d. Live CHECK constraints — wider than every migration file
+
+```
+rank_events_outcome_check:
+  outcome IN ('impression','tap','save','join','rsvp','attended','analytics')
+
+rank_events_surface_check:
+  surface IN ('pulse','discovery','events','compass','search','nearby',
+              'story','event','trip','profile','explore')
+```
+
+Migration 0153 defines six outcome values and three surfaces; 0154 adds
+`compass`. **Live has seven and eleven.** Something widened both outside the
+migration files this audit read — most likely 0197
+(`rank_events_analytics_columns`), unverified.
+
+Consequences for §7:
+- Item 6 (extend outcome vocabulary) — still a migration, but the baseline is
+  seven values, not six.
+- Item 8 (widen `surface`) — **already done live.** Eight surfaces beyond the
+  original three are permitted today.
+
+### 10e. Outcome-table row counts
+
+| Table | Rows |
+|---|---|
+| `post_saves` | 134 |
+| `posts_comments` | 118 |
+| `user_follows` | 62 |
+| `user_stamps` | 45 |
+| `trip_members` | 42 |
+| `event_rsvps` | 25 |
+| `profile_views` | 10 |
+| `post_shares` | 3 |
+| `buddy_bookings` | **0** |
+| `event_attendee_states` | **0** |
+| `shared_moments` | **0** |
+
+§3 said every rung has a table. True — but three of the strongest rungs
+(booked buddy, attended, shared moment) have **no rows at all**. The tables are
+ready; the behaviours have not happened yet in this corpus. Weight-fitting on
+the top of the hierarchy is blocked by absence of events, not only by absence
+of attribution.
+
+### 10f. Decision-ready — not acted on
+
+1. **Live schema has drifted from the migration files for `rank_events`, in the
+   same way it did for `tags` (finding 16).** Two CHECK constraints differ.
+   Nobody has recorded which change widened them or when. This is migration
+   ownership and is explicitly out of scope here — flagged, not touched.
+2. **Do not fit v2 weights on this corpus** (§10a). It needs real traffic.
