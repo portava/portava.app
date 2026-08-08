@@ -11,8 +11,9 @@
  */
 import React, { useState } from 'react';
 import {
-  View, Text, Image, Pressable, StyleSheet, ActivityIndicator,
+  View, Text, Pressable, StyleSheet, ActivityIndicator,
 } from 'react-native';
+import { CachedImage } from '../CachedImage.tsx';
 import { Lock, Calendar, Clock } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { requestToJoinEvent } from '../../services/events.ts';
@@ -72,7 +73,7 @@ export function PrivateEventCard({ event, onRequestSent }: Props) {
       {/* Cover image or generic placeholder */}
       <View style={s.cover}>
         {event.coverImageUrl != null ? (
-          <Image
+          <CachedImage
             source={{ uri: event.coverImageUrl }}
             style={s.coverImage}
             accessibilityLabel="Event cover"

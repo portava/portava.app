@@ -11,8 +11,9 @@
  */
 import React, { useState } from 'react';
 import {
-  View, Text, Image, Pressable, StyleSheet, ActivityIndicator,
+  View, Text, Pressable, StyleSheet, ActivityIndicator,
 } from 'react-native';
+import { CachedImage } from '../CachedImage.tsx';
 import { Lock, Plane, Clock } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { requestTripAccess } from '../../services/trips.ts';
@@ -72,7 +73,7 @@ export function PrivateTripCard({ trip, onRequestSent }: Props) {
       {/* Cover image or generic placeholder */}
       <View style={s.cover}>
         {trip.coverImageUrl != null ? (
-          <Image
+          <CachedImage
             source={{ uri: trip.coverImageUrl }}
             style={s.coverImage}
             accessibilityLabel="Trip cover"

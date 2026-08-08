@@ -16,7 +16,6 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  Image,
   Modal,
   Pressable,
   RefreshControl,
@@ -26,6 +25,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { CachedImage } from '../../../src/components/CachedImage';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -239,7 +239,7 @@ function FailuresTab() {
           >
             <View style={sc.thumbWrap}>
               {item.thumbnail_url
-                ? <Image source={{ uri: item.thumbnail_url }} style={sc.thumb} resizeMode="cover" />
+                ? <CachedImage source={{ uri: item.thumbnail_url }} style={sc.thumb} resizeMode="cover" fallbackLabel="" />
                 : <View style={[sc.thumb, sc.thumbFallback]}>
                     {item.media_type === 'video'
                       ? <Video size={20} color={color.mute} />
@@ -313,7 +313,7 @@ function ReportedTab() {
           >
             <View style={sc.thumbWrap}>
               {item.primaryMedia?.thumbnail_url
-                ? <Image source={{ uri: item.primaryMedia.thumbnail_url }} style={sc.thumb} resizeMode="cover" />
+                ? <CachedImage source={{ uri: item.primaryMedia.thumbnail_url }} style={sc.thumb} resizeMode="cover" fallbackLabel="" />
                 : <View style={[sc.thumb, sc.thumbFallback]}><Flag size={20} color={color.mute} /></View>
               }
             </View>
@@ -446,7 +446,7 @@ function GemsPendingTab() {
           >
             <View style={sc.thumbWrap}>
               {item.image_url
-                ? <Image source={{ uri: item.image_url }} style={sc.thumb} resizeMode="cover" />
+                ? <CachedImage source={{ uri: item.image_url }} style={sc.thumb} resizeMode="cover" fallbackLabel="" />
                 : <View style={[sc.thumb, sc.thumbFallback]}><Zap size={20} color={color.mute} /></View>
               }
             </View>
@@ -511,7 +511,7 @@ function AiProvenanceTab() {
           >
             <View style={sc.thumbWrap}>
               {(item.thumbnail_url ?? item.source_url)
-                ? <Image source={{ uri: (item.thumbnail_url ?? item.source_url)! }} style={sc.thumb} resizeMode="cover" />
+                ? <CachedImage source={{ uri: (item.thumbnail_url ?? item.source_url)! }} style={sc.thumb} resizeMode="cover" fallbackLabel="" />
                 : <View style={[sc.thumb, sc.thumbFallback]}><AlertTriangle size={20} color={color.mute} /></View>
               }
             </View>

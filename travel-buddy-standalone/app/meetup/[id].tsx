@@ -8,8 +8,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
   StyleSheet, Alert, TextInput, Platform,
-  AppState, type AppStateStatus, Image, Modal, Linking, Animated, Switch,
+  AppState, type AppStateStatus, Modal, Linking, Animated, Switch,
 } from 'react-native';
+import { Avatar } from '../../src/components/ui/Avatar';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -662,15 +663,7 @@ export default function MeetupScreen() {
                 onPress={() => { if (meetup.creator?.handle) router.push(`/u/${meetup.creator.handle}` as any); }}
                 disabled={!meetup.creator.handle}
               >
-                {meetup.creator.avatarUrl ? (
-                  <Image source={{ uri: meetup.creator.avatarUrl }} style={s.creatorAvatar} />
-                ) : (
-                  <View style={[s.creatorAvatar, s.creatorAvatarFallback]}>
-                    <Text style={s.creatorInitial}>
-                      {(meetup.creator.displayName ?? '?').charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                )}
+                <Avatar uri={meetup.creator.avatarUrl} name={meetup.creator.displayName} size={20} />
                 <Text style={s.creatorName} numberOfLines={1}>
                   Organised by {meetup.creator.displayName ?? 'someone'}
                 </Text>
@@ -1005,9 +998,6 @@ const s = StyleSheet.create({
   title: { ...t.title, color: color.ink, fontSize: 22 },
   desc: { ...t.body, color: color.mute, lineHeight: 20 },
   creatorRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
-  creatorAvatar: { width: 20, height: 20, borderRadius: 10, backgroundColor: color.haze },
-  creatorAvatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: color.signal + '22' },
-  creatorInitial: { fontSize: 10, fontWeight: '700', color: color.signal },
   creatorName: { ...t.small, color: color.mute, fontSize: 12, flex: 1 },
   creatorFallback: { ...t.small, color: color.faint, fontSize: 12, marginTop: 6 },
   sectionTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700', marginBottom: 4 },

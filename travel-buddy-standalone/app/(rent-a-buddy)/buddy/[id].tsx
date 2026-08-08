@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, ScrollView, Pressable, StyleSheet, Image, Alert,
+  View, Text, ScrollView, Pressable, StyleSheet, Alert,
 } from 'react-native';
+import { CachedImage } from '../../../src/components/CachedImage';
 import { router, useLocalSearchParams } from 'expo-router';
 import {
   ArrowLeft, Star, Shield, CheckCircle, Globe, Clock,
@@ -185,7 +186,7 @@ export default function BuddyProfileScreen() {
         {/* Hero */}
         <View style={styles.heroBox}>
           {buddy.coverPhotoUrl ? (
-            <Image source={{ uri: buddy.coverPhotoUrl }} style={styles.heroImage} resizeMode="cover" />
+            <CachedImage source={{ uri: buddy.coverPhotoUrl }} style={styles.heroImage} resizeMode="cover" />
           ) : (
             <View style={[styles.heroImage, styles.heroFallback]}>
               <Text style={styles.heroInitial}>{buddy.displayName?.[0]?.toUpperCase() ?? '?'}</Text>

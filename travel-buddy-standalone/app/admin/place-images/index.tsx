@@ -20,6 +20,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { CachedImage } from '../../../src/components/CachedImage';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -297,7 +298,7 @@ function PlaceImageReviewSheet({
               {!!(visual.source_image_url ?? visual.source_url) && (
                 <View>
                   <Text style={sc.sectionLabel}>Candidate Image</Text>
-                  <Image
+                  <CachedImage
                     source={{ uri: (visual.source_image_url ?? visual.source_url)! }}
                     style={sc.sheetImage}
                     resizeMode="cover"

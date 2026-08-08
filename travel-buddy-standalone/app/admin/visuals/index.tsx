@@ -20,6 +20,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { CachedImage } from '../../../src/components/CachedImage';
 import { router, useFocusEffect } from 'expo-router';
 import {
   ArrowLeft,
@@ -202,7 +203,7 @@ function VisualDetailSheet({
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: space.md, gap: space.md }}>
           {/* Image */}
           {!!imageUrl && (
-            <Image
+            <CachedImage
               source={{ uri: imageUrl }}
               style={sc.sheetImage}
               resizeMode="cover"

@@ -20,7 +20,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -28,6 +27,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { CachedImage } from '../CachedImage.tsx';
 import { RefreshCw, Sparkles, X, Check } from 'lucide-react-native';
 import {
   generateVisual,
@@ -375,7 +375,7 @@ export function GenerateHeaderSheet({ visible, entityType, entityId, onDismiss, 
             {(phase === 'ready' || phase === 'accepting') && imageUrl && (
               <>
                 <Text style={s.previewLabel}>Preview</Text>
-                <Image
+                <CachedImage
                   source={{ uri: imageUrl }}
                   style={s.previewImage}
                   resizeMode="cover"

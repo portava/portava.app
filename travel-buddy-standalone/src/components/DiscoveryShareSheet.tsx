@@ -17,15 +17,13 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
-  Image,
 } from 'react-native';
+import { Avatar } from './ui/Avatar.tsx';
 import {
   X,
   Send,
   Compass,
   MapPin,
-  Globe,
-  Users,
   MessageCircle,
   PlusCircle,
   Search,
@@ -68,23 +66,16 @@ function ThreadRow({
   const other = thread.otherMembers[0];
   const displayName = thread.title ?? (isDirect && other ? other.name : 'Chat');
   const avatarUrl = isDirect && other ? other.avatarUrl : null;
-  const initials = displayName[0]?.toUpperCase() ?? '?';
 
   return (
     <Pressable style={[s.threadRow, selected && s.threadRowSelected]} onPress={onPress}>
-      {avatarUrl ? (
-        <Image source={{ uri: avatarUrl }} style={s.avatar} />
-      ) : (
-        <View style={[s.avatarFallback, selected && s.avatarFallbackSelected]}>
-          {thread.threadType === 'trip' ? (
-            <Globe size={14} color={selected ? color.onInk : color.signal} />
-          ) : thread.threadType === 'circle' ? (
-            <Users size={14} color={selected ? color.onInk : color.signal} />
-          ) : (
-            <Text style={[s.avatarInitial, selected && { color: color.onInk }]}>{initials}</Text>
-          )}
-        </View>
-      )}
+      <Avatar
+        uri={avatarUrl}
+        name={displayName}
+        kind={thread.threadType === 'trip' ? 'trip' : thread.threadType === 'circle' ? 'circle' : 'person'}
+        size={36}
+        selected={selected}
+      />
       <View style={{ flex: 1 }}>
         <Text style={[s.threadName, selected && s.threadNameSelected]} numberOfLines={1}>
           {displayName}
@@ -111,17 +102,10 @@ function UserResultRow({
 }) {
   const handle = user.username ? `@${user.username}` : null;
   const displayName = user.displayName ?? handle ?? 'Unknown';
-  const initials = displayName[0]?.toUpperCase() ?? '?';
 
   return (
     <Pressable style={s.threadRow} onPress={onPress}>
-      {user.avatarUrl ? (
-        <Image source={{ uri: user.avatarUrl }} style={s.avatar} />
-      ) : (
-        <View style={s.avatarFallback}>
-          <Text style={s.avatarInitial}>{initials}</Text>
-        </View>
-      )}
+      <Avatar uri={user.avatarUrl} name={displayName} size={36} />
       <View style={{ flex: 1 }}>
         <Text style={s.threadName} numberOfLines={1}>{displayName}</Text>
         {handle ? <Text style={s.threadSub} numberOfLines={1}>{handle}</Text> : null}
@@ -542,10 +526,6 @@ const s = StyleSheet.create({
   list: { maxHeight: 220, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, marginBottom: space.md },
   threadRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingHorizontal: space.md, paddingVertical: 12 },
   threadRowSelected: { backgroundColor: color.signal + '0A' },
-  avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: color.haze },
-  avatarFallback: { width: 36, height: 36, borderRadius: 18, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
-  avatarFallbackSelected: { backgroundColor: color.signal + '22' },
-  avatarInitial: { fontSize: 14, fontWeight: '700', color: color.signal },
   threadName: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   threadNameSelected: { color: color.signal },
   threadSub: { ...t.small, color: color.mute, fontSize: 11, marginTop: 1 },

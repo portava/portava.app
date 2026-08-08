@@ -27,6 +27,7 @@ import {
   StyleSheet, Alert, Image, Share, ActionSheetIOS, Platform, Linking,
   Animated,
 } from 'react-native';
+import { CachedImage } from '../../src/components/CachedImage';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { openMapsNavigation } from '../../src/lib/maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -787,7 +788,7 @@ export default function EventDetailScreen() {
             <View style={styles.cover}>
               {/* Base layer: original cover or placeholder */}
               {event.coverUrl ? (
-                <Image source={{ uri: event.coverUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                <CachedImage source={{ uri: event.coverUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
               ) : (
                 (() => {
                   // Category-keyed fallback so the hero is never blank grey.
