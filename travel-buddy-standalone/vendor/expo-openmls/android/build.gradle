@@ -15,6 +15,16 @@ def cargoBinary = new File(cargoBinDir, 'cargo')
 def cargoExecutable = cargoBinary.exists() ? cargoBinary.absolutePath : 'cargo'
 def cargoPath = "${cargoBinDir.absolutePath}${File.pathSeparator}${System.getenv('PATH') ?: ''}"
 
+// Rust target triple -> Android ABI directory name. These are not
+// interchangeable spellings: cargo writes to target/<triple>/release/, while
+// AGP packages from <jniLibs dir>/<abi>/.
+def abiForTarget = [
+  'aarch64-linux-android'  : 'arm64-v8a',
+  'armv7-linux-androideabi': 'armeabi-v7a',
+  'x86_64-linux-android'   : 'x86_64',
+]
+def SO_NAME = 'libexpo_openmls.so'
+
 task buildRustAndroid {
   doLast {
     // Verify cargo actually runs before anything else.
@@ -59,6 +69,27 @@ task buildRustAndroid {
         commandLine cargoExecutable, 'build', '--release', '--target', target
         environment 'PATH', cargoPath
       }
+
+      // Stage the .so under an ABI-named directory. AGP reads jniLibs.srcDirs
+      // as <dir>/<abi>/lib*.so — pointing it straight at cargo's output dir
+      // means it looks for target/<triple>/release/arm64-v8a/*.so, finds
+      // nothing, and packages nothing. Silently.
+      def abi = abiForTarget[target]
+      def produced = file("../target/${target}/release/${SO_NAME}")
+      if (!produced.exists()) {
+        throw new GradleException(
+          "[expo-openmls] cargo reported success but produced no ${SO_NAME} for ${target}\n" +
+          "  expected: ${produced}\n" +
+          "Refusing to continue: this would package an APK with no native library."
+        )
+      }
+      def destDir = file("${buildDir}/rustJniLibs/${abi}")
+      destDir.mkdirs()
+      copy {
+        from produced
+        into destDir
+      }
+      println "[expo-openmls] staged ${abi}/${SO_NAME} (${produced.length()} bytes)"
     }
 
     // Generate the Kotlin bindings. THIS STEP DID NOT EXIST: the Rust was
@@ -95,8 +126,10 @@ android {
 
   sourceSets {
     main {
-      // Include Rust-generated JNI libraries
-      jniLibs.srcDirs = ['../target/aarch64-linux-android/release', '../target/armv7-linux-androideabi/release']
+      // Rust-built JNI libraries, staged into ABI-named subdirectories by
+      // buildRustAndroid. This must be the staging root, NOT cargo's output
+      // directory: AGP resolves jniLibs.srcDirs as <dir>/<abi>/lib*.so.
+      jniLibs.srcDirs = ["${buildDir}/rustJniLibs"]
     }
   }
 }
