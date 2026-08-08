@@ -22,7 +22,18 @@ Pod::Spec.new do |s|
 
   # Static Rust library produced by `cargo build --release --target aarch64-apple-ios`
   # (and lipo'd with x86_64-apple-ios-macabi for simulator).
-  # EAS build runs `scripts/build-rust-ios.sh` in the prebuildCommand.
+  #
+  # NOTHING CURRENTLY PRODUCES THIS FILE. `scripts/build-rust-ios.sh` would,
+  # but nothing invokes it. This comment used to claim "EAS build runs
+  # scripts/build-rust-ios.sh in the prebuildCommand" — that was never true and
+  # could not have been: `prebuildCommand` overrides the arguments to `expo`,
+  # not the shell, so a script path there is expanded into
+  # `npx expo bash scripts/... --platform ios` and fails. It killed three
+  # Android builds before being removed. Do not restore it.
+  #
+  # iOS needs the Rust build hooked from the iOS build itself — a podspec
+  # `script_phase` here, or an Expo config plugin. Android does the equivalent
+  # in android/build.gradle via preBuild.dependsOn buildRustAndroid.
   s.vendored_libraries = 'Rust/libexpo_openmls.a'
 
   # UniFFI-generated Swift bindings (produced alongside the Rust build)
