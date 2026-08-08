@@ -8,8 +8,9 @@
 import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, FlatList, StyleSheet,
-  ActivityIndicator, Pressable, Animated, TextInput, Modal, Image,
+  ActivityIndicator, Pressable, Animated, TextInput, Modal,
 } from 'react-native';
+import { CachedImage } from '../src/components/CachedImage';
 import { EmptyState } from '../src/components/ui/EmptyState';
 import { ErrorState } from '../src/components/ui/ErrorState';
 import { getPlaceCategoryFallback } from '../src/utils/placeCategoryFallback';
@@ -117,7 +118,7 @@ function PlaceThumb({ coverUrl }: { coverUrl: string | null }) {
   if (coverUrl && !failed) {
     return (
       <View style={s.placeThumb} testID="place-collection-thumb">
-        <Image
+        <CachedImage
           source={{ uri: coverUrl }}
           style={s.placeThumbImg}
           resizeMode="cover"

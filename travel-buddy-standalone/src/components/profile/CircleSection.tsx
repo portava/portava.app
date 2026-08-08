@@ -4,7 +4,8 @@
  * Returns null when viewer is unauthenticated, viewing own profile, or no mutuals.
  */
 import React, { useState, useEffect } from 'react';
-import { View, Text, Pressable, Image, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { Avatar } from '../ui/Avatar.tsx';
 import { router } from 'expo-router';
 import { Users } from 'lucide-react-native';
 import { getMutualFollows, type MutualFollowUser } from '../../services/follows.ts';
@@ -62,15 +63,11 @@ export function CircleSection({ targetUserId }: Props) {
               key={u.id}
               style={[cs.avatarWrap, i > 0 && { marginLeft: -10 }, { zIndex: MAX_AVATARS - i }]}
             >
-              {u.avatarUrl ? (
-                <Image source={{ uri: u.avatarUrl }} style={cs.avatar} />
-              ) : (
-                <View style={[cs.avatar, cs.avatarFallback]}>
-                  <Text style={cs.avatarInitial}>
-                    {((u.displayName ?? u.handle ?? '?')[0] ?? '?').toUpperCase()}
-                  </Text>
-                </View>
-              )}
+              <Avatar
+                uri={u.avatarUrl}
+                name={u.displayName ?? u.handle}
+                size={32}
+              />
             </View>
           ))}
         </View>
@@ -131,21 +128,6 @@ const cs = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 2,
     borderColor: color.paper,
-  },
-  avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: color.haze,
-  },
-  avatarFallback: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitial: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: color.mute,
   },
   label: {
     flex: 1,

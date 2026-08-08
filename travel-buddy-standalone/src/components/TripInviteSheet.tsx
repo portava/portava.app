@@ -17,6 +17,7 @@ import {
   View, Text, Pressable, StyleSheet, ActivityIndicator,
   Image, Modal, TextInput, ScrollView,
 } from 'react-native';
+import { Avatar as SharedAvatar } from './ui/Avatar.tsx';
 import { UserPlus, X, Search, Check, Users } from 'lucide-react-native';
 import {
   getTripInvitableUsers, getTripMembers, sendTripInvite, type FriendUser,
@@ -40,21 +41,7 @@ interface CircleMember extends FriendUser {
 }
 
 function Avatar({ user, size = 38 }: { user: FriendUser; size?: number }) {
-  if (user.avatarUrl) {
-    return (
-      <Image
-        source={{ uri: user.avatarUrl }}
-        style={{ width: size, height: size, borderRadius: size / 2 }}
-      />
-    );
-  }
-  return (
-    <View style={[{ width: size, height: size, borderRadius: size / 2 }, s.avatarFallback]}>
-      <Text style={s.avatarInitial}>
-        {(user.name?.[0] ?? user.handle?.[0] ?? '?').toUpperCase()}
-      </Text>
-    </View>
-  );
+  return <SharedAvatar uri={user.avatarUrl} name={user.name ?? user.handle} size={size} />;
 }
 
 export function TripInviteSheet({ tripId, visible, onDismiss, onInviteSent }: Props) {
@@ -441,12 +428,6 @@ const s = StyleSheet.create({
   rowName: { ...t.body, color: color.ink, fontWeight: '600' },
   rowHandle: { ...t.small, color: color.mute, fontSize: 12 },
 
-  avatarFallback: {
-    backgroundColor: color.haze,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitial: { ...t.small, fontWeight: '700', color: color.ink, fontSize: 15 },
 
   inviteBtn: {
     flexDirection: 'row',

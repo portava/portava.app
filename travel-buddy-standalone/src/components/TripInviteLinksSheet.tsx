@@ -13,6 +13,7 @@ import {
   View, Text, Pressable, StyleSheet, ActivityIndicator,
   Image, Modal, Alert, ScrollView,
 } from 'react-native';
+import { Avatar as SharedAvatar } from './ui/Avatar.tsx';
 import { useRouter } from 'expo-router';
 import { X, Link2, Trash2, Users } from 'lucide-react-native';
 import {
@@ -28,15 +29,13 @@ interface Props {
 }
 
 function Avatar({ user, size = 30, onPress }: { user: InviteLinkJoiner; size?: number; onPress?: () => void }) {
-  const inner = user.avatarUrl ? (
-    <Image
-      source={{ uri: user.avatarUrl }}
-      style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color.haze, opacity: user.removed ? 0.4 : 1 }}
+  const inner = (
+    <SharedAvatar
+      uri={user.avatarUrl}
+      name={user.name ?? user.handle}
+      size={size}
+      style={{ opacity: user.removed ? 0.4 : 1 }}
     />
-  ) : (
-    <View style={[{ width: size, height: size, borderRadius: size / 2, opacity: user.removed ? 0.4 : 1 }, s.avatarFallback]}>
-      <Text style={s.avatarInitial}>{(user.name?.[0] ?? user.handle?.[0] ?? '?').toUpperCase()}</Text>
-    </View>
   );
   if (onPress) {
     return <Pressable onPress={onPress} hitSlop={4}>{inner}</Pressable>;
@@ -436,15 +435,5 @@ const s = StyleSheet.create({
     color: color.faint,
     fontStyle: 'italic',
     marginTop: space.xs,
-  },
-  avatarFallback: {
-    backgroundColor: color.haze,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitial: {
-    ...(t.small as object),
-    fontWeight: '700',
-    color: color.mute,
   },
 });

@@ -8,7 +8,8 @@
  * area label, plan check-in) are withheld regardless of what the server sent.
  */
 import React, { useState } from 'react';
-import { View, Text, Image, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
+import { Avatar } from '../ui/Avatar.tsx';
 import { UserIdentityLink } from '../interaction/UserIdentityLink.tsx';
 import {
   Shield, MapPin, Navigation, Eye, EyeOff, Clock, CheckCircle2,
@@ -91,15 +92,7 @@ export function CrewMemberCard({ member, isBlockedByViewer = false, onBlockSucce
         testID={`crew-member-identity-${member.userId ?? 'unknown'}`}
       >
       <View style={s.avatarWrap}>
-        {member.avatarUrl ? (
-          <Image source={{ uri: member.avatarUrl }} style={s.avatar} />
-        ) : (
-          <View style={[s.avatar, s.avatarFallback]}>
-            <Text style={s.avatarInitial}>
-              {(member.name?.[0] ?? member.handle?.[0] ?? '?').toUpperCase()}
-            </Text>
-          </View>
-        )}
+        <Avatar uri={member.avatarUrl} name={member.name ?? member.handle} size={40} />
         {effectiveLiveShare && <View style={s.liveDot} />}
         {member.ghostMode && !isBlockedByViewer && <View style={s.ghostDot} />}
       </View>
@@ -158,9 +151,6 @@ const s = StyleSheet.create({
     borderBottomColor: color.haze,
   },
   avatarWrap: { position: 'relative' },
-  avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.haze },
-  avatarFallback: { alignItems: 'center', justifyContent: 'center' },
-  avatarInitial: { ...t.small, fontWeight: '700', color: color.ink },
   liveDot: {
     position: 'absolute', right: -1, bottom: -1,
     width: 12, height: 12, borderRadius: 6,

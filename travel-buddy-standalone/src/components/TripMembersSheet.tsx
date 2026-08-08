@@ -15,6 +15,7 @@ import {
   View, Text, Pressable, StyleSheet, ActivityIndicator, Image, Modal,
   TextInput, ScrollView,
 } from 'react-native';
+import { Avatar } from './ui/Avatar.tsx';
 import { UserPlus, X, Search, Check, Crown } from 'lucide-react-native';
 import { useSession } from '../context/SessionContext.tsx';
 import {
@@ -35,15 +36,12 @@ interface Props {
 }
 
 function PersonAvatar({ user, size = 36 }: { user: FriendUser; size?: number }) {
-  if (user.avatarUrl) {
-    return <Image source={{ uri: user.avatarUrl }} style={{ width: size, height: size, borderRadius: size / 2 }} />;
-  }
   return (
-    <View style={[{ width: size, height: size, borderRadius: size / 2 }, s.avatarFallback]}>
-      <Text style={s.avatarInitial}>
-        {(primaryIdentityText({ name: user.name, handle: user.handle }).replace(/^@/, '')[0] ?? '?').toUpperCase()}
-      </Text>
-    </View>
+    <Avatar
+      uri={user.avatarUrl}
+      name={primaryIdentityText({ name: user.name, handle: user.handle }).replace(/^@/, '')}
+      size={size}
+    />
   );
 }
 
@@ -328,8 +326,6 @@ const s = StyleSheet.create({
   rowHandle: { ...t.small, color: color.mute, fontSize: 12 },
   rowReason: { fontSize: 11, color: color.signal, marginTop: 1 },
 
-  avatarFallback: { backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
-  avatarInitial: { ...t.small, fontWeight: '700', color: color.ink, fontSize: 14 },
 
   badge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.sm, paddingVertical: 3, borderRadius: radius.pill, borderWidth: 1 },
   badgeOwner: { borderColor: color.signal, backgroundColor: color.paper },

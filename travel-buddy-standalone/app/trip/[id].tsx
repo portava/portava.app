@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
-import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, Share, Image, Modal, RefreshControl, type LayoutChangeEvent } from 'react-native';
+import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, Share, Modal, RefreshControl, type LayoutChangeEvent } from 'react-native';
+import { CachedImage } from '../../src/components/CachedImage';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users, BookImage, CalendarClock, MapPin, ShieldCheck, Radio, Link2 } from 'lucide-react-native';
@@ -995,7 +996,7 @@ function TripMemorySection({
       {memory ? (
         <Pressable style={tm.card} onPress={() => router.push(`/memory/${memory.id}` as any)}>
           {memory.cover?.mediaUrl && !memoryCoverFailed ? (
-            <Image source={{ uri: memory.cover.mediaUrl }} style={tm.cover} onError={() => setMemoryCoverFailed(true)} />
+            <CachedImage source={{ uri: memory.cover.mediaUrl }} style={tm.cover} onError={() => setMemoryCoverFailed(true)} />
           ) : (
             <View style={[tm.cover, tm.coverEmpty]}>
               <BookImage size={28} color={color.onInk} />
@@ -1116,7 +1117,7 @@ function EventCoverImage({ uri, style, emptyStyle }: { uri: string; style: any; 
       </View>
     );
   }
-  return <Image source={{ uri }} style={style} onError={() => setFailed(true)} />;
+  return <CachedImage source={{ uri }} style={style} onError={() => setFailed(true)} />;
 }
 
 function EventsNearTripSection({ tripId }: { tripId: string }) {

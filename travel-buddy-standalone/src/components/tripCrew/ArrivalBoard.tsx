@@ -9,7 +9,8 @@
  *  - rows present but no arrival data, or empty → shows service's honest `note`
  */
 import React, { useEffect, useState } from 'react';
-import { View, Text, Image, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { Avatar } from '../ui/Avatar.tsx';
 import { Clock, CheckCircle2, CalendarClock } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { fetchArrivalBoard } from '../../services/tripIntel.ts';
@@ -81,14 +82,8 @@ function StatusDot({ arrived }: { arrived: boolean }) {
 // ── Avatar for arrival row ────────────────────────────────────────────────────
 
 function MemberAvatar({ member }: { member: CrewMemberCard }) {
-  const initial = (member.name?.[0] ?? member.handle?.[0] ?? '?').toUpperCase();
-  if (member.avatarUrl) {
-    return <Image source={{ uri: member.avatarUrl }} style={s.avatar} />;
-  }
   return (
-    <View style={[s.avatar, s.avatarFallback]}>
-      <Text style={s.avatarInitial}>{initial}</Text>
-    </View>
+    <Avatar uri={member.avatarUrl} name={member.name ?? member.handle} size={28} />
   );
 }
 
@@ -286,21 +281,5 @@ const s = StyleSheet.create({
     color: color.mute,
     flex: 1,
     lineHeight: 18,
-  },
-  avatar: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: color.haze,
-  },
-  avatarFallback: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitial: {
-    ...t.small,
-    fontWeight: '700',
-    color: color.ink,
-    fontSize: 11,
   },
 });

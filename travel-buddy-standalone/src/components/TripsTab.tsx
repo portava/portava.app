@@ -12,6 +12,7 @@
  */
 import React, { useMemo, useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { CachedImage } from './CachedImage.tsx';
 import { router } from 'expo-router';
 import { MapPin, Calendar, ChevronRight, Luggage } from 'lucide-react-native';
 import type { TripRow } from '../services/trips.ts';
@@ -193,7 +194,7 @@ export function TripsTab({
             {featured!.coverMediaType === 'video' && featured!.coverUrl ? (
               <VideoThumbnail posterUri={featured!.coverUrl} style={tr.featuredImg} />
             ) : featured!.coverUrl ? (
-              <Image source={{ uri: featured!.coverUrl }} style={tr.featuredImg} resizeMode="cover" />
+              <CachedImage source={{ uri: featured!.coverUrl }} style={tr.featuredImg} resizeMode="cover" />
             ) : (
               <View style={[tr.featuredImg, tr.featuredFallback]}>
                 <Luggage size={30} color={color.mute} strokeWidth={1.5} />

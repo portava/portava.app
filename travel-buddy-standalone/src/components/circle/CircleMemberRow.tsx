@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, Image, Pressable, StyleSheet, Alert, ActivityIndicator } from 'react-native';
-import { MessageCircle, User, MoreHorizontal } from 'lucide-react-native';
+import { View, Text, Pressable, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import { Avatar } from '../ui/Avatar.tsx';
+import { MessageCircle, MoreHorizontal } from 'lucide-react-native';
 import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
 import { router } from 'expo-router';
 import type { CircleMember } from '../../services/circle.ts';
@@ -131,13 +132,7 @@ export function CircleMemberRow({ member, isViewerRow = false }: Props) {
     <View style={[s.row, isViewerRow && s.viewerRow]}>
       <Pressable onPress={handleProfile}>
         <View style={s.avatarWrap}>
-          {member.avatarUrl ? (
-            <Image source={{ uri: member.avatarUrl }} style={s.avatar} />
-          ) : (
-            <View style={s.avatarFallback}>
-              <User size={18} color={color.mute} />
-            </View>
-          )}
+          <Avatar uri={member.avatarUrl} name={member.displayName || member.username} size={44} />
           {member.isStale && <View style={s.staleDot} />}
         </View>
       </Pressable>
@@ -208,15 +203,6 @@ const s = StyleSheet.create({
     borderColor: '#E8EAFF',
   },
   avatarWrap: { position: 'relative' },
-  avatar: { width: 44, height: 44, borderRadius: 22 },
-  avatarFallback: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: color.haze,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   staleDot: {
     position: 'absolute',
     bottom: 0,

@@ -1,5 +1,7 @@
 import React, { useState, useEffect, Component, type ErrorInfo, type ReactNode } from 'react';
 import { View, Text, Image, Pressable, ScrollView, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import { Avatar } from './ui/Avatar.tsx';
+import { CachedImage } from './CachedImage.tsx';
 import { fallbackUriFor } from '../lib/visuals/fallbackAssets.ts';
 import { SharedVideoPlayer } from './ui/SharedVideoPlayer.tsx';
 import { router } from 'expo-router';
@@ -62,7 +64,7 @@ export function TripHero({ trip }: { trip: TripDetail }) {
         {trip.coverMediaType === 'video' && trip.coverUrl ? (
           <SharedVideoPlayer uri={trip.coverUrl} autoplay muted loop style={hero.imageBg} />
         ) : trip.coverUrl ? (
-          <Image source={{ uri: trip.coverUrl }} style={hero.imageBg} resizeMode="cover" />
+          <CachedImage source={{ uri: trip.coverUrl }} style={hero.imageBg} resizeMode="cover" />
         ) : (
           <View style={hero.imageBg}>
             {/* Category fallback image — landmark gives an attractive travel backdrop */}
@@ -185,7 +187,7 @@ export function TodayNextUp({ nextUp, tripId, action }: {
             <Text style={nx.title}>{nextUp.title}</Text>
             <View style={nx.metaRow}><MapPin size={13} color={color.mute} /><Text style={nx.meta}>{nextUp.place}</Text></View>
             <View style={nx.hostRow}>
-              <Image source={{ uri: nextUp.host.avatarUrl }} style={nx.hostAvatar} />
+              <Avatar uri={nextUp.host.avatarUrl} name={nextUp.host.name} size={20} />
               <Text style={nx.host}>Hosted by {nextUp.host.name.split(' ')[0]}</Text>
             </View>
             <View style={nx.attRow}>
@@ -220,7 +222,7 @@ function AvatarRow({ people }: { people: any[] }) {
   return (
     <View style={{ flexDirection: 'row' }}>
       {people.slice(0, 4).map((u, i) => (
-        <Image key={u.id} source={{ uri: u.avatarUrl }} style={[nx.attAvatar, { marginLeft: i === 0 ? 0 : -9, zIndex: 4 - i }]} />
+        <Avatar key={u.id} uri={u.avatarUrl} name={u.name} size={22} style={[nx.attAvatarRing, { marginLeft: i === 0 ? 0 : -9, zIndex: 4 - i }]} />
       ))}
     </View>
   );
@@ -585,7 +587,7 @@ function MemberAvatar({ u, currentUserId }: { u: User; currentUserId?: string | 
   const ringState = useHighlightRingState(u.id);
   const [viewerOpen, setViewerOpen] = useState(false);
 
-  const img = <Image source={{ uri: u.avatarUrl }} style={cr.avatar} />;
+  const img = <Avatar uri={u.avatarUrl} name={u.name} size={48} />;
 
   if (!ringState?.hasActive) {
     return (
@@ -644,7 +646,7 @@ export function TripCircle({ cityCount, inCity, suggested, currentUserId, tripId
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={cr.suggestRow}>
           {suggested.map((u) => (
             <Pressable key={u.id} onPress={() => router.push(`/profile/${u.handle}`)}>
-              <Image source={{ uri: u.avatarUrl }} style={cr.suggestAvatar} />
+              <Avatar uri={u.avatarUrl} name={u.name} size={40} />
             </Pressable>
           ))}
           <Pressable style={cr.suggestMore} onPress={goToCircle}><ChevronRight size={18} color={color.mute} /></Pressable>
@@ -985,10 +987,10 @@ const nx = StyleSheet.create({
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   meta: { ...t.small, color: color.mute },
   hostRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
-  hostAvatar: { width: 20, height: 20, borderRadius: 10, backgroundColor: color.haze },
   host: { ...t.small, color: color.mute },
   attRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: 2 },
-  attAvatar: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: color.paperRaised, backgroundColor: color.haze },
+  // Sizing/shape come from <Avatar size>; this is the overlap ring only.
+  attAvatarRing: { borderWidth: 2, borderColor: color.paperRaised },
   going: { ...t.small, color: color.mute },
   btns: { flexDirection: 'row', gap: space.sm, marginTop: space.sm },
   primary: { flex: 1, backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: space.sm, alignItems: 'center' },
@@ -1063,7 +1065,6 @@ const cr = StyleSheet.create({
   count: { ...t.bodyStrong, color: color.ink },
   avatars: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   avatarWrap: {},
-  avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: color.haze },
   onlineDot: { position: 'absolute', right: 0, bottom: 0, width: 12, height: 12, borderRadius: 6, backgroundColor: color.success, borderWidth: 2, borderColor: color.paperRaised },
   inviteBtn: { width: 48, height: 48, borderRadius: 24, borderWidth: 1.5, borderStyle: 'dashed', borderColor: color.signal, alignItems: 'center', justifyContent: 'center' },
   inviteRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
@@ -1071,7 +1072,6 @@ const cr = StyleSheet.create({
   divider: { height: 1, backgroundColor: color.haze },
   suggestLabel: { ...t.small, color: color.mute, fontWeight: '600' },
   suggestRow: { gap: space.sm, alignItems: 'center' },
-  suggestAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.haze },
   suggestMore: { width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center' },
 });
 

@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, Pressable, ActivityIndicator,
-  StyleSheet, Image, Alert, ScrollView,
+  StyleSheet, Alert, ScrollView,
 } from 'react-native';
+import { CachedImage } from '../../src/components/CachedImage';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MapPin, Calendar, X, CheckCircle2, Plane, AlertTriangle } from 'lucide-react-native';
@@ -120,7 +121,7 @@ export default function InviteLinkScreen() {
           showsVerticalScrollIndicator={false}
         >
           {screen.tombstone?.coverUrl ? (
-            <Image
+            <CachedImage
               source={{ uri: screen.tombstone.coverUrl }}
               style={[styles.cover, styles.coverDimmed]}
               resizeMode="cover"
@@ -202,7 +203,7 @@ export default function InviteLinkScreen() {
           showsVerticalScrollIndicator={false}
         >
           {screen.preview.coverUrl ? (
-            <Image
+            <CachedImage
               source={{ uri: screen.preview.coverUrl }}
               style={[styles.cover, styles.coverDimmed]}
               resizeMode="cover"
@@ -266,7 +267,7 @@ export default function InviteLinkScreen() {
           showsVerticalScrollIndicator={false}
         >
           {screen.preview.coverUrl ? (
-            <Image
+            <CachedImage
               source={{ uri: screen.preview.coverUrl }}
               style={styles.cover}
               resizeMode="cover"
