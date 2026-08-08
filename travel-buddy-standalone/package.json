@@ -11,7 +11,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "eas-build-pre-install": "corepack enable && bash scripts/eas-install-rust.sh",
-    "eas-build-on-success": "npx sentry-expo-upload-sourcemaps dist",
+    "eas-build-on-success": "bash scripts/eas-upload-sourcemaps.sh",
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && node scripts/check-import-extensions.mjs",
