@@ -3,35 +3,43 @@ name = "expo-openmls"
 version = "0.1.0"
 edition = "2021"
 
-# UniFFI scaffolding: generates Swift/Kotlin bindings from openmls.udl
+# `lib` is present so `cargo test` can link the crate; staticlib/cdylib are what
+# the iOS/Android builds consume.
 [lib]
-crate-type = ["staticlib", "cdylib"]
+crate-type = ["lib", "staticlib", "cdylib"]
 
 [dependencies]
-# MLS RFC 9420 implementation
-openmls = { version = "0.5.0", features = ["crypto-subtle"] }
-openmls_rust_crypto = "0.2.0"
-openmls_basic_credential = "0.2.0"
+# MLS RFC 9420 implementation.
+# 0.6, not 0.5: the source targets 0.6 APIs and 0.6 is where the StorageProvider
+# persistence model this module depends on is established.
+openmls = { version = "0.6.0", features = ["crypto-subtle"] }
+openmls_rust_crypto = "0.3.0"
+openmls_basic_credential = "0.3.0"
+openmls_traits = "0.3.0"
 
-# UniFFI — generates Swift/Kotlin bindings from the UDL
-uniffi = { version = "0.28.3", features = ["scaffolding"] }
+# KNOWN COMPROMISE: MemoryStorage::serialize/deserialize are gated behind
+# `test-utils` upstream ("For testing (KATs in particular)"). They are the only
+# ready-made way to snapshot provider state. Replacing this with a real
+# StorageProvider over SecureStore/SQLCipher is tracked work, NOT done here.
+openmls_memory_storage = { version = "0.3.0", features = ["test-utils"] }
+
+tls_codec = "0.4"
+
+# UniFFI — generates Swift/Kotlin bindings from the UDL.
+# NOTE: there is no `scaffolding` feature in 0.28; declaring one made dependency
+# resolution fail before any code compiled.
+uniffi = "0.28.3"
 
 # Independent Ed25519 + X25519 for identity/device key generation
 ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
 x25519-dalek   = { version = "2.0.1", features = ["static_secrets"] }
 
-# SHA-512 for safety-number derivation
 sha2 = "0.10.8"
-
-# Base64 for byte ↔ string boundary crossing
 base64 = "0.22.1"
-
-# JSON serialisation for group state bundles
 serde       = { version = "1.0", features = ["derive"] }
 serde_json  = "1.0"
-
-# Random-number generation
 rand = "0.8"
+thiserror = "1.0"
 
 [build-dependencies]
 uniffi = { version = "0.28.3", features = ["build"] }

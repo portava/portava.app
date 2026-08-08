@@ -20,10 +20,10 @@ namespace openmls {
   // Consumed one-shot when adding a device to an MLS group.
 
   [Throws=OpenMlsError]
-  string generate_key_package(
-    string identity_priv_b64,
+  KeyPackageResult generate_key_package(
+    string user_id,
     string device_ed25519_priv_b64,
-    string device_x25519_priv_b64
+    string device_ed25519_pub_b64
   );
 
   // ── Group operations ────────────────────────────────────────────────────────
@@ -32,19 +32,17 @@ namespace openmls {
   // Returns serialised group state + a Welcome message for the recipient.
   [Throws=OpenMlsError]
   GroupCreateResult create_group(
-    string my_identity_priv_b64,
-    string my_device_ed25519_priv_b64,
-    string my_device_x25519_priv_b64,
+    string user_id,
+    string device_ed25519_priv_b64,
+    string device_ed25519_pub_b64,
     string recipient_key_package_b64
   );
 
   // Join a group from a Welcome message sent by the initiator.
   [Throws=OpenMlsError]
   string process_welcome(
-    string my_identity_priv_b64,
-    string my_device_ed25519_priv_b64,
-    string my_device_x25519_priv_b64,
-    string welcome_b64
+    string welcome_b64,
+    string pending_state_b64
   );
 
   // ── Message encrypt / decrypt ───────────────────────────────────────────────
@@ -62,13 +60,17 @@ namespace openmls {
   );
 
   // ── Safety numbers ──────────────────────────────────────────────────────────
-  // Derive a 60-digit decimal safety number from two Ed25519 identity public keys.
-  // Deterministic: same input order produces the same number on both devices.
+  // Derive a 60-digit decimal safety number from the group's ACTUAL member
+  // signature keys, read out of the ratchet tree. Sorted, so both devices
+  // derive the same value. Substituting a member changes their leaf signature
+  // key and therefore the number — which is what makes it a real check.
+  //
+  // Was: two caller-supplied identity public keys, which the MLS session never
+  // used, so a match proved nothing.
 
   [Throws=OpenMlsError]
   string derive_safety_number(
-    string identity_pub_a_b64,
-    string identity_pub_b_b64
+    string group_state_b64
   );
 };
 
@@ -100,6 +102,13 @@ dictionary DeviceKeyPairBytes {
   string ed25519_priv_b64;
   string x25519_pub_b64;
   string x25519_priv_b64;
+};
+
+// Returned from generate_key_package. pending_state_b64 carries the KeyPackage's
+// private material, which process_welcome needs later.
+dictionary KeyPackageResult {
+  string key_package_b64;
+  string pending_state_b64;
 };
 
 // Returned from create_group: group state for storage + Welcome to send to peer.
