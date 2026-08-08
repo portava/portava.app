@@ -180,3 +180,16 @@ android {
   }
 }
 
+dependencies {
+  // UniFFI's Kotlin backend generates JNA-based bindings: the generated
+  // uniffi/openmls/openmls.kt refers to com.sun.jna Structure, Pointer,
+  // Library, Native and ByReference. Without this dependency it does not
+  // compile — 108 errors, all of them these symbols.
+  //
+  // The @aar classifier is required and not cosmetic. The plain jar omits the
+  // per-ABI native dispatch libraries, so it compiles and then fails at
+  // runtime with UnsatisfiedLinkError — which on this workstream would look
+  // like an FFI failure while actually being a packaging mistake.
+  implementation "net.java.dev.jna:jna:5.14.0@aar"
+}
+
