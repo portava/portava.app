@@ -16,8 +16,8 @@ import {
 } from '../mlsSession.ts';
 import type { CryptoPort } from './threadCrypto.ts';
 
-/** SecureStore key for the outstanding KeyPackage's private material. */
-const PENDING_KP_KEY = `${SECURE_KEYS.MLS_GROUP_STATE_PREFIX}pending_keypackage`;
+/** Single source of truth — see SECURE_KEYS.MLS_PENDING_KEY_PACKAGE. */
+const PENDING_KP_KEY = SECURE_KEYS.MLS_PENDING_KEY_PACKAGE;
 
 export const realCryptoPort: CryptoPort = {
   isNative,

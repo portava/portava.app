@@ -86,6 +86,16 @@ export const SECURE_KEYS = {
 
   // E-2: MLS group state is stored per group; keys are prefixed
   MLS_GROUP_STATE_PREFIX: 'portava:mls_group:',
+
+  /**
+   * E-2: private material for the currently-published KeyPackage.
+   *
+   * Written by cryptoIdentity when publishing, read by the e2ee port when a
+   * Welcome arrives. It lives here rather than as a literal in both places
+   * because a drift between the two makes every incoming Welcome unopenable —
+   * silently, and with no way to recover the thread afterwards.
+   */
+  MLS_PENDING_KEY_PACKAGE: 'portava:mls_group:pending_keypackage',
 } as const;
 
 export type SecureKey = typeof SECURE_KEYS[keyof typeof SECURE_KEYS];

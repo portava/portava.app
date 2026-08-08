@@ -150,6 +150,14 @@ export interface Message {
   canShowOriginal: boolean;
   msgType: string;
   subtype: string | null;
+  /** Opaque MLS ciphertext for E2EE threads. Null on plaintext threads. */
+  ciphertext?: string | null;
+  /**
+   * True when this device holds ciphertext it could not decrypt. The UI must
+   * show something for these — dropping them makes a conversation look like
+   * nothing was said.
+   */
+  e2eeFailed?: boolean;
   /** Client-generated id for optimistic-send correlation (set locally; echoed by the server). */
   clientId?: string | null;
   /** Local delivery state for optimistic UI. Absent for messages loaded from the server. */
@@ -182,7 +190,13 @@ export type MsgErrorKind =
   | 'network_unreachable'
   | 'config_error';
 
-import { buildOutgoingPayload } from '../lib/e2ee/threadCrypto.ts';
+import {
+  buildOutgoingPayload,
+  establishE2ee,
+  decryptIncoming,
+  joinFromWelcomeIfNeeded,
+  E2EE_WELCOME_SUBTYPE,
+} from '../lib/e2ee/threadCrypto.ts';
 import { realCryptoPort } from '../lib/e2ee/realPort.ts';
 
 export interface MsgResult<T> {
@@ -411,7 +425,54 @@ export async function getThreadMessages(
   before?: string,
 ): Promise<MsgResult<{ messages: Message[]; threadId: string }>> {
   const qs = before ? `?before=${encodeURIComponent(before)}` : '';
-  return apiGet(`/api/threads/${threadId}/messages${qs}`);
+  const res = await apiGet<{ messages: Message[]; threadId: string }>(
+    `/api/threads/${threadId}/messages${qs}`,
+  );
+  if (!res.ok || !res.data?.messages) return res;
+
+  return { ...res, data: { ...res.data, messages: await hydrateMessages(threadId, res.data.messages) } };
+}
+
+/**
+ * Turn what the server returned into what the UI renders.
+ *
+ * Joining from the Welcome comes FIRST: on the recipient's very first fetch the
+ * group does not exist yet, and decrypting before joining would mark every
+ * message unreadable. Both steps are no-ops on plaintext threads, so the
+ * non-E2EE path is unchanged.
+ *
+ * A message this device cannot read is returned with `e2eeFailed: true` and a
+ * null body rather than dropped. A silent gap in a conversation reads as
+ * "nothing was said", which is a worse lie than "this message could not be
+ * decrypted".
+ */
+async function hydrateMessages(threadId: string, messages: Message[]): Promise<Message[]> {
+  const anyCiphertext = messages.some((m) => !!(m as { ciphertext?: string | null }).ciphertext);
+  const anyWelcome = messages.some(
+    (m) => m.msgType === 'system' && m.subtype === E2EE_WELCOME_SUBTYPE,
+  );
+  if (!anyCiphertext && !anyWelcome) return messages;
+
+  await joinFromWelcomeIfNeeded(realCryptoPort, threadId, messages as never);
+
+  const out: Message[] = [];
+  for (const m of messages) {
+    // The Welcome is protocol plumbing. Users should not see a wall of base64.
+    if (m.msgType === 'system' && m.subtype === E2EE_WELCOME_SUBTYPE) continue;
+
+    const cipher = (m as { ciphertext?: string | null }).ciphertext;
+    if (!cipher) { out.push(m); continue; }
+
+    const d = await decryptIncoming(realCryptoPort, threadId, {
+      id: m.id,
+      body: m.body ?? null,
+      ciphertext: cipher,
+      msgType: m.msgType ?? null,
+      subtype: m.subtype ?? null,
+    });
+    out.push({ ...m, body: d.body ?? '', e2eeFailed: d.failed } as Message);
+  }
+  return out;
 }
 
 export async function sendMessage(
@@ -596,11 +657,72 @@ export async function openDirectThread(
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) return mapApiError(res.status, body);
+
+    // E2EE negotiation lives HERE rather than at each screen, because
+    // openDirectThread is the one funnel every 1:1 entry point goes through —
+    // ShareSheet, DiscoveryShareSheet, MapEntityPreviewCard, CircleMemberRow and
+    // anything added later. Putting it at call sites means the next one forgets.
+    //
+    // Gated on `created`: NEW threads only. Existing threads are never migrated,
+    // and that is enforced by the flag the server already returns rather than by
+    // anyone remembering the rule.
+    //
+    // Awaited, not fire-and-forget: if it returned first, a user could send a
+    // plaintext message into a thread that was about to become encrypted.
+    // Negotiation failure leaves the thread plaintext and perfectly usable.
+    if (body?.created === true && typeof body?.threadId === 'string') {
+      try {
+        await negotiateE2eeForNewThread(body.threadId, userId);
+      } catch {
+        // Never block opening a conversation on encryption setup.
+      }
+    }
+
     return { ok: true, data: body };
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
   }
+}
+
+/**
+ * Run MLS negotiation for a freshly created 1:1 thread.
+ *
+ * Deps are constructed here, where the network functions live, so
+ * lib/e2ee/threadCrypto.ts stays import-free and testable and there is no
+ * messaging <-> e2ee import cycle.
+ */
+/** Current signed-in user id, used as the PUBLIC credential identity in MLS. */
+async function currentUserId(): Promise<string | null> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data?.session?.user?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function negotiateE2eeForNewThread(threadId: string, peerUserId: string): Promise<void> {
+  const myUserId = await currentUserId();
+  if (!myUserId) return;
+
+  await establishE2ee(realCryptoPort, threadId, myUserId, peerUserId, {
+    consumeKeyPackage: async (peer) => {
+      const r = await consumePeerKeyPackage(peer);
+      return r.ok && r.data?.keyPackageB64 ? r.data.keyPackageB64 : null;
+    },
+    // Plaintext system message, sent while the thread is still plaintext —
+    // the server would reject it after is_e2ee is set, which is why the order
+    // is what it is.
+    sendWelcome: async (tid, welcomeB64) => {
+      const r = await sendMessage(tid, welcomeB64, {
+        msgType: 'system',
+        subtype: E2EE_WELCOME_SUBTYPE,
+      });
+      return r.ok;
+    },
+    markThreadE2ee: async (tid) => (await markThreadE2ee(tid)).ok,
+  });
 }
 
 // ── Media messages ────────────────────────────────────────────────────────────

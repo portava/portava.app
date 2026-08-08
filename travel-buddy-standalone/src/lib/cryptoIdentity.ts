@@ -17,6 +17,7 @@
  */
 
 import { Platform } from 'react-native';
+
 import {
   getSecure,
   setSecure,
@@ -165,5 +166,69 @@ async function _ensureDeviceRegistered(
         });
       } catch { /* best-effort */ }
     })();
+  }
+
+  // Publish a KeyPackage so other users can start an E2EE thread with this
+  // device. Without one, `GET /users/:id/key-packages/consume` returns
+  // no_key_package and every attempt to encrypt a thread with this user fails
+  // — visibly, but it fails. This is what makes the device reachable.
+  if (deviceId) await publishKeyPackageForDevice(ExpoOpenmls, deviceId);
+}
+
+/**
+ * Generate and publish one KeyPackage, retaining the private material the
+ * resulting Welcome will be encrypted to.
+ *
+ * ORDER: the pending state is stored BEFORE the KeyPackage is published. If a
+ * peer consumed a published KeyPackage while this device had not yet stored the
+ * matching private material, the Welcome would arrive unopenable and the thread
+ * would be permanently unreadable. Storing first can at worst orphan an unused
+ * pending state, which costs nothing.
+ *
+ * Pool size is deliberately one — see lib/e2ee/threadCrypto.ts. Republished on
+ * each launch, which is also the replenish path after a consume.
+ */
+async function publishKeyPackageForDevice(ExpoOpenmls: any, deviceId: string): Promise<void> {
+  try {
+    const [priv, pub, userId] = await Promise.all([
+      getSecure(SECURE_KEYS.DEVICE_ED25519_PRIVATE_KEY),
+      getSecure(SECURE_KEYS.DEVICE_ED25519_PUBLIC_KEY),
+      currentUserIdForCredential(),
+    ]);
+    if (!priv || !pub || !userId) return;
+
+    // Two-value return: the KeyPackage to publish, and the state to keep.
+    const result = await ExpoOpenmls.generateKeyPackage(userId, priv, pub);
+    if (!result?.keyPackageB64 || !result?.pendingStateB64) {
+      log('generateKeyPackage returned an unexpected shape');
+      return;
+    }
+
+    await setSecure(SECURE_KEYS.MLS_PENDING_KEY_PACKAGE, result.pendingStateB64);
+
+    const url = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+    const token = await freshToken();
+    if (!token) return;
+    await fetch(`${url}/api/me/devices/${deviceId}/key-packages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ keyPackages: [result.keyPackageB64] }),
+    });
+    log('key package published');
+  } catch (e) {
+    // Never block startup on this. The cost of failure is that nobody can start
+    // an E2EE thread with this device until the next launch — visible, not silent.
+    log('key package publish failed', { e: String(e) });
+  }
+}
+
+/** Signed-in user id — the PUBLIC identity placed in the MLS credential. */
+async function currentUserIdForCredential(): Promise<string | null> {
+  try {
+    const { supabase } = await import('./supabase.ts');
+    const { data } = await supabase.auth.getSession();
+    return data?.session?.user?.id ?? null;
+  } catch {
+    return null;
   }
 }
