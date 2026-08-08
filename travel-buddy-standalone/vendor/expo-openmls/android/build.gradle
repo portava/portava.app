@@ -62,12 +62,58 @@ task buildRustAndroid {
       'x86_64-linux-android',
     ]
 
+    // Android NDK linkers for cargo. Rust ships the std for these targets but
+    // has no idea how to LINK them: with nothing configured it falls back to
+    // the host `cc`, which cannot produce Android objects.
+    //
+    // Deliberately not a .cargo/config.toml — that file cannot express this.
+    // The NDK path differs per machine and per CI image and TOML has no
+    // environment interpolation, so a config.toml would hardcode an absolute
+    // path that is wrong everywhere except where it was written. AGP already
+    // resolves the NDK it is going to use; derive from that.
+    def ndkDir = android.ndkDirectory
+    if (ndkDir == null || !ndkDir.exists()) {
+      throw new GradleException(
+        "[expo-openmls] Android NDK not found; cargo cannot link Android targets.\n" +
+        "  android.ndkDirectory = ${ndkDir}"
+      )
+    }
+    def osName = System.getProperty('os.name').toLowerCase()
+    def hostTag = osName.contains('mac') ? 'darwin-x86_64'
+                : osName.contains('windows') ? 'windows-x86_64'
+                : 'linux-x86_64'
+    def ndkBin = new File(ndkDir, "toolchains/llvm/prebuilt/${hostTag}/bin")
+    def apiLevel = android.defaultConfig.minSdk ?: 24
+    // NB the armv7 linker wrapper is spelled armv7a-, unlike its target triple.
+    def clangFor = [
+      'aarch64-linux-android'  : "aarch64-linux-android${apiLevel}-clang",
+      'armv7-linux-androideabi': "armv7a-linux-androideabi${apiLevel}-clang",
+      'x86_64-linux-android'   : "x86_64-linux-android${apiLevel}-clang",
+    ]
+    def llvmAr = new File(ndkBin, 'llvm-ar')
+
     targets.each { target ->
+      def clang = new File(ndkBin, clangFor[target])
+      if (!clang.exists()) {
+        throw new GradleException(
+          "[expo-openmls] NDK linker missing for ${target}\n" +
+          "  expected: ${clang}\n" +
+          "  NDK:      ${ndkDir}\n" +
+          "Without it cargo falls back to the host cc and the link fails."
+        )
+      }
+
       println "[expo-openmls] cargo build --release --target ${target}"
       exec {
         workingDir '../'
         commandLine cargoExecutable, 'build', '--release', '--target', target
         environment 'PATH', cargoPath
+        // Cargo reads CARGO_TARGET_<TRIPLE>_LINKER with the triple uppercased
+        // and hyphens replaced by underscores. CC_/AR_ are for any cc-rs
+        // build script in the dependency tree.
+        environment "CARGO_TARGET_${target.toUpperCase().replace('-', '_')}_LINKER", clang.absolutePath
+        environment "CC_${target}", clang.absolutePath
+        environment "AR_${target}", llvmAr.absolutePath
       }
 
       // Stage the .so under an ABI-named directory. AGP reads jniLibs.srcDirs
