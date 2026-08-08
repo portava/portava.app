@@ -12,8 +12,9 @@
  */
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, FlatList, Pressable, Image, StyleSheet, ScrollView,
+  View, Text, FlatList, Pressable, StyleSheet, ScrollView,
 } from 'react-native';
+import { CachedImage } from '../CachedImage.tsx';
 import { router } from 'expo-router';
 import { MapPin, List, Map as MapIcon } from 'lucide-react-native';
 import type { PassportMemory } from '../../services/passportStamps.ts';
@@ -125,7 +126,7 @@ function DestinationCard({ group }: CardProps) {
     <Pressable style={s.card} onPress={handlePress}>
       {/* Hero image */}
       {group.heroImageUrl ? (
-        <Image source={{ uri: group.heroImageUrl }} style={s.hero} resizeMode="cover" />
+        <CachedImage source={{ uri: group.heroImageUrl }} style={s.hero} resizeMode="cover" />
       ) : (
         <View style={[s.hero, s.heroPlaceholder]}>
           <MapPin size={28} color={color.faint} />

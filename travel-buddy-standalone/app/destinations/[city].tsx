@@ -7,9 +7,10 @@
  */
 import React, { useMemo, useState, useEffect } from 'react';
 import {
-  View, Text, ScrollView, Pressable, Image,
+  View, Text, ScrollView, Pressable,
   ActivityIndicator, StyleSheet,
 } from 'react-native';
+import { CachedImage } from '../../src/components/CachedImage';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, MapPin } from 'lucide-react-native';
@@ -41,7 +42,7 @@ function MemoryRow({ memory }: { memory: import('../../src/services/passportStam
   return (
     <View style={s.memoryRow}>
       {memory.photoUrl ? (
-        <Image source={{ uri: memory.photoUrl }} style={s.memoryThumb} resizeMode="cover" />
+        <CachedImage source={{ uri: memory.photoUrl }} style={s.memoryThumb} resizeMode="cover" fallbackLabel="" />
       ) : (
         <View style={[s.memoryThumb, s.memoryThumbEmpty]} />
       )}
@@ -66,7 +67,7 @@ function PostcardRow({ postcard }: { postcard: import('../../src/types/models.ts
   return (
     <Pressable style={s.postcardRow} onPress={() => router.push(`/post/${postcard.postId}` as any)}>
       {postcard.mediaUrl ? (
-        <Image source={{ uri: postcard.mediaUrl }} style={s.postcardThumb} resizeMode="cover" />
+        <CachedImage source={{ uri: postcard.mediaUrl }} style={s.postcardThumb} resizeMode="cover" fallbackLabel="" />
       ) : (
         <View style={[s.postcardThumb, s.postcardThumbEmpty]} />
       )}
@@ -108,7 +109,7 @@ function TripRow({ trip }: { trip: import('../../src/services/trips.ts').TripRow
         </Text>
       </View>
       {trip.coverUrl ? (
-        <Image source={{ uri: trip.coverUrl }} style={s.tripCover} resizeMode="cover" />
+        <CachedImage source={{ uri: trip.coverUrl }} style={s.tripCover} resizeMode="cover" fallbackLabel="" />
       ) : null}
     </Pressable>
   );
@@ -189,7 +190,7 @@ export default function DestinationDetailScreen() {
 
       {/* Hero image */}
       {group.heroImageUrl ? (
-        <Image
+        <CachedImage
           source={{ uri: group.heroImageUrl }}
           style={s.heroImage}
           resizeMode="cover"

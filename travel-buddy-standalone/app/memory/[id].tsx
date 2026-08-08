@@ -7,9 +7,10 @@
  */
 import React, { useCallback, useState } from 'react';
 import {
-  View, Text, ScrollView, Pressable, Image,
+  View, Text, ScrollView, Pressable,
   StyleSheet, ActivityIndicator, Alert, Dimensions,
 } from 'react-native';
+import { CachedImage } from '../../src/components/CachedImage';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -244,11 +245,10 @@ export default function MemoryDetailScreen() {
             {items.map((item) => (
               <View key={item.id} style={s.mediaItem}>
                 {item.mediaUrl ? (
-                  <Image
+                  <CachedImage
                     source={{ uri: item.mediaUrl }}
                     style={s.mediaImage}
                     resizeMode="cover"
-                    onError={() => {/* expo-image shows blank on error; container provides fallback bg */}}
                   />
                 ) : (
                   <View style={[s.mediaImage, s.mediaFallback]}>

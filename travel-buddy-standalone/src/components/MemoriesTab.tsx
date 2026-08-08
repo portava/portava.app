@@ -3,6 +3,7 @@ import {
   View, Text, StyleSheet, Pressable, Image, ScrollView,
   ActivityIndicator, Modal, TextInput,
 } from 'react-native';
+import { CachedImage } from './CachedImage.tsx';
 import * as ImagePicker from 'expo-image-picker';
 import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
 import { SharedVideoPlayer } from './ui/SharedVideoPlayer.tsx';
@@ -343,7 +344,7 @@ function MemoryCard({ memory, onVisibilityChange, onEdit, onViewVideo }: MemoryC
         </Pressable>
       ) : memory.photoUrl ? (
         <Pressable onPress={() => onEdit(memory)} style={mc.photoWrap}>
-          <Image source={{ uri: memory.photoUrl }} style={mc.photo} resizeMode="cover" />
+          <CachedImage source={{ uri: memory.photoUrl }} style={mc.photo} resizeMode="cover" />
           <View style={mc.photoEditBadge}>
             <Camera size={13} color="#fff" />
           </View>

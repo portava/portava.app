@@ -11,9 +11,10 @@
  */
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import {
-  View, Text, FlatList, Pressable, Image, StyleSheet,
+  View, Text, FlatList, Pressable, StyleSheet,
   ActivityIndicator, useWindowDimensions, ScrollView,
 } from 'react-native';
+import { CachedImage } from '../CachedImage.tsx';
 import { router } from 'expo-router';
 import { MapPin, List, Map as MapIcon } from 'lucide-react-native';
 import type { CameraRef, LngLat, LngLatBounds } from '@maplibre/maplibre-react-native';
@@ -138,7 +139,7 @@ function DestinationCard({ group }: CardProps) {
     <Pressable style={s.card} onPress={handlePress}>
       {/* Hero image */}
       {group.heroImageUrl ? (
-        <Image source={{ uri: group.heroImageUrl }} style={s.hero} resizeMode="cover" />
+        <CachedImage source={{ uri: group.heroImageUrl }} style={s.hero} resizeMode="cover" />
       ) : (
         <View style={[s.hero, s.heroPlaceholder]}>
           <MapPin size={28} color={color.faint} />

@@ -8,8 +8,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, Pressable, FlatList, StyleSheet,
-  ActivityIndicator, Image,
+  ActivityIndicator,
 } from 'react-native';
+import { CachedImage } from '../../src/components/CachedImage';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, MapPin, BookImage } from 'lucide-react-native';
@@ -35,7 +36,7 @@ function MemoryRow({ memory }: { memory: Memory }) {
       onPress={() => router.push(`/memory/${memory.id}` as any)}
     >
       {memory.cover?.mediaUrl ? (
-        <Image source={{ uri: memory.cover.mediaUrl }} style={row.thumb} />
+        <CachedImage source={{ uri: memory.cover.mediaUrl }} style={row.thumb} fallbackLabel="" />
       ) : (
         <View style={[row.thumb, row.thumbFallback]}>
           <BookImage size={20} color={color.onInk} />

@@ -23,7 +23,6 @@ import React, {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View,
-  Image,
   StyleSheet,
   Pressable,
   Dimensions,
@@ -34,6 +33,8 @@ import {
   Platform,
   type ViewToken,
 } from 'react-native';
+import { Avatar } from '../../src/components/ui/Avatar';
+import { CachedImage } from '../../src/components/CachedImage';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Video, ResizeMode } from 'expo-av';
 import {
@@ -229,15 +230,12 @@ function ViewerOverlay({
                   }}
                   hitSlop={4}
                 >
-                  {post.authorAvatarUrl ? (
-                    <Image source={{ uri: post.authorAvatarUrl }} style={ov.avatar} />
-                  ) : (
-                    <View style={[ov.avatar, ov.avatarFallback]}>
-                      <Text style={ov.avatarInitial}>
-                        {(post.authorName || post.authorHandle || '?').charAt(0).toUpperCase()}
-                      </Text>
-                    </View>
-                  )}
+                  <Avatar
+                    uri={post.authorAvatarUrl}
+                    name={post.authorName || post.authorHandle}
+                    size={36}
+                    style={ov.avatarRing}
+                  />
                   <View>
                     {post.authorName ? (
                       <Text style={ov.authorName} numberOfLines={1}>{post.authorName}</Text>
@@ -380,22 +378,10 @@ const ov = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  // Sizing/shape come from <Avatar size>; this is the contrast ring only.
+  avatarRing: {
     borderWidth: 1.5,
     borderColor: 'rgba(255,255,255,0.6)',
-  },
-  avatarFallback: {
-    backgroundColor: color.deep,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitial: {
-    color: color.onInk,
-    fontSize: 14,
-    fontWeight: '700',
   },
   authorName: {
     ...t.bodyStrong,
@@ -496,7 +482,7 @@ function ViewerPage({ item, isActive, isMuted, postData }: ViewerPageProps) {
         /* Still fetching */
         <View style={pg.loadingWrap}>
           {posterUrl ? (
-            <Image source={{ uri: posterUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+            <CachedImage source={{ uri: posterUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackLabel="" />
           ) : null}
           <ActivityIndicator size="large" color={color.onInk} />
         </View>
@@ -520,12 +506,12 @@ function ViewerPage({ item, isActive, isMuted, postData }: ViewerPageProps) {
           {/* Poster until first frame renders */}
           {showPoster && posterUrl && Platform.OS !== 'web' ? (
             <View style={StyleSheet.absoluteFill} pointerEvents="none">
-              <Image source={{ uri: posterUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+              <CachedImage source={{ uri: posterUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackLabel="" />
             </View>
           ) : null}
         </>
       ) : (
-        <Image source={{ uri: mediaUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        <CachedImage source={{ uri: mediaUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
       )}
     </View>
   );

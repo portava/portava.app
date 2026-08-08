@@ -29,11 +29,11 @@ import {
   Pressable,
   Platform,
   StyleSheet,
-  Image,
   Share,
   Alert,
   Dimensions,
 } from 'react-native';
+import { Avatar } from '../ui/Avatar.tsx';
 import { recordMediaShare } from '../../services/mediaInteractions.ts';
 import { ShareSheet } from '../ShareSheet.tsx';
 import { formatCompactCount } from '../../lib/counterFormat.ts';
@@ -275,15 +275,12 @@ export function WatchItemOverlay({
           {/* Creator row */}
           <View style={s.creatorRow} pointerEvents="box-none">
             <Pressable onPress={goProfile} style={s.avatarWrap} hitSlop={6}>
-              {item.creator.avatarUrl ? (
-                <Image source={{ uri: item.creator.avatarUrl }} style={s.avatar} />
-              ) : (
-                <View style={[s.avatar, s.avatarFallback]}>
-                  <Text style={s.avatarInitial}>
-                    {creatorDisplayName.charAt(0).toUpperCase()}
-                  </Text>
-                </View>
-              )}
+              <Avatar
+                uri={item.creator.avatarUrl}
+                name={creatorDisplayName}
+                size={40}
+                style={s.avatarRing}
+              />
             </Pressable>
 
             <View style={s.creatorInfo} pointerEvents="box-none">
@@ -506,22 +503,10 @@ const s = StyleSheet.create({
     gap: space.sm,
   },
   avatarWrap: {},
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  // Sizing/shape come from <Avatar size>; this is the contrast ring only.
+  avatarRing: {
     borderWidth: 1.5,
     borderColor: 'rgba(255,255,255,0.6)',
-  },
-  avatarFallback: {
-    backgroundColor: color.deep,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitial: {
-    color: color.onInk,
-    fontSize: 16,
-    fontWeight: '700',
   },
   creatorInfo: {
     flex: 1,

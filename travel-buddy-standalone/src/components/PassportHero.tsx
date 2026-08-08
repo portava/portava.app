@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { CachedImage } from './CachedImage.tsx';
 import Svg, { Path, Defs, Pattern, Rect, Circle } from 'react-native-svg';
 import { Plane, MapPin, MoreHorizontal, Camera, ShieldCheck, Calendar } from 'lucide-react-native';
 import type { OwnProfile, PublicProfile } from '../types/models.ts';
@@ -197,7 +198,7 @@ export function PassportHero({
           >
             <View style={styles.photoFrame}>
               {avatarUrl ? (
-                <Image source={{ uri: avatarUrl }} style={styles.photo} />
+                <CachedImage source={{ uri: avatarUrl }} style={styles.photo} />
               ) : (
                 <View style={[styles.photo, styles.photoEmpty]}>
                   <Text style={styles.initials}>{initials}</Text>

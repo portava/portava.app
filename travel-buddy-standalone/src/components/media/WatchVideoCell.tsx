@@ -20,12 +20,12 @@ import React, {
 } from 'react';
 import {
   View,
-  Image,
   Text,
   StyleSheet,
   Dimensions,
   ActivityIndicator,
 } from 'react-native';
+import { CachedImage } from '../CachedImage.tsx';
 import { Video, type AVPlaybackStatus } from 'expo-av';
 import { WifiOff, PlayCircle } from 'lucide-react-native';
 import { color, type as t } from '../../theme/tokens.ts';
@@ -137,7 +137,7 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
       return (
         <View style={s.cell}>
           {posterUrl ? (
-            <Image source={{ uri: posterUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+            <CachedImage source={{ uri: posterUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackLabel="" />
           ) : null}
           <View style={s.failureOverlay}>
             <PlayCircle size={40} color="rgba(255,255,255,0.7)" />
@@ -166,10 +166,11 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
         {/* Poster: shown while buffering (avoids black flash during seek). */}
         {isBuffering && posterUrl ? (
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
-            <Image
+            <CachedImage
               source={{ uri: posterUrl }}
               style={StyleSheet.absoluteFill}
               resizeMode="cover"
+              fallbackLabel=""
             />
           </View>
         ) : null}

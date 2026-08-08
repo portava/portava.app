@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, Image, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
+import { CachedImage } from './CachedImage.tsx';
 import { Plane, Map, Award } from 'lucide-react-native';
 import { color, space, radius } from '../theme/tokens.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
@@ -31,7 +32,7 @@ export const PassportShareCard = React.forwardRef<View, PassportShareCardProps>(
         {/* Avatar */}
         <View style={styles.avatarWrap}>
           {avatarUrl ? (
-            <Image source={{ uri: avatarUrl }} style={styles.avatar} />
+            <CachedImage source={{ uri: avatarUrl }} style={styles.avatar} fallbackLabel="" />
           ) : (
             <View style={[styles.avatar, styles.avatarPlaceholder]}>
               <Text style={styles.avatarEmoji}>✈️</Text>

@@ -25,9 +25,9 @@ import {
   Text,
   Pressable,
   StyleSheet,
-  Image,
   Platform,
 } from 'react-native';
+import { Avatar } from '../ui/Avatar.tsx';
 import { LinearGradient } from 'expo-linear-gradient';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import type { GemsFeedItem } from '../../hooks/useGemsFeed.ts';
@@ -252,19 +252,13 @@ export function GemsItemOverlay({
             failed to resolve (both displayName and username come back empty),
             so attribution is never silently blank. */}
         <View style={styles.creatorRow}>
-          {item.creator.avatarUrl ? (
-            <Image
-              source={{ uri: item.creator.avatarUrl }}
-              style={styles.avatar}
-              accessibilityLabel={`${item.creator.displayName || 'Traveler'}'s avatar`}
-            />
-          ) : (
-            <View style={[styles.avatar, styles.avatarFallback]}>
-              <Text style={styles.avatarInitial}>
-                {(item.creator.displayName || item.creator.username || 'T')[0].toUpperCase()}
-              </Text>
-            </View>
-          )}
+          <Avatar
+            uri={item.creator.avatarUrl}
+            name={item.creator.displayName || item.creator.username}
+            size={36}
+            style={styles.avatarRing}
+            accessibilityLabel={`${item.creator.displayName || 'Traveler'}'s avatar`}
+          />
 
           <View style={styles.creatorInfo}>
             <Text style={styles.creatorName} numberOfLines={1}>
@@ -487,22 +481,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: space.sm,
   },
-  avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  // Sizing/shape come from <Avatar size>; this is the contrast ring only.
+  avatarRing: {
     borderWidth: 1.5,
     borderColor: 'rgba(255,255,255,0.5)',
-  },
-  avatarFallback: {
-    backgroundColor: color.deep,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitial: {
-    ...t.bodyStrong,
-    color: color.onInk,
-    fontSize: 14,
   },
   creatorInfo: {
     flex: 1,

@@ -10,8 +10,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, FlatList, ScrollView,
-  ActivityIndicator, RefreshControl, Image,
+  ActivityIndicator, RefreshControl,
 } from 'react-native';
+import { CachedImage } from '../src/components/CachedImage';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Trophy, MapPin, RefreshCw } from 'lucide-react-native';
@@ -70,7 +71,7 @@ function WinnerCard({ post }: { post: FeaturedPost }) {
       {/* Thumbnail */}
       <View style={styles.winnerImageWrap}>
         {post.thumbnailUrl ? (
-          <Image source={{ uri: post.thumbnailUrl }} style={styles.winnerImage} resizeMode="cover" />
+          <CachedImage source={{ uri: post.thumbnailUrl }} style={styles.winnerImage} resizeMode="cover" fallbackLabel="" />
         ) : (
           <View style={[styles.winnerImage, styles.winnerImageFallback]}>
             <Text style={styles.winnerImageEmoji}>{emoji}</Text>
@@ -141,7 +142,7 @@ function CategoryCard({ post }: { post: FeaturedPost }) {
       {/* Image */}
       <View style={styles.categoryImageWrap}>
         {post.thumbnailUrl ? (
-          <Image source={{ uri: post.thumbnailUrl }} style={styles.categoryImage} resizeMode="cover" />
+          <CachedImage source={{ uri: post.thumbnailUrl }} style={styles.categoryImage} resizeMode="cover" fallbackLabel="" />
         ) : (
           <View style={[styles.categoryImage, styles.categoryImageFallback]}>
             <Text style={{ fontSize: 28 }}>{CATEGORY_EMOJI[post.category] ?? '🏆'}</Text>

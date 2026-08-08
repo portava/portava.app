@@ -8,9 +8,10 @@
  */
 import React, { useState, useCallback, useEffect } from 'react';
 import {
-  View, Text, Pressable, FlatList, StyleSheet, ActivityIndicator,
-  Image, ScrollView, Alert,
+  View, Text, Pressable, FlatList, StyleSheet, ActivityIndicator, ScrollView, Alert,
 } from 'react-native';
+import { Avatar } from '../../src/components/ui/Avatar';
+import { CachedImage } from '../../src/components/CachedImage';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -69,7 +70,7 @@ function PostRow({ item }: { item: FeedPostItem }) {
       onPress={() => router.push(`/post/${item.id}` as any)}
     >
       {item.mediaUrls.length > 0 && (
-        <Image source={{ uri: item.mediaUrls[0] }} style={fr.postThumb} />
+        <CachedImage source={{ uri: item.mediaUrls[0] }} style={fr.postThumb} fallbackLabel="" />
       )}
       <View style={fr.postBody}>
         {item.author && (
@@ -77,15 +78,11 @@ function PostRow({ item }: { item: FeedPostItem }) {
             style={fr.authorRow}
             onPress={() => router.push(`/u/${item.author!.handle}` as any)}
           >
-            {item.author.avatarUrl ? (
-              <Image source={{ uri: item.author.avatarUrl }} style={fr.avatar} />
-            ) : (
-              <View style={[fr.avatar, fr.avatarFallback]}>
-                <Text style={fr.avatarInitial}>
-                  {(item.author.name ?? item.author.handle).charAt(0).toUpperCase()}
-                </Text>
-              </View>
-            )}
+            <Avatar
+              uri={item.author.avatarUrl}
+              name={item.author.name ?? item.author.handle}
+              size={24}
+            />
             <Text style={fr.authorName}>{item.author.name ?? item.author.handle}</Text>
             <Text style={fr.meta}>{timeAgo(item.createdAt)}</Text>
           </Pressable>
@@ -106,15 +103,7 @@ function UserRow({ item }: { item: FeedUserItem }) {
       style={fr.row}
       onPress={() => router.push(`/u/${item.handle}` as any)}
     >
-      {item.avatarUrl ? (
-        <Image source={{ uri: item.avatarUrl }} style={fr.avatarLg} />
-      ) : (
-        <View style={[fr.avatarLg, fr.avatarFallback]}>
-          <Text style={fr.avatarLgInitial}>
-            {(item.name ?? item.handle).charAt(0).toUpperCase()}
-          </Text>
-        </View>
-      )}
+      <Avatar uri={item.avatarUrl} name={item.name ?? item.handle} size={44} />
       <View style={fr.rowInfo}>
         <Text style={fr.rowTitle}>{item.name ?? item.handle}</Text>
         <Text style={fr.rowSub}>@{item.handle}</Text>
@@ -148,7 +137,7 @@ function PlaceRow({ item }: { item: FeedPlaceItem }) {
   return (
     <View style={fr.row}>
       {item.imageUrl ? (
-        <Image source={{ uri: item.imageUrl }} style={fr.placeThumb} />
+        <CachedImage source={{ uri: item.imageUrl }} style={fr.placeThumb} fallbackLabel="" />
       ) : (
         <View style={[fr.typeIcon, { backgroundColor: color.success + '18' }]}>
           <MapPin size={18} color={color.success} />
@@ -500,16 +489,12 @@ const fr = StyleSheet.create({
   postThumb: { width: 60, height: 60, borderRadius: radius.sm, backgroundColor: color.haze },
   postBody: { flex: 1, gap: 4 },
   authorRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  avatar: { width: 24, height: 24, borderRadius: 12, backgroundColor: color.haze },
-  avatarFallback: { backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center' },
-  avatarInitial: { fontSize: 10, fontWeight: '700', color: color.onInk },
   authorName: { ...t.small, color: color.ink, fontWeight: '600' },
   meta: { ...t.small, color: color.faint },
   postContent: { ...t.body, color: color.ink, lineHeight: 20 },
   statRow: { flexDirection: 'row', gap: space.md, marginTop: 2 },
   stat: { ...t.small, color: color.mute },
 
-  avatarLg: { width: 44, height: 44, borderRadius: 22, backgroundColor: color.haze },
   avatarLgInitial: { fontSize: 16, fontWeight: '700', color: color.onInk },
 
   rowInfo: { flex: 1, gap: 3, justifyContent: 'center' },

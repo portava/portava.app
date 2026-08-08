@@ -14,8 +14,9 @@
  */
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  View, Text, Image, Pressable, StyleSheet, ScrollView, ActivityIndicator, RefreshControl,
+  View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, RefreshControl,
 } from 'react-native';
+import { CachedImage } from '../../src/components/CachedImage';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, MapPin, Gem, CalendarDays, Compass } from 'lucide-react-native';
 import { listGems, type HiddenGem } from '../../src/services/hiddenGems';
@@ -153,7 +154,7 @@ export default function Destination() {
                   accessibilityLabel={`Hidden gem: ${g.name}`}
                 >
                   {g.imageUrl ? (
-                    <Image source={{ uri: g.imageUrl }} style={s.gemThumb} resizeMode="cover" />
+                    <CachedImage source={{ uri: g.imageUrl }} style={s.gemThumb} resizeMode="cover" fallbackLabel="" />
                   ) : (
                     <View style={s.gemIcon}><Gem size={16} color={color.deep} /></View>
                   )}
@@ -188,7 +189,7 @@ export default function Destination() {
                 accessibilityLabel={`Event: ${ev.title}`}
               >
                 {ev.coverUrl ? (
-                  <Image source={{ uri: ev.coverUrl }} style={s.eventThumb} />
+                  <CachedImage source={{ uri: ev.coverUrl }} style={s.eventThumb} fallbackLabel="" />
                 ) : (
                   <View style={[s.eventThumb, s.eventThumbFallback]}>
                     <CalendarDays size={16} color={color.mute} />
@@ -230,7 +231,7 @@ export default function Destination() {
                     accessibilityRole="button"
                     accessibilityLabel="Traveler post"
                   >
-                    {uri ? <Image source={{ uri }} style={s.postImg} /> : null}
+                    {uri ? <CachedImage source={{ uri }} style={s.postImg} fallbackLabel="" /> : null}
                   </Pressable>
                 );
               })}

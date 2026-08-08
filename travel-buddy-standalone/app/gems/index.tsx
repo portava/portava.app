@@ -8,8 +8,9 @@ import React, { useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   TextInput, ActivityIndicator, RefreshControl, ScrollView,
-  Alert, Image,
+  Alert,
 } from 'react-native';
+import { CachedImage } from '../../src/components/CachedImage';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useGemList, useSavedGems, useLayoverGems } from '../../src/hooks/useHiddenGems';
@@ -43,7 +44,7 @@ function GemCard({ gem, onPress }: { gem: HiddenGem; onPress: () => void }) {
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.8}>
       {gem.imageUrl ? (
-        <Image
+        <CachedImage
           source={{ uri: gem.imageUrl }}
           style={styles.cardThumbnail}
           resizeMode="cover"
