@@ -200,14 +200,22 @@ async function processMentions(
     }
   }
 
-  // Per-hour rate-limit check: count author's tags in rolling 1-hour window
-  // NOTE: schema uses tagged_at (not created_at) — see migration 0044_tags_hashtags.sql
+  // Per-hour rate-limit check: count author's tags in rolling 1-hour window.
+  // Live schema has no `tagged_at` column (0044's tagged_at columns/indexes were
+  // never applied — see docs/migrations.md); use `created_at`, which does exist.
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  const { count: hourCount } = await db
+  const { count: hourCount, error: hourCountErr } = await db
     .from('tags')
     .select('id', { count: 'exact', head: true })
     .eq('tagger_id', authorId)
-    .gte('tagged_at', oneHourAgo);
+    .gte('created_at', oneHourAgo);
+
+  if (hourCountErr) {
+    // Fail closed: if we can't verify the author is under the rate limit,
+    // do not silently allow unlimited tagging.
+    logger?.error({ err: hourCountErr, authorId }, 'processMentions: hourly rate-limit lookup failed');
+    return [];
+  }
 
   if ((hourCount ?? 0) >= MAX_TAGS_PER_HOUR) {
     logger?.warn({ authorId }, 'processMentions: hourly rate limit exceeded');
