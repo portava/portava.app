@@ -1641,12 +1641,13 @@ export default function TelegraphThread() {
                 accessibilityLabel="End-to-end encrypted. Tap to verify safety number."
                 onPress={() => {
                   // Navigate to the safety number screen.
-                  // peerIdentityPub is fetched server-side by SafetyNumberScreen.
+                  // Derived from the thread's live MLS group, not from a
+                  // server-supplied key — see SafetyNumberScreen.
                   router.push({
                     pathname: '/safety-number',
                     params: {
                       peerName: displayName,
-                      peerUserId: otherUserId ?? '',
+                      threadId: String(id ?? ''),
                     },
                   });
                 }}

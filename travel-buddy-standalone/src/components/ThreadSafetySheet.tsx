@@ -56,8 +56,11 @@ interface Props {
   isE2ee?: boolean;
   /** E-2: display name of the other user — shown inside SafetyNumberScreen. */
   peerName?: string;
-  /** E-2: peer's Ed25519 identity public key (base64) from /api/users/:id/devices. */
-  peerIdentityPubB64?: string;
+  /**
+   * E-2: thread whose live MLS group the safety number is derived from.
+   * Was the peer's identity public key, which the MLS session never used.
+   */
+  threadId?: string;
 }
 
 export function ThreadSafetySheet({
@@ -76,7 +79,7 @@ export function ThreadSafetySheet({
   onReport,
   isE2ee,
   peerName,
-  peerIdentityPubB64,
+  threadId,
 }: Props) {
   const [mutingBusy, setMutingBusy] = useState(false);
   const [showReport, setShowReport] = useState(false);
@@ -125,12 +128,12 @@ export function ThreadSafetySheet({
   }
 
   // SafetyNumberScreen is a full-screen modal layered on top of this sheet.
-  if (showSafetyNumber && peerIdentityPubB64) {
+  if (showSafetyNumber && threadId) {
     return (
       <Modal visible={visible} animationType="slide" onRequestClose={() => setShowSafetyNumber(false)}>
         <SafetyNumberScreen
           peerName={peerName ?? 'Contact'}
-          peerIdentityPubB64={peerIdentityPubB64}
+          threadId={threadId}
           onDismiss={() => setShowSafetyNumber(false)}
         />
       </Modal>
@@ -192,7 +195,7 @@ export function ThreadSafetySheet({
           </View>
 
           {/* Verify safety number — E2EE 1:1 DM only */}
-          {isE2ee && threadType === 'direct' && peerIdentityPubB64 && (
+          {isE2ee && threadType === 'direct' && threadId && (
             <Pressable style={sh.row} onPress={() => setShowSafetyNumber(true)}>
               <ShieldCheck size={18} color="#2A7A4B" />
               <View style={sh.rowTextBlock}>

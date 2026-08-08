@@ -91,7 +91,7 @@ confirming, I say so.
 | Server: KeyPackage pool | `migrations/20260802_e2ee_key_packages.sql` + `routes/keyPackages.ts` | **Live.** 3 endpoints: publish, inventory, one-shot consume |
 | Server: ciphertext | `migrations/20260803_messages_ciphertext.sql` | **Live** — confirmed in `database.types.ts`, which was regenerated against the live schema in `1c0cfdaea` |
 | Server: send path | `routes/messaging.ts:1580-1671` | **Implemented.** Accepts `ciphertext`, enforces `body=null` on E2EE threads, rejects plaintext into an E2EE thread, 64 KB cap |
-| Tests | `src/lib/__tests__/{secureStore.e0,localMessageDb.e0,cryptoIdentity.e1,mlsSession.e2}.test.ts` | Present and **already running in the standalone node gate** (part of the green 3696) |
+| Tests | `src/lib/__tests__/{secureStore.e0,localMessageDb.e0,cryptoIdentity.e1,mlsSession.e2}.test.ts` | **CORRECTED 2026-08-08: present but NOT running anywhere.** All four are in the EXCLUDE array in `scripts/run-node-tests.mjs`; they do not match `test:component`'s `\.component\.test\.` filter; and under jest they fail at module resolution. An earlier revision of this table claimed they were part of the green 3696 — that was read off a grep hit inside an exclude list. |
 
 This was executed as a planned programme, not accreted — there are design,
 execution-plan and completion-report documents for it (§1.8). Note however that

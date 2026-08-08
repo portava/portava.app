@@ -49,11 +49,16 @@ this.**
   precondition for this engagement), and the `encrypt_message` signature-key
   defect disclosed below has never been reached at runtime — it is a semantic
   bug sitting behind ~32 compile errors.
-- **The existing test suite does not exercise real cryptography.** The E-0/E-1/
-  E-2 Jest tests call `jest.mock('expo-openmls')` and run against a
-  deterministic in-memory mock with a fake encrypt/decrypt round-trip. They
-  demonstrate wiring and lifecycle, not cryptographic correctness. Please do
-  not read "42 tests passing" as evidence about the protocol.
+- **The E2EE test suite does not run at all.** Corrected 2026-08-08; an earlier
+  revision said only that it "does not exercise real cryptography", which was
+  too generous. All four E-0/E-1/E-2 test files are listed in an EXCLUDE array
+  in `scripts/run-node-tests.mjs`, so the node gate skips them; they are named
+  `*.test.ts` rather than `*.component.test.ts`, so the jest component gate does
+  not match them either; and run directly under jest they fail at module
+  resolution on `jest.mock('expo-openmls')`. The "42 tests passing" figure in
+  the completion report cannot be reproduced. Rust-level tests have since been
+  added inside the module itself (8, passing) and those DO exercise real
+  cryptography.
 
 **What this means for the engagement.** The module will be brought to a
 compiling, two-device-verified state *before* the review starts — that is

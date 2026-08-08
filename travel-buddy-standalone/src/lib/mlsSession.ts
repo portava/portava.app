@@ -26,9 +26,10 @@ import {
 // ---------------------------------------------------------------------------
 
 export interface E1PrivKeys {
-  identityPrivB64: string;
+  /** Device Ed25519 SIGNING key — the key MLS actually uses. */
   deviceEd25519PrivB64: string;
-  deviceX25519PrivB64: string;
+  /** Its public half; the Rust side imports the pair rather than minting one. */
+  deviceEd25519PubB64: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -40,15 +41,21 @@ function groupStateKey(threadId: string): string {
   return `${SECURE_KEYS.MLS_GROUP_STATE_PREFIX}${threadId}`;
 }
 
-/** Load the caller's private key bundle from SecureStore. */
+/**
+ * Load the device signing key pair from SecureStore.
+ *
+ * The identity PRIVATE key is deliberately NOT loaded here any more. It used to
+ * be passed to the native module, which placed it in the MLS credential — a
+ * public field that travels to the server and the peer. Nothing outside
+ * SecureStore needs it.
+ */
 async function loadPrivKeys(): Promise<E1PrivKeys | null> {
-  const [identityPrivB64, deviceEd25519PrivB64, deviceX25519PrivB64] = await Promise.all([
-    getSecure(SECURE_KEYS.IDENTITY_PRIVATE_KEY),
+  const [deviceEd25519PrivB64, deviceEd25519PubB64] = await Promise.all([
     getSecure(SECURE_KEYS.DEVICE_ED25519_PRIVATE_KEY),
-    getSecure(SECURE_KEYS.DEVICE_X25519_PRIVATE_KEY),
+    getSecure(SECURE_KEYS.DEVICE_ED25519_PUBLIC_KEY),
   ]);
-  if (!identityPrivB64 || !deviceEd25519PrivB64 || !deviceX25519PrivB64) return null;
-  return { identityPrivB64, deviceEd25519PrivB64, deviceX25519PrivB64 };
+  if (!deviceEd25519PrivB64 || !deviceEd25519PubB64) return null;
+  return { deviceEd25519PrivB64, deviceEd25519PubB64 };
 }
 
 /** Load MLS group state for a thread. Returns null if not yet established. */
@@ -83,6 +90,8 @@ export async function destroyGroupSession(threadId: string): Promise<void> {
  */
 export async function initGroupAsInitiator(
   threadId: string,
+  /** PUBLIC identifier placed in the MLS credential. Never key material. */
+  userId: string,
   recipientKeyPackageB64: string,
 ): Promise<{ welcomeB64: string } | null> {
   if (!isNative()) return null;
@@ -102,9 +111,9 @@ export async function initGroupAsInitiator(
   }
 
   const result = await ExpoOpenmls.createGroup(
-    keys.identityPrivB64,
+    userId,
     keys.deviceEd25519PrivB64,
-    keys.deviceX25519PrivB64,
+    keys.deviceEd25519PubB64,
     recipientKeyPackageB64,
   );
 
@@ -119,14 +128,14 @@ export async function initGroupAsInitiator(
 export async function initGroupAsRecipient(
   threadId: string,
   welcomeB64: string,
+  /**
+   * Provider snapshot returned by generateKeyPackage. It carries the
+   * KeyPackage's private material, which the Welcome is encrypted to — without
+   * it the join cannot succeed.
+   */
+  pendingStateB64: string,
 ): Promise<boolean> {
   if (!isNative()) return false;
-
-  const keys = await loadPrivKeys();
-  if (!keys) {
-    console.error('[mlsSession] initGroupAsRecipient: no crypto identity');
-    return false;
-  }
 
   let ExpoOpenmls: any = null;
   try {
@@ -135,12 +144,7 @@ export async function initGroupAsRecipient(
     return false;
   }
 
-  const groupStateB64 = await ExpoOpenmls.processWelcome(
-    keys.identityPrivB64,
-    keys.deviceEd25519PrivB64,
-    keys.deviceX25519PrivB64,
-    welcomeB64,
-  );
+  const groupStateB64 = await ExpoOpenmls.processWelcome(welcomeB64, pendingStateB64);
 
   await saveGroupState(threadId, groupStateB64);
   return true;
@@ -207,17 +211,23 @@ export async function decryptFromThread(
 // ---------------------------------------------------------------------------
 
 /**
- * Derive the safety number for a 1:1 E2EE thread.
- * Both users' identity public keys are needed — fetched from the server.
+ * Derive the safety number for a 1:1 E2EE thread from the LIVE group state.
+ *
+ * It used to take two identity public keys fetched from the server. Those keys
+ * were never used by the MLS session, so a matching number proved nothing and
+ * could not have detected a MitM. It now derives from the signature keys
+ * actually present in the group's ratchet tree.
  */
 export async function deriveSafetyNumberForThread(
-  myIdentityPubB64: string,
-  peerIdentityPubB64: string,
+  threadId: string,
 ): Promise<string | null> {
   if (!isNative()) return null;
+
+  const groupState = await loadGroupState(threadId);
+  if (!groupState) return null;
 
   let ExpoOpenmls: any = null;
   try { ExpoOpenmls = require('expo-openmls'); } catch { return null; }
 
-  return ExpoOpenmls.deriveSafetyNumber(myIdentityPubB64, peerIdentityPubB64);
+  return ExpoOpenmls.deriveSafetyNumber(groupState);
 }

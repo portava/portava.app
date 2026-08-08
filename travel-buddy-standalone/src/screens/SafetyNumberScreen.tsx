@@ -31,8 +31,13 @@ import { deriveSafetyNumberForThread } from '../lib/mlsSession.ts';
 interface Props {
   /** The peer's display name (shown in the header). */
   peerName: string;
-  /** Peer's Ed25519 identity public key (base64), fetched from /api/users/:id/devices. */
-  peerIdentityPubB64: string;
+  /**
+   * Thread whose live MLS group the number is derived from.
+   *
+   * Was the peer's identity public key fetched from the server — but the MLS
+   * session never used that key, so the number it produced verified nothing.
+   */
+  threadId: string;
   onDismiss: () => void;
 }
 
@@ -54,7 +59,7 @@ function formatSafetyNumber(raw: string): string[] {
 // Component
 // ---------------------------------------------------------------------------
 
-export function SafetyNumberScreen({ peerName, peerIdentityPubB64, onDismiss }: Props) {
+export function SafetyNumberScreen({ peerName, threadId, onDismiss }: Props) {
   const insets = useSafeAreaInsets();
   const [safetyNumber, setSafetyNumber] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,12 +69,13 @@ export function SafetyNumberScreen({ peerName, peerIdentityPubB64, onDismiss }: 
     let cancelled = false;
     (async () => {
       try {
-        const myPub = await getIdentityPublicKey();
-        if (!myPub) {
-          setError('Your device keys are not set up yet. Try again after the app fully loads.');
+        // Derived from the live MLS group, not from identity keys fetched from
+        // the server — see deriveSafetyNumberForThread.
+        const num = await deriveSafetyNumberForThread(threadId);
+        if (!num) {
+          setError('This conversation is not encrypted yet, so there is nothing to verify.');
           return;
         }
-        const num = await deriveSafetyNumberForThread(myPub, peerIdentityPubB64);
         if (!cancelled) setSafetyNumber(num);
       } catch (err) {
         if (!cancelled) setError('Could not compute safety number. Please try again.');
@@ -78,7 +84,7 @@ export function SafetyNumberScreen({ peerName, peerIdentityPubB64, onDismiss }: 
       }
     })();
     return () => { cancelled = true; };
-  }, [peerIdentityPubB64]);
+  }, [threadId]);
 
   const handleShare = useCallback(async () => {
     if (!safetyNumber) return;

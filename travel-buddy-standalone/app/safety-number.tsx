@@ -4,50 +4,30 @@
  * Pushed as a modal from the thread header lock badge.
  *
  * Params (via useLocalSearchParams):
- *   peerName     — display name of the peer
- *   peerUserId   — peer's user id; this route fetches their identity pub key
- *                  from GET /api/users/:id/devices
+ *   peerName — display name of the peer
+ *   threadId — the thread whose live MLS group the number is derived from
+ *
+ * This route previously fetched the peer's identity public key from
+ * GET /api/users/:id/devices and derived the number from it. That key was never
+ * used by the MLS session, so the number verified nothing. The derivation now
+ * reads the signature keys actually present in the group's ratchet tree, which
+ * means the fetch is gone: the number comes from local group state, not from
+ * anything the server tells us. That is the point — a server that could choose
+ * the inputs could choose the output.
  */
-import { useEffect, useState } from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SafetyNumberScreen } from '../src/screens/SafetyNumberScreen';
-import { supabase } from '../src/lib/supabase';
-
-const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
 
 export default function SafetyNumberRoute() {
-  const { peerName, peerUserId } = useLocalSearchParams<{
+  const { peerName, threadId } = useLocalSearchParams<{
     peerName: string;
-    peerUserId: string;
+    threadId: string;
   }>();
-
-  const [peerIdentityPub, setPeerIdentityPub] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!peerUserId) return;
-    // Fetch the peer's registered device identity public key.
-    (async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
-        const resp = await fetch(`${API_BASE}/api/users/${peerUserId}/devices`, {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
-        if (!resp.ok) return;
-        const json = await resp.json();
-        // Server shape: { devices: [{ id, platform, publicKey, createdAt }] }
-        // Take the first device with a public key (primary device).
-        const devices: { publicKey?: string | null }[] = Array.isArray(json?.devices) ? json.devices : [];
-        const pub = devices.find(d => d.publicKey)?.publicKey ?? null;
-        if (pub) setPeerIdentityPub(pub);
-      } catch (_) {}
-    })();
-  }, [peerUserId]);
 
   return (
     <SafetyNumberScreen
       peerName={peerName ?? 'Unknown'}
-      peerIdentityPubB64={peerIdentityPub ?? ''}
+      threadId={threadId ?? ''}
       onDismiss={() => router.back()}
     />
   );
