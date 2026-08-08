@@ -1,12 +1,39 @@
 # E2EE for Telegraph DMs — scoping proposal
 
-**Status:** proposal, for decision. No implementation has been done in this pass.
+**Status:** decisions recorded 2026-08-08 (§0.1). Scoping only — no
+implementation has been done in any pass.
 **Date:** 2026-08-08
 **Branch:** `bughunt-20260805`
 **Scope, already decided and not reopened here:** E2EE applies to Telegraph
 **direct messages only**. Public and shared media stay server-readable so
 moderation and the planned 4K transcode pipeline keep working. This document
 does not argue with that.
+
+---
+
+## 0.1 DECISIONS — recorded 2026-08-08
+
+Both decided by the owner. Not reopened below; the rest of this document is
+scoping *for* them, not argument about them.
+
+**Decision 1 — accepted as recommended: A1 / B1 / C1.**
+Finish the existing MLS wiring; **single device**; **message history is not
+recoverable on device loss**. Multi-device via MLS members and opt-in
+passphrase backup come later, in that order.
+Explicitly **rejected**: QR key-export (B3) and iCloud/Google key backup (C3).
+Both would reverse the existing `WHEN_UNLOCKED_THIS_DEVICE_ONLY` SecureStore
+decision and make "end-to-end" require an asterisk.
+
+**Decision 2 — goes further than this document originally recommended, and
+deliberately so: DM attachments must be encrypted before E2EE ships.**
+Not text-only. The reasoning is the sentence in §1.7 — encrypted text beside
+server-readable photos is *defensible as v1 but not as a marketing claim* — and
+the owner would rather carry the extra scope than ship a claim needing
+qualification.
+
+Consequence: design-phase **E-4 Media E2EE** (`e2ee-design.md` §3.2) moves
+*into* the first shippable increment. §6 below scopes it. §4's original
+"first increment" and its estimate are superseded by §6.6.
 
 ---
 
@@ -239,6 +266,9 @@ The brief is also stale on versions: it claims `openmls 0.6 / openmls_rust_crypt
 
 ## 2. STEP 2 — The three decisions
 
+> **DECIDED — see §0.1.** A1 / B1 / C1 accepted; B3 and C3 rejected.
+> Retained below as the reasoning behind that choice, not as an open question.
+
 ### (a) Key management
 
 Because a working MLS implementation is already here, the honest options are
@@ -397,6 +427,10 @@ in the existing code.
 
 ## 4. STEP 4 — Scope and sequencing
 
+> **PARTLY SUPERSEDED by Decision 2 (§0.1).** The migration stance (new threads
+> only) still holds. The "first shippable increment" and the 2–3 week estimate
+> below are text-only and are replaced by §6.8.
+
 ### Migration stance
 
 **New threads only. Do not migrate existing DMs.** The schema was deliberately
@@ -454,6 +488,10 @@ accidentally start encrypting.
 
 ## 5. Recommendation, stated plainly
 
+> **Recorded outcome:** accepted, except that the owner extended scope to
+> include encrypted DM attachments before ship (Decision 2, §0.1). The
+> "defensible as v1" carve-out for media below is therefore NOT being taken.
+
 Finish what is here rather than start again. Specifically: fix the signature-key
 defect, collapse the duplicated module, wire the two missing joins, add
 reporter-attached moderation excerpts, run the existing two-device runbook on
@@ -471,6 +509,270 @@ is a safety and store-review risk that is much cheaper to handle now.
 
 ---
 
+## 6. Encrypted DM attachments — scoping for Decision 2
+
+Design questions surfaced, not solved. Everything below was checked against
+code; line references are to the tree at `61007b897`.
+
+### 6.0 The blocker to know first
+
+**DM attachments cannot use the existing upload endpoint.** `POST /media/upload`
+(`api-server/src/routes/posts.ts:76`) does three things to every byte it
+receives:
+
+1. `sniffMedia(rawBody)` — reads magic bytes to identify the format, and
+   **rejects anything it cannot identify**. Ciphertext has no magic number, so
+   an encrypted upload is rejected outright.
+2. `processImage(rawBody, sniffed)` — re-encodes and downscales (`MAX_IMAGE_DIM
+   2048`). Re-encoding ciphertext destroys it.
+3. `makeThumbnail(...)` — server-side thumbnail at `THUMBNAIL_DIM 400`, which
+   requires readable pixels.
+
+So this is not "add a flag to the upload path". Encrypted attachments need
+their own opaque-blob upload route that does no sniffing, no processing and no
+thumbnailing. That route is small, but it must also **re-implement the safety
+controls the sniffing path provides today** — size caps (currently 15 MB image
+/ 100 MB video), the `disable_media_uploads` flag check, and the 30-per-5-min
+rate limit. Losing those by accident is the realistic failure mode.
+
+### 6.1 Where does encryption happen, and does DM media need its own bucket?
+
+The design (`e2ee-design.md` §3.2, phase E-4) already answers the crypto:
+per-item random 256-bit content key, AES-256-GCM or ChaCha20-Poly1305,
+ciphertext to object storage, **content key + nonce + content-type hint carried
+inside the MLS-encrypted message body**. That last part is the important one:
+the key rides the message, so it inherits the message's confidentiality and
+there is no second key-distribution problem to solve. Line 188 also says
+"ciphertext to separate bucket".
+
+Encryption happens **client-side, before upload**. Plaintext must never reach
+`/media/upload`.
+
+*Separate bucket vs. marker on the row* — genuinely open, but the arguments are
+lopsided:
+
+- **Separate bucket (e.g. `dm-media`), recommended.** `appStorageUrlInfo`
+  (`api-server/src/lib/mediaUrl.ts:11`) has a hard `ALLOWED_BUCKETS` allowlist
+  of exactly `post-media` and `profile-media`. A third bucket is a
+  one-line-ish addition and gives a *structural* guarantee: nothing that
+  reads public media can accidentally read DM ciphertext, because it is not in
+  a bucket those paths accept. It also keeps lifecycle rules (retention,
+  transcode, moderation scanning) cleanly separable.
+- **Marker column on `messages`.** Cheaper, but the guarantee becomes "every
+  read path remembered to check the marker". The bare-image sweep earlier in
+  this branch is direct evidence of how that goes: 102 call sites bound media
+  URLs without checking anything, across 73 files.
+
+**Note:** a new bucket is a schema/infra change and is therefore out of scope
+for this pass. Recorded as a recommendation, not done.
+
+### 6.2 Thumbnails and previews — the good news
+
+This is the question I expected to be hardest and it is close to solved
+already.
+
+**DM thumbnails are already client-generated today.** In the DM attach route
+(`messaging.ts:1890`), `thumbnailUrl` and `durationSeconds` arrive **from the
+client** in the request body and are merely validated as app-storage URLs. The
+server-side `makeThumbnail` path is used by posts/postcards/profile — **not by
+DMs**. `messaging.ts` does not import `mediaProcessing` at all.
+
+The client also already has the tools: `expo-image-manipulator ~14.0.8` (used
+in `imageRender.ts` and `renderFilteredImage.ts`) and **`expo-video-thumbnails
+~10.0.8`**, already installed.
+
+So the shape is: client generates the thumbnail → encrypts it with its own
+content key (or the same one) → uploads it as a second opaque blob → the
+thumbnail key rides the same MLS message. **No new capability is required, only
+wiring.** That is a materially smaller job than it looked.
+
+What the DM *list* shows before decryption is then a product choice:
+
+- **Placeholder + sender/type only** (e.g. "📷 Photo"). Zero risk, zero cost.
+  Recommended for the first increment.
+- **Decrypted thumbnail from the local store.** Once the thread is opened and
+  decrypted, thumbnails cache locally and the list can show them. Natural
+  extension; needs the local-store work that is already part of the design.
+- **Blurhash-style tiny preview.** The design mentions "small encrypted preview
+  inline". Note a blurhash computed from the image and stored *unencrypted*
+  would leak a low-resolution impression of every DM photo to the server —
+  which contradicts the whole decision. If a preview is wanted, it must be
+  encrypted like everything else.
+
+### 6.3 Download / decrypt flow, and where plaintext lands
+
+**This is the area with the least existing groundwork, and the answer is
+uncomfortable.**
+
+`expo-file-system` is **not installed**. Neither is `expo-crypto` nor
+`react-native-quick-crypto`. Verified against `package.json`. So today the app
+has **no general-purpose client-side file I/O and no general-purpose symmetric
+crypto**. Everything media-related currently goes `URL → expo-image/expo-av`,
+which fetch and decode internally and never hand the app bytes.
+
+That means encrypted attachments need **new native surface** that does not
+exist yet:
+
+- a way to fetch ciphertext bytes,
+- a way to AEAD-decrypt them (the OpenMLS Rust module could expose this,
+  avoiding a second crypto dependency — worth considering, since a
+  `decrypt_blob` UniFFI function is a small addition to a module that already
+  does AEAD),
+- a way to hand the plaintext to `expo-image` / `expo-av` for display.
+
+**Where the plaintext lands is the crux.** `expo-av` and `expo-image` want a
+URI, not a buffer. The realistic options:
+
+- **Decrypt to a temp file in the app sandbox, display, delete on thread
+  close.** Works with existing players. But plaintext media touches disk, is
+  visible to anything with app-sandbox access, and will be picked up by OS
+  backups unless explicitly excluded (iOS `isExcludedFromBackup`, Android
+  `allowBackup`/auto-backup rules). **A plaintext DM photo silently landing in
+  an iCloud device backup would undo the decision in §0.1 as thoroughly as
+  option C3 would.** This needs an explicit, tested answer, not a default.
+- **In-memory only, custom image source.** Strongest, but requires either
+  base64 data-URIs (memory-expensive, roughly +33% and duplicated through JS)
+  or a native image source, which is real platform work.
+- **Local HTTP loopback server serving decrypted bytes.** Common in other apps;
+  adds an attack surface and background-execution complexity. I would avoid it.
+
+For images, in-memory is plausible. **For video it is not** — see §6.4.
+
+### 6.4 Size and memory, especially low-end Android
+
+Current caps on the shared upload path: **15 MB image, 100 MB video**.
+
+- **Images at 15 MB:** decrypting in memory is fine on any device that can
+  already decode them. Low risk.
+- **Video at 100 MB: this is the genuinely hard part.** You cannot hold 100 MB
+  of plaintext video in JS memory on a low-end Android device — that is an OOM,
+  not a slowdown. And you cannot stream it, because AES-GCM authenticates the
+  *whole* ciphertext: correct AEAD use means you do not release plaintext until
+  the tag verifies, which for a single-blob 100 MB video means buffering all of
+  it before playback starts.
+
+  The standard answer is **chunked encryption** — split into (say) 1 MB frames,
+  each with its own nonce and tag, decrypt progressively, and accept that a
+  truncation attack at a chunk boundary is detectable only with an explicit
+  chunk counter and final-chunk marker. That is a real cryptographic design
+  task, not a wiring task, and it is the single item most likely to blow the
+  estimate.
+
+  A pragmatic first increment: **cap encrypted DM video far below 100 MB** (say
+  10–25 MB, with client-side downscale before encryption using the
+  `expo-image-manipulator` / recompression tooling already present) and defer
+  chunked streaming. Worth deciding explicitly, because it is user-visible:
+  "you can send a 100 MB video in a public post but only a 25 MB one in a DM".
+
+### 6.5 Device loss — confirming attachments match the text story
+
+**Confirmed: they match, and by construction rather than by discipline.**
+
+Under Decision 1 (C1) the MLS group state and identity keys live only in
+SecureStore and are lost with the device. The per-item content key lives
+*inside the MLS-encrypted message body* (§6.1). So losing the device loses the
+message, which loses the content key, which makes the attachment ciphertext
+permanently undecryptable — by the user and by the server alike.
+
+There is **no path where photos survive and text does not**, provided the
+content key is never stored anywhere but inside the encrypted message. That is
+worth stating as an invariant to hold onto: *the content key must never be
+written to the `messages` row, to a column, or to any server-visible field.* If
+someone later "optimises" by putting the content key beside `media_url`, the
+whole property collapses silently.
+
+One consequence to communicate: server-side attachment ciphertext becomes
+garbage that nobody can ever read. It should be included in the existing
+retention/deletion sweeps rather than accumulating forever.
+
+### 6.6 The 4K pipeline — plainly
+
+**The planned 4K/transcode pipeline is unaffected, and less affected than
+feared, because it does not exist yet.** `docs/app-audit.md:166` records
+"Video transcoding pipeline | 🔴 Not implemented | Postcards support video MIME
+types but no transcode step". There is no transcode step for E2EE to break.
+
+Going forward the split is clean and permanent:
+
+- **Public/shared media** — server-readable, server-transcodable. The 4K
+  pipeline applies here in full. Unchanged by any of this.
+- **DM attachments** — the server sees opaque bytes and **can never transcode
+  them**. Not "harder"; impossible by construction, which is the point.
+
+What that means for DM video quality, stated plainly:
+
+- No server-side adaptive bitrate, no HLS/DASH ladder, no format normalisation
+  for DM video. One blob, one quality, whatever the sender's device produced.
+- The sender's device becomes responsible for making the file sane before
+  encryption: downscale, re-encode to a widely-supported codec (H.264 rather
+  than HEVC, which is where cross-platform playback actually breaks), cap
+  duration/bitrate. Client-side handling **is viable** — the app already does
+  client-side image resizing in `imageRender.ts` and already generates video
+  thumbnails — but video re-encode on-device is slow on low-end Android and is
+  the main UX cost.
+- Practical consequence: **DM video will be lower quality and more
+  size-limited than public video, permanently.** That is the correct trade for
+  the decision taken, but it is a product-visible difference worth agreeing
+  now rather than discovering.
+
+### 6.7 What is genuinely hard here
+
+Ranked, so the estimate is legible:
+
+1. **Chunked AEAD for large video** (§6.4) — real crypto design, the most
+   likely thing to double an estimate. Mitigable in v1 by capping DM video size
+   and deferring streaming.
+2. **Where decrypted plaintext lives** (§6.3) — new native surface, plus the
+   OS-backup-exclusion question that could silently undo the §0.1 decision.
+3. **A new opaque-upload path that keeps today's safety controls** (§6.0) —
+   not hard, but easy to get subtly wrong by dropping a size cap or the
+   feature-flag check.
+4. **Separate bucket** (§6.1) — infra + `ALLOWED_BUCKETS`, straightforward but
+   touches schema/infra, so it is a decision, not a task.
+5. Thumbnails (§6.2) — **easier than expected**; the client already does this.
+
+### 6.8 Revised estimate, covering both decisions
+
+Superseding §4. Same caveats: the external review is elapsed time, not effort,
+and none of the Rust has ever been compiled (§1.5).
+
+| Increment | Rough size |
+|---|---|
+| E-2a Fix the signature-key defect; collapse `vendor`/`packages` duplication | 0.5–1 d |
+| E-2b Wire the two missing joins (negotiation + encrypt/decrypt on send/receive) | 3–5 d |
+| E-2c Thread-list previews from the local store | 1–2 d |
+| E-2d Reporter-attached excerpt for DM moderation | 1–2 d |
+| **E-4a Opaque-blob upload route + bucket + safety controls** | **2–3 d** |
+| **E-4b Client envelope encryption + content key inside the MLS body** | **3–4 d** |
+| **E-4c Client encrypted thumbnails** (tooling already present) | **1–2 d** |
+| **E-4d Download → decrypt → display, incl. plaintext-at-rest and backup-exclusion decisions** | **4–6 d** |
+| **E-4e Video: size caps + client-side downscale/re-encode before encryption** | **3–5 d** |
+| **E-4f Chunked AEAD for large video** — *deferrable if video is capped* | **5–8 d if taken now** |
+| E-2e Two-device runbook on real hardware (now must cover attachments) | 1–2 d |
+| E-4g Extend the runbook with attachment steps | 0.5 d |
+| E-2f External crypto review (scope now includes media envelope) | ~1–1.5 wk elapsed |
+| E-2g Fix review findings | 2–5 d |
+
+**Text-only (previous estimate): ~2–3 weeks.**
+**Both decisions, with DM video capped and chunked AEAD deferred: ~4.5–6 weeks.**
+**Both decisions, with chunked AEAD in v1: ~6–7.5 weeks.**
+
+So: **Decision 2 roughly doubles it.** Not because encryption is hard — the
+design and the thumbnail tooling are largely in place — but because §6.3 and
+§6.4 introduce native file/crypto surface the app has never had, and because
+video forces either a capability (chunked AEAD) or a product concession (size
+cap). Capping DM video is worth roughly 1–1.5 weeks and I would take it for v1.
+
+The external review also grows: it was scoped in `crypto-review-brief.md` as
+1:1 text with media explicitly **out of scope** ("The planned later phases
+(group E2EE, media, push envelopes, calls, backup/recovery) — design feedback
+welcome, implementation review not expected"). With Decision 2 that brief needs
+rewriting before it is sent, or the reviewer will not look at the part that now
+ships. **Not done in this pass** — flagged because sending a stale brief would
+waste the engagement.
+
+---
+
 ## Appendix — verification notes
 
 Verified by reading code at `494e4d3bc`: module reality and OpenMLS call sites;
@@ -485,3 +787,20 @@ Not verified, and flagged as such: whether the Rust actually compiles under EAS
 (no build run); whether FTS5 is fully wired in `localMessageDb`; the full
 edit/delete path for encrypted messages; whether the live DB rows match the
 migration files (I did not query production).
+
+Added for §6 (Decision 2), verified at `61007b897`: `/media/upload` performs
+`sniffMedia` + `processImage` + `makeThumbnail` (`routes/posts.ts:76-185`) with
+15 MB / 100 MB caps; `messaging.ts` does **not** import `mediaProcessing`, and
+DM `thumbnailUrl`/`durationSeconds` are client-supplied (`messaging.ts:1890`);
+`ALLOWED_BUCKETS` is `{post-media, profile-media}` (`lib/mediaUrl.ts:11`);
+`expo-video-thumbnails ~10.0.8` and `expo-image-manipulator ~14.0.8` are
+installed while `expo-file-system`, `expo-crypto` and `react-native-quick-crypto`
+are **absent**; `docs/app-audit.md:166` records the transcode pipeline as not
+implemented.
+
+Not verified for §6: actual decrypt throughput on a low-end Android device (no
+device testing); whether `expo-av` can accept an in-memory or data-URI source at
+acceptable cost; the precise OS-backup-exclusion behaviour for a decrypted temp
+file on either platform. All three are §6.3/§6.4 risks and are stated as open.
+
+---
