@@ -15,23 +15,51 @@
 
 ## Current state — please read before quoting
 
-Stated plainly so the engagement is not mis-scoped:
+Stated plainly so the engagement is not mis-scoped. **Updated 2026-08-08 after
+the Rust was compiled for the first time; the previous revision understated
+this.**
 
 - The cryptographic core (Rust/OpenMLS module, identity and device keys,
   KeyPackage pool, safety numbers, server ciphertext columns) is **written and
   merged**. The server schema is **already live in production**.
-- **The Rust has never been compiled.** `cargo`/`rustup` are not available in
-  the development environment; compilation happens only on EAS cloud build
-  workers, and that build has not yet been run. No part of the native module
-  has executed.
-- **The two-device verification runbook has never been run green.** It exists
-  (`docs/security/e2ee-verification-runbook.md`) and is a precondition for this
-  engagement starting.
+- **The Rust module does not currently compile.** It had never been built —
+  `cargo`/`rustup` were absent from the development environment and compilation
+  was assumed to happen only on EAS workers. A host toolchain has now been
+  installed and the crate compiled for the first time: **~32 errors**, the
+  significant ones being:
+  - **Manifest and source disagree on the OpenMLS version.** `Cargo.toml` pins
+    `openmls 0.5.0 / openmls_rust_crypto 0.2.0 / openmls_basic_credential
+    0.2.0`, but the source is written against **0.6 APIs**
+    (`MlsGroupCreateConfig`, `StagedWelcome`, `tls_deserialize_exact_bytes`).
+    Bumping to 0.6 removes some errors, not all.
+  - **`uniffi` declares a `scaffolding` feature that does not exist** in
+    0.28.3, so dependency resolution fails before any code compiles.
+  - **`thiserror` is used but never declared as a dependency**, so the error
+    type implements neither `Display` nor `ToString`.
+  - **The group-state persistence model is not supported by the library.** The
+    module serialises an `MlsGroup` to bytes and restores it, and the
+    TypeScript layer is built on that contract — "group state is loaded fresh
+    on each operation and stored back immediately after". **`MlsGroup` is not
+    TLS-serialisable in 0.5 or 0.6.** OpenMLS persists groups through a
+    `StorageProvider` trait (`MlsGroup::load<Storage: StorageProvider>`). This
+    is an architectural change to the module and to the JS boundary, not a
+    compile fix.
+- Consequently **the two-device verification runbook has never been run**
+  (`docs/security/e2ee-verification-runbook.md`; running it green is a
+  precondition for this engagement), and the `encrypt_message` signature-key
+  defect disclosed below has never been reached at runtime — it is a semantic
+  bug sitting behind ~32 compile errors.
 - **The existing test suite does not exercise real cryptography.** The E-0/E-1/
   E-2 Jest tests call `jest.mock('expo-openmls')` and run against a
   deterministic in-memory mock with a fake encrypt/decrypt round-trip. They
   demonstrate wiring and lifecycle, not cryptographic correctness. Please do
   not read "42 tests passing" as evidence about the protocol.
+
+**What this means for the engagement.** The module will be brought to a
+compiling, two-device-verified state *before* the review starts — that is
+unchanged. But a candidate should know the persistence layer is being reworked
+first, and that the version to review is the post-rework one. We will confirm
+readiness before booking dates.
 
 We will supply a **fixed commit SHA and branch** at engagement start, plus a
 working EAS development build.
@@ -42,8 +70,10 @@ End-to-end encryption for 1:1 Telegraph direct messages — **text and
 attachments** — in a React Native / Expo app. Group messaging, push envelopes,
 and calls remain planned for later phases.
 
-- **Protocol:** MLS (RFC 9420) via the OpenMLS Rust crates
-  (`openmls 0.5.0`, `openmls_rust_crypto 0.2.0`, `openmls_basic_credential 0.2.0`).
+- **Protocol:** MLS (RFC 9420) via the OpenMLS Rust crates. **Version is
+  currently inconsistent** — the manifest pins 0.5.0 while the source targets
+  0.6 APIs; this will be settled (expected: 0.6) as part of making the module
+  build, and the review copy will carry a single consistent version.
 - **Ciphersuite:** MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519.
 - **Bridge:** Rust → React Native via UniFFI 0.28, packaged as an Expo
   native module (`packages/expo-openmls`).
