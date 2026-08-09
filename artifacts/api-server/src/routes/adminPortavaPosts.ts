@@ -17,10 +17,10 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { ensurePlaceDay, isEligiblePlaceDayPost } from "../lib/places/placeDays.js";
+import { requireAdmin } from "../lib/requireAdmin.js";
 
 const router = Router();
 
@@ -45,31 +45,6 @@ export const PORTAVA_POST_CATEGORIES = [
 export type PortavaPostCategory = (typeof PORTAVA_POST_CATEGORIES)[number];
 
 const portavaPostCategory = z.enum(PORTAVA_POST_CATEGORIES);
-
-// ── Admin guard (mirrors admin.ts) ────────────────────────────────────────────
-
-async function requireAdmin(
-  req: any,
-  res: any,
-): Promise<{ userId: string; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-
-  const { data, error } = await client
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (error || !data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-
-  const sc = getServiceClient() ?? client;
-  return { userId: user.id, sc };
-}
 
 // ── Resolve @portava account id ───────────────────────────────────────────────
 

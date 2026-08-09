@@ -21,43 +21,18 @@
 import { Router } from "express";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { sendError } from "../lib/http.js";
 import { awardStamp, revokeStamp, restoreStamp } from "../services/passport/StampAwardEngine.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter as NotifRouter } from "../services/notifications/NotificationRouter.js";
 import { queryStampWorkerHealth, evaluateCurrentWorkerHealth } from "../lib/stamps/generationWorker.js";
 import { invalidateCatalogCache } from "../lib/stamps/StampCatalogService.js";
+import { requireAdmin } from "../lib/requireAdmin.js";
 
 const router = Router();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function isUuid(s: string) { return UUID_RE.test(s); }
-
-// ── Admin guard ───────────────────────────────────────────────────────────────
-
-async function requireAdmin(
-  req: any,
-  res: any,
-): Promise<{ userId: string; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-
-  const { data } = await client
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (!data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-
-  const sc = getServiceClient() ?? client;
-  return { userId: user.id, sc };
-}
 
 // ── GET /admin/stamps/definitions ────────────────────────────────────────────
 

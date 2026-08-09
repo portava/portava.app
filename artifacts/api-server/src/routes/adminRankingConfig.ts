@@ -18,36 +18,11 @@
 
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { requireUser, sendError } from "../lib/http.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { sendError } from "../lib/http.js";
 import { invalidateRankingConfigCache } from "../services/ranking/rankingConfig.js";
+import { requireAdmin } from "../lib/requireAdmin.js";
 
 const router = Router();
-
-// ── Admin guard ───────────────────────────────────────────────────────────────
-
-async function requireAdmin(
-  req: any,
-  res: any,
-): Promise<{ userId: string; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-
-  const { data, error } = await client
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (error || !data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-
-  const sc = getServiceClient() ?? client;
-  return { userId: user.id, sc };
-}
 
 // ── Config key metadata ───────────────────────────────────────────────────────
 // Describes every known ranking_config key: its human description and the

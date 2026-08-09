@@ -15,40 +15,15 @@
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { sendError } from "../lib/http.js";
 import { evictGeocodeCacheKey } from "../lib/stamps/countryGeocoder.js";
 import { repairXXCatalogEntries, makeGeocodingResolver, countXXEntriesForCityKey } from "../lib/stamps/xxCatalogRepair.js";
+import { requireAdmin } from "../lib/requireAdmin.js";
 
 const router = Router();
 
 const DB_CACHE_TABLE = "city_country_geocode_cache";
 const COUNTRY_CODE_RE = /^[A-Za-z]{2}$/;
-
-// ── Admin guard ───────────────────────────────────────────────────────────────
-
-async function requireAdmin(
-  req: any,
-  res: any,
-): Promise<{ userId: string; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-
-  const { data } = await client
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (!data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-
-  const sc = getServiceClient() ?? client;
-  return { userId: user.id, sc };
-}
 
 // ── GET /admin/geocode-cache ──────────────────────────────────────────────────
 

@@ -34,40 +34,15 @@
  */
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http.js";
+import { sendError } from "../lib/http.js";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
-import { getServiceClient } from "../lib/supabase.js";
 import { clearL1Cache, invalidate } from "../compass/CompassCacheEngine.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { runSandbox, type TestUserType } from "../compass/CompassTestingSandbox.js";
 import { SECTION_NAMES } from "../compass/CompassFeedBuilder.js";
+import { requireAdmin } from "../lib/requireAdmin.js";
 
 const router = Router();
-
-// ── Admin guard ───────────────────────────────────────────────────────────────
-
-async function requireAdmin(
-  req: any,
-  res: any,
-): Promise<{ userId: string; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-
-  const { data, error } = await client
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (error || !data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-
-  const sc = getServiceClient() ?? client;
-  return { userId: user.id, sc };
-}
 
 // ── Audit logger ──────────────────────────────────────────────────────────────
 

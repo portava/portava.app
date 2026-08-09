@@ -33,31 +33,11 @@
 
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { requireUser, sendError } from "../lib/http.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { sendError } from "../lib/http.js";
 import { ACTIVITY_SCORE_VERSION } from "../services/ranking/CreatorActivityScoreService.js";
+import { requireAdmin } from "../lib/requireAdmin.js";
 
 const router = Router();
-
-async function requireAdmin(req: any, res: any): Promise<{ sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-
-  const { data, error } = await client
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (error || !data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-
-  const sc = getServiceClient() ?? client;
-  return { sc };
-}
 
 // ── Score tier boundaries ─────────────────────────────────────────────────────
 // Tiers derived from creator_activity_scores.score (0–100):
