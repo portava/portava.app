@@ -272,6 +272,128 @@ Every available remedy changes production schema, policy, or grants:
 All four are schema/policy changes, explicitly out of scope. **Recorded, not
 acted on.**
 
+### RESOLVED 2026-08-09 — with a caveat that matters more than the fix
+
+**The column is no longer self-writable. Verified live, and verified by tests
+that are proven capable of failing.**
+
+The remedy chosen was options 1 + 2 together — a column-level `REVOKE` plus a
+trigger — for a reason worth keeping: `REVOKE UPDATE (role)` is the narrower and
+more precise barrier, but a single future `GRANT UPDATE ON profiles TO
+authenticated` re-grants every column silently. A grant has no memory of intent.
+The trigger is what survives that. Option 4 (tighten `WITH CHECK`) was discarded
+because RLS cannot see `OLD` and collapses into needing a trigger regardless.
+Option 3 (split the column out) was deferred — see below.
+
+#### The caveat: the protection was live but existed in no migration
+
+When this fix was picked up, the live database **already had** the trigger
+(`trg_profiles_role_privileged`), both functions
+(`enforce_profile_role_privileged`, `caller_may_write_profile_role`), the
+privileged RPC (`admin_set_profile_role`), and the narrowed column grants —
+applied out-of-band, committed to no migration file, covered by no test, and
+described in no document. A repo-wide search for all four identifiers returned
+nothing.
+
+That is a worse state than it looks. The vulnerability was closed in production
+while **a database rebuilt from the migration tree would still have been
+vulnerable**, and nothing anywhere would have caught the difference. This is the
+third instance of live-vs-migration drift recorded in this repo (see finding 16,
+and `post_saves.id` / `posts_comments.updated_at` in
+`docs/admin/moderation-coverage.md`), and the first where the drift was a
+security control.
+
+`2078_profiles_role_not_self_writable.sql` captures the live state verbatim and
+idempotently. Applying it to production is a no-op; its purpose is that a
+rebuild reproduces the protection.
+
+#### Verified live (2026-08-09, read-only)
+
+| Precondition from the original finding | State now |
+|---|---|
+| `authenticated`/`anon` hold `UPDATE` on `role` | **Revoked.** Only `postgres` and `service_role` retain it |
+| No trigger protects `role` | **`trg_profiles_role_privileged`** guards INSERT *and* UPDATE |
+| No explicit privileged path | **`admin_set_profile_role(uuid, text)`**, `EXECUTE` to `service_role` only |
+| RLS `profiles_update` | **Unchanged** — deliberately; RLS cannot restrict columns |
+| Role distribution | 55 `user`, 1 `admin` — unchanged before and after |
+
+#### Tests — `src/test/profileRoleNotSelfWritable.test.ts`
+
+12 tests, all passing against the live database. Each negative assertion was
+**proved capable of failing** by mutation: a copy asserting the vulnerable
+outcome was run, and every negative test failed as required (7 in the first
+pass, 5d in a second targeted pass). A green run on an already-fixed database
+would otherwise prove nothing.
+
+Two details the tests deliberately encode:
+
+- **They re-read `role` through the service client** rather than trusting the
+  returned error. An UPDATE matching zero rows under RLS returns *no error*, so
+  "no error" and "the write happened" are different claims.
+- **Test 5b asserts atomicity** — `role` smuggled alongside a permitted column
+  must fail the whole statement. A partial write would be worse than an outright
+  bypass, because it would look like a successful profile edit.
+
+#### Two things this fix does NOT do
+
+1. **`is_official` still carries a column-level `UPDATE` grant** for
+   `authenticated` and `anon`. It is protected by its own trigger (migration
+   0106), so it is not open — but it is defended by one barrier where `role` now
+   has two. Not a finding; noted for whoever hardens next.
+2. **Option 3 (split auth state out of `profiles`) remains deferred**, and the
+   corrected guard count strengthens that. The original reasoning was that once
+   all guards route through the canonical `lib/requireAdmin.ts`, `profiles.role`
+   has one read site and the split becomes contained. But the true count is
+   **33 guards, 24 converted / 9 outstanding** — not 30/24/6: `checkAdminGuard.ts`
+   matched `requireAdmin\w*` and was structurally blind to `requireVisualAdmin`,
+   `checkRentBuddyAccess`, and `canEditEntity`. The consolidation is further from
+   done than the one-read-site argument assumes, so the split stays deferred.
+
+#### Recorded for the guard consolidation to reconcile
+
+`routes/rentABuddyRollout.ts` authorises `role === 'admin' || role === 'owner'`.
+**No `owner` row exists in production.** `admin_set_profile_role` therefore
+accepts only `('user','admin')`, and a test asserts `'owner'` is rejected —
+propagating a zero-member role into a new security boundary would have made the
+boundary speculative. The divergence belongs to the consolidation, not to this
+fix.
+
+#### ⚠ These tests do not run automatically anywhere. Checked, not assumed.
+
+The instruction was to check rather than ask. The result is worse than "CI lacks
+credentials":
+
+1. **There is no CI.** No `.github/workflows/` directory exists. Nothing runs
+   tests on push, on PR, or on merge. "CI" in this repo means a human running
+   `pnpm test` or `pnpm run check:all`.
+2. **`check:all` runs no tests at all.** `scripts/run-all-checks.sh` runs six
+   static checks (`frozen-dir`, `async-handlers`, `migration-prefixes`,
+   `test-runner-flags`, `write-path-columns`, `missing-live-columns`). Not one
+   invokes the test suite.
+3. **The curated `test` script pins Supabase to a dead address** —
+   `SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy`. Port 9 is
+   the discard protocol. Any live-database test registered there is guaranteed
+   to skip, by construction.
+
+So there is no configuration in which registering this file into the curated run
+causes it to execute. Registering it would produce a *permanent skip inside a
+green suite* — the precise green-by-absence failure mode this test exists to
+avoid. It is therefore in `UNREGISTERED_TESTS_ALLOWLIST.json`, alongside
+`rlsHardening.test.ts`, which is allowlisted for the same reason.
+
+**Consequence, stated plainly: finding 17 is fixed and verified, but nothing
+will tell you if it regresses.** Dropping the trigger or re-granting the column
+would be caught by no automated check. Running it is a deliberate act:
+
+```
+pnpm run test:profile-role-not-self-writable    # needs live credentials
+```
+
+The narrowest fix for the regression gap is a scheduled job — or any CI at all —
+that runs the credentialled security tests (`test:rls-hardening`,
+`test:profile-role-not-self-writable`) against a non-production project. That is
+a separate piece of work and is **not** done here.
+
 ---
 
 ## 3. Decision-ready summary
