@@ -77,8 +77,17 @@ mechanical replacement.
 
 ### 1d. Recommended canonical — subject to §2
 
+> **SUPERSEDED 2026-08-09 — location only.** This section originally proposed
+> `lib/adminAudit.ts` as the home. The canonical guard shipped in `c8205e770`
+> as **`lib/requireAdmin.ts`** instead, and that is the single canonical. See
+> `admin-guard-consolidation.md`. An authorisation gate and an audit-logging
+> module are separate concerns: `adminAudit.ts` is imported by routes that log
+> without gating, and folding a gate into it would make both harder to reason
+> about and give the gate a reason to be imported for non-gate purposes.
+> Every requirement below was carried over unchanged — only the filename moved.
+
 Make canonical the **strict `role === "admin"`** form, error-checked, in
-`lib/adminAudit.ts`:
+`lib/requireAdmin.ts`:
 
 - strict equality on `"admin"` — never the `admin || owner` widening;
 - keep `error` and deny on it (no behaviour change, better diagnosis);
@@ -87,9 +96,14 @@ Make canonical the **strict `role === "admin"`** form, error-checked, in
 - `getServiceClient() ?? client` retained — removing the fallback would break
   the test strategy the `admin.ts` comment documents.
 
+The shipped guard satisfies all four, and adds `role` to the returned context
+so a route opting into a wider set can tell which role matched.
+
 **Two call sites cannot be mechanically converted** and are held back:
 `rentABuddyRollout.ts` (needs the `owner` decision) and `hiddenGems.ts` (needs
-call-site review).
+call-site review). Both are now expressible on the shared guard — `roles` and
+`isAdmin()` respectively — but each still requires the review this audit asked
+for, and neither is a mechanical conversion.
 
 ---
 
