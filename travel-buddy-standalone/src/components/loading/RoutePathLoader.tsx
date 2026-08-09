@@ -33,7 +33,7 @@ import Animated, {
   Easing,
   cancelAnimation,
 } from 'react-native-reanimated';
-import { color, space, radius, type as t, font, shadow, dot} from '../../theme/tokens.ts';
+import { color, space, radius, type as t, font, shadow, dot, icon } from '../../theme/tokens.ts';
 
 export interface RouteStop {
   label: string;
@@ -264,9 +264,9 @@ const styles = StyleSheet.create({
     width: 24,
   },
   badge: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: icon.lgXl,
+    height: icon.lgXl,
+    borderRadius: icon.lgXl / 2,
     alignItems: 'center',
     justifyContent: 'center',
   },

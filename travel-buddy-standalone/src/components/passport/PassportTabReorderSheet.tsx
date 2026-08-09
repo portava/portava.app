@@ -19,7 +19,7 @@ import {
   type PassportTabKey,
 } from './passportTabs.ts';
 import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
-import { space, radius, type as t } from '../../theme/tokens.ts';
+import { space, radius, type as t, icon } from '../../theme/tokens.ts';
 
 const ROW_HEIGHT = 56;
 
@@ -270,7 +270,7 @@ const rs = StyleSheet.create({
     backgroundColor: PP.paper,
   },
   rowIndex: {
-    width: 24, height: 24, borderRadius: 12,
+    width: icon.lgXl, height: icon.lgXl, borderRadius: icon.lgXl / 2,
     backgroundColor: PP.paperDeep, alignItems: 'center', justifyContent: 'center',
   },
   rowIndexText: { ...PP_LABEL, fontSize: 11, color: PP.inkMuted },

@@ -455,9 +455,9 @@ const tsp = StyleSheet.create({
     color: color.faint,
   },
   removeBtn: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: icon.lgXl,
+    height: icon.lgXl,
+    borderRadius: icon.lgXl / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1122,7 +1122,7 @@ const ts = StyleSheet.create({
 const mp = StyleSheet.create({
   card: { marginHorizontal: space.lg, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, overflow: 'hidden', ...shadow.card },
   map: { height: 150, backgroundColor: '#DDE6E8' },
-  pin: { position: 'absolute', width: 16, height: 16, borderRadius: 8, borderWidth: 2, borderColor: color.paper },
+  pin: { position: 'absolute', width: icon.smMd, height: icon.smMd, borderRadius: icon.smMd / 2, borderWidth: 2, borderColor: color.paper },
   cityLabel: { position: 'absolute', top: '44%', left: '38%', backgroundColor: 'rgba(255,255,255,0.7)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
   cityText: { ...t.small, color: color.ink, fontWeight: '700', fontSize: 11 },
   legend: { flexDirection: 'row', gap: space.lg, padding: space.md },

@@ -1150,7 +1150,7 @@ const trn = StyleSheet.create({
   },
   rowDone: { backgroundColor: `${color.signal}15` },
   check: {
-    width: 24, height: 24, borderRadius: 12,
+    width: icon.lgXl, height: icon.lgXl, borderRadius: icon.lgXl / 2,
     borderWidth: 2, borderColor: color.haze,
     alignItems: 'center', justifyContent: 'center',
     flexShrink: 0, marginTop: 1,

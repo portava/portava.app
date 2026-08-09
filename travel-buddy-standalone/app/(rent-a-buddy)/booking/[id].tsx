@@ -10,7 +10,7 @@ import {
   X, Users, Calendar, Plus, Route, Info,
 } from 'lucide-react-native';
 import { KeyboardSafeScrollView } from '../../../src/components/ui/KeyboardSafeView';
-import { color, space, radius, type as t, shadow, layout, avatar, dot } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, shadow, layout, avatar, dot, icon } from '../../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState, TravelCard } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
 import { getBooking, cancelBooking, getOrCreateBookingThread, addExtraTime, optInStayConnected, reportBooking, rebookBooking, getBuddyBlockedDates, openDispute, type BuddyBooking, type BuddyBlockedRange, type DisputeReason } from '../../../src/services/rentABuddy';
@@ -372,7 +372,7 @@ const disputeStyles = StyleSheet.create({
   },
   reasonRowActive: { backgroundColor: color.paper },
   radio: {
-    width: 16, height: 16, borderRadius: 8,
+    width: icon.smMd, height: icon.smMd, borderRadius: icon.smMd / 2,
     borderWidth: 2, borderColor: color.haze,
   },
   radioActive: { borderColor: color.signal, backgroundColor: color.signal },
@@ -862,7 +862,7 @@ const route = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: color.haze,
   },
   stepBadge: {
-    width: 24, height: 24, borderRadius: 12,
+    width: icon.lgXl, height: icon.lgXl, borderRadius: icon.lgXl / 2,
     backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center',
     marginTop: 2,
   },

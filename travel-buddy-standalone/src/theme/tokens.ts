@@ -91,7 +91,16 @@ export const shadow = {
  * what turns this number into a matching rendered glyph for icon families whose
  * artwork fills its viewBox differently.
  */
-export const icon = { sm: 14, md: 18, lg: 22, xl: 26, action: 20 } as const;
+/**
+ * Icon sizing scale — circular icon-button wrapper sizes.
+ * Core tiers: sm (14) · md (18) · lg (22) · xl (26) · action (20, post-action-row spec).
+ * Infill tokens added 2026-08-09 after sweeping the 14-26px band (same pass that added
+ * avatar infills): `smMd` (16) at 4 independent call sites, `lgXl` (24) at 14 — both
+ * confirmed RECURRING/INTENTIONAL (radio buttons, stacked avatar rings, map-pin overlays,
+ * icon-button wrappers across unrelated components), not typos of existing tokens.
+ * Named by bounding-tier concatenation, matching the `avatar` infill convention.
+ */
+export const icon = { sm: 14, smMd: 16, md: 18, lg: 22, lgXl: 24, xl: 26, action: 20 } as const;
 
 /**
  * Named typography roles — every text element in the app maps to exactly one
@@ -195,6 +204,19 @@ export const avatar = {
   xl: 48,
   xlXxl: 52,
   xxl: 56,
+  /**
+   * `xxxl` (64), `xxxxl` (72), and `xxxxxl` (96) were added 2026-08-09 after
+   * a follow-up sweep of circular-box literals above 56px. 64 appears at 9
+   * independent call sites across error/empty-state/map placeholder circles;
+   * 72 appears at 3 sites (trust rings, icon wraps); 96 appears at 2 sites
+   * (profile-photo edit screen). All are the same RECURRING pattern. One-offs
+   * (60→64, 68→64, 80→72, 88→96, 90→96) were snapped to the nearest token.
+   * Intentional decorative rings (70px/110px in CrewMapSection, 78px in
+   * PassportMarks) are kept as hardcoded values and recorded in the allowlist.
+   */
+  xxxl: 64,
+  xxxxl: 72,
+  xxxxxl: 96,
 } as const;
 
 /**

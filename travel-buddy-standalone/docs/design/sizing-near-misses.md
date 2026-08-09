@@ -49,12 +49,75 @@ other 5px sites (8 of 9) are migrated to `dot.xxs`.
 All 86 recurring sites are migrated. Six sites (StampItBurst 5px+6px,
 AvailabilityCard 9px, TravelerMapLayer 11px) are in the allowlist
 with `ALLOWLIST_CEILING = 4`. The guard's DOT_BAND (5–12px) catches any new
-circular box in that range — the same wide-band approach used for the
-avatar range (27–56px). The sub-5px values (3/4px) are animation particles
-that fall below DOT_BAND_MIN and are not a token category.
+circular box in that range. The sub-5px values (3/4px) are animation
+particles that fall below DOT_BAND_MIN and are not a token category.
 
 A new `dot` export was added to `src/theme/tokens.ts`:
 `{ xxs: 5, xs: 6, sm: 7, md: 8, lg: 10, xl: 12 }`
+
+**Update (2026-08-09, fifth pass):** the 14-26px icon-adjacent band was
+migrated. Two recurring values were classified and promoted:
+
+- **24px × 14 sites** — RECURRING/INTENTIONAL. Appears as icon-button
+  wrappers, action circles, remove buttons, step-badge indicators, stacked
+  avatar rings, check indicators, route-member avatars, and media-overlay
+  dots across 12+ unrelated components. Promoted to `icon.lgXl` (infill
+  between `icon.lg` 22 and `icon.xl` 26).
+- **16px × 4 sites** — RECURRING/INTENTIONAL. Appears as radio-button
+  controls (booking/[id].tsx), stacked avatar rings (GroupChatScreen),
+  map-pin overlay circles (TripPage), and check-status badges
+  (PassportVerificationStamp) — four distinct semantic categories, all
+  independently landing on the same 16px circle. Promoted to `icon.smMd`
+  (infill between `icon.sm` 14 and `icon.md` 18).
+
+All 18 sites migrated; imports added where absent. The guard's widened
+detection band was extended from 27–110px down to **14–110px** — any new
+hardcoded circle in the entire icon/avatar range is now caught immediately.
+
+**Update (2026-08-09, sixth pass):** the >56px band (22 sites:
+60/64/68/70/72/78/80/88/90/96/110) was classified and migrated. Of the 22
+circular boxes:
+
+- **64px × 9** (StampGrid skeleton, TagPreviewSheet type icon, ErrorState icon
+  wrap, SavedPlacesMapView icon, destination/[slug] empty icon, map/index
+  icon circles ×2, map/index.web icon circle, become/apply success circle):
+  RECURRING — same large-placeholder circle shape across unrelated files →
+  new token `avatar.xxxl` (64). All 9 migrated.
+
+- **72px × 3** (buddy/[id] trust ring, PrivateProfileWall avatar placeholder,
+  EmptyState icon wrap): RECURRING → new token `avatar.xxxxl` (72).
+  All 3 migrated.
+
+- **96px × 2** (profile/edit/photos avatar + avatarEmpty): RECURRING →
+  new token `avatar.xxxxxl` (96). Both migrated.
+
+- **60px × 1** (CallControls end button): ACCIDENTAL ONE-OFF → snapped to
+  `avatar.xxxl` (64).
+
+- **68px × 1** (IncomingCallScreen action buttons): ACCIDENTAL ONE-OFF →
+  snapped to `avatar.xxxl` (64).
+
+- **80px × 1** (gems/guide avatar circle): ACCIDENTAL ONE-OFF → snapped to
+  `avatar.xxxxl` (72).
+
+- **88px × 1** (PassportShareCard avatar): ACCIDENTAL ONE-OFF → snapped to
+  `avatar.xxxxxl` (96).
+
+- **90px × 1** (stamps.tsx empty stamp container): ACCIDENTAL ONE-OFF →
+  snapped to `avatar.xxxxxl` (96).
+
+- **70px × 1** and **110px × 1** (CrewMapSection ringInner / ringOuter):
+  INTENTIONAL — a concentric-ring map visualization where the specific
+  70/110 ratio is deliberate. Not an avatar/icon circle. Kept as hardcoded
+  values, recorded in the shrink-only allowlist.
+
+- **78px × 1** (PassportMarks ink ring): INTENTIONAL — a passport-aesthetic
+  stamp ring with specific border/opacity styling. Not a generic avatar
+  circle. Kept, recorded in allowlist.
+
+The guard's widened-detection band now covers 14–110px (full audited range).
+The allowlist ceiling is 3 (the three intentional decorative rings).
+The 64/72/96 tokens are added to `AVATAR_VALUES` for exact-match detection.
 
 The rows for 34/44/30/38/42/46/52 are left in the tables below for
 historical record of the original sweep, but they are no longer
@@ -70,15 +133,9 @@ one-time manual sweep of those, run the same way the guard scans (circular
 or `N / D` literals), across `app/` and `src/`. **No code was changed by
 this sweep** — it is documentation only.
 
-**Update, same day:** the sub-14px cluster this sweep flagged as "small
-status dots, not avatar/icon material" (5px/6px/7px/8px/10px/12px below) was
-picked up as its own token group, `dot` in `theme/tokens.ts` — see that
-token's doc comment for the full rationale. All 88 genuine sites in that
-band, plus 3 near-miss normalizations (9px, 11px, and one 4px decorative
-site), are now migrated; `StampItBurst.tsx`'s graduated particle sizes were
-deliberately left untokenized. The rows below are left as originally
-written for historical accuracy of the sweep; treat the sub-14px rows as
-resolved rather than as an open recommendation.
+The sub-14px cluster this sweep originally flagged as "small status dots, not
+avatar/icon material" was addressed in the fourth pass above.
+
 
 ## Aspect ratio near-misses
 

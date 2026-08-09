@@ -15,7 +15,7 @@ import type { PassportStampNew } from '../../services/passportStamps.ts';
 import { saveShowcase, MAX_SHOWCASE } from '../../services/stampShowcase.ts';
 import { toLegacyStamp } from '../../services/passportStampMappers.ts';
 import { UniversalStampArtwork } from './UniversalStampArtwork.tsx';
-import { color, space, radius, type as t, dot} from '../../theme/tokens.ts';
+import { color, space, radius, type as t, dot, icon } from '../../theme/tokens.ts';
 
 import { RARITY_COLORS, normalizeRarity } from '../../lib/stampRarity.ts';
 
@@ -364,13 +364,13 @@ const cs = StyleSheet.create({
   rowMeta: { ...t.small, color: color.mute, fontSize: 11, marginTop: 1 },
 
   checkBox: {
-    width: 24, height: 24, borderRadius: 12,
+    width: icon.lgXl, height: icon.lgXl, borderRadius: icon.lgXl / 2,
     backgroundColor: color.signal,
     alignItems: 'center', justifyContent: 'center',
     flexShrink: 0,
   },
   emptyCheck: {
-    width: 24, height: 24, borderRadius: 12,
+    width: icon.lgXl, height: icon.lgXl, borderRadius: icon.lgXl / 2,
     borderWidth: 1.5, borderColor: color.haze,
     flexShrink: 0,
   },

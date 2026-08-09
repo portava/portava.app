@@ -121,7 +121,8 @@ const ALLOWED_FILES = new Set([
 // the plain numbers here is simpler than adding a ts-node/tsx dependency
 // just for this check.
 const AVATAR_VALUES = new Set([28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 52, 56, 64, 72, 96]);
-const ICON_VALUES = new Set([14, 18, 22, 26, 20]);
+const ICON_VALUES = new Set([14, 16, 18, 20, 22, 24, 26]);
+const DOT_VALUES = new Set([5, 6, 7, 8, 10, 12]);
 
 /**
  * Widened-detection bands (2026-08-09). Everything inside any band is flagged
@@ -132,11 +133,12 @@ const ICON_VALUES = new Set([14, 18, 22, 26, 20]);
  * doc comment in theme/tokens.ts for why it's a separate token group, not an
  * extension of `avatar`). Added 2026-08-09 after migrating 86 recurring sites.
  *
- * `avatar` band: 27–110px — the full range audited in the 27–56px and >56px
- * sweeps. 64/72/96 are now real tokens; intentional decorative rings (70, 78, 110)
- * are in the shrink-only allowlist (ceiling 3 of the combined 7).
+ * `icon+avatar` band: 14–110px — extends the original 27–110px avatar band
+ * down to 14 to cover the 14-26px icon-adjacent infill tokens (icon.smMd=16,
+ * icon.lgXl=24). 64/72/96 are large-avatar tokens; intentional decorative
+ * rings (70, 78, 110) are in the shrink-only allowlist (ceiling 3).
  */
-const WIDE_BAND_MIN = 27;
+const WIDE_BAND_MIN = 14;
 const WIDE_BAND_MAX = 110;
 
 /**
@@ -207,13 +209,13 @@ function scanFile(src) {
   const found = [];
 
   // 1. Circular width/height box. Flagged when any of:
-  //    (a) it falls in the widened 27-56px avatar band (any value, token
-  //        match or not — see WIDE_BAND_MIN/MAX above), or
+  //    (a) it falls in the widened 14-110px icon+avatar band (any value,
+  //        token match or not — see WIDE_BAND_MIN/MAX above), or
   //    (b) it falls in the DOT_BAND 5-12px dot / indicator range (any
   //        value — see DOT_BAND_MIN/MAX above), or
-  //    (c) it's an exact avatar/icon token match outside both bands (the
-  //        original, narrower rule — still the only enforcement for the
-  //        14-26px icon-adjacent and >56px large-media bands).
+  //    (c) it's an exact avatar/icon/dot token match outside both bands
+  //        (the original, narrower rule — still the only enforcement for
+  //        the <5px and >110px bands).
   const boxRe = /width:\s*([0-9]+)\s*,\s*height:\s*\1\b/g;
   let m;
   while ((m = boxRe.exec(src)) !== null) {

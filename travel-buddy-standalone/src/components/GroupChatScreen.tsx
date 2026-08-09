@@ -1121,7 +1121,7 @@ const styles = StyleSheet.create({
   headerTag: { ...t.stamp, fontFamily: 'Courier', color: color.mute, fontSize: 10, letterSpacing: 0.4 },
   headerMembersChip: { ...t.stamp, fontFamily: 'Courier', color: color.signal, fontSize: 10, letterSpacing: 0.4 },
   avatarStack: { flexDirection: 'row', alignItems: 'center', marginRight: 2 },
-  stackAvatar: { width: 16, height: 16, borderRadius: 8, borderWidth: 1, borderColor: color.paperRaised },
+  stackAvatar: { width: icon.smMd, height: icon.smMd, borderRadius: icon.smMd / 2, borderWidth: 1, borderColor: color.paperRaised },
   stackAvatarOverlap: { marginLeft: -6 },
   stackAvatarFallback: { backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
   stackAvatarInitial: { fontSize: 8, fontWeight: '700', color: color.ink },

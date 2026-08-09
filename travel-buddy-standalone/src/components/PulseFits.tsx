@@ -4,7 +4,7 @@ import { Avatar } from './ui/Avatar.tsx';
 import { router } from 'expo-router';
 import { MapPin, ChevronRight } from 'lucide-react-native';
 import type { CityEvent } from '../types/models.ts';
-import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, icon } from '../theme/tokens.ts';
 import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
@@ -160,8 +160,8 @@ const styles = StyleSheet.create({
   host: { ...t.small, color: color.mute },
   metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
   stack: { flexDirection: 'row', alignItems: 'center' },
-  stackImg: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: color.paperRaised, backgroundColor: color.haze },
-  plus: { width: 24, height: 24, borderRadius: 12, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: color.paperRaised },
+  stackImg: { width: icon.lgXl, height: icon.lgXl, borderRadius: icon.lgXl / 2, borderWidth: 2, borderColor: color.paperRaised, backgroundColor: color.haze },
+  plus: { width: icon.lgXl, height: icon.lgXl, borderRadius: icon.lgXl / 2, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: color.paperRaised },
   plusText: { fontSize: 9, fontWeight: '700', color: color.mute },
   going: { ...t.small, color: color.mute },
   vibes: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },

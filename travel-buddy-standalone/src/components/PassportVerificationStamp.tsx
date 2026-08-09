@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { ShieldCheck, Shield, Check, XCircle } from 'lucide-react-native';
-import { color, space, radius } from '../theme/tokens.ts';
+import { color, space, radius, icon } from '../theme/tokens.ts';
 
 export const VERIFY_TEAL = '#0D9B6F';
 export const VERIFY_TEAL_DIM = 'rgba(13,155,111,0.55)';
@@ -204,9 +204,9 @@ const s = StyleSheet.create({
     letterSpacing: 0.1,
   },
   checkBadge: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
+    width: icon.smMd,
+    height: icon.smMd,
+    borderRadius: icon.smMd / 2,
     borderWidth: 1,
     borderColor: 'rgba(250,249,246,0.18)',
     alignItems: 'center',

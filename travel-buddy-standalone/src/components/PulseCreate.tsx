@@ -20,7 +20,7 @@ import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PULSE_FILTERS } from '../types/models.ts';
 import type { PulseFilter, PostCategory } from '../types/models.ts';
-import { color, space, radius, type as t, shadow, layout, avatar } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, layout, avatar, icon } from '../theme/tokens.ts';
 import { usePostActions } from '../hooks/usePosts.ts';
 import type { PostVisibility, LocationPrivacyMode } from '../services/posts.ts';
 import { uploadMedia, validateMedia, type PickedMedia } from '../services/media.ts';
@@ -966,7 +966,7 @@ const uc = StyleSheet.create({
   mediaPreview: { width: '100%', height: '100%' },
   mediaRemove: {
     position: 'absolute', top: 6, right: 6,
-    width: 24, height: 24, borderRadius: 12,
+    width: icon.lgXl, height: icon.lgXl, borderRadius: icon.lgXl / 2,
     backgroundColor: 'rgba(0,0,0,0.6)',
     alignItems: 'center', justifyContent: 'center',
   },

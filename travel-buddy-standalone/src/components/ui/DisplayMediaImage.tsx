@@ -28,7 +28,7 @@ import {
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import type { ImageContentFit } from 'expo-image';
-import { color, radius, space, type as t } from '../../theme/tokens.ts';
+import { color, radius, space, type as t, icon } from '../../theme/tokens.ts';
 import { type IdentityInput, fallbackInitials } from '../../utils/identity.ts';
 import { resolveDisplayMedia } from '../../lib/displayMedia.ts';
 import { hydrateMediaUrls, useHydratedMedia } from '../../services/mediaUrl.ts';
@@ -104,7 +104,7 @@ const fb = StyleSheet.create({
     justifyContent: 'center',
     gap: space.xs,
   },
-  dot: { width: 24, height: 24, borderRadius: 12, backgroundColor: color.paper, opacity: 0.6 },
+  dot: { width: icon.lgXl, height: icon.lgXl, borderRadius: icon.lgXl / 2, backgroundColor: color.paper, opacity: 0.6 },
   label: { ...t.small, color: color.paper, fontWeight: '600', textAlign: 'center', paddingHorizontal: space.sm },
 });
 
