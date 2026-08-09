@@ -8,6 +8,7 @@ import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
 import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
+import { eventHref } from '../lib/feedAttribution.ts';
 
 /* avatar stack for attendees — shows count without fixture data */
 function AvatarStack({ count }: { count: number }) {
@@ -55,11 +56,23 @@ function HostAvatar({ host }: { host: NonNullable<CityEvent['host']> }) {
 }
 
 /** Rich media plan card for "Fits your time". Horizontal-scroll width. */
-export function FitsCard({ ev }: { ev: CityEvent }) {
+export function FitsCard({
+  ev,
+  sessionId,
+}: {
+  ev: CityEvent;
+  /**
+   * Feed session from useCityPulse, threaded onto the event route so an RSVP
+   * on the destination screen attributes back to this impression
+   * (signal-audit §3a). Undefined when there is no session — the outcome then
+   * records unattributed rather than wrongly attributed.
+   */
+  sessionId?: string | null;
+}) {
   const time = new Date(ev.startAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   const joinLabel = (ev.attendeeCount ?? 0) >= (ev.capacity ?? 99) ? 'Full' : ev.kind === 'meetup' ? 'Request to Join' : 'Join Plan';
   return (
-    <Pressable style={styles.card} onPress={() => router.push(`/event/${ev.id}` as any)}>
+    <Pressable style={styles.card} onPress={() => router.push(eventHref(ev.id, sessionId) as any)}>
       <View style={styles.media}>
         <View style={styles.timePill}><Text style={styles.timeText}>{time}</Text></View>
         <View style={styles.matchPill}><Text style={styles.matchText}>Great match</Text></View>
@@ -86,7 +99,7 @@ export function FitsCard({ ev }: { ev: CityEvent }) {
         </View>
         <Pressable
           style={[styles.joinBtn, joinLabel === 'Full' && styles.joinBtnFull]}
-          onPress={joinLabel !== 'Full' ? () => router.push(`/event/${ev.id}` as any) : undefined}
+          onPress={joinLabel !== 'Full' ? () => router.push(eventHref(ev.id, sessionId) as any) : undefined}
         >
           <Text style={[styles.joinText, joinLabel === 'Full' && styles.joinTextFull]}>{joinLabel}</Text>
         </Pressable>

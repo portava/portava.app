@@ -445,7 +445,7 @@ function Pulse() {
               </View>
             ) : (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.fitsStrip}>
-                {fits.map((e) => <FitsCard key={e.id} ev={e} />)}
+                {fits.map((e) => <FitsCard key={e.id} ev={e} sessionId={cityPulseSessionId} />)}
               </ScrollView>
             )}
 
