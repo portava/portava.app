@@ -337,9 +337,35 @@ Two details the tests deliberately encode:
 #### Two things this fix does NOT do
 
 1. **`is_official` still carries a column-level `UPDATE` grant** for
-   `authenticated` and `anon`. It is protected by its own trigger (migration
-   0106), so it is not open — but it is defended by one barrier where `role` now
-   has two. Not a finding; noted for whoever hardens next.
+   `authenticated` and `anon` — one barrier where `role` now has two. Logged as
+   **finding 19**.
+
+   **Verified NOT exploitable (2026-08-09), by execution rather than
+   inference.** An ordinary authenticated user attempting
+   `update({ is_official: true })` on their own row via PostgREST is refused:
+   `is_official can only be set by the service role`, and the column reads
+   `false` afterwards on an authoritative service-client re-read. The probe user
+   was deleted; the probe script was not committed.
+
+   Severity is further limited by what the flag *is*: a display badge
+   (`isOfficial` in the profile/post serializers) and a ranking input
+   (`portavaRank.ts`). **No authorisation gate reads it** — unlike `role`, which
+   all 33 admin guards read. Worst case is a counterfeit badge and a ranking
+   boost, not privilege escalation.
+
+   Two latent weaknesses worth knowing before anyone relies on it:
+   - `enforce_is_official_service_role` tests
+     `current_setting('role', true) NOT IN (...)`. If that setting were ever
+     NULL, `NULL NOT IN (...)` yields NULL, the `IF` does not fire, and the
+     exception is skipped. `caller_may_write_profile_role()` avoids this with
+     `COALESCE(NULLIF(...), 'none')`. Not reachable via PostgREST, which always
+     sets the role — it needs a direct connection with no role GUC, i.e. an
+     already-privileged one.
+   - The trigger guards only elevation to TRUE. Clearing the flag is ungated,
+     though RLS confines that to the caller's own row.
+
+   Recorded as an asymmetry to reconcile, not a task, and explicitly not a
+   reason to hold anything up.
 2. **Option 3 (split auth state out of `profiles`) remains deferred**, and the
    corrected guard count strengthens that. The original reasoning was that once
    all guards route through the canonical `lib/requireAdmin.ts`, `profiles.role`
