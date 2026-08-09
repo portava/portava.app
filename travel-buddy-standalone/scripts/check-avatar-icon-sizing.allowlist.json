@@ -1,23 +1,5 @@
 [
   {
-    "file": "src/components/PassportMarks.tsx",
-    "kind": "avatar",
-    "value": 78,
-    "count": 1
-  },
-  {
-    "file": "src/components/tripCrew/CrewMapSection.tsx",
-    "kind": "avatar",
-    "value": 70,
-    "count": 1
-  },
-  {
-    "file": "src/components/tripCrew/CrewMapSection.tsx",
-    "kind": "avatar",
-    "value": 110,
-    "count": 1
-  },
-  {
     "file": "src/components/AvailabilityCard.tsx",
     "kind": "dot",
     "value": 9,

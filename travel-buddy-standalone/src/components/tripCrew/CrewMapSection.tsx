@@ -325,6 +325,10 @@ const vs = StyleSheet.create({
   sub: { ...t.small, color: color.mute, fontSize: 11 },
 });
 
+/** Concentric visualization rings for the crew density map. Ratio is deliberate — not avatar sizes. */
+const CREW_MAP_RING_OUTER = 110;
+const CREW_MAP_RING_INNER = 70;
+
 const dm = StyleSheet.create({
   wrap: {
     backgroundColor: color.paperRaised, borderRadius: radius.lg,
@@ -333,13 +337,13 @@ const dm = StyleSheet.create({
   map: { height: 140, backgroundColor: '#DDE6E8', position: 'relative' },
   ringOuter: {
     position: 'absolute', top: '15%', left: '20%',
-    width: 110, height: 110, borderRadius: 55,
+    width: CREW_MAP_RING_OUTER, height: CREW_MAP_RING_OUTER, borderRadius: CREW_MAP_RING_OUTER / 2,
     borderWidth: 1.5, borderColor: color.deep + '33',
     backgroundColor: color.deep + '08',
   },
   ringInner: {
     position: 'absolute', top: '30%', left: '32%',
-    width: 70, height: 70, borderRadius: 35,
+    width: CREW_MAP_RING_INNER, height: CREW_MAP_RING_INNER, borderRadius: CREW_MAP_RING_INNER / 2,
     borderWidth: 1.5, borderColor: color.deep + '55',
     backgroundColor: color.deep + '14',
   },

@@ -80,10 +80,14 @@ const wm = StyleSheet.create({
   wrap: { position: 'absolute', alignItems: 'center', justifyContent: 'center' },
 });
 
+/** Passport ink-stamp ring diameter. Aesthetic/branding element — not an avatar size. */
+const PASSPORT_INK_RING = 78;
+
 const ink = StyleSheet.create({
   wrap: { alignItems: 'center', justifyContent: 'center' },
   ring: {
-    width: 78, height: 78, borderRadius: 39, borderWidth: 1.5, borderColor: color.deep,
+    width: PASSPORT_INK_RING, height: PASSPORT_INK_RING, borderRadius: PASSPORT_INK_RING / 2,
+    borderWidth: 1.5, borderColor: color.deep,
     alignItems: 'center', justifyContent: 'center', gap: 2, opacity: 0.45,
     borderStyle: 'solid',
   },

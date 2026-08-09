@@ -106,8 +106,12 @@ const ALLOWLIST_PATH = join(__dirname, 'check-avatar-icon-sizing.allowlist.json'
  * was added: the four intentional one-offs in the dot range (StampItBurst
  * burst particles at 5px/6px, AvailabilityCard 9px, TravelerMapLayer 11px)
  * are explicitly allowlisted as documented one-offs — not token candidates.
+ *
+ * Lowered from 7 → 4 on 2026-08-09 after migrating the three decorative ring
+ * sizes (CrewMapSection 70/110px, PassportMarks 78px) to named constants so
+ * the scanner no longer sees raw literals for those values.
  */
-const ALLOWLIST_CEILING = 7;
+const ALLOWLIST_CEILING = 4;
 
 /** Files that ARE the token/component definitions — a literal here is the point. */
 const ALLOWED_FILES = new Set([
@@ -135,8 +139,9 @@ const DOT_VALUES = new Set([5, 6, 7, 8, 10, 12]);
  *
  * `icon+avatar` band: 14–110px — extends the original 27–110px avatar band
  * down to 14 to cover the 14-26px icon-adjacent infill tokens (icon.s16=16,
- * icon.s24=24). 64/72/96 are large-avatar tokens; intentional decorative
- * rings (70, 78, 110) are in the shrink-only allowlist (ceiling 3).
+ * icon.s24=24). 64/72/96 are large-avatar tokens; the former decorative
+ * rings (70, 78, 110) were migrated to named constants and removed from the
+ * allowlist in the 2026-08-09 shrink pass.
  */
 const WIDE_BAND_MIN = 14;
 const WIDE_BAND_MAX = 110;
