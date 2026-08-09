@@ -708,12 +708,24 @@ describe("Flow 9: QA gate for public_mvp advancement", () => {
     assert.equal(r.body.error, "qa_not_passed");
   });
 
-  it("owner override with reason bypasses QA gate and writes audit log", async () => {
+  // These two tests previously asserted that the override required role "owner"
+  // and that a plain "admin" got a 403. That pair passed only because the first
+  // one FABRICATED an owner: `state.profiles[ADMIN_ID].role = "owner"`. No such
+  // row can exist — `profiles_role_check` is
+  // CHECK (role = ANY (ARRAY['user','admin'])) and rejects 'owner' even for a
+  // superuser (verified live 2026-08-09). So the "happy path" test exercised a
+  // state the database forbids, and the "non-owner" test asserted the only
+  // behaviour production could ever produce. Together they made a permanently
+  // unreachable branch look fully covered, which is exactly why it survived.
+  //
+  // The override is now an admin capability, still requiring overrideReason and
+  // still audit-logged. These tests assert that, against a reachable state.
+
+  it("admin override with reason bypasses QA gate and writes audit log", async () => {
     state.cityRollouts[CITY_ID].status = "beta_testing";
     state.checklists[CHECKLIST_ID].checklist_status = "pending";
     state.checklists[CHECKLIST_ID].policy_scan_passed = false;
-    state.profiles[ADMIN_ID].role = "owner";
-    setupClient(ADMIN_ID, "owner");
+    setupClient(ADMIN_ID, "admin");
     const r = await req("POST", `/api/admin/rent-buddy/rollout/cities/${CITY_ID}/advance-status`, { overrideReason: "Exec approval: launch event" }, ADMIN_TOKEN);
     assert.equal(r.status, 200);
     assert.equal(r.body.toStatus, "public_mvp");
@@ -722,14 +734,20 @@ describe("Flow 9: QA gate for public_mvp advancement", () => {
     assert.ok(overrideLog.override_reason.includes("Exec approval"));
   });
 
-  it("non-owner admin cannot override the QA gate", async () => {
+  it("a non-admin cannot reach the QA override at all", async () => {
+    // The authorisation boundary that actually exists: requireAdmin, which
+    // admits only role 'admin'. Supplying an overrideReason does not help.
     state.cityRollouts[CITY_ID].status = "beta_testing";
     state.checklists[CHECKLIST_ID].checklist_status = "pending";
     state.checklists[CHECKLIST_ID].policy_scan_passed = false;
-    setupClient(ADMIN_ID, "admin");
-    const r = await req("POST", `/api/admin/rent-buddy/rollout/cities/${CITY_ID}/advance-status`, { overrideReason: "I want to override" }, ADMIN_TOKEN);
+    setupClient(USER_ID);
+    const r = await req("POST", `/api/admin/rent-buddy/rollout/cities/${CITY_ID}/advance-status`, { overrideReason: "I want to override" }, USER_TOKEN);
     assert.equal(r.status, 403);
-    assert.equal(r.body.error, "forbidden");
+    assert.equal(state.cityRollouts[CITY_ID].status, "beta_testing", "status must not advance");
+    assert.ok(
+      !state.auditLogs.some((l: any) => l.action === "qa_override"),
+      "no qa_override audit entry may be written for a non-admin",
+    );
   });
 
   it("advance from disabled returns next status in order", async () => {

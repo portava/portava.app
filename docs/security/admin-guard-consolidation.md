@@ -252,11 +252,11 @@ It is held back because it does a **second, non-authorisation thing**: it gates
 on the `ai_visual_admin_review_enabled` flag and returns 403 `feature_disabled`.
 Conversion means extracting that, not deleting it.
 
-> **Ordering matters, and a naive conversion gets it wrong.** Today the admin
-> check runs *before* the flag check, so a non-admin learns nothing about flag
-> state. Calling the canonical guard and then checking the flag preserves that.
-> Checking the flag first — the tidier-looking arrangement — leaks whether an
-> unreleased feature is enabled to any authenticated non-admin.
+> ⚠️ **This conversion is [TRAP 1](#trap-1--requirevisualadmin-the-ordering-is-the-safety-property).
+> Read it before touching this guard.** The admin check must run *before* the
+> flag check. Checking the flag first — the tidier-looking arrangement — leaks
+> whether an unreleased feature is enabled to any authenticated non-admin. The
+> ordering is the safety property, not a style choice.
 
 ### 8. `checkRentBuddyAccess` — `rentABuddyRollout.ts:150`
 
@@ -287,20 +287,114 @@ one `profiles` read spelled by hand, and changes no behaviour.
 
 **No `owner` row exists in production** (55 `user`, 1 `admin`), and as of
 migration 2078 `admin_set_profile_role` accepts only `('user','admin')` — so the
-supported path cannot create one. It remains reachable by direct service-role
-SQL, so the branches are not formally dead.
+supported path cannot create one.
 
-The consequence is concrete and worth deciding on its own merits:
+### CORRECTION 2026-08-09 — the branches were formally dead, and `:635` is now removed
 
-> **The QA-gate override is inoperable in production today.** `:635` requires
-> `admin.role === "owner"` to bypass the QA checklist when advancing a city to
-> `public_mvp`. Since no owner exists, *nobody* can exercise that override —
-> including the single admin. An intended escape hatch is currently unreachable,
-> and it fails in the safe direction, which is why nothing has surfaced it.
+This section previously said `owner` "remains reachable by direct service-role
+SQL, so the branches are not formally dead." **That was wrong.** A column CHECK
+constraint forbids the value outright:
 
-This is a product decision, not a refactor: either `owner` becomes a real
-provisioned role, or the override is re-scoped to `admin`, or it is removed. The
-consolidation should not decide it by accident.
+```
+profiles_role_check  CHECK (role = ANY (ARRAY['user'::text, 'admin'::text]))
+```
+
+Verified by execution, not by reading the definition: `UPDATE profiles SET
+role='owner'` was run as `postgres` (superuser, RLS-exempt, trigger-privileged)
+and was **rejected with a check_violation**. No service-role or superuser SQL can
+create an `owner`; it requires a DDL change to drop or alter the constraint
+first. The branches were formally dead.
+
+Full enumeration performed before removing anything — every path that could
+produce an `owner` row:
+
+| Path | Can produce `owner`? |
+|---|---|
+| `profiles_role_check` CHECK constraint | **No** — rejects it even as superuser (executed) |
+| `role` column default | No — `'user'` |
+| `admin_set_profile_role()` RPC (only explicit privileged path) | No — validates `IN ('user','admin')` |
+| `trg_profiles_role_privileged` trigger | No — blocks non-privileged role writes entirely |
+| Any HTTP request path | No — no route/service/lib writes `profiles.role` at all |
+| Signup (`handle_new_user`) | No — inserts only (id, handle, username, name); also not wired to `auth.users` |
+| Seeds | No — only ever write `role:"user"` |
+| Migrations | No — none write `'owner'` to `profiles.role` |
+| Other DB functions | No — none reference `owner` together with `profiles` |
+| Live data | 0 `owner` rows; only `user` (55) and `admin` (1) |
+
+**Resolution: the `:635` branch is removed.** A dead authorisation branch is worse
+than no branch — it reads as a capability that exists, and the likely future
+"fix" is someone provisioning an `owner` to make it work without ever learning
+why it was unreachable.
+
+> ⚠️ **This widened authorisation, deliberately.** Advancing to `public_mvp` on a
+> failed checklist was previously impossible for *everyone*; it is now possible
+> for an `admin` who supplies an `overrideReason`, and remains audit-logged as
+> `qa_override`. That is the intended escape hatch finally working. If the intent
+> was genuinely a two-tier privilege model, the correct fix is a real second role
+> — not a branch that 403s everyone.
+
+**The tests hid this.** `rentABuddyRollout.test.ts` asserted the old behaviour with
+a fabricated fixture: `state.profiles[ADMIN_ID].role = "owner"`. The "happy path"
+test exercised a state the database forbids, while its partner test asserted the
+only outcome production could ever produce. Together they made a permanently
+unreachable branch look fully covered. Both were rewritten against reachable
+states. **A fixture that no schema constraint would accept is not coverage** —
+this is the same class of failure as the checks in this repo that measured
+nothing.
+
+**Two `owner` references remain, deliberately**, at `rentABuddyRollout.ts:131`
+(`requireAdmin`) and `:178` (`checkRentBuddyAccess`). Both are *permissive*
+disjunctions (`role !== "admin" && role !== "owner"`), so the dead clause grants
+nothing and changes no behaviour — unlike `:635`, which was a deny gate. They are
+left for the guard consolidation to remove along with those two guards, rather
+than touched piecemeal here.
+
+## Named traps
+
+Conversions on this list that are **more dangerous than they look**. Each is
+recorded here because its failure mode is a refactor that makes the code
+*tidier* — so it will not look like a mistake in review, and the next person to
+try it needs to find this before they start, not after.
+
+### TRAP 1 — `requireVisualAdmin`: the ordering is the safety property
+
+**Site:** `adminVisuals.ts:34` (guard #7).
+
+**Why it looks free.** Its authorisation half is *byte-for-byte equivalent* to
+`requireAdmin(req, res, { withDisplayName: true })` — same caller-client read,
+same four columns, same `error || !data || role !== "admin"` test, same 403
+envelope, and a return shape that is an exact subset of the canonical context.
+Every signal a reviewer normally uses says "drop-in replacement".
+
+**What that reading misses.** The guard does a second, non-authorisation thing:
+it gates on the `ai_visual_admin_review_enabled` feature flag and returns 403
+`feature_disabled`. The *order* of those two checks is load-bearing:
+
+```
+CORRECT (today)                          WRONG (tidier-looking)
+  1. admin check   → 403 forbidden         1. flag check    → 403 feature_disabled
+  2. flag check    → 403 feature_disabled  2. admin check   → 403 forbidden
+```
+
+A non-admin hitting the wrong version gets `feature_disabled` when the flag is
+off and `forbidden` when it is on. **The response distinguishes the two, so any
+authenticated non-admin can probe the endpoint and read the release state of an
+unshipped feature.** The correct order returns `forbidden` to a non-admin in both
+cases, revealing nothing.
+
+**Why this is a trap and not a note.** Nothing about the wrong version looks
+wrong. It is shorter, it reads more naturally (cheap flag check first, expensive
+DB read second), and it is what a performance-minded reviewer would *ask for*.
+There is no test that fails, and per finding 18 there is no CI that would run one
+if there were. The information leak is invisible at the call site and only
+observable by diffing two error codes.
+
+**Rule.** Converting this guard means extracting the flag gate and calling it
+**after** the canonical admin guard. Never reorder them, and never merge them
+into a single early-return that evaluates the flag first. If a future change
+makes the flag check cheaper or moves it into middleware, that does not license
+the reorder — the ordering is the security property, not an optimisation
+artefact.
 
 ## Recommended order, if and when these are taken on
 
@@ -313,13 +407,18 @@ decision before any code moves.
 3. **#4 `rentABuddyMarketplace.ts`** — accept the trailing-period message change
    and rename `svc`→`sc`, or keep it as-is. Cosmetic but client-visible.
 4. **#7 `requireVisualAdmin`** — extract the flag gate, preserving check order.
+   ⚠️ **Read [TRAP 1](#trap-1--requirevisualadmin-the-ordering-is-the-safety-property)
+   before touching this one.** It is the most inviting conversion on this list and
+   the only one that can leak information by being tidied.
 5. **#2 `placesCanonical.ts`**, then **#1 `circle.ts`** — both need a ruling on
    whether "no service client" should stay a 503 or become the canonical
    fallback. That is a real availability-vs-permissiveness choice.
 6. **#3 `rentABuddySpec.ts`** — needs a ruling on the missing `message` field,
    which clients may match on.
-7. **#6 `rentABuddyRollout.ts` + #8 `checkRentBuddyAccess`** — blocked on the
-   `owner` decision above. Do these last, together.
+7. **#6 `rentABuddyRollout.ts` + #8 `checkRentBuddyAccess`** — the `owner`
+   decision is now made (see the correction above): `:635` is removed, and the
+   two remaining `owner` clauses at `:131` and `:178` are permissive no-ops to be
+   dropped with these guards. No longer blocked.
 
 ## NOT verified here
 

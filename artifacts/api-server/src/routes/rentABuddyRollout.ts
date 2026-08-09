@@ -613,7 +613,7 @@ router.post("/admin/rent-buddy/rollout/cities/:id/advance-status", asyncHandler(
     return res.status(409).json({ error: "no_next_status", message: `City is already at ${current} — cannot advance further.` });
   }
 
-  // Advancing to public_mvp requires QA checklist passed (or owner override with reason)
+  // Advancing to public_mvp requires QA checklist passed (or admin override with reason)
   if (next === "public_mvp") {
     const { data: checklist } = await admin.sc
       .from("rent_buddy_launch_checklists")
@@ -631,14 +631,24 @@ router.post("/admin/rent-buddy/rollout/cities/:id/advance-status", asyncHandler(
           checklistStatus: checklist ? (checklist as any).checklist_status : "missing",
         });
       }
-      // Only platform owners may override the QA gate
-      if (admin.role !== "owner") {
-        return res.status(403).json({
-          error: "forbidden",
-          message: "Only platform owners may override the QA gate. Contact a platform owner to approve this launch.",
-        });
-      }
-      // Owner override — log it
+      // The QA override is an ADMIN capability, gated by overrideReason + audit log.
+      //
+      // This used to require `admin.role === "owner"`. No `owner` row can exist:
+      // `profiles_role_check` is CHECK (role = ANY (ARRAY['user','admin'])), which
+      // rejects 'owner' even for a superuser (verified live 2026-08-09), and
+      // `admin_set_profile_role` accepts only ('user','admin'). Since requireAdmin
+      // above already admits nothing but 'admin', that test was unsatisfiable and
+      // this override was unreachable by ANY caller — an escape hatch that read as
+      // a real capability while silently 403-ing everyone.
+      //
+      // Removed rather than left in place: a dead authorisation branch invites the
+      // "fix" of provisioning an owner to make it work, without the remover ever
+      // learning why it was unreachable. See docs/security/admin-guard-consolidation.md.
+      //
+      // NOTE — this widens authorisation in practice: advancing to public_mvp on a
+      // failed checklist was impossible before and is now possible for an admin who
+      // supplies an overrideReason. That is the intended escape hatch finally
+      // working, and it remains audit-logged below.
       await writeAuditLog(admin.sc, {
         adminId:       admin.userId,
         action:        "qa_override",
