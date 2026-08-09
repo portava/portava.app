@@ -20,56 +20,19 @@
  */
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http";
-import { getServiceClient } from "../lib/supabase";
+import { sendError } from "../lib/http";
 import { logger } from "../lib/logger";
 import { clearReminderDedup } from "../lib/tripReminderScheduler";
 import { invalidateCompassHomeCache } from "./compassHome.js";
 import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
-import {
-  runSchemaDriftCheck,
-  getCachedSchemaDriftResult,
-} from "../lib/schemaDriftCheck";
+import { runSchemaDriftCheck, getCachedSchemaDriftResult } from "../lib/schemaDriftCheck";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
+
+import { requireAdmin } from "../lib/requireAdmin.js";
 
 const router = Router();
 
 // ── Admin guard ───────────────────────────────────────────────────────────────
-
-/**
- * Returns the authenticated user's client (from requireUser / _testClient in tests)
- * plus the service client (for bypassing RLS in production).
- *
- * In tests: `sc` is the fake client injected via _setTestClient.
- * In production: `sc` is the real service-role client from getServiceClient().
- */
-async function requireAdmin(
-  req: any,
-  res: any,
-): Promise<{ userId: string; displayName: string | null; client: any; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-
-  const { data, error } = await client
-    .from("profiles")
-    .select("role, display_name, username, handle")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (error || !data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-
-  // Prefer the real service client in production; fall back to the user client
-  // (which equals _testClient in tests) so routes are fully testable without
-  // real Supabase credentials.
-  const sc = getServiceClient() ?? client;
-  const displayName: string | null =
-    (data as any).display_name ?? (data as any).username ?? (data as any).handle ?? null;
-  return { userId: user.id, displayName, client, sc };
-}
 
 // ── Geo zone schemas ──────────────────────────────────────────────────────────
 
@@ -95,7 +58,7 @@ const createGeoZoneSchema = z.object({
 // ── GET /admin/geo-zones ──────────────────────────────────────────────────────
 
 router.get("/admin/geo-zones", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -123,7 +86,7 @@ router.get("/admin/geo-zones", async (req, res) => {
 // ── POST /admin/geo-zones ─────────────────────────────────────────────────────
 
 router.post("/admin/geo-zones", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -160,7 +123,7 @@ router.post("/admin/geo-zones", async (req, res) => {
 // ── GET /admin/geo-zones/:id ──────────────────────────────────────────────────
 
 router.get("/admin/geo-zones/:id", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -178,7 +141,7 @@ router.get("/admin/geo-zones/:id", async (req, res) => {
 // ── PATCH /admin/geo-zones/:id ────────────────────────────────────────────────
 
 router.patch("/admin/geo-zones/:id", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -222,7 +185,7 @@ router.patch("/admin/geo-zones/:id", async (req, res) => {
 // ── DELETE /admin/geo-zones/:id ───────────────────────────────────────────────
 
 router.delete("/admin/geo-zones/:id", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -239,7 +202,7 @@ router.delete("/admin/geo-zones/:id", async (req, res) => {
 
 /** GET /admin/suspicious-gps — unreviewed trust events, oldest first */
 router.get("/admin/suspicious-gps", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -260,7 +223,7 @@ router.get("/admin/suspicious-gps", async (req, res) => {
 
 /** POST /admin/suspicious-gps/:id/resolve — mark a trust event reviewed */
 router.post("/admin/suspicious-gps/:id/resolve", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -299,7 +262,7 @@ router.post("/admin/suspicious-gps/:id/resolve", async (req, res) => {
 
 /** GET /admin/venues/pending — community places awaiting moderation */
 router.get("/admin/venues/pending", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -319,7 +282,7 @@ router.get("/admin/venues/pending", async (req, res) => {
 
 /** POST /admin/venues/:id/moderate — approve or reject a provisional discovery place */
 router.post("/admin/venues/:id/moderate", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -361,7 +324,7 @@ router.post("/admin/venues/:id/moderate", async (req, res) => {
  * recent report reason so admins can prioritise review.
  */
 router.get("/admin/venues/reported", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -411,7 +374,7 @@ router.get("/admin/venues/reported", async (req, res) => {
  * which filters `.eq('status', 'active')`.
  */
 router.patch("/admin/venues/:id/status", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -455,7 +418,7 @@ export const GEOFENCE_SETTINGS_DEFAULTS = {
 
 /** GET /admin/geofence-settings — read current admin radius config */
 router.get("/admin/geofence-settings", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -478,7 +441,7 @@ const geofenceSettingsSchema = z.object({
 }).strict();
 
 router.patch("/admin/geofence-settings", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -508,7 +471,7 @@ router.patch("/admin/geofence-settings", async (req, res) => {
 
 /** POST /admin/geofence/:tripId/override-reveal — admin can force-reveal exact location */
 router.post("/admin/geofence/:tripId/override-reveal", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -531,7 +494,7 @@ router.post("/admin/geofence/:tripId/override-reveal", async (req, res) => {
 
 /** GET /admin/geofence/:tripId/suspicious-checkins — suspicious check-in events for a trip */
 router.get("/admin/geofence/:tripId/suspicious-checkins", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -584,7 +547,7 @@ async function resolveDisplayNames(
  * recent audit-log entry (changed_by display name + timestamp) merged in.
  */
 router.get("/admin/feature-flags", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -643,7 +606,7 @@ router.get("/admin/feature-flags", async (req, res) => {
 const toggleFlagSchema = z.object({ enabled: z.boolean() });
 
 router.patch("/admin/feature-flags/:flag", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { userId, displayName, sc } = admin;
 
@@ -707,7 +670,7 @@ router.patch("/admin/feature-flags/:flag", async (req, res) => {
  * Query params: limit (default 20, max 100)
  */
 router.get("/admin/feature-flags/:flag/history", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -758,7 +721,7 @@ async function isSafeReturnAdminEnabled(sc: any): Promise<boolean> {
  * Returns recent Safe Return events (all users) — admin only.
  */
 router.get("/admin/safe-return/logs", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -785,7 +748,7 @@ router.get("/admin/safe-return/logs", async (req, res) => {
  * so fresh installs can always reach config without a bootstrap deadlock).
  */
 router.get("/admin/safe-return/config", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -817,7 +780,7 @@ router.get("/admin/safe-return/config", async (req, res) => {
  * Gated by safe_return_admin_logs_enabled (seeded true in migration 0037).
  */
 router.patch("/admin/safe-return/config", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -900,7 +863,7 @@ const moderationActionSchema = z.object({
 });
 
 router.patch("/admin/users/:userId/moderation-action", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
 
@@ -1021,7 +984,7 @@ async function logModerationAction(
 // Auth is via Supabase auth.users for email lookup (service client required).
 
 router.get("/admin/users", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -1106,7 +1069,7 @@ router.get("/admin/users", async (req, res) => {
 
 /** GET /admin/users/:userId/summary — full profile + trust/safety context for admin */
 router.get("/admin/users/:userId/summary", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
   const { userId } = req.params;
@@ -1180,7 +1143,7 @@ router.get("/admin/users/:userId/summary", async (req, res) => {
 
 /** POST /admin/users/:userId/verify */
 router.post("/admin/users/:userId/verify", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
   const { userId } = req.params;
@@ -1228,7 +1191,7 @@ router.post("/admin/users/:userId/verify", async (req, res) => {
 
 /** POST /admin/users/:userId/unverify */
 router.post("/admin/users/:userId/unverify", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
   const { userId } = req.params;
@@ -1247,7 +1210,7 @@ router.post("/admin/users/:userId/unverify", async (req, res) => {
 
 /** POST /admin/users/:userId/warn — record a warning (does not change account status) */
 router.post("/admin/users/:userId/warn", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
   const { userId } = req.params;
@@ -1267,7 +1230,7 @@ router.post("/admin/users/:userId/warn", async (req, res) => {
 
 /** POST /admin/users/:userId/restrict — restrict user interactions */
 router.post("/admin/users/:userId/restrict", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
   const { userId } = req.params;
@@ -1286,7 +1249,7 @@ router.post("/admin/users/:userId/restrict", async (req, res) => {
 
 /** POST /admin/users/:userId/suspend */
 router.post("/admin/users/:userId/suspend", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
   const { userId } = req.params;
@@ -1314,7 +1277,7 @@ router.post("/admin/users/:userId/suspend", async (req, res) => {
 
 /** POST /admin/users/:userId/ban */
 router.post("/admin/users/:userId/ban", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
   const { userId } = req.params;
@@ -1341,7 +1304,7 @@ router.post("/admin/users/:userId/ban", async (req, res) => {
 
 /** POST /admin/users/:userId/restore — lift suspension or ban */
 router.post("/admin/users/:userId/restore", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
   const { userId } = req.params;
@@ -1368,7 +1331,7 @@ router.post("/admin/users/:userId/restore", async (req, res) => {
 
 /** POST /admin/users/:userId/restrict-bio — clear and lock the user's bio */
 router.post("/admin/users/:userId/restrict-bio", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
   const { userId } = req.params;
@@ -1385,7 +1348,7 @@ router.post("/admin/users/:userId/restrict-bio", async (req, res) => {
 
 /** POST /admin/users/:userId/restrict-messaging — prevent user from initiating messages */
 router.post("/admin/users/:userId/restrict-messaging", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
   const { userId } = req.params;
@@ -1404,7 +1367,7 @@ router.post("/admin/users/:userId/restrict-messaging", async (req, res) => {
 
 /** POST /admin/users/:userId/restrict-visibility — force profile to private */
 router.post("/admin/users/:userId/restrict-visibility", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
   const { userId } = req.params;
@@ -1423,7 +1386,7 @@ router.post("/admin/users/:userId/restrict-visibility", async (req, res) => {
 
 /** POST /admin/users/:userId/hide-posts — hide all posts from public discovery */
 router.post("/admin/users/:userId/hide-posts", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
   const { userId } = req.params;
@@ -1442,7 +1405,7 @@ router.post("/admin/users/:userId/hide-posts", async (req, res) => {
 
 /** DELETE /admin/users/:userId/avatar — remove a user's avatar (admin action) */
 router.delete("/admin/users/:userId/avatar", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
   const { userId } = req.params;
@@ -1473,7 +1436,7 @@ router.delete("/admin/users/:userId/avatar", async (req, res) => {
 
 /** DELETE /admin/users/:userId/cover — remove a user's cover photo (admin action) */
 router.delete("/admin/users/:userId/cover", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
   const { userId } = req.params;
@@ -1510,7 +1473,7 @@ router.delete("/admin/users/:userId/cover", async (req, res) => {
 
 /** GET /admin/moderation/reports — paginated moderation_reports with optional subject_type filter */
 router.get("/admin/moderation/reports", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -1582,7 +1545,7 @@ router.get("/admin/moderation/reports", async (req, res) => {
 
 /** GET /admin/reports — paginated report list with optional type/status filters */
 router.get("/admin/reports", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -1613,7 +1576,7 @@ const resolveReportSchema = z.object({
 
 /** POST /admin/reports/:id/resolve */
 router.post("/admin/reports/:id/resolve", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
 
@@ -1650,7 +1613,7 @@ router.post("/admin/reports/:id/resolve", async (req, res) => {
 
 /** POST /admin/reports/:id/dismiss */
 router.post("/admin/reports/:id/dismiss", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
   const notes: string | null = (req.body as any)?.notes ?? null;
@@ -1698,7 +1661,7 @@ router.post("/admin/reports/:id/dismiss", async (req, res) => {
  *   (other types: report is moved to in_review but no content mutation is applied)
  */
 router.post("/admin/reports/:id/hide-content", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
 
@@ -1775,7 +1738,7 @@ router.post("/admin/reports/:id/hide-content", async (req, res) => {
 
 /** GET /admin/deletion-requests — pending account deletion requests */
 router.get("/admin/deletion-requests", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -1798,7 +1761,7 @@ router.get("/admin/deletion-requests", async (req, res) => {
 
 /** POST /admin/deletion-requests/:id/execute — anonymize user data and mark completed */
 router.post("/admin/deletion-requests/:id/execute", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
 
@@ -1855,7 +1818,7 @@ router.post("/admin/deletion-requests/:id/execute", async (req, res) => {
 // Admin-gated. Intended for QA and integration debugging only.
 
 router.get("/admin/dev/interaction-test", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -1895,7 +1858,7 @@ router.get("/admin/dev/interaction-test", async (req, res) => {
  * the count of open reports against it so the admin dashboard can triage.
  */
 router.get("/admin/trips", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const sc = admin.sc;
 
@@ -1951,7 +1914,7 @@ router.get("/admin/trips", async (req, res) => {
  * for the audit trail.
  */
 router.post("/admin/trips/:tripId/hide", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const sc = admin.sc;
 
@@ -1984,7 +1947,7 @@ router.post("/admin/trips/:tripId/hide", async (req, res) => {
  * Body: { resolution: 'accepted' | 'rejected', reason?: string }
  */
 router.post("/admin/trips/:tripId/report-resolve", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const sc = admin.sc;
 
@@ -2028,7 +1991,7 @@ router.post("/admin/trips/:tripId/report-resolve", async (req, res) => {
  *   - reminder_delivered_at → NULL
  */
 router.post("/admin/trips/:tripId/reset-reminder", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const sc = admin.sc;
 
@@ -2083,7 +2046,7 @@ router.post("/admin/trips/:tripId/reset-reminder", async (req, res) => {
 // Query params: status, featured, reported, limit
 
 router.get("/admin/events", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const sc = admin.sc;
 
@@ -2151,7 +2114,7 @@ router.get("/admin/events", async (req, res) => {
 const ADMIN_EVENT_ACTIONS = ["hide", "cancel", "remove", "restore", "feature", "unfeature", "warn_host"] as const;
 
 router.patch("/admin/events/:eventId/moderate", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const sc = admin.sc;
 
@@ -2281,7 +2244,7 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
  *   }
  */
 router.post("/admin/trips/reconcile-invite-slots", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -2335,7 +2298,7 @@ router.post("/admin/trips/reconcile-invite-slots", async (req, res) => {
 
 /** GET /admin/users/:userId/moderation-summary — focused moderation view for admin */
 router.get("/admin/users/:userId/moderation-summary", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
   const { userId } = req.params;
@@ -2392,7 +2355,7 @@ router.get("/admin/users/:userId/moderation-summary", async (req, res) => {
  * confirm a migration landed.
  */
 router.get("/admin/health/schema-drift", async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
 
   const refresh = req.query["refresh"] === "true" || req.query["refresh"] === "1";

@@ -16,39 +16,13 @@
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { requireUser, sendError } from "../lib/http.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { sendError } from "../lib/http.js";
 import { invalidateDiscoveryCacheForEntity } from "../lib/discoveryPersistentCache.js";
 import { evictCacheEntriesForEntity } from "./discovery.js";
 
+import { requireAdmin } from "../lib/requireAdmin.js";
+
 const router = Router();
-
-// ── Admin guard ───────────────────────────────────────────────────────────────
-
-async function requireAdmin(
-  req: any,
-  res: any,
-): Promise<{ userId: string; displayName: string | null; client: any; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-
-  const { data, error } = await client
-    .from("profiles")
-    .select("role, display_name, username, handle")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (error || !data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-
-  const sc = getServiceClient() ?? client;
-  const displayName: string | null =
-    (data as any).display_name ?? (data as any).username ?? (data as any).handle ?? null;
-  return { userId: user.id, displayName, client, sc };
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -66,7 +40,7 @@ function isHighImportance(row: any): boolean {
 // ── GET /admin/place-images/queue ─────────────────────────────────────────────
 
 router.get("/admin/place-images/queue", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -147,7 +121,7 @@ router.get("/admin/place-images/queue", asyncHandler(async (req, res) => {
 // ── GET /admin/place-images/reports ──────────────────────────────────────────
 
 router.get("/admin/place-images/reports", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -227,7 +201,7 @@ router.get("/admin/place-images/reports", asyncHandler(async (req, res) => {
 // ── GET /admin/place-images/:visualId ─────────────────────────────────────────
 
 router.get("/admin/place-images/:visualId", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc } = admin;
 
@@ -283,7 +257,7 @@ router.get("/admin/place-images/:visualId", asyncHandler(async (req, res) => {
 // ── POST /admin/place-images/:visualId/approve ────────────────────────────────
 
 router.post("/admin/place-images/:visualId/approve", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId } = admin;
 
@@ -340,7 +314,7 @@ const rejectSchema = z.object({
 });
 
 router.post("/admin/place-images/:visualId/reject", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId } = admin;
 
@@ -405,7 +379,7 @@ router.post("/admin/place-images/:visualId/reject", asyncHandler(async (req, res
 // ── POST /admin/place-images/:visualId/downgrade ──────────────────────────────
 
 router.post("/admin/place-images/:visualId/downgrade", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId } = admin;
 
@@ -470,7 +444,7 @@ const replaceSchema = z.object({
 });
 
 router.post("/admin/place-images/:visualId/replace", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId } = admin;
 
@@ -575,7 +549,7 @@ const resolveSchema = z.object({
 });
 
 router.post("/admin/place-images/reports/:reportId/resolve", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res);
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { sc, userId } = admin;
 
