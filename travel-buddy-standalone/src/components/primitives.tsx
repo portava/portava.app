@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronRight, SlidersHorizontal, AlertCircle, RefreshCw } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow, icon, layout } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, icon, layout, avatar } from '../theme/tokens.ts';
 
 /**
  * Travel Buddy shared primitives. New/incomplete sections use these so every
@@ -201,7 +201,7 @@ const btn = {
 };
 
 const ib = StyleSheet.create({
-  box: { width: 42, height: 42, borderRadius: 21, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
+  box: { width: avatar.lgLgXl, height: avatar.lgLgXl, borderRadius: avatar.lgLgXl / 2, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
 });
 
 const fb = StyleSheet.create({

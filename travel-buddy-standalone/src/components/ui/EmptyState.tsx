@@ -5,7 +5,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { color, space, radius, typography, layout } from '../../theme/tokens.ts';
+import { color, space, radius, typography, layout, avatar } from '../../theme/tokens.ts';
 
 interface EmptyStateProps {
   /** Lucide icon component (outline style preferred). */
@@ -49,9 +49,9 @@ const styles = StyleSheet.create({
     gap: space.sm,
   },
   iconWrap: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: avatar.xxxxl,
+    height: avatar.xxxxl,
+    borderRadius: avatar.xxxxl / 2,
     backgroundColor: color.paper,
     borderWidth: 1,
     borderColor: color.haze,

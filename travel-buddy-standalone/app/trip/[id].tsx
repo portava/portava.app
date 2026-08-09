@@ -1199,7 +1199,7 @@ const mp = StyleSheet.create({
   wrap: { paddingHorizontal: space.lg, marginTop: space.xl, gap: space.md },
   h: { ...t.title, color: color.ink, fontSize: 18 },
   card: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, borderStyle: 'dashed', padding: space.xl, alignItems: 'center', gap: 6 },
-  iconWrap: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#E2EDF0', alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
+  iconWrap: { width: avatar.xlXxl, height: avatar.xlXxl, borderRadius: avatar.xlXxl / 2, backgroundColor: '#E2EDF0', alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
   title: { ...t.bodyStrong, color: color.ink, fontSize: 15 },
   sub: { ...t.small, color: color.mute, textAlign: 'center' },
   privacy: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: space.sm, backgroundColor: color.paper, paddingHorizontal: space.md, paddingVertical: 5, borderRadius: radius.pill },

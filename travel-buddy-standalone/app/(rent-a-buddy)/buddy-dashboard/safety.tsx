@@ -435,7 +435,7 @@ const sab = StyleSheet.create({
     width: avatar.lgXl, height: avatar.lgXl, borderRadius: avatar.lgXl / 2,
     alignItems: 'center', justifyContent: 'center',
   },
-  iconLarge: { width: 52, height: 52, borderRadius: 26 },
+  iconLarge: { width: avatar.xlXxl, height: avatar.xlXxl, borderRadius: avatar.xlXxl / 2 },
   label: { ...t.bodyStrong, color: color.ink },
   labelLarge: { fontSize: 17 },
   sub: { ...t.small, color: color.mute, lineHeight: 17, marginTop: 2 },

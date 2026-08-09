@@ -397,7 +397,7 @@ const s = StyleSheet.create({
   card: { paddingHorizontal: space.lg, paddingBottom: space.lg, alignItems: 'center', gap: space.md },
 
   typeIconWrap: {
-    width: 64, height: 64, borderRadius: 32,
+    width: avatar.xxxl, height: avatar.xxxl, borderRadius: avatar.xxxl / 2,
     alignItems: 'center', justifyContent: 'center',
   },
   hashtagSlug: { ...t.title, color: color.ink, textAlign: 'center' },

@@ -1011,7 +1011,7 @@ const s = StyleSheet.create({
   // Floating action buttons
   shareBtn: {
     position: 'absolute', right: space.lg + 38 + space.sm, zIndex: 20,
-    width: 38, height: 38, borderRadius: 19,
+    width: avatar.mdLg, height: avatar.mdLg, borderRadius: avatar.mdLg / 2,
     backgroundColor: PP.paper,
     borderWidth: 1, borderColor: PP.borderLight,
     alignItems: 'center', justifyContent: 'center',
@@ -1019,7 +1019,7 @@ const s = StyleSheet.create({
   },
   bellBtn: {
     position: 'absolute', right: space.lg, zIndex: 20,
-    width: 38, height: 38, borderRadius: 19,
+    width: avatar.mdLg, height: avatar.mdLg, borderRadius: avatar.mdLg / 2,
     backgroundColor: PP.paper,
     borderWidth: 1, borderColor: PP.borderLight,
     alignItems: 'center', justifyContent: 'center',

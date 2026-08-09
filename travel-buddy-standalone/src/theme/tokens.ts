@@ -160,8 +160,59 @@ export const aspect = { wide: 16 / 9, card: 4 / 3, square: 1, portrait: 4 / 5, s
  * position in the scale (`smMd` sits between `sm` and `md`, `lgXl` between
  * `lg` and `xl`) rather than continuing the tier-letter sequence, since they
  * are not a new tier — they are an infill.
+ *
+ * `xsSm` (30), `mdLg` (38), `lgLgXl` (42), `lgXlXl` (46), and `xlXxl` (52)
+ * were added the same day, later, after widening
+ * scripts/check-avatar-icon-sizing.mjs to catch ANY circular box in the
+ * 27-56px band, not just literals that already matched an existing token
+ * (see that script's header for why: matching-only enforcement is exactly
+ * what let the original 28/32/34/36/40 cluster form in the first place —
+ * nobody reused a value because there was nothing to check against). All
+ * five are the same story as smMd/lgXl: real, recurring, cross-component
+ * shapes (map pins, icon-buttons, avatar circles reused verbatim across
+ * unrelated screens) with zero co-occurring use of a neighboring token for
+ * the same element in any of their call sites — not drift. Named by
+ * concatenating their two bounding tier keys per the same infill
+ * convention; where a value sits between two *already-infilled* keys (e.g.
+ * 42 between `lg` and `lgXl`) the name concatenates both of those, which is
+ * why `lgLgXl`/`lgXlXl` look denser than `xsSm`/`mdLg` — they are one infill
+ * level deeper in the same 40-48 span that `lgXl` already lives in.
+ *
+ * All existing call sites are migrated as of this pass. See
+ * scripts/check-avatar-icon-sizing.mjs for the guard + shrink-only allowlist.
  */
-export const avatar = { xs: 28, sm: 32, smMd: 34, md: 36, lg: 40, lgXl: 44, xl: 48, xxl: 56 } as const;
+export const avatar = {
+  xs: 28,
+  xsSm: 30,
+  sm: 32,
+  smMd: 34,
+  md: 36,
+  mdLg: 38,
+  lg: 40,
+  lgLgXl: 42,
+  lgXl: 44,
+  lgXlXl: 46,
+  xl: 48,
+  xlXxl: 52,
+  xxl: 56,
+  /**
+   * `xxxl` (64), `xxxxl` (72), and `xxxxxl` (96) were added 2026-08-09 after
+   * a follow-up sweep of circular-box literals above 56px (the band added in
+   * the same day's third pass). 64 appears at 9 independent call sites across
+   * error/empty-state/map placeholder circles; 72 appears at 3 sites (trust
+   * rings, icon wraps); 96 appears at 2 sites (profile-photo edit screen).
+   * All are the same RECURRING pattern — same circular element reused across
+   * unrelated files with no co-occurring use of a neighbouring token — not
+   * drift. One-offs (60→64, 68→64, 80→72, 88→96, 90→96) were snapped to the
+   * nearest token. Intentional decorative rings (70px/110px in CrewMapSection,
+   * 78px in PassportMarks) are kept as hardcoded values and recorded in the
+   * shrink-only allowlist — they are visualization elements, not avatar shapes.
+   * The guard's widened-detection band is now extended to 110px.
+   */
+  xxxl: 64,
+  xxxxl: 72,
+  xxxxxl: 96,
+} as const;
 
 /**
  * Dot sizing scale — small circular status/presence indicators (live dots,

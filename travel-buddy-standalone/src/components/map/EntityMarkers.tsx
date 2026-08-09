@@ -247,12 +247,14 @@ const pin = StyleSheet.create({
     elevation: 3,
   },
   friendImg: {
-    width: 30, height: 30,
-    borderRadius: 15,
+    width: avatar.xsSm,
+    height: avatar.xsSm,
+    borderRadius: avatar.xsSm / 2,
   },
   friendFallback: {
-    width: 30, height: 30,
-    borderRadius: 15,
+    width: avatar.xsSm,
+    height: avatar.xsSm,
+    borderRadius: avatar.xsSm / 2,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -547,7 +547,7 @@ const styles = StyleSheet.create({
   reportText: { ...t.small, color: color.mute },
   trustRingRow: { flexDirection: 'row', alignItems: 'center', gap: space.lg },
   trustRing: {
-    width: 72, height: 72, borderRadius: 36,
+    width: avatar.xxxxl, height: avatar.xxxxl, borderRadius: avatar.xxxxl / 2,
     borderWidth: 4, borderColor: color.success,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: '#EEF8F3',

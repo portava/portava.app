@@ -74,9 +74,9 @@ function Pin({ selected, onPress }: PinProps) {
 
 const pin = StyleSheet.create({
   wrap: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: avatar.xsSm,
+    height: avatar.xsSm,
+    borderRadius: avatar.xsSm / 2,
     backgroundColor: color.signal,
     alignItems: 'center',
     justifyContent: 'center',

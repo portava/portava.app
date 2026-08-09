@@ -503,8 +503,9 @@ const s = StyleSheet.create({
     position: 'relative',
   },
   pin: {
-    width: 30, height: 30,
-    borderRadius: 15,
+    width: avatar.xsSm,
+    height: avatar.xsSm,
+    borderRadius: avatar.xsSm / 2,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,

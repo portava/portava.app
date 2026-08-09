@@ -323,7 +323,7 @@ const styles = StyleSheet.create({
 
   buddyRow: { flexDirection: 'row', gap: space.md },
   buddy: { alignItems: 'center', width: 56 },
-  buddyAvatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: color.haze },
+  buddyAvatar: { width: avatar.xlXxl, height: avatar.xlXxl, borderRadius: avatar.xlXxl / 2, backgroundColor: color.haze },
   buddyName: { ...t.small, color: color.ink, marginTop: 4 },
 
   perk: {

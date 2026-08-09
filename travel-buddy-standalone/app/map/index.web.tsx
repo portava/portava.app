@@ -9,7 +9,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { MapPin } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../src/theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../src/theme/tokens.ts';
 
 export default function FullScreenMapScreenWeb() {
   return (
@@ -38,9 +38,9 @@ const s = StyleSheet.create({
     backgroundColor: color.paper,
   },
   iconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: avatar.xxxl,
+    height: avatar.xxxl,
+    borderRadius: avatar.xxxl / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',

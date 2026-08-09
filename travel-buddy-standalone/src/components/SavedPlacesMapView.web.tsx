@@ -6,7 +6,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { MapPin } from 'lucide-react-native';
-import { color, space, type as t } from '../theme/tokens.ts';
+import { color, space, type as t, avatar } from '../theme/tokens.ts';
 import type { SavedPlacesMapViewProps } from './SavedPlacesMapView';
 
 export function SavedPlacesMapView({ places }: SavedPlacesMapViewProps) {
@@ -33,9 +33,9 @@ const s = StyleSheet.create({
     paddingHorizontal: 32,
   },
   icon: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: avatar.xxxl,
+    height: avatar.xxxl,
+    borderRadius: avatar.xxxl / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',

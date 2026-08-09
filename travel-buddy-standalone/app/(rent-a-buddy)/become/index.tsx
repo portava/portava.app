@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Shield, Star, ChevronDown, ChevronUp } from 'lucide-react-native';
 import { TravelButton, TravelCard } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
-import { color, space, radius, type as t, shadow } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, shadow, avatar } from '../../../src/theme/tokens';
 
 const CATEGORIES = [
   { icon: '✈️', label: 'Arrival Support', desc: 'Airport pickup, SIM card, first-day orientation' },
@@ -244,7 +244,7 @@ const s = StyleSheet.create({
     alignItems: 'flex-start', marginBottom: space.lg,
   },
   stepBadge: {
-    width: 30, height: 30, borderRadius: 15,
+    width: avatar.xsSm, height: avatar.xsSm, borderRadius: avatar.xsSm / 2,
     backgroundColor: color.signal,
     alignItems: 'center', justifyContent: 'center',
   },

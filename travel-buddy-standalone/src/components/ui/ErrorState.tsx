@@ -5,7 +5,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { AlertTriangle } from 'lucide-react-native';
-import { color, space, radius, typography, layout } from '../../theme/tokens.ts';
+import { color, space, radius, typography, layout, avatar } from '../../theme/tokens.ts';
 
 interface ErrorStateProps {
   message: string;
@@ -43,9 +43,9 @@ const styles = StyleSheet.create({
     gap: space.sm,
   },
   iconWrap: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: avatar.xxxl,
+    height: avatar.xxxl,
+    borderRadius: avatar.xxxl / 2,
     backgroundColor: '#FEF3C7',
     alignItems: 'center',
     justifyContent: 'center',

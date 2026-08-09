@@ -558,18 +558,18 @@ const s = StyleSheet.create({
     paddingRight: 30,
   },
   iconCircle: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: avatar.lgXlXl,
+    height: avatar.lgXlXl,
+    borderRadius: avatar.lgXlXl / 2,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
     flexShrink: 0,
   },
   iconImg: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: avatar.lgXlXl,
+    height: avatar.lgXlXl,
+    borderRadius: avatar.lgXlXl / 2,
   },
   topText: {
     flex: 1,
@@ -643,9 +643,9 @@ const s = StyleSheet.create({
   },
   // Friend-specific
   avatarWrap: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: avatar.lgXlXl,
+    height: avatar.lgXlXl,
+    borderRadius: avatar.lgXlXl / 2,
     borderWidth: 2.5,
     alignItems: 'center',
     justifyContent: 'center',

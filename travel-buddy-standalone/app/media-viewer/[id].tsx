@@ -352,8 +352,9 @@ const ov = StyleSheet.create({
     zIndex: 10,
   },
   iconBtn: {
-    width: 38, height: 38,
-    borderRadius: 19,
+    width: avatar.mdLg,
+    height: avatar.mdLg,
+    borderRadius: avatar.mdLg / 2,
     backgroundColor: 'rgba(17,17,15,0.55)',
     alignItems: 'center',
     justifyContent: 'center',

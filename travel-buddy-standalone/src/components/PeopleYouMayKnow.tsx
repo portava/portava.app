@@ -19,7 +19,7 @@ import {
   type TravelerSearchResult,
 } from '../services/follows.ts';
 import { useSession } from '../context/SessionContext.tsx';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
 import { AvatarImage } from './ui/DisplayMediaImage.tsx';
 import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
@@ -514,9 +514,9 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   avatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: avatar.xlXxl,
+    height: avatar.xlXxl,
+    borderRadius: avatar.xlXxl / 2,
     backgroundColor: color.haze,
     marginBottom: 2,
   },

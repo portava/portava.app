@@ -1006,7 +1006,7 @@ const s = StyleSheet.create({
   circleLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: '#7A4DBF', letterSpacing: 1 },
   circleText: { ...t.bodyStrong, color: color.ink },
   circleRow: { flexDirection: 'row', alignItems: 'center' },
-  circleAvatar: { width: 30, height: 30, borderRadius: 15, borderWidth: 2, borderColor: '#F3F0FB', backgroundColor: color.haze },
+  circleAvatar: { width: avatar.xsSm, height: avatar.xsSm, borderRadius: avatar.xsSm / 2, borderWidth: 2, borderColor: '#F3F0FB', backgroundColor: color.haze },
 
   compassCard: { borderColor: color.deep, borderWidth: 1.5 },
   compassHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },

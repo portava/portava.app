@@ -24,7 +24,7 @@ import { router } from 'expo-router';
 import { AlertTriangle } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MapPin, X as XIcon } from 'lucide-react-native';
-import { color, space, radius, type as t, icon } from '../../src/theme/tokens.ts';
+import { color, space, radius, type as t, icon, avatar } from '../../src/theme/tokens.ts';
 import { MapTopControls } from '../../src/components/map/MapTopControls.tsx';
 import { AskCompassBar } from '../../src/components/map/AskCompassBar.tsx';
 import { useLocationContext } from '../../src/context/LocationContext.tsx';
@@ -162,9 +162,9 @@ const p = StyleSheet.create({
     backgroundColor: color.paper,
   },
   iconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: avatar.xxxl,
+    height: avatar.xxxl,
+    borderRadius: avatar.xxxl / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',
@@ -228,9 +228,9 @@ const pp = StyleSheet.create({
     backgroundColor: color.paper,
   },
   iconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: avatar.xxxl,
+    height: avatar.xxxl,
+    borderRadius: avatar.xxxl / 2,
     backgroundColor: color.signal + '18',
     alignItems: 'center',
     justifyContent: 'center',

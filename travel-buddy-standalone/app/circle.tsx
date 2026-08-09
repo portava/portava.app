@@ -27,6 +27,7 @@ import { useBlockedIds } from '../src/context/BlockedIdsContext';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 import { usePlainBottomInset } from '../src/hooks/useBottomInset';
 
+
 function CircleUserRow({
   u, reason, tripId,
 }: { u: FollowUser; reason?: string; tripId?: string }) {
@@ -536,7 +537,7 @@ const styles = StyleSheet.create({
   safeReturnHintBold: { fontWeight: '700', color: color.ink },
 
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md },
-  avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: color.haze },
+  avatar: { width: avatar.xlXxl, height: avatar.xlXxl, borderRadius: avatar.xlXxl / 2, backgroundColor: color.haze },
   avatarEmpty: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0EDE8' },
   name: { ...t.bodyStrong, color: color.ink },
   handle: { ...t.small, color: color.mute, marginTop: 2, fontFamily: 'Courier' },

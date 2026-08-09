@@ -10,7 +10,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Lock } from 'lucide-react-native';
 import { PrivateRequestButton } from '../ui/PrivateRequestButton.tsx';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 
 /** Minimal safe fields from the private sentinel DTO. */
 export interface PrivateProfilePreview {
@@ -93,9 +93,9 @@ const s = StyleSheet.create({
     gap: space.md,
   },
   avatarPlaceholder: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: avatar.xxxxl,
+    height: avatar.xxxxl,
+    borderRadius: avatar.xxxxl / 2,
     backgroundColor: color.haze,
     alignItems: 'center' as const,
     justifyContent: 'center' as const,

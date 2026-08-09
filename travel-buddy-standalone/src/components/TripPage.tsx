@@ -1057,7 +1057,7 @@ const pl = StyleSheet.create({
   actions: { justifyContent: 'center', alignItems: 'center', gap: space.sm, paddingRight: space.md },
   viewBtn: { borderWidth: 1.5, borderColor: color.signal, borderRadius: radius.sm, paddingHorizontal: space.md, paddingVertical: 6 },
   viewText: { ...t.small, fontWeight: '800', color: color.signal, fontSize: 12 },
-  msgBtn: { width: 30, height: 30, borderRadius: 15, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center' },
+  msgBtn: { width: avatar.xsSm, height: avatar.xsSm, borderRadius: avatar.xsSm / 2, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center' },
 });
 
 const cr = StyleSheet.create({

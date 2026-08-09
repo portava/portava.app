@@ -22,7 +22,7 @@ import { ChevronLeft, MapPin, Gem, CalendarDays, Compass } from 'lucide-react-na
 import { listGems, type HiddenGem } from '../../src/services/hiddenGems';
 import { listEvents, type EventListItem } from '../../src/services/events';
 import { getPulseData, type PulsePost } from '../../src/services/pulse';
-import { color, space, radius, type as t, aspect } from '../../src/theme/tokens';
+import { color, space, radius, type as t, aspect, avatar } from '../../src/theme/tokens';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 import { CityConfidenceBadge } from '../../src/components/compass/CityConfidenceBadge';
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
@@ -300,7 +300,7 @@ const s = StyleSheet.create({
     width: '100%', height: 80, borderRadius: radius.sm, marginBottom: 2,
   },
   gemIcon: {
-    width: 30, height: 30, borderRadius: 15, backgroundColor: color.paper,
+    width: avatar.xsSm, height: avatar.xsSm, borderRadius: avatar.xsSm / 2, backgroundColor: color.paper,
     borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center',
   },
   gemName: { ...t.small, fontWeight: '700', color: color.ink, lineHeight: 17 },
@@ -324,7 +324,7 @@ const s = StyleSheet.create({
 
   empty: { alignItems: 'center', paddingVertical: space.xxl, paddingHorizontal: space.xl, gap: space.sm },
   emptyIcon: {
-    width: 64, height: 64, borderRadius: 32, backgroundColor: color.paperRaised,
+    width: avatar.xxxl, height: avatar.xxxl, borderRadius: avatar.xxxl / 2, backgroundColor: color.paperRaised,
     borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center',
   },
   emptyTitle: { ...t.bodyStrong, color: color.ink, fontSize: 16, textAlign: 'center' },

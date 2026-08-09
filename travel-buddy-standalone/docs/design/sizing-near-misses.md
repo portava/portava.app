@@ -5,6 +5,78 @@ Generated 2026-08-09, alongside the allowlist migration that moved every
 allowlist over to the `avatar` / `icon` / `aspect` tokens in `theme/tokens.ts`
 (allowlist now empty, ceiling 0).
 
+**Update (2026-08-09, later same day):** the 34px and 44px clusters below were
+promoted to real tokens — `avatar.smMd` (34) and `avatar.lgXl` (44) — after
+confirming all 23 and 19 sites respectively are the same recurring circular
+icon-button/avatar shape reused across unrelated components, not accidental
+drift toward an existing token. All 42 sites are migrated; see the `avatar`
+doc comment in `theme/tokens.ts` for the evidence.
+
+**Update (2026-08-09, third pass):** `check-avatar-icon-sizing.mjs` was
+widened to flag ANY circular box in the 27–56px band, not just exact token
+matches — the previous match-only rule is exactly the mechanism that let
+this whole cluster form (nobody reused a value because there was nothing to
+check against). Running the widened rule surfaced 170 sites across the full
+size range; only the 27–56px band (36 sites: 30/38/42/46/52) was in scope
+for this pass. All 36 were classified RECURRING/INTENTIONAL (zero one-offs)
+and promoted to tokens: `avatar.xsSm` (30), `avatar.mdLg` (38),
+`avatar.lgLgXl` (42), `avatar.lgXlXl` (46), `avatar.xlXxl` (52). The guard
+now enforces the widened rule for 27–56px only; the <14px, 14-26px, and
+>56px bands below are **unchanged** — still real near-misses, still
+un-migrated, still out of scope, and still only caught by the narrow
+exact-match rule.
+
+**Update (2026-08-09, fourth pass):** the >56px band (22 sites:
+60/64/68/70/72/78/80/88/90/96/110) was classified and migrated. Of the 22
+circular boxes:
+
+- **64px × 9** (StampGrid skeleton, TagPreviewSheet type icon, ErrorState icon
+  wrap, SavedPlacesMapView icon, destination/[slug] empty icon, map/index
+  icon circles ×2, map/index.web icon circle, become/apply success circle):
+  RECURRING — same large-placeholder circle shape across unrelated files →
+  new token `avatar.xxxl` (64). All 9 migrated.
+
+- **72px × 3** (buddy/[id] trust ring, PrivateProfileWall avatar placeholder,
+  EmptyState icon wrap): RECURRING → new token `avatar.xxxxl` (72).
+  All 3 migrated.
+
+- **96px × 2** (profile/edit/photos avatar + avatarEmpty): RECURRING →
+  new token `avatar.xxxxxl` (96). Both migrated.
+
+- **60px × 1** (CallControls end button): ACCIDENTAL ONE-OFF → snapped to
+  `avatar.xxxl` (64).
+
+- **68px × 1** (IncomingCallScreen action buttons): ACCIDENTAL ONE-OFF →
+  snapped to `avatar.xxxl` (64).
+
+- **80px × 1** (gems/guide avatar circle): ACCIDENTAL ONE-OFF → snapped to
+  `avatar.xxxxl` (72).
+
+- **88px × 1** (PassportShareCard avatar): ACCIDENTAL ONE-OFF → snapped to
+  `avatar.xxxxxl` (96).
+
+- **90px × 1** (stamps.tsx empty stamp container): ACCIDENTAL ONE-OFF →
+  snapped to `avatar.xxxxxl` (96).
+
+- **70px × 1** and **110px × 1** (CrewMapSection ringInner / ringOuter):
+  INTENTIONAL — a concentric-ring map visualization where the specific
+  70/110 ratio is deliberate. Not an avatar/icon circle. Kept as hardcoded
+  values, recorded in the shrink-only allowlist.
+
+- **78px × 1** (PassportMarks ink ring): INTENTIONAL — a passport-aesthetic
+  stamp ring with specific border/opacity styling. Not a generic avatar
+  circle. Kept, recorded in allowlist.
+
+The guard's widened-detection band is now extended to 57–110px (covering the
+full audited range). The allowlist ceiling is 3 (the three intentional sites).
+The 64/72/96 tokens are added to `AVATAR_VALUES` for exact-match detection
+above the widened band.
+
+The rows for 34/44/30/38/42/46/52 are left in the tables below for
+historical record of the original sweep, but they are no longer
+"near-misses" — they are now exact token matches like everything else the
+guard tracks.
+
 This document is the other half of that check's stated scope: it does **not**
 detect near-misses (see "WHAT THIS CHECK DOES NOT DO" in
 `scripts/check-avatar-icon-sizing.mjs`) — a hardcoded circular box or

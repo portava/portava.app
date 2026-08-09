@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { CachedImage } from './CachedImage.tsx';
 import { Plane, Map, Award } from 'lucide-react-native';
-import { color, space, radius } from '../theme/tokens.ts';
+import { color, space, radius, avatar } from '../theme/tokens.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
 import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
 
@@ -119,9 +119,9 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   avatar: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
+    width: avatar.xxxxxl,
+    height: avatar.xxxxxl,
+    borderRadius: avatar.xxxxxl / 2,
   },
   avatarPlaceholder: {
     backgroundColor: 'rgba(255,255,255,0.12)',

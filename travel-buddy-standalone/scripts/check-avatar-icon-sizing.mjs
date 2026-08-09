@@ -102,7 +102,7 @@ const ALLOWLIST_PATH = join(__dirname, 'check-avatar-icon-sizing.allowlist.json'
  * the file header — this is the actual enforcement mechanism, not the
  * per-entry counts. LOWER ONLY.
  */
-const ALLOWLIST_CEILING = 0;
+const ALLOWLIST_CEILING = 3;
 
 /** Files that ARE the token/component definitions — a literal here is the point. */
 const ALLOWED_FILES = new Set([
@@ -115,29 +115,29 @@ const ALLOWED_FILES = new Set([
 // imported directly: this is a zero-build-step Node script, and re-deriving
 // the plain numbers here is simpler than adding a ts-node/tsx dependency
 // just for this check.
-const AVATAR_VALUES = new Set([28, 32, 34, 36, 40, 44, 48, 56]);
+const AVATAR_VALUES = new Set([28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 52, 56, 64, 72, 96]);
 const ICON_VALUES = new Set([14, 18, 22, 26, 20]);
 const DOT_VALUES = new Set([5, 6, 7, 8, 10, 12]);
 
 /**
- * Widened-detection band for `dot` only (2026-08-09). Everything in 5-12px
- * is flagged as a circular-box violation regardless of whether it matches a
- * known `dot` token exactly — not just exact matches, like the rest of this
- * file's detection. This closes the gap that let the tiny status-dot cluster
- * drift into near-miss sizes (9px, 11px, 4px) in the first place:
- * matching-only enforcement lets a brand-new nearby literal pass silently
- * forever. Every current `dot` token value sits inside this band, so nothing
- * in the pre-existing allowlist is affected by widening — this only catches
- * NEW literals that don't match any token.
+ * Widened-detection bands (2026-08-09). Everything inside any band is flagged
+ * as a circular-box violation regardless of whether it matches a known token
+ * exactly — not just exact matches, like the rest of this file's detection.
+ * This closes the gap that let near-miss sizes drift in silently.
  *
- * `dot` band: 5-12px (the sub-14px band audited and migrated in this pass —
- * see the `dot` token's doc comment in theme/tokens.ts for why it's a
- * separate token group, not an extension of `avatar`). The `avatar`
- * (27-56px), 14-26px icon-adjacent, and >56px large-media clusters remain
- * separately scoped, still on the narrow exact-match rule below.
+ * `dot` band: 5-12px — the sub-14px status-dot cluster (see the `dot` token's
+ * doc comment in theme/tokens.ts for why it's a separate token group, not an
+ * extension of `avatar`).
+ *
+ * `avatar` band: 27-110px — the full range audited in the 27-56px and >56px
+ * sweeps. 64/72/96 are now real tokens; one-offs (60, 68, 80, 88, 90) were
+ * snapped to the nearest token; intentional decorative rings (70, 78, 110 —
+ * CrewMapSection concentric rings and PassportMarks ink ring) are recorded in
+ * the shrink-only allowlist (ceiling 3).
  */
 const WIDE_BANDS = [
-  { min: 5, max: 12 },
+  { min: 5, max: 12 },    // dot band
+  { min: 27, max: 110 },  // avatar / large-media band
 ];
 function inAnyWideBand(n) {
   return WIDE_BANDS.some((b) => n >= b.min && n <= b.max);
@@ -202,7 +202,7 @@ function scanFile(src) {
   //        see WIDE_BANDS above), or
   //    (b) it's an exact avatar/icon/dot token match outside those bands
   //        (the original, narrower rule — still the only enforcement for
-  //        the 14-26px and >56px bands).
+  //        the 14-26px gap between the dot and avatar bands).
   const boxRe = /width:\s*([0-9]+)\s*,\s*height:\s*\1\b/g;
   let m;
   while ((m = boxRe.exec(src)) !== null) {

@@ -10,7 +10,7 @@ import {
 import { AlertCircle } from 'lucide-react-native';
 import { StampCard } from './StampCard.tsx';
 import type { PassportStampNew } from '../../services/passportStamps.ts';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 
 interface Props {
   stamps: PassportStampNew[];
@@ -123,7 +123,7 @@ const sk = StyleSheet.create({
     gap: 6,
   },
   artwork: {
-    width: 64, height: 64, borderRadius: 32,
+    width: avatar.xxxl, height: avatar.xxxl, borderRadius: avatar.xxxl / 2,
     backgroundColor: color.haze,
     marginBottom: 4,
   },

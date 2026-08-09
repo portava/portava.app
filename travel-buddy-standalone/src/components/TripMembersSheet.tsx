@@ -23,7 +23,7 @@ import {
   type FriendUser,
 } from '../services/friends.ts';
 import { getTrip } from '../services/trips.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
 import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
@@ -353,7 +353,7 @@ const s = StyleSheet.create({
   errorText: { ...t.small, color: '#DC2626', marginBottom: space.sm },
   candidateRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 8 },
   candidateAdd: {
-    width: 30, height: 30, borderRadius: 15, borderWidth: 1, borderColor: color.signal,
+    width: avatar.xsSm, height: avatar.xsSm, borderRadius: avatar.xsSm / 2, borderWidth: 1, borderColor: color.signal,
     alignItems: 'center', justifyContent: 'center',
   },
 });

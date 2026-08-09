@@ -7,7 +7,7 @@ import { View, Pressable, StyleSheet } from 'react-native';
 import {
   Mic, MicOff, Video, VideoOff, SwitchCamera, Volume2, Phone, Minimize2,
 } from 'lucide-react-native';
-import { color } from '../../theme/tokens.ts';
+import { color, avatar } from '../../theme/tokens.ts';
 
 export function CallControls({
   micMuted, cameraOn, speakerOn, showVideoControls, muteDisabled,
@@ -104,14 +104,14 @@ const s = StyleSheet.create({
     gap: 14, paddingVertical: 18,
   },
   ctl: {
-    width: 52, height: 52, borderRadius: 26,
+    width: avatar.xlXxl, height: avatar.xlXxl, borderRadius: avatar.xlXxl / 2,
     backgroundColor: 'rgba(255,255,255,0.16)',
     alignItems: 'center', justifyContent: 'center',
   },
   ctlActive: { backgroundColor: 'rgba(255,255,255,0.38)' },
   ctlDisabled: { opacity: 0.4 },
   endBtn: {
-    width: 60, height: 60, borderRadius: 30,
+    width: avatar.xxxl, height: avatar.xxxl, borderRadius: avatar.xxxl / 2,
     backgroundColor: '#DC2626',
     alignItems: 'center', justifyContent: 'center',
     shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 8, elevation: 5,

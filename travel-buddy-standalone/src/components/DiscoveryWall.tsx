@@ -663,7 +663,7 @@ const h = StyleSheet.create({
   title: { ...t.hero, color: color.ink, fontSize: 28 },
   sub: { ...t.small, color: color.mute, marginTop: 1 },
   controls: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: space.md },
-  iconBtn: { width: 42, height: 42, borderRadius: 21, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
+  iconBtn: { width: avatar.lgLgXl, height: avatar.lgLgXl, borderRadius: avatar.lgLgXl / 2, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
   filterBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: space.md, height: 42, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
   filterText: { ...t.bodyStrong, color: color.ink },
   badge: { minWidth: 20, height: 20, borderRadius: 10, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },

@@ -8,6 +8,7 @@ import { View, Text, Pressable, StyleSheet, Modal } from 'react-native';
 import { CallAvatar } from './CallAvatar.tsx';
 import { Phone, PhoneOff, Video } from 'lucide-react-native';
 import type { IncomingCallInfo } from '../../context/CallContext.tsx';
+import { avatar } from '../../theme/tokens.ts';
 import { PassportVerificationStamp } from '../PassportVerificationStamp.tsx';
 
 export function IncomingCallScreen({
@@ -92,7 +93,7 @@ const s = StyleSheet.create({
   },
   actionWrap: { alignItems: 'center', gap: 8, width: 92 },
   actionBtn: {
-    width: 68, height: 68, borderRadius: 34,
+    width: avatar.xxxl, height: avatar.xxxl, borderRadius: avatar.xxxl / 2,
     alignItems: 'center', justifyContent: 'center',
     shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 10, elevation: 6,
   },

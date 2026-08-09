@@ -287,14 +287,14 @@ const st = StyleSheet.create({
   },
   avatarSection: { alignItems: 'center', padding: space.lg, gap: space.sm },
   avatarWrap: { width: 96, height: 96 },
-  avatar: { width: 96, height: 96, borderRadius: 48, backgroundColor: PP.paperDeep },
+  avatar: { width: avatar.xxxxxl, height: avatar.xxxxxl, borderRadius: avatar.xxxxxl / 2, backgroundColor: PP.paperDeep },
   avatarEmpty: {
-    width: 96, height: 96, borderRadius: 48, backgroundColor: PP.paperDeep,
+    width: avatar.xxxxxl, height: avatar.xxxxxl, borderRadius: avatar.xxxxxl / 2, backgroundColor: PP.paperDeep,
     justifyContent: 'center', alignItems: 'center',
   },
   avatarEditBadge: {
     position: 'absolute', bottom: 0, right: 0,
-    width: 30, height: 30, borderRadius: 15, backgroundColor: PP.ink,
+    width: avatar.xsSm, height: avatar.xsSm, borderRadius: avatar.xsSm / 2, backgroundColor: PP.ink,
     justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: PP.paper,
   },
   avatarHint: { fontSize: 13, color: PP.inkMuted },

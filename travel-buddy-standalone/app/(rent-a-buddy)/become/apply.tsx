@@ -12,7 +12,7 @@ import { TravelButton, TravelCard, TravelChip } from '../../../src/components/pr
 import { Stamp } from '../../../src/components/ui';
 import { MediaPickerButton } from '../../../src/components/ui/MediaPickerButton';
 import { MediaAttachmentTray } from '../../../src/components/ui/MediaAttachmentTray';
-import { color, space, radius, type as t, icon, aspect } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, icon, aspect, avatar } from '../../../src/theme/tokens';
 import { useMediaComposer } from '../../../src/hooks/useMediaComposer';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyCategory, TrainingItem, ChecklistItem, ProfileSubmitResult } from '../../../src/services/rentABuddy';
@@ -1121,7 +1121,7 @@ const done = StyleSheet.create({
     paddingHorizontal: space.xl, gap: space.lg,
   },
   circle: {
-    width: 64, height: 64, borderRadius: 32,
+    width: avatar.xxxl, height: avatar.xxxl, borderRadius: avatar.xxxl / 2,
     backgroundColor: color.success, alignItems: 'center', justifyContent: 'center',
     marginBottom: space.sm,
   },
