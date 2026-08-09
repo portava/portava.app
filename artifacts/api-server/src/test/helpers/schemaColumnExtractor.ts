@@ -13,6 +13,8 @@
  * Used by:
  *   - adminCompassSchemaDrift.test.ts (posts/events in adminCompass.ts)
  *   - adminGeoModerationSchemaDrift.test.ts (geo/moderation tables in admin.ts)
+ *   - adminRemainingDashboardsSchemaDrift.test.ts (incl. the shared admin
+ *     guard in lib/requireAdmin.ts — see "Column lists held in a const")
  */
 
 // Chained builder methods whose FIRST string argument is a column name.
@@ -22,6 +24,53 @@ export const COLUMN_ARG_METHODS = new Set([
 ]);
 
 export type ColumnRef = { column: string; method: string; index: number };
+
+/**
+ * Column lists held in a const, e.g.
+ *
+ *   const columns = opts.withDisplayName
+ *     ? "role, display_name, username, handle"
+ *     : "role";
+ *   ...
+ *   .select(columns)
+ *
+ * `.select(<identifier>)` carries no string literal, so the literal-only
+ * scan below sees nothing and the selected columns go UNVALIDATED — the
+ * extractor silently reports "no columns referenced" rather than failing,
+ * which is the worst possible outcome for a drift guard.
+ *
+ * This resolves single-assignment `const`/`let` string initialisers in the
+ * same file, including ternaries of string literals (EVERY branch is
+ * collected — a drift guard must cover the branch that is not taken too).
+ *
+ * Deliberately shallow: same-file, literal-only, no cross-module resolution
+ * and no reassignment tracking. A name it cannot resolve yields no refs,
+ * exactly as before — so this only ever ADDS coverage. If you need a select
+ * list to be checked, keep it a literal or a same-file const of literals.
+ */
+function resolveStringConsts(source: string): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  const declRe = /\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;]+)?=\s*([^;]*);/g;
+  let m: RegExpExecArray | null;
+  while ((m = declRe.exec(source)) !== null) {
+    const name = m[1]!;
+    const rhs = m[2]!;
+    // Only treat it as a column list if the RHS is made of string literals
+    // (optionally selected by a ternary). Anything else — a call, a member
+    // expression — is not statically a column list.
+    const withoutStrings = rhs.replace(/["'`][^"'`]*["'`]/g, "");
+    if (!/^[\s?:+]*$/.test(withoutStrings.replace(/[A-Za-z_$][\w$.]*/g, (t) =>
+      // allow the ternary condition identifiers, nothing else
+      /^[A-Za-z_$][\w$.]*$/.test(t) ? "" : t))) continue;
+    const lits = [...rhs.matchAll(/["'`]([^"'`]*)["'`]/g)].map((x) => x[1]!);
+    if (lits.length === 0) continue;
+    // A name assigned twice is not statically resolvable — drop it rather
+    // than guess which assignment reaches the .select().
+    if (map.has(name)) map.set(name, []);
+    else map.set(name, lits);
+  }
+  return map;
+}
 
 /**
  * Extract the query chain that starts at each `.from("<table>")` call and
@@ -42,6 +91,7 @@ export type ColumnRef = { column: string; method: string; index: number };
  */
 export function extractColumnRefs(source: string, table: string): ColumnRef[] {
   const refs: ColumnRef[] = [];
+  const stringConsts = resolveStringConsts(source);
   const fromRe = new RegExp(`\\.from\\(\\s*["'\`]${table}["'\`]\\s*\\)`, "g");
   let m: RegExpExecArray | null;
   while ((m = fromRe.exec(source)) !== null) {
@@ -81,6 +131,13 @@ export function extractColumnRefs(source: string, table: string): ColumnRef[] {
         let lit: RegExpExecArray | null;
         const parts: string[] = [];
         while ((lit = litRe.exec(firstArg)) !== null) parts.push(lit[1]!);
+        if (parts.length === 0) {
+          // `.select(columns)` — a bare identifier. Resolve it to the string
+          // literal(s) it was assigned in this file, so a column list hoisted
+          // into a const is still checked. See resolveStringConsts.
+          const ident = /^\s*([A-Za-z_$][\w$]*)\s*$/.exec(firstArg)?.[1];
+          if (ident) parts.push(...(stringConsts.get(ident) ?? []));
+        }
         for (const raw of parts.join(",").split(",")) {
           const col = raw.trim();
           if (!col || col === "*") continue;

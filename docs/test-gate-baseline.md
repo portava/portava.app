@@ -22,7 +22,7 @@ sweep. Full run, all green.
 | component tests — native | `pnpm run test:component` | PASS | 1744/1744, 323 suites |
 | component tests — web | `pnpm run test:component` (jest.web.config.js) | PASS | 4/4, 2 suites |
 | standalone node tests | `pnpm run test` (travel-buddy-standalone) | PASS | 3738/3738, 499 suites |
-| api-server tests | `pnpm run test` (artifacts/api-server) | PASS | 6135/6135, 1550 suites |
+| api-server tests | `pnpm run test` (artifacts/api-server) | PASS | 6138/6138, 1551 suites |
 
 `fail 0`, `skipped 0`, `todo 0`, `cancelled 0` on every node run.
 
@@ -48,6 +48,24 @@ Two severity-2 eslint errors exist and pre-date this baseline. Neither is
   interface declaring no members.
 
 ## Change log
+
+### 2026-08-09 — api-server 6135 → 6138, 1550 → 1551 suites (admin-guard drift coverage)
+
+Additive. One new suite, three new tests: `lib/requireAdmin.ts schema drift —
+the shared admin guard's profiles query` in
+`adminRemainingDashboardsSchemaDrift.test.ts`.
+
+Why it exists: the admin-guard consolidation moved
+`.from("profiles").select("role")` out of ~30 route files into the shared
+`lib/requireAdmin.ts`. No schema-drift test reads `src/lib/`, so that move took
+an AUTHORISATION query out of drift coverage. Three route sanity checks failed
+and were correct to fail. Coverage now follows the query: routes that import
+the guard have its source appended before extraction, and the guard is checked
+in its own right so the coverage does not depend on who imports it.
+
+The extractor also gained same-file `const` resolution for `.select(columns)`.
+Without it the guard's `withDisplayName` branch — `display_name`, `username`,
+`handle` — was invisible to the extractor and passing vacuously.
 
 ### 2026-08-08 — node 3732 → 3734 (E2EE verification gate)
 
