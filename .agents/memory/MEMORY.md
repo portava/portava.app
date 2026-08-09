@@ -21,7 +21,7 @@
 - [Overlay header height mismatch](overlay-header-height-mismatch.md) — use getOverlayHeaderTotalHeight(insetsTop) not manual insets.top + OVERLAY_HEADER_HEIGHT; wrong formula causes overlap + swallowed taps.
 - [Stamp animation architecture](stamp-animation-architecture.md) — screen-level traveling stamp (StampAnimationProvider in _layout), delayed hollow→filled state at impact, no-op test fallback pattern.
 - [Compass item hydration](compass-item-hydration.md) — top-level `title`/`category` must be set in the hydrator; shared `compassFormat.ts` utility resolves real names and event metadata across feed and recommendation surfaces.
-- [API server test suite](api-server-testing.md) — node:test not vitest; suite >5min, run via api-test workflow; fake-client pitfalls.
+- [API server test suite](api-server-testing.md) — node:test not vitest; run directly and judge by EXIT CODE (~119s); workflow-log snapshots fake both passes and failures; never re-add --test-force-exit; fake-client pitfalls.
 - [Display-name privacy rule](display-name-privacy.md) — @handle default, real name only if opted in; exemptions listed inside.
 - [Edit-tool $ metacharacters](edit-tool-metacharacters.md) — never put JS replace patterns ($ followed by &, ', backtick, digit, $) in Edit new_string; they expand and corrupt files. WriteFile is verbatim-safe.
 - [E2E signed-in verification](e2e-signed-in-verification.md) — verify auth-gated flows by creating ephemeral Supabase users via admin API and scripting the local API; no human session needed.

@@ -1,19 +1,61 @@
 ---
 name: API server test suite
-description: How to run api-server tests without timeouts, and fake-client pitfalls
+description: How to run api-server tests and read the result correctly; fake-client pitfalls
 ---
 
 # Running the suite
+
 - api-server tests use **node:test + node:assert** (NOT vitest/jest). New test files must follow that style AND be added to the explicit file list in the api-server package.json `test` script — unlisted files never run.
-- The full suite takes well over 5 minutes (the geofence suite alone ~100s). **Never run it via a raw shell command** — the 5-min cap kills it, and detached/nohup background processes get reaped between shell calls.
-- **Why:** multiple detached runs died silently; a foreground chunk run timed out.
-- **How to apply:** run it through the registered `api-test` workflow (WorkflowsRestart), then grep the workflow log for `✖` and the final `ℹ fail` count.
+- **Run it directly and judge by the EXIT CODE.** This is the reliable signal and should be the default:
+  ```
+  pnpm --filter @workspace/api-server test        # == the api-test workflow, exactly
+  ```
+  Redirect to a file and run it as a background task. Measured 2026-08-09: **6186 tests / 1562 suites / 0 fail / exit 0 in ~119s.** It also completes green under the full 7-way parallel `Project` load.
+- The `api-test` workflow runs `pnpm --filter @workspace/api-server test` and nothing else, so a direct run and the workflow are the *same command*. The exit code of the direct run is strictly better evidence than any log snapshot.
 
-# Reading workflow logs
-- `/tmp/logs/<workflow>_*.log` files are drained snapshots: they only gain content when logs are refreshed, NOT continuously. Polling the newest file with `ls -t` mid-run silently reads a stale buffer (often the *previous* run), which can fake a "pass". Refresh logs first, then read the file it names.
+## Do NOT re-add `--test-force-exit` (removed 2026-08-07, bb6369c45)
 
-# Hanging suite
-- Some test files (e.g. the geofence suite) leak open handles (unclosed servers/sockets), so their child process never exits and the runner — which uses process isolation — waits forever on the next file. The `test` script must keep `--test-force-exit`; without it the full suite deterministically stalls partway with no error.
+Earlier guidance here said the flag was required or the suite would stall. **That was wrong and the flag was removed.** It terminated runs while child processes were still executing: 54–133 tests (12–30 suites) silently did not run on any given green run, and *which* ones varied randomly. `fail 0` only ever meant "zero failures among the tests that reported."
+
+  with the flag:    6037 / 6009 / 5986 / 6002 / 6016 / 6065 / 5998
+  without:          6119 / 6119 / 6119  (byte-identical suite sets)
+
+Without it the process exits cleanly on its own — no test leaks a timer, socket or pool. There was never anything to force. Re-adding it reintroduces a silent false green.
+
+# Reading workflow logs — the false-verdict trap
+
+`/tmp/logs/<workflow>_<timestamp>_<ms>_<hash>.log` files are **drained snapshots**, not live tails. They only gain content when logs are refreshed.
+
+**A stale or partial snapshot can show a FALSE PASS *or* a FALSE FAILURE.** Both directions, equally. Reading one from a previous run, or a mid-run buffer, tells you nothing about the run you care about.
+
+This is not hypothetical. **Three independent agents each concluded `adminRemainingDashboardsSchemaDrift.test.ts` was "failing, pre-existing" in `api-test`** by following the old procedure here. Investigated 2026-08-09: the suite passes 21/21 alone, and the full command passes 6186/6186 exit 0 both in isolation and under full parallel load, with **zero `✖` and zero `not ok`** in the log. Nothing was failing. Three agents wrote off a green gate, twice with no evidence — and an ignored gate is how the real ones get ignored too.
+
+## The procedure
+
+1. **Refresh the workflow logs first.** Then read **the file the refresh names.**
+2. **Never `ls -t` the newest file.** One run emits several snapshots: run `VaB9YdTKBcFtTdS15XEbv` produced both a `status: RUNNING` file (932 lines) and a `status: FINISHED` file (1051 lines). `ls -t` mid-run hands you the partial one, or the previous run's.
+3. **Check the header before the body.** Every snapshot starts with:
+   ```
+   workflow: standalone-checks
+   status:   FINISHED
+   run_id:   VaB9YdTKBcFtTdS15XEbv
+   timestamp: 2026-08-09T07:26:49.616Z
+   ```
+   Require `status: FINISHED` **and** a `run_id` matching the run you started. `status: RUNNING` is a partial buffer — not a result.
+4. **Judge by the final `ℹ fail` count** (with `ℹ tests` / `ℹ suites` to confirm the run was complete).
+5. **Never judge by scanning for failure text.** Snapshots are truncated in the middle — they literally contain `... workflow log truncated ...`. Failure lines can be dropped, so absence of `✖` proves nothing, and a `✖` you do find may belong to a different run.
+
+If a freshly-refreshed `FINISHED` log disagrees with a direct run's exit code, trust the exit code and report the raw log text — that is a real discrepancy worth escalating, not something to write off as "pre-existing."
+
+# Schema-drift gate: sound, but the snapshot goes stale
+
+The `*SchemaDrift.test.ts` guards check route columns against the committed snapshot `src/test/generated/liveColumns.json`, not against live. Verified 2026-08-09 (snapshot dated 2026-07-21, 19 days stale): **every stale column was live-only** — `profiles.is_official`, `rank_events.event_type`, `trust_events.updated_at`, `stamp_definitions.template_family`, etc. No snapshot column was missing live.
+
+That direction is the safe one: the gate is stricter than reality, so **it cannot pass while production is broken.** The dangerous direction — a column in the snapshot but dropped live — would make the gate blind. Re-check that before trusting a green drift run after any live column drop:
+```
+pnpm --filter @workspace/scripts run refresh:live-columns
+```
+See `docs/live-columns-refresh.md`.
 
 # Fake-client pitfalls
 - The geocoder's fetch-swap test hook does NOT null its DB-client override — suites must explicitly set the DB override to null (e.g. in beforeEach) or their "no DB" tests silently read the live geocode cache table and return real rows.
@@ -28,3 +70,5 @@ When replacing the try/catch anti-pattern (supabase-js never throws; check `{ er
 
 ## Test registration is manual (2026-07-20)
 New `src/test/*.test.ts` files are NOT auto-discovered — they must be appended to the `test` script list in `artifacts/api-server/package.json` or they silently never run (compass-home.test.ts shipped unregistered in Phase 10 and was only caught in Phase 11). Always verify your new file appears in that list.
+
+`check:test-registration` guards this, but note the standing gap (2026-08-09): **392 test files on disk, 304 registered, 88 never run** behind `UNREGISTERED_TESTS_ALLOWLIST.json`. A green registration check does not mean every suite runs. See `docs/testing/suite-exclusion-audit.md`.
