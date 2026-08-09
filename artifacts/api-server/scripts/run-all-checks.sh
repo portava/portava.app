@@ -29,6 +29,7 @@ run_check() {
 run_check "check:frozen-dir" pnpm run check:frozen-dir
 run_check "check:async-handlers" pnpm run check:async-handlers
 run_check "check:migration-prefixes" pnpm run check:migration-prefixes
+run_check "check:test-runner-flags" pnpm run check:test-runner-flags
 run_check "check:write-path-columns" pnpm run check:write-path-columns
 run_check "check:missing-live-columns" pnpm run check:missing-live-columns
 

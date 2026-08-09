@@ -22,6 +22,8 @@ Earlier guidance here said the flag was required or the suite would stall. **Tha
 
 Without it the process exits cleanly on its own — no test leaks a timer, socket or pool. There was never anything to force. Re-adding it reintroduces a silent false green.
 
+**This is now enforced, not just documented:** `check:test-runner-flags` runs in `run-all-checks.sh` and fails the aggregate if this or any other truncating flag appears in a test script. It also bans `--test-only`, `--test-name-pattern`, `--test-skip-pattern`, `--test-shard`, `--test-rerun-failures` and `--test-isolation=none` — all measured to leave a run **green with a smaller count** (201 tests → 5, 5, 5 and 93 respectively on a fixed file set). If you need one of these locally, pass it on the command line; never commit it into a script.
+
 # Reading workflow logs — the false-verdict trap
 
 `/tmp/logs/<workflow>_<timestamp>_<ms>_<hash>.log` files are **drained snapshots**, not live tails. They only gain content when logs are refreshed.
