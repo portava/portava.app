@@ -34,6 +34,55 @@ The root tree partially overlaps with both the canonical and legacy chains and c
 
 The frozen-dir guard (run in CI via `check:frozen-dir` and at startup of `audit:schema`) ensures no one silently adds new files to the root tree.
 
+## Prefix collisions
+
+Migration files are applied in lexicographic order, so two files sharing a
+numeric prefix have no defined order relative to each other. `check:migration-prefixes`
+fails on any collision.
+
+**There is no `schema_migrations` table.** Verified 2026-08-09: no table matching
+`%migration%` exists in `public` or `supabase_migrations`. Nothing records what
+has been applied, so the only way to know whether a migration ran is to check
+whether the objects it creates exist in the live database. **Never renumber a
+migration without doing that check first** — renaming a file that has already
+been applied does not change the database, it only makes the record wrong.
+
+### `2059` — both files applied; documented, not renumbered
+
+| File | Verified live 2026-08-09 | Logged |
+|---|---|---|
+| `2059_content_distribution_stats.sql` | **Applied.** `content_distribution_stats` carries the four columns this file adds (`item_id`, `negative_signal_count`, `first_evaluated_at`, `last_updated_at`); the guarded `DO`-block defaults are all present (`content_type` → `'item'`, `content_id` → `gen_random_uuid()`, counters → `0`, `evaluation_complete` → `false`, `created_at`/`updated_at` → `now()`); `content_distribution_stats_item_id_idx` exists as a UNIQUE index; and `increment_distribution_stats(text, text, boolean, integer, double precision)` exists in `pg_proc`. | Yes — row dated 2026-08-01 |
+| `2059_stamp_artwork_generation_source_placeholder.sql` | **Applied.** `stamp_artwork_versions_generation_source_check` exists as a *named* constraint whose definition is exactly `generation_source = ANY (ARRAY['ai_generated','admin_upload','placeholder','recomposed'])`. The pre-migration state was an unnamed inline check permitting only the first two values, so both the rename and the two added values are this file's work. | **No — applied but never logged.** Added by this entry. |
+
+Both are applied, so there is no unapplied file to renumber and the collision is
+permanent. It is also harmless: the two files touch entirely unrelated objects
+(`content_distribution_stats` and its RPC vs. a check constraint on
+`stamp_artwork_versions`), neither reads or depends on the other, so their
+relative order is immaterial on a fresh replay.
+
+Prefix `2059` is therefore recorded in `DOCUMENTED_COLLISIONS` in
+`src/scripts/checkMigrationPrefixes.ts`. That allowlist matches on the **exact
+file set**: a third file taking prefix `2059` fails the check like any other
+collision (proven, not assumed — see below). It excuses only the pair that was
+investigated.
+
+### The gate
+
+`check:migration-prefixes` was a registered script that **nothing ran** — it was
+not in `run-all-checks.sh`, not in `.replit`, and not in any other workflow. It
+had been passing by not running while this real collision sat in the tree. It is
+now wired into `run-all-checks.sh`, so it runs under `pnpm run check:all` and the
+`api-checks` workflow.
+
+Verified 2026-08-09 against the aggregate command, not the script in isolation:
+
+| Scenario | `pnpm run check:all` |
+|---|---|
+| Documented `2059` pair only | **exit 0** — `PASSED (252 file(s), 1 documented collision(s))` |
+| New duplicate prefix (`0184`) added | **exit 1** — `✘ FAILED: check:migration-prefixes`, names both `0184` files |
+| Third file added at documented prefix `2059` | **exit 1** — allowlist does not mask it; names all three files |
+| Fixtures removed | **exit 0** |
+
 ## Automated audit
 
 The full audit is committed as `artifacts/api-server/src/scripts/auditMigrationsVsLive.ts`. Run it on demand from `artifacts/api-server`:
@@ -53,6 +102,7 @@ Encoded gotchas: triggers are checked via `pg_trigger` (TRUNCATE triggers are in
 | `20260802_e2ee_key_packages.sql` | Creates `key_packages` table (id, device_id→devices ON DELETE CASCADE, key_package_b64, created_at); index on (device_id, created_at ASC); RLS enabled. Stores one-shot MLS KeyPackages for E2EE group formation (Phase E-1). Applied via Management API. | 2026-08-01 |
 | `2035_admin_access_log.sql` | Creates `admin_access_log` table (id, admin_id→auth.users, record_type, record_id, reason nullable, action_taken default 'view', timestamp); CHECK constraints on record_type IN ('profile','event','trip','gps_event','check_in') and action_taken IN ('view','export','expand'); indexes on admin_id and timestamp; RLS enabled. Audits every admin read of private entities. Applied via Management API. | 2026-08-01 |
 | `2059_content_distribution_stats.sql` | Table pre-existed live with older schema (content_id, creator_id, unique_viewers, opens, dwell_time_ms, saves, shares, comments, positive_actions, negative_actions, last_impression_at, evaluation_complete). Added missing columns via ALTER TABLE: item_id TEXT, negative_signal_count INTEGER DEFAULT 0, first_evaluated_at TIMESTAMPTZ, last_updated_at TIMESTAMPTZ DEFAULT NOW(). Also creates `increment_distribution_stats` RPC (atomically increments counters and recomputes underexposure_status). Applied via Management API. | 2026-08-01 |
+| `2059_stamp_artwork_generation_source_placeholder.sql` | Shares prefix 2059 — see "Prefix collisions" above. Drops the unnamed inline check on `stamp_artwork_versions.generation_source` (which allowed only `ai_generated`, `admin_upload`) and re-adds it as the named constraint `stamp_artwork_versions_generation_source_check` allowing `ai_generated`, `admin_upload`, `placeholder`, `recomposed`. Required by the placeholder-provider detection feature, which writes `generation_source = 'placeholder'`. **Backfilled entry:** applied but never logged; confirmed live 2026-08-09 via `pg_get_constraintdef`, so the original apply date is unknown. | logged 2026-08-09 (applied earlier) |
 | `2060_ranking_debug_samples.sql` | Table pre-existed live with older schema (content_id, final_score, score_components, ranking_version, surface, sampled_at). Added missing columns via ALTER TABLE: item_id TEXT, session_id TEXT, components JSONB DEFAULT '{}', explanation_key TEXT. Also creates sampled_at DESC and surface indexes. Applied via Management API. | 2026-08-01 |
 | `2061_ranking_config_audit_log.sql` | Creates `ranking_config_audit_log` table (id, config_key, changed_by_user_id→auth.users ON DELETE SET NULL, old_value JSONB, new_value JSONB, changed_at); indexes on (config_key, changed_at DESC) and changed_by_user_id; RLS enabled. Audit trail for PATCH /admin/ranking/config/:key. Applied via Management API. | 2026-08-01 |
 | `2062_place_votes.sql` | Creates `place_votes` table (user_id→profiles ON DELETE CASCADE, entity_type CHECK IN ('place','gem'), entity_id TEXT, vote CHECK IN ('worth_it','skip_it'), created_at); PRIMARY KEY (user_id, entity_type, entity_id); index on (entity_type, entity_id); RLS with authenticated own-row policy. Worth-It / Skip-It votes for discovery_places and hidden_gems. Applied via Management API. | 2026-08-01 |

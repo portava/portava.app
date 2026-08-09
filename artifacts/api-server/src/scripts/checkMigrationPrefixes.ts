@@ -37,6 +37,44 @@ try {
 // Extract the numeric prefix (leading digits) from each filename.
 const PREFIX_RE = /^(\d+)/;
 
+// ── Documented collisions ─────────────────────────────────────────────────────
+//
+// A prefix collision is normally fixed by renumbering the file that has NOT yet
+// been applied. That option only exists while one of the two is unapplied.
+//
+// There is no `schema_migrations` table in this project (verified 2026-08-09:
+// no table matching '%migration%' in `public` or `supabase_migrations`), so the
+// only way to know whether a file has been applied is to check whether its
+// objects exist live. For prefix 2059 BOTH files were verified applied against
+// the live database, so neither can be renumbered to reflect what happened —
+// renaming an applied file would only make the record less accurate.
+//
+// Each entry below therefore records a collision that is permanent and
+// harmless, and must be justified in docs/migrations.md. The match is on the
+// EXACT file set: if a third file ever takes a documented prefix, the set no
+// longer matches and the check fails as it should. This allowlist can only
+// excuse the specific collision that was investigated — never a new one.
+const DOCUMENTED_COLLISIONS: Record<string, readonly string[]> = {
+  // Both applied live; the two files touch unrelated objects
+  // (content_distribution_stats vs. stamp_artwork_versions), so their relative
+  // order is immaterial on a fresh replay. See docs/migrations.md
+  // "Prefix collisions".
+  "2059": [
+    "2059_content_distribution_stats.sql",
+    "2059_stamp_artwork_generation_source_placeholder.sql",
+  ],
+};
+
+/** True when `names` is exactly the documented file set for `prefix`. */
+function isDocumented(prefix: string, names: string[]): boolean {
+  const documented = DOCUMENTED_COLLISIONS[prefix];
+  if (!documented) return false;
+  if (documented.length !== names.length) return false;
+  const a = [...documented].sort();
+  const b = [...names].sort();
+  return a.every((n, i) => n === b[i]);
+}
+
 const byPrefix = new Map<string, string[]>();
 for (const file of files) {
   const m = PREFIX_RE.exec(file);
@@ -47,8 +85,11 @@ for (const file of files) {
 }
 
 const collisions: Array<{ prefix: string; files: string[] }> = [];
+const excused: Array<{ prefix: string; files: string[] }> = [];
 for (const [prefix, names] of byPrefix) {
-  if (names.length > 1) collisions.push({ prefix, files: names });
+  if (names.length <= 1) continue;
+  if (isDocumented(prefix, names)) excused.push({ prefix, files: names });
+  else collisions.push({ prefix, files: names });
 }
 
 if (collisions.length > 0) {
@@ -56,8 +97,12 @@ if (collisions.length > 0) {
     "\nERROR: Duplicate migration prefixes found in src/migrations/.\n" +
       "       Migration runners apply files in lexicographic order; shared\n" +
       "       prefixes produce an ambiguous sequence and can cause 500 errors\n" +
-      "       when columns or tables are referenced before they are created.\n" +
-      "       Renumber the colliding files to unique prefixes.\n",
+      "       when columns or tables are referenced before they are created.\n\n" +
+      "       Before renumbering: there is no schema_migrations table, so check\n" +
+      "       whether each file's objects already exist LIVE. Renumber the one\n" +
+      "       that has NOT been applied. If both are already applied, document\n" +
+      "       the collision in docs/migrations.md and add it to\n" +
+      "       DOCUMENTED_COLLISIONS in this script.\n",
   );
   for (const { prefix, files: names } of collisions) {
     console.error(`  Prefix ${prefix}:`);
@@ -67,7 +112,16 @@ if (collisions.length > 0) {
   process.exit(1);
 }
 
+for (const { prefix, files: names } of excused) {
+  console.log(
+    `check:migration-prefixes NOTE: prefix ${prefix} is a documented collision ` +
+      `(both applied live; see docs/migrations.md):`,
+  );
+  for (const name of names) console.log(`    • ${name}`);
+}
+
 console.log(
-  `check:migration-prefixes PASSED (${files.length} file(s), all prefixes unique)`,
+  `check:migration-prefixes PASSED (${files.length} file(s), ` +
+    `${excused.length} documented collision(s), no undocumented collisions)`,
 );
 process.exit(0);
