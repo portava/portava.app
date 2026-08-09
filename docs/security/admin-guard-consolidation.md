@@ -73,15 +73,44 @@ Preserved as `isAdmin(sc, userId)`.
 
 ## Finding 3 — cosmetic differences, safe to normalise
 
-- **Fallback client**: 7 lack `getServiceClient() ?? client`
-  (circle, compassGraph, hiddenGems, placesCanonical, rentABuddyMarketplace,
+> **CORRECTED 2026-08-09 during the sweep.** Two claims below were wrong. Both
+> are struck through with the correction beneath. See §1e/§1f of
+> `admin-authz-audit.md`.
+
+- ~~**Fallback client**: 7 lack `getServiceClient() ?? client` (circle,
+  compassGraph, hiddenGems, placesCanonical, rentABuddyMarketplace,
   rentABuddySpec — plus hiddenGems by shape). The fallback exists so routes stay
   testable without service credentials; adding it is strictly permissive of
-  tests, not of callers.
-- **Selected columns**: only `admin.ts` selects
-  `role, display_name, username, handle`; the rest select `role`. Preserved as
-  the opt-in `withDisplayName`.
+  tests, not of callers.~~
+
+  **Wrong, and wrong in the permissive direction.** `circle.ts` and
+  `placesCanonical.ts` do not merely *lack* the fallback — they **require** the
+  service client and return 503 `server_not_configured` when it is absent.
+  Adding a fallback converts that refusal into "proceed using the caller's
+  client", which is permissive of **callers**, not just of tests. Separately,
+  `circle.ts`, `placesCanonical.ts` and `rentABuddySpec.ts` read `profiles`
+  through the service client, **bypassing RLS**; the shared guard reads through
+  the caller's client. Same query, different trust model.
+
+  These five (the three above plus `rentABuddyMarketplace.ts` and
+  `compassGraph.ts`) were **not converted**. Each needs its own reconciliation.
+  None is a security finding — all still fail closed.
+
+- ~~**Selected columns**: only `admin.ts` selects
+  `role, display_name, username, handle`; the rest select `role`.~~
+
+  **`adminPlaceImages.ts` selects the same four columns.** It is a two-file
+  case, and `admin-authz-audit.md` §1d said so ("the superset shape already
+  used by `admin.ts` and `adminPlaceImages.ts`") — this line contradicted it.
+  Both now pass `{ withDisplayName: true }`; had either been converted without
+  the flag, every audit-log label on that route would have silently become
+  `null`.
+
 - **Quote style / error message**: identical semantics, `"admin"` vs `'admin'`.
+  Quote style yes — error **message** no. `rentABuddySpec.ts` sends a 403 with
+  no `message` field at all, and `rentABuddyMarketplace.ts`'s differs by a
+  trailing period. No test asserts on either, but a normalisation is still a
+  response-body change and was not made blind.
 
 ## What ships
 
@@ -97,15 +126,31 @@ than inherited debt.
 ## Migration order (do not reorder)
 
 1. Land `lib/requireAdmin.ts`. Nothing imports it yet — zero behaviour change.
-2. Convert route files in batches, **starting with the 25 plain `requireAdmin`
-   cases**, which are mechanical.
+2. Convert route files in batches, **starting with the ~~25~~ 21 plain
+   `requireAdmin` cases**, which are mechanical. *(Four of the presumed 25 were
+   not plain — see the corrected Finding 3.)*
 3. Convert the two divergent ones **individually and deliberately**:
    `rentABuddyRollout.ts` with `{ roles: ["admin","owner"] }`, `hiddenGems.ts`
    with `isAdmin`. Do not batch these.
-4. `admin.ts` with `{ withDisplayName: true }`.
-5. Land `checkAdminGuard.ts` and wire it into `run-all-checks.sh` **last** —
+4. ~~`admin.ts`~~ **`admin.ts` and `adminPlaceImages.ts`** with
+   `{ withDisplayName: true }`.
+5. Reconcile the five semantics-sensitive routes individually (corrected
+   Finding 3). Each is a decision, not a conversion.
+6. Land `checkAdminGuard.ts` and wire it into `run-all-checks.sh` **last** —
    it fails while any local guard remains, so it is the proof the sweep finished,
    not a step along the way.
+
+**Status 2026-08-09 — 23 of 30 converted, 7 held back.** Steps 1, 2 and 4 are
+done (batches `5b2a346fc`, `0f33ad144`, `dd2368883`). Held back: the two
+carve-outs at step 3, and the five at step 5. Step 6 is **not** done and must
+not be until those seven are resolved — `check:admin-guard` exits 1 while any
+local guard remains, which is exactly what it is for.
+
+One thing the sweep added that this plan did not anticipate: hoisting the
+`profiles` query into `lib/` silently removed it from schema-drift coverage,
+because every drift test reads `src/routes/`. Repaired in `c7b1bea85`; see
+§1f of the audit. **A file-path-keyed static check stops guarding when the code
+it watches moves, and reports green while doing it.**
 
 Add to `package.json`:
 

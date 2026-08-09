@@ -105,6 +105,62 @@ call-site review). Both are now expressible on the shared guard — `roles` and
 `isAdmin()` respectively — but each still requires the review this audit asked
 for, and neither is a mechanical conversion.
 
+### 1e. Correction — "plain" was the wrong classification (2026-08-09)
+
+This audit sorted the 30 guards by **selected columns, role comparison, and
+status code**, and called everything that matched on those three "plain". The
+sweep found that classification too narrow. Five guards match on all three and
+still are not drop-in replaceable, because a guard's semantics also include:
+
+| Dimension | Why it matters | Divergent |
+|---|---|---|
+| **Client source** | Reading `profiles` through the service client bypasses RLS; through the caller's client it does not. Same query, different trust model. | `circle.ts`, `placesCanonical.ts`, `rentABuddySpec.ts` |
+| **Configuration-failure behaviour** | A guard that *requires* the service client returns 503 `server_not_configured` when it is absent. The shared guard falls back to the user client and proceeds — a change in the permissive direction. | `circle.ts`, `placesCanonical.ts` |
+| **Error envelope** | `sendError()` vs a hand-written `res.status(403).json(...)`; a body with no `message` field; a message differing by one character. Clients may match on these. | `circle.ts` (message), `rentABuddySpec.ts` (no `message`), `rentABuddyMarketplace.ts` (trailing period) |
+| **Returned identity** | Returning the raw `requireUser` result, or the full `user` object rather than `userId`, is a call-site contract. | `compassGraph.ts`, `circle.ts` |
+
+So the count that matters is not "30 guards, 2 exceptions" but **23 converted,
+7 held back**: the 2 documented carve-outs plus these 5. The five are *not*
+security findings — every one still fails closed. They are cases where
+converting would have changed behaviour silently, which on an authorisation
+sweep is the outcome to avoid even when the change looks harmless.
+
+**Rule for the next sweep:** a guard is drop-in replaceable only when the
+client source, RLS behaviour, configuration-failure behaviour, error envelope,
+response shape, and selected columns all match. Columns and status code alone
+are not sufficient evidence.
+
+### 1f. Drift coverage must follow a query when it moves into `lib/` (2026-08-09)
+
+Consolidation moved `.from("profiles").select("role")` out of the route files.
+Three schema-drift sanity checks failed immediately — `adminStamps.ts`,
+`adminGeocode.ts`, `trust-admin.ts` — and they were **right to fail**. Every
+schema-drift test reads `src/routes/`; none reads `src/lib/`. Hoisting the
+query moved an authorisation query out of drift coverage altogether.
+
+The tempting fix — delete the three now-unmatched `profiles` assertions —
+would have turned a real loss of coverage into a silent one, which is the same
+failure mode this consolidation exists to prevent, one level up.
+
+What was done instead (`c7b1bea85`): the drift test appends the shared guard's
+source to any route that imports it, so route-level coverage survives the
+hoist, **and** `lib/requireAdmin.ts` is checked in its own right so the
+coverage does not depend on who imports it.
+
+Two things this surfaced, both worth remembering:
+
+- The extractor was literal-only, so `.select(columns)` — a column list held
+  in a `const` — yielded **no refs at all** and passed vacuously. The guard's
+  `withDisplayName` branch (`display_name`, `username`, `handle`) was entirely
+  unchecked. Same-file `const` resolution was added.
+- Green was not accepted as proof. Injecting a dead column into the guard
+  failed 5 tests across all four consumers; only then was the coverage
+  believed.
+
+**Invariant:** moving a query into a shared module moves its drift coverage
+with it. A static guard keyed on file paths silently stops guarding the moment
+the code it watches moves — and reports green while doing it.
+
 ---
 
 ## 2. Finding 17 — `profiles.role` is self-writable (CRITICAL, decision-ready)
@@ -194,10 +250,20 @@ acted on.**
    conversion.
 4. Consolidation onto the §1d canonical is otherwise ready to proceed and is
    **not blocked** by 1–3; those three are carve-outs.
+5. **Five further routes need their own reconciliation** (§1e) —
+   `circle.ts`, `placesCanonical.ts`, `rentABuddySpec.ts`,
+   `rentABuddyMarketplace.ts`, `compassGraph.ts`. Not security findings; all
+   fail closed. Each diverges on client source, configuration-failure
+   behaviour, or error envelope, so each needs a decision rather than a
+   conversion. Status as of 2026-08-09: **23 converted, 7 held back** (these
+   five plus the two carve-outs).
 
 ## 4. Verification note
 
 - All 30 implementations were read in full, not sampled.
+- The classification they were sorted into was nonetheless too narrow — see
+  §1e. Reading every implementation is not the same as comparing every
+  dimension of every implementation.
 - Production facts (role distribution, RLS policies, column and table grants,
   triggers, RLS enablement) come from direct `pg_policy` / `pg_class` /
   `information_schema` queries, read-only.
