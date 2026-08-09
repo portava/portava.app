@@ -264,9 +264,9 @@ const styles = StyleSheet.create({
     width: 24,
   },
   badge: {
-    width: icon.lgXl,
-    height: icon.lgXl,
-    borderRadius: icon.lgXl / 2,
+    width: icon.s24,
+    height: icon.s24,
+    borderRadius: icon.s24 / 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -305,9 +305,9 @@ const styles = StyleSheet.create({
   },
   dots: { flexDirection: 'row', gap: 4 },
   dot: {
-    width: dot.xs,
-    height: dot.xs,
-    borderRadius: dot.xs / 2,
+    width: dot.s6,
+    height: dot.s6,
+    borderRadius: dot.s6 / 2,
     backgroundColor: color.signal,
   },
   loadingText: {

@@ -209,8 +209,8 @@ function FriendMarker({ entity, onPress }: { entity: MapEntity<CircleMemberLocat
 
 const pin = StyleSheet.create({
   wrap: {
-    width: avatar.sm, height: avatar.sm,
-    borderRadius: avatar.sm / 2,
+    width: avatar.s32, height: avatar.s32,
+    borderRadius: avatar.s32 / 2,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
@@ -222,21 +222,21 @@ const pin = StyleSheet.create({
     elevation: 3,
   },
   dot: {
-    width: dot.xs,
-    height: dot.xs,
-    borderRadius: dot.xs / 2,
+    width: dot.s6,
+    height: dot.s6,
+    borderRadius: dot.s6 / 2,
     alignSelf: 'center',
     marginTop: -1,
     borderWidth: 1,
     borderColor: '#fff',
   },
   avatarImg: {
-    width: avatar.xs, height: avatar.xs,
-    borderRadius: avatar.xs / 2,
+    width: avatar.s28, height: avatar.s28,
+    borderRadius: avatar.s28 / 2,
   },
   avatarWrap: {
-    width: avatar.md, height: avatar.md,
-    borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36,
+    borderRadius: avatar.s36 / 2,
     borderWidth: 2.5,
     alignItems: 'center',
     justifyContent: 'center',
@@ -248,12 +248,12 @@ const pin = StyleSheet.create({
     elevation: 3,
   },
   friendImg: {
-    width: avatar.xsSm, height: avatar.xsSm,
-    borderRadius: avatar.xsSm / 2,
+    width: avatar.s30, height: avatar.s30,
+    borderRadius: avatar.s30 / 2,
   },
   friendFallback: {
-    width: avatar.xsSm, height: avatar.xsSm,
-    borderRadius: avatar.xsSm / 2,
+    width: avatar.s30, height: avatar.s30,
+    borderRadius: avatar.s30 / 2,
     alignItems: 'center',
     justifyContent: 'center',
   },

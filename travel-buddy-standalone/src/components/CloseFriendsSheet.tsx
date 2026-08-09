@@ -161,7 +161,7 @@ const s = StyleSheet.create({
   emptyText: { ...t.bodyStrong, color: color.ink },
   emptySub: { ...t.small, color: color.mute, textAlign: 'center', maxWidth: 260 },
   friendRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.sm },
-  avatar: { width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2, backgroundColor: color.haze },
+  avatar: { width: avatar.s40, height: avatar.s40, borderRadius: avatar.s40 / 2, backgroundColor: color.haze },
   friendName: { ...t.bodyStrong, color: color.ink },
   friendHandle: { ...t.small, color: color.mute },
   removeBtn: { padding: 4 },

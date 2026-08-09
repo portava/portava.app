@@ -69,8 +69,8 @@ const s = StyleSheet.create({
     marginTop: 2,
   },
   iconWrap: {
-    width: avatar.md, height: avatar.md,
-    borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36,
+    borderRadius: avatar.s36 / 2,
     backgroundColor: VERIFY_TEAL_BG,
     alignItems: 'center',
     justifyContent: 'center',

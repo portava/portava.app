@@ -320,8 +320,8 @@ const styles = StyleSheet.create({
   topDivider: { height: 1, backgroundColor: color.haze, marginVertical: space.md },
 
   menuBtn: {
-    width: avatar.smMd, height: avatar.smMd,
-    borderRadius: avatar.smMd / 2,
+    width: avatar.s34, height: avatar.s34,
+    borderRadius: avatar.s34 / 2,
     backgroundColor: color.paperRaised,
     borderWidth: 1,
     borderColor: color.haze,

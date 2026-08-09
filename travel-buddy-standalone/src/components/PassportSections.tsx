@@ -279,7 +279,7 @@ const styles = StyleSheet.create({
   },
   buddyStack: { flexDirection: 'row' },
   buddyStackAvatar: { borderRadius: 18, borderWidth: 2, borderColor: color.paperRaised },
-  buddyStackImg: { width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2, backgroundColor: color.haze },
+  buddyStackImg: { width: avatar.s34, height: avatar.s34, borderRadius: avatar.s34 / 2, backgroundColor: color.haze },
   buddyPrevText: { ...t.small, color: color.mute, fontWeight: '600' },
   findBtn: { paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill, backgroundColor: color.ink },
   findBtnText: { ...t.small, fontWeight: '700', color: color.onInk },
@@ -317,13 +317,13 @@ const styles = StyleSheet.create({
     backgroundColor: color.paperRaised, borderRadius: radius.md,
     borderWidth: 1, borderColor: color.haze, padding: space.md,
   },
-  planDot: { width: dot.md, height: dot.md, borderRadius: dot.md / 2, backgroundColor: color.signal },
+  planDot: { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2, backgroundColor: color.signal },
   planTitle: { ...t.bodyStrong, color: color.ink },
   planMeta: { ...t.small, color: color.mute, marginTop: 2 },
 
   buddyRow: { flexDirection: 'row', gap: space.md },
   buddy: { alignItems: 'center', width: 56 },
-  buddyAvatar: { width: avatar.xlXxl, height: avatar.xlXxl, borderRadius: avatar.xlXxl / 2, backgroundColor: color.haze },
+  buddyAvatar: { width: avatar.s52, height: avatar.s52, borderRadius: avatar.s52 / 2, backgroundColor: color.haze },
   buddyName: { ...t.small, color: color.ink, marginTop: 4 },
 
   perk: {

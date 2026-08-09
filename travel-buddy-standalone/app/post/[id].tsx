@@ -459,8 +459,8 @@ const rb = StyleSheet.create({
     borderColor: color.haze,
   },
   iconWrap: {
-    width: avatar.xxl, height: avatar.xxl,
-    borderRadius: avatar.xxl / 2,
+    width: avatar.s56, height: avatar.s56,
+    borderRadius: avatar.s56 / 2,
     backgroundColor: `${color.signal}12`,
     alignItems: 'center',
     justifyContent: 'center',

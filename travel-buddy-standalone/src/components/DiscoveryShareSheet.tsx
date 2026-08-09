@@ -529,7 +529,7 @@ const s = StyleSheet.create({
   threadName: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   threadNameSelected: { color: color.signal },
   threadSub: { ...t.small, color: color.mute, fontSize: 11, marginTop: 1 },
-  checkBadge: { width: icon.action, height: icon.action, borderRadius: icon.action / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
+  checkBadge: { width: icon.s20, height: icon.s20, borderRadius: icon.s20 / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
   checkText: { fontSize: 12, color: color.onInk, fontWeight: '700' },
 
   startChatBadge: {
@@ -555,8 +555,8 @@ const s = StyleSheet.create({
     marginBottom: space.sm,
   },
   newThreadIcon: {
-    width: avatar.md, height: avatar.md,
-    borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36,
+    borderRadius: avatar.s36 / 2,
     backgroundColor: color.signal + '15',
     alignItems: 'center',
     justifyContent: 'center',

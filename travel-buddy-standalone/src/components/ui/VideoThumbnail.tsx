@@ -123,8 +123,8 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   playBtn: {
-    width: avatar.lgXl, height: avatar.lgXl,
-    borderRadius: avatar.lgXl / 2,
+    width: avatar.s44, height: avatar.s44,
+    borderRadius: avatar.s44 / 2,
     backgroundColor: 'rgba(17,17,15,0.55)',
     alignItems: 'center',
     justifyContent: 'center',

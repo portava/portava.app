@@ -1412,7 +1412,7 @@ const styles = StyleSheet.create({
   hostName:           { ...t.body, color: color.ink, fontWeight: '700' },
   attendeeRow:        { flexDirection: 'row', alignItems: 'center', marginLeft: 4 },
   avatarOverlap:      { marginRight: -8 },
-  avatarMore:         { width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
+  avatarMore:         { width: avatar.s32, height: avatar.s32, borderRadius: avatar.s32 / 2, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
   avatarMoreText:     { ...t.stamp, color: color.mute, fontSize: 11 },
   waitlistBanner:     { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#EFF6FF', borderRadius: radius.md, padding: space.md },
   waitlistText:       { ...t.small, color: '#2563EB', flex: 1 },
@@ -1442,7 +1442,7 @@ const styles = StyleSheet.create({
 
   findBuddySection:   { gap: space.sm },
   findBuddyCta:       { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#F0F9FF', borderRadius: radius.md, borderWidth: 1, borderColor: '#BAE6FD', paddingHorizontal: space.md, paddingVertical: 12 },
-  findBuddyIcon:      { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, backgroundColor: '#E0F2FE', alignItems: 'center', justifyContent: 'center' },
+  findBuddyIcon:      { width: avatar.s36, height: avatar.s36, borderRadius: avatar.s36 / 2, backgroundColor: '#E0F2FE', alignItems: 'center', justifyContent: 'center' },
   findBuddyTitle:     { ...t.bodyStrong, color: '#0C4A6E', fontSize: 14 },
   findBuddySub:       { ...t.small, color: '#0369A1', marginTop: 1 },
   seeAllBuddies:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: space.sm },

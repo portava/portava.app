@@ -300,7 +300,7 @@ const s = StyleSheet.create({
     width: '100%', height: 80, borderRadius: radius.sm, marginBottom: 2,
   },
   gemIcon: {
-    width: avatar.xsSm, height: avatar.xsSm, borderRadius: avatar.xsSm / 2, backgroundColor: color.paper,
+    width: avatar.s30, height: avatar.s30, borderRadius: avatar.s30 / 2, backgroundColor: color.paper,
     borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center',
   },
   gemName: { ...t.small, fontWeight: '700', color: color.ink, lineHeight: 17 },
@@ -324,7 +324,7 @@ const s = StyleSheet.create({
 
   empty: { alignItems: 'center', paddingVertical: space.xxl, paddingHorizontal: space.xl, gap: space.sm },
   emptyIcon: {
-    width: avatar.xxxl, height: avatar.xxxl, borderRadius: avatar.xxxl / 2, backgroundColor: color.paperRaised,
+    width: avatar.s64, height: avatar.s64, borderRadius: avatar.s64 / 2, backgroundColor: color.paperRaised,
     borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center',
   },
   emptyTitle: { ...t.bodyStrong, color: color.ink, fontSize: 16, textAlign: 'center' },

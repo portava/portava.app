@@ -104,7 +104,7 @@ const fb = StyleSheet.create({
     justifyContent: 'center',
     gap: space.xs,
   },
-  dot: { width: icon.lgXl, height: icon.lgXl, borderRadius: icon.lgXl / 2, backgroundColor: color.paper, opacity: 0.6 },
+  dot: { width: icon.s24, height: icon.s24, borderRadius: icon.s24 / 2, backgroundColor: color.paper, opacity: 0.6 },
   label: { ...t.small, color: color.paper, fontWeight: '600', textAlign: 'center', paddingHorizontal: space.sm },
 });
 

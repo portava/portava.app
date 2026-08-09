@@ -320,7 +320,7 @@ const tr = StyleSheet.create({
   timelineRow: {
     flexDirection: 'row', alignItems: 'center', gap: space.sm, minHeight: 32,
   },
-  timelineDot: { width: dot.xs, height: dot.xs, borderRadius: dot.xs / 2, backgroundColor: color.haze },
+  timelineDot: { width: dot.s6, height: dot.s6, borderRadius: dot.s6 / 2, backgroundColor: color.haze },
   timelineText: { ...t.body, flex: 1, color: color.ink },
   timelineDate: { ...t.small, color: color.faint, fontSize: 12 },
 

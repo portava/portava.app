@@ -123,7 +123,7 @@ const sk = StyleSheet.create({
     gap: 6,
   },
   artwork: {
-    width: avatar.xxxl, height: avatar.xxxl, borderRadius: avatar.xxxl / 2,
+    width: avatar.s64, height: avatar.s64, borderRadius: avatar.s64 / 2,
     backgroundColor: color.haze,
     marginBottom: 4,
   },

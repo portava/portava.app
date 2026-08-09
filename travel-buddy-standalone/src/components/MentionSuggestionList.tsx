@@ -209,8 +209,8 @@ const styles = StyleSheet.create({
   },
   avatarWrap: {},
   avatar: {
-    width: avatar.md, height: avatar.md,
-    borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36,
+    borderRadius: avatar.s36 / 2,
   },
   avatarFallback: {
     backgroundColor: color.ink,

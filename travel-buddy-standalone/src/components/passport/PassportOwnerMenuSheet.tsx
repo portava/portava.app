@@ -609,8 +609,8 @@ const s = StyleSheet.create({
     letterSpacing: 0.2,
   },
   closeBtn: {
-    width: avatar.sm, height: avatar.sm,
-    borderRadius: avatar.sm / 2,
+    width: avatar.s32, height: avatar.s32,
+    borderRadius: avatar.s32 / 2,
     backgroundColor: PP.paperDeep,
     alignItems: 'center',
     justifyContent: 'center',

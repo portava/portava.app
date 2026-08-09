@@ -104,14 +104,14 @@ const s = StyleSheet.create({
     gap: 14, paddingVertical: 18,
   },
   ctl: {
-    width: avatar.xlXxl, height: avatar.xlXxl, borderRadius: avatar.xlXxl / 2,
+    width: avatar.s52, height: avatar.s52, borderRadius: avatar.s52 / 2,
     backgroundColor: 'rgba(255,255,255,0.16)',
     alignItems: 'center', justifyContent: 'center',
   },
   ctlActive: { backgroundColor: 'rgba(255,255,255,0.38)' },
   ctlDisabled: { opacity: 0.4 },
   endBtn: {
-    width: avatar.xxxl, height: avatar.xxxl, borderRadius: avatar.xxxl / 2,
+    width: avatar.s64, height: avatar.s64, borderRadius: avatar.s64 / 2,
     backgroundColor: '#DC2626',
     alignItems: 'center', justifyContent: 'center',
     shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 8, elevation: 5,

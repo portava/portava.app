@@ -297,7 +297,7 @@ const sx = StyleSheet.create({
   },
   rowHidden: { opacity: 0.45 },
   rowIndex: {
-    width: icon.lgXl, height: icon.lgXl, borderRadius: icon.lgXl / 2,
+    width: icon.s24, height: icon.s24, borderRadius: icon.s24 / 2,
     backgroundColor: PP.paperDeep, alignItems: 'center', justifyContent: 'center',
   },
   rowIndexText: { ...PP_LABEL, fontSize: 11, color: PP.inkMuted },
@@ -320,7 +320,7 @@ const sx = StyleSheet.create({
   },
   pillHidden: { opacity: 0.4 },
   pillNum: {
-    width: icon.md, height: icon.md, borderRadius: icon.md / 2,
+    width: icon.s18, height: icon.s18, borderRadius: icon.s18 / 2,
     backgroundColor: PP.ink, alignItems: 'center', justifyContent: 'center',
   },
   pillNumHidden: { backgroundColor: PP.inkMuted },

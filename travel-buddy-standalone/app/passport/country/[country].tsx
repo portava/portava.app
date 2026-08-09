@@ -240,8 +240,8 @@ const s = StyleSheet.create({
     gap: space.sm,
   },
   backBtn: {
-    width: avatar.md, height: avatar.md,
-    borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36,
+    borderRadius: avatar.s36 / 2,
     alignItems: 'center',
     justifyContent: 'center',
   },

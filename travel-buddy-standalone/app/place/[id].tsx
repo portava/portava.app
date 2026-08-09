@@ -556,9 +556,9 @@ const fb = StyleSheet.create({
     gap: space.sm,
   },
   accentDot: {
-    width: dot.xl,
-    height: dot.xl,
-    borderRadius: dot.xl / 2,
+    width: dot.s12,
+    height: dot.s12,
+    borderRadius: dot.s12 / 2,
     marginTop: 4,
     flexShrink: 0,
   },
@@ -579,8 +579,8 @@ const fb = StyleSheet.create({
     marginTop: 4,
   },
   saveBtn: {
-    width: avatar.smMd, height: avatar.smMd,
-    borderRadius: avatar.smMd / 2,
+    width: avatar.s34, height: avatar.s34,
+    borderRadius: avatar.s34 / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',

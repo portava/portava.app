@@ -212,9 +212,9 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   statusDot: {
-    width: dot.xs,
-    height: dot.xs,
-    borderRadius: dot.xs / 2,
+    width: dot.s6,
+    height: dot.s6,
+    borderRadius: dot.s6 / 2,
   },
   statusText: {
     fontFamily: 'Courier',
@@ -244,9 +244,9 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   stageDot: {
-    width: dot.lg,
-    height: dot.lg,
-    borderRadius: dot.lg / 2,
+    width: dot.s10,
+    height: dot.s10,
+    borderRadius: dot.s10 / 2,
     borderWidth: 1.5,
     borderColor: color.haze,
     backgroundColor: color.paper,

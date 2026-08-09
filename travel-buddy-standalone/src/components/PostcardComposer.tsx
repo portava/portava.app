@@ -776,7 +776,7 @@ const s = StyleSheet.create({
   stampChipTextActive: { color: color.signal, fontWeight: '700' },
   stampToolRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   stampTool: {
-    width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2, borderWidth: 1, borderColor: color.haze,
+    width: avatar.s32, height: avatar.s32, borderRadius: avatar.s32 / 2, borderWidth: 1, borderColor: color.haze,
     alignItems: 'center', justifyContent: 'center',
   },
   stampCorner: {

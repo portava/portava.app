@@ -188,7 +188,7 @@ const styles = StyleSheet.create({
   },
   cardMain: { flexDirection: 'row', gap: space.md, padding: space.lg },
   avatarWrap: {
-    width: avatar.xxl, height: avatar.xxl, borderRadius: avatar.xxl / 2,
+    width: avatar.s56, height: avatar.s56, borderRadius: avatar.s56 / 2,
     backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center',
   },
   avatarInitial: { fontSize: 22, fontWeight: '700', color: color.onInk },

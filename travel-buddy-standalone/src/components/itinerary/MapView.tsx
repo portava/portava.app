@@ -164,12 +164,12 @@ export function ItineraryMapView({ items, onItemPress, selectedDay, loading }: M
 const mv = StyleSheet.create({
   wrap:        { gap: 16, paddingBottom: 24 },
   empty:       { alignItems: 'center', paddingVertical: 48, gap: 8 },
-  emptyIcon:   { width: avatar.xxl, height: avatar.xxl, borderRadius: avatar.xxl / 2, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
+  emptyIcon:   { width: avatar.s56, height: avatar.s56, borderRadius: avatar.s56 / 2, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
   emptyTitle:  { ...t.title, fontSize: 16, color: color.mute },
   emptyBody:   { ...t.body, color: color.faint, textAlign: 'center', maxWidth: 260 },
   mapSection:  { gap: 8 },
   mapSurface:  { height: 300, borderRadius: radius.lg, overflow: 'hidden' },
-  pin:         { width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2, alignItems: 'center', justifyContent: 'center' },
+  pin:         { width: avatar.s28, height: avatar.s28, borderRadius: avatar.s28 / 2, alignItems: 'center', justifyContent: 'center' },
   listSection: { gap: 8 },
   sectionLabel:{ ...t.small, color: color.mute, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
   noMapBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: color.haze, borderRadius: radius.md, padding: 12 },
@@ -178,7 +178,7 @@ const mv = StyleSheet.create({
 
 const pl = StyleSheet.create({
   card:    { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#fff', borderRadius: radius.md, padding: 10, borderWidth: 1, borderColor: color.haze },
-  pinDot:  { width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2, alignItems: 'center', justifyContent: 'center' },
+  pinDot:  { width: avatar.s28, height: avatar.s28, borderRadius: avatar.s28 / 2, alignItems: 'center', justifyContent: 'center' },
   text:    { flex: 1, gap: 2 },
   title:   { ...t.body, color: color.ink, fontWeight: '600' },
   loc:     { ...t.small, color: color.mute },

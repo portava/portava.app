@@ -356,7 +356,7 @@ const cs = StyleSheet.create({
   artImg: { width: ART_SIZE, height: ART_SIZE },
   rarityDot: {
     position: 'absolute', bottom: 3, right: 3,
-    width: dot.sm, height: dot.sm, borderRadius: dot.sm / 2,
+    width: dot.s7, height: dot.s7, borderRadius: dot.s7 / 2,
     borderWidth: 1.5, borderColor: '#fff',
   },
   rowInfo: { flex: 1, minWidth: 0 },
@@ -364,13 +364,13 @@ const cs = StyleSheet.create({
   rowMeta: { ...t.small, color: color.mute, fontSize: 11, marginTop: 1 },
 
   checkBox: {
-    width: icon.lgXl, height: icon.lgXl, borderRadius: icon.lgXl / 2,
+    width: icon.s24, height: icon.s24, borderRadius: icon.s24 / 2,
     backgroundColor: color.signal,
     alignItems: 'center', justifyContent: 'center',
     flexShrink: 0,
   },
   emptyCheck: {
-    width: icon.lgXl, height: icon.lgXl, borderRadius: icon.lgXl / 2,
+    width: icon.s24, height: icon.s24, borderRadius: icon.s24 / 2,
     borderWidth: 1.5, borderColor: color.haze,
     flexShrink: 0,
   },

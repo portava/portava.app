@@ -212,12 +212,12 @@ export default function AvailabilityScreen() {
 
 const s = StyleSheet.create({
   statusCard: { flexDirection: 'row', alignItems: 'center', gap: space.md, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, ...shadow.card },
-  statusIcon: { width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2, backgroundColor: '#E2EDF0', alignItems: 'center', justifyContent: 'center' },
+  statusIcon: { width: avatar.s40, height: avatar.s40, borderRadius: avatar.s40 / 2, backgroundColor: '#E2EDF0', alignItems: 'center', justifyContent: 'center' },
   statusLabel: { ...t.small, color: color.mute, fontSize: 11 },
   statusValue: { ...t.bodyStrong, color: color.ink, fontSize: 16 },
   toggle: { width: 48, height: 28, borderRadius: 14, backgroundColor: color.haze, padding: 3, justifyContent: 'center' },
   toggleOn: { backgroundColor: color.signal },
-  knob: { width: icon.lg, height: icon.lg, borderRadius: icon.lg / 2, backgroundColor: color.paperRaised },
+  knob: { width: icon.s22, height: icon.s22, borderRadius: icon.s22 / 2, backgroundColor: color.paperRaised },
   knobOn: { alignSelf: 'flex-end' },
   toggleHint: { ...t.small, color: color.mute, marginTop: -space.md },
 
@@ -255,7 +255,7 @@ const s = StyleSheet.create({
   tripEmpty: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, borderStyle: 'dashed', padding: space.lg },
   tripEmptyText: { ...t.small, color: color.mute },
   tripCard: { flexDirection: 'row', alignItems: 'center', gap: space.md, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md },
-  tripIcon: { width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2, backgroundColor: '#E2EDF0', alignItems: 'center', justifyContent: 'center' },
+  tripIcon: { width: avatar.s34, height: avatar.s34, borderRadius: avatar.s34 / 2, backgroundColor: '#E2EDF0', alignItems: 'center', justifyContent: 'center' },
   tripCity: { ...t.bodyStrong, color: color.ink, textTransform: 'capitalize' },
   tripMeta: { ...t.small, color: color.mute, fontSize: 11 },
 

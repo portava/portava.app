@@ -575,7 +575,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: color.haze,
   },
   buddyAvatar: {
-    width: avatar.xl, height: avatar.xl, borderRadius: avatar.xl / 2,
+    width: avatar.s48, height: avatar.s48, borderRadius: avatar.s48 / 2,
     backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center',
   },
   buddyInitial: { fontSize: 20, fontWeight: '700', color: color.onInk },
@@ -610,7 +610,7 @@ const styles = StyleSheet.create({
   inputPlaceholder: { ...t.body, color: color.haze, flex: 1 },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: space.lg },
   stepBtn: {
-    width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2,
+    width: avatar.s40, height: avatar.s40, borderRadius: avatar.s40 / 2,
     borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised,
     alignItems: 'center', justifyContent: 'center',
   },

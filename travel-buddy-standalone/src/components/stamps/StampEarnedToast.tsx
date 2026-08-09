@@ -244,8 +244,8 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   iconWrap: {
-    width: avatar.md, height: avatar.md,
-    borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36,
+    borderRadius: avatar.s36 / 2,
     backgroundColor: color.signal,
     alignItems: 'center',
     justifyContent: 'center',

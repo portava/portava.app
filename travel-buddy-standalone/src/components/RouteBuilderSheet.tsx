@@ -413,7 +413,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: color.haze, padding: space.sm, marginBottom: space.sm,
   },
   stopIndex: {
-    width: icon.xl, height: icon.xl, borderRadius: icon.xl / 2,
+    width: icon.s26, height: icon.s26, borderRadius: icon.s26 / 2,
     backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center',
   },
   stopIndexText: { ...t.small, color: '#fff', fontSize: 12, fontWeight: '700' },

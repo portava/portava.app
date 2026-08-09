@@ -207,7 +207,7 @@ const ch = StyleSheet.create({
   },
   artInnerRing: {
     position: 'absolute',
-    width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36, borderRadius: avatar.s36 / 2,
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
   },
   artLabel: {

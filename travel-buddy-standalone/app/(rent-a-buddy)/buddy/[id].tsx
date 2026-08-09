@@ -483,7 +483,7 @@ const styles = StyleSheet.create({
   heroFallback: { backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center' },
   heroInitial: { fontSize: 80, fontWeight: '700', color: color.onInk, opacity: 0.7 },
   heroNav: { position: 'absolute', left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: space.lg },
-  navBtn: { width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2, backgroundColor: 'rgba(17,17,15,0.5)', alignItems: 'center', justifyContent: 'center' },
+  navBtn: { width: avatar.s40, height: avatar.s40, borderRadius: avatar.s40 / 2, backgroundColor: 'rgba(17,17,15,0.5)', alignItems: 'center', justifyContent: 'center' },
   heroInfo: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: space.lg, backgroundColor: 'rgba(17,17,15,0.55)' },
   heroName: { ...t.title, color: color.onInk, fontSize: 24 },
   heroCity: { ...t.body, color: color.onInkMute, marginTop: 2, marginBottom: space.sm },
@@ -547,7 +547,7 @@ const styles = StyleSheet.create({
   reportText: { ...t.small, color: color.mute },
   trustRingRow: { flexDirection: 'row', alignItems: 'center', gap: space.lg },
   trustRing: {
-    width: avatar.xxxxl, height: avatar.xxxxl, borderRadius: avatar.xxxxl / 2,
+    width: avatar.s72, height: avatar.s72, borderRadius: avatar.s72 / 2,
     borderWidth: 4, borderColor: color.success,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: '#EEF8F3',

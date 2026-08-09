@@ -571,7 +571,7 @@ const styles = StyleSheet.create({
 
   progressRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 28, marginBottom: 4 },
   progressDot: {
-    width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2,
+    width: avatar.s28, height: avatar.s28, borderRadius: avatar.s28 / 2,
     borderWidth: 2, borderColor: '#2A3D5E',
     alignItems: 'center', justifyContent: 'center',
   },
@@ -652,7 +652,7 @@ const styles = StyleSheet.create({
   },
   privacyOptionActive: { borderColor: '#4C8BF5', backgroundColor: '#0D1F3A' },
   privacyOptionCheck: {
-    width: icon.action, height: icon.action, borderRadius: icon.action / 2,
+    width: icon.s20, height: icon.s20, borderRadius: icon.s20 / 2,
     borderWidth: 2, borderColor: '#2A3D5E',
     alignItems: 'center', justifyContent: 'center',
     marginTop: 2,

@@ -200,9 +200,9 @@ const styles = StyleSheet.create({
     gap: space.sm,
   },
   factorDot: {
-    width: dot.xxs,
-    height: dot.xxs,
-    borderRadius: dot.xxs / 2,
+    width: dot.s5,
+    height: dot.s5,
+    borderRadius: dot.s5 / 2,
     backgroundColor: color.signal,
   },
   factorText: {

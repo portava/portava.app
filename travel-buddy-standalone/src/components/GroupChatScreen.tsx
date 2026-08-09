@@ -1121,7 +1121,7 @@ const styles = StyleSheet.create({
   headerTag: { ...t.stamp, fontFamily: 'Courier', color: color.mute, fontSize: 10, letterSpacing: 0.4 },
   headerMembersChip: { ...t.stamp, fontFamily: 'Courier', color: color.signal, fontSize: 10, letterSpacing: 0.4 },
   avatarStack: { flexDirection: 'row', alignItems: 'center', marginRight: 2 },
-  stackAvatar: { width: icon.smMd, height: icon.smMd, borderRadius: icon.smMd / 2, borderWidth: 1, borderColor: color.paperRaised },
+  stackAvatar: { width: icon.s16, height: icon.s16, borderRadius: icon.s16 / 2, borderWidth: 1, borderColor: color.paperRaised },
   stackAvatarOverlap: { marginLeft: -6 },
   stackAvatarFallback: { backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
   stackAvatarInitial: { fontSize: 8, fontWeight: '700', color: color.ink },
@@ -1148,8 +1148,8 @@ const styles = StyleSheet.create({
   bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: space.sm, maxWidth: '86%' },
   bubbleRowMine: { alignSelf: 'flex-end', flexDirection: 'row-reverse' },
 
-  avatar: { width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2, backgroundColor: color.haze, overflow: 'hidden', flexShrink: 0 },
-  avatarSmall: { width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2 },
+  avatar: { width: avatar.s28, height: avatar.s28, borderRadius: avatar.s28 / 2, backgroundColor: color.haze, overflow: 'hidden', flexShrink: 0 },
+  avatarSmall: { width: avatar.s28, height: avatar.s28, borderRadius: avatar.s28 / 2 },
   avatarInitial: { fontSize: 12, color: color.ink, textAlign: 'center', lineHeight: 28 },
 
   bubble: {
@@ -1240,7 +1240,7 @@ const styles = StyleSheet.create({
     ...t.body,
     color: color.ink,
   },
-  sendBtn: { width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2, alignItems: 'center', justifyContent: 'center' },
+  sendBtn: { width: avatar.s40, height: avatar.s40, borderRadius: avatar.s40 / 2, alignItems: 'center', justifyContent: 'center' },
   sendBtnActive: { backgroundColor: TG.sentBubble },
   sendBtnDisabled: { backgroundColor: color.haze },
 
@@ -1292,7 +1292,7 @@ const styles = StyleSheet.create({
   },
   failedRetryText: { ...t.stamp, color: '#EF4444', fontSize: 10, fontWeight: '600' },
   readerAvatarRow: { flexDirection: 'row', alignItems: 'center', gap: 2, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
-  readerAvatar: { width: icon.sm, height: icon.sm, borderRadius: icon.sm / 2, backgroundColor: color.haze },
+  readerAvatar: { width: icon.s14, height: icon.s14, borderRadius: icon.s14 / 2, backgroundColor: color.haze },
 
   replyBar: {
     flexDirection: 'row',

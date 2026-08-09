@@ -182,7 +182,7 @@ const s = StyleSheet.create({
   emptyText: { ...t.bodyStrong, color: color.ink },
   emptySub: { ...t.small, color: color.mute, textAlign: 'center' },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md },
-  avatar: { width: avatar.lgXl, height: avatar.lgXl, borderRadius: avatar.lgXl / 2, backgroundColor: color.haze },
+  avatar: { width: avatar.s44, height: avatar.s44, borderRadius: avatar.s44 / 2, backgroundColor: color.haze },
   name: { ...t.bodyStrong, color: color.ink },
   handle: { ...t.small, color: color.mute },
   sep: { height: 1, backgroundColor: color.haze },

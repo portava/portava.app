@@ -1042,7 +1042,7 @@ const sc = StyleSheet.create({
   thumb:      { width: 56, height: 40, borderRadius: radius.sm ?? 4, overflow: 'hidden' },
   rowTitle:   { ...t.body, color: color.ink, fontWeight: '600' },
   rowSub:     { ...t.small, color: color.mute ?? '#6B7280', fontSize: 12 },
-  statusDot:  { width: dot.lg, height: dot.lg, borderRadius: dot.lg / 2 },
+  statusDot:  { width: dot.s10, height: dot.s10, borderRadius: dot.s10 / 2 },
   statusBadge:{ ...t.small, fontWeight: '600', fontSize: 12 },
   sep:        { height: StyleSheet.hairlineWidth, backgroundColor: color.haze, marginLeft: space.md },
 

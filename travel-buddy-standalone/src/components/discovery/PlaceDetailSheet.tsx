@@ -560,9 +560,9 @@ const styles = StyleSheet.create({
     borderBottomColor: color.haze,
   },
   accentDot: {
-    width: dot.xl,
-    height: dot.xl,
-    borderRadius: dot.xl / 2,
+    width: dot.s12,
+    height: dot.s12,
+    borderRadius: dot.s12 / 2,
     marginTop: 5,
   },
   name: {
@@ -587,8 +587,8 @@ const styles = StyleSheet.create({
     fontSize: 10,
   },
   saveHeaderBtn: {
-    width: avatar.smMd, height: avatar.smMd,
-    borderRadius: avatar.smMd / 2,
+    width: avatar.s34, height: avatar.s34,
+    borderRadius: avatar.s34 / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',
@@ -597,8 +597,8 @@ const styles = StyleSheet.create({
     backgroundColor: color.signal + '18',
   },
   closeBtn: {
-    width: avatar.sm, height: avatar.sm,
-    borderRadius: avatar.sm / 2,
+    width: avatar.s32, height: avatar.s32,
+    borderRadius: avatar.s32 / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',

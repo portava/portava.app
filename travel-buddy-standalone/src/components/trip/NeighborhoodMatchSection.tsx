@@ -77,8 +77,8 @@ const styles = StyleSheet.create({
     borderColor: '#C8DDE5',
   },
   iconWrap: {
-    width: avatar.lg, height: avatar.lg,
-    borderRadius: avatar.lg / 2,
+    width: avatar.s40, height: avatar.s40,
+    borderRadius: avatar.s40 / 2,
     backgroundColor: color.paper,
     alignItems: 'center',
     justifyContent: 'center',

@@ -149,8 +149,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   iconWrap: {
-    width: icon.lg, height: icon.lg,
-    borderRadius: icon.lg / 2,
+    width: icon.s22, height: icon.s22,
+    borderRadius: icon.s22 / 2,
     alignItems: 'center',
     justifyContent: 'center',
   },

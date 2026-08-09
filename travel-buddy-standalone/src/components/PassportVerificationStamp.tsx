@@ -204,9 +204,9 @@ const s = StyleSheet.create({
     letterSpacing: 0.1,
   },
   checkBadge: {
-    width: icon.smMd,
-    height: icon.smMd,
-    borderRadius: icon.smMd / 2,
+    width: icon.s16,
+    height: icon.s16,
+    borderRadius: icon.s16 / 2,
     borderWidth: 1,
     borderColor: 'rgba(250,249,246,0.18)',
     alignItems: 'center',

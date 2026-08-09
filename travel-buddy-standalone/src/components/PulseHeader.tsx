@@ -222,8 +222,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   avatar: {
-    width: avatar.sm, height: avatar.sm,
-    borderRadius: avatar.sm / 2,
+    width: avatar.s32, height: avatar.s32,
+    borderRadius: avatar.s32 / 2,
     borderWidth: 1,
     borderColor: pv.navyEdge,
   },
@@ -247,15 +247,15 @@ const styles = StyleSheet.create({
     color: pv.textMute,
   },
   iconBtn: {
-    width: avatar.smMd, height: avatar.smMd,
-    borderRadius: avatar.smMd / 2,
+    width: avatar.s34, height: avatar.s34,
+    borderRadius: avatar.s34 / 2,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F4F7FB',
   },
   bellWrap: {
-    width: avatar.smMd, height: avatar.smMd,
-    borderRadius: avatar.smMd / 2,
+    width: avatar.s34, height: avatar.s34,
+    borderRadius: avatar.s34 / 2,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F4F7FB',
@@ -326,9 +326,9 @@ const styles = StyleSheet.create({
     maxWidth: 150,
   },
   liveDot: {
-    width: dot.sm,
-    height: dot.sm,
-    borderRadius: dot.sm / 2,
+    width: dot.s7,
+    height: dot.s7,
+    borderRadius: dot.s7 / 2,
     backgroundColor: pv.teal,
   },
 });

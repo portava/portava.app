@@ -23,8 +23,8 @@
  *
  * This module compensates per family so a single token produces a single
  * rendered size. Lucide is the reference — lucide icons in an action row keep
- * using `icon.action` directly and are unchanged — and the two custom icons are
- * scaled up to match, then pinned inside an `icon.action` layout box so the row
+ * using `icon.s20` directly and are unchanged — and the two custom icons are
+ * scaled up to match, then pinned inside an `icon.s20` layout box so the row
  * geometry and baseline are unaffected by the larger viewport.
  *
  * Scope note: the deeper fix is to retighten StampIcon's and PortavaShareIcon's
@@ -42,7 +42,7 @@ import { StampIcon } from '../stamps/StampIcon.tsx';
 import { PortavaShareIcon } from '../icons/PortavaShareIcon.tsx';
 
 /** The canonical visible size for every icon in an action row (spec §2). */
-export const ACTION_ICON_VISIBLE = icon.action;
+export const ACTION_ICON_VISIBLE = icon.s20;
 
 /**
  * Measured ink extent as a fraction of the nominal `size` prop, per family.

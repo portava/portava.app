@@ -1600,6 +1600,6 @@ const s = StyleSheet.create({
     color: color.ink,
     backgroundColor: color.paper,
   },
-  sendBtn: { width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
+  sendBtn: { width: avatar.s40, height: avatar.s40, borderRadius: avatar.s40 / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
   sendBtnDisabled: { backgroundColor: color.haze },
 });

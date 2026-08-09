@@ -308,9 +308,9 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   liveDot: {
-    width: dot.xs,
-    height: dot.xs,
-    borderRadius: dot.xs / 2,
+    width: dot.s6,
+    height: dot.s6,
+    borderRadius: dot.s6 / 2,
     backgroundColor: pv.coral,
   },
   liveText: {
@@ -365,9 +365,9 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   dot: {
-    width: dot.xxs,
-    height: dot.xxs,
-    borderRadius: dot.xxs / 2,
+    width: dot.s5,
+    height: dot.s5,
+    borderRadius: dot.s5 / 2,
     backgroundColor: pv.navyEdge,
   },
   dotActive: {

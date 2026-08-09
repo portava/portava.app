@@ -74,8 +74,8 @@ function Pin({ selected, onPress }: PinProps) {
 
 const pin = StyleSheet.create({
   wrap: {
-    width: avatar.xsSm, height: avatar.xsSm,
-    borderRadius: avatar.xsSm / 2,
+    width: avatar.s30, height: avatar.s30,
+    borderRadius: avatar.s30 / 2,
     backgroundColor: color.signal,
     alignItems: 'center',
     justifyContent: 'center',
@@ -87,8 +87,8 @@ const pin = StyleSheet.create({
   },
   wrapSelected: {
     backgroundColor: color.deep,
-    width: avatar.md, height: avatar.md,
-    borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36,
+    borderRadius: avatar.s36 / 2,
   },
 });
 
@@ -447,8 +447,8 @@ const s = StyleSheet.create({
     paddingHorizontal: space.xxl,
   },
   emptyIcon: {
-    width: avatar.xxl, height: avatar.xxl,
-    borderRadius: avatar.xxl / 2,
+    width: avatar.s56, height: avatar.s56,
+    borderRadius: avatar.s56 / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',
@@ -477,8 +477,8 @@ const s = StyleSheet.create({
     paddingHorizontal: space.xxl,
   },
   noPinsIcon: {
-    width: avatar.xl, height: avatar.xl,
-    borderRadius: avatar.xl / 2,
+    width: avatar.s48, height: avatar.s48,
+    borderRadius: avatar.s48 / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',

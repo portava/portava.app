@@ -279,7 +279,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: color.haze, padding: space.md,
   },
   rowHeader: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  iconWrap: { width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2, alignItems: 'center', justifyContent: 'center' },
+  iconWrap: { width: avatar.s32, height: avatar.s32, borderRadius: avatar.s32 / 2, alignItems: 'center', justifyContent: 'center' },
   statusLabel: { ...t.bodyStrong, fontSize: 13 },
   dateLabel: { ...t.small, color: color.mute, fontSize: 11 },
   duration: { ...t.small, color: color.mute, fontSize: 11 },

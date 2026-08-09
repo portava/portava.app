@@ -239,9 +239,9 @@ const s = StyleSheet.create({
     gap: space.sm,
   },
   statusDot: {
-    width: dot.md,
-    height: dot.md,
-    borderRadius: dot.md / 2,
+    width: dot.s8,
+    height: dot.s8,
+    borderRadius: dot.s8 / 2,
   },
   rowBody: {
     flex: 1,

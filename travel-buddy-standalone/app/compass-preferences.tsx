@@ -684,8 +684,8 @@ const s = StyleSheet.create({
     borderTopColor: color.haze,
   },
   radio: {
-    width: icon.action, height: icon.action,
-    borderRadius: icon.action / 2,
+    width: icon.s20, height: icon.s20,
+    borderRadius: icon.s20 / 2,
     borderWidth: 2,
     borderColor: color.haze,
     alignItems: 'center',
@@ -695,9 +695,9 @@ const s = StyleSheet.create({
     borderColor: color.signal,
   },
   radioDot: {
-    width: dot.lg,
-    height: dot.lg,
-    borderRadius: dot.lg / 2,
+    width: dot.s10,
+    height: dot.s10,
+    borderRadius: dot.s10 / 2,
     backgroundColor: color.signal,
   },
   radioLabel: {

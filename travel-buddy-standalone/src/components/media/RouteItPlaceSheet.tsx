@@ -177,8 +177,8 @@ const s = StyleSheet.create({
     fontSize: 18,
   },
   closeBtn: {
-    width: avatar.sm, height: avatar.sm,
-    borderRadius: avatar.sm / 2,
+    width: avatar.s32, height: avatar.s32,
+    borderRadius: avatar.s32 / 2,
     backgroundColor: color.paperRaised,
     borderWidth: 1,
     borderColor: color.haze,
@@ -196,8 +196,8 @@ const s = StyleSheet.create({
     padding: space.md,
   },
   placeIcon: {
-    width: avatar.lgXl, height: avatar.lgXl,
-    borderRadius: avatar.lgXl / 2,
+    width: avatar.s44, height: avatar.s44,
+    borderRadius: avatar.s44 / 2,
     backgroundColor: color.signal,
     alignItems: 'center',
     justifyContent: 'center',

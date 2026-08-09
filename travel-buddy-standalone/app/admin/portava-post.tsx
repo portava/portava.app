@@ -280,7 +280,7 @@ const s = StyleSheet.create({
   scheduleRow:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 16 },
   toggle:            { width: 48, height: 28, borderRadius: 14, backgroundColor: '#D1D5DB', justifyContent: 'center', paddingHorizontal: 3 },
   toggleOn:          { backgroundColor: '#3B82F6' },
-  toggleThumb:       { width: icon.lg, height: icon.lg, borderRadius: icon.lg / 2, backgroundColor: '#FFFFFF', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, elevation: 2 },
+  toggleThumb:       { width: icon.s22, height: icon.s22, borderRadius: icon.s22 / 2, backgroundColor: '#FFFFFF', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, elevation: 2 },
   toggleThumbOn:     { alignSelf: 'flex-end' },
   helperText:        { fontSize: 12, color: '#6B7280', marginBottom: 4 },
   submitBtn:         { marginTop: 28, backgroundColor: '#3B82F6', borderRadius: 12, paddingVertical: 16, alignItems: 'center' },

@@ -111,9 +111,9 @@ const s = StyleSheet.create({
     marginBottom: space.sm,
   },
   liveDot: {
-    width: dot.sm,
-    height: dot.sm,
-    borderRadius: dot.sm / 2,
+    width: dot.s7,
+    height: dot.s7,
+    borderRadius: dot.s7 / 2,
     backgroundColor: pv.coral,
   },
   eyebrow: {
@@ -150,9 +150,9 @@ const s = StyleSheet.create({
     opacity: 0.55,
   },
   dot: {
-    width: dot.md,
-    height: dot.md,
-    borderRadius: dot.md / 2,
+    width: dot.s8,
+    height: dot.s8,
+    borderRadius: dot.s8 / 2,
   },
   value: {
     fontSize: 14,

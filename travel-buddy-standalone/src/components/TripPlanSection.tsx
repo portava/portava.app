@@ -800,7 +800,7 @@ const dc = StyleSheet.create({
   chipActive:     { backgroundColor: color.deep, borderColor: color.deep },
   chipText:       { ...t.small, color: color.mute, fontWeight: '600' },
   chipTextActive: { color: '#fff' },
-  dot:            { width: dot.xxs, height: dot.xxs, borderRadius: dot.xxs / 2, backgroundColor: color.signal },
+  dot:            { width: dot.s5, height: dot.s5, borderRadius: dot.s5 / 2, backgroundColor: color.signal },
   dotActive:      { backgroundColor: '#fff' },
 });
 
@@ -815,7 +815,7 @@ const cc = StyleSheet.create({
 
 const lk = StyleSheet.create({
   wrap:    { padding: space.lg, alignItems: 'center', gap: 8, paddingVertical: 36 },
-  iconWrap:{ width: avatar.xl, height: avatar.xl, borderRadius: avatar.xl / 2, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
+  iconWrap:{ width: avatar.s48, height: avatar.s48, borderRadius: avatar.s48 / 2, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
   title:   { ...t.title, fontSize: 16, color: color.ink },
   body:    { ...t.body, color: color.mute, textAlign: 'center', maxWidth: 260, lineHeight: 22 },
 });

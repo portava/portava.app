@@ -84,8 +84,8 @@ const s = StyleSheet.create({
     gap: 8,
   },
   iconCircle: {
-    width: avatar.xl, height: avatar.xl,
-    borderRadius: avatar.xl / 2,
+    width: avatar.s48, height: avatar.s48,
+    borderRadius: avatar.s48 / 2,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 4,

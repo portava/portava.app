@@ -244,7 +244,7 @@ const s = StyleSheet.create({
     alignItems: 'flex-start', marginBottom: space.lg,
   },
   stepBadge: {
-    width: avatar.xsSm, height: avatar.xsSm, borderRadius: avatar.xsSm / 2,
+    width: avatar.s30, height: avatar.s30, borderRadius: avatar.s30 / 2,
     backgroundColor: color.signal,
     alignItems: 'center', justifyContent: 'center',
   },

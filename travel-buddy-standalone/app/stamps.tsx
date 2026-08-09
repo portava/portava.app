@@ -251,7 +251,7 @@ const styles = StyleSheet.create({
   grid:        { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-start', padding: space.xl, paddingTop: 16, rowGap: 32, columnGap: '5%' },
   cell:        { width: '30%', alignItems: 'center', gap: 8 },
   stampContainer: { height: 100, alignItems: 'center', justifyContent: 'center' },
-  emptyStampContainer: { width: avatar.xxxxxl, height: avatar.xxxxxl, borderRadius: avatar.xxxxxl / 2, borderWidth: 1, borderColor: color.haze, borderStyle: 'dashed' },
+  emptyStampContainer: { width: avatar.s96, height: avatar.s96, borderRadius: avatar.s96 / 2, borderWidth: 1, borderColor: color.haze, borderStyle: 'dashed' },
   emptyStampPlus: { fontSize: 24, color: color.mute, fontWeight: '300' },
   textContainer: { height: 32, alignItems: 'center', justifyContent: 'flex-start', gap: 2 },
   cellName:    { fontSize: 11, color: color.ink, fontWeight: '700', textAlign: 'center', letterSpacing: 0.5 },

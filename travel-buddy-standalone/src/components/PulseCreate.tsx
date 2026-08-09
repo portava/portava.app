@@ -858,7 +858,7 @@ const fs = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   title: { ...t.title, color: color.ink, fontSize: 19 },
   clear: { ...t.small, color: color.signal, fontWeight: '700' },
-  x: { width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
+  x: { width: avatar.s32, height: avatar.s32, borderRadius: avatar.s32 / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
   chipOn: { backgroundColor: color.signal, borderColor: color.signal },
@@ -881,7 +881,7 @@ const uc = StyleSheet.create({
     backgroundColor: color.paper,
   },
   headTitle: { ...t.heading, color: color.ink, flex: 1 },
-  closeBtn: { width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
+  closeBtn: { width: avatar.s32, height: avatar.s32, borderRadius: avatar.s32 / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
   scroll: { paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: space.lg },
 
   /* selected-type compact chip (replaces full grid once a type is picked) */
@@ -966,7 +966,7 @@ const uc = StyleSheet.create({
   mediaPreview: { width: '100%', height: '100%' },
   mediaRemove: {
     position: 'absolute', top: 6, right: 6,
-    width: icon.lgXl, height: icon.lgXl, borderRadius: icon.lgXl / 2,
+    width: icon.s24, height: icon.s24, borderRadius: icon.s24 / 2,
     backgroundColor: 'rgba(0,0,0,0.6)',
     alignItems: 'center', justifyContent: 'center',
   },

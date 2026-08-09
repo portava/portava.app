@@ -534,8 +534,8 @@ const s = StyleSheet.create({
   },
   toggleOn:      { backgroundColor: '#11110F' },
   toggleThumb:   {
-    width: icon.action, height: icon.action,
-    borderRadius: icon.action / 2,
+    width: icon.s20, height: icon.s20,
+    borderRadius: icon.s20 / 2,
     backgroundColor: '#fff',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },

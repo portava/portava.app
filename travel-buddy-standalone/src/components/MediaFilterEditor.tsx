@@ -346,7 +346,7 @@ const s = StyleSheet.create({
     paddingHorizontal: space.lg, paddingVertical: 10, gap: space.md,
   },
   headerBtn: {
-    width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36, borderRadius: avatar.s36 / 2,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.12)',
   },

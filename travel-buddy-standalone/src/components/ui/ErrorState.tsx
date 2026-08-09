@@ -43,9 +43,9 @@ const styles = StyleSheet.create({
     gap: space.sm,
   },
   iconWrap: {
-    width: avatar.xxxl,
-    height: avatar.xxxl,
-    borderRadius: avatar.xxxl / 2,
+    width: avatar.s64,
+    height: avatar.s64,
+    borderRadius: avatar.s64 / 2,
     backgroundColor: '#FEF3C7',
     alignItems: 'center',
     justifyContent: 'center',

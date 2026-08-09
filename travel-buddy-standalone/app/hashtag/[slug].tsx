@@ -502,7 +502,7 @@ const fr = StyleSheet.create({
   rowSub: { ...t.small, color: color.mute },
 
   typeIcon: {
-    width: avatar.lgXl, height: avatar.lgXl, borderRadius: avatar.lgXl / 2,
+    width: avatar.s44, height: avatar.s44, borderRadius: avatar.s44 / 2,
     alignItems: 'center', justifyContent: 'center',
   },
   placeThumb: { width: 44, height: 44, borderRadius: radius.sm, backgroundColor: color.haze },

@@ -260,8 +260,8 @@ const s = StyleSheet.create({
     backgroundColor: PP.paper,
   },
   backBtn: {
-    width: avatar.md, height: avatar.md,
-    borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36,
+    borderRadius: avatar.s36 / 2,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: PP.paperDeep,
@@ -400,9 +400,9 @@ const s = StyleSheet.create({
     gap: space.md,
   },
   milestoneDot: {
-    width: dot.md,
-    height: dot.md,
-    borderRadius: dot.md / 2,
+    width: dot.s8,
+    height: dot.s8,
+    borderRadius: dot.s8 / 2,
     backgroundColor: '#7B5CE5',
   },
   milestoneInfo: {

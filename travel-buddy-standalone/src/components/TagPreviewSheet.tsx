@@ -397,7 +397,7 @@ const s = StyleSheet.create({
   card: { paddingHorizontal: space.lg, paddingBottom: space.lg, alignItems: 'center', gap: space.md },
 
   typeIconWrap: {
-    width: avatar.xxxl, height: avatar.xxxl, borderRadius: avatar.xxxl / 2,
+    width: avatar.s64, height: avatar.s64, borderRadius: avatar.s64 / 2,
     alignItems: 'center', justifyContent: 'center',
   },
   hashtagSlug: { ...t.title, color: color.ink, textAlign: 'center' },
@@ -438,7 +438,7 @@ const s = StyleSheet.create({
   dimBtnText: { ...t.bodyStrong, color: color.mute, fontWeight: '600' },
 
   userRow: { flexDirection: 'row', gap: space.md, alignItems: 'center', alignSelf: 'stretch' },
-  avatar: { width: avatar.xxl, height: avatar.xxl, borderRadius: avatar.xxl / 2, backgroundColor: color.haze },
+  avatar: { width: avatar.s56, height: avatar.s56, borderRadius: avatar.s56 / 2, backgroundColor: color.haze },
   userInfo: { flex: 1, gap: 2 },
   userName: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
   userHandle: { ...t.small, color: color.mute },

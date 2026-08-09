@@ -110,7 +110,7 @@ const styles = StyleSheet.create({
   clockLabel:{ ...t.stamp, color: color.onInkMute },
   clock:     { fontSize: 26, lineHeight: 28, fontWeight: '700', color: color.onInk, fontVariant: ['tabular-nums'] },
   tierChip:  { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(250,249,246,0.14)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
-  tierDot:   { width: dot.sm, height: dot.sm, borderRadius: dot.sm / 2 },
+  tierDot:   { width: dot.s7, height: dot.s7, borderRadius: dot.s7 / 2 },
   tierText:  { ...t.stamp, color: color.onInk },
   tierBlurb: { ...t.small, color: color.onInkMute },
 

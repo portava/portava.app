@@ -34,7 +34,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md, paddingVertical: space.md,
     marginTop: space.sm,
   },
-  dot: { width: dot.md, height: dot.md, borderRadius: dot.md / 2 },
+  dot: { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2 },
   label: { ...t.bodyStrong, color: color.ink },
   cta: { ...t.small, color: color.mute, marginTop: 1 },
 });

@@ -352,8 +352,8 @@ const ov = StyleSheet.create({
     zIndex: 10,
   },
   iconBtn: {
-    width: avatar.mdLg, height: avatar.mdLg,
-    borderRadius: avatar.mdLg / 2,
+    width: avatar.s38, height: avatar.s38,
+    borderRadius: avatar.s38 / 2,
     backgroundColor: 'rgba(17,17,15,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -799,8 +799,8 @@ const ms = StyleSheet.create({
     zIndex: 20,
   },
   closeBtnInner: {
-    width: avatar.md, height: avatar.md,
-    borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36,
+    borderRadius: avatar.s36 / 2,
     backgroundColor: 'rgba(17,17,15,0.6)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -820,9 +820,9 @@ const ms = StyleSheet.create({
     gap: 5,
   },
   dot: {
-    width: dot.xxs,
-    height: dot.xxs,
-    borderRadius: dot.xxs / 2,
+    width: dot.s5,
+    height: dot.s5,
+    borderRadius: dot.s5 / 2,
     backgroundColor: 'rgba(255,255,255,0.35)',
   },
   dotActive: {

@@ -86,9 +86,9 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   dot: {
-    width: dot.sm,
-    height: dot.sm,
-    borderRadius: dot.sm / 2,
+    width: dot.s7,
+    height: dot.s7,
+    borderRadius: dot.s7 / 2,
   },
   legendText: {
     ...t.small,

@@ -731,9 +731,9 @@ const styles = StyleSheet.create({
     paddingVertical: space.md,
   },
   stepDot: {
-    width: dot.md,
-    height: dot.md,
-    borderRadius: dot.md / 2,
+    width: dot.s8,
+    height: dot.s8,
+    borderRadius: dot.s8 / 2,
     backgroundColor: color.haze,
   },
   stepDotActive: {

@@ -382,7 +382,7 @@ export default function LayoverDashboardScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: color.paper },
   topBar:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space.lg, paddingBottom: space.sm, backgroundColor: color.paper },
-  backBtn:   { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center' },
+  backBtn:   { width: avatar.s36, height: avatar.s36, borderRadius: avatar.s36 / 2, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center' },
   topTitle:  { ...t.heading, color: color.ink },
   body:      { padding: space.lg, gap: space.md },
 

@@ -964,7 +964,7 @@ const s = StyleSheet.create({
     padding: space.md,
   },
   bpIcon: {
-    width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2,
+    width: avatar.s40, height: avatar.s40, borderRadius: avatar.s40 / 2,
     backgroundColor: PP.paperDeep,
     alignItems: 'center', justifyContent: 'center',
   },
@@ -1011,7 +1011,7 @@ const s = StyleSheet.create({
   // Floating action buttons
   shareBtn: {
     position: 'absolute', right: space.lg + 38 + space.sm, zIndex: 20,
-    width: avatar.mdLg, height: avatar.mdLg, borderRadius: avatar.mdLg / 2,
+    width: avatar.s38, height: avatar.s38, borderRadius: avatar.s38 / 2,
     backgroundColor: PP.paper,
     borderWidth: 1, borderColor: PP.borderLight,
     alignItems: 'center', justifyContent: 'center',
@@ -1019,7 +1019,7 @@ const s = StyleSheet.create({
   },
   bellBtn: {
     position: 'absolute', right: space.lg, zIndex: 20,
-    width: avatar.mdLg, height: avatar.mdLg, borderRadius: avatar.mdLg / 2,
+    width: avatar.s38, height: avatar.s38, borderRadius: avatar.s38 / 2,
     backgroundColor: PP.paper,
     borderWidth: 1, borderColor: PP.borderLight,
     alignItems: 'center', justifyContent: 'center',

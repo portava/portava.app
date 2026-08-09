@@ -134,8 +134,8 @@ const DOT_VALUES = new Set([5, 6, 7, 8, 10, 12]);
  * extension of `avatar`). Added 2026-08-09 after migrating 86 recurring sites.
  *
  * `icon+avatar` band: 14–110px — extends the original 27–110px avatar band
- * down to 14 to cover the 14-26px icon-adjacent infill tokens (icon.smMd=16,
- * icon.lgXl=24). 64/72/96 are large-avatar tokens; intentional decorative
+ * down to 14 to cover the 14-26px icon-adjacent infill tokens (icon.s16=16,
+ * icon.s24=24). 64/72/96 are large-avatar tokens; intentional decorative
  * rings (70, 78, 110) are in the shrink-only allowlist (ceiling 3).
  */
 const WIDE_BAND_MIN = 14;
@@ -147,7 +147,7 @@ const WIDE_BAND_MAX = 110;
  * Everything in [DOT_BAND_MIN, DOT_BAND_MAX] is flagged as a `dot` kind
  * violation unless already in the allowlist. Background: 94 hardcoded
  * circles below 14px were found across 74 files. 86 were recurring
- * (5/6/7/8/10/12px) and migrated to dot.xxs/xs/sm/md/lg/xl. Four
+ * (5/6/7/8/10/12px) and migrated to dot.s5/s6/s7/s8/s10/s12. Four
  * intentional one-offs (AvailabilityCard 9px, TravelerMapLayer 11px,
  * StampItBurst 5px/6px) are in the allowlist.
  */

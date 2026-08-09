@@ -119,9 +119,9 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   avatar: {
-    width: avatar.xxxxxl,
-    height: avatar.xxxxxl,
-    borderRadius: avatar.xxxxxl / 2,
+    width: avatar.s96,
+    height: avatar.s96,
+    borderRadius: avatar.s96 / 2,
   },
   avatarPlaceholder: {
     backgroundColor: 'rgba(255,255,255,0.12)',

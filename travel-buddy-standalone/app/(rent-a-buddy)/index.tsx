@@ -610,7 +610,7 @@ const styles = StyleSheet.create({
     padding: space.lg, gap: space.xs, ...shadow.card,
   },
   catIcon: {
-    width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2,
+    width: avatar.s40, height: avatar.s40, borderRadius: avatar.s40 / 2,
     backgroundColor: '#EAF2F5', alignItems: 'center', justifyContent: 'center',
     marginBottom: space.xs,
   },

@@ -249,7 +249,7 @@ const styles = StyleSheet.create({
   card:        { backgroundColor: color.paperRaised, padding: space.lg, borderRadius: radius.lg, borderWidth: 1, borderColor: color.haze, ...shadow.card, gap: space.sm },
   head:        { flexDirection: 'row', alignItems: 'center', gap: 6 },
   headText:    { ...t.stamp, fontFamily: 'Courier', color: color.signal },
-  liveDot:     { width: dot.md, height: dot.md, borderRadius: dot.md / 2, backgroundColor: '#E53935' },
+  liveDot:     { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2, backgroundColor: '#E53935' },
   row:         { flexDirection: 'row', alignItems: 'center', gap: 6 },
   rowText:     { ...t.small, color: color.ink, flex: 1 },
   nudge:       { backgroundColor: color.paper, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, padding: space.md, gap: 2 },

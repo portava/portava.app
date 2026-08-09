@@ -345,11 +345,11 @@ const dm = StyleSheet.create({
   },
   center: {
     position: 'absolute', top: '45%', left: '47%',
-    width: icon.sm, height: icon.sm, borderRadius: icon.sm / 2,
+    width: icon.s14, height: icon.s14, borderRadius: icon.s14 / 2,
     backgroundColor: color.signal, borderWidth: 2, borderColor: color.paper,
   },
   clusterDot: {
-    position: 'absolute', width: icon.lg, height: icon.lg, borderRadius: icon.lg / 2,
+    position: 'absolute', width: icon.s22, height: icon.s22, borderRadius: icon.s22 / 2,
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 2, borderColor: color.paper,
   },
@@ -361,7 +361,7 @@ const dm = StyleSheet.create({
   cityText: { ...t.small, color: color.ink, fontWeight: '700', fontSize: 10 },
   legend: { flexDirection: 'row', gap: space.lg, padding: space.md },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  dot: { width: dot.lg, height: dot.lg, borderRadius: dot.lg / 2 },
+  dot: { width: dot.s10, height: dot.s10, borderRadius: dot.s10 / 2 },
   legendText: { ...t.small, color: color.mute, fontSize: 12 },
   noteRow: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.md, paddingBottom: space.md },
   note: { ...t.small, color: color.mute, fontSize: 11 },

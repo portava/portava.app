@@ -364,7 +364,7 @@ const s = StyleSheet.create({
   },
   headerTitle: { ...t.heading, color: color.onInk, flex: 1 },
   addBtn: {
-    width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36, borderRadius: avatar.s36 / 2,
     backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center',
   },
 });
@@ -409,7 +409,7 @@ const fi = StyleSheet.create({
 const num = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   btn: {
-    width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, borderWidth: 1.5, borderColor: color.haze,
+    width: avatar.s36, height: avatar.s36, borderRadius: avatar.s36 / 2, borderWidth: 1.5, borderColor: color.haze,
     alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised,
   },
   val: { ...t.heading, color: color.ink, minWidth: 48, textAlign: 'center', fontSize: 18 },

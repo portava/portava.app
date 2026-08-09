@@ -177,8 +177,8 @@ const s = StyleSheet.create({
   },
   bannerText: { ...t.small, color: color.mute, flex: 1 },
   mpMarker: {
-    width: avatar.sm, height: avatar.sm,
-    borderRadius: avatar.sm / 2,
+    width: avatar.s32, height: avatar.s32,
+    borderRadius: avatar.s32 / 2,
     backgroundColor: '#F57F17',
     alignItems: 'center',
     justifyContent: 'center',

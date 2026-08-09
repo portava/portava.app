@@ -330,8 +330,8 @@ const s = StyleSheet.create({
     gap: space.sm,
   },
   emptyIcon: {
-    width: avatar.lgXl, height: avatar.lgXl,
-    borderRadius: avatar.lgXl / 2,
+    width: avatar.s44, height: avatar.s44,
+    borderRadius: avatar.s44 / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',

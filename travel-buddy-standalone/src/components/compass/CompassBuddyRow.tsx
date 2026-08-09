@@ -40,7 +40,7 @@ interface Props {
 function BuddySkeleton() {
   return (
     <View style={[s.card, s.skeleton]}>
-      <View style={[s.skBar, { width: avatar.xxl, height: avatar.xxl, borderRadius: avatar.xxl / 2, marginBottom: space.sm }]} />
+      <View style={[s.skBar, { width: avatar.s56, height: avatar.s56, borderRadius: avatar.s56 / 2, marginBottom: space.sm }]} />
       <View style={[s.skBar, { width: 80, height: 10, marginBottom: 6 }]} />
       <View style={[s.skBar, { width: 60, height: 8, marginBottom: space.sm }]} />
       <View style={[s.skBar, { width: 70, height: 24, borderRadius: radius.md }]} />

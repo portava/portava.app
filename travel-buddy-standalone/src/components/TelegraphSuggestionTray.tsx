@@ -325,7 +325,7 @@ export function TelegraphSuggestionTray({
     <Animated.View style={[styles.tray, { opacity }]}>
       {stale && (
         <View style={styles.staleRow}>
-          <Clock size={icon.sm} color={color.faint} />
+          <Clock size={icon.s14} color={color.faint} />
           <Text style={styles.staleLabel}>From earlier</Text>
         </View>
       )}

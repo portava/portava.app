@@ -989,7 +989,7 @@ const s = StyleSheet.create({
   // Sizing/shape come from <Avatar size>; this carries layout only.
   avatarBox: { flexShrink: 0 },
   // The loading skeleton has no Avatar to size it, so it keeps its own.
-  avatarSkeleton: { width: avatar.xl, height: avatar.xl, borderRadius: avatar.xl / 2, backgroundColor: color.haze, flexShrink: 0 },
+  avatarSkeleton: { width: avatar.s48, height: avatar.s48, borderRadius: avatar.s48 / 2, backgroundColor: color.haze, flexShrink: 0 },
   groupAvatar: { borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
 
   nameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
@@ -1062,8 +1062,8 @@ const s = StyleSheet.create({
   sectionDividerLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: TG.hairline },
 
   requestsRowIcon: {
-    width: avatar.xl, height: avatar.xl,
-    borderRadius: avatar.xl / 2,
+    width: avatar.s48, height: avatar.s48,
+    borderRadius: avatar.s48 / 2,
     backgroundColor: color.signal + '14',
     alignItems: 'center',
     justifyContent: 'center',

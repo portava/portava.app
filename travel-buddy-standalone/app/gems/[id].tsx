@@ -795,7 +795,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   reasonRowActive: { borderBottomColor: '#4C8BF5' },
-  radio: { width: icon.md, height: icon.md, borderRadius: icon.md / 2, borderWidth: 2, borderColor: '#8A9BB5' },
+  radio: { width: icon.s18, height: icon.s18, borderRadius: icon.s18 / 2, borderWidth: 2, borderColor: '#8A9BB5' },
   radioActive: { borderColor: '#4C8BF5', backgroundColor: '#4C8BF5' },
   reasonText: { color: '#E8F0FE', fontSize: 15 },
 

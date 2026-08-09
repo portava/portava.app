@@ -171,8 +171,8 @@ const styles = StyleSheet.create({
     gap: space.md,
   },
   avatarWrap: {
-    width: avatar.lg, height: avatar.lg,
-    borderRadius: avatar.lg / 2,
+    width: avatar.s40, height: avatar.s40,
+    borderRadius: avatar.s40 / 2,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,

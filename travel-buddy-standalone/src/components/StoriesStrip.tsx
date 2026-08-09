@@ -119,7 +119,7 @@ const s = StyleSheet.create({
   avatarCircle: { backgroundColor: color.haze },
   plusBadge: {
     position: 'absolute', bottom: 0, right: 0,
-    width: icon.action, height: icon.action, borderRadius: icon.action / 2,
+    width: icon.s20, height: icon.s20, borderRadius: icon.s20 / 2,
     backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center',
     borderWidth: 2, borderColor: color.paper,
   },

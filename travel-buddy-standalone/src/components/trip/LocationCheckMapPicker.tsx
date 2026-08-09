@@ -43,8 +43,8 @@ function Pin({ selected, onPress }: { selected: boolean; onPress: () => void }) 
 
 const pin = StyleSheet.create({
   wrap: {
-    width: avatar.xs, height: avatar.xs,
-    borderRadius: avatar.xs / 2,
+    width: avatar.s28, height: avatar.s28,
+    borderRadius: avatar.s28 / 2,
     backgroundColor: color.signal,
     alignItems: 'center',
     justifyContent: 'center',
@@ -56,8 +56,8 @@ const pin = StyleSheet.create({
   },
   wrapSelected: {
     backgroundColor: color.deep,
-    width: avatar.smMd, height: avatar.smMd,
-    borderRadius: avatar.smMd / 2,
+    width: avatar.s34, height: avatar.s34,
+    borderRadius: avatar.s34 / 2,
   },
 });
 

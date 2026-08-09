@@ -67,8 +67,8 @@ describe('viewBox guards — the ink ratios are derived from these', () => {
 
 describe('one canonical size', () => {
   it('the action size is the design token, not an independent number', () => {
-    expect(POST_ACTION_ICON_SIZE).toBe(icon.action);
-    expect(ACTION_ICON_VISIBLE).toBe(icon.action);
+    expect(POST_ACTION_ICON_SIZE).toBe(icon.s20);
+    expect(ACTION_ICON_VISIBLE).toBe(icon.s20);
   });
 });
 

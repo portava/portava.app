@@ -1263,9 +1263,9 @@ const cs = StyleSheet.create({
     flexShrink: 0,
   },
   peekDot: {
-    width: dot.xxs,
-    height: dot.xxs,
-    borderRadius: dot.xxs / 2,
+    width: dot.s5,
+    height: dot.s5,
+    borderRadius: dot.s5 / 2,
   },
   peekBadgeText: {
     fontSize: 9,
@@ -1283,10 +1283,10 @@ const cs = StyleSheet.create({
     width: space.sm,
   },
   peekActionBtn: {
-    width: avatar.xs, height: avatar.xs,
+    width: avatar.s28, height: avatar.s28,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: avatar.xs / 2,
+    borderRadius: avatar.s28 / 2,
     backgroundColor: color.haze,
     flexShrink: 0,
   },
@@ -1339,8 +1339,8 @@ const cs = StyleSheet.create({
   },
   // Passport error card
   errorIconCircle: {
-    width: avatar.lgXl, height: avatar.lgXl,
-    borderRadius: avatar.lgXl / 2,
+    width: avatar.s44, height: avatar.s44,
+    borderRadius: avatar.s44 / 2,
     backgroundColor: '#FEF3C7',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1366,9 +1366,9 @@ const cs = StyleSheet.create({
     paddingVertical: 3,
   },
   typeDot: {
-    width: dot.xs,
-    height: dot.xs,
-    borderRadius: dot.xs / 2,
+    width: dot.s6,
+    height: dot.s6,
+    borderRadius: dot.s6 / 2,
   },
   typeLabel: {
     fontSize: 10,
@@ -1383,16 +1383,16 @@ const cs = StyleSheet.create({
     gap: space.sm,
   },
   iconCircle: {
-    width: avatar.lgLgXl, height: avatar.lgLgXl,
-    borderRadius: avatar.lgLgXl / 2,
+    width: avatar.s42, height: avatar.s42,
+    borderRadius: avatar.s42 / 2,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
     flexShrink: 0,
   },
   iconImg: {
-    width: avatar.lgLgXl, height: avatar.lgLgXl,
-    borderRadius: avatar.lgLgXl / 2,
+    width: avatar.s42, height: avatar.s42,
+    borderRadius: avatar.s42 / 2,
   },
   topText: {
     flex: 1,
@@ -1442,9 +1442,9 @@ const cs = StyleSheet.create({
     borderColor: '#FECACA',
   },
   liveDot: {
-    width: dot.xs,
-    height: dot.xs,
-    borderRadius: dot.xs / 2,
+    width: dot.s6,
+    height: dot.s6,
+    borderRadius: dot.s6 / 2,
     backgroundColor: '#DC2626',
   },
   statusChip: {
@@ -1452,9 +1452,9 @@ const cs = StyleSheet.create({
     borderColor: '#BBF7D0',
   },
   statusDot: {
-    width: dot.xs,
-    height: dot.xs,
-    borderRadius: dot.xs / 2,
+    width: dot.s6,
+    height: dot.s6,
+    borderRadius: dot.s6 / 2,
     backgroundColor: color.success,
   },
   // Trip member avatars
@@ -1470,8 +1470,8 @@ const cs = StyleSheet.create({
   },
   // Friend avatar
   avatarWrap: {
-    width: avatar.lgLgXl, height: avatar.lgLgXl,
-    borderRadius: avatar.lgLgXl / 2,
+    width: avatar.s42, height: avatar.s42,
+    borderRadius: avatar.s42 / 2,
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1479,12 +1479,12 @@ const cs = StyleSheet.create({
     flexShrink: 0,
   },
   avatarImg: {
-    width: avatar.md, height: avatar.md,
-    borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36,
+    borderRadius: avatar.s36 / 2,
   },
   avatarFallback: {
-    width: avatar.md, height: avatar.md,
-    borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36,
+    borderRadius: avatar.s36 / 2,
     alignItems: 'center',
     justifyContent: 'center',
   },

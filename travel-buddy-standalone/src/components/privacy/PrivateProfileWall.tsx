@@ -93,9 +93,9 @@ const s = StyleSheet.create({
     gap: space.md,
   },
   avatarPlaceholder: {
-    width: avatar.xxxxl,
-    height: avatar.xxxxl,
-    borderRadius: avatar.xxxxl / 2,
+    width: avatar.s72,
+    height: avatar.s72,
+    borderRadius: avatar.s72 / 2,
     backgroundColor: color.haze,
     alignItems: 'center' as const,
     justifyContent: 'center' as const,

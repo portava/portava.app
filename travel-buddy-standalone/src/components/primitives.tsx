@@ -46,7 +46,7 @@ export function TravelSectionHeader({
       {onAction && (
         <Pressable style={({ pressed }) => [sh.action, pressed && { opacity: layout.pressedOpacity }]} onPress={onAction} hitSlop={layout.hitSlop}>
           <Text style={sh.actionText}>{actionLabel}</Text>
-          <ChevronRight size={icon.sm} color={color.signal} />
+          <ChevronRight size={icon.s14} color={color.signal} />
         </Pressable>
       )}
     </View>
@@ -112,7 +112,7 @@ export function TravelIconButton({ icon: glyph, onPress, accessibilityLabel }: {
 export function TravelFilterButton({ count = 0, onPress, label = 'Filter' }: { count?: number; onPress?: () => void; label?: string }) {
   return (
     <Pressable style={({ pressed }) => [fb.box, pressed && { opacity: layout.pressedOpacity }]} onPress={onPress} hitSlop={layout.hitSlop}>
-      <SlidersHorizontal size={icon.md} color={color.ink} />
+      <SlidersHorizontal size={icon.s18} color={color.ink} />
       <Text style={fb.text}>{label}</Text>
       {count > 0 && <View style={fb.badge}><Text style={fb.badgeText}>{count}</Text></View>}
     </Pressable>
@@ -201,7 +201,7 @@ const btn = {
 };
 
 const ib = StyleSheet.create({
-  box: { width: avatar.lgLgXl, height: avatar.lgLgXl, borderRadius: avatar.lgLgXl / 2, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
+  box: { width: avatar.s42, height: avatar.s42, borderRadius: avatar.s42 / 2, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
 });
 
 const fb = StyleSheet.create({

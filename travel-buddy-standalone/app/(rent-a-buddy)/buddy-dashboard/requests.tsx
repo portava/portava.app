@@ -538,7 +538,7 @@ const s = StyleSheet.create({
 const rc = StyleSheet.create({
   topRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, marginBottom: space.md },
   avatar: {
-    width: avatar.lgXl, height: avatar.lgXl, borderRadius: avatar.lgXl / 2,
+    width: avatar.s44, height: avatar.s44, borderRadius: avatar.s44 / 2,
     backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center',
   },
   avatarText: { ...t.bodyStrong, color: color.mute },
@@ -587,11 +587,11 @@ const modal = StyleSheet.create({
   optionText: { ...t.body, color: color.ink },
   optionActive: { color: color.signal, fontWeight: '600' },
   radio: {
-    width: icon.action, height: icon.action, borderRadius: icon.action / 2, borderWidth: 1.5,
+    width: icon.s20, height: icon.s20, borderRadius: icon.s20 / 2, borderWidth: 1.5,
     borderColor: color.haze, alignItems: 'center', justifyContent: 'center',
   },
   radioOn: { borderColor: color.signal },
-  radioDot: { width: dot.lg, height: dot.lg, borderRadius: dot.lg / 2, backgroundColor: color.signal },
+  radioDot: { width: dot.s10, height: dot.s10, borderRadius: dot.s10 / 2, backgroundColor: color.signal },
   input: {
     borderWidth: 1.5, borderColor: color.haze, borderRadius: radius.md,
     paddingHorizontal: space.md, paddingVertical: space.md,

@@ -462,7 +462,7 @@ const styles = StyleSheet.create({
     padding: space.md,
   },
   rowIcon: {
-    width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36, borderRadius: avatar.s36 / 2,
     backgroundColor: color.deep + '18',
     alignItems: 'center', justifyContent: 'center',
     marginTop: 1,

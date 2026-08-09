@@ -242,8 +242,8 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: 20,
-    width: avatar.xlXxl, height: avatar.xlXxl,
-    borderRadius: avatar.xlXxl / 2,
+    width: avatar.s52, height: avatar.s52,
+    borderRadius: avatar.s52 / 2,
     backgroundColor: color.signal,
     alignItems: 'center',
     justifyContent: 'center',
@@ -259,8 +259,8 @@ const styles = StyleSheet.create({
   gridCreateBtn: {
     position: 'absolute',
     right: 16,
-    width: avatar.md, height: avatar.md,
-    borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36,
+    borderRadius: avatar.s36 / 2,
     backgroundColor: color.paperRaised,
     borderWidth: 1,
     borderColor: color.haze,

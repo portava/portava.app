@@ -58,7 +58,7 @@ const sv = StyleSheet.create({
     gap: space.sm,
   },
   iconWrap: {
-    width: avatar.xxl, height: avatar.xxl, borderRadius: avatar.xxl / 2,
+    width: avatar.s56, height: avatar.s56, borderRadius: avatar.s56 / 2,
     backgroundColor: color.haze,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: space.xs,
@@ -448,14 +448,14 @@ const pc = StyleSheet.create({
   },
   locChipText: { fontSize: 11, fontWeight: '600', color: '#fff' },
   cornerBadge: {
-    position: 'absolute', width: icon.xl, height: icon.xl, borderRadius: icon.xl / 2,
+    position: 'absolute', width: icon.s26, height: icon.s26, borderRadius: icon.s26 / 2,
     backgroundColor: 'rgba(0,0,0,0.48)', alignItems: 'center', justifyContent: 'center',
   },
   pinBadge: { top: space.sm, right: space.xl + space.sm },
   menuBtn: { top: space.sm, right: space.sm },
   typeBadge: {
     position: 'absolute', bottom: space.sm, right: space.sm,
-    width: icon.xl, height: icon.xl, borderRadius: icon.xl / 2,
+    width: icon.s26, height: icon.s26, borderRadius: icon.s26 / 2,
     backgroundColor: 'rgba(0,0,0,0.48)', alignItems: 'center', justifyContent: 'center',
   },
   stateBadge: {

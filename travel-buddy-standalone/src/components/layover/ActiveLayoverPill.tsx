@@ -49,6 +49,6 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
     elevation: 6, maxWidth: '86%',
   },
-  pulseDot: { width: dot.sm, height: dot.sm, borderRadius: dot.sm / 2, backgroundColor: color.signal },
+  pulseDot: { width: dot.s7, height: dot.s7, borderRadius: dot.s7 / 2, backgroundColor: color.signal },
   text: { ...t.small, fontWeight: '700', color: color.onInk, flexShrink: 1 },
 });

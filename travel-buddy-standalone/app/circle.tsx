@@ -502,7 +502,7 @@ export default function Circle() {
 const styles = StyleSheet.create({
   chatBtn: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginHorizontal: space.lg, marginTop: space.md, paddingVertical: space.sm + 2, paddingHorizontal: space.lg, borderRadius: radius.pill, backgroundColor: color.signal },
   chatBtnText: { ...t.bodyStrong, color: color.onInk, fontSize: 14 },
-  unreadDot: { position: 'absolute', top: -3, right: -3, width: dot.sm, height: dot.sm, borderRadius: dot.sm / 2, backgroundColor: color.onInk },
+  unreadDot: { position: 'absolute', top: -3, right: -3, width: dot.s7, height: dot.s7, borderRadius: dot.s7 / 2, backgroundColor: color.onInk },
   tabBar: { flexDirection: 'row', gap: space.sm, margin: space.lg, marginBottom: 0, padding: 4, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill },
   tab: { flex: 1, paddingVertical: space.sm, borderRadius: radius.pill, alignItems: 'center' },
   tabActive: { backgroundColor: color.ink },
@@ -537,7 +537,7 @@ const styles = StyleSheet.create({
   safeReturnHintBold: { fontWeight: '700', color: color.ink },
 
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md },
-  avatar: { width: avatar.xlXxl, height: avatar.xlXxl, borderRadius: avatar.xlXxl / 2, backgroundColor: color.haze },
+  avatar: { width: avatar.s52, height: avatar.s52, borderRadius: avatar.s52 / 2, backgroundColor: color.haze },
   avatarEmpty: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0EDE8' },
   name: { ...t.bodyStrong, color: color.ink },
   handle: { ...t.small, color: color.mute, marginTop: 2, fontFamily: 'Courier' },
@@ -565,7 +565,7 @@ const styles = StyleSheet.create({
   ageSaveBtnText: { ...t.bodyStrong, color: color.onInk, fontSize: 13 },
   toggle: { width: 44, height: 26, borderRadius: 13, backgroundColor: color.haze, justifyContent: 'center', paddingHorizontal: 2 },
   toggleOn: { backgroundColor: color.signal },
-  toggleThumb: { width: icon.lg, height: icon.lg, borderRadius: icon.lg / 2, backgroundColor: color.paperRaised },
+  toggleThumb: { width: icon.s22, height: icon.s22, borderRadius: icon.s22 / 2, backgroundColor: color.paperRaised },
   toggleThumbOn: { alignSelf: 'flex-end' },
   tripInviteBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: 16, marginTop: 8, marginBottom: 2, backgroundColor: '#EFF6FF', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: '#BFDBFE' },
   tripInviteBannerText: { fontSize: 13, fontWeight: '600', color: '#1D4ED8', flexShrink: 1 },

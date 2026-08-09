@@ -190,7 +190,7 @@ const styles = StyleSheet.create({
   backBtnText: { color: '#4C8BF5', fontWeight: '600' },
 
   profileCard: { alignItems: 'center', paddingHorizontal: 20, paddingVertical: 24, gap: 12 },
-  avatarCircle: { width: avatar.xxxxl, height: avatar.xxxxl, borderRadius: avatar.xxxxl / 2, backgroundColor: '#1E2D45', alignItems: 'center', justifyContent: 'center' },
+  avatarCircle: { width: avatar.s72, height: avatar.s72, borderRadius: avatar.s72 / 2, backgroundColor: '#1E2D45', alignItems: 'center', justifyContent: 'center' },
   levelBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1.5, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6 },
   levelText: { fontSize: 14, fontWeight: '600' },
   cities: { color: '#8A9BB5', fontSize: 14, textAlign: 'center' },

@@ -217,7 +217,7 @@ const styles = StyleSheet.create({
   fitText:   { ...t.small, color: color.mute },
 
   stopRow:   { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.sm, borderBottomWidth: 1, borderBottomColor: color.haze },
-  orderCol:  { width: icon.xl, height: icon.xl, borderRadius: icon.xl / 2, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center' },
+  orderCol:  { width: icon.s26, height: icon.s26, borderRadius: icon.s26 / 2, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center' },
   orderNum:  { ...t.stamp, color: color.mute },
   stopTitle: { ...t.bodyStrong, color: color.ink },
   stopMeta:  { flexDirection: 'row', gap: space.sm, marginTop: 2, flexWrap: 'wrap' },

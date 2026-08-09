@@ -723,8 +723,8 @@ const s = StyleSheet.create({
     marginBottom: space.sm,
   },
   newThreadIcon: {
-    width: avatar.md, height: avatar.md,
-    borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36,
+    borderRadius: avatar.s36 / 2,
     backgroundColor: color.signal + '15',
     alignItems: 'center',
     justifyContent: 'center',
@@ -748,7 +748,7 @@ const s = StyleSheet.create({
   threadName: { fontSize: 14, fontWeight: '700', color: color.ink },
   threadNameSelected: { color: color.signal },
   threadSub: { fontSize: 11, color: color.mute, marginTop: 1 },
-  checkBadge: { width: icon.action, height: icon.action, borderRadius: icon.action / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
+  checkBadge: { width: icon.s20, height: icon.s20, borderRadius: icon.s20 / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
   checkText: { fontSize: 12, color: color.onInk, fontWeight: '700' },
 
   sendBtn: {

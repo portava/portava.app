@@ -298,8 +298,8 @@ const s = StyleSheet.create({
     elevation: 8,
   },
   iconWrap: {
-    width: avatar.xs, height: avatar.xs,
-    borderRadius: avatar.xs / 2,
+    width: avatar.s28, height: avatar.s28,
+    borderRadius: avatar.s28 / 2,
     backgroundColor: 'rgba(255,255,255,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -312,8 +312,8 @@ const s = StyleSheet.create({
     paddingVertical: 0,
   },
   sendBtn: {
-    width: avatar.xsSm, height: avatar.xsSm,
-    borderRadius: avatar.xsSm / 2,
+    width: avatar.s30, height: avatar.s30,
+    borderRadius: avatar.s30 / 2,
     backgroundColor: 'rgba(255,255,255,0.18)',
     alignItems: 'center',
     justifyContent: 'center',

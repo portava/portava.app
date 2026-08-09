@@ -432,10 +432,10 @@ const sab = StyleSheet.create({
   },
   large: { padding: space.xl },
   iconWrap: {
-    width: avatar.lgXl, height: avatar.lgXl, borderRadius: avatar.lgXl / 2,
+    width: avatar.s44, height: avatar.s44, borderRadius: avatar.s44 / 2,
     alignItems: 'center', justifyContent: 'center',
   },
-  iconLarge: { width: avatar.xlXxl, height: avatar.xlXxl, borderRadius: avatar.xlXxl / 2 },
+  iconLarge: { width: avatar.s52, height: avatar.s52, borderRadius: avatar.s52 / 2 },
   label: { ...t.bodyStrong, color: color.ink },
   labelLarge: { fontSize: 17 },
   sub: { ...t.small, color: color.mute, lineHeight: 17, marginTop: 2 },
@@ -457,11 +457,11 @@ const modal = StyleSheet.create({
   optionText: { ...t.body, color: color.ink, flex: 1 },
   optionTextActive: { color: color.signal, fontWeight: '600' },
   radio: {
-    width: icon.action, height: icon.action, borderRadius: icon.action / 2, borderWidth: 1.5,
+    width: icon.s20, height: icon.s20, borderRadius: icon.s20 / 2, borderWidth: 1.5,
     borderColor: color.haze, alignItems: 'center', justifyContent: 'center',
   },
   radioOn: { borderColor: color.signal },
-  radioDot: { width: dot.lg, height: dot.lg, borderRadius: dot.lg / 2, backgroundColor: color.signal },
+  radioDot: { width: dot.s10, height: dot.s10, borderRadius: dot.s10 / 2, backgroundColor: color.signal },
   input: {
     borderWidth: 1.5, borderColor: color.haze, borderRadius: radius.md,
     padding: space.md, ...t.body, color: color.ink,

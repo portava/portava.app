@@ -61,8 +61,8 @@ const s = StyleSheet.create({
   list: { gap: 4 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   dot: {
-    width: icon.md, height: icon.md,
-    borderRadius: icon.md / 2,
+    width: icon.s18, height: icon.s18,
+    borderRadius: icon.s18 / 2,
     backgroundColor: color.signal,
     alignItems: 'center',
     justifyContent: 'center',

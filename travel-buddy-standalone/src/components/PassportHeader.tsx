@@ -93,7 +93,7 @@ const styles = StyleSheet.create({
   },
   cell: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 4, borderRadius: radius.sm },
   cellPressed: { backgroundColor: color.haze },
-  iconCircle: { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, alignItems: 'center', justifyContent: 'center' },
+  iconCircle: { width: avatar.s36, height: avatar.s36, borderRadius: avatar.s36 / 2, alignItems: 'center', justifyContent: 'center' },
   cellText: {},
   divider: { width: 1, height: 30, backgroundColor: color.haze },
   n: { ...t.heading, color: color.ink, fontSize: 18 },

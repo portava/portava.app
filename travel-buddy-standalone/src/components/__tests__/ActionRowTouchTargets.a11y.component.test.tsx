@@ -184,7 +184,7 @@ describe('the shared pad is derived from the floor, not guessed', () => {
   it('the icon size is still the design token — the pad is what moved', () => {
     // If a future "fix" reaches 44 by growing the icon instead, this fails and
     // ui/ActionRowIcon.tsx's one-visible-size guarantee is preserved.
-    expect(POST_ACTION_ICON_SIZE).toBe(icon.action);
+    expect(POST_ACTION_ICON_SIZE).toBe(icon.s20);
     expect(POST_ACTION_ICON_SIZE).toBeLessThan(MIN_TOUCH);
   });
 });

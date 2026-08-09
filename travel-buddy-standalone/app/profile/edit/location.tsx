@@ -589,7 +589,7 @@ const sx = StyleSheet.create({
   },
   radioRowActive: { borderColor: PP.ink, backgroundColor: PP.paperDeep },
   radio: {
-    width: icon.md, height: icon.md, borderRadius: icon.md / 2, borderWidth: 2,
+    width: icon.s18, height: icon.s18, borderRadius: icon.s18 / 2, borderWidth: 2,
     borderColor: PP.border, marginTop: 2, flexShrink: 0,
   },
   radioChecked: { borderColor: PP.ink, backgroundColor: PP.ink },
@@ -611,5 +611,5 @@ const sx = StyleSheet.create({
   sheetOptionLabel: { ...t.body, color: PP.ink, fontSize: 14, fontWeight: '600' },
   sheetOptionSelected: { color: PP.inkLight },
   sheetOptionDesc: { ...t.small, color: PP.inkMuted, fontSize: 12, lineHeight: 16 },
-  checkDot: { width: dot.md, height: dot.md, borderRadius: dot.md / 2, backgroundColor: PP.inkLight },
+  checkDot: { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2, backgroundColor: PP.inkLight },
 });

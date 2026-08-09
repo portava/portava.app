@@ -127,27 +127,27 @@ const styles = StyleSheet.create({
 }
 
 {
-  // dot.md token usage — must NOT be caught (no numeric literals)
+  // dot.s8 token usage — must NOT be caught (no numeric literals)
   const { exitCode } = runGuard(`
 import { View, StyleSheet } from 'react-native';
 import { dot } from '../theme/tokens.ts';
 const styles = StyleSheet.create({
-  liveDot: { width: dot.md, height: dot.md, borderRadius: dot.md / 2 },
+  liveDot: { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2 },
 });
 `);
-  expect('dot.md token usage → guard exits 0', exitCode, 0);
+  expect('dot.s8 token usage → guard exits 0', exitCode, 0);
 }
 
 {
-  // dot.xs token usage — must NOT be caught
+  // dot.s6 token usage — must NOT be caught
   const { exitCode } = runGuard(`
 import { View, StyleSheet } from 'react-native';
 import { dot } from '../theme/tokens.ts';
 const styles = StyleSheet.create({
-  pageDot: { width: dot.xs, height: dot.xs, borderRadius: dot.xs / 2 },
+  pageDot: { width: dot.s6, height: dot.s6, borderRadius: dot.s6 / 2 },
 });
 `);
-  expect('dot.xs token usage → guard exits 0', exitCode, 0);
+  expect('dot.s6 token usage → guard exits 0', exitCode, 0);
 }
 
 // ── avatar-band tests (27–56px) ───────────────────────────────────────────────
@@ -177,15 +177,15 @@ const styles = StyleSheet.create({
 }
 
 {
-  // avatar.md token — must NOT be caught
+  // avatar.s36 token — must NOT be caught
   const { exitCode } = runGuard(`
 import { View, StyleSheet } from 'react-native';
 import { avatar } from '../theme/tokens.ts';
 const styles = StyleSheet.create({
-  av: { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2 },
+  av: { width: avatar.s36, height: avatar.s36, borderRadius: avatar.s36 / 2 },
 });
 `);
-  expect('avatar.md token usage → guard exits 0', exitCode, 0);
+  expect('avatar.s36 token usage → guard exits 0', exitCode, 0);
 }
 
 // ── boundary / edge cases ─────────────────────────────────────────────────────

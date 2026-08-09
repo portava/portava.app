@@ -100,7 +100,8 @@ export const shadow = {
  * icon-button wrappers across unrelated components), not typos of existing tokens.
  * Named by bounding-tier concatenation, matching the `avatar` infill convention.
  */
-export const icon = { sm: 14, smMd: 16, md: 18, lg: 22, lgXl: 24, xl: 26, action: 20 } as const;
+/** Every key is `s<value>` — see `avatar`'s doc comment for why. */
+export const icon = { s14: 14, s16: 16, s18: 18, s20: 20, s22: 22, s24: 24, s26: 26 } as const;
 
 /**
  * Named typography roles — every text element in the app maps to exactly one
@@ -190,33 +191,41 @@ export const aspect = { wide: 16 / 9, card: 4 / 3, square: 1, portrait: 4 / 5, s
  * All existing call sites are migrated as of this pass. See
  * scripts/check-avatar-icon-sizing.mjs for the guard + shrink-only allowlist.
  */
+/**
+ * Every key is `s<value>` — the key states its own pixel value, so the
+ * name can never drift from what it means. Tier-letter keys (xs/sm/mdLg/…)
+ * were deliberately replaced with this numeric convention: tier-letter
+ * concatenation collapses once enough infill values exist (see `xxxxxl`,
+ * the reductio of that scheme) and it forces readers to memorize an
+ * arbitrary ladder instead of reading the value directly off the key.
+ */
 export const avatar = {
-  xs: 28,
-  xsSm: 30,
-  sm: 32,
-  smMd: 34,
-  md: 36,
-  mdLg: 38,
-  lg: 40,
-  lgLgXl: 42,
-  lgXl: 44,
-  lgXlXl: 46,
-  xl: 48,
-  xlXxl: 52,
-  xxl: 56,
+  s28: 28,
+  s30: 30,
+  s32: 32,
+  s34: 34,
+  s36: 36,
+  s38: 38,
+  s40: 40,
+  s42: 42,
+  s44: 44,
+  s46: 46,
+  s48: 48,
+  s52: 52,
+  s56: 56,
   /**
-   * `xxxl` (64), `xxxxl` (72), and `xxxxxl` (96) were added 2026-08-09 after
-   * a follow-up sweep of circular-box literals above 56px. 64 appears at 9
-   * independent call sites across error/empty-state/map placeholder circles;
-   * 72 appears at 3 sites (trust rings, icon wraps); 96 appears at 2 sites
-   * (profile-photo edit screen). All are the same RECURRING pattern. One-offs
-   * (60→64, 68→64, 80→72, 88→96, 90→96) were snapped to the nearest token.
-   * Intentional decorative rings (70px/110px in CrewMapSection, 78px in
-   * PassportMarks) are kept as hardcoded values and recorded in the allowlist.
+   * `s64`, `s72`, and `s96` were added 2026-08-09 after a follow-up sweep of
+   * circular-box literals above 56px. 64 appears at 9 independent call sites
+   * across error/empty-state/map placeholder circles; 72 appears at 3 sites
+   * (trust rings, icon wraps); 96 appears at 2 sites (profile-photo edit
+   * screen). All are the same RECURRING pattern. One-offs (60→64, 68→64,
+   * 80→72, 88→96, 90→96) were snapped to the nearest token. Intentional
+   * decorative rings (70px/110px in CrewMapSection, 78px in PassportMarks)
+   * are kept as hardcoded values and recorded in the allowlist.
    */
-  xxxl: 64,
-  xxxxl: 72,
-  xxxxxl: 96,
+  s64: 64,
+  s72: 72,
+  s96: 96,
 } as const;
 
 /**
@@ -239,14 +248,16 @@ export const avatar = {
  * `dot` is deliberately separate from `avatar` / `icon` — dots and indicators
  * are a different UI category (they are not interchangeable with avatar or
  * icon-button containers) and their sub-14px range is below the `icon` floor.
+ *
+ * Every key is `s<value>` — see `avatar`'s doc comment for why.
  */
 export const dot = {
-  xxs: 5,
-  xs:  6,
-  sm:  7,
-  md:  8,
-  lg:  10,
-  xl:  12,
+  s5: 5,
+  s6: 6,
+  s7: 7,
+  s8: 8,
+  s10: 10,
+  s12: 12,
 } as const;
 
 /** Layout constraints. */

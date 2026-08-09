@@ -454,7 +454,7 @@ export default function PrivacyVisibilityScreen() {
 const st = StyleSheet.create({
   center: { paddingVertical: space.xxl, alignItems: 'center', justifyContent: 'center' },
   radio: {
-    width: icon.action, height: icon.action, borderRadius: icon.action / 2,
+    width: icon.s20, height: icon.s20, borderRadius: icon.s20 / 2,
     borderWidth: 2, borderColor: PP.border,
   },
   radioChecked: { borderColor: PP.inkLight, backgroundColor: PP.inkLight },

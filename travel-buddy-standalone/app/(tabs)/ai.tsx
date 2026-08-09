@@ -555,7 +555,7 @@ const styles = StyleSheet.create({
   actionText:    { ...t.small, fontWeight: '700', color: color.onInk },
   inputBar:      { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.md, borderTopWidth: 1, borderTopColor: color.haze, backgroundColor: color.paper },
   input:         { flex: 1, ...t.body, color: color.ink, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill, paddingHorizontal: space.lg, paddingVertical: space.md },
-  sendBtn:       { width: avatar.lgXl, height: avatar.lgXl, borderRadius: avatar.lgXl / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
+  sendBtn:       { width: avatar.s44, height: avatar.s44, borderRadius: avatar.s44 / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
   sendBtnDisabled: { opacity: 0.45 },
-  layoverBtn:    { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, backgroundColor: '#1565C0', alignItems: 'center', justifyContent: 'center' },
+  layoverBtn:    { width: avatar.s36, height: avatar.s36, borderRadius: avatar.s36 / 2, backgroundColor: '#1565C0', alignItems: 'center', justifyContent: 'center' },
 });

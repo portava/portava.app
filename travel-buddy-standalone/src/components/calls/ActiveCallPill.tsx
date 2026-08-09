@@ -67,11 +67,11 @@ const s = StyleSheet.create({
     backgroundColor: '#159447',
     shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 8, elevation: 5,
   },
-  liveDot: { width: dot.md, height: dot.md, borderRadius: dot.md / 2, backgroundColor: '#fff' },
+  liveDot: { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2, backgroundColor: '#fff' },
   label: { fontSize: 13.5, fontWeight: '700', color: '#fff' },
   time: { fontSize: 11.5, color: 'rgba(255,255,255,0.85)', fontVariant: ['tabular-nums'] },
   iconBtn: {
-    width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2,
+    width: avatar.s32, height: avatar.s32, borderRadius: avatar.s32 / 2,
     backgroundColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center', justifyContent: 'center',
   },

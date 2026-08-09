@@ -406,7 +406,7 @@ const stat = StyleSheet.create({
     alignItems: 'center', gap: 3,
     borderWidth: 1, borderColor: color.haze, ...shadow.card,
   },
-  iconWrap: { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
+  iconWrap: { width: avatar.s36, height: avatar.s36, borderRadius: avatar.s36 / 2, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
   value: { ...t.heading, color: color.ink, fontSize: 20 },
   label: { fontFamily: 'Courier', fontSize: 9, color: color.mute, letterSpacing: 1, textAlign: 'center' },
   sub: { ...t.small, color: color.haze, textAlign: 'center', fontSize: 11 },

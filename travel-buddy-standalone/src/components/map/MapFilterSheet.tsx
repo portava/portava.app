@@ -197,8 +197,8 @@ const s = StyleSheet.create({
     color: color.ink,
   },
   closeBtn: {
-    width: avatar.sm, height: avatar.sm,
-    borderRadius: avatar.sm / 2,
+    width: avatar.s32, height: avatar.s32,
+    borderRadius: avatar.s32 / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',
@@ -226,8 +226,8 @@ const s = StyleSheet.create({
     borderBottomColor: color.haze,
   },
   swatch: {
-    width: icon.md, height: icon.md,
-    borderRadius: icon.md / 2,
+    width: icon.s18, height: icon.s18,
+    borderRadius: icon.s18 / 2,
     flexShrink: 0,
   },
   rowText: {

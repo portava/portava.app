@@ -634,9 +634,9 @@ const s = StyleSheet.create({
   scrubHandle: {
     position: 'absolute',
     bottom: -4.5,   // vertically centre on the 3-px track
-    width: dot.xl,
-    height: dot.xl,
-    borderRadius: dot.xl / 2,
+    width: dot.s12,
+    height: dot.s12,
+    borderRadius: dot.s12 / 2,
     backgroundColor: '#fff',
     shadowColor: '#000',
     shadowOpacity: 0.35,
@@ -670,8 +670,8 @@ const s = StyleSheet.create({
   muteBtn: {
     position: 'absolute',
     right: 16,
-    width: avatar.md, height: avatar.md,
-    borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36,
+    borderRadius: avatar.s36 / 2,
     backgroundColor: 'rgba(17,17,15,0.55)',
     alignItems: 'center',
     justifyContent: 'center',

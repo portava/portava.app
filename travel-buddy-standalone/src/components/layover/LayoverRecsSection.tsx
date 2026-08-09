@@ -123,6 +123,6 @@ const styles = StyleSheet.create({
   metaStamp: { ...t.stamp, color: color.faint },
   warning:   { ...t.small, color: color.warn, marginTop: 4 },
 
-  addBtn:    { width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2, borderWidth: 1.5, borderColor: color.deep, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
-  addedBadge:{ width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2, backgroundColor: 'rgba(46,125,91,0.12)', alignItems: 'center', justifyContent: 'center', marginTop: 4 },
+  addBtn:    { width: avatar.s34, height: avatar.s34, borderRadius: avatar.s34 / 2, borderWidth: 1.5, borderColor: color.deep, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
+  addedBadge:{ width: avatar.s34, height: avatar.s34, borderRadius: avatar.s34 / 2, backgroundColor: 'rgba(46,125,91,0.12)', alignItems: 'center', justifyContent: 'center', marginTop: 4 },
 });

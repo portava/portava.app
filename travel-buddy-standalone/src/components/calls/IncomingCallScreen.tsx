@@ -93,7 +93,7 @@ const s = StyleSheet.create({
   },
   actionWrap: { alignItems: 'center', gap: 8, width: 92 },
   actionBtn: {
-    width: avatar.xxxl, height: avatar.xxxl, borderRadius: avatar.xxxl / 2,
+    width: avatar.s64, height: avatar.s64, borderRadius: avatar.s64 / 2,
     alignItems: 'center', justifyContent: 'center',
     shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 10, elevation: 6,
   },

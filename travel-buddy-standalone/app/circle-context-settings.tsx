@@ -392,8 +392,8 @@ const s = StyleSheet.create({
     backgroundColor: '#EAF2F4',
   },
   radio: {
-    width: icon.md, height: icon.md,
-    borderRadius: icon.md / 2,
+    width: icon.s18, height: icon.s18,
+    borderRadius: icon.s18 / 2,
     borderWidth: 2,
     borderColor: color.haze,
     marginTop: 2,

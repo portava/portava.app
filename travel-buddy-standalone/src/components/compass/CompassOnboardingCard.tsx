@@ -326,9 +326,9 @@ const s = StyleSheet.create({
     marginVertical: space.xs,
   },
   dot: {
-    width: dot.xs,
-    height: dot.xs,
-    borderRadius: dot.xs / 2,
+    width: dot.s6,
+    height: dot.s6,
+    borderRadius: dot.s6 / 2,
     backgroundColor: color.haze,
   },
   dotActive: {
@@ -401,8 +401,8 @@ const s = StyleSheet.create({
     backgroundColor: color.signal + '08',
   },
   optionDot: {
-    width: icon.sm, height: icon.sm,
-    borderRadius: icon.sm / 2,
+    width: icon.s14, height: icon.s14,
+    borderRadius: icon.s14 / 2,
     borderWidth: 1.5,
     borderColor: color.haze,
   },

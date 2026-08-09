@@ -132,8 +132,8 @@ const s = StyleSheet.create({
     gap: 8,
   },
   iconCircle: {
-    width: avatar.xl, height: avatar.xl,
-    borderRadius: avatar.xl / 2,
+    width: avatar.s48, height: avatar.s48,
+    borderRadius: avatar.s48 / 2,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 4,
@@ -160,8 +160,8 @@ const s = StyleSheet.create({
     backgroundColor: '#13213A',
   },
   pin: {
-    width: avatar.xsSm, height: avatar.xsSm,
-    borderRadius: avatar.xsSm / 2,
+    width: avatar.s30, height: avatar.s30,
+    borderRadius: avatar.s30 / 2,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,

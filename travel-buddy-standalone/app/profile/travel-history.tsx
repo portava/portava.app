@@ -281,7 +281,7 @@ const r = StyleSheet.create({
     paddingHorizontal: space.md, paddingVertical: space.md, gap: space.sm, minHeight: 64,
   },
   tripIcon: {
-    width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2,
+    width: avatar.s32, height: avatar.s32, borderRadius: avatar.s32 / 2,
     backgroundColor: PP.borderLight, alignItems: 'center', justifyContent: 'center',
   },
   tripBody: { flex: 1, gap: 2 },
@@ -294,7 +294,7 @@ const r = StyleSheet.create({
     paddingHorizontal: space.md, paddingVertical: 12, gap: space.sm, minHeight: 44,
   },
   placeIcon: {
-    width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2,
+    width: avatar.s28, height: avatar.s28, borderRadius: avatar.s28 / 2,
     backgroundColor: PP.borderLight, alignItems: 'center', justifyContent: 'center',
   },
   placeLabel: { flex: 1, fontFamily: 'Courier', fontSize: 13, color: PP.ink },

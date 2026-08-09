@@ -372,7 +372,7 @@ const disputeStyles = StyleSheet.create({
   },
   reasonRowActive: { backgroundColor: color.paper },
   radio: {
-    width: icon.smMd, height: icon.smMd, borderRadius: icon.smMd / 2,
+    width: icon.s16, height: icon.s16, borderRadius: icon.s16 / 2,
     borderWidth: 2, borderColor: color.haze,
   },
   radioActive: { borderColor: color.signal, backgroundColor: color.signal },
@@ -829,7 +829,7 @@ const buddy = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: color.haze,
   },
   avatar: {
-    width: avatar.lgXl, height: avatar.lgXl, borderRadius: avatar.lgXl / 2,
+    width: avatar.s44, height: avatar.s44, borderRadius: avatar.s44 / 2,
     backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center',
   },
   initial: { fontSize: 18, fontWeight: '700', color: color.onInk },
@@ -862,7 +862,7 @@ const route = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: color.haze,
   },
   stepBadge: {
-    width: icon.lgXl, height: icon.lgXl, borderRadius: icon.lgXl / 2,
+    width: icon.s24, height: icon.s24, borderRadius: icon.s24 / 2,
     backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center',
     marginTop: 2,
   },
@@ -873,7 +873,7 @@ const route = StyleSheet.create({
 
 const sb = StyleSheet.create({
   pill: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 999, borderWidth: 1, paddingHorizontal: space.sm, paddingVertical: 4 },
-  dot: { width: dot.xs, height: dot.xs, borderRadius: dot.xs / 2 },
+  dot: { width: dot.s6, height: dot.s6, borderRadius: dot.s6 / 2 },
   text: { fontSize: 11, fontWeight: '700', fontFamily: 'Courier', letterSpacing: 0.3 },
 });
 
@@ -895,7 +895,7 @@ const modal = StyleSheet.create({
   sub: { ...t.body, color: color.mute },
   input: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, ...t.body, color: color.ink, height: 80, textAlignVertical: 'top' },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: space.lg, justifyContent: 'center', paddingVertical: space.sm },
-  stepBtn: { width: avatar.lgXl, height: avatar.lgXl, borderRadius: avatar.lgXl / 2, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
+  stepBtn: { width: avatar.s44, height: avatar.s44, borderRadius: avatar.s44 / 2, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
   stepBtnText: { fontSize: 22, color: color.ink, fontWeight: '600' },
   stepValue: { ...t.bodyStrong, color: color.ink, minWidth: 100, textAlign: 'center', fontSize: 18 },
   actions: { flexDirection: 'row', gap: space.md, marginTop: space.sm },

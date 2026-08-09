@@ -131,10 +131,10 @@ const s = StyleSheet.create({
     ...shadow.card,
   },
   emojiBtn: {
-    width: avatar.lg, height: avatar.lg,
+    width: avatar.s40, height: avatar.s40,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: avatar.lg / 2,
+    borderRadius: avatar.s40 / 2,
   },
   emojiBtnSelected: {
     backgroundColor: color.signal + '18',

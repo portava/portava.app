@@ -197,7 +197,7 @@ export function RouteFullMapModal({
 
 const fm = StyleSheet.create({
   pin: {
-    width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2,
+    width: avatar.s32, height: avatar.s32, borderRadius: avatar.s32 / 2,
     backgroundColor: '#E76F51', alignItems: 'center', justifyContent: 'center',
     borderWidth: 2, borderColor: '#fff',
     shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 3, shadowOffset: { width: 0, height: 1 },
@@ -223,7 +223,7 @@ const fm = StyleSheet.create({
     shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 4, elevation: 4,
   },
   legendRow:      { flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 3 },
-  legendDot:      { width: icon.lg, height: icon.lg, borderRadius: icon.lg / 2, backgroundColor: '#E76F51', alignItems: 'center', justifyContent: 'center' },
+  legendDot:      { width: icon.s22, height: icon.s22, borderRadius: icon.s22 / 2, backgroundColor: '#E76F51', alignItems: 'center', justifyContent: 'center' },
   legendDotDone:  { backgroundColor: '#999' },
   legendDotNext:  { backgroundColor: color.deep },
   legendDotLabel: { color: '#fff', fontSize: 10, fontWeight: '700' },

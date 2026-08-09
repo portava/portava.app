@@ -69,7 +69,7 @@ const s = StyleSheet.create({
     gap: space.sm,
   },
   row: { flexDirection: 'row', gap: space.md, alignItems: 'flex-start' },
-  avatar: { width: avatar.lgXl, height: avatar.lgXl, borderRadius: avatar.lgXl / 2, backgroundColor: color.haze },
+  avatar: { width: avatar.s44, height: avatar.s44, borderRadius: avatar.s44 / 2, backgroundColor: color.haze },
   avatarEmpty: { alignItems: 'center', justifyContent: 'center' },
   body: { flex: 1, gap: 2 },
   name: { ...t.bodyStrong, fontSize: 14, color: color.ink },

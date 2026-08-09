@@ -33,9 +33,9 @@ const s = StyleSheet.create({
     paddingHorizontal: 32,
   },
   icon: {
-    width: avatar.xxxl,
-    height: avatar.xxxl,
-    borderRadius: avatar.xxxl / 2,
+    width: avatar.s64,
+    height: avatar.s64,
+    borderRadius: avatar.s64 / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',

@@ -183,9 +183,9 @@ const styles = StyleSheet.create({
   lockDot: {
     position: 'absolute',
     bottom: 12,
-    width: dot.xxs,
-    height: dot.xxs,
-    borderRadius: dot.xxs / 2,
+    width: dot.s5,
+    height: dot.s5,
+    borderRadius: dot.s5 / 2,
     backgroundColor: color.deep,
   },
   loadingText: {

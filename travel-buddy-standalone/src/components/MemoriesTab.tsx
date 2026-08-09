@@ -847,7 +847,7 @@ const mc = StyleSheet.create({
   photo: { width: '100%', aspectRatio: aspect.portrait, backgroundColor: color.haze },
   photoEditBadge: {
     position: 'absolute', bottom: 8, right: 8,
-    width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2,
+    width: avatar.s28, height: avatar.s28, borderRadius: avatar.s28 / 2,
     backgroundColor: 'rgba(17,17,15,0.6)',
     alignItems: 'center', justifyContent: 'center',
   },
@@ -914,7 +914,7 @@ const cm = StyleSheet.create({
   photoPreview: { width: '100%', height: 160, backgroundColor: color.haze },
   photoUploadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', gap: 8 },
   photoUploadingText: { ...t.small, color: '#fff', fontWeight: '600' },
-  photoRemoveBtn: { position: 'absolute', top: 8, right: 8, width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2, backgroundColor: 'rgba(17,17,15,0.6)', alignItems: 'center', justifyContent: 'center' },
+  photoRemoveBtn: { position: 'absolute', top: 8, right: 8, width: avatar.s28, height: avatar.s28, borderRadius: avatar.s28 / 2, backgroundColor: 'rgba(17,17,15,0.6)', alignItems: 'center', justifyContent: 'center' },
   photoChangeBtn: { position: 'absolute', bottom: 8, right: 8, backgroundColor: 'rgba(17,17,15,0.6)', borderRadius: radius.pill, paddingHorizontal: 10, paddingVertical: 4 },
   photoChangeBtnText: { ...t.small, color: '#fff', fontWeight: '700' },
   uploadErrorBox: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#FEF2F2', borderRadius: radius.md, padding: space.md, marginTop: space.sm, gap: space.sm },

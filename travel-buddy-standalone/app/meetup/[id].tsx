@@ -1027,7 +1027,7 @@ const s = StyleSheet.create({
   optionBlock: { ...t.small, color: color.mute, backgroundColor: color.haze, paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm, fontSize: 11 },
   optionLabel: { ...t.small, color: color.mute },
   voteRow: { flexDirection: 'row', gap: space.sm, alignItems: 'center' },
-  voteBtn: { width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2, alignItems: 'center', justifyContent: 'center' },
+  voteBtn: { width: avatar.s34, height: avatar.s34, borderRadius: avatar.s34 / 2, alignItems: 'center', justifyContent: 'center' },
   confirmBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.md, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: '#16A34A', marginLeft: 'auto' },
   confirmBtnText: { ...t.small, color: '#16A34A', fontWeight: '700', fontSize: 11 },
   voteHint: { ...t.small, color: color.faint, fontSize: 11, marginTop: 4 },

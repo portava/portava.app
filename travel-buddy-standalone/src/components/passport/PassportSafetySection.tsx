@@ -189,7 +189,7 @@ const s = StyleSheet.create({
     paddingTop: 4,
   },
   flagDot: {
-    width: dot.md, height: dot.md, borderRadius: dot.md / 2,
+    width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2,
     backgroundColor: PP.inkMuted,
   },
   flagDotOk: { backgroundColor: TEAL },

@@ -73,7 +73,7 @@ const s = StyleSheet.create({
   bannerText:{ ...t.small, color: color.mute, textAlign: 'center' },
   list:      { padding: space.md, gap: 10 },
   row:       { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#fff', borderRadius: radius.md, padding: 10, borderWidth: 1, borderColor: color.haze },
-  dot:       { width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2, backgroundColor: '#E76F51', alignItems: 'center', justifyContent: 'center' },
+  dot:       { width: avatar.s28, height: avatar.s28, borderRadius: avatar.s28 / 2, backgroundColor: '#E76F51', alignItems: 'center', justifyContent: 'center' },
   dotDone:   { backgroundColor: '#999' },
   dotSkipped:{ backgroundColor: '#ccc' },
   dotNext:   { backgroundColor: color.deep },

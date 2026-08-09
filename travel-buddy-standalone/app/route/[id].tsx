@@ -623,7 +623,7 @@ const styles = StyleSheet.create({
   membersList: { marginTop: space.sm, gap: space.xs },
   memberRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   memberAvatar: {
-    width: icon.lgXl, height: icon.lgXl, borderRadius: icon.lgXl / 2,
+    width: icon.s24, height: icon.s24, borderRadius: icon.s24 / 2,
     backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center',
   },
   memberAvatarText: { color: '#fff', fontSize: 11, fontWeight: '700' },
@@ -648,7 +648,7 @@ const styles = StyleSheet.create({
   stopCardDone: { opacity: 0.6 },
   stopCardLeft: {},
   stopBadge: {
-    width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2,
+    width: avatar.s28, height: avatar.s28, borderRadius: avatar.s28 / 2,
     backgroundColor: '#E76F51', alignItems: 'center', justifyContent: 'center',
   },
   stopBadgeDone:    { backgroundColor: '#999' },

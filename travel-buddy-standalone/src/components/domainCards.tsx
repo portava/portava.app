@@ -89,7 +89,7 @@ const cc = StyleSheet.create({
 const idc = StyleSheet.create({
   card: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, overflow: 'hidden', ...shadow.card },
   media: { height: 110, backgroundColor: color.deep, padding: space.sm },
-  sparkle: { width: icon.xl, height: icon.xl, borderRadius: icon.xl / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
+  sparkle: { width: icon.s26, height: icon.s26, borderRadius: icon.s26 / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
   body: { padding: space.md, gap: 3 },
   title: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   sub: { ...t.small, color: color.mute, fontSize: 11 },

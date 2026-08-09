@@ -104,7 +104,7 @@ const s = StyleSheet.create({
   },
   title: { ...t.heading, color: color.ink },
   closeBtn: {
-    width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2,
+    width: avatar.s32, height: avatar.s32, borderRadius: avatar.s32 / 2,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: color.paperRaised,
     borderWidth: 1, borderColor: color.haze,

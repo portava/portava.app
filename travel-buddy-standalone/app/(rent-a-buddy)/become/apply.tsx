@@ -1057,7 +1057,7 @@ const grid = StyleSheet.create({
   labelActive: { color: color.signal },
   checkWrap: {
     position: 'absolute', top: 8, right: 8,
-    width: icon.action, height: icon.action, borderRadius: icon.action / 2,
+    width: icon.s20, height: icon.s20, borderRadius: icon.s20 / 2,
     backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center',
   },
 });
@@ -1121,7 +1121,7 @@ const done = StyleSheet.create({
     paddingHorizontal: space.xl, gap: space.lg,
   },
   circle: {
-    width: avatar.xxxl, height: avatar.xxxl, borderRadius: avatar.xxxl / 2,
+    width: avatar.s64, height: avatar.s64, borderRadius: avatar.s64 / 2,
     backgroundColor: color.success, alignItems: 'center', justifyContent: 'center',
     marginBottom: space.sm,
   },
@@ -1150,7 +1150,7 @@ const trn = StyleSheet.create({
   },
   rowDone: { backgroundColor: `${color.signal}15` },
   check: {
-    width: icon.lgXl, height: icon.lgXl, borderRadius: icon.lgXl / 2,
+    width: icon.s24, height: icon.s24, borderRadius: icon.s24 / 2,
     borderWidth: 2, borderColor: color.haze,
     alignItems: 'center', justifyContent: 'center',
     flexShrink: 0, marginTop: 1,

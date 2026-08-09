@@ -262,9 +262,9 @@ const hero = StyleSheet.create({
     gap: 5,
   },
   dot: {
-    width: dot.xs,
-    height: dot.xs,
-    borderRadius: dot.xs / 2,
+    width: dot.s6,
+    height: dot.s6,
+    borderRadius: dot.s6 / 2,
     backgroundColor: 'rgba(250,249,246,0.4)',
   },
   dotActive: {
@@ -1554,8 +1554,8 @@ const tc = StyleSheet.create({
     paddingVertical: 6,
   },
   avatar: {
-    width: icon.lg, height: icon.lg,
-    borderRadius: icon.lg / 2,
+    width: icon.s22, height: icon.s22,
+    borderRadius: icon.s22 / 2,
   },
   avatarFallback: {
     backgroundColor: color.deep,

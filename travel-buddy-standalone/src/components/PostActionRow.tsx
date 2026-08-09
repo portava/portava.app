@@ -35,7 +35,7 @@ import { computeActionGap } from '../lib/actionRowGap.ts';
  * the two custom icon families need `ActionStampIcon` / `ActionShareIcon` from
  * components/ui/ActionRowIcon.tsx to render at the same *visible* size.
  */
-export const POST_ACTION_ICON_SIZE = iconToken.action;
+export const POST_ACTION_ICON_SIZE = iconToken.s20;
 export const POST_ACTION_MIN_TOUCH = 44;
 const INTERNAL_GAP = 4;
 /**

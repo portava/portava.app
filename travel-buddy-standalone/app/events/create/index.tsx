@@ -1488,7 +1488,7 @@ const styles = StyleSheet.create({
   optLabel:          { ...t.body, color: color.mute, fontWeight: '600' },
   optLabelActive:    { color: color.ink },
   optDesc:           { ...t.small, color: color.faint },
-  optDot:            { width: dot.md, height: dot.md, borderRadius: dot.md / 2, backgroundColor: color.signal },
+  optDot:            { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2, backgroundColor: color.signal },
   toggleRow:         { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.sm },
   toggleLabel:       { ...t.body, color: color.ink, fontWeight: '600' },
   toggleSub:         { ...t.small, color: color.mute },

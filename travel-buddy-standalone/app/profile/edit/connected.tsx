@@ -409,11 +409,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.lg, paddingVertical: space.md, minHeight: 52,
   },
   radio: {
-    width: icon.lg, height: icon.lg, borderRadius: icon.lg / 2, borderWidth: 2, borderColor: PP.border,
+    width: icon.s22, height: icon.s22, borderRadius: icon.s22 / 2, borderWidth: 2, borderColor: PP.border,
     alignItems: 'center', justifyContent: 'center',
   },
   radioOn: { borderColor: PP.inkLight },
-  radioDot: { width: dot.lg, height: dot.lg, borderRadius: dot.lg / 2, backgroundColor: PP.inkLight },
+  radioDot: { width: dot.s10, height: dot.s10, borderRadius: dot.s10 / 2, backgroundColor: PP.inkLight },
   radioLabel: { ...t.body, color: PP.ink, fontWeight: '600' },
   radioDesc: { ...t.small, color: PP.inkMuted, fontSize: 12, marginTop: 1, lineHeight: 16 },
 

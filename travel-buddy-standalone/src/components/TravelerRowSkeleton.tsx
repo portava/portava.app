@@ -45,8 +45,8 @@ const styles = StyleSheet.create({
     padding: space.md,
   },
   avatar: {
-    width: avatar.xl, height: avatar.xl,
-    borderRadius: avatar.xl / 2,
+    width: avatar.s48, height: avatar.s48,
+    borderRadius: avatar.s48 / 2,
   },
   info: {
     flex: 1,

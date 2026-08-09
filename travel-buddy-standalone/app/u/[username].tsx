@@ -1413,7 +1413,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: space.md,
     paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: color.haze,
   },
-  reasonRadio: { width: icon.action, height: icon.action, borderRadius: icon.action / 2, borderWidth: 2, borderColor: color.haze },
+  reasonRadio: { width: icon.s20, height: icon.s20, borderRadius: icon.s20 / 2, borderWidth: 2, borderColor: color.haze },
   reasonRadioSelected: { borderColor: color.signal, backgroundColor: color.signal },
   reasonLabel: { ...t.body, color: color.ink, fontSize: 14, flex: 1 },
   reportDoneWrap: { alignItems: 'center', gap: space.md, paddingVertical: space.xl },

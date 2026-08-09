@@ -241,7 +241,7 @@ const rs = StyleSheet.create({
   },
   rowHidden: { opacity: 0.45 },
   rowIndex: {
-    width: icon.lgXl, height: icon.lgXl, borderRadius: icon.lgXl / 2,
+    width: icon.s24, height: icon.s24, borderRadius: icon.s24 / 2,
     backgroundColor: PP.paperDeep, alignItems: 'center', justifyContent: 'center',
   },
   rowIndexText: { ...PP_LABEL, fontSize: 11, color: PP.inkMuted },

@@ -322,7 +322,7 @@ const sv = StyleSheet.create({
     gap: space.sm,
   },
   iconWrap: {
-    width: avatar.xxl, height: avatar.xxl, borderRadius: avatar.xxl / 2,
+    width: avatar.s56, height: avatar.s56, borderRadius: avatar.s56 / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',

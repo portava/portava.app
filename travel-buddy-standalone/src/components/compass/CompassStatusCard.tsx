@@ -127,8 +127,8 @@ const styles = StyleSheet.create({
     gap: space.sm,
   },
   iconWrap: {
-    width: avatar.smMd, height: avatar.smMd,
-    borderRadius: avatar.smMd / 2,
+    width: avatar.s34, height: avatar.s34,
+    borderRadius: avatar.s34 / 2,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -372,7 +372,7 @@ const chips = StyleSheet.create({
 const stepper = StyleSheet.create({
   wrap: { flexDirection: 'row', alignItems: 'center', gap: space.lg, marginTop: space.sm },
   btn: {
-    width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2,
+    width: avatar.s40, height: avatar.s40, borderRadius: avatar.s40 / 2,
     borderWidth: 1.5, borderColor: color.haze,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: color.paperRaised,

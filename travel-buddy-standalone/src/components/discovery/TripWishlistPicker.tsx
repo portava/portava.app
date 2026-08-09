@@ -321,8 +321,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   closeBtn: {
-    width: avatar.sm, height: avatar.sm,
-    borderRadius: avatar.sm / 2,
+    width: avatar.s32, height: avatar.s32,
+    borderRadius: avatar.s32 / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',
@@ -398,8 +398,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#DC262608',
   },
   badge: {
-    width: avatar.sm, height: avatar.sm,
-    borderRadius: avatar.sm / 2,
+    width: avatar.s32, height: avatar.s32,
+    borderRadius: avatar.s32 / 2,
     backgroundColor: '#E2EDF0',
     alignItems: 'center',
     justifyContent: 'center',
@@ -425,8 +425,8 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   addChip: {
-    width: avatar.sm, height: avatar.sm,
-    borderRadius: avatar.sm / 2,
+    width: avatar.s32, height: avatar.s32,
+    borderRadius: avatar.s32 / 2,
     backgroundColor: color.signal + '14',
     alignItems: 'center',
     justifyContent: 'center',

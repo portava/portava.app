@@ -38,9 +38,9 @@ const s = StyleSheet.create({
     backgroundColor: color.paper,
   },
   iconCircle: {
-    width: avatar.xxxl,
-    height: avatar.xxxl,
-    borderRadius: avatar.xxxl / 2,
+    width: avatar.s64,
+    height: avatar.s64,
+    borderRadius: avatar.s64 / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',

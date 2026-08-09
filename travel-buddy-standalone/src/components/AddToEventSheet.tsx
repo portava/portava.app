@@ -294,7 +294,7 @@ const s = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   title: { ...t.title, color: color.ink, fontSize: 18 },
   xBtn: {
-    width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2,
+    width: avatar.s32, height: avatar.s32, borderRadius: avatar.s32 / 2,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze,
   },
@@ -304,7 +304,7 @@ const s = StyleSheet.create({
     borderWidth: 1, borderColor: color.haze, padding: space.sm,
   },
   previewIcon: {
-    width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2,
+    width: avatar.s40, height: avatar.s40, borderRadius: avatar.s40 / 2,
     backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center',
   },
   previewTitle: { ...t.bodyStrong, color: color.ink },
@@ -321,7 +321,7 @@ const s = StyleSheet.create({
   },
   eventRowAdded: { borderColor: color.success + '60', backgroundColor: color.success + '08' },
   eventIcon: {
-    width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2,
+    width: avatar.s34, height: avatar.s34, borderRadius: avatar.s34 / 2,
     backgroundColor: color.signal + '15', alignItems: 'center', justifyContent: 'center',
   },
   eventTitle: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
@@ -335,7 +335,7 @@ const s = StyleSheet.create({
     padding: space.md,
   },
   createIcon: {
-    width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2,
+    width: avatar.s34, height: avatar.s34, borderRadius: avatar.s34 / 2,
     backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center',
   },
   createText: { ...t.bodyStrong, color: color.signal, fontSize: 14 },

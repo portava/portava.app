@@ -509,7 +509,7 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.haze,
   },
   iconCircle: {
-    width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2,
+    width: avatar.s34, height: avatar.s34, borderRadius: avatar.s34 / 2,
     backgroundColor: color.paperRaised,
     alignItems: 'center', justifyContent: 'center',
   },

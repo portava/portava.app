@@ -241,7 +241,7 @@ const cs = StyleSheet.create({
   title: { ...t.heading, color: PP.ink, flex: 1, textAlign: 'center' },
   closeBtn: {
     position: 'absolute', right: space.lg,
-    width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36, borderRadius: avatar.s36 / 2,
     backgroundColor: PP.paperDeep, alignItems: 'center', justifyContent: 'center',
   },
   searchRow: { paddingHorizontal: space.lg, paddingVertical: space.md, borderBottomWidth: 1, borderBottomColor: PP.borderLight },
@@ -428,7 +428,7 @@ const fm = StyleSheet.create({
   title: { ...t.heading, color: PP.ink, flex: 1, textAlign: 'center' },
   closeBtn: {
     position: 'absolute', right: space.lg,
-    width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36, borderRadius: avatar.s36 / 2,
     backgroundColor: PP.paperDeep, alignItems: 'center', justifyContent: 'center',
   },
   body: { padding: space.lg, gap: space.xl, paddingBottom: 48 },
@@ -720,7 +720,7 @@ export default function PassportManagerScreen() {
 
 const scr = StyleSheet.create({
   addBtn: {
-    width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2,
+    width: avatar.s36, height: avatar.s36, borderRadius: avatar.s36 / 2,
     backgroundColor: PP.paperDeep, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: PP.border,
   },

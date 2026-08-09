@@ -353,7 +353,7 @@ const s = StyleSheet.create({
   errorText: { ...t.small, color: '#DC2626', marginBottom: space.sm },
   candidateRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 8 },
   candidateAdd: {
-    width: avatar.xsSm, height: avatar.xsSm, borderRadius: avatar.xsSm / 2, borderWidth: 1, borderColor: color.signal,
+    width: avatar.s30, height: avatar.s30, borderRadius: avatar.s30 / 2, borderWidth: 1, borderColor: color.signal,
     alignItems: 'center', justifyContent: 'center',
   },
 });

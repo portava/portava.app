@@ -282,19 +282,19 @@ const st = StyleSheet.create({
   placeholderText: { fontSize: 13, color: PP.inkMuted, fontWeight: '600' },
   editBadge: {
     position: 'absolute', bottom: space.sm, right: space.sm,
-    width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2, backgroundColor: PP.ink,
+    width: avatar.s34, height: avatar.s34, borderRadius: avatar.s34 / 2, backgroundColor: PP.ink,
     justifyContent: 'center', alignItems: 'center',
   },
   avatarSection: { alignItems: 'center', padding: space.lg, gap: space.sm },
   avatarWrap: { width: 96, height: 96 },
-  avatar: { width: avatar.xxxxxl, height: avatar.xxxxxl, borderRadius: avatar.xxxxxl / 2, backgroundColor: PP.paperDeep },
+  avatar: { width: avatar.s96, height: avatar.s96, borderRadius: avatar.s96 / 2, backgroundColor: PP.paperDeep },
   avatarEmpty: {
-    width: avatar.xxxxxl, height: avatar.xxxxxl, borderRadius: avatar.xxxxxl / 2, backgroundColor: PP.paperDeep,
+    width: avatar.s96, height: avatar.s96, borderRadius: avatar.s96 / 2, backgroundColor: PP.paperDeep,
     justifyContent: 'center', alignItems: 'center',
   },
   avatarEditBadge: {
     position: 'absolute', bottom: 0, right: 0,
-    width: avatar.xsSm, height: avatar.xsSm, borderRadius: avatar.xsSm / 2, backgroundColor: PP.ink,
+    width: avatar.s30, height: avatar.s30, borderRadius: avatar.s30 / 2, backgroundColor: PP.ink,
     justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: PP.paper,
   },
   avatarHint: { fontSize: 13, color: PP.inkMuted },

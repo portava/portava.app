@@ -147,7 +147,7 @@ const styles = StyleSheet.create({
     paddingVertical: space.md,
   },
   searchForIcon: {
-    width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2,
+    width: avatar.s28, height: avatar.s28, borderRadius: avatar.s28 / 2,
     backgroundColor: color.signal,
     alignItems: 'center', justifyContent: 'center',
   },
@@ -179,9 +179,9 @@ const styles = StyleSheet.create({
   rowTitle: { ...t.body, color: color.ink },
   rowTitleBold: { fontWeight: '700' },
   rowSub: { ...t.small, fontSize: 12, lineHeight: 16, color: color.mute, marginTop: 1 },
-  avatar: { width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2, backgroundColor: color.haze },
+  avatar: { width: avatar.s28, height: avatar.s28, borderRadius: avatar.s28 / 2, backgroundColor: color.haze },
   avatarFallback: {
-    width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2,
+    width: avatar.s28, height: avatar.s28, borderRadius: avatar.s28 / 2,
     backgroundColor: color.haze,
     alignItems: 'center', justifyContent: 'center',
   },
