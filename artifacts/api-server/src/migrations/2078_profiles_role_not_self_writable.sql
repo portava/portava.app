@@ -2,14 +2,34 @@
 --
 -- WHAT THIS IS
 -- ------------
--- This migration does not introduce new behaviour. It *captures* protection
--- that already exists in the live database but was applied out-of-band and
--- committed to no migration file. Verified live 2026-08-09: the trigger, both
--- functions, and the narrowed column grants were all already present. A
--- database rebuilt from the migration tree alone would NOT have had them —
--- it would have reproduced the vulnerability. That gap is what this file
--- closes. Every statement is idempotent and matches what is live, so applying
--- it to production is a no-op.
+-- This migration closes finding 17. Every statement is idempotent, so applying
+-- it to a database that already has these objects is a no-op.
+--
+-- CORRECTED 2026-08-09 — the original header of this file claimed the protection
+-- "already exists in the live database but was applied out-of-band and committed
+-- to no migration file", i.e. that this migration merely *captured* pre-existing
+-- drift. That was wrong, and the same wrong account is in commit 85727c37c's
+-- message. What actually happened: a CONCURRENT Claude Code session working the
+-- same finding wrote this migration and applied it live through the Supabase
+-- Management API at ~10:11 that morning, without yet committing the file. The
+-- session that wrote the original header queried the schema at ~11:18, found the
+-- objects present and absent from the migration tree, and read peer
+-- work-in-progress as history.
+--
+-- The protection did NOT pre-exist. Before 10:11 the same day: `profiles` had no
+-- role trigger, `authenticated` held table-level UPDATE on all 81 columns, and
+-- the guard tests run against the unpatched schema SUCCEEDED at escalating —
+-- role read back 'admin' through .update(), raw PostgREST PATCH, upsert,
+-- merge-duplicates upsert, and self-INSERT.
+--
+-- So this file is the ORIGIN of the trigger/functions/RPC/grants, not a record of
+-- them. Do not cite it as an instance of live-vs-migration drift.
+--
+-- (There IS real drift adjacent to this: `profiles.role` itself and
+-- `profiles_role_check CHECK (role = ANY (ARRAY['user','admin']))` appear in no
+-- migration file and genuinely predate this work. See
+-- docs/security/admin-authz-audit.md for the full correction and for why two
+-- concurrent sessions on one tree produced this confusion.)
 --
 -- THE FINDING (docs/security/admin-authz-audit.md §2)
 -- ---------------------------------------------------

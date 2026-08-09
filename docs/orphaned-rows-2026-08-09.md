@@ -56,13 +56,41 @@ time of the deletion** (`lib/rankLog.ts`, `services/ranking/rankingAnalytics.ts`
 `src/scripts/checkRankEventsSurfaces.ts`). Do not sweep without checking with
 whoever owns that work.
 
-It references posts via **`item_id` (text) + `item_kind`**, not a `post_id`
-column — the same reason a column-name scan misses it.
+It references posts via **`item_id` (text)** plus *either* `item_kind` *or*
+`content_type` — never a `post_id` column, which is why a column-name scan misses
+it, and why a query filtering on only one of those two type columns silently sees
+a fraction of the table.
 
-**This table was already accumulating orphans independently of the deletion.**
-Total orphaned rows with a UUID-shaped `item_id` and no matching post: **145,621**,
-of which only 74,452 came from this deletion. The remaining **~71,169 pre-date it**.
-Whatever causes that is a separate, ongoing issue and is not addressed here.
+### CORRECTION — the "~71,169 pre-existing orphans" claim was wrong
+
+This file originally stated that `rank_events` "was already accumulating orphans
+independently of the deletion", with **145,621** total orphans of which only
+74,452 were ours and **~71,169 pre-dated** us. **That is retracted.**
+
+The error: every UUID-shaped `item_id` was compared against `posts` alone, but
+`rank_events` is polymorphic. Buddy and event rows reference other tables
+entirely and were counted as orphans:
+
+```
+145,985 "orphans"  =  74,452 real  +  45,360 buddy rows  +  26,173 event rows
+```
+
+Measured correctly against the 100 known-deleted post ids:
+
+| | rows |
+|---|---:|
+| post-referencing rows | 130,353 |
+| orphaned (no such post) | 74,452 |
+| traceable to this deletion | **74,452** |
+| **standing orphans predating it** | **0** |
+
+**There was no pre-existing orphan population.** Every orphaned post reference in
+`rank_events` came from this deletion.
+
+The ranking-side analysis — the two-column type convention, the `place:` id
+prefix, buddy ids being `profiles.id`, and the fact that 37% of the table now
+points at deleted posts — is recorded where the algorithm work will find it:
+**`docs/algorithm/rank-events-signal-gaps.md` §4**.
 
 ## Not an orphan
 

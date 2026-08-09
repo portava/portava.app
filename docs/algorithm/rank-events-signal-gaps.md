@@ -130,3 +130,92 @@ this gets cheaper — `rent_a_buddy` might simply need adding to
 - No typecheck or test run on the script: built against a clone with no
   `node_modules`. It follows the same Management API pattern as
   `checkMissingLiveColumns.ts`, but that is structural similarity, not proof.
+
+---
+
+## 4. The entity type lives in TWO mutually exclusive columns (2026-08-09, measured live)
+
+Found while auditing the fallout of a seed-account deletion. **No code was
+changed and no row was touched** — `rank_events` is mid-flight work elsewhere.
+This is recorded here rather than only in the cleanup notes because it is a
+join hazard for anyone querying the ranking corpus.
+
+`rank_events` carries both `item_kind` and `content_type`. Every row has
+**exactly one** of them set and the other NULL — two writers, two conventions,
+one table:
+
+| Entity | `item_kind` set | `content_type` set | total |
+|---|---:|---:|---:|
+| post | 35,884 | 94,469 | **130,353** |
+| buddy | 12,299 | 33,061 | **45,360** |
+| event | 8,598 | 17,575 | **26,173** |
+| place | 84 | 408 | **492** |
+| neither | — | — | 1 |
+| | | | **202,379** |
+
+**Any analysis that filters on only one of these columns silently drops the
+other convention's rows** — 28% or 72% of the corpus depending which you pick.
+Nothing errors; the query just returns a confident subset. Use
+`coalesce(item_kind, content_type)`.
+
+Two further join hazards in the same column:
+
+- **`place` item_ids are prefixed strings**, `place:<uuid>`, not bare UUIDs.
+  They match no `id` column anywhere as-is, and a `~ '^[0-9a-f]{8}-'` UUID
+  filter excludes them entirely.
+- **`buddy` item_ids are `profiles.id` values**, not `rent_buddy_profiles.id`.
+  All 8 distinct buddy ids resolve against `profiles`; zero resolve against
+  `rent_buddy_profiles.id`.
+
+### A correction, because the wrong number was briefly recorded
+
+An earlier note claimed `rank_events` held **~71,169 orphaned rows predating**
+the seed deletion — i.e. a large standing orphan population in the ranking
+corpus. **That was wrong and is retracted.** It came from comparing every
+UUID-shaped `item_id` against `posts` alone, which counts every buddy and event
+row as an orphan. The arithmetic of the error, exactly:
+
+```
+145,985 "orphans"  =  74,452 real  +  45,360 buddy rows  +  26,173 event rows
+```
+
+Measured properly, against the 100 known-deleted post ids:
+
+| | rows |
+|---|---:|
+| post-referencing rows | 130,353 |
+| …orphaned (no such post) | 74,452 |
+| …of those, traceable to the seed deletion | **74,452** |
+| …standing orphans predating it | **0** |
+| buddy rows orphaned | 0 |
+| event rows orphaned | 0 |
+| place rows | unresolved — the `place:` prefix means they cannot be joined naively; not asserted either way |
+
+**There is no standing orphan population.** Every orphaned post reference in
+`rank_events` came from the 2026-08-09 seed deletion.
+
+### What is actually true, and does matter for ranking
+
+**74,452 rows — 37% of the whole table, and 57% of all post-referencing rows —
+now point at posts that no longer exist.** They came from 17 distinct seed posts
+served to 4 viewers, fanned out across five event types
+(`ranking_item_eligible`, `_scored`, `_selected`, `_exploration_selected`, and
+`item_kind='post'` impressions).
+
+That skew is worth knowing before the corpus is used for training, evaluation or
+backfill: a small number of seed items generated a large share of the logged
+ranking events, and those items are now undereferenceable. Whether to sweep,
+tombstone, or leave them is a ranking decision, not a cleanup one — hence this
+note rather than a deletion.
+
+Re-measure with:
+
+```sql
+select coalesce(item_kind, content_type) as kind,
+       count(*) as rows,
+       count(*) filter (
+         where coalesce(item_kind, content_type) = 'post'
+           and not exists (select 1 from posts p where p.id::text = re.item_id)
+       ) as orphaned_posts
+  from rank_events re group by 1 order by rows desc;
+```

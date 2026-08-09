@@ -285,27 +285,84 @@ The trigger is what survives that. Option 4 (tighten `WITH CHECK`) was discarded
 because RLS cannot see `OLD` and collapses into needing a trigger regardless.
 Option 3 (split the column out) was deferred — see below.
 
-#### The caveat: the protection was live but existed in no migration
+#### ~~The caveat: the protection was live but existed in no migration~~ — RETRACTED
 
-When this fix was picked up, the live database **already had** the trigger
-(`trg_profiles_role_privileged`), both functions
-(`enforce_profile_role_privileged`, `caller_may_write_profile_role`), the
-privileged RPC (`admin_set_profile_role`), and the narrowed column grants —
-applied out-of-band, committed to no migration file, covered by no test, and
-described in no document. A repo-wide search for all four identifiers returned
-nothing.
+> ⚠️ **This section was wrong and is corrected below. It is kept rather than
+> deleted because commit `85727c37c` still carries the incorrect account in its
+> message, and someone reading that commit needs to find this.**
 
-That is a worse state than it looks. The vulnerability was closed in production
-while **a database rebuilt from the migration tree would still have been
-vulnerable**, and nothing anywhere would have caught the difference. This is the
-third instance of live-vs-migration drift recorded in this repo (see finding 16,
-and `post_saves.id` / `posts_comments.updated_at` in
-`docs/admin/moderation-coverage.md`), and the first where the drift was a
-security control.
+**What it claimed.** That when the fix was picked up, the live database *already
+had* the trigger, both functions, the privileged RPC, and the narrowed column
+grants — applied out-of-band, committed to no migration, covered by no test. It
+called this the third instance of live-vs-migration drift in this repo and the
+first involving a security control.
 
-`2078_profiles_role_not_self_writable.sql` captures the live state verbatim and
-idempotently. Applying it to production is a no-op; its purpose is that a
-rebuild reproduces the protection.
+**What actually happened.** Those objects were **not** pre-existing drift. A
+concurrent Claude Code session created them earlier the same day: it wrote
+`2078`, applied it to the live database through the Supabase Management API at
+**~10:11**, and had not yet committed the file. The session that wrote this
+section queried the live schema at **~11:18**, found the objects present and
+absent from the migration tree, and reasonably — but incorrectly — concluded they
+were historical out-of-band drift.
+
+**Evidence that the protection did not pre-exist**, from the first session's own
+run, all before 10:11:
+
+- `profiles` carried exactly two triggers, `enforce_is_official_trigger` and
+  `trg_profiles_updated`. No `trg_profiles_role_privileged`.
+- `authenticated` held **table-level** `UPDATE` on all 81 columns;
+  `has_column_privilege('authenticated','profiles','role','UPDATE')` was `true`.
+- The guard tests were run against the unpatched schema **and the escalation
+  succeeded** — 8 assertions failed with `role` reading back `'admin'` via
+  `.update()`, raw PostgREST `PATCH`, supabase-js upsert, PostgREST
+  merge-duplicates upsert, and self-`INSERT`.
+
+So the vulnerability was open in production that morning and was closed by 2078,
+not before it. **This was not an instance of live-vs-migration drift, and the
+drift count should not include it.**
+
+**There is genuine drift here, and conflating the two is what went wrong.**
+`profiles.role` itself, and its constraint
+`profiles_role_check CHECK (role = ANY (ARRAY['user','admin']))`, appear in **no
+migration file**. Those *do* predate this work and *are* undocumented live
+schema. The correct statement is: the column and its constraint are drift; the
+trigger, functions, RPC and grants are not.
+
+`2078_profiles_role_not_self_writable.sql` is still correct and still worth
+having — it is idempotent, matches live, and makes a rebuild reproduce the
+protection. Only the story about where the live objects came from was wrong.
+
+#### Why the misattribution happened — read this before doing archaeology here
+
+**Two Claude Code sessions worked this same task concurrently, in one working
+tree, alongside the Replit Agent.** That is the whole explanation, and it is
+worth more than the corrected line above, because the same confusion is available
+to anyone working this repo right now.
+
+What it produced on 2026-08-09 alone:
+
+- **Duplicate work.** Both sessions independently diagnosed finding 17, wrote a
+  migration numbered `2078`, and wrote a test for it.
+- **An overwritten test file.** Session A wrote
+  `src/test/profileRoleGuard.test.ts` (10 tests, run against the unpatched schema
+  first to prove they could fail). Commit `85727c37c` from session B replaced it
+  with `src/test/profileRoleNotSelfWritable.test.ts` (12 tests). `profileRoleGuard.test.ts`
+  exists in no commit — searching history for it finds nothing.
+- **A false drift finding**, above: live objects with no migration, read as
+  history rather than as a peer session's uncommitted work-in-progress.
+- **A moving test baseline.** A run mid-afternoon reported **7662 tests / 1915
+  suites** while the true baseline is **6186 / 1562**. The inflated numbers came
+  from another session's uncommitted expansion of the `test` script in
+  `package.json`, since reverted. Neither number was wrong when measured; they
+  measured different trees minutes apart.
+
+**Practical rule.** In this repo, "present in the live database but in no
+migration" does **not** by itself establish out-of-band drift, and "absent from
+git history" does not establish that something was never written. Before dating a
+change from schema state, check whether a concurrent session could have made it —
+compare file mtimes against commit timestamps, and prefer evidence of the
+*vulnerable* prior state (a failing test, a permission that was still granted)
+over the mere presence of the fix.
 
 #### Verified live (2026-08-09, read-only)
 
