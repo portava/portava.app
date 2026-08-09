@@ -158,3 +158,85 @@ and the place detail screen uses `entityType="place"`. Apply immediately after 2
 | `src/migrations/2059_stamp_artwork_generation_source_placeholder.sql` | applied 2026-07-31 |
 
 Drops the old unnamed check constraint (`generation_source IN ('ai_generated','admin_upload')`) and replaces it with a named constraint that also allows `'placeholder'`. Required for the placeholder-provider detection feature (task 2957): when `STAMP_WORKER_ENABLED=true` but no OpenAI key is set, candidates are stored with `generation_source='placeholder'` so the admin review screen can filter them and the `provider_degraded` health flag has persistent evidence to query.
+
+
+## 2079 — profiles.is_official: privileged in BOTH directions
+
+| File | Status |
+|------|--------|
+| `src/migrations/2079_is_official_privileged_both_directions.sql` | applied 2026-08-09 |
+
+Replaces `enforce_is_official_service_role()` with
+`enforce_is_official_privileged()`, which delegates to
+`caller_may_write_profile_role()` (added by 2078) and guards **any** change to
+`is_official`, in either direction, on INSERT and UPDATE.
+
+**Two defects fixed, both found by probing the control rather than reading it.**
+
+*1 — the guard rejected the only path that could use it.* The old function tested
+`current_setting('role')` alone. On a direct postgres connection (Supabase SQL
+editor, psql, Management API) that GUC is `'none'`, so superuser administration
+was refused. Verified by executing `UPDATE profiles SET is_official = true` as
+`postgres`: it raised `is_official can only be set by the service role`. Since
+**no application path writes this column at all** — every reference in `src/` is
+a read or serializer — direct DB access was the only way to grant official
+status, and it was exactly the path being refused.
+
+> The failure mode is what makes this more than untidy: an operator with full
+> superuser access is told "only the service role may do this", which is false
+> from where they are standing. Under time pressure the likely resolution is to
+> drop or edit the trigger — losing the control entirely. **A control that
+> misleads its operator is worse than one that merely blocks, because it invites
+> its own removal.**
+
+*2 — the guard was one-directional.* It fired only on `false → true`. `true →
+false` was unguarded (verified by executing the demotion). Combined with 2078
+re-granting `authenticated` column UPDATE on all non-`role` columns, and RLS
+permitting `id = auth.uid()`, an official account holder could **clear their own
+badge and could not restore it** — a one-way door out of a state that gates
+publisher surfaces. This was not in the original finding, which is why it was
+fixed rather than filed.
+
+**Scope check.** `caller_may_write_profile_role()` was only *added* as a
+consumer, never modified. Its two existing consumers
+(`enforce_profile_role_privileged`, `admin_set_profile_role`) are untouched and
+behave identically. It is deliberately not renamed despite the `_role` name:
+renaming would require rewriting both consumers and the test that calls it as an
+RPC.
+
+**Drift note — this one is real.** `profiles.is_official`,
+`enforce_is_official_trigger` and `enforce_is_official_service_role()` appear in
+no migration file; a tree-wide search returns only 2078's prose. 2079 is the
+first time any of it is captured in the chain. (2078's header cites
+"`enforce_is_official_trigger` (migration 0106)" — that citation is wrong;
+`0106_engagement_indexes.sql` creates like/reaction indexes and mentions
+neither.)
+
+**Tests — `src/test/isOfficialPrivileged.test.ts`, 8 tests, live DB.**
+
+```
+pnpm run test:is-official-privileged
+```
+
+Proven capable of failing, three ways:
+
+| Run | Result |
+|---|---|
+| Against the **unpatched** schema | **2 fail** — both `true → false` demotion tests; the gap is real |
+| With the trigger **dropped entirely** | **5 fail** — every negative assertion goes red |
+| After 2079 | **8 pass** |
+
+The 3 that stay green under a dropped trigger are the ones the trigger does not
+govern, and that is deliberate: cross-user writes are blocked by RLS, the
+service-role path is privileged, and an ordinary signup INSERT must *not* be
+blocked. A file where every test goes red when you remove one object is a file
+that is not distinguishing anything.
+
+Direct-postgres administration — the path the test suite cannot reach, since it
+goes through PostgREST — was verified separately by executing both `false→true`
+and `true→false` as `postgres`: both now succeed (rolled back).
+
+⚠️ A first draft of the test had order-dependent fixtures: the cross-user test
+asserted "badge still true" and failed only because the self-demotion test had
+already cleared it, reporting the wrong defect at the wrong line. Each
+badge-dependent test now restores state via `ensureBadge()` first.
