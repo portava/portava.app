@@ -658,7 +658,7 @@ const styles = StyleSheet.create({
   row: { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, padding: space.lg },
   rowInline: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   killPill: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#FFF0EE', borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 3 },
-  killDot: { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2, backgroundColor: '#E03131' },
+  killDot: { width: dot.md, height: dot.md, borderRadius: dot.md / 2, backgroundColor: '#E03131' },
   killCount: { ...t.small, color: '#E03131', fontWeight: '700', fontSize: 11 },
   item: { ...t.body, color: color.ink },
   logout: { color: color.signal, fontWeight: '700' },

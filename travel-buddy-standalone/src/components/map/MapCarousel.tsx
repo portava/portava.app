@@ -60,7 +60,7 @@ import {
   X,
 } from 'lucide-react-native';
 import { StampIcon } from '../stamps/StampIcon.tsx';
-import { color, space, radius, type as t, shadow, avatar, dot } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar, dot} from '../../theme/tokens.ts';
 import { useMapStore } from '../../stores/mapStore.tsx';
 import type { PreviewDetent } from '../../stores/mapStore.tsx';
 import { MapEntityActionRow } from './MapEntityActionRow.tsx';
@@ -1263,8 +1263,9 @@ const cs = StyleSheet.create({
     flexShrink: 0,
   },
   peekDot: {
-    width: dot.s5, height: dot.s5,
-    borderRadius: dot.s5 / 2,
+    width: dot.xxs,
+    height: dot.xxs,
+    borderRadius: dot.xxs / 2,
   },
   peekBadgeText: {
     fontSize: 9,
@@ -1365,8 +1366,9 @@ const cs = StyleSheet.create({
     paddingVertical: 3,
   },
   typeDot: {
-    width: dot.s6, height: dot.s6,
-    borderRadius: dot.s6 / 2,
+    width: dot.xs,
+    height: dot.xs,
+    borderRadius: dot.xs / 2,
   },
   typeLabel: {
     fontSize: 10,
@@ -1381,8 +1383,7 @@ const cs = StyleSheet.create({
     gap: space.sm,
   },
   iconCircle: {
-    width: avatar.lgLgXl,
-    height: avatar.lgLgXl,
+    width: avatar.lgLgXl, height: avatar.lgLgXl,
     borderRadius: avatar.lgLgXl / 2,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1390,8 +1391,7 @@ const cs = StyleSheet.create({
     flexShrink: 0,
   },
   iconImg: {
-    width: avatar.lgLgXl,
-    height: avatar.lgLgXl,
+    width: avatar.lgLgXl, height: avatar.lgLgXl,
     borderRadius: avatar.lgLgXl / 2,
   },
   topText: {
@@ -1442,8 +1442,9 @@ const cs = StyleSheet.create({
     borderColor: '#FECACA',
   },
   liveDot: {
-    width: dot.s6, height: dot.s6,
-    borderRadius: dot.s6 / 2,
+    width: dot.xs,
+    height: dot.xs,
+    borderRadius: dot.xs / 2,
     backgroundColor: '#DC2626',
   },
   statusChip: {
@@ -1451,8 +1452,9 @@ const cs = StyleSheet.create({
     borderColor: '#BBF7D0',
   },
   statusDot: {
-    width: dot.s6, height: dot.s6,
-    borderRadius: dot.s6 / 2,
+    width: dot.xs,
+    height: dot.xs,
+    borderRadius: dot.xs / 2,
     backgroundColor: color.success,
   },
   // Trip member avatars
@@ -1468,8 +1470,7 @@ const cs = StyleSheet.create({
   },
   // Friend avatar
   avatarWrap: {
-    width: avatar.lgLgXl,
-    height: avatar.lgLgXl,
+    width: avatar.lgLgXl, height: avatar.lgLgXl,
     borderRadius: avatar.lgLgXl / 2,
     borderWidth: 2,
     alignItems: 'center',

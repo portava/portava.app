@@ -251,8 +251,7 @@ const dc = StyleSheet.create({
     lineHeight: 12,
   },
   artwork: {
-    width: avatar.mdLg,
-    height: avatar.mdLg,
+    width: avatar.mdLg, height: avatar.mdLg,
     borderRadius: avatar.mdLg / 2,
     backgroundColor: 'rgba(255,255,255,0.08)',
     alignItems: 'center',

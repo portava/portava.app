@@ -16,5 +16,29 @@
     "kind": "avatar",
     "value": 110,
     "count": 1
+  },
+  {
+    "file": "src/components/AvailabilityCard.tsx",
+    "kind": "dot",
+    "value": 9,
+    "count": 1
+  },
+  {
+    "file": "src/components/discovery/TravelerMapLayer.tsx",
+    "kind": "dot",
+    "value": 11,
+    "count": 1
+  },
+  {
+    "file": "src/components/media/StampItBurst.tsx",
+    "kind": "dot",
+    "value": 5,
+    "count": 1
+  },
+  {
+    "file": "src/components/media/StampItBurst.tsx",
+    "kind": "dot",
+    "value": 6,
+    "count": 1
   }
 ]

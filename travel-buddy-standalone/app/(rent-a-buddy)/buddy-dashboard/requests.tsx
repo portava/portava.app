@@ -591,7 +591,7 @@ const modal = StyleSheet.create({
     borderColor: color.haze, alignItems: 'center', justifyContent: 'center',
   },
   radioOn: { borderColor: color.signal },
-  radioDot: { width: dot.s10, height: dot.s10, borderRadius: dot.s10 / 2, backgroundColor: color.signal },
+  radioDot: { width: dot.lg, height: dot.lg, borderRadius: dot.lg / 2, backgroundColor: color.signal },
   input: {
     borderWidth: 1.5, borderColor: color.haze, borderRadius: radius.md,
     paddingHorizontal: space.md, paddingVertical: space.md,

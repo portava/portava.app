@@ -591,8 +591,9 @@ const vs = StyleSheet.create({
     padding: 16,
   },
   sheetDot: {
-    width: dot.s12, height: dot.s12,
-    borderRadius: dot.s12 / 2,
+    width: dot.xl,
+    height: dot.xl,
+    borderRadius: dot.xl / 2,
     backgroundColor: '#22C55E',
   },
   sheetPrimary: {

@@ -186,8 +186,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 6,
     right: 6,
-    width: dot.s5, height: dot.s5,
-    borderRadius: dot.s5 / 2,
+    width: dot.xxs,
+    height: dot.xxs,
+    borderRadius: dot.xxs / 2,
     opacity: 0.7,
   },
 });

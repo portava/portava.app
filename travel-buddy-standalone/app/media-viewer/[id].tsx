@@ -62,7 +62,7 @@ import {
 } from '../../src/lib/viewerContext.ts';
 import { formatLocationLabel } from '../../src/lib/formatPlaceLabel.ts';
 import { PortavaShareIcon } from '../../src/components/icons/PortavaShareIcon.tsx';
-import { color, space, type as t, radius, avatar, dot } from '../../src/theme/tokens.ts';
+import { color, space, type as t, radius, avatar, dot} from '../../src/theme/tokens.ts';
 import { useSession } from '../../src/context/SessionContext.tsx';
 import { PlaceQuickActions } from '../../src/components/PlaceQuickActions.tsx';
 
@@ -352,8 +352,7 @@ const ov = StyleSheet.create({
     zIndex: 10,
   },
   iconBtn: {
-    width: avatar.mdLg,
-    height: avatar.mdLg,
+    width: avatar.mdLg, height: avatar.mdLg,
     borderRadius: avatar.mdLg / 2,
     backgroundColor: 'rgba(17,17,15,0.55)',
     alignItems: 'center',
@@ -821,8 +820,9 @@ const ms = StyleSheet.create({
     gap: 5,
   },
   dot: {
-    width: dot.s5, height: dot.s5,
-    borderRadius: dot.s5 / 2,
+    width: dot.xxs,
+    height: dot.xxs,
+    borderRadius: dot.xxs / 2,
     backgroundColor: 'rgba(255,255,255,0.35)',
   },
   dotActive: {

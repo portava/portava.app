@@ -857,7 +857,7 @@ const styles = StyleSheet.create({
   topBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
   topBtnText: { ...t.small, fontWeight: '700', color: color.ink },
   topIcon: { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
-  unreadDot: { position: 'absolute', top: -3, right: -3, width: dot.s7, height: dot.s7, borderRadius: dot.s7 / 2, backgroundColor: color.signal },
+  unreadDot: { position: 'absolute', top: -3, right: -3, width: dot.sm, height: dot.sm, borderRadius: dot.sm / 2, backgroundColor: color.signal },
   layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: space.lg, marginTop: space.lg, backgroundColor: '#E3F2FD', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: '#BBDEFB' },
   layoverBannerIcon: { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#BBDEFB' },
   layoverBannerBody: { flex: 1, gap: 1 },

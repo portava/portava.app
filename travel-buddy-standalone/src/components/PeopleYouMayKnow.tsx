@@ -514,8 +514,7 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   avatar: {
-    width: avatar.xlXxl,
-    height: avatar.xlXxl,
+    width: avatar.xlXxl, height: avatar.xlXxl,
     borderRadius: avatar.xlXxl / 2,
     backgroundColor: color.haze,
     marginBottom: 2,

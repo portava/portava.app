@@ -28,7 +28,7 @@ import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { CalendarDays, Radio } from 'lucide-react-native';
 import type { CityEvent } from '../types/models.ts';
-import { color, space, radius, type as t, dot } from '../theme/tokens.ts';
+import { color, space, radius, type as t, dot} from '../theme/tokens.ts';
 import { FitsCard } from './PulseFits.tsx';
 import { sortEventsByStartTime } from '../hooks/cityPulseUtils.ts';
 import { eventHref } from '../lib/feedAttribution.ts';
@@ -279,9 +279,9 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center',
     gap: 6, paddingHorizontal: space.lg,
   },
-  liveDot: { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2, backgroundColor: '#EF4444' },
+  liveDot: { width: dot.md, height: dot.md, borderRadius: dot.md / 2, backgroundColor: '#EF4444' },
   liveDotSm: {
-    width: dot.s7, height: dot.s7, borderRadius: dot.s7 / 2,
+    width: dot.sm, height: dot.sm, borderRadius: dot.sm / 2,
     backgroundColor: '#EF4444', flexShrink: 0, marginTop: 3,
   },
   nowLabel: { ...t.bodyStrong, color: color.ink, fontSize: 14 },

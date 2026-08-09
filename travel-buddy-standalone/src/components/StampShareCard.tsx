@@ -255,7 +255,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
   },
-  rarityDot: { width: dot.s5, height: dot.s5, borderRadius: dot.s5 / 2 },
+  rarityDot: { width: dot.xxs, height: dot.xxs, borderRadius: dot.xxs / 2 },
   rarityText: {
     fontFamily: 'Courier',
     fontSize: 10,

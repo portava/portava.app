@@ -160,8 +160,7 @@ const s = StyleSheet.create({
     backgroundColor: '#13213A',
   },
   pin: {
-    width: avatar.xsSm,
-    height: avatar.xsSm,
+    width: avatar.xsSm, height: avatar.xsSm,
     borderRadius: avatar.xsSm / 2,
     alignItems: 'center',
     justifyContent: 'center',

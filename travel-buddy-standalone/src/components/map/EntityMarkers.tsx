@@ -222,8 +222,9 @@ const pin = StyleSheet.create({
     elevation: 3,
   },
   dot: {
-    width: dot.s6, height: dot.s6,
-    borderRadius: dot.s6 / 2,
+    width: dot.xs,
+    height: dot.xs,
+    borderRadius: dot.xs / 2,
     alignSelf: 'center',
     marginTop: -1,
     borderWidth: 1,
@@ -247,13 +248,11 @@ const pin = StyleSheet.create({
     elevation: 3,
   },
   friendImg: {
-    width: avatar.xsSm,
-    height: avatar.xsSm,
+    width: avatar.xsSm, height: avatar.xsSm,
     borderRadius: avatar.xsSm / 2,
   },
   friendFallback: {
-    width: avatar.xsSm,
-    height: avatar.xsSm,
+    width: avatar.xsSm, height: avatar.xsSm,
     borderRadius: avatar.xsSm / 2,
     alignItems: 'center',
     justifyContent: 'center',

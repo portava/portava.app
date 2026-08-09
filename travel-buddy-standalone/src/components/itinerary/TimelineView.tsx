@@ -731,7 +731,7 @@ const dg = StyleSheet.create({
   group:            { marginBottom: 16 },
   header:           { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
   headerUnscheduled:{ opacity: 0.65 },
-  dot:              { width: dot.s10, height: dot.s10, borderRadius: dot.s10 / 2, backgroundColor: color.deep },
+  dot:              { width: dot.lg, height: dot.lg, borderRadius: dot.lg / 2, backgroundColor: color.deep },
   dotUnscheduled:   { backgroundColor: color.faint },
   label:            { ...t.small, color: color.ink, fontWeight: '700', fontSize: 13 },
   labelUnscheduled: { color: color.mute, fontStyle: 'italic' },

@@ -116,14 +116,12 @@ const s = StyleSheet.create({
     paddingRight: 30,
   },
   avatar: {
-    width: avatar.lgXlXl,
-    height: avatar.lgXlXl,
+    width: avatar.lgXlXl, height: avatar.lgXlXl,
     borderRadius: avatar.lgXlXl / 2,
     backgroundColor: color.haze,
   },
   avatarFallback: {
-    width: avatar.lgXlXl,
-    height: avatar.lgXlXl,
+    width: avatar.lgXlXl, height: avatar.lgXlXl,
     borderRadius: avatar.lgXlXl / 2,
     backgroundColor: color.deep,
     alignItems: 'center',
@@ -177,8 +175,9 @@ const s = StyleSheet.create({
     color: color.mute,
   },
   freshDot: {
-    width: dot.s8, height: dot.s8,
-    borderRadius: dot.s8 / 2,
+    width: dot.md,
+    height: dot.md,
+    borderRadius: dot.md / 2,
   },
   passportBtn: {
     flexDirection: 'row',

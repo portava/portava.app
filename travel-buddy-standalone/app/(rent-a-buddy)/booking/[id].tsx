@@ -873,7 +873,7 @@ const route = StyleSheet.create({
 
 const sb = StyleSheet.create({
   pill: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 999, borderWidth: 1, paddingHorizontal: space.sm, paddingVertical: 4 },
-  dot: { width: dot.s6, height: dot.s6, borderRadius: dot.s6 / 2 },
+  dot: { width: dot.xs, height: dot.xs, borderRadius: dot.xs / 2 },
   text: { fontSize: 11, fontWeight: '700', fontFamily: 'Courier', letterSpacing: 0.3 },
 });
 

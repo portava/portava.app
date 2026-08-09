@@ -56,7 +56,7 @@ import {
 } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { CachedImage } from '../../CachedImage.tsx';
-import { color, space, radius, type as t, shadow, typography, icon, aspect, dot } from '../../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, typography, icon, aspect, dot} from '../../../theme/tokens.ts';
 import { getPlaceTimeline } from '../../../services/places.ts';
 import type {
   PlaceLivingResponse,
@@ -262,8 +262,9 @@ const hero = StyleSheet.create({
     gap: 5,
   },
   dot: {
-    width: dot.s6, height: dot.s6,
-    borderRadius: dot.s6 / 2,
+    width: dot.xs,
+    height: dot.xs,
+    borderRadius: dot.xs / 2,
     backgroundColor: 'rgba(250,249,246,0.4)',
   },
   dotActive: {

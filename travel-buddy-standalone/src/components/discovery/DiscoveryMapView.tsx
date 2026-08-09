@@ -477,8 +477,9 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   meDot: {
-    width: dot.s12, height: dot.s12,
-    borderRadius: dot.s12 / 2,
+    width: dot.xl,
+    height: dot.xl,
+    borderRadius: dot.xl / 2,
     backgroundColor: '#2D7FF9',
     borderWidth: 2,
     borderColor: '#fff',
@@ -503,8 +504,7 @@ const s = StyleSheet.create({
     position: 'relative',
   },
   pin: {
-    width: avatar.xsSm,
-    height: avatar.xsSm,
+    width: avatar.xsSm, height: avatar.xsSm,
     borderRadius: avatar.xsSm / 2,
     alignItems: 'center',
     justifyContent: 'center',

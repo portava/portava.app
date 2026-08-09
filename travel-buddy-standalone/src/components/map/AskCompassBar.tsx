@@ -312,8 +312,7 @@ const s = StyleSheet.create({
     paddingVertical: 0,
   },
   sendBtn: {
-    width: avatar.xsSm,
-    height: avatar.xsSm,
+    width: avatar.xsSm, height: avatar.xsSm,
     borderRadius: avatar.xsSm / 2,
     backgroundColor: 'rgba(255,255,255,0.18)',
     alignItems: 'center',

@@ -375,7 +375,7 @@ const styles = StyleSheet.create({
     paddingTop: space.xxxl,
     paddingBottom: space.md,
   },
-  dot: { width: dot.s6, height: dot.s6, borderRadius: dot.s6 / 2, backgroundColor: color.haze },
+  dot: { width: dot.xs, height: dot.xs, borderRadius: dot.xs / 2, backgroundColor: color.haze },
   dotActive: { backgroundColor: color.signal, width: 20 },
   dotDone: { backgroundColor: color.deep },
   title: { ...t.hero, fontSize: 32, lineHeight: 34, color: color.ink, marginTop: space.md },

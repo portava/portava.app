@@ -17,7 +17,7 @@ import {
   ArrowLeft, Sparkles, Eye, EyeOff, Bell, Shield, Zap,
   ChevronDown, ChevronUp, Check, Globe, Users,
 } from 'lucide-react-native';
-import { color, space, radius, type as t, icon, dot } from '../src/theme/tokens';
+import { color, space, radius, type as t, icon, dot} from '../src/theme/tokens';
 import { useCompassPreferences } from '../src/hooks/compass/useCompassPreferences';
 import {
   putCompassBoostVisibility,
@@ -695,8 +695,9 @@ const s = StyleSheet.create({
     borderColor: color.signal,
   },
   radioDot: {
-    width: dot.s10, height: dot.s10,
-    borderRadius: dot.s10 / 2,
+    width: dot.lg,
+    height: dot.lg,
+    borderRadius: dot.lg / 2,
     backgroundColor: color.signal,
   },
   radioLabel: {

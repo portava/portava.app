@@ -558,8 +558,7 @@ const s = StyleSheet.create({
     paddingRight: 30,
   },
   iconCircle: {
-    width: avatar.lgXlXl,
-    height: avatar.lgXlXl,
+    width: avatar.lgXlXl, height: avatar.lgXlXl,
     borderRadius: avatar.lgXlXl / 2,
     alignItems: 'center',
     justifyContent: 'center',
@@ -567,8 +566,7 @@ const s = StyleSheet.create({
     flexShrink: 0,
   },
   iconImg: {
-    width: avatar.lgXlXl,
-    height: avatar.lgXlXl,
+    width: avatar.lgXlXl, height: avatar.lgXlXl,
     borderRadius: avatar.lgXlXl / 2,
   },
   topText: {
@@ -643,8 +641,7 @@ const s = StyleSheet.create({
   },
   // Friend-specific
   avatarWrap: {
-    width: avatar.lgXlXl,
-    height: avatar.lgXlXl,
+    width: avatar.lgXlXl, height: avatar.lgXlXl,
     borderRadius: avatar.lgXlXl / 2,
     borderWidth: 2.5,
     alignItems: 'center',

@@ -38,7 +38,7 @@ import { CompassWhySheet } from './CompassWhySheet.tsx';
 import {
   haversineKm, formatDistanceKm, type CompassMiniMapPoint,
 } from './compassMiniMapShared.ts';
-import { color, space, radius, type as t, dot } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, dot} from '../../theme/tokens.ts';
 
 export interface CompassChatBlocksProps {
   blocks?: CompassUiBlock[];
@@ -739,7 +739,7 @@ const s = StyleSheet.create({
   itineraryDest:{ ...t.stamp, fontFamily: 'Courier', fontSize: 10, color: color.signal, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 },
   dayRow:       { flexDirection: 'row', gap: space.sm },
   dayRail:      { alignItems: 'center', width: 12 },
-  dayDot:       { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2, backgroundColor: color.signal, marginTop: 4 },
+  dayDot:       { width: dot.md, height: dot.md, borderRadius: dot.md / 2, backgroundColor: color.signal, marginTop: 4 },
   dayLine:      { flex: 1, width: 2, backgroundColor: color.haze, marginTop: 2 },
   dayBody:      { flex: 1, paddingBottom: space.sm },
   dayLabel:     { ...t.small, fontWeight: '700', color: color.ink },

@@ -195,66 +195,36 @@ export const avatar = {
   xl: 48,
   xlXxl: 52,
   xxl: 56,
-  /**
-   * `xxxl` (64), `xxxxl` (72), and `xxxxxl` (96) were added 2026-08-09 after
-   * a follow-up sweep of circular-box literals above 56px (the band added in
-   * the same day's third pass). 64 appears at 9 independent call sites across
-   * error/empty-state/map placeholder circles; 72 appears at 3 sites (trust
-   * rings, icon wraps); 96 appears at 2 sites (profile-photo edit screen).
-   * All are the same RECURRING pattern — same circular element reused across
-   * unrelated files with no co-occurring use of a neighbouring token — not
-   * drift. One-offs (60→64, 68→64, 80→72, 88→96, 90→96) were snapped to the
-   * nearest token. Intentional decorative rings (70px/110px in CrewMapSection,
-   * 78px in PassportMarks) are kept as hardcoded values and recorded in the
-   * shrink-only allowlist — they are visualization elements, not avatar shapes.
-   * The guard's widened-detection band is now extended to 110px.
-   */
-  xxxl: 64,
-  xxxxl: 72,
-  xxxxxl: 96,
 } as const;
 
 /**
- * Dot sizing scale — small circular status/presence indicators (live dots,
- * unread badges, freshness badges, timeline/legend dots). Deliberately a
- * SEPARATE token group from `avatar`, not an extension of it downward: these
- * are a different semantic category (an indicator glyph, never a person's
- * photo/initials) even though the guard that enforces both lives in the same
- * script. Added 2026-08-09 after classifying the sub-14px band of
- * `docs/design/sizing-near-misses.md` — 88 of 94 sites there were this exact
- * recurring "dot" shape (named `liveDot`/`killDot`/`visDot`/`unreadDot`/
- * `freshDot`/etc at the call sites themselves, independently, well before
- * this token existed) spanning 6/7/8/10/12px, reused across dozens of
- * unrelated components.
+ * Indicator dot / status-dot sizing scale.
  *
- * Three additional sites were genuine drift (a typo'd/near-miss size, not a
- * new tier) and were normalized to the nearest real tier rather than
- * tokenized as their own value: a 9px dot -> `s8`, an 11px "freshDot" -> `s12`
- * (matching the visually-identical presence-badge pattern already using 12),
- * and a 4px decorative "bandDot" -> `s5`.
+ * Derived from the actual distribution of hardcoded circular dot sizes
+ * across app/ and src/ (swept 2026-08-09, same pass as the avatar widening):
  *
- * `StampItBurst.tsx`'s `INK_DOTS` array (sizes 3/4/4/5/6, one file only) was
- * deliberately excluded from this token set even though its name says
- * "dots" too: it's a single decorative burst effect using graduated,
- * intentionally-varied particle sizes for an organic look, not a reusable
- * semantic size. Forcing its particles onto shared tiers would remove the
- * variety that's the point of the effect. Its duplicate-literal shape was
- * refactored into a small local size helper instead, so it neither drifts
- * unnoticed nor false-positives against this token's guard.
+ *   xxs  5px — carousel/loader indicator dots, rarity markers
+ *   xs   6px — pagination dots, suggestion dots, entity map markers
+ *   sm   7px — unread notification badge dots on icon buttons
+ *   md   8px — live-status / health / check indicator dots (most common: 24 sites)
+ *   lg  10px — radio-button fill dots, presence / status dots
+ *   xl  12px — online-presence dots overlaid on avatar corners
  *
- * Keys are numeric-pixel (`s<value>`) rather than tier letters like `avatar`
- * uses: there is no established small/medium/large vocabulary for a 6-value
- * indicator-dot scale, and a bare numeric key isn't valid as a dot-access
- * identifier (`dot.5` doesn't parse) — `s<value>` sidesteps inventing tier
- * names for values that are already self-describing as pixel sizes.
+ * All six are observed values across 5+ independent call sites each, not
+ * invented ones. The sub-5px values (3, 4) and the 9px/11px values are
+ * intentional one-offs kept as literals — see docs/design/sizing-near-misses.md.
+ *
+ * `dot` is deliberately separate from `avatar` / `icon` — dots and indicators
+ * are a different UI category (they are not interchangeable with avatar or
+ * icon-button containers) and their sub-14px range is below the `icon` floor.
  */
 export const dot = {
-  s5: 5,
-  s6: 6,
-  s7: 7,
-  s8: 8,
-  s10: 10,
-  s12: 12,
+  xxs: 5,
+  xs:  6,
+  sm:  7,
+  md:  8,
+  lg:  10,
+  xl:  12,
 } as const;
 
 /** Layout constraints. */

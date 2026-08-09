@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { View, Text, StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
-import { color, type as t, dot } from '../theme/tokens.ts';
+import { color, type as t, dot} from '../theme/tokens.ts';
 
 const GOING_COLOR   = color.success; // green
 const MAYBE_COLOR   = '#E0A417';     // amber
@@ -86,8 +86,9 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   dot: {
-    width: dot.s7, height: dot.s7,
-    borderRadius: dot.s7 / 2,
+    width: dot.sm,
+    height: dot.sm,
+    borderRadius: dot.sm / 2,
   },
   legendText: {
     ...t.small,

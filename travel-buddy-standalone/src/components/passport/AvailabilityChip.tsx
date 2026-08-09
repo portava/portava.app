@@ -70,8 +70,9 @@ const s = StyleSheet.create({
     marginTop: 4,
   },
   dot: {
-    width: dot.s7, height: dot.s7,
-    borderRadius: dot.s7 / 2,
+    width: dot.sm,
+    height: dot.sm,
+    borderRadius: dot.sm / 2,
     backgroundColor: GREEN_DOT,
   },
   textWrap: {

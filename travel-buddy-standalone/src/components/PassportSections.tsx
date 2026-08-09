@@ -317,7 +317,7 @@ const styles = StyleSheet.create({
     backgroundColor: color.paperRaised, borderRadius: radius.md,
     borderWidth: 1, borderColor: color.haze, padding: space.md,
   },
-  planDot: { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2, backgroundColor: color.signal },
+  planDot: { width: dot.md, height: dot.md, borderRadius: dot.md / 2, backgroundColor: color.signal },
   planTitle: { ...t.bodyStrong, color: color.ink },
   planMeta: { ...t.small, color: color.mute, marginTop: 2 },
 

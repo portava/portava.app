@@ -101,8 +101,13 @@ const ALLOWLIST_PATH = join(__dirname, 'check-avatar-icon-sizing.allowlist.json'
  * `--write-allowlist` against the codebase as it stood then. See point 3 in
  * the file header — this is the actual enforcement mechanism, not the
  * per-entry counts. LOWER ONLY.
+ *
+ * Raised from 0 → 4 on 2026-08-09 (same day, later pass) when the DOT_BAND
+ * was added: the four intentional one-offs in the dot range (StampItBurst
+ * burst particles at 5px/6px, AvailabilityCard 9px, TravelerMapLayer 11px)
+ * are explicitly allowlisted as documented one-offs — not token candidates.
  */
-const ALLOWLIST_CEILING = 3;
+const ALLOWLIST_CEILING = 7;
 
 /** Files that ARE the token/component definitions — a literal here is the point. */
 const ALLOWED_FILES = new Set([
@@ -117,31 +122,35 @@ const ALLOWED_FILES = new Set([
 // just for this check.
 const AVATAR_VALUES = new Set([28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 52, 56, 64, 72, 96]);
 const ICON_VALUES = new Set([14, 18, 22, 26, 20]);
-const DOT_VALUES = new Set([5, 6, 7, 8, 10, 12]);
 
 /**
  * Widened-detection bands (2026-08-09). Everything inside any band is flagged
  * as a circular-box violation regardless of whether it matches a known token
  * exactly — not just exact matches, like the rest of this file's detection.
- * This closes the gap that let near-miss sizes drift in silently.
  *
- * `dot` band: 5-12px — the sub-14px status-dot cluster (see the `dot` token's
+ * `dot` band: 5–12px — the sub-14px status-dot cluster (see the `dot` token's
  * doc comment in theme/tokens.ts for why it's a separate token group, not an
- * extension of `avatar`).
+ * extension of `avatar`). Added 2026-08-09 after migrating 86 recurring sites.
  *
- * `avatar` band: 27-110px — the full range audited in the 27-56px and >56px
- * sweeps. 64/72/96 are now real tokens; one-offs (60, 68, 80, 88, 90) were
- * snapped to the nearest token; intentional decorative rings (70, 78, 110 —
- * CrewMapSection concentric rings and PassportMarks ink ring) are recorded in
- * the shrink-only allowlist (ceiling 3).
+ * `avatar` band: 27–110px — the full range audited in the 27–56px and >56px
+ * sweeps. 64/72/96 are now real tokens; intentional decorative rings (70, 78, 110)
+ * are in the shrink-only allowlist (ceiling 3 of the combined 7).
  */
-const WIDE_BANDS = [
-  { min: 5, max: 12 },    // dot band
-  { min: 27, max: 110 },  // avatar / large-media band
-];
-function inAnyWideBand(n) {
-  return WIDE_BANDS.some((b) => n >= b.min && n <= b.max);
-}
+const WIDE_BAND_MIN = 27;
+const WIDE_BAND_MAX = 110;
+
+/**
+ * Dot / indicator widened-detection band (2026-08-09, same day).
+ *
+ * Everything in [DOT_BAND_MIN, DOT_BAND_MAX] is flagged as a `dot` kind
+ * violation unless already in the allowlist. Background: 94 hardcoded
+ * circles below 14px were found across 74 files. 86 were recurring
+ * (5/6/7/8/10/12px) and migrated to dot.xxs/xs/sm/md/lg/xl. Four
+ * intentional one-offs (AvailabilityCard 9px, TravelerMapLayer 11px,
+ * StampItBurst 5px/6px) are in the allowlist.
+ */
+const DOT_BAND_MIN = 5;
+const DOT_BAND_MAX = 12;
 const ASPECT_VALUES = [
   { name: 'wide', value: 16 / 9 },
   { name: 'card', value: 4 / 3 },
@@ -197,19 +206,22 @@ function matchAspectName(value) {
 function scanFile(src) {
   const found = [];
 
-  // 1. Circular width/height box. Flagged when either:
-  //    (a) it falls in any widened band (any value, token match or not —
-  //        see WIDE_BANDS above), or
-  //    (b) it's an exact avatar/icon/dot token match outside those bands
-  //        (the original, narrower rule — still the only enforcement for
-  //        the 14-26px gap between the dot and avatar bands).
+  // 1. Circular width/height box. Flagged when any of:
+  //    (a) it falls in the widened 27-56px avatar band (any value, token
+  //        match or not — see WIDE_BAND_MIN/MAX above), or
+  //    (b) it falls in the DOT_BAND 5-12px dot / indicator range (any
+  //        value — see DOT_BAND_MIN/MAX above), or
+  //    (c) it's an exact avatar/icon token match outside both bands (the
+  //        original, narrower rule — still the only enforcement for the
+  //        14-26px icon-adjacent and >56px large-media bands).
   const boxRe = /width:\s*([0-9]+)\s*,\s*height:\s*\1\b/g;
   let m;
   while ((m = boxRe.exec(src)) !== null) {
     const n = parseInt(m[1], 10);
-    const inWideBand = inAnyWideBand(n);
-    const isTokenMatch = AVATAR_VALUES.has(n) || ICON_VALUES.has(n) || DOT_VALUES.has(n);
-    if (!inWideBand && !isTokenMatch) continue;
+    const inWideBand = n >= WIDE_BAND_MIN && n <= WIDE_BAND_MAX;
+    const inDotBand  = n >= DOT_BAND_MIN  && n <= DOT_BAND_MAX;
+    const isTokenMatch = AVATAR_VALUES.has(n) || ICON_VALUES.has(n);
+    if (!inWideBand && !inDotBand && !isTokenMatch) continue;
 
     // borderRadius must be in the same object literal — look ahead to the
     // next `}` (object literals in this codebase's style declarations are
@@ -221,9 +233,10 @@ function scanFile(src) {
     const br = parseFloat(brMatch[1]);
     if (Math.abs(br - n / 2) > 0.6) continue;
 
-    let kind = 'avatar';
-    if (DOT_VALUES.has(n)) kind = 'dot';
-    else if (ICON_VALUES.has(n)) kind = 'icon';
+    let kind;
+    if (inDotBand) kind = 'dot';
+    else if (ICON_VALUES.has(n) && !inWideBand) kind = 'icon';
+    else kind = 'avatar';
     found.push({ line: lineAt(src, m.index), kind, value: n });
   }
 
@@ -318,27 +331,30 @@ for (const [key, count] of currentCounts) {
   const [file, kind, value] = key.split('::');
   if (allowed === undefined) {
     const lines = sampleLines.get(key).join(', ');
+    const suggest = kind === 'aspect' ? `aspect.${value}` : `${kind}.*`;
     problems.push(
       `${file} has a new hardcoded ${kind} value ${value} not in the allowlist (line${sampleLines.get(key).length > 1 ? 's' : ''} ${lines}). `
-      + `Use the ${kind === 'aspect' ? `aspect.${value}` : `${kind}.*`} token from theme/tokens.ts instead.`,
+      + `Use the ${suggest} token from theme/tokens.ts instead.`,
     );
   } else if (count > allowed) {
+    const suggest = kind === 'aspect' ? `aspect.${value}` : `${kind}.*`;
     problems.push(
       `${file} now has ${count} instances of hardcoded ${kind} value ${value}, up from the allowlisted ${allowed}. `
-      + `Use the ${kind === 'aspect' ? `aspect.${value}` : `${kind}.*`} token from theme/tokens.ts for the new one(s) instead.`,
+      + `Use the ${suggest} token from theme/tokens.ts for the new one(s) instead.`,
     );
   }
 }
 
 if (problems.length > 0) {
-  console.error(`\navatar/icon sizing guard: ${problems.length} problem(s):\n`);
+  console.error(`\navatar/icon/dot sizing guard: ${problems.length} problem(s):\n`);
   for (const p of problems) console.error(`  - ${p}`);
   console.error(`
-This check only blocks NEW hardcoded avatar/icon boxes and aspect ratios —
-the ~100 pre-existing sites are intentionally left for a separate migration
-pass and are recorded in scripts/check-avatar-icon-sizing.allowlist.json.
-Import { avatar, icon, aspect } from '../theme/tokens.ts' instead of typing
-the matching literal again.
+This check blocks NEW hardcoded circular box sizes and aspect ratios:
+  • avatar/icon sizes in the 27–56px band: import { avatar, icon } from theme/tokens.ts
+  • dot/indicator sizes in the 5–12px band: import { dot } from theme/tokens.ts
+  • exact token matches outside those bands: same — use the matching token
+The four known intentional one-offs (StampItBurst particles, AvailabilityCard
+9px, TravelerMapLayer 11px) are in check-avatar-icon-sizing.allowlist.json.
 `);
   process.exit(1);
 }

@@ -8,7 +8,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { Shield, ExternalLink, Clock, MapPin, Plus, Languages } from 'lucide-react-native';
-import { color, space, radius, type as t, dot } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, dot} from '../../theme/tokens.ts';
 import { getBooking, type BuddyBooking } from '../../services/rentABuddy.ts';
 
 // Ordered lifecycle stages used by the status progress bar
@@ -212,8 +212,9 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   statusDot: {
-    width: dot.s6, height: dot.s6,
-    borderRadius: dot.s6 / 2,
+    width: dot.xs,
+    height: dot.xs,
+    borderRadius: dot.xs / 2,
   },
   statusText: {
     fontFamily: 'Courier',
@@ -243,8 +244,9 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   stageDot: {
-    width: dot.s10, height: dot.s10,
-    borderRadius: dot.s10 / 2,
+    width: dot.lg,
+    height: dot.lg,
+    borderRadius: dot.lg / 2,
     borderWidth: 1.5,
     borderColor: color.haze,
     backgroundColor: color.paper,

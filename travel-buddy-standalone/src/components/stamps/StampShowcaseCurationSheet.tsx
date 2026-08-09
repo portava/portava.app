@@ -15,7 +15,7 @@ import type { PassportStampNew } from '../../services/passportStamps.ts';
 import { saveShowcase, MAX_SHOWCASE } from '../../services/stampShowcase.ts';
 import { toLegacyStamp } from '../../services/passportStampMappers.ts';
 import { UniversalStampArtwork } from './UniversalStampArtwork.tsx';
-import { color, space, radius, type as t, dot } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, dot} from '../../theme/tokens.ts';
 
 import { RARITY_COLORS, normalizeRarity } from '../../lib/stampRarity.ts';
 
@@ -356,7 +356,7 @@ const cs = StyleSheet.create({
   artImg: { width: ART_SIZE, height: ART_SIZE },
   rarityDot: {
     position: 'absolute', bottom: 3, right: 3,
-    width: dot.s7, height: dot.s7, borderRadius: dot.s7 / 2,
+    width: dot.sm, height: dot.sm, borderRadius: dot.sm / 2,
     borderWidth: 1.5, borderColor: '#fff',
   },
   rowInfo: { flex: 1, minWidth: 0 },

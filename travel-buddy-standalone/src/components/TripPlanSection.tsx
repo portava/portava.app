@@ -800,7 +800,7 @@ const dc = StyleSheet.create({
   chipActive:     { backgroundColor: color.deep, borderColor: color.deep },
   chipText:       { ...t.small, color: color.mute, fontWeight: '600' },
   chipTextActive: { color: '#fff' },
-  dot:            { width: dot.s5, height: dot.s5, borderRadius: dot.s5 / 2, backgroundColor: color.signal },
+  dot:            { width: dot.xxs, height: dot.xxs, borderRadius: dot.xxs / 2, backgroundColor: color.signal },
   dotActive:      { backgroundColor: '#fff' },
 });
 

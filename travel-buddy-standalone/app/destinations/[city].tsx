@@ -23,7 +23,7 @@ import {
   type DestinationGroup,
 } from '../../src/utils/destinationGrouping.ts';
 import { StampBadge } from '../../src/components/PassportStamps.tsx';
-import { color, space, radius, type as t, dot } from '../../src/theme/tokens.ts';
+import { color, space, radius, type as t, dot} from '../../src/theme/tokens.ts';
 
 // ── Section wrapper ───────────────────────────────────────────────────────────
 
@@ -389,7 +389,7 @@ const s = StyleSheet.create({
     borderColor: color.haze,
     padding: space.md,
   },
-  tripDot: { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2, backgroundColor: color.signal },
+  tripDot: { width: dot.md, height: dot.md, borderRadius: dot.md / 2, backgroundColor: color.signal },
   tripTitle: { ...t.bodyStrong, color: color.ink },
   tripMeta: { ...t.small, color: color.mute, marginTop: 2 },
   tripCover: { width: 44, height: 44, borderRadius: radius.sm, backgroundColor: color.haze },

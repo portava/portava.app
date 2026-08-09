@@ -560,8 +560,9 @@ const styles = StyleSheet.create({
     borderBottomColor: color.haze,
   },
   accentDot: {
-    width: dot.s12, height: dot.s12,
-    borderRadius: dot.s12 / 2,
+    width: dot.xl,
+    height: dot.xl,
+    borderRadius: dot.xl / 2,
     marginTop: 5,
   },
   name: {

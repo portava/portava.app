@@ -163,8 +163,9 @@ const s = StyleSheet.create({
     marginTop: 3,
   },
   statusDot: {
-    width: dot.s6, height: dot.s6,
-    borderRadius: dot.s6 / 2,
+    width: dot.xs,
+    height: dot.xs,
+    borderRadius: dot.xs / 2,
     backgroundColor: color.faint,
   },
   statusDotActive: {

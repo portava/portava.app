@@ -23,7 +23,7 @@ import {
   AccessibilityInfo,
   type ViewStyle,
 } from 'react-native';
-import { color, space, type as t, font, dot } from '../../theme/tokens.ts';
+import { color, space, type as t, font, dot} from '../../theme/tokens.ts';
 
 const DEFAULT_MESSAGES = [
   'Opening Telegraph…',
@@ -132,8 +132,9 @@ const s = StyleSheet.create({
     paddingVertical: 11,
   },
   dot: {
-    width: dot.s7, height: dot.s7,
-    borderRadius: dot.s7 / 2,
+    width: dot.sm,
+    height: dot.sm,
+    borderRadius: dot.sm / 2,
     backgroundColor: color.mute,
   },
   text: {

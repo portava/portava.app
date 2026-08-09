@@ -132,8 +132,9 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
   },
   rarityDot: {
-    width: dot.s6, height: dot.s6,
-    borderRadius: dot.s6 / 2,
+    width: dot.xs,
+    height: dot.xs,
+    borderRadius: dot.xs / 2,
     marginVertical: 2,
     opacity: 0.8,
   },

@@ -18,7 +18,7 @@ import { X, ChevronDown, Lock, Users, Globe, Heart, UserCheck } from 'lucide-rea
 import { useMediaComposer } from '../hooks/useMediaComposer.ts';
 import { MediaPickerButton } from './ui/MediaPickerButton.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t, avatar, icon, aspect, dot } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar, icon, aspect, dot} from '../theme/tokens.ts';
 import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
 import type { StoryVisibility } from '../services/stories.ts';
 import { createStory, uploadStoryMedia } from '../services/stories.ts';
@@ -291,5 +291,5 @@ const s = StyleSheet.create({
   visOptionLabel: { ...t.bodyStrong, color: color.ink },
   visOptionLabelActive: { color: color.deep },
   visOptionSub: { ...t.small, color: color.mute, fontSize: 12, marginTop: 1 },
-  visCheck: { width: dot.s10, height: dot.s10, borderRadius: dot.s10 / 2, backgroundColor: color.deep },
+  visCheck: { width: dot.lg, height: dot.lg, borderRadius: dot.lg / 2, backgroundColor: color.deep },
 });

@@ -11,7 +11,7 @@ import {
   AccessibilityInfo,
 } from 'react-native';
 import type { ShowcaseStamp } from '../../services/stampShowcase.ts';
-import { color, space, radius, type as t, dot } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, dot} from '../../theme/tokens.ts';
 import { RARITY_COLORS, normalizeRarity, hasGlowRing } from '../../lib/stampRarity.ts';
 import { UniversalStampArtwork } from './UniversalStampArtwork.tsx';
 import type { PassportStamp } from '../../types/models.ts';
@@ -228,8 +228,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 4,
     right: 4,
-    width: dot.s8, height: dot.s8,
-    borderRadius: dot.s8 / 2,
+    width: dot.md,
+    height: dot.md,
+    borderRadius: dot.md / 2,
     borderWidth: 1.5,
     borderColor: '#fff',
   },

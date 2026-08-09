@@ -45,7 +45,7 @@ import { WatchRadialMenu } from './WatchRadialMenu.tsx';
 import { useWatchPlayback } from '../../hooks/useWatchPlayback.ts';
 import { useWatchStamp } from '../../hooks/useWatchStamp.ts';
 import type { MediaFeedItem } from '../../types/media.ts';
-import { color, radius, avatar, dot } from '../../theme/tokens.ts';
+import { color, radius, avatar, dot} from '../../theme/tokens.ts';
 import { usePlanPicker } from '../PlanPickerController.tsx';
 import { Share } from 'react-native';
 
@@ -634,8 +634,9 @@ const s = StyleSheet.create({
   scrubHandle: {
     position: 'absolute',
     bottom: -4.5,   // vertically centre on the 3-px track
-    width: dot.s12, height: dot.s12,
-    borderRadius: dot.s12 / 2,
+    width: dot.xl,
+    height: dot.xl,
+    borderRadius: dot.xl / 2,
     backgroundColor: '#fff',
     shadowColor: '#000',
     shadowOpacity: 0.35,

@@ -242,8 +242,7 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: 20,
-    width: avatar.xlXxl,
-    height: avatar.xlXxl,
+    width: avatar.xlXxl, height: avatar.xlXxl,
     borderRadius: avatar.xlXxl / 2,
     backgroundColor: color.signal,
     alignItems: 'center',

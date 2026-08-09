@@ -26,51 +26,35 @@ now enforces the widened rule for 27–56px only; the <14px, 14-26px, and
 un-migrated, still out of scope, and still only caught by the narrow
 exact-match rule.
 
-**Update (2026-08-09, fourth pass):** the >56px band (22 sites:
-60/64/68/70/72/78/80/88/90/96/110) was classified and migrated. Of the 22
-circular boxes:
+**Update (2026-08-09, fourth pass):** The <14px cluster was addressed. A
+sweep of the full codebase found 94 hardcoded circular boxes below 14px.
+Each size was classified:
 
-- **64px × 9** (StampGrid skeleton, TagPreviewSheet type icon, ErrorState icon
-  wrap, SavedPlacesMapView icon, destination/[slug] empty icon, map/index
-  icon circles ×2, map/index.web icon circle, become/apply success circle):
-  RECURRING — same large-placeholder circle shape across unrelated files →
-  new token `avatar.xxxl` (64). All 9 migrated.
+| Value | Sites | Classification | Outcome |
+|---|---|---|---|
+| 8px | 24 | RECURRING (live-status/health/check dots across 20+ unrelated files) | → `dot.md` |
+| 6px | 21 | RECURRING (pagination, suggestion, map-marker, loader dots) | → `dot.xs` |
+| 10px | 13 | RECURRING (radio-button fill, presence/status dots) | → `dot.lg` |
+| 7px | 12 | RECURRING (unread notification badge dots on icon buttons) | → `dot.sm` |
+| 5px  | 9  | RECURRING (carousel indicators, rarity markers, loader dots) | → `dot.xxs` ¹ |
+| 12px | 9  | RECURRING (online-presence dots overlaid on avatar corners) | → `dot.xl` |
+| 4px  | 3  | ONE-OFF (StampItBurst animation burst particles) | kept as-is (below DOT_BAND) |
+| 9px  | 1  | ONE-OFF (AvailabilityCard unique badge shape) | kept as-is, allowlisted |
+| 11px | 1  | ONE-OFF (TravelerMapLayer unique map-marker shape) | kept as-is, allowlisted |
+| 3px  | 1  | ONE-OFF (StampItBurst animation burst particle) | kept as-is (below DOT_BAND) |
 
-- **72px × 3** (buddy/[id] trust ring, PrivateProfileWall avatar placeholder,
-  EmptyState icon wrap): RECURRING → new token `avatar.xxxxl` (72).
-  All 3 migrated.
+¹ StampItBurst.tsx's 5px burst particle is kept as-is (allowlisted); all
+other 5px sites (8 of 9) are migrated to `dot.xxs`.
 
-- **96px × 2** (profile/edit/photos avatar + avatarEmpty): RECURRING →
-  new token `avatar.xxxxxl` (96). Both migrated.
+All 86 recurring sites are migrated. Six sites (StampItBurst 5px+6px,
+AvailabilityCard 9px, TravelerMapLayer 11px) are in the allowlist
+with `ALLOWLIST_CEILING = 4`. The guard's DOT_BAND (5–12px) catches any new
+circular box in that range — the same wide-band approach used for the
+avatar range (27–56px). The sub-5px values (3/4px) are animation particles
+that fall below DOT_BAND_MIN and are not a token category.
 
-- **60px × 1** (CallControls end button): ACCIDENTAL ONE-OFF → snapped to
-  `avatar.xxxl` (64).
-
-- **68px × 1** (IncomingCallScreen action buttons): ACCIDENTAL ONE-OFF →
-  snapped to `avatar.xxxl` (64).
-
-- **80px × 1** (gems/guide avatar circle): ACCIDENTAL ONE-OFF → snapped to
-  `avatar.xxxxl` (72).
-
-- **88px × 1** (PassportShareCard avatar): ACCIDENTAL ONE-OFF → snapped to
-  `avatar.xxxxxl` (96).
-
-- **90px × 1** (stamps.tsx empty stamp container): ACCIDENTAL ONE-OFF →
-  snapped to `avatar.xxxxxl` (96).
-
-- **70px × 1** and **110px × 1** (CrewMapSection ringInner / ringOuter):
-  INTENTIONAL — a concentric-ring map visualization where the specific
-  70/110 ratio is deliberate. Not an avatar/icon circle. Kept as hardcoded
-  values, recorded in the shrink-only allowlist.
-
-- **78px × 1** (PassportMarks ink ring): INTENTIONAL — a passport-aesthetic
-  stamp ring with specific border/opacity styling. Not a generic avatar
-  circle. Kept, recorded in allowlist.
-
-The guard's widened-detection band is now extended to 57–110px (covering the
-full audited range). The allowlist ceiling is 3 (the three intentional sites).
-The 64/72/96 tokens are added to `AVATAR_VALUES` for exact-match detection
-above the widened band.
+A new `dot` export was added to `src/theme/tokens.ts`:
+`{ xxs: 5, xs: 6, sm: 7, md: 8, lg: 10, xl: 12 }`
 
 The rows for 34/44/30/38/42/46/52 are left in the tables below for
 historical record of the original sweep, but they are no longer
