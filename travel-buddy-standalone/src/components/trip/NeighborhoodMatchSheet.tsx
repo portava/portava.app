@@ -22,7 +22,7 @@ import Slider from '@react-native-community/slider';
 import { X, MapPin, Star, AlertTriangle, Check, Map, List, Maximize2 } from 'lucide-react-native';
 import { LocationCheckMapPicker } from './LocationCheckMapPicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, dot } from '../../theme/tokens.ts';
 import {
   setTripAreaPreferences,
   fetchNeighborhoodMatch,
@@ -731,9 +731,8 @@ const styles = StyleSheet.create({
     paddingVertical: space.md,
   },
   stepDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: dot.s8, height: dot.s8,
+    borderRadius: dot.s8 / 2,
     backgroundColor: color.haze,
   },
   stepDotActive: {

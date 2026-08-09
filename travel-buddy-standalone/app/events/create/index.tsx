@@ -46,7 +46,7 @@ import {
 } from '../../../src/lib/eventDateTime';
 import { GlobalPlacePicker } from '../../../src/components/selectors/GlobalPlacePicker';
 import { Avatar } from '../../../src/components/ui';
-import { color, space, radius, type as t, shadow, aspect } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, shadow, aspect, dot } from '../../../src/theme/tokens';
 
 // ── Date/time display helpers ─────────────────────────────────────────────────
 
@@ -1488,7 +1488,7 @@ const styles = StyleSheet.create({
   optLabel:          { ...t.body, color: color.mute, fontWeight: '600' },
   optLabelActive:    { color: color.ink },
   optDesc:           { ...t.small, color: color.faint },
-  optDot:            { width: 8, height: 8, borderRadius: 4, backgroundColor: color.signal },
+  optDot:            { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2, backgroundColor: color.signal },
   toggleRow:         { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.sm },
   toggleLabel:       { ...t.body, color: color.ink, fontWeight: '600' },
   toggleSub:         { ...t.small, color: color.mute },

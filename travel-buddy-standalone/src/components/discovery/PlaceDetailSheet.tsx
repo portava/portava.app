@@ -17,7 +17,7 @@ import { GenerateHeaderSheet } from '../events/GenerateHeaderSheet.tsx';
 import type { DiscoveryPlace, PlaceLiveStatus } from '../../services/discovery.ts';
 import { getPlaceLiveStatus } from '../../services/discovery.ts';
 import { checkSaved, toggleSave } from '../../services/collections.ts';
-import { color, space, radius, type as t, shadow, avatar } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar, dot } from '../../theme/tokens.ts';
 import { categoryColor } from './PlaceCard.tsx';
 import { TripWishlistPicker } from './TripWishlistPicker.tsx';
 import { usePlainBottomInset } from '../../hooks/useBottomInset.ts';
@@ -560,9 +560,8 @@ const styles = StyleSheet.create({
     borderBottomColor: color.haze,
   },
   accentDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: dot.s12, height: dot.s12,
+    borderRadius: dot.s12 / 2,
     marginTop: 5,
   },
   name: {

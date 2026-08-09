@@ -14,7 +14,7 @@ import { UserIdentityLink } from '../interaction/UserIdentityLink.tsx';
 import {
   Shield, MapPin, Navigation, Eye, EyeOff, Clock, CheckCircle2,
 } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, dot } from '../../theme/tokens.ts';
 import type { CrewMemberCard as CrewMemberCardType, CrewStatusLabel } from '../../services/tripCrewLocation.ts';
 import { UserOverflowMenu } from '../interaction/UserOverflowMenu.tsx';
 
@@ -153,12 +153,12 @@ const s = StyleSheet.create({
   avatarWrap: { position: 'relative' },
   liveDot: {
     position: 'absolute', right: -1, bottom: -1,
-    width: 12, height: 12, borderRadius: 6,
+    width: dot.s12, height: dot.s12, borderRadius: dot.s12 / 2,
     backgroundColor: color.signal, borderWidth: 2, borderColor: color.paperRaised,
   },
   ghostDot: {
     position: 'absolute', right: -1, bottom: -1,
-    width: 12, height: 12, borderRadius: 6,
+    width: dot.s12, height: dot.s12, borderRadius: dot.s12 / 2,
     backgroundColor: color.mute, borderWidth: 2, borderColor: color.paperRaised,
   },
   body: { flex: 1, minWidth: 0 },

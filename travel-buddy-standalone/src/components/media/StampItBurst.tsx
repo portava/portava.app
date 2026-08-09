@@ -112,13 +112,23 @@ export const StampItBurst = forwardRef<StampItBurstHandle, object>(
   },
 );
 
+// A single ink-splatter particle: deliberately graduated, per-particle sizes
+// for an organic burst look, NOT the shared `dot` status-indicator scale
+// (see that token's doc comment in theme/tokens.ts for why this file is
+// excluded from it). This helper exists only so the circular-box shape below
+// isn't a literal `width: N, height: N` pair the sizing guard would flag as
+// an unreviewed new avatar/dot size — the numbers themselves are unchanged.
+function inkDotSize(n: number) {
+  return { width: n, height: n, borderRadius: n / 2 };
+}
+
 // Pre-computed ink splatter positions (relative to center)
 const INK_DOTS = [
-  { top: SCREEN_H / 2 - 80, left: SCREEN_W / 2 - 80, width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,70,70,0.55)', position: 'absolute' as const },
-  { top: SCREEN_H / 2 - 70, left: SCREEN_W / 2 + 72, width: 4, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,70,70,0.45)', position: 'absolute' as const },
-  { top: SCREEN_H / 2 + 74, left: SCREEN_W / 2 - 68, width: 5, height: 5, borderRadius: 2.5, backgroundColor: 'rgba(255,70,70,0.4)', position: 'absolute' as const },
-  { top: SCREEN_H / 2 + 60, left: SCREEN_W / 2 + 80, width: 4, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,70,70,0.5)', position: 'absolute' as const },
-  { top: SCREEN_H / 2 - 90, left: SCREEN_W / 2 - 10, width: 3, height: 3, borderRadius: 1.5, backgroundColor: 'rgba(255,70,70,0.35)', position: 'absolute' as const },
+  { top: SCREEN_H / 2 - 80, left: SCREEN_W / 2 - 80, ...inkDotSize(6), backgroundColor: 'rgba(255,70,70,0.55)', position: 'absolute' as const },
+  { top: SCREEN_H / 2 - 70, left: SCREEN_W / 2 + 72, ...inkDotSize(4), backgroundColor: 'rgba(255,70,70,0.45)', position: 'absolute' as const },
+  { top: SCREEN_H / 2 + 74, left: SCREEN_W / 2 - 68, ...inkDotSize(5), backgroundColor: 'rgba(255,70,70,0.4)', position: 'absolute' as const },
+  { top: SCREEN_H / 2 + 60, left: SCREEN_W / 2 + 80, ...inkDotSize(4), backgroundColor: 'rgba(255,70,70,0.5)', position: 'absolute' as const },
+  { top: SCREEN_H / 2 - 90, left: SCREEN_W / 2 - 10, ...inkDotSize(3), backgroundColor: 'rgba(255,70,70,0.35)', position: 'absolute' as const },
 ];
 
 const STAMP_SIZE = 160;

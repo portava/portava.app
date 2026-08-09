@@ -9,6 +9,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import type { AvailabilityChipState } from '../../lib/availabilityChip.ts';
+import { dot } from '../../theme/tokens.ts';
 
 interface AvailabilityChipProps {
   chipState: AvailabilityChipState | null | undefined;
@@ -69,9 +70,8 @@ const s = StyleSheet.create({
     marginTop: 4,
   },
   dot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
+    width: dot.s7, height: dot.s7,
+    borderRadius: dot.s7 / 2,
     backgroundColor: GREEN_DOT,
   },
   textWrap: {

@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { ShieldCheck, Shield } from 'lucide-react-native';
-import { color, space, radius } from '../theme/tokens.ts';
+import { color, space, radius, dot } from '../theme/tokens.ts';
 import { VERIFY_TEAL, VERIFY_TEAL_DIM, VERIFY_TEAL_BG } from './PassportVerificationStamp.tsx';
 
 export interface VerificationLevelStatus {
@@ -163,9 +163,8 @@ const s = StyleSheet.create({
     marginTop: 3,
   },
   statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: dot.s6, height: dot.s6,
+    borderRadius: dot.s6 / 2,
     backgroundColor: color.faint,
   },
   statusDotActive: {

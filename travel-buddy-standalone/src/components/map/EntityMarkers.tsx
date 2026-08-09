@@ -32,7 +32,7 @@ import type { EventListItem } from '../../services/events.ts';
 import type { HiddenGem } from '../../services/hiddenGems.ts';
 import type { TripRow } from '../../services/trips.ts';
 import type { CircleMemberLocation } from '../../services/map.ts';
-import { avatar } from '../../theme/tokens.ts';
+import { avatar, dot } from '../../theme/tokens.ts';
 
 // ── Clustering ─────────────────────────────────────────────────────────────────
 
@@ -222,9 +222,8 @@ const pin = StyleSheet.create({
     elevation: 3,
   },
   dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: dot.s6, height: dot.s6,
+    borderRadius: dot.s6 / 2,
     alignSelf: 'center',
     marginTop: -1,
     borderWidth: 1,
@@ -248,13 +247,11 @@ const pin = StyleSheet.create({
     elevation: 3,
   },
   friendImg: {
-    width: 30,
-    height: 30,
+    width: 30, height: 30,
     borderRadius: 15,
   },
   friendFallback: {
-    width: 30,
-    height: 30,
+    width: 30, height: 30,
     borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',

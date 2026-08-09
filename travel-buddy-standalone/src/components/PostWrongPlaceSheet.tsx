@@ -8,7 +8,7 @@ import {
   View, Text, Pressable, Modal, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { X } from 'lucide-react-native';
-import { color, space, radius, type as t, icon } from '../theme/tokens.ts';
+import { color, space, radius, type as t, icon, dot } from '../theme/tokens.ts';
 import { reportWrongPlace } from '../services/posts.ts';
 
 // ── Reason options ─────────────────────────────────────────────────────────────
@@ -235,9 +235,8 @@ const s = StyleSheet.create({
     borderColor: color.signal,
   },
   radioDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: dot.s10, height: dot.s10,
+    borderRadius: dot.s10 / 2,
     backgroundColor: color.signal,
   },
   reasonText: {

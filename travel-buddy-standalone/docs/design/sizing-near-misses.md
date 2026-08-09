@@ -14,6 +14,16 @@ one-time manual sweep of those, run the same way the guard scans (circular
 or `N / D` literals), across `app/` and `src/`. **No code was changed by
 this sweep** — it is documentation only.
 
+**Update, same day:** the sub-14px cluster this sweep flagged as "small
+status dots, not avatar/icon material" (5px/6px/7px/8px/10px/12px below) was
+picked up as its own token group, `dot` in `theme/tokens.ts` — see that
+token's doc comment for the full rationale. All 88 genuine sites in that
+band, plus 3 near-miss normalizations (9px, 11px, and one 4px decorative
+site), are now migrated; `StampItBurst.tsx`'s graduated particle sizes were
+deliberately left untokenized. The rows below are left as originally
+written for historical accuracy of the sweep; treat the sub-14px rows as
+resolved rather than as an open recommendation.
+
 ## Aspect ratio near-misses
 
 None found. Every `aspectRatio:` literal in the codebase either already

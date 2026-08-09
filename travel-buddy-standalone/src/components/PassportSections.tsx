@@ -6,7 +6,7 @@ import { router } from 'expo-router';
 import { ShieldCheck, Lock, ChevronRight } from 'lucide-react-native';
 import type { TrustValue, TravelStats, Plan, Perk, User } from '../types/models.ts';
 import { Stamp } from './ui.tsx';
-import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar, dot } from '../theme/tokens.ts';
 import { MediaCard } from './cards/MediaCard.tsx';
 
 const TIER_LABEL: Record<TrustValue['tier'], string> = {
@@ -317,7 +317,7 @@ const styles = StyleSheet.create({
     backgroundColor: color.paperRaised, borderRadius: radius.md,
     borderWidth: 1, borderColor: color.haze, padding: space.md,
   },
-  planDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: color.signal },
+  planDot: { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2, backgroundColor: color.signal },
   planTitle: { ...t.bodyStrong, color: color.ink },
   planMeta: { ...t.small, color: color.mute, marginTop: 2 },
 

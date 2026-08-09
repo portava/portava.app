@@ -21,7 +21,7 @@ const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'
 const { Map, Camera, Marker } = _ml as typeof import('@maplibre/maplibre-react-native');
 import { Layers, MapPin, Navigation, Star, Users } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
-import { color, space, radius, type as t, avatar, icon } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar, icon, dot } from '../../theme/tokens.ts';
 import {
   loadMapFilter,
   saveMapFilter,
@@ -477,9 +477,8 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   meDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: dot.s12, height: dot.s12,
+    borderRadius: dot.s12 / 2,
     backgroundColor: '#2D7FF9',
     borderWidth: 2,
     borderColor: '#fff',
@@ -504,8 +503,7 @@ const s = StyleSheet.create({
     position: 'relative',
   },
   pin: {
-    width: 30,
-    height: 30,
+    width: 30, height: 30,
     borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',

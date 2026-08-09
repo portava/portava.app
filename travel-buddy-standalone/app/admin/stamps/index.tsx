@@ -17,7 +17,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { ArrowLeft, Image as ImageIcon, Clock, CheckCircle, AlertTriangle, XCircle, Activity, MapPin, Copy, History } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
-import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, dot } from '../../../src/theme/tokens';
 import {
   getAdminStampCatalog,
   getStampWorkerHealth,
@@ -305,7 +305,7 @@ const styles = StyleSheet.create({
   sectionTitle: { ...t.small, color: color.mute, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: space.md, marginBottom: space.xs },
   healthStrip:  { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.md, backgroundColor: color.paperRaised, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.sm, borderWidth: 1, borderColor: color.haze },
   healthItem:   { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  healthDot:    { width: 8, height: 8, borderRadius: 4 },
+  healthDot:    { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2 },
   healthText:   { ...t.small, color: color.ink },
   warnBanner:   { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm, backgroundColor: '#FEF3C7', borderWidth: 1, borderColor: '#FCD34D', borderRadius: radius.md, padding: space.md },
   warnBody:     { flex: 1, gap: 2 },

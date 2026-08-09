@@ -10,7 +10,7 @@ import {
   X, Users, Calendar, Plus, Route, Info,
 } from 'lucide-react-native';
 import { KeyboardSafeScrollView } from '../../../src/components/ui/KeyboardSafeView';
-import { color, space, radius, type as t, shadow, layout, avatar } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, shadow, layout, avatar, dot } from '../../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState, TravelCard } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
 import { getBooking, cancelBooking, getOrCreateBookingThread, addExtraTime, optInStayConnected, reportBooking, rebookBooking, getBuddyBlockedDates, openDispute, type BuddyBooking, type BuddyBlockedRange, type DisputeReason } from '../../../src/services/rentABuddy';
@@ -873,7 +873,7 @@ const route = StyleSheet.create({
 
 const sb = StyleSheet.create({
   pill: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 999, borderWidth: 1, paddingHorizontal: space.sm, paddingVertical: 4 },
-  dot: { width: 6, height: 6, borderRadius: 3 },
+  dot: { width: dot.s6, height: dot.s6, borderRadius: dot.s6 / 2 },
   text: { fontSize: 11, fontWeight: '700', fontFamily: 'Courier', letterSpacing: 0.3 },
 });
 

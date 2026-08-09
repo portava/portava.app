@@ -12,7 +12,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { Avatar } from '../ui/Avatar.tsx';
 import { Clock, CheckCircle2, CalendarClock } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, dot } from '../../theme/tokens.ts';
 import { fetchArrivalBoard } from '../../services/tripIntel.ts';
 import { UserIdentityLink } from '../interaction/UserIdentityLink.tsx';
 import type { CrewMemberCard } from '../../services/tripCrewLocation.ts';
@@ -239,9 +239,8 @@ const s = StyleSheet.create({
     gap: space.sm,
   },
   statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: dot.s8, height: dot.s8,
+    borderRadius: dot.s8 / 2,
   },
   rowBody: {
     flex: 1,

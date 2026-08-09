@@ -16,7 +16,7 @@ import {
 import { DatePickerField } from '../../../src/components/DateTimePickerField';
 import { GlobalCalendarPicker } from '../../../src/components/selectors/GlobalCalendarPicker';
 import { toISODate, fromISODate } from '../../../src/lib/dateTime/formatters';
-import { color, space, radius, type as t, icon, avatar } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, icon, avatar, dot } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyBooking } from '../../../src/services/rentABuddy';
 
@@ -591,7 +591,7 @@ const modal = StyleSheet.create({
     borderColor: color.haze, alignItems: 'center', justifyContent: 'center',
   },
   radioOn: { borderColor: color.signal },
-  radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: color.signal },
+  radioDot: { width: dot.s10, height: dot.s10, borderRadius: dot.s10 / 2, backgroundColor: color.signal },
   input: {
     borderWidth: 1.5, borderColor: color.haze, borderRadius: radius.md,
     paddingHorizontal: space.md, paddingVertical: space.md,

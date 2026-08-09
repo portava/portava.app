@@ -5,7 +5,7 @@ import { Zap, Brain } from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { useSession } from '../../src/context/SessionContext';
 import { supabase } from '../../src/lib/supabase';
-import { color, space, type as t, radius, layout, icon } from '../../src/theme/tokens';
+import { color, space, type as t, radius, layout, icon, dot } from '../../src/theme/tokens';
 import { updateTelegraphChatSettings, getTelegraphChatSettings } from '../../src/services/telegraphChat';
 import { fetchPreferences, patchPreferences, resetLearnedPreferences } from '../../src/services/intelligence';
 import { deactivateAccount, requestAccountDeletion, reactivateAccount } from '../../src/services/profile';
@@ -658,7 +658,7 @@ const styles = StyleSheet.create({
   row: { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, padding: space.lg },
   rowInline: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   killPill: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#FFF0EE', borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 3 },
-  killDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#E03131' },
+  killDot: { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2, backgroundColor: '#E03131' },
   killCount: { ...t.small, color: '#E03131', fontWeight: '700', fontSize: 11 },
   item: { ...t.body, color: color.ink },
   logout: { color: color.signal, fontWeight: '700' },

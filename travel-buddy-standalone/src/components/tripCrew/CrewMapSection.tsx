@@ -15,7 +15,7 @@ import {
 import {
   Navigation, EyeOff, RefreshCw, Users, Info, MapPin,
 } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow, icon } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, icon, dot } from '../../theme/tokens.ts';
 import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
 import { CrewMemberCard } from './CrewMemberCard.tsx';
 import { CrewCallCard } from './CrewCallCard.tsx';
@@ -361,7 +361,7 @@ const dm = StyleSheet.create({
   cityText: { ...t.small, color: color.ink, fontWeight: '700', fontSize: 10 },
   legend: { flexDirection: 'row', gap: space.lg, padding: space.md },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  dot: { width: 10, height: 10, borderRadius: 5 },
+  dot: { width: dot.s10, height: dot.s10, borderRadius: dot.s10 / 2 },
   legendText: { ...t.small, color: color.mute, fontSize: 12 },
   noteRow: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.md, paddingBottom: space.md },
   note: { ...t.small, color: color.mute, fontSize: 11 },

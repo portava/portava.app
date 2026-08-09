@@ -36,7 +36,7 @@ import Animated, {
   Easing,
   cancelAnimation,
 } from 'react-native-reanimated';
-import { color, space, type as t, font } from '../../theme/tokens.ts';
+import { color, space, type as t, font, dot } from '../../theme/tokens.ts';
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 const AnimatedG = Animated.createAnimatedComponent(G);
@@ -306,9 +306,8 @@ const styles = StyleSheet.create({
   },
   dots: { flexDirection: 'row', gap: 4 },
   dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: dot.s6, height: dot.s6,
+    borderRadius: dot.s6 / 2,
     backgroundColor: color.signal,
   },
   loadingText: {

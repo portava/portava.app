@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { ArrowLeft, Shield, Globe, Users, Settings, FileText, ChevronRight, ChevronDown, ChevronUp, CheckCircle, XCircle, AlertCircle, Pause, Play, BarChart3 } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, shadow, dot } from '../../../src/theme/tokens';
 import { ReasonPromptModal } from '../../../src/components/ReasonPromptModal';
 import { supabase } from '../../../src/lib/supabase';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -447,7 +447,7 @@ const betaStyles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.md, backgroundColor: color.paperRaised, borderRadius: radius.sm, borderWidth: 1, borderColor: color.haze, marginBottom: space.sm },
   rowUser: { ...t.small, color: color.ink, fontFamily: 'Courier' },
   rowCity: { ...t.small, color: color.mute, marginTop: 2 },
-  statusDot: { width: 8, height: 8, borderRadius: 4 },
+  statusDot: { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2 },
   revokeBtn: { backgroundColor: '#EF444415', borderRadius: radius.sm, paddingHorizontal: space.sm, paddingVertical: 4, borderWidth: 1, borderColor: '#EF4444' },
   revokeBtnText: { ...t.small, fontWeight: '700', color: '#EF4444' },
 });
@@ -697,7 +697,7 @@ function AuditLogPanel() {
 
 const auditStyles = StyleSheet.create({
   row: { flexDirection: 'row', gap: space.sm, padding: space.sm, borderBottomWidth: 1, borderBottomColor: color.haze },
-  actionDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: color.signal, marginTop: 4 },
+  actionDot: { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2, backgroundColor: color.signal, marginTop: 4 },
   action: { ...t.small, fontWeight: '700', color: color.ink, textTransform: 'capitalize' },
   status: { ...t.small, color: color.mute, marginTop: 2 },
   override: { ...t.small, color: '#F59E0B', marginTop: 2 },

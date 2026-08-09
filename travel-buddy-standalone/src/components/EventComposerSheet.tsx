@@ -25,7 +25,7 @@ import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import { GlobalCalendarPicker } from './selectors/GlobalCalendarPicker.tsx';
 import { GlobalTimePicker } from './selectors/GlobalTimePicker.tsx';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, dot } from '../theme/tokens.ts';
 import { formatEventLocation } from '../lib/location/formatEventLocation.ts';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 
@@ -894,7 +894,7 @@ const s = StyleSheet.create({
   head:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.lg, paddingVertical: space.md, borderBottomWidth: 1, borderBottomColor: color.haze, gap: space.md },
   headTitle:  { ...t.title, color: color.ink, fontWeight: '800', flex: 1 },
   stepIndicator:{ flexDirection: 'row', gap: 5 },
-  stepDot:    { width: 6, height: 6, borderRadius: 3, backgroundColor: color.haze },
+  stepDot:    { width: dot.s6, height: dot.s6, borderRadius: dot.s6 / 2, backgroundColor: color.haze },
   stepDotActive:{ backgroundColor: color.signal },
   stepLabel:  { ...t.small, color: color.mute, fontWeight: '700', paddingHorizontal: space.lg, paddingTop: space.sm, textTransform: 'uppercase', letterSpacing: 0.5 },
   body:       { padding: space.lg, gap: space.sm, paddingBottom: space.xl },
@@ -916,7 +916,7 @@ const s = StyleSheet.create({
   visLabel:   { ...t.body, color: color.ink, fontWeight: '600' },
   visLabelActive:{ color: color.signal },
   visDesc:    { ...t.small, color: color.mute },
-  visDot:     { width: 8, height: 8, borderRadius: 4, backgroundColor: color.signal },
+  visDot:     { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2, backgroundColor: color.signal },
   priceBtn:   { flex: 1, paddingVertical: 10, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, alignItems: 'center', backgroundColor: color.paper },
   priceBtnActive:{ borderColor: color.signal, backgroundColor: color.signal },
   priceBtnText:{ ...t.small, color: color.mute, fontWeight: '600' },

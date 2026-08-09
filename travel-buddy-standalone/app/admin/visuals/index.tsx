@@ -41,7 +41,7 @@ import {
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
-import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, dot } from '../../../src/theme/tokens';
 import {
   getVisualStats,
   getPendingReview,
@@ -1042,7 +1042,7 @@ const sc = StyleSheet.create({
   thumb:      { width: 56, height: 40, borderRadius: radius.sm ?? 4, overflow: 'hidden' },
   rowTitle:   { ...t.body, color: color.ink, fontWeight: '600' },
   rowSub:     { ...t.small, color: color.mute ?? '#6B7280', fontSize: 12 },
-  statusDot:  { width: 10, height: 10, borderRadius: 5 },
+  statusDot:  { width: dot.s10, height: dot.s10, borderRadius: dot.s10 / 2 },
   statusBadge:{ ...t.small, fontWeight: '600', fontSize: 12 },
   sep:        { height: StyleSheet.hairlineWidth, backgroundColor: color.haze, marginLeft: space.md },
 

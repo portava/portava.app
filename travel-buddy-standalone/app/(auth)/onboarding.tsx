@@ -3,7 +3,7 @@ import { View, Text, TextInput, ScrollView, Pressable, StyleSheet, ActivityIndic
 import { router } from 'expo-router';
 import { Stamp, Chip } from '../../src/components/ui';
 import type { Interest, TravelStyle } from '../../src/types/models';
-import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { color, space, radius, type as t, dot } from '../../src/theme/tokens';
 import { getMyProfile } from '../../src/services/profile';
 import { runOnboardingFinish } from '../../src/services/onboardingFinish';
 import { buildOnboardingPatch } from '../../src/services/profilePatchBuilder';
@@ -375,7 +375,7 @@ const styles = StyleSheet.create({
     paddingTop: space.xxxl,
     paddingBottom: space.md,
   },
-  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: color.haze },
+  dot: { width: dot.s6, height: dot.s6, borderRadius: dot.s6 / 2, backgroundColor: color.haze },
   dotActive: { backgroundColor: color.signal, width: 20 },
   dotDone: { backgroundColor: color.deep },
   title: { ...t.hero, fontSize: 32, lineHeight: 34, color: color.ink, marginTop: space.md },

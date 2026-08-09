@@ -13,7 +13,7 @@ import { ChevronLeft, Eye, Users, TrendingUp, Stamp, Award } from 'lucide-react-
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getProfileAnalytics, type ProfileAnalytics } from '../../src/services/profile';
 import { PP, PP_LABEL, fmtMonthYear } from '../../src/theme/passportTokens';
-import { space, type as t, radius, avatar } from '../../src/theme/tokens';
+import { space, type as t, radius, avatar, dot } from '../../src/theme/tokens';
 import { ProfileViewersSheet } from '../../src/components/ProfileViewersSheet';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -400,9 +400,8 @@ const s = StyleSheet.create({
     gap: space.md,
   },
   milestoneDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: dot.s8, height: dot.s8,
+    borderRadius: dot.s8 / 2,
     backgroundColor: '#7B5CE5',
   },
   milestoneInfo: {

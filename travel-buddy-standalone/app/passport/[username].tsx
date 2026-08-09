@@ -28,7 +28,7 @@ import { TripsTab } from '../../src/components/TripsTab';
 import { MapTab } from '../../src/components/MapTab';
 import { resolveTabOrder, type PassportTabKey, TAB_LABELS } from '../../src/components/passport/passportTabs';
 import { resolveDisplayName, formatHandle, truncateDisplayName } from '../../src/utils/identity';
-import { space, radius } from '../../src/theme/tokens';
+import { space, radius, dot } from '../../src/theme/tokens';
 import { PP, PP_LABEL } from '../../src/theme/passportTokens';
 import { resolveAvailabilityChip } from '../../src/lib/availabilityChip';
 import type { PublicProfile } from '../../src/types/models';
@@ -591,9 +591,8 @@ const vs = StyleSheet.create({
     padding: 16,
   },
   sheetDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: dot.s12, height: dot.s12,
+    borderRadius: dot.s12 / 2,
     backgroundColor: '#22C55E',
   },
   sheetPrimary: {

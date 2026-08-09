@@ -117,6 +117,31 @@ const ALLOWED_FILES = new Set([
 // just for this check.
 const AVATAR_VALUES = new Set([28, 32, 34, 36, 40, 44, 48, 56]);
 const ICON_VALUES = new Set([14, 18, 22, 26, 20]);
+const DOT_VALUES = new Set([5, 6, 7, 8, 10, 12]);
+
+/**
+ * Widened-detection band for `dot` only (2026-08-09). Everything in 5-12px
+ * is flagged as a circular-box violation regardless of whether it matches a
+ * known `dot` token exactly — not just exact matches, like the rest of this
+ * file's detection. This closes the gap that let the tiny status-dot cluster
+ * drift into near-miss sizes (9px, 11px, 4px) in the first place:
+ * matching-only enforcement lets a brand-new nearby literal pass silently
+ * forever. Every current `dot` token value sits inside this band, so nothing
+ * in the pre-existing allowlist is affected by widening — this only catches
+ * NEW literals that don't match any token.
+ *
+ * `dot` band: 5-12px (the sub-14px band audited and migrated in this pass —
+ * see the `dot` token's doc comment in theme/tokens.ts for why it's a
+ * separate token group, not an extension of `avatar`). The `avatar`
+ * (27-56px), 14-26px icon-adjacent, and >56px large-media clusters remain
+ * separately scoped, still on the narrow exact-match rule below.
+ */
+const WIDE_BANDS = [
+  { min: 5, max: 12 },
+];
+function inAnyWideBand(n) {
+  return WIDE_BANDS.some((b) => n >= b.min && n <= b.max);
+}
 const ASPECT_VALUES = [
   { name: 'wide', value: 16 / 9 },
   { name: 'card', value: 4 / 3 },
@@ -167,17 +192,24 @@ function matchAspectName(value) {
 
 /**
  * Scans one file's source for both violation shapes. Returns a list of
- * { line, kind: 'avatar'|'icon'|'aspect', value, token }.
+ * { line, kind: 'avatar'|'icon'|'dot'|'aspect', value, token }.
  */
 function scanFile(src) {
   const found = [];
 
-  // 1. Circular width/height box matching an avatar/icon token value.
+  // 1. Circular width/height box. Flagged when either:
+  //    (a) it falls in any widened band (any value, token match or not —
+  //        see WIDE_BANDS above), or
+  //    (b) it's an exact avatar/icon/dot token match outside those bands
+  //        (the original, narrower rule — still the only enforcement for
+  //        the 14-26px and >56px bands).
   const boxRe = /width:\s*([0-9]+)\s*,\s*height:\s*\1\b/g;
   let m;
   while ((m = boxRe.exec(src)) !== null) {
     const n = parseInt(m[1], 10);
-    if (!AVATAR_VALUES.has(n) && !ICON_VALUES.has(n)) continue;
+    const inWideBand = inAnyWideBand(n);
+    const isTokenMatch = AVATAR_VALUES.has(n) || ICON_VALUES.has(n) || DOT_VALUES.has(n);
+    if (!inWideBand && !isTokenMatch) continue;
 
     // borderRadius must be in the same object literal — look ahead to the
     // next `}` (object literals in this codebase's style declarations are
@@ -189,7 +221,9 @@ function scanFile(src) {
     const br = parseFloat(brMatch[1]);
     if (Math.abs(br - n / 2) > 0.6) continue;
 
-    const kind = AVATAR_VALUES.has(n) ? 'avatar' : 'icon';
+    let kind = 'avatar';
+    if (DOT_VALUES.has(n)) kind = 'dot';
+    else if (ICON_VALUES.has(n)) kind = 'icon';
     found.push({ line: lineAt(src, m.index), kind, value: n });
   }
 

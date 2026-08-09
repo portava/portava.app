@@ -14,7 +14,7 @@ import {
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { useLocalSearchParams } from 'expo-router';
 import { Zap, Send, ChevronDown, ChevronUp, Sparkles, CheckCircle } from 'lucide-react-native';
-import { color, space, radius, type as t, icon, avatar } from '../theme/tokens.ts';
+import { color, space, radius, type as t, icon, avatar, dot } from '../theme/tokens.ts';
 import { sendConciergeCommand, confirmCommandAction, declineCommandAction } from '../services/intelligence.ts';
 
 const PROMPT_CHIPS = [
@@ -345,7 +345,7 @@ const rc = StyleSheet.create({
   summary: { ...t.body, color: color.ink, fontSize: 13, lineHeight: 19, marginBottom: space.md },
   sugList: { gap: 0 },
   sugRow: { flexDirection: 'row', gap: space.sm, paddingVertical: 6, borderTopWidth: 1, borderTopColor: color.haze },
-  sugDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: color.signal, marginTop: 6 },
+  sugDot: { width: dot.s6, height: dot.s6, borderRadius: dot.s6 / 2, backgroundColor: color.signal, marginTop: 6 },
   sugTitle: { ...t.bodyStrong, color: color.ink, fontSize: 13 },
   sugReason: { ...t.small, color: color.mute, fontSize: 11, lineHeight: 16 },
   sugMeta: { ...t.stamp, fontFamily: 'Courier', color: color.faint, fontSize: 10 },

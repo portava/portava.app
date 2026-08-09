@@ -17,7 +17,7 @@ import {
   SettingsScreen, SettingsSection, SettingsRow, SettingsDivider, ToggleRow,
 } from '../../../src/components/settings/SettingsUI';
 import { PP } from '../../../src/theme/passportTokens';
-import { space, radius, type as t, icon } from '../../../src/theme/tokens';
+import { space, radius, type as t, icon, dot } from '../../../src/theme/tokens';
 import {
   getMyLocationPrivacy,
   updateMyLocationPrivacy,
@@ -611,5 +611,5 @@ const sx = StyleSheet.create({
   sheetOptionLabel: { ...t.body, color: PP.ink, fontSize: 14, fontWeight: '600' },
   sheetOptionSelected: { color: PP.inkLight },
   sheetOptionDesc: { ...t.small, color: PP.inkMuted, fontSize: 12, lineHeight: 16 },
-  checkDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: PP.inkLight },
+  checkDot: { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2, backgroundColor: PP.inkLight },
 });

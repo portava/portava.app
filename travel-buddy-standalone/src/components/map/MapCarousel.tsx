@@ -60,7 +60,7 @@ import {
   X,
 } from 'lucide-react-native';
 import { StampIcon } from '../stamps/StampIcon.tsx';
-import { color, space, radius, type as t, shadow, avatar } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar, dot } from '../../theme/tokens.ts';
 import { useMapStore } from '../../stores/mapStore.tsx';
 import type { PreviewDetent } from '../../stores/mapStore.tsx';
 import { MapEntityActionRow } from './MapEntityActionRow.tsx';
@@ -1263,9 +1263,8 @@ const cs = StyleSheet.create({
     flexShrink: 0,
   },
   peekDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
+    width: dot.s5, height: dot.s5,
+    borderRadius: dot.s5 / 2,
   },
   peekBadgeText: {
     fontSize: 9,
@@ -1366,9 +1365,8 @@ const cs = StyleSheet.create({
     paddingVertical: 3,
   },
   typeDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: dot.s6, height: dot.s6,
+    borderRadius: dot.s6 / 2,
   },
   typeLabel: {
     fontSize: 10,
@@ -1383,8 +1381,7 @@ const cs = StyleSheet.create({
     gap: space.sm,
   },
   iconCircle: {
-    width: 42,
-    height: 42,
+    width: 42, height: 42,
     borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1392,8 +1389,7 @@ const cs = StyleSheet.create({
     flexShrink: 0,
   },
   iconImg: {
-    width: 42,
-    height: 42,
+    width: 42, height: 42,
     borderRadius: 21,
   },
   topText: {
@@ -1444,9 +1440,8 @@ const cs = StyleSheet.create({
     borderColor: '#FECACA',
   },
   liveDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: dot.s6, height: dot.s6,
+    borderRadius: dot.s6 / 2,
     backgroundColor: '#DC2626',
   },
   statusChip: {
@@ -1454,9 +1449,8 @@ const cs = StyleSheet.create({
     borderColor: '#BBF7D0',
   },
   statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: dot.s6, height: dot.s6,
+    borderRadius: dot.s6 / 2,
     backgroundColor: color.success,
   },
   // Trip member avatars
@@ -1472,8 +1466,7 @@ const cs = StyleSheet.create({
   },
   // Friend avatar
   avatarWrap: {
-    width: 42,
-    height: 42,
+    width: 42, height: 42,
     borderRadius: 21,
     borderWidth: 2,
     alignItems: 'center',

@@ -19,7 +19,7 @@ import { createPlanItem } from '../services/tripPlan.ts';
 import type { BookmarkedPlace } from '../services/discoveryBookmarks.ts';
 import type { TripDetail, SavedIdea, TimelineDay, PassportStamp, User } from '../types/models.ts';
 import type { TripPlan, TripPlanStatus } from '../__fixtures__/tripDetail.ts';
-import { color, space, radius, type as t, shadow, layout, avatar, icon } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, layout, avatar, icon, dot } from '../theme/tokens.ts';
 import { fromISODate } from '../lib/dateTime/formatters.ts';
 import { PassportStampCard } from './PassportStampCard.tsx';
 import { TravelSectionHeader, TravelEmptyState } from './primitives.tsx';
@@ -1014,7 +1014,7 @@ const tl = StyleSheet.create({
   item: { flexDirection: 'row', gap: space.md },
   timeCol: { width: 56, alignItems: 'flex-start' },
   itemTime: { ...t.small, color: color.mute, fontFamily: 'Courier', fontSize: 11 },
-  dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: color.signal, marginTop: 4 },
+  dot: { width: dot.s10, height: dot.s10, borderRadius: dot.s10 / 2, backgroundColor: color.signal, marginTop: 4 },
   dotOpen: { backgroundColor: color.paper, borderWidth: 2, borderColor: color.faint },
   itemCard: { flex: 1, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, padding: space.md, gap: 2 },
   itemFree: { borderStyle: 'dashed', backgroundColor: color.paper },
@@ -1065,7 +1065,7 @@ const cr = StyleSheet.create({
   count: { ...t.bodyStrong, color: color.ink },
   avatars: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   avatarWrap: {},
-  onlineDot: { position: 'absolute', right: 0, bottom: 0, width: 12, height: 12, borderRadius: 6, backgroundColor: color.success, borderWidth: 2, borderColor: color.paperRaised },
+  onlineDot: { position: 'absolute', right: 0, bottom: 0, width: dot.s12, height: dot.s12, borderRadius: dot.s12 / 2, backgroundColor: color.success, borderWidth: 2, borderColor: color.paperRaised },
   inviteBtn: { width: avatar.xl, height: avatar.xl, borderRadius: avatar.xl / 2, borderWidth: 1.5, borderStyle: 'dashed', borderColor: color.signal, alignItems: 'center', justifyContent: 'center' },
   inviteRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   inviteText: { ...t.small, fontWeight: '700', color: color.signal },
@@ -1127,7 +1127,7 @@ const mp = StyleSheet.create({
   cityText: { ...t.small, color: color.ink, fontWeight: '700', fontSize: 11 },
   legend: { flexDirection: 'row', gap: space.lg, padding: space.md },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  dot: { width: 10, height: 10, borderRadius: 5 },
+  dot: { width: dot.s10, height: dot.s10, borderRadius: dot.s10 / 2 },
   legendText: { ...t.small, color: color.mute, fontSize: 12 },
   noteRow: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.md, paddingBottom: space.md },
   note: { ...t.small, color: color.mute, fontSize: 11 },

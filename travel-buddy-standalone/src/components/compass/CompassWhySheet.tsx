@@ -9,7 +9,7 @@ import {
   View, Text, Pressable, Modal, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { Sparkles, X } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, dot } from '../../theme/tokens.ts';
 import { useCompassWhyExplanation } from '../../hooks/compass/useCompassWhyExplanation.ts';
 
 interface Props {
@@ -200,9 +200,8 @@ const styles = StyleSheet.create({
     gap: space.sm,
   },
   factorDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 3,
+    width: dot.s5, height: dot.s5,
+    borderRadius: dot.s5 / 2,
     backgroundColor: color.signal,
   },
   factorText: {

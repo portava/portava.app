@@ -5,7 +5,7 @@ import Animated, { useAnimatedStyle, interpolate } from 'react-native-reanimated
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Search, SlidersHorizontal, MapPin, Pencil, MessageCircle, CircleUserRound, Plus } from 'lucide-react-native';
-import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar, dot } from '../theme/tokens.ts';
 import { pv } from '../theme/pulseTheme.ts';
 import { useUnreadCounts } from '../hooks/useMessaging.ts';
 import { NotificationBell } from './NotificationBell.tsx';
@@ -326,9 +326,8 @@ const styles = StyleSheet.create({
     maxWidth: 150,
   },
   liveDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
+    width: dot.s7, height: dot.s7,
+    borderRadius: dot.s7 / 2,
     backgroundColor: pv.teal,
   },
 });

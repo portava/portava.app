@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { Zap, ChevronDown, ChevronUp, Clock, AlertTriangle, Calendar, Sparkles, RefreshCw, Ticket, Cloud, CloudRain, Sun, MapPin, Globe } from 'lucide-react-native';
-import { color, space, radius, type as t, icon } from '../theme/tokens.ts';
+import { color, space, radius, type as t, icon, dot } from '../theme/tokens.ts';
 import { fetchDailyBrief, refreshDailyBrief, dismissBriefRecommendation } from '../services/intelligence.ts';
 import { TelegraphFeedbackMenu } from './TelegraphFeedbackMenu.tsx';
 
@@ -630,7 +630,7 @@ const s = StyleSheet.create({
   chip: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#E8F0F2', paddingHorizontal: space.md, paddingVertical: 5, borderRadius: radius.pill },
   chipText: { ...t.small, color: color.deep, fontSize: 11 },
   planRow: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: color.haze },
-  planDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: color.signal, marginTop: 5 },
+  planDot: { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2, backgroundColor: color.signal, marginTop: 5 },
   planTitle: { ...t.bodyStrong, color: color.ink, fontSize: 13 },
   planTime: { ...t.small, color: color.mute, fontSize: 11 },
   planLoc: { ...t.small, color: color.mute, fontSize: 11 },

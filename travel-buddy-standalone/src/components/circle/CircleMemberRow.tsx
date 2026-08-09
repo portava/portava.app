@@ -8,7 +8,7 @@ import type { CircleMember } from '../../services/circle.ts';
 import { blockUser } from '../../services/blocks.ts';
 import { reportContent } from '../../services/reports.ts';
 import { openDirectThread } from '../../services/messaging.ts';
-import { color, radius, type as t } from '../../theme/tokens.ts';
+import { color, radius, type as t, dot } from '../../theme/tokens.ts';
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; textColor: string }> = {
   active:     { label: 'Available',   bg: '#E8F5E9', textColor: '#2E7D32' },
@@ -207,9 +207,8 @@ const s = StyleSheet.create({
     position: 'absolute',
     bottom: 0,
     right: 0,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: dot.s12, height: dot.s12,
+    borderRadius: dot.s12 / 2,
     backgroundColor: '#FF8F00',
     borderWidth: 2,
     borderColor: '#fff',

@@ -16,7 +16,7 @@ import { CachedImage } from './CachedImage.tsx';
 import { router } from 'expo-router';
 import { MapPin, Calendar, ChevronRight, Luggage } from 'lucide-react-native';
 import type { TripRow } from '../services/trips.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, dot } from '../theme/tokens.ts';
 import { useBottomInset } from '../hooks/useBottomInset.ts';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import { fromISODate } from '../lib/dateTime/formatters.ts';
@@ -320,7 +320,7 @@ const tr = StyleSheet.create({
   timelineRow: {
     flexDirection: 'row', alignItems: 'center', gap: space.sm, minHeight: 32,
   },
-  timelineDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: color.haze },
+  timelineDot: { width: dot.s6, height: dot.s6, borderRadius: dot.s6 / 2, backgroundColor: color.haze },
   timelineText: { ...t.body, flex: 1, color: color.ink },
   timelineDate: { ...t.small, color: color.faint, fontSize: 12 },
 

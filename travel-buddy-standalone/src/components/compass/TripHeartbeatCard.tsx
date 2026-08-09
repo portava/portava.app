@@ -9,6 +9,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, Pressable, ActivityIndicator, StyleSheet, Switch } from 'react-native';
 import { HeartPulse, RefreshCw, Check, X, Settings2 } from 'lucide-react-native';
+import { dot } from '../../theme/tokens.ts';
 import {
   fetchTripHeartbeat,
   runTripAutopilotCheck,
@@ -232,7 +233,7 @@ const styles = StyleSheet.create({
   badgeText: { fontSize: 11, fontWeight: '700' },
   okText: { fontSize: 12.5, color: '#475569' },
   issueRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 7 },
-  dot: { width: 7, height: 7, borderRadius: 4, marginTop: 5 },
+  dot: { width: dot.s7, height: dot.s7, borderRadius: dot.s7 / 2, marginTop: 5 },
   issueText: { flex: 1, fontSize: 12.5, color: '#334155', lineHeight: 17 },
   proposal: {
     backgroundColor: '#f8fafc',

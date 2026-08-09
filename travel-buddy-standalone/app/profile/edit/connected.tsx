@@ -24,7 +24,7 @@ import {
   SettingsScreen, SettingsSection, SettingsRow, SettingsDivider, ToggleRow,
 } from '../../../src/components/settings/SettingsUI';
 import { PP } from '../../../src/theme/passportTokens';
-import { space, radius, type as t, icon } from '../../../src/theme/tokens';
+import { space, radius, type as t, icon, dot } from '../../../src/theme/tokens';
 import { updateTelegraphChatSettings, getTelegraphChatSettings } from '../../../src/services/telegraphChat';
 import {
   getTagPermission, updateTagPermission,
@@ -413,7 +413,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   radioOn: { borderColor: PP.inkLight },
-  radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: PP.inkLight },
+  radioDot: { width: dot.s10, height: dot.s10, borderRadius: dot.s10 / 2, backgroundColor: PP.inkLight },
   radioLabel: { ...t.body, color: PP.ink, fontWeight: '600' },
   radioDesc: { ...t.small, color: PP.inkMuted, fontSize: 12, marginTop: 1, lineHeight: 16 },
 

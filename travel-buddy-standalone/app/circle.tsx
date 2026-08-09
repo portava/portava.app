@@ -16,7 +16,7 @@ import { AvailabilityGrid } from '../src/components/AvailabilityGrid';
 import { BestDaysBanner } from '../src/components/BestDaysBanner';
 import { MeetupCreationSheet } from '../src/components/MeetupCreationSheet';
 import { useSession } from '../src/context/SessionContext';
-import { color, space, radius, type as t, shadow, icon } from '../src/theme/tokens';
+import { color, space, radius, type as t, shadow, icon, avatar, dot } from '../src/theme/tokens';
 import { HighlightRing } from '../src/components/HighlightRing';
 import { HighlightViewer } from '../src/components/HighlightViewer';
 import { useHighlightRingState } from '../src/hooks/useHighlightRingState';
@@ -501,7 +501,7 @@ export default function Circle() {
 const styles = StyleSheet.create({
   chatBtn: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginHorizontal: space.lg, marginTop: space.md, paddingVertical: space.sm + 2, paddingHorizontal: space.lg, borderRadius: radius.pill, backgroundColor: color.signal },
   chatBtnText: { ...t.bodyStrong, color: color.onInk, fontSize: 14 },
-  unreadDot: { position: 'absolute', top: -3, right: -3, width: 7, height: 7, borderRadius: 4, backgroundColor: color.onInk },
+  unreadDot: { position: 'absolute', top: -3, right: -3, width: dot.s7, height: dot.s7, borderRadius: dot.s7 / 2, backgroundColor: color.onInk },
   tabBar: { flexDirection: 'row', gap: space.sm, margin: space.lg, marginBottom: 0, padding: 4, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill },
   tab: { flex: 1, paddingVertical: space.sm, borderRadius: radius.pill, alignItems: 'center' },
   tabActive: { backgroundColor: color.ink },

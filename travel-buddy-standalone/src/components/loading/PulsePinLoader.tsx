@@ -32,7 +32,7 @@ import Animated, {
   Easing,
   cancelAnimation,
 } from 'react-native-reanimated';
-import { color, space, type as t, font } from '../../theme/tokens.ts';
+import { color, space, type as t, font, dot } from '../../theme/tokens.ts';
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
@@ -183,9 +183,8 @@ const styles = StyleSheet.create({
   lockDot: {
     position: 'absolute',
     bottom: 12,
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
+    width: dot.s5, height: dot.s5,
+    borderRadius: dot.s5 / 2,
     backgroundColor: color.deep,
   },
   loadingText: {

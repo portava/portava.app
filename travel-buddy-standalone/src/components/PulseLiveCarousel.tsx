@@ -28,7 +28,7 @@ import Animated, {
 import { router, useFocusEffect } from 'expo-router';
 import type { CityEvent } from '../types/models.ts';
 import { pv } from '../theme/pulseTheme.ts';
-import { type as t } from '../theme/tokens.ts';
+import { type as t, dot } from '../theme/tokens.ts';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -308,9 +308,8 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   liveDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: dot.s6, height: dot.s6,
+    borderRadius: dot.s6 / 2,
     backgroundColor: pv.coral,
   },
   liveText: {
@@ -365,9 +364,8 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   dot: {
-    width: 5,
-    height: 5,
-    borderRadius: 3,
+    width: dot.s5, height: dot.s5,
+    borderRadius: dot.s5 / 2,
     backgroundColor: pv.navyEdge,
   },
   dotActive: {

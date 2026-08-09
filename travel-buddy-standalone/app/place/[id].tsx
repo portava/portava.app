@@ -20,7 +20,7 @@ import {
 import { useLocalSearchParams, Stack } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Flag, MapPin, Globe, Phone, Tag, Bookmark, Navigation, Clock, Star, ListPlus } from 'lucide-react-native';
-import { color, space, radius, type as t, avatar } from '../../src/theme/tokens';
+import { color, space, radius, type as t, avatar, dot } from '../../src/theme/tokens';
 import { getCanonicalPlace, getPlaceLiving } from '../../src/services/places';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 import { PlaceCard } from '../../src/components/place/PlaceCard';
@@ -556,9 +556,8 @@ const fb = StyleSheet.create({
     gap: space.sm,
   },
   accentDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: dot.s12, height: dot.s12,
+    borderRadius: dot.s12 / 2,
     marginTop: 4,
     flexShrink: 0,
   },

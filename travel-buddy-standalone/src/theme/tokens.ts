@@ -160,11 +160,51 @@ export const aspect = { wide: 16 / 9, card: 4 / 3, square: 1, portrait: 4 / 5, s
  * position in the scale (`smMd` sits between `sm` and `md`, `lgXl` between
  * `lg` and `xl`) rather than continuing the tier-letter sequence, since they
  * are not a new tier — they are an infill.
- *
- * All existing call sites are migrated as of this pass. See
- * scripts/check-avatar-icon-sizing.mjs for the guard + shrink-only allowlist.
  */
 export const avatar = { xs: 28, sm: 32, smMd: 34, md: 36, lg: 40, lgXl: 44, xl: 48, xxl: 56 } as const;
+
+/**
+ * Dot sizing scale — small circular status/presence indicators (live dots,
+ * unread badges, freshness badges, timeline/legend dots). Deliberately a
+ * SEPARATE token group from `avatar`, not an extension of it downward: these
+ * are a different semantic category (an indicator glyph, never a person's
+ * photo/initials) even though the guard that enforces both lives in the same
+ * script. Added 2026-08-09 after classifying the sub-14px band of
+ * `docs/design/sizing-near-misses.md` — 88 of 94 sites there were this exact
+ * recurring "dot" shape (named `liveDot`/`killDot`/`visDot`/`unreadDot`/
+ * `freshDot`/etc at the call sites themselves, independently, well before
+ * this token existed) spanning 6/7/8/10/12px, reused across dozens of
+ * unrelated components.
+ *
+ * Three additional sites were genuine drift (a typo'd/near-miss size, not a
+ * new tier) and were normalized to the nearest real tier rather than
+ * tokenized as their own value: a 9px dot -> `s8`, an 11px "freshDot" -> `s12`
+ * (matching the visually-identical presence-badge pattern already using 12),
+ * and a 4px decorative "bandDot" -> `s5`.
+ *
+ * `StampItBurst.tsx`'s `INK_DOTS` array (sizes 3/4/4/5/6, one file only) was
+ * deliberately excluded from this token set even though its name says
+ * "dots" too: it's a single decorative burst effect using graduated,
+ * intentionally-varied particle sizes for an organic look, not a reusable
+ * semantic size. Forcing its particles onto shared tiers would remove the
+ * variety that's the point of the effect. Its duplicate-literal shape was
+ * refactored into a small local size helper instead, so it neither drifts
+ * unnoticed nor false-positives against this token's guard.
+ *
+ * Keys are numeric-pixel (`s<value>`) rather than tier letters like `avatar`
+ * uses: there is no established small/medium/large vocabulary for a 6-value
+ * indicator-dot scale, and a bare numeric key isn't valid as a dot-access
+ * identifier (`dot.5` doesn't parse) — `s<value>` sidesteps inventing tier
+ * names for values that are already self-describing as pixel sizes.
+ */
+export const dot = {
+  s5: 5,
+  s6: 6,
+  s7: 7,
+  s8: 8,
+  s10: 10,
+  s12: 12,
+} as const;
 
 /** Layout constraints. */
 export const layout = {

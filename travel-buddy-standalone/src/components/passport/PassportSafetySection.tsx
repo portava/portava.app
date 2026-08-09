@@ -8,6 +8,7 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { ShieldCheck, Shield } from 'lucide-react-native';
 import type { VerificationLevelStatus } from '../VerificationLevelsRail.tsx';
 import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
+import { dot } from '../../theme/tokens.ts';
 
 interface Props {
   levels: VerificationLevelStatus;
@@ -188,7 +189,7 @@ const s = StyleSheet.create({
     paddingTop: 4,
   },
   flagDot: {
-    width: 8, height: 8, borderRadius: 4,
+    width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2,
     backgroundColor: PP.inkMuted,
   },
   flagDotOk: { backgroundColor: TEAL },

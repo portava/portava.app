@@ -10,7 +10,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
 import { MapPin, X, ArrowRight, HandMetal } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow, icon } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, icon, avatar, dot } from '../../theme/tokens.ts';
 import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
 import type { MapTraveler } from '../../services/mapTravelers.ts';
 import { travelerInitials } from './TravelerMapLayer.tsx';
@@ -116,14 +116,12 @@ const s = StyleSheet.create({
     paddingRight: 30,
   },
   avatar: {
-    width: 46,
-    height: 46,
+    width: 46, height: 46,
     borderRadius: 23,
     backgroundColor: color.haze,
   },
   avatarFallback: {
-    width: 46,
-    height: 46,
+    width: 46, height: 46,
     borderRadius: 23,
     backgroundColor: color.deep,
     alignItems: 'center',
@@ -177,9 +175,8 @@ const s = StyleSheet.create({
     color: color.mute,
   },
   freshDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: dot.s8, height: dot.s8,
+    borderRadius: dot.s8 / 2,
   },
   passportBtn: {
     flexDirection: 'row',

@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, ActivityIndicator, Pressable, StyleSheet } from 'react-native';
-import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, dot } from '../theme/tokens.ts';
 import type { PostRow } from '../services/posts.ts';
 import { formatRelativeTime } from '../lib/dateTime/formatters.ts';
 
@@ -79,7 +79,7 @@ const s = StyleSheet.create({
   section: { paddingHorizontal: space.lg, gap: space.sm, marginBottom: space.lg },
   headRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   heading: { ...t.title, color: color.ink, fontSize: 18 },
-  liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: color.success },
+  liveDot: { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2, backgroundColor: color.success },
   card: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: space.sm, ...shadow.card },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   author: { ...t.bodyStrong, color: color.ink, fontSize: 14, maxWidth: 160 },

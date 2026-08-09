@@ -8,7 +8,7 @@ import {
 import type { TripPlanItem, TripPlanCategory, TripPlanItemStatus } from '../../types/models.ts';
 import { removePlanItem, updatePlanItem, reorderPlanItem } from '../../services/tripPlan.ts';
 import { LOCK_LABEL, LOCK_STYLE } from './LockTypeSelector.tsx';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, dot } from '../../theme/tokens.ts';
 
 // ── Category / status maps ─────────────────────────────────────────────────────
 
@@ -731,7 +731,7 @@ const dg = StyleSheet.create({
   group:            { marginBottom: 16 },
   header:           { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
   headerUnscheduled:{ opacity: 0.65 },
-  dot:              { width: 10, height: 10, borderRadius: 5, backgroundColor: color.deep },
+  dot:              { width: dot.s10, height: dot.s10, borderRadius: dot.s10 / 2, backgroundColor: color.deep },
   dotUnscheduled:   { backgroundColor: color.faint },
   label:            { ...t.small, color: color.ink, fontWeight: '700', fontSize: 13 },
   labelUnscheduled: { color: color.mute, fontStyle: 'italic' },

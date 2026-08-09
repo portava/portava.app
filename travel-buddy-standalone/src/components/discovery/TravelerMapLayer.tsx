@@ -17,7 +17,7 @@ import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'); } catch { return {}; } })();
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const { Marker } = _ml as typeof import('@maplibre/maplibre-react-native');
-import { color } from '../../theme/tokens.ts';
+import { color, avatar, dot } from '../../theme/tokens.ts';
 import { primaryIdentityText } from '../../lib/displayIdentity.ts';
 import type { MapTraveler } from '../../services/mapTravelers.ts';
 import { useHydratedMedia } from '../../services/mediaUrl.ts';
@@ -169,16 +169,14 @@ const m = StyleSheet.create({
     height: 38,
   },
   avatarImg: {
-    width: 38,
-    height: 38,
+    width: 38, height: 38,
     borderRadius: 19,
     borderWidth: 2.5,
     borderColor: '#fff',
     backgroundColor: color.haze,
   },
   initialsDisc: {
-    width: 38,
-    height: 38,
+    width: 38, height: 38,
     borderRadius: 19,
     borderWidth: 2.5,
     borderColor: '#fff',
@@ -195,9 +193,8 @@ const m = StyleSheet.create({
     position: 'absolute',
     bottom: 0,
     right: 0,
-    width: 11,
-    height: 11,
-    borderRadius: 5.5,
+    width: dot.s12, height: dot.s12,
+    borderRadius: dot.s12 / 2,
     borderWidth: 1.5,
     borderColor: '#fff',
   },

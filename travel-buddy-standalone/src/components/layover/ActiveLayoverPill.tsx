@@ -13,7 +13,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronRight, Plane } from 'lucide-react-native';
-import { color, space, type as t } from '../../theme/tokens.ts';
+import { color, space, type as t, dot } from '../../theme/tokens.ts';
 import { useLayoverSessionContext } from '../../context/LayoverSessionContext.tsx';
 import { fmtClock } from './layoverFormat.ts';
 
@@ -49,6 +49,6 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
     elevation: 6, maxWidth: '86%',
   },
-  pulseDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: color.signal },
+  pulseDot: { width: dot.s7, height: dot.s7, borderRadius: dot.s7 / 2, backgroundColor: color.signal },
   text: { ...t.small, fontWeight: '700', color: color.onInk, flexShrink: 1 },
 });

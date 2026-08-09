@@ -21,6 +21,7 @@ import type { PassportStamp } from '../types/models.ts';
 import { resolveArtwork } from '../lib/stampArtworkResolver.ts';
 import { STAMP_RARITY_LABELS, STAMP_RARITY_COLORS } from '../types/stampArtwork.ts';
 import { StampSvgFrame } from './StampSvgFrame.tsx';
+import { dot } from '../theme/tokens.ts';
 
 type IconCmp = ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
 
@@ -254,7 +255,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
   },
-  rarityDot: { width: 5, height: 5, borderRadius: 3 },
+  rarityDot: { width: dot.s5, height: dot.s5, borderRadius: dot.s5 / 2 },
   rarityText: {
     fontFamily: 'Courier',
     fontSize: 10,

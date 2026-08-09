@@ -9,7 +9,7 @@ import {
   StopCircle, DollarSign, Users, X,
 } from 'lucide-react-native';
 import { TravelButton, TravelCard } from '../../../src/components/primitives';
-import { color, space, radius, type as t, icon, avatar } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, icon, avatar, dot } from '../../../src/theme/tokens';
 import {
   getMyRequests, reportBooking, endBookingEarly, feelUnsafe, confirmCashBalance,
   type BuddyBooking,
@@ -461,7 +461,7 @@ const modal = StyleSheet.create({
     borderColor: color.haze, alignItems: 'center', justifyContent: 'center',
   },
   radioOn: { borderColor: color.signal },
-  radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: color.signal },
+  radioDot: { width: dot.s10, height: dot.s10, borderRadius: dot.s10 / 2, backgroundColor: color.signal },
   input: {
     borderWidth: 1.5, borderColor: color.haze, borderRadius: radius.md,
     padding: space.md, ...t.body, color: color.ink,

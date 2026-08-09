@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { CalendarClock, ChevronRight } from 'lucide-react-native';
 import type { AvailabilityStatus } from '../types/models.ts';
 import { STATUS_LABEL } from '../lib/availability.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, dot } from '../theme/tokens.ts';
 
 /**
  * Compact availability status card. Display-only this pass.
@@ -34,7 +34,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md, paddingVertical: space.md,
     marginTop: space.sm,
   },
-  dot: { width: 9, height: 9, borderRadius: 5 },
+  dot: { width: dot.s8, height: dot.s8, borderRadius: dot.s8 / 2 },
   label: { ...t.bodyStrong, color: color.ink },
   cta: { ...t.small, color: color.mute, marginTop: 1 },
 });

@@ -33,7 +33,7 @@ import Animated, {
   Easing,
   cancelAnimation,
 } from 'react-native-reanimated';
-import { color, space, radius, type as t, font, shadow } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, font, shadow, dot } from '../../theme/tokens.ts';
 
 export interface RouteStop {
   label: string;
@@ -305,9 +305,8 @@ const styles = StyleSheet.create({
   },
   dots: { flexDirection: 'row', gap: 4 },
   dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: dot.s6, height: dot.s6,
+    borderRadius: dot.s6 / 2,
     backgroundColor: color.signal,
   },
   loadingText: {

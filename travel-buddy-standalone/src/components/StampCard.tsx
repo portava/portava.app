@@ -14,6 +14,7 @@ import type { PassportStamp } from '../types/models.ts';
 import { resolveArtwork } from '../lib/stampArtworkResolver.ts';
 import { STAMP_RARITY_COLORS } from '../types/stampArtwork.ts';
 import { StampSvgFrame } from './StampSvgFrame.tsx';
+import { dot } from '../theme/tokens.ts';
 
 type IconCmp = ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
 
@@ -185,9 +186,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 6,
     right: 6,
-    width: 5,
-    height: 5,
-    borderRadius: 3,
+    width: dot.s5, height: dot.s5,
+    borderRadius: dot.s5 / 2,
     opacity: 0.7,
   },
 });

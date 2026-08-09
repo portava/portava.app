@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { Send, MapPin } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, dot } from '../theme/tokens.ts';
 
 /* ── Local palette ─────────────────────────────────────────── */
 const p = {
@@ -474,9 +474,8 @@ const es = StyleSheet.create({
     paddingHorizontal: 6,
   },
   bandDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
+    width: dot.s5, height: dot.s5,
+    borderRadius: dot.s5 / 2,
     backgroundColor: 'rgba(255,255,255,0.7)',
   },
 
