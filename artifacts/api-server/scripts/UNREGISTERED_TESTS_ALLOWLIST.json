@@ -86,7 +86,6 @@
   "src/test/privacyFeedFilter.test.ts",
   "src/test/privateFollowVisibility.test.ts",
   "src/test/profileBuildPass.test.ts",
-  "src/test/profileMediaCleanup.test.ts",
   "src/test/profilePersona.test.ts",
   "src/test/profilePhase3Targeted.test.ts",
   "src/test/profilePrivacy.test.ts",

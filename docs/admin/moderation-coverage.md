@@ -24,6 +24,9 @@
 > `profile-media/avatars/…` (`routes/profile.ts:1015`) — is exactly the one the
 > old `/object/public/` slice could not parse. See §A below.
 >
+> **Orphan census 2026-08-09 — and a live user-facing bug found while counting.**
+> Nothing swept; counts only. See "Storage orphan census" below.
+>
 > **Guard count — 33, not 30 or 31.** `checkAdminGuard.ts` now detects guards by
 > shape. Re-run against the pre-sweep tree: **33** local role gates, not the 30
 > the original audit recorded nor the 31 this document claimed. See the guard
@@ -513,13 +516,105 @@ the tree is gated by a check no tooling watches.
 | 5 | Audit records a user, never the content item; no reversal linkage. | **Medium-high.** A wrongful removal cannot be identified or undone. | **1–2 d** — add target-entity fields via `metadata`, plus `undo_of`. |
 | 6 | Two report tables, two queues, disjoint entity vocabularies. | **Medium.** Complaints are split; an admin working one queue silently never sees the other. | **3–5 d** — unify into one queue view, or one intake with a discriminator. Data migration if merged. |
 | 7 | Admin cannot delete a profile without a user-initiated request; cascade misses highlights, memories, bookings, trips, events. | **Medium.** Ban is the practical ceiling; content survives deletion when it does run. | **2–3 d** — admin-initiated path + extend the cascade, one decision per entity. |
-| 8 | ~~Storage deletes are silent best-effort~~ **FIXED** for avatar/cover and the new media delete: all three formats resolved, fail-loud on unparseable or failed removal. **Existing orphans still need a sweep** — every avatar/cover delete performed before this fix on a bucket-path value left its object behind. | **Reduced to cleanup.** | **0.5–1 d** — one-off reconciliation listing bucket objects with no referencing row. |
+| 8 | ~~Storage deletes are silent best-effort~~ **FIXED** in all three paths — avatar/cover delete, the new media delete, and `cleanupOldMedia` (the actual orphan producer; the admin path had never run). **20 existing profile-media orphans still need a sweep**, not yet performed. | **Reduced to cleanup.** | **0.5–1 d** — reconciliation over profile-media. Do NOT extend it to post-media on the current numbers; see the census. |
 | 9 | No assignment/triage on either queue. | **Low-medium.** Fine for one moderator; collides with two. | **1–2 d** — `assigned_to` + filter, mirroring `trust_reviews`. |
 | 10 | `requireVisualAdmin` invisible to `checkAdminGuard`; inline gates unwatched. | **Low today, structural.** The most destructive media delete is gated by an unwatched check. | **0.5 d** — widen the regex beyond `requireAdmin\w*`; fold `adminVisuals` into the outstanding set. |
+| 11 | **One real, active user has 14 broken media items** on published public posts — `post_media` rows whose storage objects do not exist, all created 2026-07-17. The other 100 such rows belong to never-signed-in seed accounts. | **Live user-facing.** The client renders `public_url` and gets a broken image; `processing_status` says `ready`, so nothing flags it. | **0.5 d to diagnose** (what removed the objects — storage logs), then either restore or mark the rows unavailable so the UI stops trying. |
 
-**Roughly 15–25 days** for all ten. Gaps 1 and 2 together (~5 days) convert the
+**Roughly 15–25 days** for the original ten; gap 11 is new and small but should be triaged first because it is the only one a user can see today. Gaps 1 and 2 together (~5 days) convert the
 existing backend from unusable to usable, and are worth far more than their
 share of the estimate.
+
+---
+
+## Storage orphan census — 2026-08-09
+
+Counted, not swept. Nothing has been deleted.
+
+### profile-media — 20 orphans, and the cause was not the admin path
+
+| | |
+|---|---|
+| Objects in bucket | 25 |
+| Unreferenced by any `avatar_url` / `cover_photo_url` | **20** (14 `avatars/`, 6 `covers/`) |
+| Distinct users owning objects | 6 |
+
+**None of these came from the admin delete path.** `moderation_actions` has 0
+rows, so no admin has ever removed an avatar or cover — that endpoint has never
+run in production. Gap 8's original framing ("every pre-fix delete stranded its
+object") was true in principle and empty in practice.
+
+The distribution names the real source: one user holds 11 objects, another 5,
+another 3, and three hold 2. Those are **superseded uploads**. Each avatar
+change should have removed its predecessor via `cleanupOldMedia`
+(`routes/profile.ts`), which carried the identical marker-slice bug — and which
+runs on every profile media change, where the admin path runs never.
+
+> **FIXED 2026-08-09.** `cleanupOldMedia` now resolves through
+> `lib/storagePath.ts`. "Fail loud" is adapted to its context: it runs in
+> `setImmediate` after the response, so there is no request to fail and no
+> column left to protect — instead an object that cannot be accounted for is
+> logged with its path rather than dropped. Five tests added, and the suite was
+> registered (it was one of the 88 that never ran, so the tests would have been
+> invisible otherwise).
+
+The 20 existing orphans still need a sweep. Sweeping before this fix would have
+cleaned a set that immediately regrew.
+
+### post-media — 33 unreferenced objects, LOW CONFIDENCE
+
+| | |
+|---|---|
+| Objects in bucket | 35 |
+| Not referenced by any `post_media.storage_path` | **33** |
+| `post_media` rows | 116 |
+| …whose `storage_path` has no matching object | **114** |
+
+**Treat the 33 as unreliable, and do not sweep on it.** The inconsistency runs
+in *both* directions at once: only 2 objects are referenced by a row, and only
+2 rows point at an object that exists. A delete bug produces orphans in one
+direction — objects outliving their rows. It does not simultaneously produce
+114 rows referencing objects that were never there.
+
+That signature points at seeding or a bucket wipe, not at a code defect, and it
+means the 33 is measuring the same broken correspondence from the other side
+rather than an independent finding. The new `adminMedia` delete cannot be the
+cause either: `moderation_actions` is empty, so it has never run.
+
+### The 114 dangling rows are mostly seed — but not entirely
+
+Checked as instructed, because "data hygiene" and "users are looking at broken
+images" are different problems.
+
+| Owner cohort | Rows | Signals |
+|---|---|---|
+| Seed accounts | 100 | 20 users · UUID**v5** ids (deterministic, i.e. generated) · `@example.com` · **`last_sign_in_at` is null — never signed in** · created in batches on 2026-07-17 / 07-27 |
+| **One real user** | **14** | UUID**v4** · `@gmail.com` · account created 2026-06-28 · **last signed in 2026-08-07** · has a genuine Supabase-hosted avatar |
+
+**All 114 sit on posts that are `published` and `public`, with `public_url`
+populated and `processing_status = 'ready'`.** So the client renders them and
+gets a broken image; nothing in the data marks them as unavailable.
+
+For the real user this is a **live user-facing bug, not a hygiene note**: 14
+broken images and 1 broken video across 14 published public posts, on an
+account that was active two days before this audit.
+
+Scope and likely cause: their 14 broken items were all created on **2026-07-17**
+— a single day — while their other 2 media items (2026-07-17 and 2026-08-07)
+are intact. Both intact and broken rows use the same 3-segment path shape, so
+this is not a path-format mismatch; the objects are simply absent. A bulk loss
+around 2026-07-17 fits the evidence better than a per-upload failure, and the
+2026-08-07 object proves the upload pipeline works now.
+
+> **Not established:** what removed those objects. The date correlates with the
+> seed-account creation batch, which suggests a bucket wipe after seeding, but
+> that is a hypothesis and storage access logs were not consulted. Worth
+> settling before anyone concludes the pipeline is healthy.
+
+**Recommended order:** tell that user's 14 posts apart from the seed rows before
+any sweep — a sweep keyed on "unreferenced object" would not touch them (their
+problem is the opposite: rows without objects), but a cleanup keyed on
+"dangling row" would silently delete a real person's posts.
 
 ---
 

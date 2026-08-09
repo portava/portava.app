@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, safeSecretEquals } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
+import { resolveStoragePath } from "../lib/storagePath.js";
 import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
 import { retranslateForUser } from "../services/messageTranslation";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
@@ -701,20 +702,64 @@ router.patch("/me/profile", async (req, res) => {
   // `savedRow` is the row actually written — a field's old file is only
   // deleted if its column was persisted (the schema-drift fallback strips
   // cover_photo_url, in which case the old cover is still live).
+  // This is the highest-volume orphan producer in the codebase: it runs on
+  // every avatar or cover change, where the admin delete path runs almost
+  // never. It previously searched the old URL for `/object/public/<bucket>/`
+  // and `continue`d when that was absent — which is the common case, not the
+  // rare one, because the upload endpoints below return a BUCKET-QUALIFIED
+  // path (`profile-media/avatars/…`, see `res.json({ url: ... })` in
+  // POST /me/avatar/file and /me/cover/file). So the format this server writes
+  // was exactly the format this cleanup could not parse, and every replaced
+  // avatar left its predecessor behind. Measured 2026-08-09: 20 orphaned
+  // objects in profile-media across 6 users, one of them holding 11.
+  //
+  // FAIL LOUD, adapted to the context. Unlike the admin delete paths this runs
+  // in setImmediate AFTER the response is sent, so there is no request to fail
+  // and no column left to protect — the profile row is already updated. The
+  // equivalent obligation here is that an object we cannot account for is
+  // LOGGED with enough detail to find it, never dropped on the floor.
   const cleanupOldMedia = (savedRow: Record<string, unknown>) => {
     setImmediate(() => {
       const sc = getServiceClient();
       if (!sc) return;
-      const marker = `/object/public/${AVATAR_BUCKET}/`;
-      for (const [newUrl, oldUrl] of [
-        ["avatar_url" in savedRow ? p.avatarUrl : undefined, oldAvatarUrl],
-        ["cover_photo_url" in savedRow ? p.coverUrl : undefined, oldCoverUrl],
-      ] as Array<[string | undefined, string | null]>) {
+      for (const [field, newUrl, oldUrl] of [
+        ["avatar_url", "avatar_url" in savedRow ? p.avatarUrl : undefined, oldAvatarUrl],
+        ["cover_photo_url", "cover_photo_url" in savedRow ? p.coverUrl : undefined, oldCoverUrl],
+      ] as Array<[string, string | undefined, string | null]>) {
         if (newUrl === undefined || !oldUrl || oldUrl === newUrl) continue;
-        const idx = oldUrl.indexOf(marker);
-        if (idx === -1) continue;
-        const oldPath = oldUrl.slice(idx + marker.length);
-        sc.storage.from(AVATAR_BUCKET).remove([oldPath]).catch(() => {});
+
+        const ref = resolveStoragePath(oldUrl, AVATAR_BUCKET);
+        if (ref.kind === "none") continue;
+        if (ref.kind === "external") continue; // seed/CDN URL — no object of ours
+
+        if (ref.kind === "unresolvable") {
+          req.log?.error?.(
+            { field, userId: user.id, storedValue: ref.value },
+            "profile media cleanup: cannot derive a storage path from the replaced value — " +
+              "object orphaned, needs manual removal",
+          );
+          continue;
+        }
+
+        sc.storage
+          .from(AVATAR_BUCKET)
+          .remove([ref.path])
+          .then(
+            ({ error }: any) => {
+              if (error) {
+                req.log?.error?.(
+                  { field, userId: user.id, path: ref.path, err: error },
+                  "profile media cleanup: storage removal failed — object orphaned",
+                );
+              }
+            },
+            (err: unknown) => {
+              req.log?.error?.(
+                { field, userId: user.id, path: ref.path, err },
+                "profile media cleanup: storage removal threw — object orphaned",
+              );
+            },
+          );
       }
     });
   };
