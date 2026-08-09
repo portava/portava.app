@@ -71,6 +71,8 @@ import {
   setGuideStatus,
 } from "../services/hiddenGems/LocalGuideService.js";
 
+import { isAdmin } from "../lib/requireAdmin.js";
+
 const router = Router();
 
 // ── Feature flag helper ───────────────────────────────────────────────────────
@@ -86,17 +88,6 @@ async function isFlagEnabled(db: any, flag: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-// ── Admin guard ────────────────────────────────────────────────────────────────
-
-async function requireAdmin(sc: any, userId: string): Promise<boolean> {
-  const { data } = await sc
-    .from("profiles")
-    .select("role")
-    .eq("id", userId)
-    .maybeSingle();
-  return (data as any)?.role === "admin";
 }
 
 // ── Validation schemas ─────────────────────────────────────────────────────────
@@ -705,8 +696,14 @@ router.get("/hidden-gems/:id", async (req, res) => {
     if (!gem) { sendError(res, "not_found", "Gem not found"); return; }
     // Non-active gems (pending / hidden / merged) are only visible to owner or admin
     if ((gem as any).status !== "active" && (gem as any).submitted_by !== callerId) {
-      const isAdmin = callerId ? await requireAdmin(sc, callerId) : false;
-      if (!isAdmin) { sendError(res, "not_found", "Gem not found"); return; }
+      // Renamed from `isAdmin` when the shared predicate arrived: a local
+      // `const isAdmin` would shadow the import inside this block and make
+      // its own initialiser a TDZ ReferenceError.
+      const callerIsAdmin = callerId ? await isAdmin(sc, callerId) : false;
+      // 404, not 403 — this branch is reached while composing a response for
+      // a caller who may not know the gem exists, and saying "forbidden"
+      // would confirm that it does.
+      if (!callerIsAdmin) { sendError(res, "not_found", "Gem not found"); return; }
     }
 
     const safe = await applyGemPrivacy(gem, sc, callerId, callerTripId);
@@ -1163,7 +1160,7 @@ router.get("/admin/hidden-gems/pending", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
 
-  if (!await requireAdmin(sc, user.id)) {
+  if (!await isAdmin(sc, user.id)) {
     sendError(res, "forbidden", "Admin access required"); return;
   }
 
@@ -1183,7 +1180,7 @@ router.get("/admin/hidden-gems/reported", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
 
-  if (!await requireAdmin(sc, user.id)) {
+  if (!await isAdmin(sc, user.id)) {
     sendError(res, "forbidden", "Admin access required"); return;
   }
 
@@ -1203,7 +1200,7 @@ router.get("/admin/hidden-gems/guide-applications", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
 
-  if (!await requireAdmin(sc, user.id)) {
+  if (!await isAdmin(sc, user.id)) {
     sendError(res, "forbidden", "Admin access required"); return;
   }
 
@@ -1226,7 +1223,7 @@ router.get("/admin/hidden-gems/sensitive-gems", async (req, res) => {
   const { user } = auth;
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await requireAdmin(sc, user.id)) { sendError(res, "forbidden", "Admin access required"); return; }
+  if (!await isAdmin(sc, user.id)) { sendError(res, "forbidden", "Admin access required"); return; }
   try {
     const gems = await getSensitiveGems(sc);
     res.json({ gems });
@@ -1239,7 +1236,7 @@ router.get("/admin/hidden-gems/duplicate-candidates", async (req, res) => {
   const { user } = auth;
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await requireAdmin(sc, user.id)) { sendError(res, "forbidden", "Admin access required"); return; }
+  if (!await isAdmin(sc, user.id)) { sendError(res, "forbidden", "Admin access required"); return; }
   try {
     const gems = await getDuplicateCandidates(sc);
     res.json({ gems });
@@ -1254,7 +1251,7 @@ router.post("/admin/hidden-gems/:id/verify", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
 
-  if (!await requireAdmin(sc, user.id)) {
+  if (!await isAdmin(sc, user.id)) {
     sendError(res, "forbidden", "Admin access required"); return;
   }
 
@@ -1320,7 +1317,7 @@ router.post("/admin/hidden-gems/:id/sensitive", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
 
-  if (!await requireAdmin(sc, user.id)) {
+  if (!await isAdmin(sc, user.id)) {
     sendError(res, "forbidden", "Admin access required"); return;
   }
 
@@ -1346,7 +1343,7 @@ router.post("/admin/hidden-gems/:id/merge", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
 
-  if (!await requireAdmin(sc, user.id)) {
+  if (!await isAdmin(sc, user.id)) {
     sendError(res, "forbidden", "Admin access required"); return;
   }
 
@@ -1369,7 +1366,7 @@ router.post("/admin/local-guides/:userId/status", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
 
-  if (!await requireAdmin(sc, user.id)) {
+  if (!await isAdmin(sc, user.id)) {
     sendError(res, "forbidden", "Admin access required"); return;
   }
 
