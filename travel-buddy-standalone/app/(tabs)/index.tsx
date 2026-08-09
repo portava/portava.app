@@ -204,7 +204,7 @@ function Pulse() {
     }).catch(() => { /* best-effort: silently ignore if not logged in yet */ });
   }, []);
 
-  const { buckets, events, status } = useCityPulse({ currentCitySlug: activeCitySlug, interests: [], categoryAffinities });
+  const { buckets, events, status, sessionId: cityPulseSessionId } = useCityPulse({ currentCitySlug: activeCitySlug, interests: [], categoryAffinities });
 
   const livePulse = useLivePulse({
     context: activeCitySlug ? 'currentCity' : 'myPlans',
@@ -426,7 +426,7 @@ function Pulse() {
           // Availability improves personalisation but must not gate Pulse's
           // usefulness. Show what's happening in the city right now instead of
           // a dead-end message telling the user to set availability first.
-          <ExploreTodaySection events={events} city={activeCity} />
+          <ExploreTodaySection events={events} city={activeCity} sessionId={cityPulseSessionId} />
         ) : (
           <>
             {/* Fits your time — only visible when availability is set */}

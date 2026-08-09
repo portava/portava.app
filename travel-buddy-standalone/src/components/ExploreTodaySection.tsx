@@ -31,6 +31,7 @@ import type { CityEvent } from '../types/models.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { FitsCard } from './PulseFits.tsx';
 import { sortEventsByStartTime } from '../hooks/cityPulseUtils.ts';
+import { eventHref } from '../lib/feedAttribution.ts';
 
 // ── Types & constants ─────────────────────────────────────────────────────────
 
@@ -76,11 +77,11 @@ function fmtTime(iso: string): string {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function NowChip({ ev }: { ev: CityEvent }) {
+function NowChip({ ev, sessionId }: { ev: CityEvent; sessionId?: string | null }) {
   return (
     <Pressable
       style={s.nowChip}
-      onPress={() => router.push(`/event/${ev.id}` as any)}
+      onPress={() => router.push(eventHref(ev.id, sessionId) as any)}
     >
       <View style={s.liveDotSm} />
       <View style={s.nowChipBody}>
@@ -93,11 +94,11 @@ function NowChip({ ev }: { ev: CityEvent }) {
   );
 }
 
-function ChronRow({ ev }: { ev: CityEvent }) {
+function ChronRow({ ev, sessionId }: { ev: CityEvent; sessionId?: string | null }) {
   return (
     <Pressable
       style={s.chronRow}
-      onPress={() => router.push(`/event/${ev.id}` as any)}
+      onPress={() => router.push(eventHref(ev.id, sessionId) as any)}
     >
       <Text style={s.chronTime}>{fmtTime(ev.startAt)}</Text>
       <View style={s.chronDivider} />
@@ -117,9 +118,18 @@ function ChronRow({ ev }: { ev: CityEvent }) {
 export function ExploreTodaySection({
   events,
   city,
+  sessionId,
 }: {
   events: CityEvent[];
   city: string;
+  /**
+   * Feed session that served these impressions, from useCityPulse. Threaded
+   * onto the event route so an RSVP on the destination screen can be
+   * attributed back to the impression that produced it (signal-audit §3a).
+   * Undefined when the caller has no session — the outcome then records
+   * unattributed rather than wrongly attributed.
+   */
+  sessionId?: string | null;
 }) {
   const [band, setBand] = useState<TimeBand>(currentBand);
 
@@ -182,7 +192,7 @@ export function ExploreTodaySection({
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={s.nowStrip}
           >
-            {happeningNow.map((ev) => <NowChip key={ev.id} ev={ev} />)}
+            {happeningNow.map((ev) => <NowChip key={ev.id} ev={ev} sessionId={sessionId} />)}
           </ScrollView>
         </View>
       )}
@@ -243,7 +253,7 @@ export function ExploreTodaySection({
         <Text style={s.chronSectionTitle}>
           Full Day{city ? ` · ${city}` : ''}
         </Text>
-        {chronEvents.map((ev) => <ChronRow key={ev.id} ev={ev} />)}
+        {chronEvents.map((ev) => <ChronRow key={ev.id} ev={ev} sessionId={sessionId} />)}
       </View>
 
     </View>

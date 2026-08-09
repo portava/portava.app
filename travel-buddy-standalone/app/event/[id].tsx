@@ -76,6 +76,7 @@ import { PlaceInfoSection } from '../../src/components/place/PlaceInfoSection';
 import { getVenueInfoByCoords, clearVenueInfoCache, getCanonicalPlace, type VenueContactInfo } from '../../src/services/places';
 import type { CanonicalPlace } from '../../src/types/canonicalPlace';
 import { canonicalUrl } from '../../src/constants/canonicalUrl';
+import { readFeedSession } from '../../src/lib/feedAttribution.ts';
 
 /**
  * Composes the location subtitle line, avoiding a duplicated city when
@@ -142,7 +143,11 @@ function openMap(locationName: string | null, lat: number | null, lng: number | 
 export default function EventDetailScreen() {
   const insets = useSafeAreaInsets();
   const { inset: barInset, onBarLayout } = useStickyBarInset();
-  const { id, tripId: tripIdParam } = useLocalSearchParams<{ id: string; tripId?: string }>();
+  const { id, tripId: tripIdParam, sessionId: rawFeedSession } =
+    useLocalSearchParams<{ id: string; tripId?: string; sessionId?: string }>();
+  // Present only when this screen was opened from a feed card; null for deep
+  // links, notifications and search. See src/lib/feedAttribution.ts.
+  const feedSessionId = readFeedSession(rawFeedSession);
   const { userId } = useSession();
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
   const navBarScrollHandler = useNavBarScrollHandler();
@@ -277,7 +282,7 @@ export default function EventDetailScreen() {
     handleAcceptOffer,
     handleRequestJoin,
     handleJoinChat: rsvpJoinChat,
-  } = useEventRsvp(event, load, (updater) => setEvent((e) => e ? updater(e) : e));
+  } = useEventRsvp(event, load, (updater) => setEvent((e) => e ? updater(e) : e), { sessionId: feedSessionId });
 
   function handleRsvpWithMenu(status: EventRsvpStatus) {
     setShowRsvpMenu(false);
