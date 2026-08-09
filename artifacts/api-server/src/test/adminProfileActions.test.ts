@@ -103,13 +103,21 @@ function makeFakeClient(opts: {
       { id: DELETION_REQ_ID, user_id: TARGET_USER_ID, requested_at: new Date().toISOString(), scheduled_at: new Date().toISOString(), status: "pending" },
     ],
     accountStates = [],
+    failInsertsOn = null as string | null,
   } = opts;
 
   function builder(table: string, rows: unknown[]) {
     let _rows = [...rows];
+    let _failed = false;
+    const DB_ERR = { message: "simulated audit write failure", code: "XX000" };
     const b: any = {
       select:      () => b,
-      insert:      (data: any) => { captureInserts.push({ table, data }); _rows = Array.isArray(data) ? data : [data]; return b; },
+      insert:      (data: any) => {
+        captureInserts.push({ table, data });
+        if (failInsertsOn === table) { _failed = true; return b; }
+        _rows = Array.isArray(data) ? data : [data];
+        return b;
+      },
       update:      (data: any) => { captureUpdates.push({ table, data }); _rows = _rows.map((r: any) => ({ ...r, ...data })); return b; },
       upsert:      (data: any) => { _rows = Array.isArray(data) ? data : [data]; return b; },
       delete:      () => { _rows = []; return b; },
@@ -125,9 +133,9 @@ function makeFakeClient(opts: {
       order:       () => b,
       limit:       () => b,
       range:       () => b,
-      then:        (resolve: any) => Promise.resolve({ data: _rows, error: null, count: _rows.length }).then(resolve),
-      maybeSingle: () => Promise.resolve({ data: _rows[0] ?? null, error: null }),
-      single:      () => Promise.resolve({ data: { ...(_rows[0] as any ?? {}), id: "new-row-id", performed_by: ADMIN_USER_ID, created_at: new Date().toISOString() }, error: null }),
+      then:        (resolve: any) => Promise.resolve(_failed ? { data: null, error: DB_ERR, count: 0 } : { data: _rows, error: null, count: _rows.length }).then(resolve),
+      maybeSingle: () => Promise.resolve(_failed ? { data: null, error: DB_ERR } : { data: _rows[0] ?? null, error: null }),
+      single:      () => Promise.resolve(_failed ? { data: null, error: DB_ERR } : { data: { ...(_rows[0] as any ?? {}), id: "new-row-id", performed_by: ADMIN_USER_ID, created_at: new Date().toISOString() }, error: null }),
     };
     return b;
   }
@@ -229,6 +237,24 @@ describe("POST /admin/users/:userId/warn", () => {
     const { status, body } = await req("POST", `/admin/users/${TARGET_USER_ID}/warn`, { reason: "repeated spam" });
     assert.equal(status, 201);
     assert.ok(body.action, "should return the action row");
+  });
+
+  // For `warn`, the moderation_actions row IS the entire effect — there is no
+  // separate state change to fall back on. If that write fails and the endpoint
+  // still answers 2xx, an operator sees a warning they believe was recorded and
+  // nothing exists. Now that this is a button in the admin UI rather than a
+  // hand-crafted request, that is a believable mistake to make.
+  it("fails loudly when the moderation_actions write fails — never reports a warn it did not record", async () => {
+    const inserts: any[] = [];
+    setClient(inserts, [], { failInsertsOn: "moderation_actions" });
+    const { status, body } = await req("POST", `/admin/users/${TARGET_USER_ID}/warn`, { reason: "repeated spam" });
+
+    assert.notEqual(status, 201, "must not report success when nothing was logged");
+    assert.equal(status, 500, `expected 500, got ${status}: ${JSON.stringify(body)}`);
+    assert.ok(
+      String(body?.message ?? "").toLowerCase().includes("audit"),
+      `error should name the audit write; got ${JSON.stringify(body)}`,
+    );
   });
 });
 

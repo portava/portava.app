@@ -1280,16 +1280,36 @@ router.post("/admin/users/:userId/warn", async (req, res) => {
   const { userId } = req.params;
   const reason: string | null = (req.body as any)?.reason ?? null;
 
-  const { data, error } = await sc.from("moderation_actions").insert({
-    target_user_id: userId,
-    action_type: "warn",
-    reason,
-    performed_by: adminUserId,
-    created_at: new Date().toISOString(),
-  }).select("id, action_type, reason, performed_by, created_at").single();
+  // `warn` is the one action whose ENTIRE effect is the audit row — every other
+  // path writes a state change and audits alongside it. So a warn that answers
+  // 2xx without that row leaves nothing at all behind, and now that this is a
+  // button in the admin UI rather than a hand-crafted request, an operator has
+  // every reason to believe it landed.
+  //
+  // It already aborted on the insert error, but it was the only action doing so
+  // outside logModerationAction: no metadata, and the failure surfaced as a
+  // sanitised "A database error occurred" rather than naming the audit write
+  // the way every sibling path does. Same helper, same fail-closed shape, same
+  // exposeDetail — an admin-only diagnostic surface should say what broke.
+  const createdAt = new Date().toISOString();
+  const auditR = await logModerationAction(sc, userId, adminUserId, "warn", reason, {
+    target_type: "user",
+    target_id: userId,
+  });
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
-  if (error) { sendError(res, "db_error", error.message); return; }
-  res.status(201).json({ action: data });
+  // Built from what was written rather than read back: a read-back that fails
+  // on a successful insert would report failure for a warn that did land, and
+  // an operator retrying that turns one warning into two.
+  res.status(201).json({
+    action: {
+      target_user_id: userId,
+      action_type: "warn",
+      reason,
+      performed_by: adminUserId,
+      created_at: createdAt,
+    },
+  });
 });
 
 /** POST /admin/users/:userId/restrict — restrict user interactions */
