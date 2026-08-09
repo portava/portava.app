@@ -92,7 +92,8 @@
     "test:discovery-vote-l1-eviction": "node --import tsx/esm --test src/test/discoveryVoteL1Eviction.test.ts",
     "test:stamp-placeholder-provider-warn": "node --import tsx/esm --test src/test/stampPlaceholderProviderWarn.test.ts",
     "test:trip-counts-owner-fallback": "node --import tsx/esm --test src/test/tripCountsOwnerFallback.test.ts",
-    "test:compass-search-decay-flush": "node --import tsx/esm --test src/test/compassSearchDecayFlushScheduler.test.ts"
+    "test:compass-search-decay-flush": "node --import tsx/esm --test src/test/compassSearchDecayFlushScheduler.test.ts",
+    "verify:moderation-fk-e2e": "node --env-file-if-exists=.env --import tsx/esm src/scripts/verifyModerationFkE2E.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
