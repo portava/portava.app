@@ -18,6 +18,11 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import reportsRouter from "../routes/reports.js";
+// GET /admin/reports lives in routes/admin.ts, not routes/reports.ts — it moved
+// and this harness was never updated, so the four "GET /admin/reports" cases
+// below asserted against a route the test app had never mounted and every one
+// of them 404'd. Mounted here so they exercise the real handler and its guard.
+import adminRouter from "../routes/admin.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
 
@@ -207,6 +212,9 @@ before(() => new Promise<void>((resolve) => {
     next();
   });
   app.use("/", reportsRouter);
+  // reports.ts only declares /reports, /reports/:id and /me/reports, so nothing
+  // here shadows /admin/reports.
+  app.use("/", adminRouter);
   server = app.listen(0, "127.0.0.1", () => {
     const addr = server.address() as any;
     base = `http://127.0.0.1:${addr.port}`;

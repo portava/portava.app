@@ -108,7 +108,6 @@
   "src/test/rentABuddySpecRebook.test.ts",
   "src/test/rentABuddySpecRequest.test.ts",
   "src/test/reportsHistory.test.ts",
-  "src/test/reports.test.ts",
   "src/test/rlsHardening.test.ts",
   "src/test/rlsPrivacyBaseline.test.ts",
   "src/test/rlsPrivacy.test.ts",
