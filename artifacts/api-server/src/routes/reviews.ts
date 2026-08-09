@@ -25,6 +25,8 @@ import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { invalidateDiscoveryCacheForOsmId } from "../lib/discoveryPersistentCache.js";
 import { evictOsmPlaceFromL1Cache } from "./discovery.js";
 
+import { requireAdmin } from "../lib/requireAdmin.js";
+
 const router = Router();
 
 // ── Discovery cache invalidation helper ───────────────────────────────────────
@@ -59,28 +61,6 @@ async function maybeInvalidateDiscoveryVoteCacheForPlace(
   } catch {
     // Fire-and-forget: cache invalidation failures must never break the caller.
   }
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-async function requireAdminGuard(
-  req: any,
-  res: any,
-): Promise<{ userId: string; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-  const { data } = await client
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (!data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-  const sc = getServiceClient() ?? client;
-  return { userId: user.id, sc };
 }
 
 /**

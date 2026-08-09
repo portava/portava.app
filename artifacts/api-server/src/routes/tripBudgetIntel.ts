@@ -28,35 +28,12 @@ import {
   type BudgetTier,
 } from "../lib/tripBudgetIntel.js";
 
+import { requireAdmin } from "../lib/requireAdmin.js";
+
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 
 const ACCEPTED_ROLES = ["owner", "co_host", "member", "viewer"];
-
-// ── Admin guard (local-helper pattern, mirrors src/routes/admin.ts) ───────────
-
-async function requireAdmin(
-  req: any,
-  res: any,
-): Promise<{ userId: string; client: any; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-
-  const { data, error } = await client
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (error || !data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-
-  const sc = getServiceClient() ?? client;
-  return { userId: user.id, client, sc };
-}
 
 // ── Shared member-route preamble ──────────────────────────────────────────────
 

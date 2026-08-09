@@ -18,29 +18,9 @@ import { getServiceClient } from "../lib/supabase.js";
 import { isUuid } from "../lib/followDecisions.js";
 import { resolveAppeal } from "../services/appeals/resolveAppeal.js";
 
+import { requireAdmin } from "../lib/requireAdmin.js";
+
 const router = Router();
-
-// ── Admin guard ───────────────────────────────────────────────────────────────
-
-async function requireAdminGuard(
-  req: any,
-  res: any,
-): Promise<{ userId: string; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-  const { data } = await client
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (!data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-  const sc = getServiceClient() ?? client;
-  return { userId: user.id, sc };
-}
 
 // ── POST /api/appeals ─────────────────────────────────────────────────────────
 
@@ -153,7 +133,7 @@ router.get("/appeals/me", asyncHandler(async (req, res) => {
 // Admin-only — full queue with optional state filter
 
 router.get("/appeals", asyncHandler(async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
 
@@ -211,7 +191,7 @@ const UpdateAppealSchema = z.object({
 });
 
 router.patch("/appeals/:id", asyncHandler(async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { userId: adminId, sc } = admin;
 

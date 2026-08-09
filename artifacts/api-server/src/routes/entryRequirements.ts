@@ -20,12 +20,13 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { getServiceClient } from "../lib/supabase.js";
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { toCountryCode } from "../lib/countryCodes.js";
 import { ENTRY_FLAG, DISCLAIMER, assessTripEntry } from "../lib/entryRequirements.js";
+
+import { requireAdmin } from "../lib/requireAdmin.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -89,27 +90,6 @@ async function requireMembership(
   const membership = await requireTripMember(sc, tripId, userId);
   if (!membership) { sendError(res, "not_member", "Not a trip member"); return null; }
   return trip;
-}
-
-/** Admin gate (routes/admin.ts pattern): profiles.role === 'admin'. */
-async function requireAdmin(
-  req: Request,
-  res: Response,
-): Promise<{ userId: string; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-  const { data, error } = await client
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (error || !data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-  const sc = getServiceClient() ?? client;
-  return { userId: user.id, sc };
 }
 
 function toPassportDto(row: any) {

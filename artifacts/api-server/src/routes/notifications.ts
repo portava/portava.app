@@ -39,6 +39,8 @@ import { RealtimeActivityService } from "../services/notifications/RealtimeActiv
 import { TEMPLATES } from "../services/notifications/NotificationTemplateService.js";
 import type { NotificationCategory } from "../services/notifications/NotificationTemplateService.js";
 
+import { requireAdmin } from "../lib/requireAdmin.js";
+
 const router = Router();
 
 const NOTIFICATION_CATEGORIES = [
@@ -69,28 +71,6 @@ function requireInternalSecret(req: any, res: any): boolean {
     return false;
   }
   return true;
-}
-
-// ── Admin guard (re-used from admin.ts pattern) ───────────────────────────────
-
-async function requireAdmin(req: any, res: any): Promise<{ userId: string; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-
-  const { data, error } = await client
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (error || !data || (data as any).role !== 'admin') {
-    res.status(403).json({ error: 'forbidden', message: 'Admin role required' });
-    return null;
-  }
-
-  const sc = getServiceClient() ?? client;
-  return { userId: user.id, sc };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -73,20 +73,7 @@ import {
 import { createStamp } from "../services/passport/PassportStampService.js";
 import { detectIntent } from "../services/telegraphIntent.js";
 
-// ── Admin guard (same pattern as admin.ts) ────────────────────────────────────
-async function requireAdminGuard(req: any, res: any): Promise<{ userId: string; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-  const { data, error } = await client
-    .from("profiles").select("role").eq("id", user.id).maybeSingle();
-  if (error || !data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-  const sc = getServiceClient() ?? client;
-  return { userId: user.id, sc };
-}
+import { requireAdmin } from "../lib/requireAdmin.js";
 
 const router = Router();
 
@@ -1547,7 +1534,7 @@ router.delete("/airport/sessions/:id", async (req, res) => {
 // ── Admin: POST /api/admin/airport/profiles ───────────────────────────────────
 
 router.post("/admin/airport/profiles", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc, userId } = admin;
 
@@ -1566,7 +1553,7 @@ router.post("/admin/airport/profiles", async (req, res) => {
 // ── Admin: GET /api/admin/airport/profiles ─────────────────────────────────
 
 router.get("/admin/airport/profiles", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
 
@@ -1592,7 +1579,7 @@ const patchProfileSchema = z.object({
 });
 
 router.patch("/admin/airport/profiles/:id", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
 
@@ -1638,7 +1625,7 @@ router.patch("/admin/airport/profiles/:id", async (req, res) => {
 // ── Admin: DELETE /api/admin/airport/profiles/:id ───────────────────────────
 
 router.delete("/admin/airport/profiles/:id", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
 
@@ -1655,7 +1642,7 @@ router.delete("/admin/airport/profiles/:id", async (req, res) => {
 // Lists active layover sessions for monitoring (city-level only, no GPS).
 
 router.get("/admin/airport/sessions", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
 
@@ -1680,7 +1667,7 @@ router.get("/admin/airport/sessions", async (req, res) => {
 // Lists system geo_zones associated with airports (is_system=true, airport ref in metadata).
 
 router.get("/admin/airport/caution-zones", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
 
@@ -1716,7 +1703,7 @@ const cautionZoneSchema = z.object({
 });
 
 router.post("/admin/airport/caution-zones", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc, userId } = admin;
 
@@ -1747,7 +1734,7 @@ router.post("/admin/airport/caution-zones", async (req, res) => {
 // ── Admin: DELETE /api/admin/airport/caution-zones/:id ───────────────────────
 
 router.delete("/admin/airport/caution-zones/:id", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
 
@@ -1765,7 +1752,7 @@ router.delete("/admin/airport/caution-zones/:id", async (req, res) => {
 // Lists discovery_places near airports awaiting or already verified by admin.
 
 router.get("/admin/airport/verified-places", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
 
@@ -1797,7 +1784,7 @@ const verifyPlaceSchema = z.object({
 });
 
 router.patch("/admin/airport/verified-places/:id", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
 
@@ -1832,7 +1819,7 @@ router.patch("/admin/airport/verified-places/:id", async (req, res) => {
 // Lists layover_recommendations that are flagged for admin review.
 
 router.get("/admin/airport/reports", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
 
@@ -1857,7 +1844,7 @@ const resolveReportSchema = z.object({
 });
 
 router.post("/admin/airport/reports/:id/resolve", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
 

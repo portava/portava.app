@@ -47,6 +47,8 @@ import { recordContribution } from "../services/passport/PassportContributionSer
 import type { VisibilityTier, CallerContext } from "../services/passport/PassportPrivacyGuard.js";
 import { filterStamps, filterMemories } from "../services/passport/PassportPrivacyGuard.js";
 
+import { requireAdmin } from "../lib/requireAdmin.js";
+
 const router = Router();
 
 // ── Feature flag helpers ──────────────────────────────────────────────────────
@@ -797,27 +799,6 @@ router.get("/users/:username/passport/stamps", async (req, res) => {
 
 // ── Admin artwork preview endpoint ────────────────────────────────────────────
 
-/** Local admin guard: requireUser + profiles.role === 'admin' check. */
-async function requireAdminForStamps(req: any, res: any): Promise<{ userId: string; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-
-  const { data, error } = await client
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (error || !data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-
-  const sc = getServiceClient() ?? client;
-  return { userId: user.id, sc };
-}
-
 /**
  * GET /admin/passport/stamps/preview
  * Returns the resolved artwork definition for a stamp type and rarity.
@@ -833,7 +814,7 @@ async function requireAdminForStamps(req: any, res: any): Promise<{ userId: stri
  *   ?dark=false          whether to preview dark-mode variant
  */
 router.get("/admin/passport/stamps/preview", async (req, res) => {
-  const admin = await requireAdminForStamps(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
 

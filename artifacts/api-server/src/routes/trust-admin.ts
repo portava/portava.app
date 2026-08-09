@@ -18,8 +18,7 @@
 import { Router } from "express";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { sendError } from "../lib/http.js";
 import {
   confirmEvent,
   dismissEvent,
@@ -31,6 +30,8 @@ import { getTrustProfile, recalculateTrustScore } from "../services/trust/TrustS
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { getActiveCaps, liftCap } from "../services/trust/TrustCapService.js";
 import type { RestrictionType } from "../services/trust/TrustRestrictionService.js";
+
+import { requireAdmin } from "../lib/requireAdmin.js";
 
 const router = Router();
 
@@ -48,35 +49,10 @@ const TRUST_SETTING_KEYS = new Set([
   "gaming_checkin_cluster_limit", "gaming_mutual_rate_threshold", "gaming_rapid_jump_points",
 ]);
 
-// ── Admin guard ────────────────────────────────────────────────────────────────
-
-async function requireAdminGuard(
-  req: any,
-  res: any,
-): Promise<{ userId: string; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-
-  const { data } = await client
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (!data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-
-  const sc = getServiceClient() ?? client;
-  return { userId: user.id, sc };
-}
-
 // ── GET /admin/trust/reviews ─────────────────────────────────────────────────
 
 router.get("/admin/trust/reviews", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
 
@@ -109,7 +85,7 @@ router.get("/admin/trust/reviews", async (req, res) => {
 // ── GET /admin/trust/users/:userId ───────────────────────────────────────────
 
 router.get("/admin/trust/users/:userId", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc, userId: adminId } = admin;
 
@@ -157,7 +133,7 @@ const ConfirmSchema = z.object({
 });
 
 router.post("/admin/trust/events/:eventId/confirm", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc, userId } = admin;
 
@@ -178,7 +154,7 @@ router.post("/admin/trust/events/:eventId/confirm", async (req, res) => {
 // ── POST /admin/trust/events/:eventId/dismiss ────────────────────────────────
 
 router.post("/admin/trust/events/:eventId/dismiss", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc, userId } = admin;
 
@@ -205,7 +181,7 @@ const RestrictSchema = z.object({
 });
 
 router.post("/admin/trust/users/:userId/restrict", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc, userId: adminId } = admin;
 
@@ -238,7 +214,7 @@ const LiftSchema = z.object({
 });
 
 router.post("/admin/trust/restrictions/:id/remove", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc, userId: adminId } = admin;
 
@@ -266,7 +242,7 @@ const CapOverrideSchema = z.object({
 });
 
 router.post("/admin/trust/users/:userId/cap/override", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc, userId: adminId } = admin;
 
@@ -299,7 +275,7 @@ router.post("/admin/trust/users/:userId/cap/override", async (req, res) => {
 // ── GET /admin/trust/gaming-flags ────────────────────────────────────────────
 
 router.get("/admin/trust/gaming-flags", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
 
@@ -321,7 +297,7 @@ router.get("/admin/trust/gaming-flags", async (req, res) => {
 // ── POST /admin/trust/gaming-flags/:id/mark-reviewed ────────────────────────
 
 router.post("/admin/trust/gaming-flags/:id/mark-reviewed", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc, userId: adminId } = admin;
 
@@ -342,7 +318,7 @@ router.post("/admin/trust/gaming-flags/:id/mark-reviewed", async (req, res) => {
 // ── GET /admin/trust/settings ────────────────────────────────────────────────
 
 router.get("/admin/trust/settings", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
 
@@ -359,7 +335,7 @@ router.get("/admin/trust/settings", async (req, res) => {
 // ── PUT /admin/trust/settings/:key ───────────────────────────────────────────
 
 router.put("/admin/trust/settings/:key", async (req, res) => {
-  const admin = await requireAdminGuard(req, res);
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc, userId: adminId } = admin;
 

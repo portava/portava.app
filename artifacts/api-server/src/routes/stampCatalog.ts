@@ -26,39 +26,19 @@
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http.js";
+import { sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { randomUUID } from "crypto";
 import { invalidateCatalogCache } from "../lib/stamps/StampCatalogService.js";
 import { STYLE_VERSION } from "../lib/stamps/artDirection.js";
 import { runReconciliation, RUN_SUMMARY_SOURCE_TABLE } from "../lib/stamps/reconcileStampCatalog.js";
 
+import { requireAdmin } from "../lib/requireAdmin.js";
+
 const router = Router();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function isUuid(s: string) { return UUID_RE.test(s); }
-
-// ── Admin guard ───────────────────────────────────────────────────────────────
-
-async function requireAdmin(req: any, res: any): Promise<{ userId: string; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-
-  const { data } = await client
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (!data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-
-  const sc = getServiceClient() ?? client;
-  return { userId: user.id, sc };
-}
 
 // ── Write admin audit log ─────────────────────────────────────────────────────
 

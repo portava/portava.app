@@ -40,6 +40,8 @@ import {
   worstSeverity,
 } from "../lib/rentaBuddyScanner.js";
 
+import { requireAdmin } from "../lib/requireAdmin.js";
+
 export { POLICY_TEXT, CATEGORY_RISK_LEVELS, getCategoryRiskLevel };
 
 const router = Router();
@@ -220,30 +222,6 @@ async function requireBookingParty(
     return null;
   }
   return { isTraveler, isBuddy, buddyUserId };
-}
-
-// ── Admin guard ────────────────────────────────────────────────────────────────
-
-async function requireAdmin(
-  req: any,
-  res: any,
-): Promise<{ userId: string; client: any; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-  const serviceClient = getServiceClient() ?? client;
-
-  const { data } = await client
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (!data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-  return { userId: user.id, client, sc: serviceClient };
 }
 
 // ── Row mapper helpers ─────────────────────────────────────────────────────────

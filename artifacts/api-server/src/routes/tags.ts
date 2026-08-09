@@ -15,29 +15,9 @@ import { isUuid } from '../lib/followDecisions.js';
 import { resolveInteractionPermissions } from '../services/interactionPermissions.js';
 import { isFlagEnabled } from '../lib/featureFlags.js';
 
+import { requireAdmin } from "../lib/requireAdmin.js";
+
 const router = Router();
-
-// ─── Admin guard ──────────────────────────────────────────────────────────────
-
-async function requireAdmin(req: any, res: any): Promise<{ userId: string; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-
-  const { data, error } = await client
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (error || !data || (data as any).role !== 'admin') {
-    res.status(403).json({ error: 'forbidden', message: 'Admin role required' });
-    return null;
-  }
-
-  const sc = getServiceClient() ?? client;
-  return { userId: user.id, sc };
-}
 
 // ─── POST /api/tags — create a tag (tagger → tagged_user_id) ─────────────────
 //
