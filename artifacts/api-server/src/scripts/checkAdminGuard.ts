@@ -70,8 +70,133 @@ const ALLOWED: Record<string, string> = {
   // "someRoute.ts": "Guard needs X which the shared helper cannot express because Y.",
 };
 
-/** Matches a locally declared admin guard, e.g. `async function requireAdminGuard(` */
-const LOCAL_GUARD = /(?:^|\n)\s*(?:export\s+)?(?:async\s+)?function\s+(requireAdmin\w*)\s*\(/g;
+/**
+ * Detect a local admin guard by SHAPE, not by name prefix.
+ *
+ * The original matcher was `/function\s+(requireAdmin\w*)\s*\(/` — keyed on the
+ * name. It missed `requireVisualAdmin` in adminVisuals.ts, a full admin guard
+ * that reads profiles.role and sends 403, purely because the name does not
+ * begin with "requireAdmin". Worse, the "30 local guards" baseline that the
+ * whole consolidation was scoped against came from this same matcher, so the
+ * baseline inherited the blind spot. A name-keyed check only ever finds guards
+ * someone remembered to name conventionally — which is not the population you
+ * need to worry about.
+ *
+ * Shape test: a function declaration whose body both
+ *   (a) queries the `profiles` table for `role`, and
+ *   (b) compares that role against a literal role name.
+ * Both must be present, so a plain profile read (name, avatar) is not flagged.
+ *
+ * Scanning is brace-balanced from the declaration so a match is attributed to
+ * the function it is actually inside, rather than to the nearest preceding
+ * `function` keyword.
+ */
+const FUNCTION_DECL =
+  /(?:^|\n)\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g;
+
+/** Body reads profiles.role. */
+const READS_ROLE = /\.from\(\s*["'`]profiles["'`]\s*\)[\s\S]{0,400}?\.select\(\s*["'`][^"'`]*\brole\b/;
+/** Body compares a role against a literal — 'admin', 'owner', 'moderator', … */
+const COMPARES_ROLE =
+  /\brole\b[\s\S]{0,80}?(?:===|!==|==|!=)\s*["'`](?:admin|owner|moderator|superadmin|staff)["'`]|(?:===|!==|==|!=)\s*["'`](?:admin|owner|moderator|superadmin|staff)["'`][\s\S]{0,40}?\brole\b|\broles\b\s*\.\s*includes\s*\(/;
+
+/**
+ * Extract the body of the function whose declaration starts at `declIdx`.
+ *
+ * The opening brace is NOT simply the next `{`. A return-type annotation can
+ * contain one:
+ *
+ *   async function requireAdmin(req, res): Promise<{ user: any } | null> {
+ *                                                  ^ not the body
+ *
+ * Taking that brace yields `{ user: any }` as the "body", which contains no
+ * role check, so the guard reads as clean. Four of the six known guards are
+ * written exactly this way — the first version of this shape check silently
+ * under-reported because of it. So: balance the parameter parens first, then
+ * take the first brace at angle-bracket depth zero.
+ */
+function functionBody(source: string, declIdx: number): string {
+  // Balance the parameter list.
+  let i = source.indexOf("(", declIdx);
+  if (i === -1) return "";
+  let paren = 0;
+  for (; i < source.length; i++) {
+    const ch = source[i]!;
+    if (ch === "(") paren++;
+    else if (ch === ")") { paren--; if (paren === 0) { i++; break; } }
+  }
+  // Skip the return-type annotation: the body brace is the first `{` that is
+  // not nested inside `<...>`.
+  let angle = 0;
+  let open = -1;
+  for (; i < source.length; i++) {
+    const ch = source[i]!;
+    if (ch === "<") angle++;
+    else if (ch === ">") { if (angle > 0) angle--; }
+    else if (ch === "{" && angle === 0) { open = i; break; }
+    // An overload signature ends at a semicolon with no body — but only count
+    // one at angle depth 0. `Promise<{ user: any; sc: any } | null>` contains a
+    // semicolon INSIDE the type, and treating that as an overload made four
+    // guards vanish from this check.
+    else if (ch === ";" && angle === 0) return "";
+  }
+  if (open === -1) return "";
+
+  // Balance braces, skipping strings AND comments. Comments matter: a stray
+  // `{` in prose (`// build the { thing }`) or an unbalanced brace in a block
+  // comment desynchronises the counter, the closing brace is never matched,
+  // and the "body" runs to the end of the file. That produced a real false
+  // positive here — compass.ts's streamModelRound came back as a 106,910-char
+  // body and matched both shape patterns from unrelated code far below it.
+  let depth = 0;
+  let inStr: string | null = null;
+  for (let i = open; i < source.length; i++) {
+    const ch = source[i]!;
+    const next = source[i + 1];
+
+    if (inStr) {
+      if (ch === "\\") i++;
+      else if (ch === inStr) inStr = null;
+      continue;
+    }
+    if (ch === "/" && next === "/") {
+      const nl = source.indexOf("\n", i);
+      if (nl === -1) break;
+      i = nl;
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      const close = source.indexOf("*/", i + 2);
+      if (close === -1) break;
+      i = close + 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") { inStr = ch; continue; }
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return source.slice(open, i + 1);
+    }
+  }
+  // Never found the closing brace — the scan desynchronised. Return nothing
+  // rather than a runaway slice, so this reports no guard instead of a
+  // spurious one. A missed guard is caught by review; a false positive
+  // teaches people to ignore the check.
+  return "";
+}
+
+/** Every locally declared admin guard in `source`, found by shape. */
+function findLocalGuards(source: string): string[] {
+  const found: string[] = [];
+  FUNCTION_DECL.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = FUNCTION_DECL.exec(source))) {
+    const name = m[1]!;
+    const body = functionBody(source, m.index);
+    if (READS_ROLE.test(body) && COMPARES_ROLE.test(body)) found.push(name);
+  }
+  return found;
+}
 
 function tsFilesIn(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true })
@@ -85,10 +210,8 @@ const violations: Array<{ file: string; fn: string }> = [];
 for (const file of tsFilesIn(routesDir)) {
   if (file in ALLOWED) continue;
   const source = readFileSync(join(routesDir, file), "utf8");
-  LOCAL_GUARD.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = LOCAL_GUARD.exec(source))) {
-    violations.push({ file, fn: m[1] });
+  for (const fn of findLocalGuards(source)) {
+    violations.push({ file, fn });
   }
 }
 
