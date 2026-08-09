@@ -56,7 +56,7 @@ import {
 } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { CachedImage } from '../../CachedImage.tsx';
-import { color, space, radius, type as t, shadow, typography } from '../../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, typography, icon, aspect } from '../../../theme/tokens.ts';
 import { getPlaceTimeline } from '../../../services/places.ts';
 import type {
   PlaceLivingResponse,
@@ -864,7 +864,7 @@ const pg = StyleSheet.create({
   },
   thumbImage: {
     width: '100%',
-    aspectRatio: 1,
+    aspectRatio: aspect.square,
   },
   thumbFallback: {
     backgroundColor: '#1a1a18',
@@ -1554,9 +1554,8 @@ const tc = StyleSheet.create({
     paddingVertical: 6,
   },
   avatar: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: icon.lg, height: icon.lg,
+    borderRadius: icon.lg / 2,
   },
   avatarFallback: {
     backgroundColor: color.deep,

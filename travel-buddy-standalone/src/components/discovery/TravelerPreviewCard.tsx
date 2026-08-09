@@ -10,7 +10,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
 import { MapPin, X, ArrowRight, HandMetal } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, icon } from '../../theme/tokens.ts';
 import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
 import type { MapTraveler } from '../../services/mapTravelers.ts';
 import { travelerInitials } from './TravelerMapLayer.tsx';
@@ -103,9 +103,8 @@ const s = StyleSheet.create({
     top: 10,
     right: 10,
     zIndex: 2,
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: icon.xl, height: icon.xl,
+    borderRadius: icon.xl / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',

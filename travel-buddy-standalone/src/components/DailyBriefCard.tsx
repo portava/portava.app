@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { Zap, ChevronDown, ChevronUp, Clock, AlertTriangle, Calendar, Sparkles, RefreshCw, Ticket, Cloud, CloudRain, Sun, MapPin, Globe } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, icon } from '../theme/tokens.ts';
 import { fetchDailyBrief, refreshDailyBrief, dismissBriefRecommendation } from '../services/intelligence.ts';
 import { TelegraphFeedbackMenu } from './TelegraphFeedbackMenu.tsx';
 
@@ -607,7 +607,7 @@ const s = StyleSheet.create({
   deniedText: { ...t.small, color: color.mute, flex: 1, lineHeight: 17 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: space.lg, borderBottomWidth: 1, borderBottomColor: color.haze },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  icon: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#FFF0EE', alignItems: 'center', justifyContent: 'center' },
+  icon: { width: icon.xl, height: icon.xl, borderRadius: icon.xl / 2, backgroundColor: '#FFF0EE', alignItems: 'center', justifyContent: 'center' },
   headerTitle: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   headerDate: { ...t.small, color: color.mute, fontSize: 11 },
   headerDateSub: { ...t.small, color: color.mute, fontSize: 11, paddingHorizontal: space.lg, paddingTop: 4 },

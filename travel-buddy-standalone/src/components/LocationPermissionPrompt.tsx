@@ -7,7 +7,7 @@ import {
   View, Text, Pressable, Modal, StyleSheet,
 } from 'react-native';
 import { MapPin, Navigation, X } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 import { useLocationContext } from '../context/LocationContext.tsx';
 
 export function LocationPermissionPrompt() {
@@ -107,9 +107,8 @@ const s = StyleSheet.create({
     padding: space.sm,
   },
   iconWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: avatar.xxl, height: avatar.xxl,
+    borderRadius: avatar.xxl / 2,
     backgroundColor: '#FFF0EC',
     alignItems: 'center',
     justifyContent: 'center',

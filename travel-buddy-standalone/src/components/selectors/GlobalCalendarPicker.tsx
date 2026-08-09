@@ -25,7 +25,7 @@ import {
 } from 'react-native';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import {
   toMidnight, isSameDay, isBeforeDay, isAfterDay, isBetweenDays,
   toISODate, fromISODate, formatDisplayDate, formatDisplayDateRange,
@@ -372,7 +372,7 @@ const s = StyleSheet.create({
   cellInRange: { backgroundColor: `${color.signal}18` },
   cellRangeEdge: { backgroundColor: `${color.signal}28` },
   dayCircle: {
-    width: 36, height: 36, borderRadius: 18,
+    width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2,
     alignItems: 'center', justifyContent: 'center',
   },
   daySelected: { backgroundColor: color.signal },

@@ -24,7 +24,7 @@ import { router } from 'expo-router';
 import { AlertTriangle } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MapPin, X as XIcon } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../src/theme/tokens.ts';
+import { color, space, radius, type as t, icon } from '../../src/theme/tokens.ts';
 import { MapTopControls } from '../../src/components/map/MapTopControls.tsx';
 import { AskCompassBar } from '../../src/components/map/AskCompassBar.tsx';
 import { useLocationContext } from '../../src/context/LocationContext.tsx';
@@ -1068,9 +1068,8 @@ const s = StyleSheet.create({
     maxWidth: 260,
   },
   filterClearBtn: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: icon.md, height: icon.md,
+    borderRadius: icon.md / 2,
     backgroundColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
     justifyContent: 'center',

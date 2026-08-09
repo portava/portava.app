@@ -22,6 +22,7 @@
     "test:component": "node scripts/check-test-mocks.mjs && jest --forceExit --testPathPattern='\\.component\\.test\\.' && jest -c jest.web.config.js --forceExit",
     "lint:imports": "node scripts/check-import-extensions.mjs",
     "lint:bare-image": "node scripts/check-bare-image.mjs",
+    "lint:avatar-icon-sizing": "node scripts/check-avatar-icon-sizing.mjs",
     "lint:ksv": "node scripts/check-ksv-inner-scroll.mjs",
     "lint:mocks": "node scripts/check-test-mocks.mjs",
     "lint:close-then-navigate": "node scripts/check-close-then-navigate.mjs",

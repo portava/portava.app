@@ -19,7 +19,7 @@ const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const { Map, Camera, GeoJSONSource, Layer, Marker } = _ml as typeof import('@maplibre/maplibre-react-native');
 import { MapPin, Maximize2 } from 'lucide-react-native';
-import { color, radius, space, type as t } from '../../theme/tokens.ts';
+import { color, radius, space, type as t, avatar } from '../../theme/tokens.ts';
 
 import { MAP_STYLE_URL } from '../../constants/mapStyle.ts';
 const MAP_STYLE = MAP_STYLE_URL;
@@ -177,9 +177,8 @@ const s = StyleSheet.create({
   },
   bannerText: { ...t.small, color: color.mute, flex: 1 },
   mpMarker: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: avatar.sm, height: avatar.sm,
+    borderRadius: avatar.sm / 2,
     backgroundColor: '#F57F17',
     alignItems: 'center',
     justifyContent: 'center',

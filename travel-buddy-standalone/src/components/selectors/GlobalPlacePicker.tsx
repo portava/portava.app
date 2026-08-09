@@ -42,7 +42,7 @@ import { X, MapPin, Search, Navigation, Clock, TrendingUp, RefreshCw } from 'luc
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ExpoLocation from 'expo-location';
 import { getCurrentGps } from '../../services/location.ts';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import { usePlaceSearch } from '../../hooks/usePlaceSearch.ts';
 import { useRecentPlaces } from '../../hooks/useRecentPlaces.ts';
 import { usePopularCities } from '../../hooks/usePopularCities.ts';
@@ -509,7 +509,7 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.haze,
   },
   iconCircle: {
-    width: 34, height: 34, borderRadius: 17,
+    width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2,
     backgroundColor: color.paperRaised,
     alignItems: 'center', justifyContent: 'center',
   },

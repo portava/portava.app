@@ -14,7 +14,7 @@ import { MediaGridSkeleton } from './loading/MediaGridSkeleton.tsx';
 import { EmptyState } from './ui/EmptyState.tsx';
 import type { usePostcardActions } from '../hooks/usePostcardActions.ts';
 import type { PostcardsSentinel } from '../services/profile.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar, icon } from '../theme/tokens.ts';
 
 /* ────────────────────────────────────────────────────────── */
 /* Sentinel state views (private / blocked / unavailable)     */
@@ -58,7 +58,7 @@ const sv = StyleSheet.create({
     gap: space.sm,
   },
   iconWrap: {
-    width: 56, height: 56, borderRadius: 28,
+    width: avatar.xxl, height: avatar.xxl, borderRadius: avatar.xxl / 2,
     backgroundColor: color.haze,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: space.xs,
@@ -448,14 +448,14 @@ const pc = StyleSheet.create({
   },
   locChipText: { fontSize: 11, fontWeight: '600', color: '#fff' },
   cornerBadge: {
-    position: 'absolute', width: 26, height: 26, borderRadius: 13,
+    position: 'absolute', width: icon.xl, height: icon.xl, borderRadius: icon.xl / 2,
     backgroundColor: 'rgba(0,0,0,0.48)', alignItems: 'center', justifyContent: 'center',
   },
   pinBadge: { top: space.sm, right: space.xl + space.sm },
   menuBtn: { top: space.sm, right: space.sm },
   typeBadge: {
     position: 'absolute', bottom: space.sm, right: space.sm,
-    width: 26, height: 26, borderRadius: 13,
+    width: icon.xl, height: icon.xl, borderRadius: icon.xl / 2,
     backgroundColor: 'rgba(0,0,0,0.48)', alignItems: 'center', justifyContent: 'center',
   },
   stateBadge: {

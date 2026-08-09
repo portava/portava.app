@@ -68,24 +68,6 @@ jest.mock('../MapEntityActionRow.tsx', () => ({
 
 // NOTE: theme/tokens spreads native font-loader internals that crash under
 // jest-expo; plain value stubs are sufficient.
-jest.mock('../../../theme/tokens', () => ({
-  color: {
-    deep:        '#2A7F8F',
-    ink:         '#1A1A2E',
-    signal:      '#FF6B6B',
-    mute:        '#9B9B9B',
-    faint:       '#CCCCCC',
-    paper:       '#FFFFFF',
-    paperRaised: '#F9F9F9',
-    haze:        '#E8E8E8',
-    onInk:       '#FFFFFF',
-    success:     '#16A34A',
-  },
-  space:  { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32, xxxl: 48 },
-  radius: { sm: 4, md: 8, lg: 12, pill: 999 },
-  type:   { heading: {}, bodyStrong: {}, body: {}, small: {}, stamp: {} },
-  shadow: { card: {}, float: {} },
-}));
 
 // NOTE: MAP_LAYER_CONFIG imports map-native internals; only color + label
 // per entity type is needed here.

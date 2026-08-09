@@ -10,7 +10,7 @@ import {
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Heart, Search, X } from 'lucide-react-native';
-import { color, radius, space, type as t } from '../src/theme/tokens';
+import { color, radius, space, type as t, avatar } from '../src/theme/tokens';
 import {
   getCloseFriends, addCloseFriend, removeCloseFriend,
   type CloseFriend,
@@ -182,7 +182,7 @@ const s = StyleSheet.create({
   emptyText: { ...t.bodyStrong, color: color.ink },
   emptySub: { ...t.small, color: color.mute, textAlign: 'center' },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md },
-  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: color.haze },
+  avatar: { width: avatar.lgXl, height: avatar.lgXl, borderRadius: avatar.lgXl / 2, backgroundColor: color.haze },
   name: { ...t.bodyStrong, color: color.ink },
   handle: { ...t.small, color: color.mute },
   sep: { height: 1, backgroundColor: color.haze },

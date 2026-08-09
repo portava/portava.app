@@ -28,7 +28,7 @@ import {
   type EntityTagSuggestion,
   type HashtagSuggestion,
 } from '../services/tagging.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -209,9 +209,8 @@ const styles = StyleSheet.create({
   },
   avatarWrap: {},
   avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: avatar.md, height: avatar.md,
+    borderRadius: avatar.md / 2,
   },
   avatarFallback: {
     backgroundColor: color.ink,

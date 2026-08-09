@@ -46,7 +46,7 @@ import {
 } from '../../../src/lib/eventDateTime';
 import { GlobalPlacePicker } from '../../../src/components/selectors/GlobalPlacePicker';
 import { Avatar } from '../../../src/components/ui';
-import { color, space, radius, type as t, shadow } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, shadow, aspect } from '../../../src/theme/tokens';
 
 // ── Date/time display helpers ─────────────────────────────────────────────────
 
@@ -1511,7 +1511,7 @@ const styles = StyleSheet.create({
   inviteBtn:         { backgroundColor: color.signal, paddingHorizontal: space.md, paddingVertical: 6, borderRadius: radius.pill },
   inviteBtnSent:     { backgroundColor: color.haze },
   inviteBtnText:     { ...t.small, color: color.onInk, fontWeight: '700' },
-  coverPicker:          { width: '100%', aspectRatio: 16 / 9, borderRadius: radius.md, borderWidth: 1.5, borderColor: color.haze, borderStyle: 'dashed', overflow: 'hidden', backgroundColor: color.paperRaised },
+  coverPicker:          { width: '100%', aspectRatio: aspect.wide, borderRadius: radius.md, borderWidth: 1.5, borderColor: color.haze, borderStyle: 'dashed', overflow: 'hidden', backgroundColor: color.paperRaised },
   coverPickerFilled:    { borderStyle: 'solid', borderColor: color.haze },
   coverPickerImage:     { width: '100%', height: '100%' },
   coverPickerOverlay:   { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', gap: 8 },
@@ -1529,7 +1529,7 @@ const styles = StyleSheet.create({
   compassChip:          { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: color.signal + '12', borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: 5 },
   compassChipInner:     { flexDirection: 'row', alignItems: 'center' },
   compassChipText:      { ...t.small, color: color.signal, fontSize: 12, fontWeight: '600' },
-  reviewCover:          { width: '100%', aspectRatio: 16 / 9, borderRadius: radius.md, marginBottom: space.xs },
+  reviewCover:          { width: '100%', aspectRatio: aspect.wide, borderRadius: radius.md, marginBottom: space.xs },
   reviewCard:           { backgroundColor: color.paperRaised, borderRadius: radius.lg, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: space.sm, marginBottom: space.md, overflow: 'hidden' },
   reviewTitle:       { ...t.title, color: color.ink, fontWeight: '800', fontSize: 18 },
   reviewDesc:        { ...t.body, color: color.mute },

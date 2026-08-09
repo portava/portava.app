@@ -16,7 +16,7 @@ import { AvailabilityGrid } from '../src/components/AvailabilityGrid';
 import { BestDaysBanner } from '../src/components/BestDaysBanner';
 import { MeetupCreationSheet } from '../src/components/MeetupCreationSheet';
 import { useSession } from '../src/context/SessionContext';
-import { color, space, radius, type as t, shadow } from '../src/theme/tokens';
+import { color, space, radius, type as t, shadow, icon } from '../src/theme/tokens';
 import { HighlightRing } from '../src/components/HighlightRing';
 import { HighlightViewer } from '../src/components/HighlightViewer';
 import { useHighlightRingState } from '../src/hooks/useHighlightRingState';
@@ -564,7 +564,7 @@ const styles = StyleSheet.create({
   ageSaveBtnText: { ...t.bodyStrong, color: color.onInk, fontSize: 13 },
   toggle: { width: 44, height: 26, borderRadius: 13, backgroundColor: color.haze, justifyContent: 'center', paddingHorizontal: 2 },
   toggleOn: { backgroundColor: color.signal },
-  toggleThumb: { width: 22, height: 22, borderRadius: 11, backgroundColor: color.paperRaised },
+  toggleThumb: { width: icon.lg, height: icon.lg, borderRadius: icon.lg / 2, backgroundColor: color.paperRaised },
   toggleThumbOn: { alignSelf: 'flex-end' },
   tripInviteBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: 16, marginTop: 8, marginBottom: 2, backgroundColor: '#EFF6FF', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: '#BFDBFE' },
   tripInviteBannerText: { fontSize: 13, fontWeight: '600', color: '#1D4ED8', flexShrink: 1 },

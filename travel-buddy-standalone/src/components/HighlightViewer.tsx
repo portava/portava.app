@@ -27,7 +27,7 @@ import { SaveButton } from './SaveButton.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { closeThenNavigate } from '../lib/deferredNavigate.ts';
 import * as Sharing from 'expo-sharing';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import type { Highlight } from '../services/highlights.ts';
 import {
@@ -663,7 +663,7 @@ const s = StyleSheet.create({
   locText: { color: 'rgba(255,255,255,0.8)', fontSize: 11, marginTop: 1 },
   timeChip: { backgroundColor: 'rgba(17,17,15,0.5)', paddingHorizontal: 7, paddingVertical: 3, borderRadius: radius.sm },
   timeText: { color: '#fff', fontSize: 11, fontFamily: 'Courier', fontWeight: '700' },
-  closeBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(17,17,15,0.4)' },
+  closeBtn: { width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(17,17,15,0.4)' },
   addBtn: { marginRight: 8 },
   muteBtn: { marginRight: 8 },
   tapZones: { ...StyleSheet.absoluteFillObject, flexDirection: 'row', zIndex: 5 },

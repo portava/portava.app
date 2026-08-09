@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { ShieldCheck, Info } from 'lucide-react-native';
-import { color, space, radius } from '../theme/tokens.ts';
+import { color, space, radius, avatar } from '../theme/tokens.ts';
 import { VERIFY_TEAL, VERIFY_TEAL_DIM, VERIFY_TEAL_BG } from './PassportVerificationStamp.tsx';
 
 interface Props {
@@ -69,9 +69,8 @@ const s = StyleSheet.create({
     marginTop: 2,
   },
   iconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: avatar.md, height: avatar.md,
+    borderRadius: avatar.md / 2,
     backgroundColor: VERIFY_TEAL_BG,
     alignItems: 'center',
     justifyContent: 'center',

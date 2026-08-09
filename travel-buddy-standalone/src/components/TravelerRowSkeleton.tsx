@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
-import { color, space, radius } from '../theme/tokens.ts';
+import { color, space, radius, avatar } from '../theme/tokens.ts';
 
 function SkeletonBlock({ style }: { style: object }) {
   const opacity = useRef(new Animated.Value(0.4)).current;
@@ -45,9 +45,8 @@ const styles = StyleSheet.create({
     padding: space.md,
   },
   avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: avatar.xl, height: avatar.xl,
+    borderRadius: avatar.xl / 2,
   },
   info: {
     flex: 1,

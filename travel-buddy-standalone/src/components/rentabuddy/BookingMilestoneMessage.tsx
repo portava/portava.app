@@ -11,7 +11,7 @@ import {
   CheckCircle, Clock, DollarSign, Navigation, MapPin,
   Star, AlertCircle, UserCheck, PlusCircle,
 } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, icon } from '../../theme/tokens.ts';
 import { TG } from '../../theme/telegraphTokens.ts';
 
 type MilestoneSubtype =
@@ -149,9 +149,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   iconWrap: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: icon.lg, height: icon.lg,
+    borderRadius: icon.lg / 2,
     alignItems: 'center',
     justifyContent: 'center',
   },

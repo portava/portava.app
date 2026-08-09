@@ -24,7 +24,7 @@ import {
 import { resolveProfileSaveOutcome } from '../../../src/services/profileSaveFlow';
 import type { OwnProfile } from '../../../src/types/models';
 import { PP } from '../../../src/theme/passportTokens';
-import { space } from '../../../src/theme/tokens';
+import { space, avatar } from '../../../src/theme/tokens';
 import {
   SettingsScreen, SettingsSection, SaveButton, useUnsavedGuard, useSavedThenBack,
   FieldHint, type SaveState,
@@ -282,7 +282,7 @@ const st = StyleSheet.create({
   placeholderText: { fontSize: 13, color: PP.inkMuted, fontWeight: '600' },
   editBadge: {
     position: 'absolute', bottom: space.sm, right: space.sm,
-    width: 34, height: 34, borderRadius: 17, backgroundColor: PP.ink,
+    width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2, backgroundColor: PP.ink,
     justifyContent: 'center', alignItems: 'center',
   },
   avatarSection: { alignItems: 'center', padding: space.lg, gap: space.sm },

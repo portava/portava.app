@@ -16,7 +16,7 @@ import {
 import { Avatar } from '../ui/Avatar.tsx';
 import { router } from 'expo-router';
 import { Sparkles, Star, CheckCircle, MapPin, Globe } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import {
   fetchCompassSettings,
   fetchCompassBuddyMatches,
@@ -40,7 +40,7 @@ interface Props {
 function BuddySkeleton() {
   return (
     <View style={[s.card, s.skeleton]}>
-      <View style={[s.skBar, { width: 56, height: 56, borderRadius: 28, marginBottom: space.sm }]} />
+      <View style={[s.skBar, { width: avatar.xxl, height: avatar.xxl, borderRadius: avatar.xxl / 2, marginBottom: space.sm }]} />
       <View style={[s.skBar, { width: 80, height: 10, marginBottom: 6 }]} />
       <View style={[s.skBar, { width: 60, height: 8, marginBottom: space.sm }]} />
       <View style={[s.skBar, { width: 70, height: 24, borderRadius: radius.md }]} />

@@ -21,7 +21,7 @@ const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'
 const { Map, Camera, Marker } = _ml as typeof import('@maplibre/maplibre-react-native');
 import { Layers, MapPin, Navigation, Star, Users } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar, icon } from '../../theme/tokens.ts';
 import {
   loadMapFilter,
   saveMapFilter,
@@ -470,9 +470,8 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
 
 const s = StyleSheet.create({
   meDotOuter: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: icon.lg, height: icon.lg,
+    borderRadius: icon.lg / 2,
     backgroundColor: 'rgba(45,127,249,0.25)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -489,9 +488,8 @@ const s = StyleSheet.create({
     position: 'absolute',
     right: 14,
     bottom: 14,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: avatar.lgXl, height: avatar.lgXl,
+    borderRadius: avatar.lgXl / 2,
     backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
@@ -520,9 +518,8 @@ const s = StyleSheet.create({
     elevation: 3,
   },
   dbPin: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: avatar.smMd, height: avatar.smMd,
+    borderRadius: avatar.smMd / 2,
     borderWidth: 2.5,
     borderColor: '#fffbeb',
     shadowOpacity: 0.3,
@@ -538,9 +535,8 @@ const s = StyleSheet.create({
     paddingVertical: space.xxxl,
   },
   emptyIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: avatar.xxl, height: avatar.xxl,
+    borderRadius: avatar.xxl / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',
@@ -616,9 +612,8 @@ const s = StyleSheet.create({
     position: 'absolute',
     top: 14,
     right: 14,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: avatar.md, height: avatar.md,
+    borderRadius: avatar.md / 2,
     backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
@@ -632,9 +627,8 @@ const s = StyleSheet.create({
     position: 'absolute',
     top: 58,
     right: 14,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: avatar.md, height: avatar.md,
+    borderRadius: avatar.md / 2,
     backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
@@ -666,9 +660,8 @@ const s = StyleSheet.create({
     gap: 10,
   },
   legendDot: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: icon.md, height: icon.md,
+    borderRadius: icon.md / 2,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1.5,

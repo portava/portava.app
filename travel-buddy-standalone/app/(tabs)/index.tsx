@@ -21,7 +21,7 @@ import { fetchPreferences } from '../../src/services/intelligence';
 import { STATUS_LABEL } from '../../src/lib/availability';
 import type { PulseFilter, PulseFeedItem } from '../../src/types/models';
 import type { PostRow } from '../../src/services/posts';
-import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+import { color, space, radius, type as t, shadow, avatar } from '../../src/theme/tokens';
 import { useLocationContext } from '../../src/context/LocationContext';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
@@ -695,7 +695,7 @@ const styles = StyleSheet.create({
   loadingWrap: { paddingVertical: space.xxl, alignItems: 'center' },
   loadMoreWrap: { paddingVertical: space.lg, alignItems: 'center' },
   layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: space.lg, marginTop: space.lg, marginBottom: space.sm, backgroundColor: '#E3F2FD', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: '#BBDEFB' },
-  layoverBannerIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#BBDEFB' },
+  layoverBannerIcon: { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#BBDEFB' },
   layoverBannerBody: { flex: 1, gap: 1 },
   layoverBannerTitle: { fontSize: 14, fontWeight: '700', color: '#0D47A1' },
   layoverBannerSubText: { fontSize: 12, fontWeight: '400', color: '#1565C0', opacity: 0.85 },

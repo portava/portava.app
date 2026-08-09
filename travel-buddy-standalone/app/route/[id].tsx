@@ -23,7 +23,7 @@ import {
   Route, CheckCircle, SkipForward, StopCircle, ChevronDown, ChevronUp,
   MapPin, Shield, Compass, Maximize2, Users, AlertTriangle,
 } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { color, space, radius, type as t, avatar } from '../../src/theme/tokens';
 import { useSession } from '../../src/context/SessionContext';
 import { joinRoutePlan, leaveRoutePlan } from '../../src/services/routePlan';
 import { postCompassAsk, type CompassQuickAction } from '../../src/services/compass';
@@ -648,7 +648,7 @@ const styles = StyleSheet.create({
   stopCardDone: { opacity: 0.6 },
   stopCardLeft: {},
   stopBadge: {
-    width: 28, height: 28, borderRadius: 14,
+    width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2,
     backgroundColor: '#E76F51', alignItems: 'center', justifyContent: 'center',
   },
   stopBadgeDone:    { backgroundColor: '#999' },

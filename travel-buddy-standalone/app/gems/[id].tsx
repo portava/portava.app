@@ -33,6 +33,7 @@ import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 import { ReasonPromptModal } from '../../src/components/ReasonPromptModal';
 import { StampButton } from '../../src/components/stamps/StampButton';
 import * as Sentry from '@sentry/react-native';
+import { icon } from '../../src/theme/tokens';
 
 // ── Privacy section ────────────────────────────────────────────────────────────
 
@@ -794,7 +795,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   reasonRowActive: { borderBottomColor: '#4C8BF5' },
-  radio: { width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: '#8A9BB5' },
+  radio: { width: icon.md, height: icon.md, borderRadius: icon.md / 2, borderWidth: 2, borderColor: '#8A9BB5' },
   radioActive: { borderColor: '#4C8BF5', backgroundColor: '#4C8BF5' },
   reasonText: { color: '#E8F0FE', fontSize: 15 },
 

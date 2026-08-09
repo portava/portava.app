@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Play } from 'lucide-react-native';
-import { color, radius } from '../../theme/tokens.ts';
+import { color, radius, avatar } from '../../theme/tokens.ts';
 import { useHydratedMedia } from '../../services/mediaUrl.ts';
 
 export interface VideoThumbnailProps {
@@ -123,9 +123,8 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   playBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: avatar.lgXl, height: avatar.lgXl,
+    borderRadius: avatar.lgXl / 2,
     backgroundColor: 'rgba(17,17,15,0.55)',
     alignItems: 'center',
     justifyContent: 'center',

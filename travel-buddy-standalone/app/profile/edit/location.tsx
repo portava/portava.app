@@ -17,7 +17,7 @@ import {
   SettingsScreen, SettingsSection, SettingsRow, SettingsDivider, ToggleRow,
 } from '../../../src/components/settings/SettingsUI';
 import { PP } from '../../../src/theme/passportTokens';
-import { space, radius, type as t } from '../../../src/theme/tokens';
+import { space, radius, type as t, icon } from '../../../src/theme/tokens';
 import {
   getMyLocationPrivacy,
   updateMyLocationPrivacy,
@@ -589,7 +589,7 @@ const sx = StyleSheet.create({
   },
   radioRowActive: { borderColor: PP.ink, backgroundColor: PP.paperDeep },
   radio: {
-    width: 18, height: 18, borderRadius: 9, borderWidth: 2,
+    width: icon.md, height: icon.md, borderRadius: icon.md / 2, borderWidth: 2,
     borderColor: PP.border, marginTop: 2, flexShrink: 0,
   },
   radioChecked: { borderColor: PP.ink, backgroundColor: PP.ink },

@@ -29,6 +29,7 @@ import type { PassportStats } from '../../services/passportStamps.ts';
 import { PP } from '../../theme/passportTokens.ts';
 import { AvailabilityChip } from './AvailabilityChip.tsx';
 import type { AvailabilityChipState } from '../../lib/availabilityChip.ts';
+import { avatar } from '../../theme/tokens.ts';
 
 type AnyProfile = OwnProfile | PublicProfile;
 
@@ -566,9 +567,8 @@ const s = StyleSheet.create({
     position: 'absolute',
     top: 8,
     right: 8,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: avatar.smMd, height: avatar.smMd,
+    borderRadius: avatar.smMd / 2,
     backgroundColor: 'rgba(255,255,255,0.72)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -623,9 +623,8 @@ const s = StyleSheet.create({
     position: 'absolute',
     bottom: -2,
     right: -2,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: avatar.xs, height: avatar.xs,
+    borderRadius: avatar.xs / 2,
     backgroundColor: INK,
     alignItems: 'center',
     justifyContent: 'center',

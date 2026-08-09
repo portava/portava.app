@@ -8,7 +8,7 @@ import { Plus, Lock, Map as MapIcon, List, RotateCcw, AlertTriangle, Settings2, 
 import type { TripPlanItem, TripPlanCategory } from '../types/models.ts';
 import { fetchTripPlan, fetchTripPlanMap, type TripPlanResult } from '../services/tripPlan.ts';
 import { usePlanSync } from '../hooks/usePlanSync.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 import { AddToPlanSheet } from './AddToPlanSheet.tsx';
 import { TimelineView, type DayBucket } from './itinerary/TimelineView.tsx';
 import { ItineraryMapView } from './itinerary/MapView';
@@ -815,7 +815,7 @@ const cc = StyleSheet.create({
 
 const lk = StyleSheet.create({
   wrap:    { padding: space.lg, alignItems: 'center', gap: 8, paddingVertical: 36 },
-  iconWrap:{ width: 48, height: 48, borderRadius: 24, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
+  iconWrap:{ width: avatar.xl, height: avatar.xl, borderRadius: avatar.xl / 2, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
   title:   { ...t.title, fontSize: 16, color: color.ink },
   body:    { ...t.body, color: color.mute, textAlign: 'center', maxWidth: 260, lineHeight: 22 },
 });

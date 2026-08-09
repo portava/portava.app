@@ -37,7 +37,7 @@ import { Avatar } from './ui/Avatar.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { closeThenNavigate } from '../lib/deferredNavigate.ts';
 import { X } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar } from '../theme/tokens.ts';
 import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
 import { getLikers, type LikeTargetType, type LikerUser } from '../services/engagementLikers.ts';
 import { followUser, unfollowUser } from '../services/follows.ts';
@@ -293,9 +293,8 @@ const s = StyleSheet.create({
     fontSize: 16,
   },
   closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: avatar.sm, height: avatar.sm,
+    borderRadius: avatar.sm / 2,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: color.paperRaised,

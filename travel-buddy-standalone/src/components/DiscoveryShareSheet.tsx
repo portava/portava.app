@@ -29,7 +29,7 @@ import {
   Search,
 } from 'lucide-react-native';
 import { closeThenNavigate } from '../lib/deferredNavigate.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar, icon } from '../theme/tokens.ts';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { getMyThreads, sendMessage, openDirectThread } from '../services/messaging.ts';
 import type { ThreadSummary } from '../services/messaging.ts';
@@ -529,7 +529,7 @@ const s = StyleSheet.create({
   threadName: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   threadNameSelected: { color: color.signal },
   threadSub: { ...t.small, color: color.mute, fontSize: 11, marginTop: 1 },
-  checkBadge: { width: 20, height: 20, borderRadius: 10, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
+  checkBadge: { width: icon.action, height: icon.action, borderRadius: icon.action / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
   checkText: { fontSize: 12, color: color.onInk, fontWeight: '700' },
 
   startChatBadge: {
@@ -555,9 +555,8 @@ const s = StyleSheet.create({
     marginBottom: space.sm,
   },
   newThreadIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: avatar.md, height: avatar.md,
+    borderRadius: avatar.md / 2,
     backgroundColor: color.signal + '15',
     alignItems: 'center',
     justifyContent: 'center',

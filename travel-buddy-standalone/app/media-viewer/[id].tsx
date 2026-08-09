@@ -62,7 +62,7 @@ import {
 } from '../../src/lib/viewerContext.ts';
 import { formatLocationLabel } from '../../src/lib/formatPlaceLabel.ts';
 import { PortavaShareIcon } from '../../src/components/icons/PortavaShareIcon.tsx';
-import { color, space, type as t, radius } from '../../src/theme/tokens.ts';
+import { color, space, type as t, radius, avatar } from '../../src/theme/tokens.ts';
 import { useSession } from '../../src/context/SessionContext.tsx';
 import { PlaceQuickActions } from '../../src/components/PlaceQuickActions.tsx';
 
@@ -800,9 +800,8 @@ const ms = StyleSheet.create({
     zIndex: 20,
   },
   closeBtnInner: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: avatar.md, height: avatar.md,
+    borderRadius: avatar.md / 2,
     backgroundColor: 'rgba(17,17,15,0.6)',
     alignItems: 'center',
     justifyContent: 'center',

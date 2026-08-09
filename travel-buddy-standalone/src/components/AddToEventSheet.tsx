@@ -20,7 +20,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Calendar, Plus, MapPin, Check } from 'lucide-react-native';
 import { closeThenNavigate } from '../lib/deferredNavigate.ts';
-import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, layout, avatar } from '../theme/tokens.ts';
 import { listMyEvents, type EventListItem } from '../services/events.ts';
 import { freshToken as freshApiToken } from '../services/apiToken.ts';
 import { isSupabaseConfigured } from '../lib/supabase.ts';
@@ -294,7 +294,7 @@ const s = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   title: { ...t.title, color: color.ink, fontSize: 18 },
   xBtn: {
-    width: 32, height: 32, borderRadius: 16,
+    width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze,
   },
@@ -304,7 +304,7 @@ const s = StyleSheet.create({
     borderWidth: 1, borderColor: color.haze, padding: space.sm,
   },
   previewIcon: {
-    width: 40, height: 40, borderRadius: 20,
+    width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2,
     backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center',
   },
   previewTitle: { ...t.bodyStrong, color: color.ink },
@@ -321,7 +321,7 @@ const s = StyleSheet.create({
   },
   eventRowAdded: { borderColor: color.success + '60', backgroundColor: color.success + '08' },
   eventIcon: {
-    width: 34, height: 34, borderRadius: 17,
+    width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2,
     backgroundColor: color.signal + '15', alignItems: 'center', justifyContent: 'center',
   },
   eventTitle: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
@@ -335,7 +335,7 @@ const s = StyleSheet.create({
     padding: space.md,
   },
   createIcon: {
-    width: 34, height: 34, borderRadius: 17,
+    width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2,
     backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center',
   },
   createText: { ...t.bodyStrong, color: color.signal, fontSize: 14 },

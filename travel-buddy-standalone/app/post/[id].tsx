@@ -25,7 +25,7 @@ import { getPostById, type PostRow } from '../../src/services/posts';
 import { useSession } from '../../src/context/SessionContext';
 import { primaryIdentityText } from '../../src/lib/displayIdentity.ts';
 import { DisplayMediaImage, AvatarImage } from '../../src/components/ui/DisplayMediaImage.tsx';
-import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { color, space, radius, type as t, avatar } from '../../src/theme/tokens';
 import { emitCommentCount } from '../../src/lib/commentCountStore';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
@@ -459,9 +459,8 @@ const rb = StyleSheet.create({
     borderColor: color.haze,
   },
   iconWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: avatar.xxl, height: avatar.xxl,
+    borderRadius: avatar.xxl / 2,
     backgroundColor: `${color.signal}12`,
     alignItems: 'center',
     justifyContent: 'center',

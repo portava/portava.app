@@ -22,7 +22,7 @@ import {
   Animated,
 } from 'react-native';
 import { Compass, Send, X } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import {
   fetchCompassRecommendations,
   type CompassRecommendation,
@@ -298,9 +298,8 @@ const s = StyleSheet.create({
     elevation: 8,
   },
   iconWrap: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: avatar.xs, height: avatar.xs,
+    borderRadius: avatar.xs / 2,
     backgroundColor: 'rgba(255,255,255,0.12)',
     alignItems: 'center',
     justifyContent: 'center',

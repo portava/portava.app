@@ -14,7 +14,7 @@ const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const { Map, Camera, Marker, GeoJSONSource, Layer } = _ml as typeof import('@maplibre/maplibre-react-native');
 import { Minimize2 } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar, icon } from '../theme/tokens.ts';
 import type { RouteStop, RouteLeg } from '../services/routePlan.ts';
 
 // ── Map tile style ─────────────────────────────────────────────────────────────
@@ -197,7 +197,7 @@ export function RouteFullMapModal({
 
 const fm = StyleSheet.create({
   pin: {
-    width: 32, height: 32, borderRadius: 16,
+    width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2,
     backgroundColor: '#E76F51', alignItems: 'center', justifyContent: 'center',
     borderWidth: 2, borderColor: '#fff',
     shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 3, shadowOffset: { width: 0, height: 1 },
@@ -223,7 +223,7 @@ const fm = StyleSheet.create({
     shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 4, elevation: 4,
   },
   legendRow:      { flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 3 },
-  legendDot:      { width: 22, height: 22, borderRadius: 11, backgroundColor: '#E76F51', alignItems: 'center', justifyContent: 'center' },
+  legendDot:      { width: icon.lg, height: icon.lg, borderRadius: icon.lg / 2, backgroundColor: '#E76F51', alignItems: 'center', justifyContent: 'center' },
   legendDotDone:  { backgroundColor: '#999' },
   legendDotNext:  { backgroundColor: color.deep },
   legendDotLabel: { color: '#fff', fontSize: 10, fontWeight: '700' },

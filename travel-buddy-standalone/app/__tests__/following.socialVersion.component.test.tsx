@@ -54,15 +54,6 @@ jest.mock('../../src/hooks/useNavBarCollapse', () => ({
   NavBarFiller:           () => null,
 }));
 
-// NOTE: intentionally exhaustive — theme tokens are pure value objects; the
-// Proxy stubs produce valid style primitives without pulling the real tokens.
-jest.mock('../../src/theme/tokens', () => {
-  const colorProxy  = new Proxy({}, { get: () => '#000000' });
-  const numberProxy = new Proxy({}, { get: () => 8 });
-  const typeProxy   = new Proxy({}, { get: () => ({}) });
-  return { color: colorProxy, space: numberProxy, radius: numberProxy, type: typeProxy };
-});
-
 // lucide-react-native: covered by the global Proxy mapper in jest.config.js —
 // no per-file mock needed.
 

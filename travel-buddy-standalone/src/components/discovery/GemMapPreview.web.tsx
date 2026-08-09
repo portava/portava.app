@@ -13,6 +13,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Lock, MapPin, Map as MapIcon } from 'lucide-react-native';
+import { avatar } from '../../theme/tokens.ts';
 
 export interface GemMapPreviewProps {
   lat: number | null;
@@ -83,9 +84,8 @@ const s = StyleSheet.create({
     gap: 8,
   },
   iconCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: avatar.xl, height: avatar.xl,
+    borderRadius: avatar.xl / 2,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 4,

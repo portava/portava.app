@@ -24,7 +24,7 @@ import { Stamp } from '../../src/components/ui';
 import { useSession } from '../../src/context/SessionContext';
 import { useMyTrips, usePendingTripInvites } from '../../src/hooks/useBackend';
 import { useUnreadCounts } from '../../src/hooks/useMessaging';
-import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+import { color, space, radius, type as t, shadow, avatar, icon } from '../../src/theme/tokens';
 import { acceptTripInvite, declineTripInvite, type TripInvite } from '../../src/services/trips';
 import { addEventToTrip } from '../../src/services/events';
 import { classifyInviteAcceptError } from '../../src/lib/inviteCardGoneHandler';
@@ -646,8 +646,8 @@ const styles = StyleSheet.create({
   },
   inviteBody: { padding: space.md, gap: space.sm },
   inviteInviterRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  inviterAvatar: { width: 20, height: 20, borderRadius: 10 },
-  inviterAvatarPlaceholder: { width: 20, height: 20, borderRadius: 10, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
+  inviterAvatar: { width: icon.action, height: icon.action, borderRadius: icon.action / 2 },
+  inviterAvatarPlaceholder: { width: icon.action, height: icon.action, borderRadius: icon.action / 2, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
   inviterLabel: { ...t.small, color: color.mute, flex: 1 },
   inviterName: { fontWeight: '600', color: color.ink },
   inviteTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
@@ -674,7 +674,7 @@ const styles = StyleSheet.create({
   },
   inviteBtnAcceptText: { ...t.small, color: color.onInk, fontWeight: '700' },
   layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#E3F2FD', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: '#BBDEFB' },
-  layoverBannerIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#BBDEFB' },
+  layoverBannerIcon: { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#BBDEFB' },
   layoverBannerBody: { flex: 1, gap: 1 },
   layoverBannerTitle: { fontSize: 14, fontWeight: '700', color: '#0D47A1' },
   layoverBannerSub: { fontSize: 12, fontWeight: '400', color: '#1565C0', opacity: 0.85 },

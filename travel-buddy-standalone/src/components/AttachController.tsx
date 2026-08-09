@@ -7,7 +7,7 @@ import { X, Check, Plus, Search, MapPin } from 'lucide-react-native';
 import type { AttachSource, AttachTarget, AttachTargetType } from '../types/models.ts';
 import { useAttachments } from '../context/AttachmentStore.tsx';
 import { attachTripTargets, attachPlanTargets, TRIP_GROUP_LABEL, PLAN_GROUP_LABEL } from '../data/attachTargets.ts';
-import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, layout, avatar } from '../theme/tokens.ts';
 
 /**
  * Attach controller. Wrap the app once; any card calls useAttach().open(source, kind)
@@ -155,7 +155,7 @@ const s = StyleSheet.create({
   grab: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: color.haze },
   head: { flexDirection: 'row', alignItems: 'center' },
   title: { ...t.title, color: color.ink, fontSize: 19 },
-  x: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
+  x: { width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
   preview: { flexDirection: 'row', alignItems: 'center', gap: space.md, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.sm },
   previewThumb: { width: 44, height: 44, borderRadius: radius.sm, backgroundColor: color.deep },
   previewTitle: { ...t.bodyStrong, color: color.ink },
@@ -165,13 +165,13 @@ const s = StyleSheet.create({
   error: { ...t.small, color: color.signal, fontWeight: '600' },
   groupLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.mute, letterSpacing: 1, marginTop: space.xs },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md },
-  rowIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#E2EDF0', alignItems: 'center', justifyContent: 'center' },
+  rowIcon: { width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2, backgroundColor: '#E2EDF0', alignItems: 'center', justifyContent: 'center' },
   rowTitle: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   rowSub: { ...t.small, color: color.mute, fontSize: 11 },
   added: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   addedText: { ...t.small, color: color.success, fontWeight: '700', fontSize: 12 },
   createRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md, borderRadius: radius.md, borderWidth: 1.5, borderStyle: 'dashed', borderColor: color.signal, marginTop: space.xs },
-  createIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
+  createIcon: { width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
   createText: { ...t.bodyStrong, color: color.signal },
   toast: { position: 'absolute', alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: color.ink, paddingHorizontal: space.lg, paddingVertical: space.md, borderRadius: radius.pill, ...shadow.float },
   toastText: { ...t.bodyStrong, color: color.onInk },

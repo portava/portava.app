@@ -20,7 +20,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { X } from 'lucide-react-native';
-import { color, radius, space, type as t, shadow } from '../../theme/tokens.ts';
+import { color, radius, space, type as t, shadow, avatar, icon } from '../../theme/tokens.ts';
 import { MAP_LAYER_CONFIG, TOGGLEABLE_LAYERS } from '../../types/mapTypes.ts';
 import type { ToggleableEntityType } from '../../types/mapTypes.ts';
 
@@ -197,9 +197,8 @@ const s = StyleSheet.create({
     color: color.ink,
   },
   closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: avatar.sm, height: avatar.sm,
+    borderRadius: avatar.sm / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',
@@ -227,9 +226,8 @@ const s = StyleSheet.create({
     borderBottomColor: color.haze,
   },
   swatch: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: icon.md, height: icon.md,
+    borderRadius: icon.md / 2,
     flexShrink: 0,
   },
   rowText: {

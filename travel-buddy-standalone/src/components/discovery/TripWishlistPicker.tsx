@@ -33,7 +33,7 @@ import {
   getSavedListIds,
   type BookmarkedPlace,
 } from '../../services/discoveryBookmarks.ts';
-import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar } from '../../theme/tokens.ts';
 
 // ── Shared payload type ────────────────────────────────────────────────────────
 
@@ -321,9 +321,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: avatar.sm, height: avatar.sm,
+    borderRadius: avatar.sm / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',
@@ -399,9 +398,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#DC262608',
   },
   badge: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: avatar.sm, height: avatar.sm,
+    borderRadius: avatar.sm / 2,
     backgroundColor: '#E2EDF0',
     alignItems: 'center',
     justifyContent: 'center',
@@ -427,9 +425,8 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   addChip: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: avatar.sm, height: avatar.sm,
+    borderRadius: avatar.sm / 2,
     backgroundColor: color.signal + '14',
     alignItems: 'center',
     justifyContent: 'center',

@@ -68,12 +68,6 @@ jest.mock('../../../services/mediaUrl', () => {
 // NOTE: intentionally exhaustive — tokens.ts imports a font loader that is
 // unavailable under jest-expo; plain value stubs cover every style reference
 // used inside TravelerMapLayer.
-jest.mock('../../../theme/tokens', () => ({
-  color: {
-    deep: '#2A7F8F',
-    haze: '#E8E8E8',
-  },
-}));
 
 // NOTE: intentionally exhaustive — displayIdentity imports truncateDisplayName
 // from utils/identity which itself may pull platform internals; a minimal stub

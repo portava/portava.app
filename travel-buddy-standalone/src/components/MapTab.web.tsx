@@ -16,7 +16,7 @@ import type { PassportMapPayload } from '../services/passportStamps.ts';
 import type { PostcardsSentinel } from '../services/profile.ts';
 import { getPassportMap } from '../services/passportStamps.ts';
 import { Lock, Ban, EyeOff } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
@@ -322,7 +322,7 @@ const sv = StyleSheet.create({
     gap: space.sm,
   },
   iconWrap: {
-    width: 56, height: 56, borderRadius: 28,
+    width: avatar.xxl, height: avatar.xxl, borderRadius: avatar.xxl / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',

@@ -11,7 +11,7 @@ import {
 import { Avatar } from './ui/Avatar.tsx';
 import { X, Eye } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar } from '../theme/tokens.ts';
 import { fetchProfileViewers, type ProfileViewer } from '../services/postViewers.ts';
 
 interface Props {
@@ -104,7 +104,7 @@ const s = StyleSheet.create({
   },
   title: { ...t.heading, color: color.ink },
   closeBtn: {
-    width: 32, height: 32, borderRadius: 16,
+    width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: color.paperRaised,
     borderWidth: 1, borderColor: color.haze,

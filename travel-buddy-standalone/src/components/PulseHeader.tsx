@@ -5,7 +5,7 @@ import Animated, { useAnimatedStyle, interpolate } from 'react-native-reanimated
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Search, SlidersHorizontal, MapPin, Pencil, MessageCircle, CircleUserRound, Plus } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 import { pv } from '../theme/pulseTheme.ts';
 import { useUnreadCounts } from '../hooks/useMessaging.ts';
 import { NotificationBell } from './NotificationBell.tsx';
@@ -222,9 +222,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: avatar.sm, height: avatar.sm,
+    borderRadius: avatar.sm / 2,
     borderWidth: 1,
     borderColor: pv.navyEdge,
   },
@@ -248,17 +247,15 @@ const styles = StyleSheet.create({
     color: pv.textMute,
   },
   iconBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: avatar.smMd, height: avatar.smMd,
+    borderRadius: avatar.smMd / 2,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F4F7FB',
   },
   bellWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: avatar.smMd, height: avatar.smMd,
+    borderRadius: avatar.smMd / 2,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F4F7FB',

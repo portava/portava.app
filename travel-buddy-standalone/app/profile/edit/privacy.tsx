@@ -22,7 +22,7 @@ import { useSession } from '../../../src/context/SessionContext';
 import { _clearSnapshot } from '../../../src/hooks/snapshotCacheUtils';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PP } from '../../../src/theme/passportTokens';
-import { space, radius, type as t } from '../../../src/theme/tokens';
+import { space, radius, type as t, icon } from '../../../src/theme/tokens';
 import {
   SettingsScreen, SettingsSection, SettingsRow, SettingsDivider, ToggleRow,
   SaveBar, ChipGrid, useUnsavedGuard, type SaveState,
@@ -454,7 +454,7 @@ export default function PrivacyVisibilityScreen() {
 const st = StyleSheet.create({
   center: { paddingVertical: space.xxl, alignItems: 'center', justifyContent: 'center' },
   radio: {
-    width: 20, height: 20, borderRadius: 10,
+    width: icon.action, height: icon.action, borderRadius: icon.action / 2,
     borderWidth: 2, borderColor: PP.border,
   },
   radioChecked: { borderColor: PP.inkLight, backgroundColor: PP.inkLight },

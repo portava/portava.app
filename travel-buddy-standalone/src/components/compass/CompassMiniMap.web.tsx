@@ -10,7 +10,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { MapPin, Maximize2 } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, icon } from '../../theme/tokens.ts';
 import type { CompassMiniMapPoint } from './compassMiniMapShared.ts';
 
 export interface CompassMiniMapProps {
@@ -61,9 +61,8 @@ const s = StyleSheet.create({
   list: { gap: 4 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   dot: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: icon.md, height: icon.md,
+    borderRadius: icon.md / 2,
     backgroundColor: color.signal,
     alignItems: 'center',
     justifyContent: 'center',

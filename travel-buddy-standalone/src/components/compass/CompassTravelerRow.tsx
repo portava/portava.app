@@ -20,7 +20,7 @@ import {
 import { Avatar } from '../ui/Avatar.tsx';
 import { router } from 'expo-router';
 import { Users, Sparkles, CheckCircle, MapPin, MoreHorizontal } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity.ts';
 import {
   fetchCompassSettings,
@@ -39,7 +39,7 @@ interface Props {
 function TravelerSkeleton() {
   return (
     <View style={[s.card, s.skeleton]}>
-      <View style={[s.skBar, { width: 48, height: 48, borderRadius: 24, marginBottom: space.sm, alignSelf: 'center' }]} />
+      <View style={[s.skBar, { width: avatar.xl, height: avatar.xl, borderRadius: avatar.xl / 2, marginBottom: space.sm, alignSelf: 'center' }]} />
       <View style={[s.skBar, { width: 72, height: 10, marginBottom: 5 }]} />
       <View style={[s.skBar, { width: 56, height: 8, marginBottom: space.sm }]} />
       <View style={[s.skBar, { width: 68, height: 24, borderRadius: radius.md }]} />

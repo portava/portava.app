@@ -8,7 +8,7 @@ import { PassportMonogramWatermark, PassportInkStamp, PassportHeroBackdrop } fro
 import { isTravelBuddyVerified, getVerificationOwnerPrompt } from '../lib/verification.ts';
 import { resolveAvatarUrl, fallbackInitials } from '../utils/identity.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
-import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar } from '../theme/tokens.ts';
 import { HighlightRing } from './HighlightRing.tsx';
 import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
 import { OfficialBadge } from './OfficialBadge.tsx';
@@ -320,9 +320,8 @@ const styles = StyleSheet.create({
   topDivider: { height: 1, backgroundColor: color.haze, marginVertical: space.md },
 
   menuBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: avatar.smMd, height: avatar.smMd,
+    borderRadius: avatar.smMd / 2,
     backgroundColor: color.paperRaised,
     borderWidth: 1,
     borderColor: color.haze,

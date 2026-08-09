@@ -12,7 +12,7 @@ import { TelegraphSendIcon } from './icons/TelegraphSendIcon.tsx';
 import type { RouteStopDraft } from './RouteBuilderSheet.tsx';
 import type { DiscoveryItem } from '../data/discovery.ts';
 import type { NeighborhoodVibe, TravelerPick, SavedDiscoveryItem } from '../data/discovery.ts';
-import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, layout, avatar, icon } from '../theme/tokens.ts';
 import { usePlanPicker } from './PlanPickerController.tsx';
 import { TravelSectionHeader, TravelEmptyState } from './primitives.tsx';
 import { DiscoveryShareSheet } from './DiscoveryShareSheet.tsx';
@@ -723,7 +723,7 @@ const cc = StyleSheet.create({
 const fc = StyleSheet.create({
   card: { width: 160, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, overflow: 'hidden', ...shadow.card },
   media: { height: 110, backgroundColor: color.deep, padding: space.sm },
-  sparkle: { width: 26, height: 26, borderRadius: 13, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
+  sparkle: { width: icon.xl, height: icon.xl, borderRadius: icon.xl / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
   body: { padding: space.md, gap: 3 },
   title: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   sub: { ...t.small, color: color.mute, fontSize: 11 },
@@ -746,8 +746,8 @@ const g = StyleSheet.create({
   strip: { gap: space.md, paddingHorizontal: space.lg, paddingVertical: space.xs },
   card: { width: 200, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, overflow: 'hidden', ...shadow.card },
   media: { height: 120, backgroundColor: color.deep, padding: space.sm, justifyContent: 'space-between', flexDirection: 'row' },
-  gemBadge: { width: 28, height: 28, borderRadius: 14, backgroundColor: color.success, alignItems: 'center', justifyContent: 'center' },
-  saveIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(17,17,15,0.4)', alignItems: 'center', justifyContent: 'center' },
+  gemBadge: { width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2, backgroundColor: color.success, alignItems: 'center', justifyContent: 'center' },
+  saveIcon: { width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2, backgroundColor: 'rgba(17,17,15,0.4)', alignItems: 'center', justifyContent: 'center' },
   body: { padding: space.md, gap: 3 },
   name: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   locRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
@@ -819,7 +819,7 @@ const sv = StyleSheet.create({
 const ac = StyleSheet.create({
   card: { marginHorizontal: space.lg, marginTop: space.xl, backgroundColor: color.ink, borderRadius: radius.lg, padding: space.lg, gap: space.md, ...shadow.card },
   head: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  icon: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
+  icon: { width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
   title: { ...t.title, color: color.onInk, fontSize: 18 },
   sub: { ...t.small, color: color.onInkMute, marginTop: 1 },
   prompts: { gap: space.sm },

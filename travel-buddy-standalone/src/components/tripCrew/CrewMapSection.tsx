@@ -15,7 +15,7 @@ import {
 import {
   Navigation, EyeOff, RefreshCw, Users, Info, MapPin,
 } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, icon } from '../../theme/tokens.ts';
 import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
 import { CrewMemberCard } from './CrewMemberCard.tsx';
 import { CrewCallCard } from './CrewCallCard.tsx';
@@ -345,11 +345,11 @@ const dm = StyleSheet.create({
   },
   center: {
     position: 'absolute', top: '45%', left: '47%',
-    width: 14, height: 14, borderRadius: 7,
+    width: icon.sm, height: icon.sm, borderRadius: icon.sm / 2,
     backgroundColor: color.signal, borderWidth: 2, borderColor: color.paper,
   },
   clusterDot: {
-    position: 'absolute', width: 22, height: 22, borderRadius: 11,
+    position: 'absolute', width: icon.lg, height: icon.lg, borderRadius: icon.lg / 2,
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 2, borderColor: color.paper,
   },

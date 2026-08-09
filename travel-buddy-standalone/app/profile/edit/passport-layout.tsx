@@ -17,7 +17,7 @@ import {
   SettingsScreen, SettingsSection, SaveBar, useUnsavedGuard, useSavedThenBack, type SaveState,
 } from '../../../src/components/settings/SettingsUI';
 import { PP, PP_LABEL } from '../../../src/theme/passportTokens';
-import { space, radius, type as t } from '../../../src/theme/tokens';
+import { space, radius, type as t, icon } from '../../../src/theme/tokens';
 import { getMyProfile, updateMyProfile } from '../../../src/services/profile';
 import { resolveProfileSaveOutcome } from '../../../src/services/profileSaveFlow';
 import {
@@ -320,7 +320,7 @@ const sx = StyleSheet.create({
   },
   pillHidden: { opacity: 0.4 },
   pillNum: {
-    width: 18, height: 18, borderRadius: 9,
+    width: icon.md, height: icon.md, borderRadius: icon.md / 2,
     backgroundColor: PP.ink, alignItems: 'center', justifyContent: 'center',
   },
   pillNumHidden: { backgroundColor: PP.inkMuted },

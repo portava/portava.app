@@ -15,7 +15,7 @@ import { useBlockedIds } from '../context/BlockedIdsContext.tsx';
 import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 import { TG, TG_AVATAR } from '../theme/telegraphTokens.ts';
 import { TelegraphAvatar, TelegraphRow } from './telegraph/TelegraphPrimitives.tsx';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
@@ -989,7 +989,7 @@ const s = StyleSheet.create({
   // Sizing/shape come from <Avatar size>; this carries layout only.
   avatarBox: { flexShrink: 0 },
   // The loading skeleton has no Avatar to size it, so it keeps its own.
-  avatarSkeleton: { width: 48, height: 48, borderRadius: 24, backgroundColor: color.haze, flexShrink: 0 },
+  avatarSkeleton: { width: avatar.xl, height: avatar.xl, borderRadius: avatar.xl / 2, backgroundColor: color.haze, flexShrink: 0 },
   groupAvatar: { borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
 
   nameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
@@ -1062,9 +1062,8 @@ const s = StyleSheet.create({
   sectionDividerLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: TG.hairline },
 
   requestsRowIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: avatar.xl, height: avatar.xl,
+    borderRadius: avatar.xl / 2,
     backgroundColor: color.signal + '14',
     alignItems: 'center',
     justifyContent: 'center',

@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity.ts';
 import { AvatarImage } from '../ui/DisplayMediaImage.tsx';
 
@@ -69,7 +69,7 @@ const s = StyleSheet.create({
     gap: space.sm,
   },
   row: { flexDirection: 'row', gap: space.md, alignItems: 'flex-start' },
-  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: color.haze },
+  avatar: { width: avatar.lgXl, height: avatar.lgXl, borderRadius: avatar.lgXl / 2, backgroundColor: color.haze },
   avatarEmpty: { alignItems: 'center', justifyContent: 'center' },
   body: { flex: 1, gap: 2 },
   name: { ...t.bodyStrong, fontSize: 14, color: color.ink },

@@ -17,7 +17,7 @@ import {
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, PauseCircle } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t } from '../src/theme/tokens';
+import { color, space, radius, type as t, icon } from '../src/theme/tokens';
 import {
   getCircleContextSettings,
   patchCircleContextSettings,
@@ -392,9 +392,8 @@ const s = StyleSheet.create({
     backgroundColor: '#EAF2F4',
   },
   radio: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: icon.md, height: icon.md,
+    borderRadius: icon.md / 2,
     borderWidth: 2,
     borderColor: color.haze,
     marginTop: 2,

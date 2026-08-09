@@ -7,7 +7,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { MapPin } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, icon } from '../theme/tokens.ts';
 import type { FullRoutePlan } from '../services/routePlan.ts';
 
 interface Props {
@@ -65,9 +65,8 @@ const s = StyleSheet.create({
   list: { gap: 6 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dot: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: icon.lg, height: icon.lg,
+    borderRadius: icon.lg / 2,
     backgroundColor: '#E76F51',
     alignItems: 'center',
     justifyContent: 'center',

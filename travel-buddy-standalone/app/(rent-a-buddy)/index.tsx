@@ -9,7 +9,7 @@ import {
   ChevronDown, ChevronUp, Star, Plane, ShoppingBag,
   Globe, Camera, Music, BookOpen, HelpCircle, AlertCircle, Bell,
 } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow, layout } from '../../src/theme/tokens';
+import { color, space, radius, type as t, shadow, layout, avatar } from '../../src/theme/tokens';
 import {
   TravelSectionHeader, HorizontalScrollStrip,
 } from '../../src/components/primitives';
@@ -610,7 +610,7 @@ const styles = StyleSheet.create({
     padding: space.lg, gap: space.xs, ...shadow.card,
   },
   catIcon: {
-    width: 40, height: 40, borderRadius: 20,
+    width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2,
     backgroundColor: '#EAF2F5', alignItems: 'center', justifyContent: 'center',
     marginBottom: space.xs,
   },

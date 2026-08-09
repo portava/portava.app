@@ -40,7 +40,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGroupChat } from '../hooks/useGroupChat.ts';
 import { useSession } from '../context/SessionContext.tsx';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar, icon } from '../theme/tokens.ts';
 import { TG, TG_SPACING } from '../theme/telegraphTokens.ts';
 import { TelegraphSystemNotice } from './TelegraphSystemNotice.tsx';
 import { TranslationSettingsSheet } from './TranslationSettingsSheet.tsx';
@@ -1148,8 +1148,8 @@ const styles = StyleSheet.create({
   bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: space.sm, maxWidth: '86%' },
   bubbleRowMine: { alignSelf: 'flex-end', flexDirection: 'row-reverse' },
 
-  avatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: color.haze, overflow: 'hidden', flexShrink: 0 },
-  avatarSmall: { width: 28, height: 28, borderRadius: 14 },
+  avatar: { width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2, backgroundColor: color.haze, overflow: 'hidden', flexShrink: 0 },
+  avatarSmall: { width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2 },
   avatarInitial: { fontSize: 12, color: color.ink, textAlign: 'center', lineHeight: 28 },
 
   bubble: {
@@ -1240,7 +1240,7 @@ const styles = StyleSheet.create({
     ...t.body,
     color: color.ink,
   },
-  sendBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  sendBtn: { width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2, alignItems: 'center', justifyContent: 'center' },
   sendBtnActive: { backgroundColor: TG.sentBubble },
   sendBtnDisabled: { backgroundColor: color.haze },
 
@@ -1292,7 +1292,7 @@ const styles = StyleSheet.create({
   },
   failedRetryText: { ...t.stamp, color: '#EF4444', fontSize: 10, fontWeight: '600' },
   readerAvatarRow: { flexDirection: 'row', alignItems: 'center', gap: 2, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
-  readerAvatar: { width: 14, height: 14, borderRadius: 7, backgroundColor: color.haze },
+  readerAvatar: { width: icon.sm, height: icon.sm, borderRadius: icon.sm / 2, backgroundColor: color.haze },
 
   replyBar: {
     flexDirection: 'row',

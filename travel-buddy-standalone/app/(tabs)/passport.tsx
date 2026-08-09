@@ -34,7 +34,7 @@ import { PostcardsTab } from '../../src/components/PostcardsTab';
 import { StampsTab } from '../../src/components/StampsTab';
 import type { OwnProfile, PassportPostcard } from '../../src/types/models';
 import type { TripRow } from '../../src/services/trips';
-import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { color, space, radius, type as t, avatar } from '../../src/theme/tokens';
 import { CompassStatusCard } from '../../src/components/compass/CompassStatusCard';
 import { CompassPassportSuggestions } from '../../src/components/compass/CompassPassportSuggestions';
 import { getMyBuddyProfile, type BuddyProfile } from '../../src/services/rentABuddy';
@@ -964,7 +964,7 @@ const s = StyleSheet.create({
     padding: space.md,
   },
   bpIcon: {
-    width: 40, height: 40, borderRadius: 20,
+    width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2,
     backgroundColor: PP.paperDeep,
     alignItems: 'center', justifyContent: 'center',
   },

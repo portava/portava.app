@@ -37,7 +37,7 @@ import { GridFeed } from '../../src/components/media/GridFeed';
 import { GemsFeed } from '../../src/components/media/GemsFeed';
 import { MediaQuickCreateSheet } from '../../src/components/media/MediaQuickCreateSheet';
 import { mediaEvents } from '../../src/lib/mediaEvents';
-import { color, shadow } from '../../src/theme/tokens';
+import { color, shadow, avatar } from '../../src/theme/tokens';
 import { AppHeader, getOverlayHeaderTotalHeight } from '../../src/components/ui/AppHeader';
 import { useLayoverAwareBottomInset } from '../../src/hooks/useBottomInset';
 
@@ -260,9 +260,8 @@ const styles = StyleSheet.create({
   gridCreateBtn: {
     position: 'absolute',
     right: 16,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: avatar.md, height: avatar.md,
+    borderRadius: avatar.md / 2,
     backgroundColor: color.paperRaised,
     borderWidth: 1,
     borderColor: color.haze,

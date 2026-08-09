@@ -8,7 +8,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
-import { color, radius, space, type as t } from '../theme/tokens.ts';
+import { color, radius, space, type as t, icon } from '../theme/tokens.ts';
 import { HighlightRing } from './HighlightRing.tsx';
 import { useSession } from '../context/SessionContext.tsx';
 import { getStoriesFeed, type StoryFeedUser, type Story } from '../services/stories.ts';
@@ -119,7 +119,7 @@ const s = StyleSheet.create({
   avatarCircle: { backgroundColor: color.haze },
   plusBadge: {
     position: 'absolute', bottom: 0, right: 0,
-    width: 20, height: 20, borderRadius: 10,
+    width: icon.action, height: icon.action, borderRadius: icon.action / 2,
     backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center',
     borderWidth: 2, borderColor: color.paper,
   },

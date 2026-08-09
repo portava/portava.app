@@ -19,7 +19,7 @@ import { createPlanItem } from '../services/tripPlan.ts';
 import type { BookmarkedPlace } from '../services/discoveryBookmarks.ts';
 import type { TripDetail, SavedIdea, TimelineDay, PassportStamp, User } from '../types/models.ts';
 import type { TripPlan, TripPlanStatus } from '../__fixtures__/tripDetail.ts';
-import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, layout, avatar, icon } from '../theme/tokens.ts';
 import { fromISODate } from '../lib/dateTime/formatters.ts';
 import { PassportStampCard } from './PassportStampCard.tsx';
 import { TravelSectionHeader, TravelEmptyState } from './primitives.tsx';
@@ -1030,7 +1030,7 @@ const si = StyleSheet.create({
   strip: { gap: space.md, paddingHorizontal: space.lg, paddingBottom: space.sm },
   card: { width: 150, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, overflow: 'hidden', ...shadow.card },
   media: { height: 100, backgroundColor: color.deep, alignItems: 'flex-end', padding: space.sm },
-  bookmark: { width: 26, height: 26, borderRadius: 13, backgroundColor: 'rgba(17,17,15,0.4)', alignItems: 'center', justifyContent: 'center' },
+  bookmark: { width: icon.xl, height: icon.xl, borderRadius: icon.xl / 2, backgroundColor: 'rgba(17,17,15,0.4)', alignItems: 'center', justifyContent: 'center' },
   body: { padding: space.md, gap: 4 },
   name: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   hood: { ...t.small, color: color.mute, fontSize: 11 },
@@ -1066,20 +1066,20 @@ const cr = StyleSheet.create({
   avatars: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   avatarWrap: {},
   onlineDot: { position: 'absolute', right: 0, bottom: 0, width: 12, height: 12, borderRadius: 6, backgroundColor: color.success, borderWidth: 2, borderColor: color.paperRaised },
-  inviteBtn: { width: 48, height: 48, borderRadius: 24, borderWidth: 1.5, borderStyle: 'dashed', borderColor: color.signal, alignItems: 'center', justifyContent: 'center' },
+  inviteBtn: { width: avatar.xl, height: avatar.xl, borderRadius: avatar.xl / 2, borderWidth: 1.5, borderStyle: 'dashed', borderColor: color.signal, alignItems: 'center', justifyContent: 'center' },
   inviteRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   inviteText: { ...t.small, fontWeight: '700', color: color.signal },
   divider: { height: 1, backgroundColor: color.haze },
   suggestLabel: { ...t.small, color: color.mute, fontWeight: '600' },
   suggestRow: { gap: space.sm, alignItems: 'center' },
-  suggestMore: { width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center' },
+  suggestMore: { width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center' },
 });
 
 const cb = StyleSheet.create({
   card:        { marginHorizontal: space.lg, backgroundColor: color.ink, borderRadius: radius.lg, padding: space.lg, gap: space.md, ...shadow.card },
   emptyCard:   { marginHorizontal: space.lg, backgroundColor: color.ink, borderRadius: radius.lg, padding: space.lg, gap: space.md, ...shadow.card },
   head:        { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  icon:        { width: 40, height: 40, borderRadius: 20, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
+  icon:        { width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
   title:       { ...t.bodyStrong, color: color.onInk, fontSize: 16 },
   sub:         { ...t.small, color: color.onInkMute, marginTop: 1 },
   cta:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: space.md },
@@ -1136,7 +1136,7 @@ const mp = StyleSheet.create({
 const sf = StyleSheet.create({
   card: { marginHorizontal: space.lg, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.lg, gap: space.md, ...shadow.card },
   head: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  icon: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#E3F1EA', alignItems: 'center', justifyContent: 'center' },
+  icon: { width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2, backgroundColor: '#E3F1EA', alignItems: 'center', justifyContent: 'center' },
   title: { ...t.bodyStrong, color: color.ink, fontSize: 15 },
   sub: { ...t.small, color: color.mute, marginTop: 1 },
   btns: { flexDirection: 'row', gap: space.sm },

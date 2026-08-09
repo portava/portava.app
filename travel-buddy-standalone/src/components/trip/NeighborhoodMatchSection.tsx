@@ -8,7 +8,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { Home } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import { fetchNeighborhoodMatch } from '../../services/neighborhoods.ts';
 import { NeighborhoodMatchSheet } from './NeighborhoodMatchSheet.tsx';
 
@@ -77,9 +77,8 @@ const styles = StyleSheet.create({
     borderColor: '#C8DDE5',
   },
   iconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: avatar.lg, height: avatar.lg,
+    borderRadius: avatar.lg / 2,
     backgroundColor: color.paper,
     alignItems: 'center',
     justifyContent: 'center',

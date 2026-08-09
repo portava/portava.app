@@ -26,7 +26,7 @@ import {
   type UploadCancelRef,
 } from '../services/postcards.ts';
 import { validateMedia } from '../services/media.ts';
-import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar } from '../theme/tokens.ts';
 import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
 import { useMediaPicker } from '../hooks/useMediaPicker.ts';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
@@ -776,7 +776,7 @@ const s = StyleSheet.create({
   stampChipTextActive: { color: color.signal, fontWeight: '700' },
   stampToolRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   stampTool: {
-    width: 32, height: 32, borderRadius: 16, borderWidth: 1, borderColor: color.haze,
+    width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2, borderWidth: 1, borderColor: color.haze,
     alignItems: 'center', justifyContent: 'center',
   },
   stampCorner: {

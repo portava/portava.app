@@ -32,6 +32,7 @@ import type { EventListItem } from '../../services/events.ts';
 import type { HiddenGem } from '../../services/hiddenGems.ts';
 import type { TripRow } from '../../services/trips.ts';
 import type { CircleMemberLocation } from '../../services/map.ts';
+import { avatar } from '../../theme/tokens.ts';
 
 // ── Clustering ─────────────────────────────────────────────────────────────────
 
@@ -208,9 +209,8 @@ function FriendMarker({ entity, onPress }: { entity: MapEntity<CircleMemberLocat
 
 const pin = StyleSheet.create({
   wrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: avatar.sm, height: avatar.sm,
+    borderRadius: avatar.sm / 2,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
@@ -231,14 +231,12 @@ const pin = StyleSheet.create({
     borderColor: '#fff',
   },
   avatarImg: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: avatar.xs, height: avatar.xs,
+    borderRadius: avatar.xs / 2,
   },
   avatarWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: avatar.md, height: avatar.md,
+    borderRadius: avatar.md / 2,
     borderWidth: 2.5,
     alignItems: 'center',
     justifyContent: 'center',

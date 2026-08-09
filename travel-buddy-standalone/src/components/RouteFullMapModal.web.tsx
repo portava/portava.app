@@ -7,7 +7,7 @@
 import React from 'react';
 import { View, Text, Modal, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { MapPin, X } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 import type { RouteStop, RouteLeg } from '../services/routePlan.ts';
 
 export interface RouteFullMapModalProps {
@@ -73,7 +73,7 @@ const s = StyleSheet.create({
   bannerText:{ ...t.small, color: color.mute, textAlign: 'center' },
   list:      { padding: space.md, gap: 10 },
   row:       { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#fff', borderRadius: radius.md, padding: 10, borderWidth: 1, borderColor: color.haze },
-  dot:       { width: 28, height: 28, borderRadius: 14, backgroundColor: '#E76F51', alignItems: 'center', justifyContent: 'center' },
+  dot:       { width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2, backgroundColor: '#E76F51', alignItems: 'center', justifyContent: 'center' },
   dotDone:   { backgroundColor: '#999' },
   dotSkipped:{ backgroundColor: '#ccc' },
   dotNext:   { backgroundColor: color.deep },

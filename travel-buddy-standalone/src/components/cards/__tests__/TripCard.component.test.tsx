@@ -31,30 +31,6 @@ jest.mock('../../CachedImage', () => ({
 // NOTE: intentionally exhaustive — real tokens file imports StyleSheet from
 // react-native and computes values at module load; partial spread would pull
 // in transitive native modules that crash the jest-expo runner.
-jest.mock('../../../theme/tokens', () => ({
-  color: {
-    deep:        '#2A7F8F',
-    ink:         '#1A1A2E',
-    signal:      '#FF6B6B',
-    mute:        '#9B9B9B',
-    success:     '#22C55E',
-    faint:       '#F3F4F6',
-    paper:       '#FFFFFF',
-    paperRaised: '#F9F9F9',
-    haze:        '#E8E8E8',
-    onInk:       '#FFFFFF',
-  },
-  space:      { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 },
-  radius:     { sm: 4, md: 8, lg: 12, pill: 999 },
-  shadow:     { card: {} },
-  typography: {
-    label:    {},
-    metadata: {},
-    cardTitle: {},
-    caption:  {},
-  },
-  layout: { pressedOpacity: 0.7 },
-}));
 
 // ── Shared fixture factory ─────────────────────────────────────────────────────
 

@@ -45,7 +45,7 @@ import { WatchRadialMenu } from './WatchRadialMenu.tsx';
 import { useWatchPlayback } from '../../hooks/useWatchPlayback.ts';
 import { useWatchStamp } from '../../hooks/useWatchStamp.ts';
 import type { MediaFeedItem } from '../../types/media.ts';
-import { color, radius } from '../../theme/tokens.ts';
+import { color, radius, avatar } from '../../theme/tokens.ts';
 import { usePlanPicker } from '../PlanPickerController.tsx';
 import { Share } from 'react-native';
 
@@ -670,9 +670,8 @@ const s = StyleSheet.create({
   muteBtn: {
     position: 'absolute',
     right: 16,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: avatar.md, height: avatar.md,
+    borderRadius: avatar.md / 2,
     backgroundColor: 'rgba(17,17,15,0.55)',
     alignItems: 'center',
     justifyContent: 'center',

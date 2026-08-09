@@ -6,7 +6,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Bell } from 'lucide-react-native';
 import { AvatarImage } from '../ui/DisplayMediaImage.tsx';
-import { color, space, radius, typography, layout } from '../../theme/tokens.ts';
+import { color, space, radius, typography, layout, avatar } from '../../theme/tokens.ts';
 import type { AppNotification } from '../../services/notifications.ts';
 
 export interface NotificationCardProps {
@@ -110,9 +110,8 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   bellWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: avatar.lg, height: avatar.lg,
+    borderRadius: avatar.lg / 2,
     backgroundColor: color.paper,
     borderWidth: 1,
     borderColor: color.haze,

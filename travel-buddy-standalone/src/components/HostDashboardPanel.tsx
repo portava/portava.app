@@ -22,7 +22,7 @@ import {
 } from '../services/events.ts';
 import { searchUsers, type TravelerSearchResult } from '../services/follows.ts';
 import { Avatar } from './ui.tsx';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 import { useFeatureFlags } from '../context/FeatureFlagsContext.tsx';
 import { GenerateHeaderSheet } from './events/GenerateHeaderSheet.tsx';
 
@@ -491,12 +491,12 @@ const s = StyleSheet.create({
   requestName:{ ...t.body, color: color.ink, fontWeight: '700' },
   requestMsg: { ...t.small, color: color.mute, marginTop: 2 },
   requestActions:{ flexDirection: 'row', gap: space.sm },
-  approveBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#DCFCE7', alignItems: 'center', justifyContent: 'center' },
-  denyBtn:    { width: 36, height: 36, borderRadius: 18, backgroundColor: '#FEE2E2', alignItems: 'center', justifyContent: 'center' },
+  approveBtn: { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, backgroundColor: '#DCFCE7', alignItems: 'center', justifyContent: 'center' },
+  denyBtn:    { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, backgroundColor: '#FEE2E2', alignItems: 'center', justifyContent: 'center' },
   attendeeRow:{ flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.sm, borderBottomWidth: 1, borderBottomColor: color.haze },
   attendeeName:{ flex: 1, ...t.body, color: color.ink },
   attendeeActions:{ flexDirection: 'row', gap: space.xs },
-  iconBtn:    { width: 32, height: 32, borderRadius: 16, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
+  iconBtn:    { width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
   sectionNote:{ ...t.small, color: color.faint, textAlign: 'center', marginTop: space.md },
   waitlistInfo:{ flexDirection: 'row', gap: space.sm, backgroundColor: '#EFF6FF', padding: space.md, borderRadius: radius.md, alignItems: 'flex-start', marginBottom: space.sm },
   waitlistInfoText:{ ...t.small, color: '#2563EB', flex: 1 },

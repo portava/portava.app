@@ -21,7 +21,7 @@ import { Search, Clock } from 'lucide-react-native';
 import { TypeIcon } from './searchNav.tsx';
 import type { SuggestGroup } from '../../services/discovery.ts';
 import type { UnifiedSearchResult, SearchHistoryEntry } from '../../services/discovery.ts';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import { PlainBottomFiller } from '../../hooks/useBottomInset.ts';
 
 interface Props {
@@ -147,7 +147,7 @@ const styles = StyleSheet.create({
     paddingVertical: space.md,
   },
   searchForIcon: {
-    width: 28, height: 28, borderRadius: 14,
+    width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2,
     backgroundColor: color.signal,
     alignItems: 'center', justifyContent: 'center',
   },
@@ -179,9 +179,9 @@ const styles = StyleSheet.create({
   rowTitle: { ...t.body, color: color.ink },
   rowTitleBold: { fontWeight: '700' },
   rowSub: { ...t.small, fontSize: 12, lineHeight: 16, color: color.mute, marginTop: 1 },
-  avatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: color.haze },
+  avatar: { width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2, backgroundColor: color.haze },
   avatarFallback: {
-    width: 28, height: 28, borderRadius: 14,
+    width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2,
     backgroundColor: color.haze,
     alignItems: 'center', justifyContent: 'center',
   },

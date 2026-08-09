@@ -27,7 +27,7 @@ import { DatePickerField } from '../../src/components/DateTimePickerField';
 import { useSession } from '../../src/context/SessionContext';
 import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { RichText } from '../../src/components/RichText';
-import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+import { color, space, radius, type as t, shadow, avatar } from '../../src/theme/tokens';
 import { addMeetupToCalendar } from '../../src/services/calendar';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
@@ -1027,7 +1027,7 @@ const s = StyleSheet.create({
   optionBlock: { ...t.small, color: color.mute, backgroundColor: color.haze, paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm, fontSize: 11 },
   optionLabel: { ...t.small, color: color.mute },
   voteRow: { flexDirection: 'row', gap: space.sm, alignItems: 'center' },
-  voteBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  voteBtn: { width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2, alignItems: 'center', justifyContent: 'center' },
   confirmBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.md, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: '#16A34A', marginLeft: 'auto' },
   confirmBtnText: { ...t.small, color: '#16A34A', fontWeight: '700', fontSize: 11 },
   voteHint: { ...t.small, color: color.faint, fontSize: 11, marginTop: 4 },

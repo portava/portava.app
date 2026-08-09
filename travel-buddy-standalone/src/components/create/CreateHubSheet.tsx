@@ -32,7 +32,7 @@ import {
   Star,
   X,
 } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar } from '../../theme/tokens.ts';
 import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
 import { useIsDesktop } from '../../hooks/useBreakpoint.ts';
 
@@ -339,9 +339,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: avatar.sm, height: avatar.sm,
+    borderRadius: avatar.sm / 2,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: color.paperRaised,

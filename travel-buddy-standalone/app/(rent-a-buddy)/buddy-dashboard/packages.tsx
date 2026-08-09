@@ -12,7 +12,7 @@ import {
 } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
 import { KeyboardSafeView } from '../../../src/components/ui/KeyboardSafeView';
-import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, avatar } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyPackage, BuddyCategory } from '../../../src/services/rentABuddy';
 
@@ -364,7 +364,7 @@ const s = StyleSheet.create({
   },
   headerTitle: { ...t.heading, color: color.onInk, flex: 1 },
   addBtn: {
-    width: 36, height: 36, borderRadius: 18,
+    width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2,
     backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center',
   },
 });
@@ -409,7 +409,7 @@ const fi = StyleSheet.create({
 const num = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   btn: {
-    width: 36, height: 36, borderRadius: 18, borderWidth: 1.5, borderColor: color.haze,
+    width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, borderWidth: 1.5, borderColor: color.haze,
     alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised,
   },
   val: { ...t.heading, color: color.ink, minWidth: 48, textAlign: 'center', fontSize: 18 },

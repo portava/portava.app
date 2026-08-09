@@ -6,6 +6,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Pressable,
   RefreshControl,
@@ -14,9 +15,12 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
-import { fetchAdminReports, type ContentReport } from '../../src/services/reportsAdmin';
+import { fetchAdminReports, resolveReport, dismissReport, type ContentReport } from '../../src/services/reportsAdmin';
 import { useSession } from '../../src/context/SessionContext';
 import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
+import { ReasonPromptModal } from '../../src/components/ReasonPromptModal';
+
+const ACTIONABLE_STATUSES = new Set(['open', 'in_review']);
 
 const STATUS_FILTERS = ['open', 'in_review', 'resolved', 'dismissed', 'all'] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
@@ -49,6 +53,9 @@ export default function ContentReportsScreen() {
   const [refreshing, setRefreshing]   = useState(false);
   const [error, setError]             = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('open');
+  const [actioningId, setActioningId] = useState<string | null>(null);
+  const [resolvePrompt, setResolvePrompt] = useState<ContentReport | null>(null);
+  const [dismissPrompt, setDismissPrompt] = useState<ContentReport | null>(null);
 
   const load = useCallback(async (p = 1, append = false) => {
     if (!isAuthed) return;
@@ -82,6 +89,43 @@ export default function ContentReportsScreen() {
   const onLoadMore = () => {
     const totalPages = Math.ceil(total / 30);
     if (page < totalPages && !loading) load(page + 1, true);
+  };
+
+  const applyLocalStatus = (id: string, status: string) => {
+    setReports((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)));
+  };
+
+  const onSubmitResolve = async (value: string) => {
+    const report = resolvePrompt;
+    setResolvePrompt(null);
+    if (!report) return;
+    setActioningId(report.id);
+    try {
+      await resolveReport(report.id, value, value);
+      applyLocalStatus(report.id, 'resolved');
+    } catch (e: any) {
+      // Surface the real server error — a report whose target isn't a user
+      // (post/place/trip/event/message/thread) can 500 on a known FK
+      // constraint in the audit write; never mask that as a silent success.
+      Alert.alert('Could not resolve report', e?.message ?? 'Unknown error');
+    } finally {
+      setActioningId(null);
+    }
+  };
+
+  const onSubmitDismiss = async (value: string) => {
+    const report = dismissPrompt;
+    setDismissPrompt(null);
+    if (!report) return;
+    setActioningId(report.id);
+    try {
+      await dismissReport(report.id, value || null);
+      applyLocalStatus(report.id, 'dismissed');
+    } catch (e: any) {
+      Alert.alert('Could not dismiss report', e?.message ?? 'Unknown error');
+    } finally {
+      setActioningId(null);
+    }
   };
 
   return (
@@ -160,11 +204,47 @@ export default function ContentReportsScreen() {
                   <Text style={s.detail} numberOfLines={2}>{r.reason_detail}</Text>
                 ) : null}
                 <Text style={s.meta}>{new Date(r.created_at).toLocaleDateString()} · {r.status} · reporter: {r.reporter_id.slice(0, 8)}…</Text>
+                {ACTIONABLE_STATUSES.has(r.status) && (
+                  <View style={s.rowActions}>
+                    {actioningId === r.id ? (
+                      <ActivityIndicator size="small" color="#3B82F6" />
+                    ) : (
+                      <>
+                        <Pressable style={s.resolveBtn} onPress={() => setResolvePrompt(r)} testID={`resolve-report-${r.id}`}>
+                          <Text style={s.resolveBtnText}>Resolve</Text>
+                        </Pressable>
+                        <Pressable style={s.dismissBtn} onPress={() => setDismissPrompt(r)} testID={`dismiss-report-${r.id}`}>
+                          <Text style={s.dismissBtnText}>Dismiss</Text>
+                        </Pressable>
+                      </>
+                    )}
+                  </View>
+                )}
               </View>
             </View>
           )}
         />
       )}
+
+      <ReasonPromptModal
+        visible={resolvePrompt != null}
+        title="Resolve report"
+        message="What action was taken? (e.g. content removed, user warned, no violation found)"
+        placeholder="Action taken…"
+        confirmLabel="Resolve"
+        onCancel={() => setResolvePrompt(null)}
+        onSubmit={onSubmitResolve}
+      />
+      <ReasonPromptModal
+        visible={dismissPrompt != null}
+        title="Dismiss report"
+        message="Optional note for the audit trail."
+        placeholder="Reason (optional)…"
+        confirmLabel="Dismiss"
+        requireValue={false}
+        onCancel={() => setDismissPrompt(null)}
+        onSubmit={onSubmitDismiss}
+      />
     </View>
   );
 }
@@ -193,6 +273,11 @@ const s = StyleSheet.create({
   target:       { fontSize: 12, color: '#6B7280' },
   detail:       { fontSize: 13, color: '#374151' },
   meta:         { fontSize: 11, color: '#9CA3AF' },
+  rowActions:   { flexDirection: 'row', gap: 8, marginTop: 8 },
+  resolveBtn:   { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, backgroundColor: '#10B981' },
+  resolveBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
+  dismissBtn:   { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: '#E5E7EB' },
+  dismissBtnText: { color: '#374151', fontSize: 12, fontWeight: '700' },
   centered:     { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
   emptyText:    { fontSize: 15, color: '#6B7280' },
   errorText:    { fontSize: 15, color: '#EF4444', textAlign: 'center', marginBottom: 12 },

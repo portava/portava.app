@@ -33,7 +33,7 @@ import {
   Star,
   Stamp,
 } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar, icon } from '../../theme/tokens.ts';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
 import { AvatarImage, DisplayMediaImage } from '../ui/DisplayMediaImage.tsx';
 import type { MapEntity, PassportCountryPayload } from '../../types/mapTypes.ts';
@@ -545,9 +545,8 @@ const s = StyleSheet.create({
     top: 10,
     right: 10,
     zIndex: 2,
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: icon.xl, height: icon.xl,
+    borderRadius: icon.xl / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',
@@ -654,14 +653,12 @@ const s = StyleSheet.create({
     flexShrink: 0,
   },
   avatarImg: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: avatar.lg, height: avatar.lg,
+    borderRadius: avatar.lg / 2,
   },
   avatarFallback: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: avatar.lg, height: avatar.lg,
+    borderRadius: avatar.lg / 2,
     alignItems: 'center',
     justifyContent: 'center',
   },

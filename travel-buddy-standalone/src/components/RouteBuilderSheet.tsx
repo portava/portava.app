@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { X, Route, Trash2, MapPin, ChevronRight, Plus } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, icon } from '../theme/tokens.ts';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { createRoutePlan, type CandidateStopInput, type RouteStyle, type FullRoutePlan } from '../services/routePlan.ts';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
@@ -413,7 +413,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: color.haze, padding: space.sm, marginBottom: space.sm,
   },
   stopIndex: {
-    width: 26, height: 26, borderRadius: 13,
+    width: icon.xl, height: icon.xl, borderRadius: icon.xl / 2,
     backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center',
   },
   stopIndexText: { ...t.small, color: '#fff', fontSize: 12, fontWeight: '700' },

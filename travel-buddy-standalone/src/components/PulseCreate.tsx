@@ -20,7 +20,7 @@ import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PULSE_FILTERS } from '../types/models.ts';
 import type { PulseFilter, PostCategory } from '../types/models.ts';
-import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, layout, avatar } from '../theme/tokens.ts';
 import { usePostActions } from '../hooks/usePosts.ts';
 import type { PostVisibility, LocationPrivacyMode } from '../services/posts.ts';
 import { uploadMedia, validateMedia, type PickedMedia } from '../services/media.ts';
@@ -858,7 +858,7 @@ const fs = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   title: { ...t.title, color: color.ink, fontSize: 19 },
   clear: { ...t.small, color: color.signal, fontWeight: '700' },
-  x: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
+  x: { width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
   chipOn: { backgroundColor: color.signal, borderColor: color.signal },
@@ -881,7 +881,7 @@ const uc = StyleSheet.create({
     backgroundColor: color.paper,
   },
   headTitle: { ...t.heading, color: color.ink, flex: 1 },
-  closeBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
+  closeBtn: { width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
   scroll: { paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: space.lg },
 
   /* selected-type compact chip (replaces full grid once a type is picked) */

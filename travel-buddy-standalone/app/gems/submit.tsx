@@ -20,6 +20,7 @@ import type { Place } from '../../src/lib/location/placeTypes';
 import { canNext as wizardCanNext, buildSubmitPayload } from '../../src/lib/gems/submitMachine';
 import { GemLocationPreview } from '../../src/components/gems/GemLocationPreview';
 import { uploadMedia } from '../../src/services/media';
+import { avatar, icon } from '../../src/theme/tokens';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -570,7 +571,7 @@ const styles = StyleSheet.create({
 
   progressRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 28, marginBottom: 4 },
   progressDot: {
-    width: 28, height: 28, borderRadius: 14,
+    width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2,
     borderWidth: 2, borderColor: '#2A3D5E',
     alignItems: 'center', justifyContent: 'center',
   },
@@ -651,7 +652,7 @@ const styles = StyleSheet.create({
   },
   privacyOptionActive: { borderColor: '#4C8BF5', backgroundColor: '#0D1F3A' },
   privacyOptionCheck: {
-    width: 20, height: 20, borderRadius: 10,
+    width: icon.action, height: icon.action, borderRadius: icon.action / 2,
     borderWidth: 2, borderColor: '#2A3D5E',
     alignItems: 'center', justifyContent: 'center',
     marginTop: 2,

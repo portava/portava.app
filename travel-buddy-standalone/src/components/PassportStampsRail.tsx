@@ -3,7 +3,7 @@ import {
   View, Text, ScrollView, Pressable, StyleSheet,
 } from 'react-native';
 import { ShieldCheck, Plane } from 'lucide-react-native';
-import { color, space, radius } from '../theme/tokens.ts';
+import { color, space, radius, avatar, icon } from '../theme/tokens.ts';
 import type { PassportStamp } from '../types/models.ts';
 import { VERIFY_TEAL, VERIFY_TEAL_BG } from './PassportVerificationStamp.tsx';
 
@@ -200,9 +200,8 @@ const vs = StyleSheet.create({
     paddingVertical: 10,
   },
   iconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: avatar.md, height: avatar.md,
+    borderRadius: avatar.md / 2,
     backgroundColor: 'rgba(13,155,111,0.18)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -260,9 +259,8 @@ const dc = StyleSheet.create({
     justifyContent: 'center',
   },
   innerRing: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: icon.xl, height: icon.xl,
+    borderRadius: icon.xl / 2,
     borderWidth: 1.5,
     borderColor: 'rgba(255,255,255,0.25)',
   },

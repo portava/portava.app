@@ -44,7 +44,7 @@ import { StampIcon } from './stamps/StampIcon.tsx';
 import { ReportSheet } from './ReportSheet.tsx';
 import { blockUser } from '../services/blocks.ts';
 import { ProfilePreviewCard } from './ProfilePreviewCard.tsx';
-import { color, space, radius, shadow } from '../theme/tokens.ts';
+import { color, space, radius, shadow, avatar } from '../theme/tokens.ts';
 import { MentionInput, type MentionInputHandle } from './MentionInput.tsx';
 import { MentionSuggestionList } from './MentionSuggestionList.tsx';
 import type { AnyMentionSuggestion } from '../services/tagging.ts';
@@ -1600,6 +1600,6 @@ const s = StyleSheet.create({
     color: color.ink,
     backgroundColor: color.paper,
   },
-  sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
+  sendBtn: { width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
   sendBtnDisabled: { backgroundColor: color.haze },
 });

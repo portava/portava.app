@@ -6,6 +6,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Mic, MicOff, Phone } from 'lucide-react-native';
+import { avatar } from '../../theme/tokens.ts';
 
 function fmtElapsed(sec: number): string {
   const m = Math.floor(sec / 60), s = sec % 60;
@@ -70,7 +71,7 @@ const s = StyleSheet.create({
   label: { fontSize: 13.5, fontWeight: '700', color: '#fff' },
   time: { fontSize: 11.5, color: 'rgba(255,255,255,0.85)', fontVariant: ['tabular-nums'] },
   iconBtn: {
-    width: 32, height: 32, borderRadius: 16,
+    width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2,
     backgroundColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center', justifyContent: 'center',
   },

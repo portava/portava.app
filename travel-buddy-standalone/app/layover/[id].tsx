@@ -13,7 +13,7 @@ import {
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Bell, BellRing, Power, Send } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { color, space, radius, type as t, avatar } from '../../src/theme/tokens';
 import { ConfirmSheet } from '../../src/components/ui/ConfirmSheet';
 import {
   addStopFromRecommendation,
@@ -382,7 +382,7 @@ export default function LayoverDashboardScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: color.paper },
   topBar:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space.lg, paddingBottom: space.sm, backgroundColor: color.paper },
-  backBtn:   { width: 36, height: 36, borderRadius: 18, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center' },
+  backBtn:   { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center' },
   topTitle:  { ...t.heading, color: color.ink },
   body:      { padding: space.lg, gap: space.md },
 

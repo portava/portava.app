@@ -26,7 +26,7 @@ import type { PassportStampNew } from '../../../src/services/passportStamps.ts';
 import { StampGrid } from '../../../src/components/stamps/StampGrid.tsx';
 import { StampDetailModal } from '../../../src/components/stamps/StampDetailModal.tsx';
 import { getCountryEssentials, type CountryEssentials } from '../../../src/services/countryEssentials.ts';
-import { color, space, radius, type as t } from '../../../src/theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../../src/theme/tokens.ts';
 
 // ── Country essentials card ────────────────────────────────────────────────────
 
@@ -240,9 +240,8 @@ const s = StyleSheet.create({
     gap: space.sm,
   },
   backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: avatar.md, height: avatar.md,
+    borderRadius: avatar.md / 2,
     alignItems: 'center',
     justifyContent: 'center',
   },

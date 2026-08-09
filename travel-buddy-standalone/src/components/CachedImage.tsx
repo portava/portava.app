@@ -6,6 +6,7 @@ import type { ImageStyle, StyleProp, ViewStyle } from 'react-native';
 import { useHydratedMedia } from '../services/mediaUrl.ts';
 import { MediaFallback } from './ui/DisplayMediaImage.tsx';
 import { resolveFilterStyle } from '../lib/media/filters.ts';
+import { aspect as aspectTokens } from '../theme/tokens.ts';
 
 type ResizeMode = 'cover' | 'contain' | 'stretch' | 'center' | 'repeat';
 
@@ -47,6 +48,14 @@ interface CachedImageProps {
    * bare <Image> must not silently drop the label they had.
    */
   accessibilityLabel?: string;
+  /**
+   * Optional sizing contract. Accepts a named ratio from `theme/tokens.ts`
+   * `aspect` (wide/card/square/portrait/story) or a raw width/height number.
+   * Applied as `aspectRatio` on top of `style`, so callers keep controlling
+   * width via `style` and stop hand-writing `aspectRatio: 4 / 5` inline.
+   * Purely additive — omitting it leaves every existing caller unchanged.
+   */
+  aspect?: keyof typeof aspectTokens | number;
 }
 
 /**
@@ -83,9 +92,16 @@ export function CachedImage({
   filterIntensity,
   fallbackLabel,
   accessibilityLabel,
+  aspect,
 }: CachedImageProps) {
   const contentFit: ImageContentFit = CONTENT_FIT_MAP[resizeMode] ?? 'cover';
   const uri = source?.uri;
+
+  // undefined when `aspect` is omitted, so sizedStyle === style and every
+  // pre-existing caller renders byte-for-byte the same as before this prop
+  // existed.
+  const aspectRatio = aspect === undefined ? undefined : (typeof aspect === 'number' ? aspect : aspectTokens[aspect]);
+  const sizedStyle = aspectRatio === undefined ? style : [style, { aspectRatio }];
 
   // undefined for every no-filter case (absent / 'original' / unknown id /
   // malformed intensity). Not a hook — safe to compute before the early return.
@@ -119,7 +135,7 @@ export function CachedImage({
 
   if (!uri || failed || !resolvedSource) {
     return (
-      <View style={style as any} testID={testID}>
+      <View style={sizedStyle as any} testID={testID}>
         <MediaFallback style={{ flex: 1 }} label={fallbackLabel} />
       </View>
     );
@@ -128,7 +144,7 @@ export function CachedImage({
   const image = (
     <ExpoImage
       source={resolvedSource}
-      style={filterStyle ? StyleSheet.absoluteFill : (style as any)}
+      style={filterStyle ? StyleSheet.absoluteFill : (sizedStyle as any)}
       contentFit={contentFit}
       cachePolicy="disk"
       transition={200}
@@ -152,7 +168,7 @@ export function CachedImage({
   // caller's style — including any borderRadius — and clips, while the image
   // fills it absolutely.
   return (
-    <View style={[style as StyleProp<ViewStyle>, { overflow: 'hidden' }, filterStyle as StyleProp<ViewStyle>]}>
+    <View style={[sizedStyle as StyleProp<ViewStyle>, { overflow: 'hidden' }, filterStyle as StyleProp<ViewStyle>]}>
       {image}
     </View>
   );

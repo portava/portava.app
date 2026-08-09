@@ -9,7 +9,7 @@ import {
   Alert, StyleSheet, TextInput,
 } from 'react-native';
 import { X, MapPin, Clock, Users, Eye, Shield } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, icon } from '../../theme/tokens.ts';
 import { GpsLocationCapture } from '../location/GpsLocationCapture.tsx';
 import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 import {
@@ -338,7 +338,7 @@ const s = StyleSheet.create({
   input:         { backgroundColor: '#fff', borderWidth: 1, borderColor: color.haze, borderRadius: radius.sm, padding: 10, ...t.body, color: color.ink },
   optionRow:     { flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 10, borderRadius: radius.sm, backgroundColor: '#fff', borderWidth: 1, borderColor: color.haze },
   optionRowActive:{ borderColor: color.deep, backgroundColor: '#EFF5F7' },
-  radioOuter:    { width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: color.mute, alignItems: 'center', justifyContent: 'center', marginTop: 2 },
+  radioOuter:    { width: icon.md, height: icon.md, borderRadius: icon.md / 2, borderWidth: 2, borderColor: color.mute, alignItems: 'center', justifyContent: 'center', marginTop: 2 },
   radioInner:    { width: 8, height: 8, borderRadius: 4, backgroundColor: color.deep },
   optionLabel:   { ...t.body, color: color.ink, fontWeight: '600' },
   optionLabelActive: { color: color.deep },

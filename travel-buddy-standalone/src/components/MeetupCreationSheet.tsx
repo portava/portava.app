@@ -42,7 +42,7 @@ import {
 import {
   getMyFriends, getTripInvitableUsers, getCircleInvitableUsers, type FriendUser,
 } from '../services/friends.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, icon } from '../theme/tokens.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -899,9 +899,9 @@ const s = StyleSheet.create({
   candidateRowActive: { backgroundColor: '#FFF0ED', borderColor: color.signal },
   candidateName:    { ...t.bodyStrong, color: color.ink, fontWeight: '600', fontSize: 14 },
   candidateHandle:  { ...t.small, color: color.mute, fontSize: 11 },
-  checkbox:         { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paper },
+  checkbox:         { width: icon.lg, height: icon.lg, borderRadius: icon.lg / 2, borderWidth: 1.5, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paper },
   checkboxActive:   { backgroundColor: color.signal, borderColor: color.signal },
-  checkboxLocked:   { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: color.signal, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
+  checkboxLocked:   { width: icon.lg, height: icon.lg, borderRadius: icon.lg / 2, borderWidth: 1.5, borderColor: color.signal, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
   candidateRowLocked: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: 'transparent', opacity: 0.85 },
   sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4, paddingHorizontal: 2, marginTop: space.sm },
   sectionHeaderText:{ ...t.small, fontWeight: '700', color: color.signal, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 },
@@ -912,7 +912,7 @@ const s = StyleSheet.create({
   proposeHint:      { ...t.small, color: color.mute, fontSize: 11, marginTop: -space.sm },
   toggle:           { width: 44, height: 26, borderRadius: 13, backgroundColor: color.haze, justifyContent: 'center', paddingHorizontal: 2 },
   toggleOn:         { backgroundColor: color.signal },
-  toggleThumb:      { width: 22, height: 22, borderRadius: 11, backgroundColor: color.paperRaised },
+  toggleThumb:      { width: icon.lg, height: icon.lg, borderRadius: icon.lg / 2, backgroundColor: color.paperRaised },
   toggleThumbOn:    { alignSelf: 'flex-end' },
   singleDate:       { gap: space.md },
   addSlotBtn:       { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.sm, paddingHorizontal: space.md, borderRadius: radius.md, borderWidth: 1, borderStyle: 'dashed', borderColor: color.signal },

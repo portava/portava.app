@@ -37,7 +37,7 @@ import { getBooking } from '../../src/services/rentABuddy';
 import { useThreadMessages, useLanguageSettings, useOutgoingRequestStatus, markThreadRead } from '../../src/hooks/useMessaging';
 import { useTrip } from '../../src/hooks/useBackend';
 import { useSession } from '../../src/context/SessionContext';
-import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { color, space, radius, type as t, avatar, icon } from '../../src/theme/tokens';
 import { TG, TG_SPACING } from '../../src/theme/telegraphTokens';
 import { TelegraphSuggestionTray, clearTelegraphSuggestionsCache } from '../../src/components/TelegraphSuggestionTray';
 import { TelegraphSystemNotice } from '../../src/components/TelegraphSystemNotice';
@@ -599,7 +599,7 @@ const mc = StyleSheet.create({
   cardMine: { backgroundColor: color.signal + '22', borderColor: color.signal + '55' },
   cardConfirmed: { borderColor: color.success + '55', backgroundColor: color.success + '0A' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  icon: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#E0F2FE', alignItems: 'center', justifyContent: 'center' },
+  icon: { width: icon.lg, height: icon.lg, borderRadius: icon.lg / 2, backgroundColor: '#E0F2FE', alignItems: 'center', justifyContent: 'center' },
   iconConfirmed: { backgroundColor: color.success + '22' },
   label: { ...t.small, color: color.mute, fontWeight: '700', fontSize: 10, letterSpacing: 0.5, textTransform: 'uppercase' },
   labelConfirmed: { color: color.success },
@@ -2358,9 +2358,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: space.lg,
     bottom: 130,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: avatar.lg, height: avatar.lg,
+    borderRadius: avatar.lg / 2,
     backgroundColor: TG.surfaceRaised,
     borderWidth: 1,
     borderColor: TG.hairline,
@@ -2578,7 +2577,7 @@ const styles = StyleSheet.create({
   failedRetryBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.pill, borderWidth: 1, borderColor: '#FECACA' },
   failedRetryText: { ...t.stamp, color: '#EF4444', fontSize: 10, fontWeight: '600' },
 
-  sendBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  sendBtn: { width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2, alignItems: 'center', justifyContent: 'center' },
   sendBtnActive: { backgroundColor: TG.sentBubble },
   sendBtnDisabled: { backgroundColor: color.haze },
 });
@@ -2610,9 +2609,8 @@ const sheetStyles = StyleSheet.create({
   tripOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: space.sm },
   tripName: { ...t.body, color: color.ink },
   radioBtn: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: icon.lg, height: icon.lg,
+    borderRadius: icon.lg / 2,
     borderWidth: 2,
     borderColor: color.haze,
     alignItems: 'center',

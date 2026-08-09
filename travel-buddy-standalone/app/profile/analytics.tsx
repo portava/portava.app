@@ -13,7 +13,7 @@ import { ChevronLeft, Eye, Users, TrendingUp, Stamp, Award } from 'lucide-react-
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getProfileAnalytics, type ProfileAnalytics } from '../../src/services/profile';
 import { PP, PP_LABEL, fmtMonthYear } from '../../src/theme/passportTokens';
-import { space, type as t, radius } from '../../src/theme/tokens';
+import { space, type as t, radius, avatar } from '../../src/theme/tokens';
 import { ProfileViewersSheet } from '../../src/components/ProfileViewersSheet';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -260,9 +260,8 @@ const s = StyleSheet.create({
     backgroundColor: PP.paper,
   },
   backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: avatar.md, height: avatar.md,
+    borderRadius: avatar.md / 2,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: PP.paperDeep,

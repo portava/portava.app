@@ -21,7 +21,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, CheckCircle, XCircle, RefreshCw, TriangleAlert } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
-import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, aspect } from '../../../src/theme/tokens';
 import {
   getAdminCatalogEntry,
   activateStampVersion,
@@ -428,7 +428,7 @@ const styles = StyleSheet.create({
   shortfallText:     { ...t.small, color: '#92400E', fontWeight: '600' },
   candidatesRow:     { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   candidateCard:        { width: '30%', alignItems: 'center', gap: 4 },
-  candidateImg:         { width: '100%', aspectRatio: 1, borderRadius: radius.sm, backgroundColor: '#F9FAFB' },
+  candidateImg:         { width: '100%', aspectRatio: aspect.square, borderRadius: radius.sm, backgroundColor: '#F9FAFB' },
   staleVersionBadge:    { backgroundColor: '#FEF3C7', borderRadius: radius.pill, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: '#FDE68A' },
   staleVersionText:     { fontSize: 9, fontWeight: '700', color: '#92400E' },
   candidateMeta:        { fontSize: 9, color: color.faint },

@@ -6,7 +6,7 @@ import { router } from 'expo-router';
 import { ShieldCheck, Lock, ChevronRight } from 'lucide-react-native';
 import type { TrustValue, TravelStats, Plan, Perk, User } from '../types/models.ts';
 import { Stamp } from './ui.tsx';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 import { MediaCard } from './cards/MediaCard.tsx';
 
 const TIER_LABEL: Record<TrustValue['tier'], string> = {
@@ -279,7 +279,7 @@ const styles = StyleSheet.create({
   },
   buddyStack: { flexDirection: 'row' },
   buddyStackAvatar: { borderRadius: 18, borderWidth: 2, borderColor: color.paperRaised },
-  buddyStackImg: { width: 34, height: 34, borderRadius: 17, backgroundColor: color.haze },
+  buddyStackImg: { width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2, backgroundColor: color.haze },
   buddyPrevText: { ...t.small, color: color.mute, fontWeight: '600' },
   findBtn: { paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill, backgroundColor: color.ink },
   findBtnText: { ...t.small, fontWeight: '700', color: color.onInk },

@@ -10,7 +10,7 @@ import {
 import { router } from 'expo-router';
 import { Shield, CheckCircle, AlertCircle, Clock, X, ChevronLeft } from 'lucide-react-native';
 import { AppHeader } from '../src/components/ui/AppHeader';
-import { color, space, radius, type as t } from '../src/theme/tokens';
+import { color, space, radius, type as t, avatar } from '../src/theme/tokens';
 import { getHistory, type SafeReturnSession, type SafeReturnSessionEvents } from '../src/services/safeReturn';
 import { SafeReturnSetupSheet } from '../src/components/safeReturn/SafeReturnSetupSheet';
 import { useSession } from '../src/context/SessionContext';
@@ -279,7 +279,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: color.haze, padding: space.md,
   },
   rowHeader: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  iconWrap: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  iconWrap: { width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2, alignItems: 'center', justifyContent: 'center' },
   statusLabel: { ...t.bodyStrong, fontSize: 13 },
   dateLabel: { ...t.small, color: color.mute, fontSize: 11 },
   duration: { ...t.small, color: color.mute, fontSize: 11 },

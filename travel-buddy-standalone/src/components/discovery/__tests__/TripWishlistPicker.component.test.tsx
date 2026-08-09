@@ -32,23 +32,6 @@ jest.mock('../../../services/discoveryBookmarks', () => ({
   getSavedListIds: jest.fn(),
 }));
 
-jest.mock('../../../theme/tokens', () => ({
-  ...jest.requireActual('../../../theme/tokens'),
-  color: {
-    deep:        '#2A7F8F',
-    ink:         '#1A1A2E',
-    signal:      '#FF6B6B',
-    mute:        '#9B9B9B',
-    paper:       '#FFFFFF',
-    paperRaised: '#F9F9F9',
-    haze:        '#E8E8E8',
-    onInk:       '#FFFFFF',
-  },
-  space:  { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32, xxxl: 48 },
-  radius: { md: 8, pill: 999 },
-  type:   { heading: {}, bodyStrong: {}, small: {}, stamp: {} },
-  shadow: { float: {} },
-}));
 
 // ── Typed references to mocked modules ─────────────────────────────────────────
 

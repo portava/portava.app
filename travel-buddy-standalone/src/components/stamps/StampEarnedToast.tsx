@@ -18,7 +18,7 @@ import { router } from 'expo-router';
 import { Award, X } from 'lucide-react-native';
 import { getMyRecentStamps } from '../../services/stamps.ts';
 import type { PassportStampNew } from '../../services/passportStamps.ts';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 
 const SEEN_KEY = 'stamp_earned_seen_ids';
 /** Only surface stamps earned within this window of the triggering action. */
@@ -244,9 +244,8 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   iconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: avatar.md, height: avatar.md,
+    borderRadius: avatar.md / 2,
     backgroundColor: color.signal,
     alignItems: 'center',
     justifyContent: 'center',

@@ -18,7 +18,7 @@ import {
   ArrowLeft, Hash, MapPin, Calendar, Users, Map, Plane, Flag,
 } from 'lucide-react-native';
 import { SaveButton } from '../../src/components/SaveButton';
-import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+import { color, space, radius, type as t, shadow, avatar } from '../../src/theme/tokens';
 import {
   getHashtag, getHashtagFeed, followHashtag, unfollowHashtag, reportHashtag,
   type HashtagMeta, type FeedItem, type FeedTab, type FeedScope,
@@ -502,7 +502,7 @@ const fr = StyleSheet.create({
   rowSub: { ...t.small, color: color.mute },
 
   typeIcon: {
-    width: 44, height: 44, borderRadius: 22,
+    width: avatar.lgXl, height: avatar.lgXl, borderRadius: avatar.lgXl / 2,
     alignItems: 'center', justifyContent: 'center',
   },
   placeThumb: { width: 44, height: 44, borderRadius: radius.sm, backgroundColor: color.haze },

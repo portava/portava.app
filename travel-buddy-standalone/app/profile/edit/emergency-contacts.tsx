@@ -14,7 +14,7 @@ import { router } from 'expo-router';
 import { KeyboardSafeScrollView } from '../../../src/components/ui/KeyboardSafeView';
 import { Phone, Mail, User, Plus, Trash2, Edit2, ShieldCheck, X } from 'lucide-react-native';
 import { AppHeader } from '../../../src/components/ui/AppHeader';
-import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, avatar } from '../../../src/theme/tokens';
 import {
   listEmergencyContacts,
   addEmergencyContact,
@@ -462,7 +462,7 @@ const styles = StyleSheet.create({
     padding: space.md,
   },
   rowIcon: {
-    width: 36, height: 36, borderRadius: 18,
+    width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2,
     backgroundColor: color.deep + '18',
     alignItems: 'center', justifyContent: 'center',
     marginTop: 1,

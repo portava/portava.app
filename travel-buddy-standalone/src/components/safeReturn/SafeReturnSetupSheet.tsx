@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { X, Shield, ChevronDown, ChevronUp, Info } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, icon } from '../../theme/tokens.ts';
 import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 import {
   createSession,
@@ -546,7 +546,7 @@ const styles = StyleSheet.create({
   },
   escalationRowActive: { borderColor: color.deep, backgroundColor: '#EAF2F4' },
   radio: {
-    width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: color.haze, marginTop: 2,
+    width: icon.md, height: icon.md, borderRadius: icon.md / 2, borderWidth: 2, borderColor: color.haze, marginTop: 2,
   },
   radioActive: { borderColor: color.deep, backgroundColor: color.deep },
   escalationLabel: { ...t.bodyStrong, color: color.ink, fontSize: 13 },

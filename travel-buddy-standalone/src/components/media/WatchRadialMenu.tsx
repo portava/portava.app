@@ -17,7 +17,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Gem, MapPinned, Megaphone, SearchCheck } from 'lucide-react-native';
-import { color, radius, type as t } from '../../theme/tokens.ts';
+import { color, radius, type as t, avatar } from '../../theme/tokens.ts';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -200,9 +200,8 @@ const s = StyleSheet.create({
   },
   hub: {
     position: 'absolute',
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: avatar.lgXl, height: avatar.lgXl,
+    borderRadius: avatar.lgXl / 2,
     backgroundColor: 'rgba(255,255,255,0.18)',
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.5)',
@@ -217,9 +216,8 @@ const s = StyleSheet.create({
   },
   arcBtn: {
     position: 'absolute',
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: avatar.xxl, height: avatar.xxl,
+    borderRadius: avatar.xxl / 2,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 2,

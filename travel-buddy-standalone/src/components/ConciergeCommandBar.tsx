@@ -14,7 +14,7 @@ import {
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { useLocalSearchParams } from 'expo-router';
 import { Zap, Send, ChevronDown, ChevronUp, Sparkles, CheckCircle } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, icon, avatar } from '../theme/tokens.ts';
 import { sendConciergeCommand, confirmCommandAction, declineCommandAction } from '../services/intelligence.ts';
 
 const PROMPT_CHIPS = [
@@ -323,11 +323,11 @@ function ConfirmationSheet({
 const s = StyleSheet.create({
   wrap: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, marginHorizontal: space.lg, marginTop: space.xl, overflow: 'hidden' },
   header: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, paddingTop: space.lg, paddingBottom: space.sm },
-  icon: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#FFF0EE', alignItems: 'center', justifyContent: 'center' },
+  icon: { width: icon.lg, height: icon.lg, borderRadius: icon.lg / 2, backgroundColor: '#FFF0EE', alignItems: 'center', justifyContent: 'center' },
   title: { ...t.bodyStrong, color: color.ink, fontSize: 13, flex: 1 },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, paddingBottom: space.sm },
   input: { flex: 1, backgroundColor: color.paper, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, paddingHorizontal: space.md, paddingVertical: 9, ...t.body, color: color.ink, fontSize: 13 },
-  sendBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
+  sendBtn: { width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
   chipRow: { paddingHorizontal: space.lg, gap: space.sm, paddingBottom: space.md },
   chip: { paddingHorizontal: space.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: color.paper, borderWidth: 1, borderColor: color.haze },
   chipText: { ...t.small, color: color.ink, fontSize: 12, fontWeight: '600' },

@@ -17,7 +17,7 @@ import { GenerateHeaderSheet } from '../events/GenerateHeaderSheet.tsx';
 import type { DiscoveryPlace, PlaceLiveStatus } from '../../services/discovery.ts';
 import { getPlaceLiveStatus } from '../../services/discovery.ts';
 import { checkSaved, toggleSave } from '../../services/collections.ts';
-import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar } from '../../theme/tokens.ts';
 import { categoryColor } from './PlaceCard.tsx';
 import { TripWishlistPicker } from './TripWishlistPicker.tsx';
 import { usePlainBottomInset } from '../../hooks/useBottomInset.ts';
@@ -587,9 +587,8 @@ const styles = StyleSheet.create({
     fontSize: 10,
   },
   saveHeaderBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: avatar.smMd, height: avatar.smMd,
+    borderRadius: avatar.smMd / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',
@@ -598,9 +597,8 @@ const styles = StyleSheet.create({
     backgroundColor: color.signal + '18',
   },
   closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: avatar.sm, height: avatar.sm,
+    borderRadius: avatar.sm / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',

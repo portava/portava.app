@@ -10,7 +10,7 @@ import {
   X, Users, Calendar, Plus, Route, Info,
 } from 'lucide-react-native';
 import { KeyboardSafeScrollView } from '../../../src/components/ui/KeyboardSafeView';
-import { color, space, radius, type as t, shadow, layout } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, shadow, layout, avatar } from '../../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState, TravelCard } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
 import { getBooking, cancelBooking, getOrCreateBookingThread, addExtraTime, optInStayConnected, reportBooking, rebookBooking, getBuddyBlockedDates, openDispute, type BuddyBooking, type BuddyBlockedRange, type DisputeReason } from '../../../src/services/rentABuddy';
@@ -829,7 +829,7 @@ const buddy = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: color.haze,
   },
   avatar: {
-    width: 44, height: 44, borderRadius: 22,
+    width: avatar.lgXl, height: avatar.lgXl, borderRadius: avatar.lgXl / 2,
     backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center',
   },
   initial: { fontSize: 18, fontWeight: '700', color: color.onInk },
@@ -895,7 +895,7 @@ const modal = StyleSheet.create({
   sub: { ...t.body, color: color.mute },
   input: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, ...t.body, color: color.ink, height: 80, textAlignVertical: 'top' },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: space.lg, justifyContent: 'center', paddingVertical: space.sm },
-  stepBtn: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
+  stepBtn: { width: avatar.lgXl, height: avatar.lgXl, borderRadius: avatar.lgXl / 2, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
   stepBtnText: { fontSize: 22, color: color.ink, fontWeight: '600' },
   stepValue: { ...t.bodyStrong, color: color.ink, minWidth: 100, textAlign: 'center', fontSize: 18 },
   actions: { flexDirection: 'row', gap: space.md, marginTop: space.sm },

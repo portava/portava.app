@@ -11,7 +11,7 @@ import {
   TravelErrorState, TravelEmptyState,
 } from '../../../src/components/primitives';
 import { KeyboardSafeView } from '../../../src/components/ui/KeyboardSafeView';
-import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, avatar } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyAddon } from '../../../src/services/rentABuddy';
 
@@ -285,7 +285,7 @@ const s = StyleSheet.create({
   },
   headerTitle: { ...t.heading, color: color.onInk, flex: 1 },
   addBtn: {
-    width: 36, height: 36, borderRadius: 18,
+    width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2,
     backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center',
   },
 });

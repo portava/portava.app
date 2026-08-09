@@ -8,7 +8,7 @@ import {
   ArrowLeft, Shield, CheckCircle, Info, ChevronDown, ChevronUp,
   AlertTriangle, MapPin, CalendarCheck, Calendar, Clock,
 } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow, layout } from '../../src/theme/tokens';
+import { color, space, radius, type as t, shadow, layout, avatar } from '../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState } from '../../src/components/primitives';
 import { Stamp } from '../../src/components/ui';
 import {
@@ -575,7 +575,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: color.haze,
   },
   buddyAvatar: {
-    width: 48, height: 48, borderRadius: 24,
+    width: avatar.xl, height: avatar.xl, borderRadius: avatar.xl / 2,
     backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center',
   },
   buddyInitial: { fontSize: 20, fontWeight: '700', color: color.onInk },
@@ -610,7 +610,7 @@ const styles = StyleSheet.create({
   inputPlaceholder: { ...t.body, color: color.haze, flex: 1 },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: space.lg },
   stepBtn: {
-    width: 40, height: 40, borderRadius: 20,
+    width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2,
     borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised,
     alignItems: 'center', justifyContent: 'center',
   },

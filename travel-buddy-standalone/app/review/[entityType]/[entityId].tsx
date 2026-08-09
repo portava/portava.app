@@ -32,6 +32,7 @@ import { NavBarFiller } from '../../../src/hooks/useNavBarCollapse';
 import { useMediaComposer } from '../../../src/hooks/useMediaComposer';
 import { MediaPickerButton } from '../../../src/components/ui/MediaPickerButton';
 import { MediaAttachmentTray } from '../../../src/components/ui/MediaAttachmentTray';
+import { icon } from '../../../src/theme/tokens';
 
 // ── Star rating ───────────────────────────────────────────────────────────────
 
@@ -533,9 +534,8 @@ const s = StyleSheet.create({
   },
   toggleOn:      { backgroundColor: '#11110F' },
   toggleThumb:   {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: icon.action, height: icon.action,
+    borderRadius: icon.action / 2,
     backgroundColor: '#fff',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },

@@ -8,7 +8,7 @@ import React from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
 import { MapPin, Navigation } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanCategory } from '../../types/models.ts';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 
 export interface MapViewProps {
   items: TripPlanItem[];
@@ -77,13 +77,13 @@ export function ItineraryMapView({ items, onItemPress, selectedDay, loading }: M
 const s = StyleSheet.create({
   list:      { gap: 8, paddingBottom: 24 },
   empty:     { alignItems: 'center', paddingVertical: 48, gap: 8 },
-  emptyIcon: { width: 56, height: 56, borderRadius: 28, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
+  emptyIcon: { width: avatar.xxl, height: avatar.xxl, borderRadius: avatar.xxl / 2, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
   emptyTitle:{ ...t.title, fontSize: 16, color: color.mute },
   emptyBody: { ...t.body, color: color.faint, textAlign: 'center', maxWidth: 260 },
   banner:    { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: color.haze, borderRadius: radius.md, padding: 12, marginBottom: 4 },
   bannerText:{ ...t.small, color: color.mute, flex: 1 },
   card:      { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#fff', borderRadius: radius.md, padding: 10, borderWidth: 1, borderColor: color.haze },
-  pinDot:    { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  pinDot:    { width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2, alignItems: 'center', justifyContent: 'center' },
   cardText:  { flex: 1, gap: 2 },
   cardTitle: { ...t.body, color: color.ink, fontWeight: '600' },
   cardLoc:   { ...t.small, color: color.mute },

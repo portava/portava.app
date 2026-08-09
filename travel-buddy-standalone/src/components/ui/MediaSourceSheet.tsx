@@ -31,7 +31,7 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Camera, ImageIcon, X } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import { VideoStoryTrimSheet } from './VideoStoryTrimSheet.tsx';
 
 export interface MediaSourceSheetProps {
@@ -406,9 +406,8 @@ const s = StyleSheet.create({
     opacity: 0.7,
   },
   iconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: avatar.lgXl, height: avatar.lgXl,
+    borderRadius: avatar.lgXl / 2,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,

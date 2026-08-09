@@ -10,7 +10,7 @@ import {
   View, Text, Modal, Pressable, StyleSheet, Linking, ScrollView,
 } from 'react-native';
 import { X, Phone, MessageCircle, MapPin, Car, Users, Shield } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 
 interface Props {
   visible: boolean;
@@ -159,7 +159,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: space.md,
     borderRadius: radius.md, borderWidth: 1, padding: space.md, marginBottom: space.sm,
   },
-  optionIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  optionIcon: { width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2, alignItems: 'center', justifyContent: 'center' },
   optionLabel: { ...t.bodyStrong, fontSize: 14 },
   optionSub: { ...t.small, color: color.mute, fontSize: 11 },
   closeBtn: {

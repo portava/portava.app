@@ -12,7 +12,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { MapPin } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 
 export interface MeetupAreaPreviewProps {
   lat: number;
@@ -47,9 +47,8 @@ const s = StyleSheet.create({
     gap: 6,
   },
   iconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: avatar.lgXl, height: avatar.lgXl,
+    borderRadius: avatar.lgXl / 2,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255, 77, 46, 0.10)',

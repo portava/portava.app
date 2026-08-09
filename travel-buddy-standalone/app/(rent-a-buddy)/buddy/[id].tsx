@@ -9,7 +9,7 @@ import {
   Bookmark, Flag, ChevronDown, ChevronUp, MapPin,
 } from 'lucide-react-native';
 import { StampButton } from '../../../src/components/stamps/StampButton';
-import { color, space, radius, type as t, shadow, layout } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, shadow, layout, avatar } from '../../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState, TravelCard } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
 import {
@@ -483,7 +483,7 @@ const styles = StyleSheet.create({
   heroFallback: { backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center' },
   heroInitial: { fontSize: 80, fontWeight: '700', color: color.onInk, opacity: 0.7 },
   heroNav: { position: 'absolute', left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: space.lg },
-  navBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(17,17,15,0.5)', alignItems: 'center', justifyContent: 'center' },
+  navBtn: { width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2, backgroundColor: 'rgba(17,17,15,0.5)', alignItems: 'center', justifyContent: 'center' },
   heroInfo: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: space.lg, backgroundColor: 'rgba(17,17,15,0.55)' },
   heroName: { ...t.title, color: color.onInk, fontSize: 24 },
   heroCity: { ...t.body, color: color.onInkMute, marginTop: 2, marginBottom: space.sm },

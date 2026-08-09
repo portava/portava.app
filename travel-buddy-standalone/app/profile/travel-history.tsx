@@ -14,7 +14,7 @@ import { ArrowLeft } from 'lucide-react-native';
 import { listMyTrips, type TripRow } from '../../src/services/trips';
 import { getMyPassportStamps } from '../../src/services/passportStamps';
 import { PP, PP_LABEL } from '../../src/theme/passportTokens';
-import { space, color } from '../../src/theme/tokens';
+import { space, color, avatar } from '../../src/theme/tokens';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -281,7 +281,7 @@ const r = StyleSheet.create({
     paddingHorizontal: space.md, paddingVertical: space.md, gap: space.sm, minHeight: 64,
   },
   tripIcon: {
-    width: 32, height: 32, borderRadius: 16,
+    width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2,
     backgroundColor: PP.borderLight, alignItems: 'center', justifyContent: 'center',
   },
   tripBody: { flex: 1, gap: 2 },
@@ -294,7 +294,7 @@ const r = StyleSheet.create({
     paddingHorizontal: space.md, paddingVertical: 12, gap: space.sm, minHeight: 44,
   },
   placeIcon: {
-    width: 28, height: 28, borderRadius: 14,
+    width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2,
     backgroundColor: PP.borderLight, alignItems: 'center', justifyContent: 'center',
   },
   placeLabel: { flex: 1, fontFamily: 'Courier', fontSize: 13, color: PP.ink },

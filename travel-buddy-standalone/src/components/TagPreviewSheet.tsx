@@ -19,7 +19,7 @@ import {
   X, Hash, User, Plane, Users, Calendar, MapPin, Flag,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar } from '../theme/tokens.ts';
 import {
   getHashtag, getUserByHandle, followHashtag, unfollowHashtag, reportHashtag,
   type HashtagMeta, type UserPreview,
@@ -438,7 +438,7 @@ const s = StyleSheet.create({
   dimBtnText: { ...t.bodyStrong, color: color.mute, fontWeight: '600' },
 
   userRow: { flexDirection: 'row', gap: space.md, alignItems: 'center', alignSelf: 'stretch' },
-  avatar: { width: 56, height: 56, borderRadius: 28, backgroundColor: color.haze },
+  avatar: { width: avatar.xxl, height: avatar.xxl, borderRadius: avatar.xxl / 2, backgroundColor: color.haze },
   userInfo: { flex: 1, gap: 2 },
   userName: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
   userHandle: { ...t.small, color: color.mute },

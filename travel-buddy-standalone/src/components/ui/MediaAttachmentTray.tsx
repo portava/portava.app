@@ -26,7 +26,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { X, Star, RefreshCw, Video as VideoIcon, GripVertical } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, icon } from '../../theme/tokens.ts';
 import type { UseMediaComposerReturn, MediaItem } from '../../hooks/useMediaComposer.ts';
 
 // ---------------------------------------------------------------------------
@@ -606,9 +606,8 @@ const s = StyleSheet.create({
     position: 'absolute',
     top: 4,
     right: 4,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: icon.action, height: icon.action,
+    borderRadius: icon.action / 2,
     backgroundColor: 'rgba(0,0,0,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -617,9 +616,8 @@ const s = StyleSheet.create({
     position: 'absolute',
     top: 4,
     left: 4,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: icon.action, height: icon.action,
+    borderRadius: icon.action / 2,
     backgroundColor: 'rgba(0,0,0,0.35)',
     alignItems: 'center',
     justifyContent: 'center',

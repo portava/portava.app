@@ -48,7 +48,7 @@ import {
 import { PortavaShareIcon } from './icons/PortavaShareIcon.tsx';
 import { closeThenNavigate } from '../lib/deferredNavigate.ts';
 import { canonicalUrl } from '../constants/canonicalUrl.ts';
-import { color, space, radius, shadow } from '../theme/tokens.ts';
+import { color, space, radius, shadow, avatar, icon } from '../theme/tokens.ts';
 import { PortavaSheet } from './ui/PortavaSheet.tsx';
 import { Avatar } from './ui/Avatar.tsx';
 import { SectionHeader } from './ui/SectionHeader.tsx';
@@ -723,9 +723,8 @@ const s = StyleSheet.create({
     marginBottom: space.sm,
   },
   newThreadIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: avatar.md, height: avatar.md,
+    borderRadius: avatar.md / 2,
     backgroundColor: color.signal + '15',
     alignItems: 'center',
     justifyContent: 'center',
@@ -749,7 +748,7 @@ const s = StyleSheet.create({
   threadName: { fontSize: 14, fontWeight: '700', color: color.ink },
   threadNameSelected: { color: color.signal },
   threadSub: { fontSize: 11, color: color.mute, marginTop: 1 },
-  checkBadge: { width: 20, height: 20, borderRadius: 10, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
+  checkBadge: { width: icon.action, height: icon.action, borderRadius: icon.action / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
   checkText: { fontSize: 12, color: color.onInk, fontWeight: '700' },
 
   sendBtn: {

@@ -12,7 +12,7 @@ import { TravelButton, TravelCard, TravelChip } from '../../../src/components/pr
 import { Stamp } from '../../../src/components/ui';
 import { MediaPickerButton } from '../../../src/components/ui/MediaPickerButton';
 import { MediaAttachmentTray } from '../../../src/components/ui/MediaAttachmentTray';
-import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, icon, aspect } from '../../../src/theme/tokens';
 import { useMediaComposer } from '../../../src/hooks/useMediaComposer';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyCategory, TrainingItem, ChecklistItem, ProfileSubmitResult } from '../../../src/services/rentABuddy';
@@ -1057,7 +1057,7 @@ const grid = StyleSheet.create({
   labelActive: { color: color.signal },
   checkWrap: {
     position: 'absolute', top: 8, right: 8,
-    width: 20, height: 20, borderRadius: 10,
+    width: icon.action, height: icon.action, borderRadius: icon.action / 2,
     backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center',
   },
 });
@@ -1082,7 +1082,7 @@ const avail = StyleSheet.create({
 const photos = StyleSheet.create({
   row: { flexDirection: 'row', gap: space.md, marginBottom: space.lg },
   slot: {
-    flex: 1, aspectRatio: 1, borderRadius: radius.md,
+    flex: 1, aspectRatio: aspect.square, borderRadius: radius.md,
     borderWidth: 1.5, borderStyle: 'dashed', borderColor: color.haze,
     alignItems: 'center', justifyContent: 'center', gap: 6,
     backgroundColor: color.paperRaised,

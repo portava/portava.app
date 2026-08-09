@@ -16,7 +16,7 @@ import { checkSaved, saveItem, unsaveItem } from '../../services/collections.ts'
 import { getSavedListIds } from '../../services/discoveryBookmarks.ts';
 import { usePlanPicker } from '../PlanPickerController.tsx';
 import type { RouteStopDraft } from '../RouteBuilderSheet.tsx';
-import { color, space, radius, type as t, shadow, layout } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, layout, avatar } from '../../theme/tokens.ts';
 import { TripWishlistPicker } from './TripWishlistPicker.tsx';
 import { DisplayMediaImage, MediaFallback } from '../ui/DisplayMediaImage.tsx';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
@@ -668,9 +668,8 @@ const styles = StyleSheet.create({
   },
   saveBtn: {
     marginLeft: 'auto',
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: avatar.xs, height: avatar.xs,
+    borderRadius: avatar.xs / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',
@@ -679,9 +678,8 @@ const styles = StyleSheet.create({
     backgroundColor: color.signal + '18',
   },
   wishlistBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: avatar.xs, height: avatar.xs,
+    borderRadius: avatar.xs / 2,
     backgroundColor: color.deep + '14',
     alignItems: 'center',
     justifyContent: 'center',

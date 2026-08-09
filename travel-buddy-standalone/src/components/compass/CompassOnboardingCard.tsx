@@ -19,7 +19,7 @@ import {
 } from 'react-native';
 import { Sparkles, ArrowRight, Check } from 'lucide-react-native';
 import { router } from 'expo-router';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, icon } from '../../theme/tokens.ts';
 import {
   fetchCompassSettings,
   patchCompassSettings,
@@ -401,9 +401,8 @@ const s = StyleSheet.create({
     backgroundColor: color.signal + '08',
   },
   optionDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
+    width: icon.sm, height: icon.sm,
+    borderRadius: icon.sm / 2,
     borderWidth: 1.5,
     borderColor: color.haze,
   },

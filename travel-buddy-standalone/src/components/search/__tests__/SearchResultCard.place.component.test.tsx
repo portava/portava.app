@@ -24,25 +24,6 @@ jest.mock('expo-router', () => ({
 
 // NOTE: intentionally exhaustive — spreading requireActual pulls in native
 // font loader internals that crash under jest-expo.
-jest.mock('../../../theme/tokens', () => ({
-  color: {
-    deep:        '#2A7F8F',
-    ink:         '#1A1A2E',
-    signal:      '#FF6B6B',
-    mute:        '#9B9B9B',
-    faint:       '#CCCCCC',
-    paper:       '#FFFFFF',
-    paperRaised: '#F9F9F9',
-    haze:        '#E8E8E8',
-    onInk:       '#FFFFFF',
-    success:     '#16A34A',
-    warn:        '#F59E0B',
-  },
-  space:  { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32, xxxl: 48 },
-  radius: { sm: 4, md: 8, lg: 12, pill: 999 },
-  type:   { heading: {}, bodyStrong: {}, body: {}, small: {}, stamp: {} },
-  shadow: { card: {}, float: {} },
-}));
 
 // NOTE: intentionally exhaustive — UserAvatarButton imports supabase and
 // native image modules; only the children passthrough is needed here.

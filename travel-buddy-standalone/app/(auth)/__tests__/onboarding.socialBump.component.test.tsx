@@ -97,15 +97,6 @@ jest.mock('../../../src/components/ui', () => ({
   },
 }));
 
-// NOTE: intentionally exhaustive — theme tokens are pure value objects; the
-// Proxy stubs produce valid style primitives without needing the real tokens.
-jest.mock('../../../src/theme/tokens', () => {
-  const colorProxy  = new Proxy({}, { get: () => '#000000' });
-  const numberProxy = new Proxy({}, { get: () => 8 });
-  const typeProxy   = new Proxy({}, { get: () => ({}) });
-  return { color: colorProxy, space: numberProxy, radius: numberProxy, type: typeProxy };
-});
-
 // ── Test ──────────────────────────────────────────────────────────────────────
 
 import Onboarding from '../onboarding';

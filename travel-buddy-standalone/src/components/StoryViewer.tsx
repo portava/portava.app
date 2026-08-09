@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Eye, Users } from 'lucide-react-native';
-import { color, radius, space, type as t } from '../theme/tokens.ts';
+import { color, radius, space, type as t, avatar } from '../theme/tokens.ts';
 import type { Story, StoryFeedUser } from '../services/stories.ts';
 import { getViewers, type StoryViewer } from '../services/stories.ts';
 import { useSession } from '../context/SessionContext.tsx';
@@ -229,7 +229,7 @@ const s = StyleSheet.create({
   progressFill: { height: '100%', backgroundColor: '#fff', borderRadius: 1 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space.md, paddingVertical: space.sm },
   authorRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.2)' },
+  avatar: { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, backgroundColor: 'rgba(255,255,255,0.2)' },
   authorNameRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 4 },
   authorName: { color: '#fff', fontWeight: '700', fontSize: 14 },
   timeAgo: { color: 'rgba(255,255,255,0.7)', fontSize: 11 },
@@ -245,7 +245,7 @@ const s = StyleSheet.create({
   hiddenText: { ...t.body, color: color.mute },
   emptyText: { ...t.body, color: color.mute, textAlign: 'center', paddingVertical: space.xl },
   viewerRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.sm },
-  viewerAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: color.haze },
+  viewerAvatar: { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, backgroundColor: color.haze },
   viewerNameRow: { flex: 1, flexDirection: 'row' as const, alignItems: 'center' as const, gap: 3 },
   viewerName: { flexShrink: 1, ...t.body, color: color.ink },
   viewerTime: { ...t.small, color: color.mute },

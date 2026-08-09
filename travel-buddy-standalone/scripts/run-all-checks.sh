@@ -30,6 +30,7 @@ run_check "test" pnpm run test
 run_check "test:component" pnpm run test:component
 run_check "typecheck" pnpm run typecheck
 run_check "lint:bare-image" pnpm run lint:bare-image
+run_check "lint:avatar-icon-sizing" pnpm run lint:avatar-icon-sizing
 
 echo ""
 echo "──────────────────────────────────────────────────────────"

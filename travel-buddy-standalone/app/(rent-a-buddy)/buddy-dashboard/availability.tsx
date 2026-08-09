@@ -8,7 +8,7 @@ import { ArrowLeft, Save, Minus, Plus } from 'lucide-react-native';
 import {
   TravelButton, TravelCard, TravelChip, TravelLoadingState, TravelSectionHeader,
 } from '../../../src/components/primitives';
-import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, avatar } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import { GlobalCalendarPicker } from '../../../src/components/selectors/GlobalCalendarPicker';
 import { fromISODate, formatDisplayDate } from '../../../src/lib/dateTime/formatters';
@@ -372,7 +372,7 @@ const chips = StyleSheet.create({
 const stepper = StyleSheet.create({
   wrap: { flexDirection: 'row', alignItems: 'center', gap: space.lg, marginTop: space.sm },
   btn: {
-    width: 40, height: 40, borderRadius: 20,
+    width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2,
     borderWidth: 1.5, borderColor: color.haze,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: color.paperRaised,

@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import Svg, { Path, Defs, Pattern, Rect, Line, Circle } from 'react-native-svg';
 import { Stamp as StampIcon, Users, CalendarDays, MapPin, ChevronRight } from 'lucide-react-native';
 import type { TravelStats } from '../types/models.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 
 /**
  * Clickable info bar — icon-circle items, each routes somewhere (never dead).
@@ -93,7 +93,7 @@ const styles = StyleSheet.create({
   },
   cell: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 4, borderRadius: radius.sm },
   cellPressed: { backgroundColor: color.haze },
-  iconCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  iconCircle: { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, alignItems: 'center', justifyContent: 'center' },
   cellText: {},
   divider: { width: 1, height: 30, backgroundColor: color.haze },
   n: { ...t.heading, color: color.ink, fontSize: 18 },

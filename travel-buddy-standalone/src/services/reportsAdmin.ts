@@ -72,3 +72,43 @@ export async function fetchAdminReports(opts: {
   if (!res.ok) throw new Error(`Failed to load reports: ${res.status}`);
   return res.json() as Promise<AdminReportsResult>;
 }
+
+export interface ResolvedReport {
+  id: string;
+  status: string;
+  reviewedAt?: string | null;
+  reviewed_at?: string | null;
+}
+
+/** POST /api/admin/reports/:id/resolve */
+export async function resolveReport(
+  id: string,
+  action: string,
+  notes?: string | null,
+): Promise<{ report: ResolvedReport; audit: unknown }> {
+  const res = await authedFetch(`${apiBase()}/api/admin/reports/${id}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify({ action, notes: notes ?? null }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as any)?.message ?? `Failed to resolve report: ${res.status}`);
+  }
+  return res.json();
+}
+
+/** POST /api/admin/reports/:id/dismiss */
+export async function dismissReport(
+  id: string,
+  notes?: string | null,
+): Promise<{ report: ResolvedReport; audit: unknown }> {
+  const res = await authedFetch(`${apiBase()}/api/admin/reports/${id}/dismiss`, {
+    method: 'POST',
+    body: JSON.stringify({ notes: notes ?? null }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as any)?.message ?? `Failed to dismiss report: ${res.status}`);
+  }
+  return res.json();
+}

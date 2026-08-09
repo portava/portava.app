@@ -96,22 +96,6 @@ jest.mock('../../src/hooks/useBottomInset', () => ({
   PlainBottomFiller: () => null,
 }));
 
-// ── Theme tokens ──────────────────────────────────────────────────────────────
-jest.mock('../../src/theme/tokens', () => {
-  const colorProxy  = new Proxy({}, { get: () => '#000000' });
-  const numberProxy = new Proxy({}, { get: () => 8 });
-  const typeProxy   = new Proxy({}, { get: () => ({}) });
-  return {
-    color:      colorProxy,
-    space:      numberProxy,
-    radius:     numberProxy,
-    shadow:     new Proxy({}, { get: () => ({}) }),
-    typography: new Proxy({}, { get: () => ({}) }),
-    layout:     { pressedOpacity: 0.7 },
-    type:       typeProxy,
-  };
-});
-
 // ── AvatarImage (used inside ProfileCard) ─────────────────────────────────────
 // NOTE: intentionally exhaustive — AvatarImage uses expo-image which loads native
 // modules unavailable in the jest environment; null stub avoids the crash.

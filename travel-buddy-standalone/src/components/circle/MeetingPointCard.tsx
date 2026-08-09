@@ -16,7 +16,7 @@ import type { MeetingPoint } from '../../services/circle.ts';
 import { postMeetingPoint, patchMeetingPoint } from '../../services/circle.ts';
 import { GlobalPlacePicker } from '../selectors/GlobalPlacePicker.tsx';
 import type { Place } from '../../lib/location/placeTypes.ts';
-import { color, radius, type as t } from '../../theme/tokens.ts';
+import { color, radius, type as t, avatar } from '../../theme/tokens.ts';
 
 interface Props {
   meetingPoint: MeetingPoint | null;
@@ -258,9 +258,8 @@ const s = StyleSheet.create({
     borderColor: '#FFF176',
   },
   iconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: avatar.md, height: avatar.md,
+    borderRadius: avatar.md / 2,
     backgroundColor: '#FFF8E1',
     alignItems: 'center',
     justifyContent: 'center',

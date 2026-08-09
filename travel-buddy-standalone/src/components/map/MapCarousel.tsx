@@ -60,7 +60,7 @@ import {
   X,
 } from 'lucide-react-native';
 import { StampIcon } from '../stamps/StampIcon.tsx';
-import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar } from '../../theme/tokens.ts';
 import { useMapStore } from '../../stores/mapStore.tsx';
 import type { PreviewDetent } from '../../stores/mapStore.tsx';
 import { MapEntityActionRow } from './MapEntityActionRow.tsx';
@@ -1283,11 +1283,10 @@ const cs = StyleSheet.create({
     width: space.sm,
   },
   peekActionBtn: {
-    width: 28,
-    height: 28,
+    width: avatar.xs, height: avatar.xs,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 14,
+    borderRadius: avatar.xs / 2,
     backgroundColor: color.haze,
     flexShrink: 0,
   },
@@ -1340,9 +1339,8 @@ const cs = StyleSheet.create({
   },
   // Passport error card
   errorIconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: avatar.lgXl, height: avatar.lgXl,
+    borderRadius: avatar.lgXl / 2,
     backgroundColor: '#FEF3C7',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1484,14 +1482,12 @@ const cs = StyleSheet.create({
     flexShrink: 0,
   },
   avatarImg: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: avatar.md, height: avatar.md,
+    borderRadius: avatar.md / 2,
   },
   avatarFallback: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: avatar.md, height: avatar.md,
+    borderRadius: avatar.md / 2,
     alignItems: 'center',
     justifyContent: 'center',
   },

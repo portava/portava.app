@@ -35,7 +35,7 @@ import { Video, ResizeMode } from 'expo-av';
 import { X, MapPin, CheckSquare, Square, ChevronDown, Gem, Camera, ImageIcon } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar } from '../../theme/tokens.ts';
 import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';
 import { useMediaComposer } from '../../hooks/useMediaComposer.ts';
 import { useMediaPicker } from '../../hooks/useMediaPicker.ts';
@@ -860,9 +860,8 @@ const styles = StyleSheet.create({
     color: color.mute,
   },
   closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: avatar.sm, height: avatar.sm,
+    borderRadius: avatar.sm / 2,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: color.paperRaised,
@@ -924,9 +923,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 8,
     right: 8,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: avatar.xs, height: avatar.xs,
+    borderRadius: avatar.xs / 2,
     backgroundColor: 'rgba(17,17,15,0.65)',
     alignItems: 'center',
     justifyContent: 'center',

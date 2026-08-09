@@ -13,7 +13,7 @@ import {
   Pressable,
   StyleSheet,
 } from 'react-native';
-import { color, space, radius, shadow } from '../theme/tokens.ts';
+import { color, space, radius, shadow, avatar } from '../theme/tokens.ts';
 import { useBottomInset } from '../hooks/useBottomInset.ts';
 
 export const REACTION_EMOJIS = ['❤️', '😂', '😮', '😢', '😡', '👍', '🔥', '✈️'] as const;
@@ -131,11 +131,10 @@ const s = StyleSheet.create({
     ...shadow.card,
   },
   emojiBtn: {
-    width: 40,
-    height: 40,
+    width: avatar.lg, height: avatar.lg,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 20,
+    borderRadius: avatar.lg / 2,
   },
   emojiBtnSelected: {
     backgroundColor: color.signal + '18',

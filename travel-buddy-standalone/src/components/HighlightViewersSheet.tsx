@@ -11,7 +11,7 @@ import { Avatar } from './ui/Avatar.tsx';
 import { X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StampIcon } from './stamps/StampIcon.tsx';
-import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar } from '../theme/tokens.ts';
 import { fetchHighlightViewers, type HighlightViewer } from '../services/highlights.ts';
 
 interface Props {
@@ -98,7 +98,7 @@ const s = StyleSheet.create({
   grab: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: color.haze, marginTop: 10, marginBottom: 4 },
   head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.lg, paddingVertical: space.md },
   title: { ...t.heading, color: color.ink },
-  closeBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
+  closeBtn: { width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
   loading: { padding: space.xl, alignItems: 'center' },
   empty: { padding: space.xl, alignItems: 'center' },
   emptyText: { ...t.body, color: color.mute },

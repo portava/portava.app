@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { ArrowLeft, Calendar, Trash2, Star, MessageSquarePlus } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow, layout } from '../../src/theme/tokens';
+import { color, space, radius, type as t, shadow, layout, avatar } from '../../src/theme/tokens';
 import {
   TravelEmptyState, TravelErrorState, TravelLoadingState,
 } from '../../src/components/primitives';
@@ -188,7 +188,7 @@ const styles = StyleSheet.create({
   },
   cardMain: { flexDirection: 'row', gap: space.md, padding: space.lg },
   avatarWrap: {
-    width: 56, height: 56, borderRadius: 28,
+    width: avatar.xxl, height: avatar.xxl, borderRadius: avatar.xxl / 2,
     backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center',
   },
   avatarInitial: { fontSize: 22, fontWeight: '700', color: color.onInk },

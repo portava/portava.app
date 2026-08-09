@@ -7,7 +7,7 @@ import {
   ArrowLeft, Shield, AlertTriangle, MapPin, Phone,
   Flag, CheckCircle, Plus, X, Zap, Users,
 } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow, layout } from '../../src/theme/tokens';
+import { color, space, radius, type as t, shadow, layout, avatar } from '../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState } from '../../src/components/primitives';
 import { getBooking, addExtraTime, reportBooking, safetyCheckin, feelUnsafe, endBookingEarly, type BuddyBooking } from '../../src/services/rentABuddy';
 import {
@@ -547,7 +547,7 @@ const styles = StyleSheet.create({
     backgroundColor: color.paperRaised, padding: space.lg,
     borderBottomWidth: 1, borderBottomColor: color.haze,
   },
-  buddyAvatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center' },
+  buddyAvatar: { width: avatar.xl, height: avatar.xl, borderRadius: avatar.xl / 2, backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center' },
   buddyInitial: { fontSize: 20, fontWeight: '700', color: color.onInk },
   buddyName: { ...t.bodyStrong, color: color.ink },
   buddyCity: { ...t.small, color: color.mute },
@@ -621,7 +621,7 @@ const modal = StyleSheet.create({
   title: { ...t.title, color: color.ink },
   sub: { ...t.body, color: color.mute },
   stepper: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.xl, paddingVertical: space.md },
-  stepBtn: { width: 44, height: 44, borderRadius: 22, borderWidth: 1.5, borderColor: color.haze, backgroundColor: color.paperRaised, alignItems: 'center', justifyContent: 'center' },
+  stepBtn: { width: avatar.lgXl, height: avatar.lgXl, borderRadius: avatar.lgXl / 2, borderWidth: 1.5, borderColor: color.haze, backgroundColor: color.paperRaised, alignItems: 'center', justifyContent: 'center' },
   stepBtnText: { fontSize: 22, color: color.ink, fontWeight: '600' },
   stepVal: { ...t.title, color: color.ink, minWidth: 100, textAlign: 'center' },
   actions: { flexDirection: 'row', gap: space.md, marginTop: space.sm },
@@ -639,7 +639,7 @@ const picker = StyleSheet.create({
     padding: space.md,
   },
   avatar: {
-    width: 36, height: 36, borderRadius: 18,
+    width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2,
     backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center',
   },
   avatarText: { fontSize: 15, fontWeight: '700', color: color.onInk },

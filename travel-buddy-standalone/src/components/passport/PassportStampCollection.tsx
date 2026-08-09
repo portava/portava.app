@@ -10,6 +10,7 @@ import {
 import { Compass } from 'lucide-react-native';
 import type { PassportStamp } from '../../types/models.ts';
 import { PP, PP_LABEL, PP_VALUE, fmtMonthYear } from '../../theme/passportTokens.ts';
+import { avatar } from '../../theme/tokens.ts';
 
 type StampFilter = 'all' | 'cities' | 'special';
 
@@ -206,7 +207,7 @@ const ch = StyleSheet.create({
   },
   artInnerRing: {
     position: 'absolute',
-    width: 36, height: 36, borderRadius: 18,
+    width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2,
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
   },
   artLabel: {

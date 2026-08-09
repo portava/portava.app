@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MapPin, X, Navigation } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar } from '../../theme/tokens.ts';
 import { usePlanPicker } from '../PlanPickerController.tsx';
 import type { MediaFeedPlace } from '../../types/media.ts';
 
@@ -177,9 +177,8 @@ const s = StyleSheet.create({
     fontSize: 18,
   },
   closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: avatar.sm, height: avatar.sm,
+    borderRadius: avatar.sm / 2,
     backgroundColor: color.paperRaised,
     borderWidth: 1,
     borderColor: color.haze,
@@ -197,9 +196,8 @@ const s = StyleSheet.create({
     padding: space.md,
   },
   placeIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: avatar.lgXl, height: avatar.lgXl,
+    borderRadius: avatar.lgXl / 2,
     backgroundColor: color.signal,
     alignItems: 'center',
     justifyContent: 'center',

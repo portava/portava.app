@@ -78,14 +78,6 @@ jest.mock('../../../src/components/primitives', () => ({
 jest.mock('../../../src/components/ui', () => ({ Stamp: () => null }));
 // NOTE: intentional stub — theme tokens are exhaustive; avoids native
 // font/shadow resolution that crashes jest-expo.
-jest.mock('../../../src/theme/tokens', () => ({
-  color:  { paperRaised: '#fff', haze: '#ccc', ink: '#000', onInk: '#fff', mute: '#999', warn: '#f59e0b', signal: '#e11d48', success: '#10b981', deep: '#1e3a5f', paper: '#faf9f6', faint: '#ddd' },
-  space:  { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 },
-  radius: { sm: 4, md: 8, lg: 12, pill: 999 },
-  shadow: { card: {}, float: {} },
-  layout: { pressedOpacity: 0.7, hitSlop: 8 },
-  type:   { small: {}, body: {}, bodyStrong: {}, heading: {}, title: {}, hero: {}, stamp: {} },
-}));
 
 import RentABuddyLanding from '../index';
 

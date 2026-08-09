@@ -22,7 +22,7 @@ import { ChevronLeft, MapPin, Gem, CalendarDays, Compass } from 'lucide-react-na
 import { listGems, type HiddenGem } from '../../src/services/hiddenGems';
 import { listEvents, type EventListItem } from '../../src/services/events';
 import { getPulseData, type PulsePost } from '../../src/services/pulse';
-import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { color, space, radius, type as t, aspect } from '../../src/theme/tokens';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 import { CityConfidenceBadge } from '../../src/components/compass/CityConfidenceBadge';
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
@@ -317,7 +317,7 @@ const s = StyleSheet.create({
 
   postGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: space.lg },
   postTile: {
-    width: '31.5%', aspectRatio: 1, borderRadius: radius.sm,
+    width: '31.5%', aspectRatio: aspect.square, borderRadius: radius.sm,
     overflow: 'hidden', backgroundColor: color.haze,
   },
   postImg: { width: '100%', height: '100%' },

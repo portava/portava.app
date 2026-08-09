@@ -5,7 +5,7 @@ import { Zap, Brain } from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { useSession } from '../../src/context/SessionContext';
 import { supabase } from '../../src/lib/supabase';
-import { color, space, type as t, radius, layout } from '../../src/theme/tokens';
+import { color, space, type as t, radius, layout, icon } from '../../src/theme/tokens';
 import { updateTelegraphChatSettings, getTelegraphChatSettings } from '../../src/services/telegraphChat';
 import { fetchPreferences, patchPreferences, resetLearnedPreferences } from '../../src/services/intelligence';
 import { deactivateAccount, requestAccountDeletion, reactivateAccount } from '../../src/services/profile';
@@ -634,7 +634,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md, padding: space.md,
   },
   radioRowActive: { borderColor: color.deep, backgroundColor: '#EAF2F4' },
-  radio: { width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: color.haze },
+  radio: { width: icon.md, height: icon.md, borderRadius: icon.md / 2, borderWidth: 2, borderColor: color.haze },
   radioChecked: { borderColor: color.deep, backgroundColor: color.deep },
   radioLabel: { ...t.bodyStrong, color: color.ink, fontSize: 13 },
   radioSub: { ...t.small, color: color.mute, fontSize: 11 },

@@ -25,7 +25,7 @@ import {
 } from 'lucide-react-native';
 import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
 import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
-import { space, radius } from '../../theme/tokens.ts';
+import { space, radius, avatar } from '../../theme/tokens.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -609,9 +609,8 @@ const s = StyleSheet.create({
     letterSpacing: 0.2,
   },
   closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: avatar.sm, height: avatar.sm,
+    borderRadius: avatar.sm / 2,
     backgroundColor: PP.paperDeep,
     alignItems: 'center',
     justifyContent: 'center',

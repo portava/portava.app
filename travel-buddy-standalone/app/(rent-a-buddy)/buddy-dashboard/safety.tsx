@@ -9,7 +9,7 @@ import {
   StopCircle, DollarSign, Users, X,
 } from 'lucide-react-native';
 import { TravelButton, TravelCard } from '../../../src/components/primitives';
-import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, icon, avatar } from '../../../src/theme/tokens';
 import {
   getMyRequests, reportBooking, endBookingEarly, feelUnsafe, confirmCashBalance,
   type BuddyBooking,
@@ -432,7 +432,7 @@ const sab = StyleSheet.create({
   },
   large: { padding: space.xl },
   iconWrap: {
-    width: 44, height: 44, borderRadius: 22,
+    width: avatar.lgXl, height: avatar.lgXl, borderRadius: avatar.lgXl / 2,
     alignItems: 'center', justifyContent: 'center',
   },
   iconLarge: { width: 52, height: 52, borderRadius: 26 },
@@ -457,7 +457,7 @@ const modal = StyleSheet.create({
   optionText: { ...t.body, color: color.ink, flex: 1 },
   optionTextActive: { color: color.signal, fontWeight: '600' },
   radio: {
-    width: 20, height: 20, borderRadius: 10, borderWidth: 1.5,
+    width: icon.action, height: icon.action, borderRadius: icon.action / 2, borderWidth: 1.5,
     borderColor: color.haze, alignItems: 'center', justifyContent: 'center',
   },
   radioOn: { borderColor: color.signal },

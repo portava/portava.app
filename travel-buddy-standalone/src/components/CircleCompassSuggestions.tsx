@@ -21,7 +21,7 @@ import { router } from 'expo-router';
 import { Users, Radio, MapPin } from 'lucide-react-native';
 import { getCompassSuggestions, type CompassCircleCard } from '../services/circle.ts';
 import { useSession } from '../context/SessionContext.tsx';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 
 const MAX_CARDS = 3;
 
@@ -171,9 +171,8 @@ const styles = StyleSheet.create({
     gap: space.md,
   },
   avatarWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: avatar.lg, height: avatar.lg,
+    borderRadius: avatar.lg / 2,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,

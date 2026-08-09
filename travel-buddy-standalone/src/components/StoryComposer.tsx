@@ -18,7 +18,7 @@ import { X, ChevronDown, Lock, Users, Globe, Heart, UserCheck } from 'lucide-rea
 import { useMediaComposer } from '../hooks/useMediaComposer.ts';
 import { MediaPickerButton } from './ui/MediaPickerButton.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar, icon, aspect } from '../theme/tokens.ts';
 import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
 import type { StoryVisibility } from '../services/stories.ts';
 import { createStory, uploadStoryMedia } from '../services/stories.ts';
@@ -265,9 +265,9 @@ const s = StyleSheet.create({
   mediaPicker: { flexDirection: 'row', gap: space.md },
   mediaBtn: { flex: 1, borderWidth: 2, borderColor: color.haze, borderStyle: 'dashed', borderRadius: radius.md, paddingVertical: space.xl, alignItems: 'center', gap: space.sm },
   mediaBtnText: { ...t.small, color: color.mute, fontWeight: '600' },
-  previewContainer: { borderRadius: radius.md, overflow: 'hidden', aspectRatio: 9 / 16, maxHeight: 320, alignSelf: 'center', width: '60%' },
+  previewContainer: { borderRadius: radius.md, overflow: 'hidden', aspectRatio: aspect.story, maxHeight: 320, alignSelf: 'center', width: '60%' },
   preview: { flex: 1, backgroundColor: color.haze },
-  clearMedia: { position: 'absolute', top: 8, right: 8, width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center' },
+  clearMedia: { position: 'absolute', top: 8, right: 8, width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center' },
   captionInput: { borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, padding: space.md, ...t.body, color: color.ink, minHeight: 80, textAlignVertical: 'top' },
   charCount: { ...t.small, color: color.faint, textAlign: 'right' },
   visRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, padding: space.md },
@@ -278,7 +278,7 @@ const s = StyleSheet.create({
   toggleSub: { ...t.small, color: color.mute, fontSize: 12, marginTop: 1 },
   toggle: { width: 44, height: 24, borderRadius: 12, backgroundColor: color.haze, padding: 2 },
   toggleOn: { backgroundColor: color.signal },
-  toggleKnob: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff' },
+  toggleKnob: { width: icon.action, height: icon.action, borderRadius: icon.action / 2, backgroundColor: '#fff' },
   toggleKnobOn: { transform: [{ translateX: 20 }] },
   infoBanner: { flexDirection: 'row', alignItems: 'center', gap: space.sm, backgroundColor: '#FFF0EE', borderRadius: radius.md, padding: space.md },
   infoText: { flex: 1, ...t.small, color: color.signal, fontSize: 12 },

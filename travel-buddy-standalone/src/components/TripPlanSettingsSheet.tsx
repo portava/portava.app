@@ -8,7 +8,7 @@ import {
   fetchTripPlanPermission, updateTripPlanPermission,
   type PlanEditPermission, type TripPlanPermissionResult,
 } from '../services/tripPlan.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 
 interface MemberRow {
   id: string;
@@ -236,7 +236,7 @@ const s = StyleSheet.create({
     backgroundColor: color.paperRaised,
   },
   optionActive: { borderColor: color.deep, backgroundColor: '#EEF4FF' },
-  optionIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#F0F4FF', alignItems: 'center', justifyContent: 'center' },
+  optionIcon: { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, backgroundColor: '#F0F4FF', alignItems: 'center', justifyContent: 'center' },
   optionText: { flex: 1 },
   optionLabel: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   optionLabelActive: { color: color.deep },
@@ -252,7 +252,7 @@ const s = StyleSheet.create({
     backgroundColor: color.paperRaised,
   },
   memberRowActive: { borderColor: color.deep, backgroundColor: '#EEF4FF' },
-  memberAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center' },
+  memberAvatar: { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center' },
   memberAvatarText: { ...t.small, color: '#fff', fontWeight: '700' },
   memberInfo: { flex: 1 },
   memberName: { ...t.bodyStrong, color: color.ink, fontSize: 14 },

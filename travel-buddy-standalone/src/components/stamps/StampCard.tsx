@@ -10,7 +10,7 @@ import { Lock, EyeOff } from 'lucide-react-native';
 import { UniversalStampArtwork } from './UniversalStampArtwork.tsx';
 import type { PassportStamp } from '../../types/models.ts';
 import type { PassportStampNew } from '../../services/passportStamps.ts';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, icon } from '../../theme/tokens.ts';
 import { RARITY_COLORS, normalizeRarity, hasGlowRing } from '../../lib/stampRarity.ts';
 
 const VISIBILITY_LABEL: Record<string, string> = {
@@ -115,9 +115,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -3,
     right: -3,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: icon.md, height: icon.md,
+    borderRadius: icon.md / 2,
     backgroundColor: '#6B7280',
     alignItems: 'center',
     justifyContent: 'center',
@@ -154,9 +153,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: -3,
     right: -3,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: icon.md, height: icon.md,
+    borderRadius: icon.md / 2,
     backgroundColor: '#9CA3AF',
     alignItems: 'center',
     justifyContent: 'center',

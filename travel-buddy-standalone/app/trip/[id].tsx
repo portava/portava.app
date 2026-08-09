@@ -47,7 +47,7 @@ import { updateTrip, createInviteLink, getTripMemberRole, fetchTripPrivatePrevie
 import { PrivateTripCard, type PrivateTripPreview } from '../../src/components/privacy/PrivateTripCard';
 import { getCanonicalPlace } from '../../src/services/places';
 import type { CanonicalPlace } from '../../src/types/canonicalPlace';
-import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { color, space, radius, type as t, avatar } from '../../src/theme/tokens';
 import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
@@ -856,10 +856,10 @@ const styles = StyleSheet.create({
   backText: { ...t.bodyStrong, color: color.signal },
   topBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
   topBtnText: { ...t.small, fontWeight: '700', color: color.ink },
-  topIcon: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
+  topIcon: { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised },
   unreadDot: { position: 'absolute', top: -3, right: -3, width: 7, height: 7, borderRadius: 4, backgroundColor: color.signal },
   layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: space.lg, marginTop: space.lg, backgroundColor: '#E3F2FD', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: '#BBDEFB' },
-  layoverBannerIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#BBDEFB' },
+  layoverBannerIcon: { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#BBDEFB' },
   layoverBannerBody: { flex: 1, gap: 1 },
   layoverBannerTitle: { fontSize: 14, fontWeight: '700', color: '#0D47A1' },
   layoverBannerSub: { fontSize: 12, fontWeight: '400', color: '#1565C0', opacity: 0.85 },

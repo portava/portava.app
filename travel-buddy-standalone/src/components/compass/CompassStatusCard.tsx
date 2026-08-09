@@ -9,7 +9,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { Sparkles, ChevronRight, Star, Shield, Zap, Globe, Award } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import { fetchCompassActiveReward, type CompassActiveReward } from '../../services/compass.ts';
 import { useSession } from '../../context/SessionContext.tsx';
 
@@ -127,9 +127,8 @@ const styles = StyleSheet.create({
     gap: space.sm,
   },
   iconWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: avatar.smMd, height: avatar.smMd,
+    borderRadius: avatar.smMd / 2,
     alignItems: 'center',
     justifyContent: 'center',
   },

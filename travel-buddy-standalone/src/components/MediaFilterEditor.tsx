@@ -29,7 +29,7 @@ import type { StyleProp, ViewStyle } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { X, RotateCcw, PlayCircle, Check } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar } from '../theme/tokens.ts';
 import { mediaFilters, getMediaFilter, resolveFilterStyle } from '../lib/media/filters.ts';
 import { renderFilteredImage } from '../lib/media/renderFilteredImage.ts';
 
@@ -346,7 +346,7 @@ const s = StyleSheet.create({
     paddingHorizontal: space.lg, paddingVertical: 10, gap: space.md,
   },
   headerBtn: {
-    width: 36, height: 36, borderRadius: 18,
+    width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.12)',
   },

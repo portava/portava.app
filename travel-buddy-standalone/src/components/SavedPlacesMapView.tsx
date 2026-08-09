@@ -22,7 +22,7 @@ import type { CameraRef, LngLatBounds } from '@maplibre/maplibre-react-native';
 import { MapPin, Route, X } from 'lucide-react-native';
 import { getPlaceCategoryFallback } from '../utils/placeCategoryFallback.ts';
 import type { BookmarkedPlace } from '../services/discoveryBookmarks.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 import {
   UNCATEGORIZED,
   filterMappable,
@@ -88,9 +88,8 @@ const pin = StyleSheet.create({
   },
   wrapSelected: {
     backgroundColor: color.deep,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: avatar.md, height: avatar.md,
+    borderRadius: avatar.md / 2,
   },
 });
 
@@ -449,9 +448,8 @@ const s = StyleSheet.create({
     paddingHorizontal: space.xxl,
   },
   emptyIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: avatar.xxl, height: avatar.xxl,
+    borderRadius: avatar.xxl / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',
@@ -480,9 +478,8 @@ const s = StyleSheet.create({
     paddingHorizontal: space.xxl,
   },
   noPinsIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: avatar.xl, height: avatar.xl,
+    borderRadius: avatar.xl / 2,
     backgroundColor: color.haze,
     alignItems: 'center',
     justifyContent: 'center',

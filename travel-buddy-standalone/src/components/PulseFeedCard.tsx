@@ -10,7 +10,7 @@ import {
   Sparkles, Info, Plus, ShieldCheck, Clock,
 } from 'lucide-react-native';
 import type { PulseFeedItem } from '../types/models.ts';
-import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, layout, avatar, icon } from '../theme/tokens.ts';
 import { usePlanPicker } from './PlanPickerController.tsx';
 import { RichText } from './RichText.tsx';
 import { CompassFeedbackMenu } from './compass/CompassFeedbackMenu.tsx';
@@ -953,7 +953,7 @@ const s = StyleSheet.create({
   card: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: space.sm, ...shadow.card },
   authorRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   authorNameRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.haze },
+  avatar: { width: avatar.lg, height: avatar.lg, borderRadius: avatar.lg / 2, backgroundColor: color.haze },
   avatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: color.deep },
   avatarFallbackText: { color: color.onInk, fontSize: 16, fontWeight: '700' },
   author: { ...t.bodyStrong, color: color.ink, fontSize: 15 },
@@ -964,7 +964,7 @@ const s = StyleSheet.create({
   media: { height: 150, borderRadius: radius.sm, backgroundColor: color.deep, overflow: 'hidden', justifyContent: 'flex-start', padding: space.sm },
   mediaTag: { alignSelf: 'flex-start', backgroundColor: 'rgba(17,17,15,0.5)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm },
   mediaTagText: { ...t.stamp, color: color.onInk, fontFamily: 'Courier' },
-  gemIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: color.success, alignItems: 'center', justifyContent: 'center' },
+  gemIcon: { width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2, backgroundColor: color.success, alignItems: 'center', justifyContent: 'center' },
 
   caption: { ...t.body, color: color.ink, lineHeight: 22 },
   question: { ...t.heading, color: color.ink, fontSize: 17 },
@@ -1002,7 +1002,7 @@ const s = StyleSheet.create({
 
   circleCard: { backgroundColor: '#F3F0FB', borderColor: '#E0D6F5' },
   circleHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  circleBadge: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#7A4DBF', alignItems: 'center', justifyContent: 'center' },
+  circleBadge: { width: icon.lg, height: icon.lg, borderRadius: icon.lg / 2, backgroundColor: '#7A4DBF', alignItems: 'center', justifyContent: 'center' },
   circleLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: '#7A4DBF', letterSpacing: 1 },
   circleText: { ...t.bodyStrong, color: color.ink },
   circleRow: { flexDirection: 'row', alignItems: 'center' },
@@ -1010,7 +1010,7 @@ const s = StyleSheet.create({
 
   compassCard: { borderColor: color.deep, borderWidth: 1.5 },
   compassHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  compassBadge: { width: 22, height: 22, borderRadius: 11, backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center' },
+  compassBadge: { width: icon.lg, height: icon.lg, borderRadius: icon.lg / 2, backgroundColor: color.deep, alignItems: 'center', justifyContent: 'center' },
   compassLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.deep, letterSpacing: 1 },
   reasonRow: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#E2EDF0', alignSelf: 'flex-start', paddingHorizontal: space.sm, paddingVertical: 3, borderRadius: radius.sm },
   reason: { ...t.small, color: color.deep, fontSize: 11 },

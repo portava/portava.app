@@ -126,8 +126,45 @@ export const spacing = {
   40: 40,
 } as const;
 
-/** Standard image aspect ratios for cards. */
-export const aspect = { wide: 16 / 9, card: 4 / 3, square: 1, portrait: 3 / 4 } as const;
+/**
+ * Standard image aspect ratios (width / height).
+ *
+ * `portrait` is 4/5 — the Facebook/Instagram portrait-post standard, and the
+ * ratio MasonryGrid.tsx actually falls back to for dimensionless media
+ * (`colWidth * 1.25`, i.e. height/width = 5/4). This was 3/4 until 2026-08-09;
+ * nothing in the app ever rendered 3/4, so it was a dead, incorrect default —
+ * fixed here rather than left for whoever reaches for it next.
+ * `story` (9/16) is the vertical ratio StoryComposer's preview renders at.
+ */
+export const aspect = { wide: 16 / 9, card: 4 / 3, square: 1, portrait: 4 / 5, story: 9 / 16 } as const;
+
+/**
+ * Avatar sizing scale.
+ *
+ * Derived from the actual distribution of hardcoded circular avatar sizes
+ * across app/ and src/ (grepped 2026-08-09): 28/32/36/40 each appear 13-16
+ * times as independent, un-migrated values — a scale nobody had to reach for,
+ * so they drifted into four near-identical sizes instead of one. 48 and 56
+ * are the next real, repeated tier (profile-header-sized avatars, 5 uses
+ * each). All six are observed values, not invented ones; nothing below 28 is
+ * included because that range is already served by `icon` (max 26).
+ *
+ * `smMd` (34) and `lgXl` (44) were added 2026-08-09 after a follow-up sweep
+ * of near-miss circular-box literals (see docs/design/sizing-near-misses.md):
+ * 34 appears at 23 independent call sites and 44 at 19, each reproducing the
+ * exact same circular icon-button/avatar shape across unrelated components
+ * (event sheets, passport screens, map pins, stamp pickers, etc) with no
+ * co-occurring 32/36/40 use of the same element in those files — i.e. not a
+ * typo'd/drifted existing token, but two real, deliberately-reused sizes
+ * that just don't line up with the xs/sm/md/lg/xl/xxl steps. Named for their
+ * position in the scale (`smMd` sits between `sm` and `md`, `lgXl` between
+ * `lg` and `xl`) rather than continuing the tier-letter sequence, since they
+ * are not a new tier — they are an infill.
+ *
+ * All existing call sites are migrated as of this pass. See
+ * scripts/check-avatar-icon-sizing.mjs for the guard + shrink-only allowlist.
+ */
+export const avatar = { xs: 28, sm: 32, smMd: 34, md: 36, lg: 40, lgXl: 44, xl: 48, xxl: 56 } as const;
 
 /** Layout constraints. */
 export const layout = {

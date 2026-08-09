@@ -13,7 +13,7 @@ import {
   TravelEmptyState, TravelButton,
 } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
-import { color, space, radius, type as t, shadow } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, shadow, avatar } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyDashboardSummary, BuddyBooking, ChecklistItem } from '../../../src/services/rentABuddy';
 
@@ -406,7 +406,7 @@ const stat = StyleSheet.create({
     alignItems: 'center', gap: 3,
     borderWidth: 1, borderColor: color.haze, ...shadow.card,
   },
-  iconWrap: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
+  iconWrap: { width: avatar.md, height: avatar.md, borderRadius: avatar.md / 2, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
   value: { ...t.heading, color: color.ink, fontSize: 20 },
   label: { fontFamily: 'Courier', fontSize: 9, color: color.mute, letterSpacing: 1, textAlign: 'center' },
   sub: { ...t.small, color: color.haze, textAlign: 'center', fontSize: 11 },

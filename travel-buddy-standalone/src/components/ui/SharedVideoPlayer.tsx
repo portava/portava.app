@@ -31,7 +31,7 @@ import {
 } from 'react-native';
 import { Video, type AVPlaybackStatus } from 'expo-av';
 import { Play, Volume2, VolumeX } from 'lucide-react-native';
-import { color, radius } from '../../theme/tokens.ts';
+import { color, radius, avatar } from '../../theme/tokens.ts';
 import { useSmartVideoFit } from '../../hooks/useSmartVideoFit.ts';
 import { VideoBlurBackdrop } from './VideoBlurBackdrop.tsx';
 import { useHydratedMedia } from '../../services/mediaUrl.ts';
@@ -210,9 +210,8 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   playBtn: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: avatar.xxl, height: avatar.xxl,
+    borderRadius: avatar.xxl / 2,
     backgroundColor: 'rgba(17,17,15,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -221,9 +220,8 @@ const s = StyleSheet.create({
     position: 'absolute',
     bottom: 10,
     right: 10,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: avatar.sm, height: avatar.sm,
+    borderRadius: avatar.sm / 2,
     backgroundColor: 'rgba(17,17,15,0.55)',
     alignItems: 'center',
     justifyContent: 'center',

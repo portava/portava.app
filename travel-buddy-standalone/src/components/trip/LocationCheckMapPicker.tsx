@@ -15,7 +15,7 @@ const { Map, Camera, Marker } = _ml as typeof import('@maplibre/maplibre-react-n
 import type { CameraRef } from '@maplibre/maplibre-react-native';
 import { MapPin, Check, X } from 'lucide-react-native';
 import type { BookmarkedPlace } from '../../services/discoveryBookmarks.ts';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import { MAP_STYLE_URL as MAP_STYLE } from '../../constants/mapStyle.ts';
 import { filterMappable, computeBounds } from '../savedPlacesMapHelpers.ts';
 
@@ -43,9 +43,8 @@ function Pin({ selected, onPress }: { selected: boolean; onPress: () => void }) 
 
 const pin = StyleSheet.create({
   wrap: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: avatar.xs, height: avatar.xs,
+    borderRadius: avatar.xs / 2,
     backgroundColor: color.signal,
     alignItems: 'center',
     justifyContent: 'center',
@@ -57,9 +56,8 @@ const pin = StyleSheet.create({
   },
   wrapSelected: {
     backgroundColor: color.deep,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: avatar.smMd, height: avatar.smMd,
+    borderRadius: avatar.smMd / 2,
   },
 });
 

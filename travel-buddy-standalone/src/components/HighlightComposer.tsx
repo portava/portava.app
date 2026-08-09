@@ -16,7 +16,7 @@ import { X, Video as VideoIcon, MapPin } from 'lucide-react-native';
 import { useMediaComposer } from '../hooks/useMediaComposer.ts';
 import { MediaPickerButton } from './ui/MediaPickerButton.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, avatar } from '../theme/tokens.ts';
 import { uploadMedia, validateMedia } from '../services/media.ts';
 import { createHighlight, type HighlightVisibility } from '../services/highlights.ts';
 import { useSession } from '../context/SessionContext.tsx';
@@ -412,7 +412,7 @@ const s = StyleSheet.create({
   grab: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: color.haze, marginTop: 10, marginBottom: 4 },
   head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.lg, paddingVertical: 10 },
   headTitle: { ...t.heading, color: color.ink, flex: 1 },
-  closeBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
+  closeBtn: { width: avatar.sm, height: avatar.sm, borderRadius: avatar.sm / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
   scroll: { paddingHorizontal: space.lg, paddingBottom: space.lg, gap: space.md },
   field: { gap: 6 },
   fieldLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.mute, letterSpacing: 0.8, textTransform: 'uppercase' },
@@ -423,7 +423,7 @@ const s = StyleSheet.create({
   mediaPreviewWrap: { position: 'relative' },
   mediaPreview: { width: '100%', height: 220, borderRadius: radius.md, backgroundColor: color.haze },
   videoPlayOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md },
-  mediaRemove: { position: 'absolute', top: 8, right: 8, width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(17,17,15,0.6)', alignItems: 'center', justifyContent: 'center' },
+  mediaRemove: { position: 'absolute', top: 8, right: 8, width: avatar.xs, height: avatar.xs, borderRadius: avatar.xs / 2, backgroundColor: 'rgba(17,17,15,0.6)', alignItems: 'center', justifyContent: 'center' },
   durationBadge: { position: 'absolute', bottom: 8, left: 8, backgroundColor: 'rgba(17,17,15,0.6)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm },
   durationText: { fontFamily: 'Courier', fontSize: 11, color: '#fff', fontWeight: '700' },
   input: { ...t.body, color: color.ink, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: 10 },

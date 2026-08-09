@@ -30,6 +30,7 @@ export interface GemMapPreviewProps {
 
 import { MAP_STYLE_URL } from '../../constants/mapStyle.ts';
 import { openInMaps } from '../../lib/openInMaps.ts';
+import { avatar } from '../../theme/tokens.ts';
 const MAP_STYLE = MAP_STYLE_URL;
 
 export function GemMapPreview({ lat, lng, coordsPrecision, locationLabel }: GemMapPreviewProps) {
@@ -131,9 +132,8 @@ const s = StyleSheet.create({
     gap: 8,
   },
   iconCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: avatar.xl, height: avatar.xl,
+    borderRadius: avatar.xl / 2,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 4,

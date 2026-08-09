@@ -40,7 +40,7 @@ import { getUserReviews, type Review } from '../../src/services/reviews';
 import { getPublicShowcase, type ShowcaseStamp } from '../../src/services/stampShowcase';
 import { getBuddyProfileByUserId, type BuddyProfile } from '../../src/services/rentABuddy';
 import type { PublicProfile } from '../../src/types/models';
-import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { color, space, radius, type as t, icon } from '../../src/theme/tokens';
 import { PROFILE_NOT_FOUND_TITLE, PROFILE_NOT_FOUND_SUB } from '../../src/constants/profileScreenCopy';
 import { resolveDisplayName, formatHandle, truncateDisplayName } from '../../src/utils/identity';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
@@ -1413,7 +1413,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: space.md,
     paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: color.haze,
   },
-  reasonRadio: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: color.haze },
+  reasonRadio: { width: icon.action, height: icon.action, borderRadius: icon.action / 2, borderWidth: 2, borderColor: color.haze },
   reasonRadioSelected: { borderColor: color.signal, backgroundColor: color.signal },
   reasonLabel: { ...t.body, color: color.ink, fontSize: 14, flex: 1 },
   reportDoneWrap: { alignItems: 'center', gap: space.md, paddingVertical: space.xl },

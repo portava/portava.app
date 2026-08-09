@@ -16,7 +16,7 @@ import {
 import { DatePickerField } from '../../../src/components/DateTimePickerField';
 import { GlobalCalendarPicker } from '../../../src/components/selectors/GlobalCalendarPicker';
 import { toISODate, fromISODate } from '../../../src/lib/dateTime/formatters';
-import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import { color, space, radius, type as t, icon, avatar } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyBooking } from '../../../src/services/rentABuddy';
 
@@ -538,7 +538,7 @@ const s = StyleSheet.create({
 const rc = StyleSheet.create({
   topRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, marginBottom: space.md },
   avatar: {
-    width: 44, height: 44, borderRadius: 22,
+    width: avatar.lgXl, height: avatar.lgXl, borderRadius: avatar.lgXl / 2,
     backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center',
   },
   avatarText: { ...t.bodyStrong, color: color.mute },
@@ -587,7 +587,7 @@ const modal = StyleSheet.create({
   optionText: { ...t.body, color: color.ink },
   optionActive: { color: color.signal, fontWeight: '600' },
   radio: {
-    width: 20, height: 20, borderRadius: 10, borderWidth: 1.5,
+    width: icon.action, height: icon.action, borderRadius: icon.action / 2, borderWidth: 1.5,
     borderColor: color.haze, alignItems: 'center', justifyContent: 'center',
   },
   radioOn: { borderColor: color.signal },

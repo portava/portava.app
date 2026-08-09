@@ -5,7 +5,7 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { Compass, Plus, Check } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import { fmtDur, REC_EMOJI, safetyColors } from './layoverFormat.ts';
 import type { LayoverRecommendation } from '../../services/layover.ts';
 
@@ -123,6 +123,6 @@ const styles = StyleSheet.create({
   metaStamp: { ...t.stamp, color: color.faint },
   warning:   { ...t.small, color: color.warn, marginTop: 4 },
 
-  addBtn:    { width: 34, height: 34, borderRadius: 17, borderWidth: 1.5, borderColor: color.deep, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
-  addedBadge:{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(46,125,91,0.12)', alignItems: 'center', justifyContent: 'center', marginTop: 4 },
+  addBtn:    { width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2, borderWidth: 1.5, borderColor: color.deep, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
+  addedBadge:{ width: avatar.smMd, height: avatar.smMd, borderRadius: avatar.smMd / 2, backgroundColor: 'rgba(46,125,91,0.12)', alignItems: 'center', justifyContent: 'center', marginTop: 4 },
 });
