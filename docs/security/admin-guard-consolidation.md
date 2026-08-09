@@ -129,22 +129,35 @@ than inherited debt.
 2. Convert route files in batches, **starting with the ~~25~~ 21 plain
    `requireAdmin` cases**, which are mechanical. *(Four of the presumed 25 were
    not plain — see the corrected Finding 3.)*
-3. Convert the two divergent ones **individually and deliberately**:
-   `rentABuddyRollout.ts` with `{ roles: ["admin","owner"] }`, `hiddenGems.ts`
-   with `isAdmin`. Do not batch these.
+3. Convert the ~~two~~ **one** divergent one **individually and deliberately**:
+   `hiddenGems.ts` with `isAdmin`. Do not batch. *(`rentABuddyRollout.ts` was
+   listed here with `{ roles: ["admin","owner"] }`; it belongs at step 5 —
+   the role set was never its only divergence.)*
 4. ~~`admin.ts`~~ **`admin.ts` and `adminPlaceImages.ts`** with
    `{ withDisplayName: true }`.
-5. Reconcile the five semantics-sensitive routes individually (corrected
-   Finding 3). Each is a decision, not a conversion.
+5. Reconcile the ~~five~~ **six** semantics-sensitive routes individually
+   (corrected Finding 3, plus `rentABuddyRollout.ts`). Each is a decision, not
+   a conversion.
 6. Land `checkAdminGuard.ts` and wire it into `run-all-checks.sh` **last** —
    it fails while any local guard remains, so it is the proof the sweep finished,
    not a step along the way.
 
-**Status 2026-08-09 — 23 of 30 converted, 7 held back.** Steps 1, 2 and 4 are
-done (batches `5b2a346fc`, `0f33ad144`, `dd2368883`). Held back: the two
-carve-outs at step 3, and the five at step 5. Step 6 is **not** done and must
-not be until those seven are resolved — `check:admin-guard` exits 1 while any
-local guard remains, which is exactly what it is for.
+**Status 2026-08-09 — 24 of 30 converted, 6 held back.** Steps 1, 2 and 4 are
+done (batches `5b2a346fc`, `0f33ad144`, `dd2368883`). Of step 3's two
+carve-outs, `hiddenGems.ts` is converted to the `isAdmin` predicate
+(`d74e730a1`); `rentABuddyRollout.ts` is **not**.
+
+`rentABuddyRollout.ts` was converted with `{ roles: ["admin","owner"] }` and
+then **reverted** (`b42787bbc`). The `roles` option handles the role set
+correctly, but this plan's step 3 framed the route as a role-set problem only,
+and that framing hid two further divergences: the guard reads `profiles`
+through the service client, and a call site branches on the returned `role` to
+gate QA-override — a second authorisation decision. It moves to the step 5 set.
+See §1e of `admin-authz-audit.md`.
+
+Step 6 is **not** done and must not be until those six are resolved —
+`check:admin-guard` exits 1 while any local guard remains, which is exactly
+what it is for.
 
 One thing the sweep added that this plan did not anticipate: hoisting the
 `profiles` query into `lib/` silently removed it from schema-drift coverage,

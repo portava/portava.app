@@ -109,21 +109,57 @@ for, and neither is a mechanical conversion.
 
 This audit sorted the 30 guards by **selected columns, role comparison, and
 status code**, and called everything that matched on those three "plain". The
-sweep found that classification too narrow. Five guards match on all three and
+sweep found that classification too narrow. Six guards match on all three and
 still are not drop-in replaceable, because a guard's semantics also include:
 
 | Dimension | Why it matters | Divergent |
 |---|---|---|
-| **Client source** | Reading `profiles` through the service client bypasses RLS; through the caller's client it does not. Same query, different trust model. | `circle.ts`, `placesCanonical.ts`, `rentABuddySpec.ts` |
+| **Client source** | Reading `profiles` through the service client bypasses RLS; through the caller's client it does not. Same query, different trust model. | `circle.ts`, `placesCanonical.ts`, `rentABuddySpec.ts`, `rentABuddyRollout.ts` |
 | **Configuration-failure behaviour** | A guard that *requires* the service client returns 503 `server_not_configured` when it is absent. The shared guard falls back to the user client and proceeds — a change in the permissive direction. | `circle.ts`, `placesCanonical.ts` |
 | **Error envelope** | `sendError()` vs a hand-written `res.status(403).json(...)`; a body with no `message` field; a message differing by one character. Clients may match on these. | `circle.ts` (message), `rentABuddySpec.ts` (no `message`), `rentABuddyMarketplace.ts` (trailing period) |
 | **Returned identity** | Returning the raw `requireUser` result, or the full `user` object rather than `userId`, is a call-site contract. | `compassGraph.ts`, `circle.ts` |
+| **Returned role as a second gate** | A call site that branches on the returned `role` is making a *second* authorisation decision the guard does not make. Converting the guard silently moves that decision's input. | `rentABuddyRollout.ts` |
 
-So the count that matters is not "30 guards, 2 exceptions" but **23 converted,
-7 held back**: the 2 documented carve-outs plus these 5. The five are *not*
-security findings — every one still fails closed. They are cases where
-converting would have changed behaviour silently, which on an authorisation
-sweep is the outcome to avoid even when the change looks harmless.
+So the count that matters is not "30 guards, 2 exceptions" but **24 converted,
+6 held back**: 1 carve-out (`hiddenGems.ts`, converted to `isAdmin`) plus these
+6. None is a security finding — every one still fails closed. They are cases
+where converting would have changed behaviour silently, which on an
+authorisation sweep is the outcome to avoid even when the change looks harmless.
+
+#### Why `rentABuddyRollout.ts` was missed by this very correction
+
+It was added on 2026-08-09, *after* §1e was first written, and the miss is
+instructive rather than incidental.
+
+§1d had already classified this route under **"needs the `owner` decision"**.
+Once a route carries a label, the label becomes the thing you check. The
+`roles` option answered the labelled question completely and correctly — and
+because it did, nobody re-ran the other five dimensions against it. §1e was
+written in the same session and still did not list it, because §1e was derived
+from the routes that had *no* label, not from all thirty.
+
+Two axes diverge here, not one:
+
+- **Client source.** The local guard reads through `getServiceClient() ??
+  auth.client`; the shared guard reads through the caller's client. In practice
+  the row is the caller's own and RLS almost certainly permits both — but §1e's
+  own rule is that plausibility is not evidence on an authorisation path.
+- **Returned role as a second gate.** Line ~626 branches on
+  `admin.role !== "owner"` to gate QA-override, a *distinct* authorisation
+  decision layered on top of the guard's admin-or-owner check. The shared guard
+  does return `role`, so this survives mechanically — but it means the
+  conversion moves the input to two authorisation decisions, not one.
+
+A conversion was made and reverted (`b42787bbc`, reverted). Its commit message
+asserts "no call site reads the returned `role`". **That claim is false** — it
+came from a grep whose own exclusion filter removed the matching line. The
+mistake is recorded here because the revert alone does not correct the log, and
+because the failure mode is worth naming: *a search that can exclude the
+evidence it is looking for is not a verification.*
+
+**Rule added:** a label from an earlier pass is a hypothesis, not a
+classification. Re-run every dimension against every route, including the ones
+already explained.
 
 **Rule for the next sweep:** a guard is drop-in replaceable only when the
 client source, RLS behaviour, configuration-failure behaviour, error envelope,
@@ -250,13 +286,19 @@ acted on.**
    conversion.
 4. Consolidation onto the §1d canonical is otherwise ready to proceed and is
    **not blocked** by 1–3; those three are carve-outs.
-5. **Five further routes need their own reconciliation** (§1e) —
+5. **Six further routes need their own reconciliation** (§1e) —
    `circle.ts`, `placesCanonical.ts`, `rentABuddySpec.ts`,
-   `rentABuddyMarketplace.ts`, `compassGraph.ts`. Not security findings; all
-   fail closed. Each diverges on client source, configuration-failure
-   behaviour, or error envelope, so each needs a decision rather than a
-   conversion. Status as of 2026-08-09: **23 converted, 7 held back** (these
-   five plus the two carve-outs).
+   `rentABuddyMarketplace.ts`, `compassGraph.ts`, and `rentABuddyRollout.ts`.
+   Not security findings; all fail closed. Each diverges on client source,
+   configuration-failure behaviour, error envelope, or a returned field used as
+   a second gate — so each needs a decision rather than a conversion.
+
+   `rentABuddyRollout.ts` additionally still needs the `owner` decision at
+   item 2 above. The `roles` option answers that question, but answering it is
+   not sufficient to convert the route: see §1e for why the label masked the
+   other dimensions.
+
+   Status as of 2026-08-09: **24 converted, 6 held back**.
 
 ## 4. Verification note
 

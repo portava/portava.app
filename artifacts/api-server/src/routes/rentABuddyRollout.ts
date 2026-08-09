@@ -17,8 +17,6 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 
-import { requireAdmin } from "../lib/requireAdmin.js";
-
 const router = Router();
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -113,18 +111,29 @@ async function getFlag(sc: any, flag: string): Promise<boolean> {
 }
 
 // ── Admin guard ────────────────────────────────────────────────────────────────
-//
-// This route is the ONE that accepts `owner` as well as `admin`; the other 29
-// require exactly `admin`. The wider set is passed explicitly at every call
-// site via `{ roles: ADMIN_OR_OWNER }` rather than being the shared guard's
-// default — folding it into the default would grant `owner` admin rights
-// across every other route group, and dropping it would revoke `owner` access
-// to a feature that works today.
-//
-// Keep this list here, next to the routes it applies to, so a reader sees the
-// widening at the point of use instead of inferring it from the shared guard.
 
-const ADMIN_OR_OWNER = ["admin", "owner"] as const;
+async function requireAdmin(
+  req: any,
+  res: any,
+): Promise<{ userId: string; sc: any; role: string } | null> {
+  const auth = await requireUser(req, res);
+  if (!auth) return null;
+  const { user } = auth;
+  const serviceClient = getServiceClient() ?? auth.client;
+
+  const { data } = await serviceClient
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const role = (data as any)?.role ?? "";
+  if (!data || (role !== "admin" && role !== "owner")) {
+    res.status(403).json({ error: "forbidden", message: "Admin role required" });
+    return null;
+  }
+  return { userId: user.id, sc: serviceClient, role };
+}
 
 // ── checkRentBuddyAccess — exported for use by rentABuddy routes ───────────────
 
@@ -485,7 +494,7 @@ function nextStatus(current: CityRolloutStatus): CityRolloutStatus | null {
 
 // GET /api/admin/rent-buddy/rollout/cities
 router.get("/admin/rent-buddy/rollout/cities", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const { data, error } = await admin.sc
@@ -499,7 +508,7 @@ router.get("/admin/rent-buddy/rollout/cities", asyncHandler(async (req, res) => 
 
 // POST /api/admin/rent-buddy/rollout/cities
 router.post("/admin/rent-buddy/rollout/cities", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const { city, country, targetLaunchDate, buddyCap, notes } = req.body ?? {};
@@ -540,7 +549,7 @@ router.post("/admin/rent-buddy/rollout/cities", asyncHandler(async (req, res) =>
 
 // GET /api/admin/rent-buddy/rollout/cities/:id
 router.get("/admin/rent-buddy/rollout/cities/:id", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const { data, error } = await admin.sc
@@ -556,7 +565,7 @@ router.get("/admin/rent-buddy/rollout/cities/:id", asyncHandler(async (req, res)
 
 // PATCH /api/admin/rent-buddy/rollout/cities/:id
 router.patch("/admin/rent-buddy/rollout/cities/:id", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const { targetLaunchDate, buddyCap, notes, country } = req.body ?? {};
@@ -585,7 +594,7 @@ router.patch("/admin/rent-buddy/rollout/cities/:id", asyncHandler(async (req, re
 
 // POST /api/admin/rent-buddy/rollout/cities/:id/advance-status
 router.post("/admin/rent-buddy/rollout/cities/:id/advance-status", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const { overrideReason } = req.body ?? {};
@@ -661,7 +670,7 @@ router.post("/admin/rent-buddy/rollout/cities/:id/advance-status", asyncHandler(
 
 // POST /api/admin/rent-buddy/rollout/cities/:id/pause
 router.post("/admin/rent-buddy/rollout/cities/:id/pause", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const { reason } = req.body ?? {};
@@ -695,7 +704,7 @@ router.post("/admin/rent-buddy/rollout/cities/:id/pause", asyncHandler(async (re
 
 // POST /api/admin/rent-buddy/rollout/cities/:id/resume
 router.post("/admin/rent-buddy/rollout/cities/:id/resume", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const { resumeStatus } = req.body ?? {};
@@ -733,7 +742,7 @@ router.post("/admin/rent-buddy/rollout/cities/:id/resume", asyncHandler(async (r
 
 // GET /api/admin/rent-buddy/rollout/cities/:id/metrics
 router.get("/admin/rent-buddy/rollout/cities/:id/metrics", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const { data: rollout } = await admin.sc
@@ -848,7 +857,7 @@ router.get("/admin/rent-buddy/rollout/cities/:id/metrics", asyncHandler(async (r
 
 // GET /api/admin/rent-buddy/beta-access
 router.get("/admin/rent-buddy/beta-access", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const { city, status } = req.query as Record<string, string>;
@@ -868,7 +877,7 @@ router.get("/admin/rent-buddy/beta-access", asyncHandler(async (req, res) => {
 
 // POST /api/admin/rent-buddy/beta-access
 router.post("/admin/rent-buddy/beta-access", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const { userId, city, accessType = "invited", notes } = req.body ?? {};
@@ -905,7 +914,7 @@ router.post("/admin/rent-buddy/beta-access", asyncHandler(async (req, res) => {
 
 // PATCH /api/admin/rent-buddy/beta-access/:id
 router.patch("/admin/rent-buddy/beta-access/:id", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const { accessType, notes } = req.body ?? {};
@@ -924,7 +933,7 @@ router.patch("/admin/rent-buddy/beta-access/:id", asyncHandler(async (req, res) 
 
 // POST /api/admin/rent-buddy/beta-access/:id/revoke
 router.post("/admin/rent-buddy/beta-access/:id/revoke", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const now = new Date().toISOString();
@@ -956,7 +965,7 @@ router.post("/admin/rent-buddy/beta-access/:id/revoke", asyncHandler(async (req,
 
 // GET /api/admin/rent-buddy/qa/checklists
 router.get("/admin/rent-buddy/qa/checklists", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const { cityRolloutId } = req.query as Record<string, string>;
@@ -970,7 +979,7 @@ router.get("/admin/rent-buddy/qa/checklists", asyncHandler(async (req, res) => {
 
 // POST /api/admin/rent-buddy/qa/checklists
 router.post("/admin/rent-buddy/qa/checklists", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const { cityRolloutId, notes } = req.body ?? {};
@@ -991,7 +1000,7 @@ router.post("/admin/rent-buddy/qa/checklists", asyncHandler(async (req, res) => 
 
 // PATCH /api/admin/rent-buddy/qa/checklists/:id
 router.patch("/admin/rent-buddy/qa/checklists/:id", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const allowed = [
@@ -1016,7 +1025,7 @@ router.patch("/admin/rent-buddy/qa/checklists/:id", asyncHandler(async (req, res
 
 // POST /api/admin/rent-buddy/qa/checklists/:id/mark-passed
 router.post("/admin/rent-buddy/qa/checklists/:id/mark-passed", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const now = new Date().toISOString();
@@ -1047,7 +1056,7 @@ router.post("/admin/rent-buddy/qa/checklists/:id/mark-passed", asyncHandler(asyn
 
 // POST /api/admin/rent-buddy/qa/checklists/:id/mark-failed
 router.post("/admin/rent-buddy/qa/checklists/:id/mark-failed", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const { reason } = req.body ?? {};
@@ -1082,7 +1091,7 @@ router.post("/admin/rent-buddy/qa/checklists/:id/mark-failed", asyncHandler(asyn
 
 // GET /api/admin/rent-buddy/global-controls
 router.get("/admin/rent-buddy/global-controls", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const controls = await getGlobalControls(admin.sc);
@@ -1091,7 +1100,7 @@ router.get("/admin/rent-buddy/global-controls", asyncHandler(async (req, res) =>
 
 // PATCH /api/admin/rent-buddy/global-controls
 router.patch("/admin/rent-buddy/global-controls", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const allowed = [
@@ -1129,7 +1138,7 @@ router.patch("/admin/rent-buddy/global-controls", asyncHandler(async (req, res) 
 
 // GET /api/admin/rent-buddy/audit-log
 router.get("/admin/rent-buddy/audit-log", asyncHandler(async (req, res) => {
-  const admin = await requireAdmin(req, res, { roles: ADMIN_OR_OWNER });
+  const admin = await requireAdmin(req, res);
   if (!admin) return;
 
   const { cityRolloutId, adminId, action, page = "1", perPage = "50" } = req.query as Record<string, string>;
