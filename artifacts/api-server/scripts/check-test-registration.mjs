@@ -88,7 +88,47 @@ if (failed) {
   process.exit(1);
 }
 
+// ── Summary ───────────────────────────────────────────────────────────────────
+//
+// The previous summary read:
+//
+//   all N test files are either registered (R in package.json) or explicitly
+//   allowlisted (A)
+//
+// which was arithmetically impossible: "either/or" implies R + A === N, but the
+// two sets OVERLAP — a file can be both registered and allowlisted, in which
+// case it RUNS and the allowlist entry is inert. With 392/302/129 the line
+// invited the reading 129-are-excluded when the true figure was 90, and that
+// wrong number was quoted downstream.
+//
+// Allowlisting does not prevent execution. It only suppresses this check.
+//
+// So the numbers below are derived from the files on disk and split by the one
+// question that matters — does it run? — which makes them a real partition:
+//
+//   registeredOnDisk + excluded === found      (true by construction)
+//
+// `redundant` is reported separately and deliberately NOT added to anything: it
+// is a subset of registeredOnDisk, not a third bucket.
+
+const registeredOnDisk = found.filter((f) => registered.has(f));
+const excluded = found.filter((f) => !registered.has(f));
+const redundant = allowlist.filter((f) => registered.has(f));
+// Registered paths with no file on disk — a typo'd entry that runs nothing.
+const ghosts = [...registered].filter((f) => !found.includes(f));
+
 console.log(
-  `✅ check-test-registration: all ${found.length} test files are either registered ` +
-    `(${registered.size} in package.json) or explicitly allowlisted (${allowlist.length}).`,
+  `✅ check-test-registration: ${found.length} test file(s) on disk under src/\n` +
+    `     ${registeredOnDisk.length} registered  → RUN under \`npm test\`\n` +
+    `     ${excluded.length} not registered → NEVER RUN (allowlisted)\n` +
+    `     ${registeredOnDisk.length} + ${excluded.length} = ${found.length}\n` +
+    `   allowlist has ${allowlist.length} entr(y/ies): ${excluded.length} actually exclude, ` +
+    `${redundant.length} are redundant (also registered, so they run).`,
 );
+
+if (ghosts.length > 0) {
+  console.warn(
+    `\n⚠️  ${ghosts.length} registered path(s) do not exist on disk — they run nothing:\n` +
+      ghosts.map((f) => `   - ${f}`).join("\n"),
+  );
+}

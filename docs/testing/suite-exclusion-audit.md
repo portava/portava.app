@@ -2,6 +2,19 @@
 
 **Date:** 2026-08-09 · **Scope:** `artifacts/api-server` only · **Status:** report only, nothing re-enabled.
 
+> **UPDATE 2026-08-09 — the `broken` suite is fixed and registered.**
+> `reports.test.ts` now mounts `routes/admin.js`, and its four
+> `GET /admin/reports` assertions execute for the first time. **All four
+> pass** — admin authorisation on that route was never broken; the 404 was
+> purely the harness. Verified by mutation (disabling the shared guard fails
+> 5a and 5b), so they are not passing vacuously.
+>
+> It is registered in the `test` script and removed from the allowlist, so it
+> did not become a 40th redundant entry. Curated run **6138 → 6165 tests**,
+> **1551 → 1557 suites**. Remaining excluded: **90 → 89**; allowlist
+> **129 → 128** (still 39 redundant). The guard's summary line is also fixed
+> (§1). Every other number below reflects the pre-fix state.
+
 ## Summary
 
 | | |
