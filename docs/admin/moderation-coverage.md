@@ -678,6 +678,121 @@ run must not read as one that passed.
 
 ---
 
+## Seed-post deletion and the 7 real-user rows — 2026-08-09
+
+### What was deleted
+
+A prior session deleted 100 seeded posts and accepted the FK cascade. **The
+owner has since confirmed the seed-post deletion was authorised**, so the posts
+themselves need no recovery and are not an open item.
+
+The cascade also removed 7 rows owned by a **real signed-in user**
+(`highrollsmoke@gmail.com`, `user_id 5f123260-976f-49f3-a102-52346b4fc0af`),
+which were outside the intended scope:
+
+| Table            | Rows | FK to `posts`      |
+| ---------------- | ---- | ------------------ |
+| `posts_comments` | 3    | `ON DELETE CASCADE` |
+| `post_reactions` | 2    | `ON DELETE CASCADE` |
+| `post_saves`     | 2    | `ON DELETE CASCADE` |
+| **Total**        | **7** |                   |
+
+A further **4 `content_stamps`** rows for the same user were also captured in
+the backup. `content_stamps` has **no FK** to `posts` (it uses a polymorphic
+`entity_type`/`entity_id` pair), so those 4 rows did **not** cascade and are
+presumed still live — but they now point at `entity_id`s that no longer exist,
+making them dangling rather than deleted.
+
+### Backups — located and preserved
+
+The prior session's backups **do still exist**. They were written to its
+scratchpad under `/tmp/claude-1000/`, which survived the workspace reload.
+Because `/tmp` is ephemeral, they have been copied to a durable location in the
+working tree and verified by `sha256sum` against the originals:
+
+```
+recovery-backups/2026-08-09-seed-post-cascade/
+  backup_engagement.json    e51e232e…  the 7 rows + 4 content_stamps
+  backup_posts.json         e4c386ab…  100 rows
+  backup_post_media.json    713ba3b4…  100 rows
+  baseline.sql              the prior session's pre-delete count query
+```
+
+`recovery-backups/` is **gitignored** (`.gitignore:69`) — these files contain
+real user content (comment bodies, user ids) and must not be committed.
+
+> **Do not stage these under a dot-directory.** The first copy was written to
+> `.recovery/` and had vanished from the working tree within ~20 minutes, while
+> the `/tmp` originals survived — something in this workspace's sync/cleanup
+> path prunes dot-directories. The visible `recovery-backups/` path was used
+> instead. If these files are ever re-staged, avoid a leading dot and re-verify
+> the copy still exists some minutes later.
+
+The `/tmp` originals are still present as a second copy, but `/tmp` is
+ephemeral and must not be treated as the surviving one.
+
+### Are the 7 rows complete, or just ids?
+
+**Complete rows, not ids.** Every one of the 7 carries a full column set, and
+every column each table's migration declares `NOT NULL` is present and
+populated. Checked against:
+
+- `posts_comments` — `0024_post_engagement.sql:24`
+- `post_reactions` — `0066_post_interaction_layer.sql:6`
+- `post_saves` — `0097_post_saves.sql:12`
+
+`post_reactions` matches its migration exactly (5 columns). The other two carry
+**more** columns than the migration files define:
+
+| Backup column                 | Provenance                                    |
+| ----------------------------- | --------------------------------------------- |
+| `posts_comments.parent_comment_id` | `0066_post_interaction_layer.sql:53` — accounted for |
+| `posts_comments.original_language` | `20260810_content_translations.sql:39` — accounted for |
+| `posts_comments.updated_at`   | **no migration defines it**                    |
+| `post_saves.id`               | **no migration defines it** — `0097` gives `post_saves` a composite PK `(user_id, post_id)` and no `id` column at all |
+
+So the backup is a superset of the migration-defined schema, consistent with it
+having been captured as `select *` against live. That is a **second instance of
+the pattern already recorded in finding 16**: live schema has drifted from the
+migration files. It does not threaten the data — nothing is missing — but it
+means a restore must be written against the *live* column set, not against these
+migration files, or it will fail on columns that do not exist.
+
+### Restore — PENDING A DECISION, NOT DONE
+
+**Nothing has been restored and nothing has been deleted.** The owner is
+deciding. This section records the state only.
+
+The decision is not a simple "put them back", for one reason:
+
+> **All 7 rows reference posts that no longer exist.** Their parent `post_id`s
+> resolve to 5 distinct posts, and all 5 are inside `backup_posts.json` — i.e.
+> all 5 were seed posts, whose deletion was authorised.
+
+Consequently:
+
+- Restoring the 7 rows **as-is is not possible** while the parents are gone. All
+  three tables declare `post_id … REFERENCES posts(id)`, so the inserts would be
+  rejected by the FK constraint.
+- Restoring them **would require first re-creating 5 of the 100 seed posts** —
+  re-introducing the seeded data the owner just authorised removing.
+- The rows' standalone value is low: they are a comment `"hola"`, two QA-test
+  comments (`"QA test - Watch feed comment"`, `"QA test reply comment"`), two
+  emoji reactions, and two saves — **all of them interactions with seed content,
+  and two of the three comments are self-described QA tests.**
+
+The honest read is that these 7 are **legitimately orphaned, not lost value**.
+They were a real user's interactions, but exclusively with fixture posts that no
+longer exist; restoring them recreates dangling references to deleted content,
+or forces partial un-deletion of the seed set. The same argument applies to the
+4 surviving `content_stamps`, which are already dangling and may warrant
+cleanup rather than preservation.
+
+That said — the rows are a real user's data, they are safely preserved, and the
+call is the owner's. The backup makes either choice reversible.
+
+---
+
 ## Verification note
 
 - Every file:line was opened and read; nothing is inferred from a grep hit alone.
@@ -695,3 +810,17 @@ run must not read as one that passed.
   migration. No migration alters it, but per this repo's own history
   (finding 16), live constraints have differed from migration files before.
 - Estimates are build-only: no design, review, or QA time included.
+- **Not verified against live:** the seed-post deletion accounting above was
+  reconstructed from the prior session's backup files and the migration
+  definitions — **no query was run against the live database** in the session
+  that wrote it. The per-table counts (3 comments / 2 reactions / 2 saves, 100
+  posts, 100 post_media) are what the backups *contain*, which is strong
+  evidence of what was deleted but is not the same as confirming what is
+  presently absent from live. The claim that the 4 `content_stamps` rows
+  survived is an inference from `content_stamps` having no FK to `posts`, not an
+  observation. Confirming both needs a read-only live count.
+- The `post_saves.id` and `posts_comments.updated_at` drift was established by
+  searching every `.sql` tree in the repo (`migrations/`,
+  `artifacts/api-server/src/migrations/`, `artifacts/api-server/supabase/`)
+  for `CREATE TABLE` and `ADD COLUMN` on those tables; absence of a defining
+  migration is a repo-wide search result, not a spot check.

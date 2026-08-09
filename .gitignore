@@ -63,3 +63,7 @@ app.json.bak
 *.zip
 screenshots/
 attached_assets/
+
+# Recovery snapshots — contain real user data, never commit
+.recovery/
+recovery-backups/

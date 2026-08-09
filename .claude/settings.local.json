@@ -5,7 +5,8 @@
       "Bash(git check-ignore *)",
       "Bash(env)",
       "Read(//home/runner/workspace/travel-buddy-standalone/assets/images/**)",
-      "Read(//home/runner/workspace/travel-buddy-standalone/**)"
+      "Read(//home/runner/workspace/travel-buddy-standalone/**)",
+      "Bash(grep -n \"^# \\\\|^## \\\\|^---$\" docs/admin/moderation-coverage.md)"
     ]
   }
 }
