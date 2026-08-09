@@ -9,7 +9,12 @@
  * GET  /api/admin/media/wrong-place          — wrong-place reports for Gems
  * GET  /api/admin/media/gems-pending         — Gems submissions awaiting review
  * GET  /api/admin/media/ai-provenance        — items labelled illustrative/AI-generated
- * POST /api/admin/media/:id/moderate         — approve | reject | flag with action + reason
+ * POST /api/admin/media/:id/moderate         — approve | reject | flag | delete
+ *
+ * `reject` HIDES (status flip, reversible, leaves Storage untouched).
+ * `delete` DESTROYS (removes the Storage object and its thumbnail, then the
+ * row) and is available for target='post_media' only. They are separate verbs
+ * on purpose — see the note above moderateSchema.
  *
  * Schema notes (live DB):
  *   reports: target_type, target_id, reason_code, reason_detail, moderation_notes,
@@ -25,6 +30,7 @@ import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { sendError } from "../lib/http.js";
 import { requireAdmin } from "../lib/requireAdmin.js";
+import { resolveStoragePath } from "../lib/storagePath.js";
 
 const router = Router();
 
@@ -213,8 +219,24 @@ router.get("/admin/media/ai-provenance", asyncHandler(async (req, res) => {
 
 // ── POST /admin/media/:id/moderate ────────────────────────────────────────────
 
+/**
+ * `delete` is a SEPARATE action from `reject`, deliberately.
+ *
+ * `reject` remains what it was: a status flip to `moderation_status='rejected'`
+ * that hides the media and can be undone by approving again. It does NOT touch
+ * Storage. Overloading it to also destroy the object would make every
+ * mis-click permanently unrecoverable, and this codebase has nothing to
+ * recover with — moderation_actions records a target USER, never which object
+ * was removed or where it lived (see docs/admin/moderation-coverage.md §F), so
+ * a wrongly deleted file could not even be identified afterwards, let alone
+ * restored.
+ *
+ * `delete` is the irreversible one: it removes the Storage object(s) and the
+ * row. Making it a distinct verb keeps triage reversible and forces the
+ * destructive path to be chosen on purpose.
+ */
 const moderateSchema = z.object({
-  action: z.enum(["approve", "reject", "flag"]),
+  action: z.enum(["approve", "reject", "flag", "delete"]),
   target: z.enum(["post", "post_media", "hidden_gem", "report"]).optional().default("post"),
   reason: z.string().min(1).max(500).optional(),
 });
@@ -253,6 +275,78 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
       res.status(404).json({ error: "not_found", message: "Post not found" });
       return;
     }
+
+  } else if (target === "post_media" && action === "delete") {
+    // The only path in this file that actually removes bytes. Everything else
+    // is a status flip; this route previously had no Storage call at all,
+    // despite already selecting storage_path/storage_bucket for its listings.
+    const { data: row, error: readErr } = await sc
+      .from("post_media")
+      .select("id, user_id, storage_path, storage_bucket, thumbnail_storage_path")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (readErr) { sendError(res, "db_error", readErr.message); return; }
+    if (!row) { res.status(404).json({ error: "not_found", message: "Media item not found" }); return; }
+
+    const bucket = (row as any).storage_bucket as string | null;
+    const ref = resolveStoragePath((row as any).storage_path, bucket ?? "");
+    // The thumbnail is a second object. Deleting only the original leaves it
+    // behind, still fetchable — the exact orphan this change exists to stop.
+    const thumbRef = resolveStoragePath((row as any).thumbnail_storage_path, bucket ?? "");
+
+    if (!bucket || ref.kind === "unresolvable" || thumbRef.kind === "unresolvable") {
+      sendError(
+        res, "db_error",
+        `Cannot derive a storage path for media ${id} ` +
+        `(bucket=${bucket ?? "null"}, path=${String((row as any).storage_path)}). ` +
+        `Refusing to delete the row, because doing so would orphan the object.`,
+        { exposeDetail: true },
+      );
+      return;
+    }
+
+    // Audit BEFORE destroying anything, and fail closed — matching the
+    // convention in admin.ts. target_user_id is the media OWNER: that column is
+    // `REFERENCES profiles(id)`, so writing a media id there would violate the
+    // FK and abort the whole action.
+    const ownerId = (row as any).user_id as string | null;
+    if (ownerId) {
+      const { error: auditErr } = await sc.from("moderation_actions").insert({
+        target_user_id: ownerId,
+        action_type: "content_removed",
+        reason: reason ?? `post_media ${id} deleted by admin`,
+        performed_by: userId,
+        created_at: now,
+        // metadata is the only place the specific object can be recorded;
+        // moderation_actions has no content-target column.
+        metadata: { target: "post_media", media_id: id, bucket, path: ref.kind === "path" ? ref.path : null },
+      });
+      if (auditErr) { sendError(res, "db_error", `Audit write failed: ${auditErr.message}`, { exposeDetail: true }); return; }
+    }
+
+    const paths = [ref, thumbRef]
+      .filter((r): r is { kind: "path"; path: string } => r.kind === "path")
+      .map((r) => r.path);
+
+    if (paths.length > 0) {
+      const { error: storageErr } = await sc.storage.from(bucket).remove(paths);
+      if (storageErr) {
+        // Do NOT delete the row: it is the only remaining pointer to the object.
+        sendError(
+          res, "db_error",
+          `Storage removal failed for media ${id}: ${storageErr.message}. Row left intact.`,
+          { exposeDetail: true },
+        );
+        return;
+      }
+    }
+
+    const { error: delErr } = await sc.from("post_media").delete().eq("id", id);
+    if (delErr) { sendError(res, "db_error", delErr.message); return; }
+
+    res.json({ ok: true, id, action, target, deleted: true, objectsRemoved: paths.length });
+    return;
 
   } else if (target === "post_media") {
     const newStatus =

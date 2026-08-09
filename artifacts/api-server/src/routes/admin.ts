@@ -27,6 +27,7 @@ import { invalidateCompassHomeCache } from "./compassHome.js";
 import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
 import { runSchemaDriftCheck, getCachedSchemaDriftResult } from "../lib/schemaDriftCheck";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
+import { resolveStoragePath } from "../lib/storagePath.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
 
@@ -1403,6 +1404,73 @@ router.post("/admin/users/:userId/hide-posts", async (req, res) => {
   res.json({ ok: true, postsHidden: true });
 });
 
+/**
+ * Remove the Storage object behind a profile-media column, then report what
+ * happened so the caller can decide whether it is safe to null the column.
+ *
+ * FAIL LOUD, not fail open. The previous implementation searched the stored
+ * value for `/object/public/<bucket>/` and, when that was absent, skipped the
+ * storage delete and nulled the column anyway. Live data (2026-08-09) shows
+ * that branch was the common one, not the rare one: `avatar_url` holds a
+ * bucket-qualified path (`profile-media/avatars/…`) for values written by the
+ * current upload endpoints, and the old marker never matched those. The column
+ * is the only pointer to the object, so nulling it after a skipped delete
+ * orphaned the file permanently and silently.
+ *
+ * `external` is a success, not a skip: 25 of 30 avatars are seed URLs on
+ * picsum/unsplash/dicebear where no object of ours exists. Distinguishing that
+ * from "could not parse" is the whole point of the return type.
+ */
+async function removeProfileMediaObject(
+  sc: any,
+  storedUrl: string | null,
+  field: "avatar" | "cover",
+  targetUserId: string,
+  req: any,
+): Promise<{ ok: true; outcome: string } | { ok: false; error: string }> {
+  const ref = resolveStoragePath(storedUrl, PROFILE_MEDIA_BUCKET);
+
+  switch (ref.kind) {
+    case "none":
+      return { ok: true, outcome: "no_media" };
+
+    case "external":
+      // Nothing of ours to delete. Clearing the column is the whole operation.
+      return { ok: true, outcome: "external_reference" };
+
+    case "unresolvable":
+      req?.log?.error?.(
+        { field, targetUserId, storedValue: ref.value },
+        "admin media delete: cannot derive a storage path from the stored value",
+      );
+      return {
+        ok: false,
+        error:
+          `Cannot derive a storage path for ${field} from the stored value ` +
+          `(${ref.value}). Refusing to clear the column, because doing so would ` +
+          `orphan the object with nothing left pointing at it. Fix the stored ` +
+          `value or delete the object manually.`,
+      };
+
+    case "path": {
+      const { error } = await sc.storage.from(PROFILE_MEDIA_BUCKET).remove([ref.path]);
+      if (error) {
+        req?.log?.error?.(
+          { field, targetUserId, path: ref.path, err: error },
+          "admin media delete: storage removal failed",
+        );
+        return {
+          ok: false,
+          error:
+            `Storage removal failed for ${field} (${ref.path}): ${error.message}. ` +
+            `The column was left intact so the object can still be found.`,
+        };
+      }
+      return { ok: true, outcome: "object_deleted" };
+    }
+  }
+}
+
 /** DELETE /admin/users/:userId/avatar — remove a user's avatar (admin action) */
 router.delete("/admin/users/:userId/avatar", async (req, res) => {
   const admin = await requireAdmin(req, res, { withDisplayName: true });
@@ -1415,23 +1483,21 @@ router.delete("/admin/users/:userId/avatar", async (req, res) => {
   const auditR = await logModerationAction(sc, userId, adminUserId, "content_removed", reason ?? "Avatar removed by admin");
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
-  // Fetch existing avatar URL and delete from storage (fail-open)
-  try {
-    const { data: profileRow } = await sc.from("profiles").select("avatar_url").eq("id", userId).maybeSingle();
-    const oldUrl: string | null = (profileRow as any)?.avatar_url ?? null;
-    if (oldUrl) {
-      const marker = `/object/public/${PROFILE_MEDIA_BUCKET}/`;
-      const idx = oldUrl.indexOf(marker);
-      if (idx !== -1) {
-        const oldPath = oldUrl.slice(idx + marker.length);
-        await sc.storage.from(PROFILE_MEDIA_BUCKET).remove([oldPath]);
-      }
-    }
-  } catch { /* storage delete is best-effort */ }
+  // Remove the storage object BEFORE nulling the column. Ordering matters: the
+  // column is the only record of where the object lives, so nulling first and
+  // failing second would strand the object with nothing left pointing at it.
+  const { data: profileRow, error: readErr } = await sc
+    .from("profiles").select("avatar_url").eq("id", userId).maybeSingle();
+  if (readErr) { sendError(res, "db_error", readErr.message); return; }
+
+  const removal = await removeProfileMediaObject(
+    sc, (profileRow as any)?.avatar_url ?? null, "avatar", userId, req,
+  );
+  if (!removal.ok) { sendError(res, "db_error", removal.error, { exposeDetail: true }); return; }
 
   const { error } = await sc.from("profiles").update({ avatar_url: null }).eq("id", userId);
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ ok: true });
+  res.json({ ok: true, storage: removal.outcome });
 });
 
 /** DELETE /admin/users/:userId/cover — remove a user's cover photo (admin action) */
@@ -1446,22 +1512,18 @@ router.delete("/admin/users/:userId/cover", async (req, res) => {
   const auditR = await logModerationAction(sc, userId, adminUserId, "content_removed", reason ?? "Cover photo removed by admin");
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
-  try {
-    const { data: profileRow } = await sc.from("profiles").select("cover_photo_url").eq("id", userId).maybeSingle();
-    const oldUrl: string | null = (profileRow as any)?.cover_photo_url ?? null;
-    if (oldUrl) {
-      const marker = `/object/public/${PROFILE_MEDIA_BUCKET}/`;
-      const idx = oldUrl.indexOf(marker);
-      if (idx !== -1) {
-        const oldPath = oldUrl.slice(idx + marker.length);
-        await sc.storage.from(PROFILE_MEDIA_BUCKET).remove([oldPath]);
-      }
-    }
-  } catch { /* storage delete is best-effort */ }
+  const { data: profileRow, error: readErr } = await sc
+    .from("profiles").select("cover_photo_url").eq("id", userId).maybeSingle();
+  if (readErr) { sendError(res, "db_error", readErr.message); return; }
+
+  const removal = await removeProfileMediaObject(
+    sc, (profileRow as any)?.cover_photo_url ?? null, "cover", userId, req,
+  );
+  if (!removal.ok) { sendError(res, "db_error", removal.error, { exposeDetail: true }); return; }
 
   const { error } = await sc.from("profiles").update({ cover_photo_url: null }).eq("id", userId);
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ ok: true });
+  res.json({ ok: true, storage: removal.outcome });
 });
 
 // ── Admin moderation_reports queue ────────────────────────────────────────────
