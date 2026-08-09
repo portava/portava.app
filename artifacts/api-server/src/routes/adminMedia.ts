@@ -31,6 +31,7 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { sendError } from "../lib/http.js";
 import { requireAdmin } from "../lib/requireAdmin.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
+import { resolveContentOwner } from "../lib/contentOwner.js";
 
 const router = Router();
 
@@ -310,7 +311,11 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
     // convention in admin.ts. target_user_id is the media OWNER: that column is
     // `REFERENCES profiles(id)`, so writing a media id there would violate the
     // FK and abort the whole action.
-    const ownerId = (row as any).user_id as string | null;
+    //
+    // Resolved through the shared rule rather than reading post_media.user_id
+    // inline, so this and the report paths cannot drift apart. The row is
+    // already loaded above, so the lookup is the only extra cost.
+    const ownerId = await resolveContentOwner(sc, "post_media", id);
     if (ownerId) {
       const { error: auditErr } = await sc.from("moderation_actions").insert({
         target_user_id: ownerId,

@@ -90,6 +90,9 @@ interface FakeState {
   user_restrictions?:          Record<string, any>[];
   user_interaction_cooldowns?: Record<string, any>[];
   report_evidence?:            Record<string, any>[];
+  posts?:                      Record<string, any>[];
+  trips?:                      Record<string, any>[];
+  moderation_actions?:         Record<string, any>[];
 }
 
 function makeFakeClient(state: FakeState, callerToken: string, callerId: string) {
@@ -103,6 +106,9 @@ function makeFakeClient(state: FakeState, callerToken: string, callerId: string)
     if (table === "user_restrictions")          return (state.user_restrictions ?? []).map((r) => ({ ...r }));
     if (table === "user_interaction_cooldowns") return (state.user_interaction_cooldowns ?? []).map((r) => ({ ...r }));
     if (table === "report_evidence")            return (state.report_evidence ?? []).map((r) => ({ ...r }));
+    if (table === "posts")                      return (state.posts ?? []).map((r) => ({ ...r }));
+    if (table === "trips")                      return (state.trips ?? []).map((r) => ({ ...r }));
+    if (table === "moderation_actions")         return (state.moderation_actions ?? []).map((r) => ({ ...r }));
     return [];
   }
 
@@ -456,6 +462,127 @@ describe("reports routes", () => {
       setClients(makeAdminClient());
       const r = await req("GET", "/admin/reports", undefined, "bad-token");
       assert.equal(r.status, 401);
+    });
+  });
+
+  // ── 6. Resolving / dismissing reports — the audit target ────────────────────
+  //
+  // moderation_actions.target_user_id is NOT NULL REFERENCES profiles(id)
+  // (confirmed live). Resolve and dismiss used to pass reports.target_id
+  // straight in, so for any report whose target was NOT a user the insert
+  // violated the FK, the fail-closed audit aborted, and the endpoint 500'd
+  // before the report could be resolved.
+  //
+  // These tests use a POST report on purpose. A user report would pass against
+  // the broken code — target_id IS a profile id in that case — so it would
+  // prove nothing. The post case is the one that was broken.
+
+  describe("POST /admin/reports/:id/resolve — audit target", () => {
+    const POST_AUTHOR_ID = USER_C_ID;
+
+    function makeResolveClient(targetType: string, targetId: string) {
+      return makeFakeClient({
+        profiles: [{ id: ADMIN_ID, role: "admin", is_private: false }],
+        reports: [{
+          id: REPORT_ID, reporter_id: USER_A_ID,
+          target_type: targetType, target_id: targetId,
+          reason_code: "spam", severity: "normal", status: "open",
+          created_at: new Date().toISOString(),
+        }],
+        posts: [{ id: POST_ID, author_id: POST_AUTHOR_ID }],
+        trips: [{ id: TRIP_ID, owner_id: USER_D_ID }],
+      }, ADMIN_TOKEN, ADMIN_ID);
+    }
+
+    it("6a. resolving a POST report succeeds and audits against the post AUTHOR, not the post id", async () => {
+      const client = makeResolveClient("post", POST_ID);
+      setClients(client);
+
+      const r = await req("POST", `/admin/reports/${REPORT_ID}/resolve`,
+        { action: "content_removed", notes: "spam" }, ADMIN_TOKEN);
+
+      // Pre-fix this was 500 "Audit write failed" against a real database.
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.equal(r.body.report.status, "resolved");
+      assert.equal(r.body.audit, "recorded");
+
+      const rows = client.__inserted.moderation_actions ?? [];
+      assert.equal(rows.length, 1, "exactly one audit row");
+      // The assertion that fails against the old code: it wrote POST_ID here.
+      assert.equal(rows[0].target_user_id, POST_AUTHOR_ID,
+        "target_user_id must be the post's author (a profile id), not the post id");
+      assert.notEqual(rows[0].target_user_id, POST_ID);
+    });
+
+    it("6b. the audit row carries report_id and the content target in metadata", async () => {
+      const client = makeResolveClient("post", POST_ID);
+      setClients(client);
+
+      await req("POST", `/admin/reports/${REPORT_ID}/resolve`,
+        { action: "content_removed", notes: "spam" }, ADMIN_TOKEN);
+
+      const meta = (client.__inserted.moderation_actions ?? [])[0]?.metadata;
+      assert.ok(meta, "metadata must be written — it is the only place these fit");
+      assert.equal(meta.report_id, REPORT_ID,
+        "without report_id an action cannot be traced to the complaint that caused it");
+      assert.equal(meta.target_type, "post");
+      assert.equal(meta.target_id, POST_ID);
+    });
+
+    it("6c. a TRIP report audits against the trip owner", async () => {
+      const client = makeResolveClient("trip", TRIP_ID);
+      setClients(client);
+
+      const r = await req("POST", `/admin/reports/${REPORT_ID}/resolve`,
+        { action: "content_removed" }, ADMIN_TOKEN);
+
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const rows = client.__inserted.moderation_actions ?? [];
+      assert.equal(rows[0].target_user_id, USER_D_ID);
+      assert.equal(rows[0].metadata.target_id, TRIP_ID);
+    });
+
+    it("6d. a USER report still audits against that user (unchanged behaviour)", async () => {
+      const client = makeResolveClient("user", USER_B_ID);
+      setClients(client);
+
+      const r = await req("POST", `/admin/reports/${REPORT_ID}/resolve`,
+        { action: "warn" }, ADMIN_TOKEN);
+
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const rows = client.__inserted.moderation_actions ?? [];
+      assert.equal(rows[0].target_user_id, USER_B_ID);
+      assert.equal(rows[0].metadata.report_id, REPORT_ID);
+    });
+
+    it("6e. an unowned target (place) resolves without inventing a target user", async () => {
+      const client = makeResolveClient("place", TARGET_ID);
+      setClients(client);
+
+      const r = await req("POST", `/admin/reports/${REPORT_ID}/resolve`,
+        { action: "dismissed_no_action" }, ADMIN_TOKEN);
+
+      // Places have no owner. The report must still be resolvable, and the
+      // audit must not attribute the action to an arbitrary profile (the old
+      // hide-content path used the acting admin's own id here).
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.equal(r.body.audit, "skipped_no_owner");
+      const rows = client.__inserted.moderation_actions ?? [];
+      assert.equal(rows.length, 0, "no audit row rather than a fabricated target");
+    });
+
+    it("6f. dismissing a POST report audits against the author too", async () => {
+      const client = makeResolveClient("post", POST_ID);
+      setClients(client);
+
+      const r = await req("POST", `/admin/reports/${REPORT_ID}/dismiss`,
+        { notes: "not a violation" }, ADMIN_TOKEN);
+
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const rows = client.__inserted.moderation_actions ?? [];
+      assert.equal(rows[0].target_user_id, POST_AUTHOR_ID);
+      assert.equal(rows[0].action_type, "report_dismissed");
+      assert.equal(rows[0].metadata.report_id, REPORT_ID);
     });
   });
 });

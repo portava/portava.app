@@ -20,6 +20,8 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { moderationReportRateLimit } from "../lib/rateLimit.js";
 
+import { resolveContentOwner } from "../lib/contentOwner.js";
+
 const router = Router();
 
 // ── Enum constants ─────────────────────────────────────────────────────────────
@@ -53,100 +55,17 @@ const ReportSchema = z.object({
 });
 
 // ── Helper: resolve subject_user_id from the relevant table ───────────────────
+//
+// Delegates to the shared resolver so intake and the admin moderation paths
+// agree on who owns a piece of content. This used to be a second, independent
+// implementation; see lib/contentOwner.ts for why having several was a problem.
 
 async function resolveSubjectUserId(
   sc: NonNullable<ReturnType<typeof getServiceClient>>,
   subjectType: (typeof SUBJECT_TYPES)[number],
   subjectId: string,
 ): Promise<string | null> {
-  try {
-    switch (subjectType) {
-      case "user":
-        return subjectId;
-
-      case "post": {
-        const { data } = await sc
-          .from("posts")
-          .select("author_id")
-          .eq("id", subjectId)
-          .maybeSingle();
-        return (data as any)?.author_id ?? null;
-      }
-
-      case "comment": {
-        // posts_comments.user_id is the comment author
-        const { data } = await sc
-          .from("posts_comments")
-          .select("user_id")
-          .eq("id", subjectId)
-          .maybeSingle();
-        return (data as any)?.user_id ?? null;
-      }
-
-      case "message": {
-        const { data } = await sc
-          .from("messages")
-          .select("sender_id")
-          .eq("id", subjectId)
-          .maybeSingle();
-        return (data as any)?.sender_id ?? null;
-      }
-
-      case "event": {
-        const { data } = await sc
-          .from("events")
-          .select("host_id")
-          .eq("id", subjectId)
-          .maybeSingle();
-        return (data as any)?.host_id ?? null;
-      }
-
-      case "review": {
-        const { data } = await sc
-          .from("reviews")
-          .select("reviewer_id")
-          .eq("id", subjectId)
-          .maybeSingle();
-        return (data as any)?.reviewer_id ?? null;
-      }
-
-      case "media": {
-        // Canonical media asset (migration 0189) — owner is the accountable user.
-        const { data } = await sc
-          .from("media_assets")
-          .select("owner_user_id")
-          .eq("id", subjectId)
-          .maybeSingle();
-        return (data as any)?.owner_user_id ?? null;
-      }
-
-      case "buddy_listing": {
-        // rent_buddy_profiles keyed by user_id
-        const { data } = await sc
-          .from("rent_buddy_profiles")
-          .select("user_id")
-          .eq("id", subjectId)
-          .maybeSingle();
-        if ((data as any)?.user_id) return (data as any).user_id;
-        // fallback: subjectId might be a userId directly
-        const { data: byUser } = await sc
-          .from("rent_buddy_profiles")
-          .select("user_id")
-          .eq("user_id", subjectId)
-          .maybeSingle();
-        return (byUser as any)?.user_id ?? null;
-      }
-
-      case "place":
-        // Canonical places are not owned by a single user — no subject_user_id.
-        return null;
-
-      default:
-        return null;
-    }
-  } catch {
-    return null;
-  }
+  return resolveContentOwner(sc, subjectType, subjectId);
 }
 
 /* ===========================================================================

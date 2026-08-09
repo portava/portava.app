@@ -28,6 +28,7 @@ import { executeAccountDeletion } from "../services/accountDeletion/AccountDelet
 import { runSchemaDriftCheck, getCachedSchemaDriftResult } from "../lib/schemaDriftCheck";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
+import { resolveContentOwner, type ModerationMetadata } from "../lib/contentOwner.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
 
@@ -962,6 +963,7 @@ async function logModerationAction(
   adminUserId: string,
   actionType: string,
   reason: string | null,
+  metadata?: ModerationMetadata,
 ): Promise<{ ok: boolean; error?: string }> {
   const { error } = await sc.from("moderation_actions").insert({
     target_user_id: targetUserId,
@@ -969,9 +971,70 @@ async function logModerationAction(
     reason: reason ?? null,
     performed_by: adminUserId,
     created_at: new Date().toISOString(),
+    // metadata jsonb (0164) — the only place the content item and the
+    // originating report can be recorded; there are no columns for either.
+    ...(metadata ? { metadata } : {}),
   });
   if (error) return { ok: false, error: error.message };
   return { ok: true };
+}
+
+/**
+ * Audit a moderation action taken in response to a report.
+ *
+ * `moderation_actions.target_user_id` is a NOT NULL FK to profiles(id), so the
+ * row can only name a user. When the reported content has no accountable user
+ * — `place` is unowned by design, and a deleted row resolves to nothing — there
+ * is no honest value for that column.
+ *
+ * The three available options were: fabricate one (the previous hide-content
+ * behaviour used the acting admin's own id, which records the admin as the
+ * target of their own action), refuse the moderation action entirely (which
+ * would make unowned and orphaned content unmoderatable — precisely the
+ * content most likely to need it), or skip the user-scoped row and say so.
+ *
+ * This does the third. The report row itself still records who resolved it and
+ * when (`reviewed_by` / `reviewed_at` / `moderation_notes`), so the action is
+ * not unrecorded — it is only absent from the user-centric trail, which has no
+ * subject to file it under. The caller surfaces `audit` in its response and the
+ * skip is logged. Making this fail-closed properly needs either a nullable
+ * `target_user_id` or a content-target column, i.e. a migration.
+ */
+async function auditReportAction(
+  sc: any,
+  req: any,
+  opts: {
+    reportId: string;
+    targetType: string;
+    targetId: string;
+    adminUserId: string;
+    actionType: string;
+    reason: string | null;
+  },
+): Promise<{ ok: true; audit: string } | { ok: false; error: string }> {
+  const ownerUserId = await resolveContentOwner(sc, opts.targetType, opts.targetId);
+
+  const metadata: ModerationMetadata = {
+    report_id: opts.reportId,
+    target_type: opts.targetType,
+    target_id: opts.targetId,
+  };
+
+  if (!ownerUserId) {
+    metadata.owner_unresolved = true;
+    req?.log?.warn?.(
+      { reportId: opts.reportId, targetType: opts.targetType, targetId: opts.targetId },
+      "moderation audit: no accountable user for reported content — " +
+        "user-scoped audit row skipped (see auditReportAction)",
+    );
+    return { ok: true, audit: "skipped_no_owner" };
+  }
+
+  const r = await logModerationAction(
+    sc, ownerUserId, opts.adminUserId, opts.actionType, opts.reason, metadata,
+  );
+  if (!r.ok) return { ok: false, error: r.error ?? "unknown" };
+  return { ok: true, audit: "recorded" };
 }
 
 // logAdminAccess and accessReason are imported from ../lib/adminAudit.js
@@ -1645,10 +1708,11 @@ router.post("/admin/reports/:id/resolve", async (req, res) => {
   const parsed = resolveReportSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload"); return; }
 
-  // Fetch report to get target_id before writing audit (fail-closed)
+  // target_type is needed as well as target_id: the audit row names the content
+  // OWNER, and which table to look in depends on the type.
   const { data: reportRow, error: fetchErr } = await sc
     .from("reports")
-    .select("id, target_id, status")
+    .select("id, target_type, target_id, status")
     .eq("id", req.params.id)
     .neq("status", "resolved")
     .maybeSingle();
@@ -1656,9 +1720,18 @@ router.post("/admin/reports/:id/resolve", async (req, res) => {
   if (fetchErr) { sendError(res, "db_error", fetchErr.message); return; }
   if (!reportRow) { sendError(res, "not_found", "Report not found or already resolved"); return; }
 
-  // Audit first (fail-closed)
-  const targetId: string = (reportRow as any).target_id as string;
-  const auditR = await logModerationAction(sc, targetId, adminUserId, parsed.data.action, parsed.data.notes ?? null);
+  // Audit first (fail-closed). This previously passed target_id straight in as
+  // target_user_id, which is a FK to profiles(id) — so every report whose
+  // target was not a user (post, place, trip, event, message, thread) failed
+  // the insert and 500'd here, before the report could ever be resolved.
+  const auditR = await auditReportAction(sc, req, {
+    reportId: req.params.id,
+    targetType: (reportRow as any).target_type as string,
+    targetId: (reportRow as any).target_id as string,
+    adminUserId,
+    actionType: parsed.data.action,
+    reason: parsed.data.notes ?? null,
+  });
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const now = new Date().toISOString();
@@ -1670,7 +1743,10 @@ router.post("/admin/reports/:id/resolve", async (req, res) => {
     .maybeSingle();
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ report: { id: (data as any).id, status: (data as any).status, reviewedAt: (data as any).reviewed_at } });
+  res.json({
+    report: { id: (data as any).id, status: (data as any).status, reviewedAt: (data as any).reviewed_at },
+    audit: auditR.audit,
+  });
 });
 
 /** POST /admin/reports/:id/dismiss */
@@ -1680,10 +1756,10 @@ router.post("/admin/reports/:id/dismiss", async (req, res) => {
   const { sc, userId: adminUserId } = admin;
   const notes: string | null = (req.body as any)?.notes ?? null;
 
-  // Fetch report to get target_id before writing audit (fail-closed)
+  // target_type as well as target_id — same reason as resolve above.
   const { data: reportRow, error: fetchErr } = await sc
     .from("reports")
-    .select("id, target_id, status")
+    .select("id, target_type, target_id, status")
     .eq("id", req.params.id)
     .eq("status", "open")
     .maybeSingle();
@@ -1691,9 +1767,16 @@ router.post("/admin/reports/:id/dismiss", async (req, res) => {
   if (fetchErr) { sendError(res, "db_error", fetchErr.message); return; }
   if (!reportRow) { sendError(res, "not_found", "Report not found or not in open status"); return; }
 
-  // Audit first (fail-closed)
-  const targetId: string = (reportRow as any).target_id as string;
-  const auditR = await logModerationAction(sc, targetId, adminUserId, "report_dismissed", notes);
+  // Audit first (fail-closed). Same FK defect as resolve: target_id was passed
+  // straight in as target_user_id.
+  const auditR = await auditReportAction(sc, req, {
+    reportId: req.params.id,
+    targetType: (reportRow as any).target_type as string,
+    targetId: (reportRow as any).target_id as string,
+    adminUserId,
+    actionType: "report_dismissed",
+    reason: notes,
+  });
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const now = new Date().toISOString();
@@ -1705,7 +1788,7 @@ router.post("/admin/reports/:id/dismiss", async (req, res) => {
     .maybeSingle();
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ report: data });
+  res.json({ report: data, audit: auditR.audit });
 });
 
 /**
@@ -1743,23 +1826,19 @@ router.post("/admin/reports/:id/hide-content", async (req, res) => {
 
   const now = new Date().toISOString();
 
-  // Resolve the content owner's user_id — moderation_actions.target_user_id is a FK to
-  // profiles(id), so we must pass a profile UUID, not the content item UUID.
-  // Fall back to adminUserId (always a valid profile) when the owner cannot be found.
-  let ownerUserId: string = adminUserId;
-  if (target_type === "post") {
-    const { data: pr } = await sc.from("posts").select("author_id").eq("id", target_id).maybeSingle();
-    if ((pr as any)?.author_id) ownerUserId = (pr as any).author_id;
-  } else if (target_type === "trip") {
-    const { data: tr } = await sc.from("trips").select("owner_id").eq("id", target_id).maybeSingle();
-    if ((tr as any)?.owner_id) ownerUserId = (tr as any).owner_id;
-  } else if (target_type === "event") {
-    const { data: er } = await sc.from("events").select("host_id").eq("id", target_id).maybeSingle();
-    if ((er as any)?.host_id) ownerUserId = (er as any).host_id;
-  }
-
-  // Audit against the OWNER's profile UUID (fail-closed)
-  const auditR = await logModerationAction(sc, ownerUserId, adminUserId, "content_removed", reason);
+  // Audit against the content OWNER (fail-closed). This used to carry its own
+  // owner-resolution block covering only post/trip/event, and fell back to
+  // adminUserId when the owner could not be found — which satisfies the FK but
+  // records the admin as the target of their own action. Now one shared rule,
+  // and an unresolvable owner is reported rather than fabricated.
+  const auditR = await auditReportAction(sc, req, {
+    reportId: req.params.id,
+    targetType: target_type,
+    targetId: target_id,
+    adminUserId,
+    actionType: "content_removed",
+    reason,
+  });
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   // Apply content mutation based on target type
