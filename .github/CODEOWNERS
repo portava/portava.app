@@ -1,0 +1,31 @@
+# CODEOWNERS — the enforcement boundary.
+#
+# WHAT THIS CAN AND CANNOT DO, stated plainly because the CI boundary section
+# in docs/ci/README.md depends on it and must not overstate it.
+#
+# There is currently ONE maintainer. GitHub does not count a PR author's own
+# approval, so "Require review from Code Owners" cannot mean "a second person
+# reviewed this" here — it can only mean the change is FLAGGED as touching the
+# enforcement layer, and merged deliberately (by admin bypass, which is
+# recorded). That is a weaker property than review, and it is the honest one.
+#
+# When a second maintainer exists, this becomes real review and the boundary
+# section should be updated to say so.
+#
+# Scope is deliberately narrow. A `*` default rule would put every PR behind the
+# same requirement without adding protection, and would make the bypass routine
+# rather than exceptional — which is how a control stops being noticed.
+
+# The CI enforcement layer. Every guarantee in docs/ci/README.md rests on these
+# files; the guards cannot guard themselves, and that limit is documented
+# rather than papered over.
+/.github/**                                                @portava
+
+# The Supabase target allowlist and the in-process chokepoint. A quiet edit to
+# any of these removes protection with no check going red — check-guard-coverage
+# cannot detect its own weakening.
+/artifacts/api-server/src/lib/ciSupabaseGuard.mjs           @portava
+/artifacts/api-server/src/lib/ciProdReadOnlyAuditGuard.mjs  @portava
+/artifacts/api-server/src/lib/supabaseTargetPolicy.mjs      @portava
+/artifacts/api-server/scripts/check-guard-coverage.mjs      @portava
+/artifacts/api-server/scripts/check-memory-citations.mjs    @portava
