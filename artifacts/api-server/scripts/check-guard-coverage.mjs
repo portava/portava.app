@@ -213,6 +213,26 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'and no .insert/.update/.upsert/.delete/.rpc call anywhere in the file. Auditing PRODUCTION is ' +
       'the point: the cache-dominance figure it reports is meaningless against an empty CI project.',
   },
+  {
+    file: 'src/scripts/auditStorageExif.ts',
+    reason:
+      'EXIF/GPS census of the media buckets. Everything it sends, in full: (1) bucket ENUMERATION — GET ' +
+      '/storage/v1/bucket, then POST /storage/v1/object/list/<bucket> paged by offset and recursed into ' +
+      'prefixes, which is the Storage listing API and creates nothing; (2) ranged header GETs — GET ' +
+      '/storage/v1/object/<bucket>/<name> with `Range: bytes=0-131071` per image object, so it reads a header ' +
+      'segment and never the pixels; (3) two Management API statements, both reads — a SELECT on ' +
+      'information_schema.columns for the public text/varchar columns whose names look like a path or a URL, ' +
+      'then a UNION of `select distinct "<col>"::text from public."<table>" where "<col>" is not null` over ' +
+      'exactly those columns, limit 200000, to decide which objects are still referenced. No INSERT, UPDATE, ' +
+      'DELETE or DDL; no .insert/.update/.upsert/.delete/.rpc; no Storage upload, move, copy or remove; no ' +
+      '--apply flag and no code path that could take one. Auditing PRODUCTION is the point — an empty CI ' +
+      'project has no user photographs, so the census figure it exists to report is only meaningful there. ' +
+      'HISTORY WORTH KEEPING: this file used to skip the guard entirely on its own ' +
+      'AUDIT_READONLY_ACK_PRODUCTION variable. That was an override, not an acknowledgement — on that path ' +
+      'nothing consulted the CI markers, so it would have permitted a production run from inside a workflow, ' +
+      'and it compared the variable against the ref parsed from SUPABASE_URL itself, which any project ' +
+      'satisfies. It was deleted when this entry was added; do not reintroduce it beside the front door.',
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -325,33 +345,6 @@ const EXEMPT = [
       'UNGUARDED, NOT SAFE: run by hand with a production .env it writes to production, and nothing here ' +
       'prevents that. Wiring it into a workflow requires adding the guard import in the same change.',
   })),
-  {
-    file: 'src/scripts/auditStorageExif.ts',
-    reason:
-      'EXIF/GPS census of the media buckets, run by hand via `pnpm run audit:storage-exif`. It enumerates ' +
-      'every bucket through the Storage API, ranged-GETs the first 128KB of each image object, and sends two ' +
-      'statements through the Management API — a SELECT on information_schema.columns, then a UNION of ' +
-      '`select distinct <col> from public.<table>` over the path/url columns that SELECT returned — to decide ' +
-      'which objects are still referenced. It writes nothing. No workflow under .github/ invokes ' +
-      'audit:storage-exif and no CI-invoked package script reaches it (the CI surface is derived, not ' +
-      'assumed — see deriveCiSurface below). ' +
-      'HOW THIS SITS WITH THE FILE\'S OWN GUARD CALL — NEITHER SUPERSEDES THE OTHER, AND THEY ARE NOT THE ' +
-      'SAME MECHANISM: the script ends its preamble with `await import("../lib/ciSupabaseGuard.mjs")`, so a ' +
-      'plain run IS refused against production. But that is a DYNAMIC import inside an else branch, which is ' +
-      'not an import statement and is deliberately not what this check counts, and it is skipped outright ' +
-      'when AUDIT_READONLY_ACK_PRODUCTION is set to the ref resolved from SUPABASE_URL. That acknowledgement ' +
-      'is an operator bypass of the guard, not a second guard: on that path nothing consults the allowlist at ' +
-      'all. So there are three separate things here — this entry is why the coverage check accepts the file, ' +
-      'the dynamic import is what refuses an unacknowledged production run, and the ACK is the one hole in ' +
-      'that refusal. Reading any one of them as covering the others is the mistake. EXEMPTION MEANS ' +
-      'UNGUARDED, NOT SAFE: with the ACK set, or with the guard import removed, a human pointing this at ' +
-      'production pulls the header bytes of every user photograph in the bucket into a process, and nothing ' +
-      'here prevents that. Wiring it into a workflow means replacing all of the above with a static first ' +
-      'import in the same change; since every statement it sends is a read, that door is ' +
-      'src/lib/ciProdReadOnlyAuditGuard.mjs plus an entry in READ_ONLY_AUDIT_ENTRY_POINTS naming those ' +
-      'statements, and the AUDIT_READONLY_ACK_PRODUCTION branch must be DELETED rather than left beside it — ' +
-      'a bypass next to a front door is not a front door.',
-  },
   {
     file: 'src/scripts/backfillFeedVariants.ts',
     reason:

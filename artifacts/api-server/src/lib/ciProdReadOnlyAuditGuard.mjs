@@ -13,6 +13,9 @@
  *   src/scripts/checkDiscoveryCacheKeys.ts  SELECTs on discovery_cache, plus a
  *                                           SELECT and a WITH-prefixed SELECT
  *                                           aggregating rank_events
+ *   src/scripts/auditStorageExif.ts         Storage bucket/object listings and
+ *                                           ranged header GETs, plus two
+ *                                           Management API SELECTs
  *
  * That list, and nothing else. The list is not advice: scripts/check-guard-
  * coverage.mjs fails the build if any other file imports this module, and fails

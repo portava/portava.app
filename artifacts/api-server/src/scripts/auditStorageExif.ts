@@ -50,17 +50,30 @@
  * THE PRODUCTION QUESTION
  * =======================
  *
- * By DEFAULT this imports ciSupabaseGuard.mjs like every other Supabase-reaching
- * script and is refused against production. Read-only is not the same as
- * harmless: this script's job is to pull the header of every user photograph in
- * a bucket into a process's memory, and that is not a decision a script should
- * take on its own because its verbs happened to be read-shaped.
+ * This imports src/lib/ciProdReadOnlyAuditGuard.mjs as its first statement, the
+ * same front door as the other read-only audits, and is listed in
+ * READ_ONLY_AUDIT_ENTRY_POINTS in scripts/check-guard-coverage.mjs. Auditing
+ * production is the point of the script, and that door is how a process asks:
+ * outside CI, with PORTAVA_PROD_READ_ONLY_AUDIT set to the exact sentence, and
+ * only against the ref declared in KNOWN_PROD_PROJECT_REF. Everywhere else, and
+ * in CI always, it behaves exactly like the strict guard and exits 2.
  *
- * It is a decision an operator can take deliberately, and the exception is
- * spelled AUDIT_READONLY_ACK_PRODUCTION — see the long note at the guard call
- * below for why it is an env var naming the production ref rather than a change
- * to the guard. Unset, nothing changes. It must never be set in committed
- * config, a workflow file, or a .env that ships.
+ * Read-only is not the same as harmless: this script's job is to pull the header
+ * of every user photograph in a bucket into a process's memory, which is why the
+ * request has to be made out loud rather than inferred from the verbs being
+ * read-shaped.
+ *
+ * IT USED TO CARRY ITS OWN AUDIT_READONLY_ACK_PRODUCTION VARIABLE. That has been
+ * deleted, and it should not be reintroduced. It was described in its own
+ * comments as an acknowledgement rather than an override, and that description
+ * was wrong on the only point that mattered: on the acknowledged path the guard
+ * module was never imported, so nothing consulted the CI markers, the allowlist
+ * script, or the declared production ref. Set inside GitHub Actions it would
+ * have permitted a production run from a workflow — the one thing the front door
+ * refuses unconditionally. It was also not scoped to production at all: it
+ * compared the variable against the ref parsed out of SUPABASE_URL itself, a
+ * self-referential test that ANY project satisfies. The door below is narrower
+ * in every direction.
  *
  * Usage (from artifacts/api-server):
  *   pnpm run audit:storage-exif                 # every bucket, every image
@@ -71,57 +84,26 @@
  * Exit 2 → cannot run (credentials or target refused). Never reads as a pass.
  */
 
+// THE CHOKEPOINT. First import, static, above @supabase-touching module and
+// above every other import, because the guard works by ES module evaluation
+// order: placed second, everything above it is already loaded before the
+// allowlist is consulted.
+//
+// This is the read-only front door, and this file is in
+// READ_ONLY_AUDIT_ENTRY_POINTS in scripts/check-guard-coverage.mjs, which fails
+// the build if an unlisted file imports it or if a listed file stops. The grant
+// rests on the claim that this script only reads: every Storage call is a bucket
+// listing, an object listing or a ranged GET, and both Management API statements
+// are SELECTs. If a write is ever added here, the fix is to move this import to
+// ../lib/ciSupabaseGuard.mjs and delete the entry, in the same change.
+//
+// There is no bypass beside this line, and adding one would defeat it — see the
+// note on the deleted AUDIT_READONLY_ACK_PRODUCTION variable in the header.
+import "../lib/ciProdReadOnlyAuditGuard.mjs";
+
 import { exifFactsFrom, NO_EXIF } from "../lib/exifFacts.js";
 
 export {};
-
-/**
- * THE CHOKEPOINT, and the ONE acknowledged exception to it.
- *
- * By default this imports ciSupabaseGuard.mjs exactly like every other
- * Supabase-reaching script, and is refused against production. That default is
- * not negotiable and is what runs when nobody has said anything.
- *
- * WHY AN ENV VAR AND NOT A GUARD CHANGE
- * -------------------------------------
- * The guard refuses whenever the resolved ref EQUALS KNOWN_PROD_PROJECT_REF.
- * There is therefore no TRUTHFUL environment in which it passes for this target:
- * the only way to make it pass would be to set KNOWN_PROD_PROJECT_REF to a ref
- * that is not production — i.e. to lie to the assertion about what production
- * is, which is the precise failure mode the guard's own comments were written
- * to prevent. So the exception is not expressed by misinforming the guard. It is
- * expressed here, in the one script it applies to, by making the operator NAME
- * the production ref out loud:
- *
- *   AUDIT_READONLY_ACK_PRODUCTION=<the production project ref>
- *
- * The value must match the ref resolved from SUPABASE_URL exactly. A wrong or
- * absent value falls through to the guard and is refused. Nothing about any
- * other entry point changes, no guard file is touched, and this is inert unless
- * the variable is set for that single invocation.
- *
- * THIS IS SOUND ONLY BECAUSE THIS SCRIPT CANNOT WRITE. The guard's stated
- * concern is write probes ("these checks perform write probes against real auth
- * users"). Every call below is a SELECT, a bucket/object listing, or a ranged
- * GET. If a write path is ever added to this file, this exception must be
- * deleted in the same change — it is justified by the absence of writes, not by
- * the convenience of the audit.
- */
-const ACK = process.env.AUDIT_READONLY_ACK_PRODUCTION?.trim();
-const RESOLVED_REF = process.env.SUPABASE_URL
-  ? new URL(process.env.SUPABASE_URL).hostname.split(".")[0]
-  : "";
-
-if (ACK && ACK === RESOLVED_REF) {
-  console.warn(
-    `\n⚠️  READ-ONLY PRODUCTION AUDIT — project '${RESOLVED_REF}', acknowledged via\n` +
-      `    AUDIT_READONLY_ACK_PRODUCTION. ciSupabaseGuard was NOT consulted for this\n` +
-      `    invocation. This is permitted because this script issues no writes of any\n` +
-      `    kind. SELECT, list and ranged-GET only.\n`,
-  );
-} else {
-  await import("../lib/ciSupabaseGuard.mjs");
-}
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
