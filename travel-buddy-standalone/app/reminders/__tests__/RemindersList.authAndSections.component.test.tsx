@@ -59,6 +59,20 @@ const mockReminders = [
     createdAt: new Date(NOW).toISOString(),
     updatedAt: new Date(NOW).toISOString(),
   },
+  {
+    id: 'r-saved-place',
+    title: 'Book the tasting menu',
+    note: null,
+    remindAt: new Date(NOW + 2 * 60 * 60_000).toISOString(),
+    targetType: 'saved_place',
+    targetId: 'place-9',
+    tripId: null,
+    targetLabel: 'Time Out Market',
+    status: 'upcoming',
+    notificationId: 'notif-2',
+    createdAt: new Date(NOW).toISOString(),
+    updatedAt: new Date(NOW).toISOString(),
+  },
 ];
 // Return a fresh copy each call — the component's load() does `all.sort(...)`
 // in place, and sorting a shared array reference here would silently reorder
@@ -114,6 +128,18 @@ describe('RemindersScreen — Upcoming / Completed sections', () => {
     expect(screen.getByText('Completed')).toBeTruthy();
     expect(screen.getByText('Upcoming: pack bags')).toBeTruthy();
     expect(screen.getByText('Completed: buy tickets')).toBeTruthy();
+  });
+
+  it('renders a saved_place reminder in the Upcoming section with its target label, distinct from the trip reminder', async () => {
+    await act(async () => { render(<RemindersScreen />); });
+    await act(async () => {});
+
+    expect(screen.getByText('Book the tasting menu')).toBeTruthy();
+    // targetLabel is appended to the meta line ("<when> · <targetLabel>") —
+    // confirms the saved_place row isn't blank or falling through to a
+    // default that drops or mislabels the target.
+    expect(screen.getByText(/Time Out Market/)).toBeTruthy();
+    expect(screen.getByText(/Tokyo trip/)).toBeTruthy();
   });
 
   it('omits the Completed section entirely when there are no completed reminders', async () => {
