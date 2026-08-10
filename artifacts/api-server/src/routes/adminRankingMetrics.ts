@@ -16,6 +16,13 @@
  *   exploration_slot: { impressions, taps, rate },
  *   by_surface: { [surface]: { impressions, taps } },
  *
+ * SCOPE NOTE.  Every metric here EXCEPT `by_surface` is a ranker-quality
+ * measure and excludes Live Pulse serves (surface='live_pulse'), which are
+ * assembled by urgency rather than by the ranker.  `by_surface` is the only
+ * breakdown keyed by surface and therefore the only place Live Pulse volume is
+ * observable, so it counts every row and reports 'live_pulse' as its own
+ * bucket.  See the two comment blocks in the handler.
+ *
  *   // New fields:
  *   exposure_by_tier: { highly_active, active, moderate, occasional, new_inactive },
  *   creator_concentration: { top_1pct, top_5pct, top_10pct, alert: boolean },
@@ -142,6 +149,15 @@ router.get("/admin/ranking/metrics", asyncHandler(async (req, res) => {
   ).toISOString();
 
   // ── Fetch all rank_events rows in the window ─────────────────────────────
+  //
+  // Explicit column list, deliberately: `select("*")` contributes nothing to the
+  // registered schema-drift guard (test/helpers/schemaColumnExtractor.ts skips
+  // "*"), so a wildcard here would silently void the coverage that
+  // test/adminRemainingDashboardsSchemaDrift.test.ts provides for this file.
+  // Every column named below is present in the generated live-schema snapshot
+  // (src/test/generated/liveColumns.json), so PostgREST cannot reject the query
+  // on an unknown column.  `surface` in particular is an original 0153 column —
+  // the Live Pulse exclusion below needs nothing that 0197 added.
   const { data: rows, error: rankErr } = await sc
     .from("rank_events")
     .select("outcome, item_kind, position, surface, user_id, served_at")
@@ -154,9 +170,35 @@ router.get("/admin/ranking/metrics", asyncHandler(async (req, res) => {
 
   const all = (rows as any[]) ?? [];
 
+  // The SURFACE-BLIND ranker-quality metrics below must not count Live Pulse
+  // serves.
+  //
+  // Giving Live Pulse its own surface does NOT make this filter redundant, and
+  // it is worth being precise about why: of the six computations fed from these
+  // rows, only `by_surface` has a surface dimension at all.  totals,
+  // tap_through_by_kind, the exploration-slot bucket, both diversity
+  // concentration ratios and new_user_exposure_rate all aggregate every surface
+  // into one number.  Without an explicit exclusion, Live Pulse serves would
+  // still inflate totals.impressions, depress the event/plan/buddy/gem
+  // tap-through rates, land in the exploration bucket via `position % 7 === 6`
+  // (Live Pulse `position` is a plain urgency index, not an exploration slot),
+  // skew both concentration ratios and count as new-user exposure.
+  //
+  // `by_surface` is the deliberate exception and keeps using `all` — see the
+  // note there.  A distinct surface exists to be VISIBLE; the only place it can
+  // be shown without contaminating anything is the one breakdown keyed by it.
+  //
+  // The filter is scoped to surface, not to `event_type == null`.  The
+  // event_type formulation excluded EVERY provenance-tagged row, which also
+  // silently dropped the 'watch_impression' rows written by routes/mediaFeed.ts
+  // — a behaviour change unrelated to Live Pulse and untested here.  This
+  // exclusion touches exactly the rows this work introduced and leaves every
+  // other row class counted exactly as it was before.
+  const nonLivePulse = all.filter((r) => r.surface !== "live_pulse");
+
   // ── Totals ────────────────────────────────────────────────────────────────
   const totals = { impressions: 0, taps: 0, saves: 0, joins: 0, rsvps: 0, attended: 0 };
-  for (const r of all) {
+  for (const r of nonLivePulse) {
     const o: string = r.outcome ?? "";
     if      (o === "impression") totals.impressions++;
     else if (o === "tap")        totals.taps++;
@@ -170,7 +212,7 @@ router.get("/admin/ranking/metrics", asyncHandler(async (req, res) => {
 
   // ── By kind ───────────────────────────────────────────────────────────────
   const kindMap: Record<string, { impressions: number; taps: number }> = {};
-  for (const r of all) {
+  for (const r of nonLivePulse) {
     const k: string = r.item_kind ?? "unknown";
     if (!kindMap[k]) kindMap[k] = { impressions: 0, taps: 0 };
     if      (r.outcome === "impression") kindMap[k].impressions++;
@@ -182,11 +224,25 @@ router.get("/admin/ranking/metrics", asyncHandler(async (req, res) => {
   }
 
   // ── Exploration slots (every 7th position: 6, 13, 20 …) ─────────────────
-  const explRows = all.filter((r) => typeof r.position === "number" && r.position % 7 === 6);
+  const explRows = nonLivePulse.filter((r) => typeof r.position === "number" && r.position % 7 === 6);
   const explImpressions = explRows.filter((r) => r.outcome === "impression").length;
   const explTaps        = explRows.filter((r) => r.outcome === "tap").length;
 
   // ── By surface ───────────────────────────────────────────────────────────
+  //
+  // Deliberately uses `all`, not `nonLivePulse`.  This is the ONE computation
+  // here with a surface dimension, and making Live Pulse serves visible and
+  // separable is the entire point of giving them their own surface value.
+  // Excluding them here would spend the cost of a new key space and then hide
+  // the result: an operator would have no way to see Live Pulse volume, and a
+  // silent collapse of the rail would look identical to normal operation — the
+  // same invisibility that let 'living_page' rot.
+  //
+  // The five surface-BLIND aggregates above (totals, tap_through_by_kind, the
+  // exploration-slot bucket, both diversity concentration ratios,
+  // new_user_exposure_rate) keep the exclusion, because there a Live Pulse row
+  // is silently fused into a ranker-quality number it did not come from.  Here
+  // it lands in its own labelled bucket and contaminates nothing.
   const surfaceMap: Record<string, { impressions: number; taps: number }> = {};
   for (const r of all) {
     const s: string = r.surface ?? "unknown";
@@ -317,7 +373,7 @@ router.get("/admin/ranking/metrics", asyncHandler(async (req, res) => {
   // Approximate median unique creators per 10-item window using surface data.
   // Category and city concentration use item_kind / surface as proxies since
   // those dimensions are not stored directly on rank_events.
-  const impRows = all.filter((r) => r.outcome === "impression");
+  const impRows = nonLivePulse.filter((r) => r.outcome === "impression");
   const kindCounts: Record<string, number> = {};
   for (const r of impRows) {
     const k = r.item_kind ?? "unknown";
@@ -369,7 +425,7 @@ router.get("/admin/ranking/metrics", asyncHandler(async (req, res) => {
     if (newUserIds.size > 0) {
       // Find distinct new-user viewers who received at least one impression
       const impressedNewUsers = new Set(
-        all
+        nonLivePulse
           .filter((r) => r.outcome === "impression" && newUserIds.has(r.user_id))
           .map((r) => r.user_id),
       );
@@ -388,7 +444,10 @@ router.get("/admin/ranking/metrics", asyncHandler(async (req, res) => {
       preRows.map((r) => r.user_id).filter(Boolean),
     );
 
-    // Viewers in the current window who were NOT active in the pre-window
+    // Viewers in the current window who were NOT active in the pre-window.
+    // Intentionally uses `all`, not `nonLivePulse`: this is an activity/return signal,
+    // and a Live Pulse serve is genuine activity.  The pre-window query it is
+    // compared against is likewise unfiltered.
     const windowRows = all.filter((r) => r.user_id && r.served_at);
     const windowViewerIds = new Set(windowRows.map((r) => r.user_id));
     const returningIds = [...windowViewerIds].filter(

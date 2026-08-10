@@ -26,12 +26,79 @@ run_check() {
   fi
 }
 
+# A check whose result is not read off the exit code alone.
+#
+# check:rank-events-surfaces reports two independent things: (1) the deploy
+# gate — a BEHAVIOURAL PROBE that attempts a real INSERT with the required
+# surface and always rolls it back, which is the only thing that decides the
+# verdict; and (2) an informational report on the standing, pre-existing
+# 'living_page' / 'compass' rejections, which fires on EVERY run and is not
+# something a build can fix. That informational finding is printed prominently
+# and does NOT move the exit code, so check:all does not go permanently red on
+# it — a permanently-red check is one `|| true` away from being no check at all,
+# which is precisely how 'living_page' went months silently dropping rows.
+#
+# TWO CONDITIONS, BOTH REQUIRED, TO SCORE A PASS:
+#
+#   1. exit 0 — and ONLY 0. Every other code fails, including codes the script
+#      does not currently emit, because an unrecognised code is an unknown state
+#      and an unknown state is not a pass. In particular exit 1 FAILS: nothing
+#      in that script chooses 1, so 1 can only mean the process died
+#      involuntarily (uncaught exception, unhandled rejection, module-resolution
+#      or tsx/TypeScript load failure). A crash proves nothing. 2 = CANNOT-RUN
+#      (no live credentials — this gate must FAIL rather than skip in a
+#      credential-less environment); 3 = BLOCKED (rejected, or the result could
+#      not be established); every fail-closed condition in the script exits 2
+#      or 3.
+#
+#   2. the line `GATE live_pulse: PERMITTED` present in the output. The
+#      documented contract is "proceed only when that line is present", and an
+#      exit code alone cannot express it: a process that dies before printing a
+#      verdict can still leave a passing-looking status behind. Absent line =
+#      FAIL, whatever the exit code.
+#
+# If REQUIRED_SURFACES in the script ever gains an entry, add its GATE line to
+# the required set below.
+# See the EXIT CODE CONTRACT in src/scripts/checkRankEventsSurfaces.ts.
+run_gate() {
+  local label="$1"
+  shift
+  echo ""
+  echo "──────────────────────────────────────────────────────────"
+  echo "▶ RUNNING: $label"
+  echo "──────────────────────────────────────────────────────────"
+  local gate_log
+  gate_log="$(mktemp)"
+  # tee so the operator still sees the output live; PIPESTATUS[0] so the score
+  # comes from the check, not from tee.
+  "$@" 2>&1 | tee "$gate_log"
+  local rc=${PIPESTATUS[0]}
+  local verdict=1
+  grep -qxF 'GATE live_pulse: PERMITTED' "$gate_log" || verdict=0
+  rm -f "$gate_log"
+  if [ "$rc" -eq 0 ] && [ "$verdict" -eq 1 ]; then
+    echo "✔ PASSED: $label (exit 0, 'GATE live_pulse: PERMITTED' present)"
+  elif [ "$rc" -eq 0 ]; then
+    echo "✘ FAILED: $label (exit 0 but NO 'GATE live_pulse: PERMITTED' line —"
+    echo "          the gate never reached a verdict; an absent GATE line is a block)"
+    FAILED=1
+  elif [ "$rc" -eq 1 ]; then
+    echo "✘ FAILED: $label (exit 1 — the script never chooses 1, so the process"
+    echo "          died involuntarily and proved nothing; read the error above)"
+    FAILED=1
+  else
+    echo "✘ FAILED: $label (exit $rc — deploy-blocking; read the GATE lines above)"
+    FAILED=1
+  fi
+}
+
 run_check "check:frozen-dir" pnpm run check:frozen-dir
 run_check "check:async-handlers" pnpm run check:async-handlers
 run_check "check:migration-prefixes" pnpm run check:migration-prefixes
 run_check "check:test-runner-flags" pnpm run check:test-runner-flags
 run_check "check:write-path-columns" pnpm run check:write-path-columns
 run_check "check:missing-live-columns" pnpm run check:missing-live-columns
+run_gate  "check:rank-events-surfaces" pnpm run check:rank-events-surfaces
 
 echo ""
 echo "──────────────────────────────────────────────────────────"

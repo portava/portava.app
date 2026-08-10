@@ -15,7 +15,22 @@
 import { useCallback, useRef } from 'react';
 import { freshToken } from '../services/apiToken.ts';
 
-type Surface = 'pulse' | 'discovery' | 'events';
+/**
+ * Feed surfaces that write rank_events rows we can report outcomes against.
+ *
+ * Must stay a subset of SURFACE_VALUES in the API's src/routes/rankEvents.ts —
+ * that zod enum 400s anything it does not recognise, so a value added here
+ * before the server accepts it silently loses every outcome.
+ *
+ * 'live_pulse' is the Live Pulse rail (GET /api/pulse/live). It is deliberately
+ * NOT 'pulse': Live Pulse items are assembled by urgency rather than ranked, but
+ * are keyed by the same canonical entity ids as the ranked /pulse feed. Sharing
+ * a surface put both in one key space, and the outcome lookup — most recent
+ * (user_id, item_id, surface, outcome='impression') wins — let a Live Pulse
+ * serve row steal outcomes belonging to genuine ranked impressions. A separate
+ * surface is a separate key space, so the collision cannot happen at all.
+ */
+type Surface = 'pulse' | 'discovery' | 'events' | 'live_pulse';
 type Outcome = 'tap' | 'save' | 'join' | 'rsvp' | 'attended';
 
 const API_BASE = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';

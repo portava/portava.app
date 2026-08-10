@@ -49,21 +49,113 @@ really is better than a broken page load. The problem is that it makes total,
 permanent signal loss look identical to normal operation.
 
 **To resolve:** `src/scripts/checkRankEventsSurfaces.ts` (added alongside this
-doc) reads the live constraint definitions, compares them against every value
-the code writes, and reports observed row counts per surface. Read-only.
+doc) reports observed row counts per surface, prints the live constraint
+definitions, and — for any surface a pending deploy depends on — runs a
+**behavioural probe** against the live database.
 
 ```
 cd artifacts/api-server
 node --env-file-if-exists=.env --import tsx/esm src/scripts/checkRankEventsSurfaces.ts
 ```
 
-Exit 1 means at least one written value is rejected live. **The script will
-not widen a constraint** — that is a production schema change and belongs to a
-person.
+### Why the gate is a probe and not a text parse
 
-Note it reports permitted-but-zero-rows separately from rejected. A surface
-that is allowed and still has no rows is a different bug, and the two are easy
-to conflate.
+The gate used to answer "is `'live_pulse'` permitted live?" by running
+`pg_get_constraintdef()` and regex-harvesting every single-quoted literal out
+of the definition. That is irreducibly fragile: it harvested literals from
+*any* clause (so a value named in a negative clause such as
+`surface <> 'live_pulse'` read as PERMITTED), it never verified the definition
+was a positive allow-list on `surface` at all, and with more than one CHECK on
+`surface` the effective vocabulary is their intersection, which no single
+definition string expresses. Every one of those is a way to print PERMITTED
+about a database that would reject the row.
+
+So the gate now asks the database, by attempting the write:
+
+- one statement — a `DO` block — attempts a real `INSERT` with the required
+  surface, sourcing an FK-valid `user_id` via `SELECT id FROM auth.users LIMIT 1`
+  in the same statement and supplying known-good values for every other
+  constrained column, so the row actually *reaches* the surface CHECK;
+- it then **always** `RAISE`s, success path included, carrying the verdict in
+  the exception message. Rollback is not a separate statement that could be
+  skipped — it is the consequence of the only statement failing. There is no
+  path where a `BEGIN` succeeded and a `ROLLBACK` did not run, because the probe
+  never issues `BEGIN`;
+- afterwards it counts rows matching the probe's sentinel `item_id` prefix and
+  requires **zero** — matching the prefix, not this run's id, so it also catches
+  a leak from any earlier run;
+- error classes come from SQLSTATE captured by `GET STACKED DIAGNOSTICS`, never
+  from message prose. `23514` check_violation means rejected — but only after
+  the reported `CONSTRAINT_NAME` is matched against the live `pg_constraint`
+  listing and shown to constrain `surface` and nothing else. An unattributable
+  `23514` is fatal, not a clean "rejected". `23503` / `23502` mean the probe row
+  shape is wrong and prove nothing about `surface`.
+
+Constraint-definition text and the old literal harvest are still printed. They
+are **informational only**, labelled as such, and can never set or override the
+gate verdict.
+
+**The script will not widen a constraint** — that is a production schema change
+and belongs to a person.
+
+### Exit code contract
+
+The same table appears in the script header, in
+`artifacts/api-server/docs/migrations.md`, and in
+`artifacts/api-server/scripts/run-all-checks.sh`. **Proceed on exit 0 AND only
+when the line `GATE live_pulse: PERMITTED` is present in the output. Block on
+every other code, including one this script does not currently emit — and block
+on an absent `GATE` line whatever the exit code.**
+
+| Exit | Meaning | Action |
+| --- | --- | --- |
+| `0` | PROCEED — the probe insert was accepted live and rolled back, and no probe row persisted. The *informational* harvest may also have found a written value absent from the live definition (the standing `living_page` / `compass` finding above, expected on every run); it is printed prominently as a `FINDING` block and **does not change the exit code**. | PROCEED (after confirming the `GATE live_pulse: PERMITTED` line) |
+| `1` | CRASHED — **never chosen by the script.** Node's default code for an involuntary death: uncaught exception, unhandled rejection, module-resolution failure, `tsx`/TypeScript load failure. The run died before reaching a verdict. | **BLOCK** |
+| `2` | CANNOT-RUN — no live credentials, or `SUPABASE_URL` is unparsable, so the probe never ran and proved nothing | **BLOCK** |
+| `3` | BLOCKED — every fail-closed condition the script chooses: probe rejected; unattributable or non-surface `check_violation`; `23503`/`23502` (the probe is wrong); read-only transaction; insufficient privilege; any other SQLSTATE; no probe sentinel in the response; `auth.users` empty; a probe row persisted or the pristine count could not run; no CHECK on `surface` (the half-applied-0199 state) or none at all; no CHECK on `outcome`; the `pg_constraint` read threw; **any throw that escapes `main()`** — `main().catch()` converts it to 3 rather than letting Node default it to 1 | **BLOCK** |
+
+### Why exit 1 is reserved, and why nothing runs at module scope
+
+Exit 1 used to be the *informational* code — the standing `living_page` /
+`compass` finding — and was documented as "proceed". But 1 is also Node's
+default exit code for **every** involuntary failure, so a crashed run and a
+clean pass were the same observable result, under the one code operators were
+told to ignore. Concretely, the project ref was derived at module scope:
+
+```ts
+const projectRef = new URL(SUPABASE_URL).hostname.split(".")[0];
+```
+
+`new URL()` throws on a malformed value, and module scope is outside `main()`'s
+catch — so a bad `SUPABASE_URL` terminated the process with exit 1 and
+`run_gate` printed `PASSED`. A fatal condition wearing the code operators are
+told to ignore is the exact failure this gate exists to prevent.
+
+So exit 1 is now free: **nothing in the script chooses it**, and it means only
+"the process died involuntarily". Environment validation and the URL parse both
+happen inside `main()` (`requireTransport()`), where a failure is a printed
+`BLOCKED` verdict with exit 2. Module scope holds only literals, `process.env`
+property reads, and declarations — keep it that way.
+
+Notably, "no CHECK constraint on `surface` exists live" is exit 3, not a pass:
+an accepted insert there proves only that nothing is *enforced*, which is not
+the same fact as "the value is permitted". Conversely, "more than one CHECK
+mentions `surface`" is no longer fatal — the probe measures the effective
+intersection directly — and is now only reported for a human.
+
+`pnpm run check:all` runs the gate under exactly that rule (`run_gate` in
+`scripts/run-all-checks.sh`), which scores a pass only when **both** hold: the
+exit code is `0`, **and** `grep -qxF 'GATE live_pulse: PERMITTED'` matches the
+captured output. Everything else fails, exit 1 included. The exit-code test
+alone is not sufficient — the documented contract is "the GATE line must be
+present", and a process that dies before printing a verdict can still leave a
+passing-looking status behind. The gate needs live credentials by construction,
+so in an environment without them it exits 2 and `check:all` **fails** — it does
+not skip. A gate that no-ops without credentials is not a gate.
+
+Note the script reports permitted-but-zero-rows separately from rejected. A
+surface that is allowed and still has no rows is a different bug, and the two
+are easy to conflate.
 
 ---
 

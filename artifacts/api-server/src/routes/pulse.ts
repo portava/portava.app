@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { enrichSpans } from '../lib/enrichSpans';
 import { rankCandidates } from '../lib/portavaRank';
-import { logImpression } from '../lib/rankLog';
+import { logImpression, logLivePulseServe } from '../lib/rankLog';
 import { isFlagEnabled } from '../lib/featureFlags';
 import {
   enforceCreatorCapsGeneric,
@@ -1011,6 +1011,19 @@ router.get("/pulse/live", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
+  // Minted here — same position and same name as GET /pulse — so that every
+  // serve row written below carries it and the client can echo it back on
+  // POST /rank-events/outcome, narrowing the attribution lookup in
+  // routes/rankEvents.ts (user_id + item_id + surface + outcome='impression',
+  // most recent served_at wins) to one specific response.
+  //
+  // This is precision, NOT the mechanism that keeps Live Pulse outcomes off
+  // ranked impressions: that lookup only applies .eq("session_id") when the
+  // client actually sends one, so a null would skip it entirely.  What makes
+  // the two streams non-colliding is that these rows are written on
+  // surface='live_pulse' — a separate key space from the ranked writer's
+  // 'pulse'.  See logLivePulseServe in lib/rankLog.
+  const sessionId = randomUUID();
 
   const sc = getServiceClient();
   if (!sc) {
@@ -1057,10 +1070,22 @@ router.get("/pulse/live", async (req, res) => {
     for (const r of (inRes.data as any[]) ?? []) blockedSet.add(r.blocker_id as string);
   } catch { /* non-fatal */ }
 
-  const items: (LivePulseItem & { _urgency?: number })[] = [];
+  // Internal-only fields, stripped before the response is serialised:
+  //   _urgency     — sort key (see urgency()).
+  //   _rankItemId  — the id this item's entity is known by in rank_events, when
+  //                  that differs from the client-facing `item_id`.  The rail's
+  //                  `item_id` is whatever the app needs to navigate; the ranked
+  //                  writer may key the same entity differently.  Live Pulse
+  //                  rows land on their own surface ('live_pulse'), so a
+  //                  mismatch no longer collides with ranked rows — but one
+  //                  entity must still have ONE id across surfaces or every
+  //                  per-entity rollup and cross-surface comparison misses.
+  //                  Only available_buddy needs this today (rail id =
+  //                  rent_buddy_profiles.id, ranker id = the buddy's user_id).
+  const items: (LivePulseItem & { _urgency?: number; _rankItemId?: string })[] = [];
   const seen = new Set<string>();
 
-  function addItem(item: LivePulseItem & { _urgency?: number }) {
+  function addItem(item: LivePulseItem & { _urgency?: number; _rankItemId?: string }) {
     const key = `${item.item_type}:${item.item_id}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -1580,6 +1605,16 @@ router.get("/pulse/live", async (req, res) => {
           id:                `available_buddy:${bp.id as string}`,
           item_type:         'available_buddy',
           item_id:           bp.id as string,
+          // Telemetry id ≠ presentation id.  The card's item_id must stay the
+          // rent_buddy_profiles.id because both actions navigate by profile id
+          // (navigate_buddy_profile, request_buddy?buddyId=<profile-id>), but
+          // the ranked writer keys buddy candidates by user_id
+          // (`id: b.user_id`, see buddyCandidates above), so rank_events rows
+          // for item_kind='buddy' must use user_id too.  Already selected
+          // above, so no extra column and no extra round trip.  If it is ever
+          // null the buddy row is dropped rather than written under the wrong
+          // namespace — see buildLivePulseServeRows in lib/rankLog.
+          _rankItemId:       (bp.user_id as string | null) ?? undefined,
           status_label:      'My Plan',
           title:             'Buddy Available',
           subtitle:          (bp.city as string | null) ?? null,
@@ -1724,9 +1759,35 @@ router.get("/pulse/live", async (req, res) => {
     return aStart - bStart;
   });
 
-  const responseItems: LivePulseItem[] = items.map(({ _urgency: _u, ...rest }) => rest);
+  const responseItems: LivePulseItem[] = items.map(
+    ({ _urgency: _u, _rankItemId: _r, ...rest }) => rest,
+  );
 
-  res.json({ items: responseItems, fallbackContext: fallbackContext ?? null });
+  // ── Serve telemetry — fire-and-forget, non-fatal ───────────────────────────
+  // Emitted here (and only here) because this is the one point where the served
+  // list is final: the urgency sort above has run, so the array index IS the
+  // position the viewer saw.  These items are urgency-assembled, not ranked, so
+  // no features are written; the rows land on surface='live_pulse' (their own
+  // key space, NOT the ranked writer's 'pulse'), event_type marks the
+  // provenance, and item_id is always the canonical entity id (never the
+  // composite `item.id`).
+  //
+  // Requires migration 0199_rank_events_live_pulse_surface.sql to be live: the
+  // insert below only warns on failure, so shipping ahead of the CHECK widening
+  // drops every row silently.
+  // Excluded item types (circle, safe_return, compass, buddy_request) emit
+  // nothing — see LIVE_PULSE_ITEM_KIND in lib/rankLog.
+  //
+  // `items` is passed rather than `responseItems` because it still carries
+  // _rankItemId; the two arrays are index-identical (responseItems is a 1:1
+  // map of items), so `position` is unaffected.
+  void logLivePulseServe(items, user.id, sessionId, (err) => {
+    // Optional chaining: pinoHttp is mounted app-wide in production, but tests
+    // mount this router on a bare express app where req.log is undefined.
+    req.log?.warn({ err, userId: user.id }, "pulse/live: rank_events serve insert failed (non-fatal)");
+  });
+
+  res.json({ items: responseItems, fallbackContext: fallbackContext ?? null, sessionId });
 });
 
 export default router;

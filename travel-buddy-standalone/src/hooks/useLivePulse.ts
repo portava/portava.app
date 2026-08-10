@@ -32,6 +32,22 @@ export interface UseLivePulseResult {
   items: LivePulseItem[];
   loading: boolean;
   error: string | null;
+  /**
+   * Session UUID the server stamped on the rank_events serve rows for the
+   * items currently in `items` — null when the server did not return one.
+   *
+   * Kept in lockstep with `items`: both are written together in the success
+   * branch and neither is touched on a failed fetch, so this always identifies
+   * the batch the user is actually looking at. Forward it to any outcome
+   * reported from a Live Pulse card (surface 'live_pulse') so the outcome route
+   * can narrow its impression lookup to this serve instead of picking whichever
+   * live_pulse impression happens to be most recent.
+   *
+   * This is a precision improvement only. Live Pulse cards are safe from
+   * cross-surface mis-attribution because they report under their own surface,
+   * not because a session is present — nothing here is load-bearing.
+   */
+  sessionId: string | null;
   refresh: () => void;
   dismiss: (id: string) => void;
   changeContext: (ctx: LivePulseContext) => void;
@@ -51,6 +67,10 @@ export function useLivePulse(opts: UseLivePulseOptions = {}): UseLivePulseResult
   const context: LivePulseContext = opts.context ?? internalContext;
 
   const [allItems, setAllItems] = useState<LivePulseItem[]>([]);
+  // Serve session for whatever is in `allItems`. Written only where allItems is
+  // written, so an outcome can never be tagged with a session that served a
+  // different batch of cards.
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dismissedVersion, setDismissedVersion] = useState(0);
@@ -67,7 +87,10 @@ export function useLivePulse(opts: UseLivePulseOptions = {}): UseLivePulseResult
     setLoading(false);
     if (result.ok) {
       setAllItems(result.items);
+      setSessionId(result.sessionId);
     } else {
+      // Leave items AND sessionId untouched: on a failed refresh the previously
+      // served cards stay on screen, so they keep the session that served them.
       setError(result.error);
     }
   }, [context, citySlug, lat, lng, paused]);
@@ -108,5 +131,5 @@ export function useLivePulse(opts: UseLivePulseOptions = {}): UseLivePulseResult
   // Silence the unused var warning — dismissedVersion drives re-render
   void dismissedVersion;
 
-  return { items, loading, error, refresh, dismiss, changeContext };
+  return { items, loading, error, sessionId, refresh, dismiss, changeContext };
 }

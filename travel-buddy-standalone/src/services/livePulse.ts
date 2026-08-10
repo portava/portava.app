@@ -65,6 +65,26 @@ export interface GetLivePulseParams {
   citySlug?: string | null;
 }
 
+/**
+ * Raw body of GET /api/pulse/live.
+ *
+ * `sessionId` is the UUID the server stamps on every rank_events serve row it
+ * writes for this response (one UUID per response, same shape and field name as
+ * GET /api/pulse). Those rows carry surface='live_pulse'.
+ *
+ * Forward it on any outcome reported for a card from this batch: the outcome
+ * route only adds `.eq("session_id", …)` when the client sends one, and without
+ * it the lookup falls back to "most recent impression for (user, item, surface)
+ * wins". Because Live Pulse now owns its own surface, that fallback still picks
+ * a Live Pulse row — never a ranked /pulse one — so the session only
+ * disambiguates between repeated Live Pulse serves of the same entity. It is
+ * precision, not the correctness mechanism.
+ */
+export interface LivePulseResponse {
+  items: LivePulseItem[];
+  sessionId?: string;
+}
+
 // ── Session-scoped dismiss store ──────────────────────────────────────────────
 
 const _dismissed = new Set<string>();
@@ -101,7 +121,10 @@ export function clearDismissedItems(): void {
 
 export async function getLivePulseItems(
   params: GetLivePulseParams = {},
-): Promise<{ ok: true; items: LivePulseItem[] } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; items: LivePulseItem[]; sessionId: string | null }
+  | { ok: false; error: string }
+> {
   const base = apiBase();
   if (!base) return { ok: false, error: 'API not configured' };
 
@@ -122,8 +145,16 @@ export async function getLivePulseItems(
       const body = await res.json().catch(() => ({})) as Record<string, unknown>;
       return { ok: false, error: (body.message as string) ?? `HTTP ${res.status}` };
     }
-    const data = (await res.json()) as { items: LivePulseItem[] };
-    return { ok: true, items: data.items ?? [] };
+    const data = (await res.json()) as LivePulseResponse;
+    // Normalise to `string | null`: an older server build (or a build with the
+    // serve-logging disabled) omits the field entirely, and an empty string
+    // would be forwarded as a real session and rejected by the outcome route's
+    // UUID check. Absent means "unattributed", which is honest.
+    const sessionId =
+      typeof data.sessionId === 'string' && data.sessionId.length > 0
+        ? data.sessionId
+        : null;
+    return { ok: true, items: data.items ?? [], sessionId };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? 'Network error' };
   }

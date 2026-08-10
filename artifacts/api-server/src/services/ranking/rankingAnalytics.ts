@@ -63,6 +63,31 @@ export const RankingEvent = {
 /** Union of all ranking analytics event_type strings. */
 export type RankingEventType = (typeof RankingEvent)[keyof typeof RankingEvent];
 
+// ── Non-ranker event_type markers ─────────────────────────────────────────────
+//
+// rank_events.event_type is a free-text provenance column shared by writers that
+// are NOT part of the ranking pipeline (e.g. 'place_view' in routes/rankEvents.ts,
+// 'watch_impression' in routes/mediaFeed.ts).  Those values do not belong in
+// `RankingEvent`: every member of that object is a ranking-pipeline event and
+// every value is prefixed "ranking_" — an invariant asserted by
+// src/test/ranking-explanation-analytics.test.ts ("all event strings start with
+// 'ranking_'").  Markers for non-ranker writers live here instead.
+
+/**
+ * `event_type` marker for a Live Pulse rail serve (GET /api/pulse/live).
+ *
+ * Deliberately NOT a member of `RankingEvent`.  Live Pulse items are assembled
+ * by urgency (routes/pulse.ts), never scored by rankCandidates, so those rows
+ * carry no feature vector — naming this a `ranking_*` event would assert the
+ * ranker provenance the marker exists to deny, as well as breaking the
+ * "ranking_" prefix invariant above.
+ *
+ * Genuine ranker impressions (lib/rankLog.ts logImpression /
+ * logCompassImpression) write no event_type at all, so `event_type IS NULL`
+ * selects the ranked corpus and `event_type = 'live_pulse_serve'` selects these.
+ */
+export const LIVE_PULSE_SERVE_EVENT = "live_pulse_serve";
+
 // ── Outcome → analytics event mapping ────────────────────────────────────────
 //
 // Maps the existing client-facing outcome values to the new typed constants.

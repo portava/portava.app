@@ -10,7 +10,14 @@ import { freshToken as freshApiToken } from './apiToken.ts';
 const apiBase = () => (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
 
 type OutcomeValue = 'tap' | 'save' | 'join' | 'rsvp' | 'attended';
-type SurfaceValue = 'pulse' | 'discovery' | 'events';
+/**
+ * Kept in lockstep with the `Surface` union in ../hooks/useRankOutcome.ts and
+ * with SURFACE_VALUES in the API's src/routes/rankEvents.ts (that zod enum 400s
+ * anything else). 'live_pulse' is the Live Pulse rail; it is a separate key
+ * space from the ranked 'pulse' feed on purpose — see the note on `Surface` in
+ * useRankOutcome.ts.
+ */
+type SurfaceValue = 'pulse' | 'discovery' | 'events' | 'live_pulse';
 
 /**
  * Fire-and-forget: post an outcome row to /api/rank-events/outcome.
@@ -18,7 +25,10 @@ type SurfaceValue = 'pulse' | 'discovery' | 'events';
  * Errors are swallowed — a logging failure must never interrupt the user.
  *
  * @param itemId    ID of the item the user interacted with.
- * @param surface   Feed surface that served the item ("pulse" | "events" | "discovery").
+ * @param surface   Feed surface that served the item — must be the surface the
+ *                  impression row was WRITTEN with, not the screen the user is
+ *                  looking at now. The Live Pulse rail serves under
+ *                  "live_pulse"; the ranked Pulse feed serves under "pulse".
  * @param outcome   Interaction type.
  * @param sessionId Session UUID returned by the originating feed response.
  */

@@ -77,7 +77,12 @@ export function LivePulseRail({ pulse }: LivePulseRailProps) {
   const [expanded, setExpanded] = useState(true);
   const [activeFilter, setActiveFilter] = useState<RailFilter>('All');
 
-  const { items, loading, error, refresh, dismiss, changeContext: _changeContext } = pulse;
+  // sessionId identifies the serve batch `items` came from; LivePulseCard
+  // forwards it on every outcome it reports so the server can attribute the
+  // outcome to THIS serve rather than an earlier Live Pulse serve of the same
+  // entity. Separation from the ranked /pulse feed comes from the surface
+  // ('live_pulse'), not from this session.
+  const { items, loading, error, sessionId, refresh, dismiss, changeContext: _changeContext } = pulse;
 
   const filteredItems = useMemo(
     () => filterItems(items, activeFilter),
@@ -163,6 +168,7 @@ export function LivePulseRail({ pulse }: LivePulseRailProps) {
               renderItem={({ item }) => (
                 <LivePulseCard
                   item={item}
+                  sessionId={sessionId}
                   onDismiss={dismiss}
                   onActionDone={refresh}
                 />

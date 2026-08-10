@@ -80,7 +80,23 @@ router.post("/rank-events", asyncHandler(async (req, res) => {
 // sending the legacy string values.  New outcome event types are emitted
 // as additional analytics rows using the typed RankingEvent constants.
 const OUTCOME_VALUES = ["tap", "save", "join", "rsvp", "attended"] as const;
-const SURFACE_VALUES = ["pulse", "discovery", "events"] as const;
+
+/**
+ * Surfaces a client may report an outcome against.  This is the ONLY server-side
+ * validation of `surface`; everything else writes a hard-coded literal.
+ *
+ * 'live_pulse' — the Live Pulse rail (GET /api/pulse/live).  Its serve rows are
+ * written on their own surface by logLivePulseServe (lib/rankLog.ts) precisely
+ * so they cannot hijack outcome attribution from ranked surface='pulse'
+ * impressions, and the lookup below hard-filters .eq("surface", surface), so
+ * without this value every Live Pulse save/rsvp 400s at the zod boundary.
+ *
+ * NOTE this value also reaches the CHECK constraint a SECOND time: the analytics
+ * insert further down echoes `surface` verbatim into a new row.  Migration
+ * 0199_rank_events_live_pulse_surface.sql must be applied live before this enum
+ * is widened, or that insert is silently rejected (it only warns).
+ */
+const SURFACE_VALUES = ["pulse", "discovery", "events", "live_pulse"] as const;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
