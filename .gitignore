@@ -79,3 +79,8 @@ recovery-backups/
 _ci/
 _drop2/
 *.pre-fix
+apply-*.sh
+fix-*.sh
+*-drop.zip
+drop*.zip
+ci-drop.zip
