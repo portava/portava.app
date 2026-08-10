@@ -159,4 +159,21 @@ describe('useHighlightRingState viewed-ids — flag OFF is byte-identical to leg
     await new Promise((r) => setTimeout(r, 0));
     assert.equal(storage.store.has(scopedKey('user-a')), false);
   });
+
+  it('pre-existing legacy viewed-ids map is untouched (no migration attempt) — same key, same value, merged in place', async () => {
+    const preUpgrade = { 'pre-existing-highlight': futureExpiry };
+    storage.store.set(LEGACY_KEY, JSON.stringify(preUpgrade));
+
+    await _initViewedIdsForTest();
+    assert.ok(viewedHighlightIds.has('pre-existing-highlight'), 'must load the pre-existing entry unchanged');
+    assert.equal(storage.store.has(scopedKey('user-a')), false, 'no scoped key may exist');
+
+    markViewed('highlight-new', futureExpiry);
+    await new Promise((r) => setTimeout(r, 0));
+
+    const finalRaw = await storage.getItem(LEGACY_KEY);
+    assert.ok(finalRaw, 'legacy key must still be the live key');
+    const finalParsed = JSON.parse(finalRaw!);
+    assert.equal(finalParsed['pre-existing-highlight'], preUpgrade['pre-existing-highlight'], 'the pre-existing entry must be byte-identical to what was there before this ran');
+  });
 });

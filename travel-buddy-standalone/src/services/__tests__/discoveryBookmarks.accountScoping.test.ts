@@ -137,4 +137,22 @@ describe('discoveryBookmarks — flag OFF is byte-identical to legacy behavior',
     const raw = storage.store.get('discovery_bookmarks_scoped_v1:user-a');
     assert.equal(raw, undefined);
   });
+
+  it('pre-existing legacy data is untouched (no migration attempt) — same key, same value, appended to in place', async () => {
+    const preUpgrade = JSON.stringify([makePlace('pre-existing-place')]);
+    storage.store.set(BOOKMARKS_KEY, preUpgrade);
+
+    const list = await listSaved();
+    assert.equal(list.length, 1, 'listSaved must return the pre-existing bookmark unchanged');
+    assert.equal(list[0].id, 'pre-existing-place');
+
+    await toggleSave(makePlace('newly-added-place'));
+
+    assert.equal(storage.store.has('discovery_bookmarks_scoped_v1:user-a'), false, 'no scoped key may exist');
+    const finalRaw = storage.store.get(BOOKMARKS_KEY);
+    assert.ok(finalRaw, 'legacy key must still be the live key');
+    const finalParsed = JSON.parse(finalRaw!);
+    const original = finalParsed.find((p: { id: string }) => p.id === 'pre-existing-place');
+    assert.deepEqual(original, JSON.parse(preUpgrade)[0], 'the pre-existing entry must be byte-identical to what was written before this ran');
+  });
 });

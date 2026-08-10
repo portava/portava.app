@@ -119,4 +119,13 @@ describe('milestoneCelebrationStorage — flag OFF is byte-identical to legacy b
     await storage.setItem(key!, 'true');
     assert.equal(storage.store.has(scopedMilestoneStorageKey(1000, 'user-a')), false);
   });
+
+  it('pre-existing legacy "seen" marker is untouched (no migration attempt) — same key, same value', async () => {
+    storage.store.set(legacyMilestoneStorageKey(1000), 'true');
+
+    const key = await resolveMilestoneStorageKey(storage, 1000);
+    assert.equal(key, legacyMilestoneStorageKey(1000));
+    assert.equal(await storage.getItem(key!), 'true', 'must read the pre-existing marker byte-identical');
+    assert.equal(storage.store.has(scopedMilestoneStorageKey(1000, 'user-a')), false, 'no scoped key may exist');
+  });
 });

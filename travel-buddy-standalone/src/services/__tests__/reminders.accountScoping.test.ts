@@ -207,4 +207,41 @@ describe('reminders — flag OFF is byte-identical to legacy behavior', () => {
     const raw = await storage.getItem('@travel_buddy/reminders_scoped_v1:user-a');
     assert.equal(raw, null);
   });
+
+  it('pre-existing legacy data is untouched (no migration attempt) and its live notification survives', async () => {
+    const preExistingNotifId = 'pre-existing-live-notification';
+    fake.scheduled.add(preExistingNotifId);
+    const preUpgrade: Reminder[] = [{
+      id: 'r1', title: 'was already there pre-upgrade', note: null, remindAt: FUTURE, targetType: 'custom',
+      targetId: null, tripId: null, targetLabel: null, status: 'upcoming',
+      notificationId: preExistingNotifId, createdAt: FUTURE, updatedAt: FUTURE,
+    }];
+    const preRaw = JSON.stringify(preUpgrade);
+    await storage.setItem(REMINDERS_STORAGE_KEY, preRaw);
+
+    // Exercise every read/write path a real app run would hit, with the
+    // flag off and no simulated session — this is the exact runtime
+    // condition the flag ships in today.
+    const list = await loadReminders(storage);
+    await createReminder({ title: 'newly added', remindAt: FUTURE, targetType: 'custom' }, storage);
+
+    assert.equal(list.length, 1, 'loadReminders must return the pre-existing reminder unchanged');
+    assert.equal(list[0].notificationId, preExistingNotifId, 'notificationId must NOT be nulled — that only happens during migration');
+    assert.ok(
+      fake.scheduled.has(preExistingNotifId),
+      'CRITICAL: a real, live OS notification scheduled before this ran must still be scheduled after — migration must never fire with the flag off',
+    );
+    assert.equal(
+      await storage.getItem('@travel_buddy/reminders_scoped_v1:user-a'),
+      null,
+      'no scoped key may exist — this data is not "unmigrated pending", it was never a migration candidate',
+    );
+    // The legacy key itself: still present, and the original entry still
+    // byte-identical within it (a second reminder was appended alongside).
+    const finalRaw = await storage.getItem(REMINDERS_STORAGE_KEY);
+    assert.ok(finalRaw, 'legacy key must still exist');
+    const finalParsed: Reminder[] = JSON.parse(finalRaw!);
+    const original = finalParsed.find((r) => r.id === 'r1');
+    assert.deepEqual(original, preUpgrade[0], 'the pre-existing entry must be byte-identical to what was written before this ran');
+  });
 });

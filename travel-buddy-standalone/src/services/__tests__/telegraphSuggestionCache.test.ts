@@ -101,4 +101,15 @@ describe('telegraphSuggestionCache — flag OFF is byte-identical to legacy beha
     await resolveTelegraphCacheKey(storage, THREAD);
     assert.equal(storage.store.has(`telegraph_suggestions_scoped_v1_${THREAD}_user-a`), false);
   });
+
+  it('pre-existing legacy cache entry is untouched (no migration attempt) — same key, same value', async () => {
+    const preUpgrade = JSON.stringify({ suggestions: [{ id: 'pre-existing' }], savedAt: 12345 });
+    await storage.setItem(telegraphCacheKey(THREAD), preUpgrade);
+
+    const key = await resolveTelegraphCacheKey(storage, THREAD);
+    assert.equal(key, telegraphCacheKey(THREAD));
+    const raw = await storage.getItem(key!);
+    assert.equal(raw, preUpgrade, 'must read the pre-existing cache value byte-identical');
+    assert.equal(storage.store.has(`telegraph_suggestions_scoped_v1_${THREAD}_user-a`), false, 'no scoped key may exist');
+  });
 });

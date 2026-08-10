@@ -106,4 +106,15 @@ describe('checkpointArrivalQueue — flag OFF is byte-identical to legacy behavi
     await resolveCheckpointQueueKey(storage);
     assert.equal(storage.store.has('@travel_buddy/pending_checkpoint_arrivals_scoped_v1:user-a'), false);
   });
+
+  it('pre-existing legacy queue is untouched (no migration attempt) — same key, same value', async () => {
+    const preUpgrade = JSON.stringify(['pre-existing-stop']);
+    await storage.setItem(PENDING_ARRIVALS_STORE_KEY, preUpgrade);
+
+    const key = await resolveCheckpointQueueKey(storage);
+    assert.equal(key, PENDING_ARRIVALS_STORE_KEY);
+    const raw = await storage.getItem(key!);
+    assert.equal(raw, preUpgrade, 'must read the pre-existing queue byte-identical');
+    assert.equal(storage.store.has('@travel_buddy/pending_checkpoint_arrivals_scoped_v1:user-a'), false, 'no scoped key may exist');
+  });
 });

@@ -117,4 +117,16 @@ describe('savedPlacesMapFilterStorage — flag OFF is byte-identical to legacy b
     await Promise.resolve();
     assert.equal(storage.store.has(scopedCategoryStorageKey('global', 'user-a')), false);
   });
+
+  it('pre-existing legacy filter is untouched (no migration attempt) — same key, same value', async () => {
+    storage.store.set(categoryStorageKey('global'), 'Museums');
+
+    const key = await resolveCategoryStorageKey(storage, 'global');
+    assert.equal(key, categoryStorageKey('global'));
+    const raw = await readRawCategoryFilter(storage, key!);
+    assert.equal(raw, 'Museums', 'must read the pre-existing value unchanged');
+
+    assert.equal(storage.store.has(scopedCategoryStorageKey('global', 'user-a')), false, 'no scoped key may exist');
+    assert.equal(storage.store.get(categoryStorageKey('global')), 'Museums', 'legacy key must still hold the original byte-identical value');
+  });
 });

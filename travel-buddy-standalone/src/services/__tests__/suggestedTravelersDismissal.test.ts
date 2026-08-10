@@ -112,4 +112,14 @@ describe('suggestedTravelersDismissal — flag OFF is byte-identical to legacy b
     await storage.setItem(key!, JSON.stringify([]));
     assert.equal(storage.store.has(scopedDismissedKey('user-a')), false);
   });
+
+  it('pre-existing legacy dismissed list is untouched (no migration attempt) — same key, same value', async () => {
+    const preUpgrade = JSON.stringify([{ id: 'pre-existing', dismissedAt: 12345 }]);
+    storage.store.set(DISMISSED_STORAGE_KEY, preUpgrade);
+
+    const key = await resolveSuggestedTravelersDismissedKey(storage);
+    assert.equal(key, DISMISSED_STORAGE_KEY);
+    assert.equal(await storage.getItem(key!), preUpgrade, 'must read the pre-existing list byte-identical');
+    assert.equal(storage.store.has(scopedDismissedKey('user-a')), false, 'no scoped key may exist');
+  });
 });

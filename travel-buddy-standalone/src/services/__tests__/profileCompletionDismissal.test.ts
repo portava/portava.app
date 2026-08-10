@@ -110,4 +110,13 @@ describe('profileCompletionDismissal — flag OFF is byte-identical to legacy be
     await storage.setItem(key!, '1');
     assert.equal(storage.store.has(scopedDismissedKey('user-a')), false);
   });
+
+  it('pre-existing legacy dismissal is untouched (no migration attempt) — same key, same value', async () => {
+    storage.store.set(DISMISSED_STORAGE_KEY, '1');
+
+    const key = await resolveProfileCompletionDismissedKey(storage);
+    assert.equal(key, DISMISSED_STORAGE_KEY);
+    assert.equal(await storage.getItem(key!), '1', 'must read the pre-existing value byte-identical');
+    assert.equal(storage.store.has(scopedDismissedKey('user-a')), false, 'no scoped key may exist');
+  });
 });
