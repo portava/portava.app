@@ -592,6 +592,54 @@ select count(*) from auth.users;
 One profile row with `is_official = true`, and `auth.users` count ≥ 1. That second
 query is also what unblocks §2.2 / `checkRankEventsSurfaces`.
 
+### Step 6b — Seed the notification feature flags
+
+A schema-only restore carries the `feature_flags` TABLE and none of its ROWS.
+`0062_notifications_schema.sql` seeds five of them behind
+`IF EXISTS (SELECT 1 FROM pg_tables …)`, but that block only ever ran in an
+environment where the migration itself was replayed — which, per §1, this project
+deliberately is not.
+
+**Why this is not cosmetic.** `isFlagEnabled` (`lib/featureFlags.ts`) returns
+false on a missing row, so every one of these reads `false` on an unseeded
+project. Nothing errors and nothing goes red — the notification system is simply
+off, and any CI test that touches it passes by exercising the disabled path. It
+is the §0 failure mode exactly: a green run that verified the feature is
+switched off.
+
+In the CI project's SQL editor:
+
+```sql
+INSERT INTO public.feature_flags (flag, enabled, description) VALUES
+  ('notifications_enabled',        TRUE,  'Master switch for the in-app notification system'),
+  ('push_notifications_enabled',   TRUE,  'Enable Expo push delivery via notification_devices table'),
+  ('notification_digests_enabled', FALSE, 'Enable daily notification digest batching'),
+  ('realtime_activity_enabled',    TRUE,  'Enable SSE realtime activity stream'),
+  ('safety_notifications_enabled', TRUE,  'Enable safety-critical notification delivery')
+ON CONFLICT (flag) DO NOTHING;
+```
+
+Values are 0062's, which is the declared seed. **One of them does not match
+production:** live `notification_digests_enabled` is `true`, the migration says
+`false`. 0062's value is used here because it is the written one; if CI is meant
+to mirror production's behaviour rather than the migration's, flip that row and
+record why.
+
+**Verify** — 5 rows, and compare against production rather than eyeballing:
+
+```sql
+select flag, enabled from public.feature_flags
+ where flag in ('notifications_enabled','push_notifications_enabled',
+                'notification_digests_enabled','realtime_activity_enabled',
+                'safety_notifications_enabled')
+ order by flag;
+```
+
+This is the general shape of the problem, not a one-off: any `feature_flags` row
+the app expects is absent on a schema-only restore, and `isFlagEnabled`'s
+fail-closed default converts each absence into a silently disabled feature rather
+than an error. These five are the set that had been identified as of 2026-08-10.
+
 ### Step 7 — Configure the workflow's environment
 
 - Repo → Settings → Secrets and variables → Actions → **Variables**: set

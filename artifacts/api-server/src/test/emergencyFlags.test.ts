@@ -196,16 +196,25 @@ describe("disable_tagging flag gates POST /tags", () => {
       `Should not block tagging when flag is false`);
   });
 
-  it("fail-open: DB error on flag query allows tagging (does not block)", async () => {
+  // INVERTED 2026-08-10 (Phase 0 #3). This test previously asserted fail-OPEN:
+  // that a DB error on the flag query let tagging through. That was the defect,
+  // written down as an expectation — for an emergency STOP, false-on-error means
+  // "do not stop", so the switch disengaged exactly when the database was
+  // unhealthy. disable_tagging is now read through isKillSwitchEngaged, which
+  // treats an unreadable state as engaged. The other fail-open assertions in
+  // this file are left alone deliberately: their switches have NOT been
+  // converted, and a test asserting behaviour the code does not have would be
+  // worse than one recording behaviour that should change. See the kill-switch
+  // inventory in the Phase 0 notes.
+  it("fail-CLOSED: DB error on the flag query STOPS tagging", async () => {
     setClients("error");
-    const { body } = await req("POST", "/tags", {
+    const { status, body } = await req("POST", "/tags", {
       source_type:    "post",
       source_id:      TARGET_ID,
       tagged_user_id: TARGET_ID,
     });
-    // Must not be feature_disabled — DB error must fail-open
-    assert.notEqual(body.error, "feature_disabled",
-      `DB error should fail-open but got feature_disabled: ${JSON.stringify(body)}`);
+    assert.equal(body.error, "feature_disabled",
+      `an unreadable emergency stop must engage, got ${status} ${JSON.stringify(body)}`);
   });
 });
 

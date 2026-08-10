@@ -175,7 +175,15 @@ export async function enrichSpans(
     .select('id, source_id, tagged_user_id')
     .eq('source_type', sourceType)
     .in('source_id', sourceIds)
-    .eq('suppressed', false);
+    .eq('suppressed', false)
+    // status: 0064 added 'pending' for approval_required tags and 'rejected'
+    // for declined ones. Only 'approved' may be rendered. Without this the
+    // approval flow was decorative — a tag awaiting the tagged user's consent
+    // was shown to every viewer the moment it was written, and the 202 that
+    // POST /api/tags returns described a gate that did not exist on the read
+    // side. Column is NOT NULL DEFAULT 'approved' (0064), so pre-approval rows
+    // still match.
+    .eq('status', 'approved');
 
   const taggedUserIds: string[] = [
     ...new Set(((tagRows ?? []) as any[]).map((r: any) => r.tagged_user_id as string)),

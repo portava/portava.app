@@ -26,6 +26,47 @@ export async function isFlagEnabled(sc: any, flag: string): Promise<boolean> {
 }
 
 /**
+ * Read an EMERGENCY STOP flag. Returns true when the stop is ENGAGED.
+ *
+ * WHY THIS EXISTS SEPARATELY FROM isFlagEnabled
+ * =============================================
+ *
+ * isFlagEnabled returns false on any error, and for an ordinary capability flag
+ * that is the safe default: an unreadable flag means the feature stays off.
+ *
+ * A kill switch inverts the meaning of every value. `disable_tagging = true`
+ * means STOP, so false-on-error means "do not stop" — the switch disengages
+ * precisely when the database is unhealthy, which is the moment you are most
+ * likely to be reaching for it. Reading a stop through isFlagEnabled is not a
+ * safe default wearing the wrong name; it is the unsafe default.
+ *
+ * So the polarity of the FAILURE is inverted here, not the polarity of the
+ * flag: a DB error means the stop engages. The flag row keeps its name, its
+ * value and its meaning, so nothing about existing rows or the admin UI
+ * changes — which is why this was chosen over renaming the flag to
+ * `tagging_enabled`. Inverting the flag itself would make an ABSENT row (every
+ * flag nobody has created, including all of them on a freshly restored CI
+ * project) read as "disabled", turning a missing row into an outage.
+ *
+ * A missing row is therefore NOT engaged: maybeSingle() returns data=null with
+ * error=null, which means "no such stop has been configured". Only a genuine
+ * error — the state could not be established — engages it.
+ */
+export async function isKillSwitchEngaged(sc: any, flag: string): Promise<boolean> {
+  try {
+    const { data, error } = await sc
+      .from("feature_flags")
+      .select("enabled")
+      .eq("flag", flag)
+      .maybeSingle();
+    if (error) return true; // state unknown → treat as stopped
+    return Boolean((data as any)?.enabled);
+  } catch {
+    return true; // state unknown → treat as stopped
+  }
+}
+
+/**
  * Fetch a single flag row including its metadata column.
  * Returns null on any error (fail-closed).
  */

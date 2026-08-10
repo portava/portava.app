@@ -13,7 +13,7 @@ import { getServiceClient } from '../lib/supabase.js';
 import { nameVisibilitySet } from '../lib/publicIdentity.js';
 import { isUuid } from '../lib/followDecisions.js';
 import { resolveInteractionPermissions } from '../services/interactionPermissions.js';
-import { isFlagEnabled } from '../lib/featureFlags.js';
+import { isKillSwitchEngaged } from '../lib/featureFlags.js';
 import {
   assertMayTagSource,
   checkHourlyTagLimit,
@@ -63,8 +63,13 @@ router.post('/tags', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  // Emergency flag: disable_tagging — fail-open (allow) on DB error
-  if (await isFlagEnabled(sc, 'disable_tagging')) {
+  // Emergency stop: disable_tagging. Read through isKillSwitchEngaged, NOT
+  // isFlagEnabled — for a stop, false-on-error means "do not stop", so the
+  // switch would disengage exactly when the DB is unhealthy. An unreadable stop
+  // is treated as engaged. Same response as a deliberate stop (the caller's
+  // experience is identical: tagging is off); the message differs so operators
+  // can tell the two apart in logs.
+  if (await isKillSwitchEngaged(sc, 'disable_tagging')) {
     sendError(res, 'feature_disabled', 'Tagging is temporarily disabled');
     return;
   }

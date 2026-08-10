@@ -714,3 +714,136 @@ describe('GET /api/tags/suggestions — filter injection', () => {
     }
   });
 });
+
+// ═══ Phase 0 #2 — pending tags must not render ════════════════════════════════
+//
+// 0064 added tags.status with 'pending' for approval_required. enrichSpans
+// filtered only `suppressed`, so a tag awaiting the tagged user's approval
+// rendered to every viewer immediately and the 202 the write path returns was
+// theatre.
+
+describe('enrichSpans — tag status', () => {
+  const post = 'eeee1111-0000-4000-8000-000000000001';
+  const alice = 'aaaa1111-0000-4000-8000-000000000011';
+
+  function scFor(status: string) {
+    return makeClient({
+      tags: [{ id: 'tagrow-1', source_type: 'post', source_id: post,
+               tagged_user_id: alice, suppressed: false, status }],
+      profiles: [{ id: alice, handle: 'alice' }],
+      hashtag_usage: [],
+      hashtags: [],
+      blocks: [],
+    });
+  }
+
+  it('does NOT render a pending tag', async () => {
+    const { enrichSpans } = await import('../lib/enrichSpans.js');
+    const out = await enrichSpans(scFor('pending'), 'post', [{ id: post, content: 'hey @alice' }]);
+    assert.deepEqual(out[post].tags, [],
+      'a tag awaiting approval must not be rendered to viewers');
+  });
+
+  it('still renders an approved tag (guards against over-filtering)', async () => {
+    const { enrichSpans } = await import('../lib/enrichSpans.js');
+    const out = await enrichSpans(scFor('approved'), 'post', [{ id: post, content: 'hey @alice' }]);
+    assert.equal(out[post].tags.length, 1, 'approved tags must still render');
+    assert.equal(out[post].tags[0].matchToken, 'alice');
+  });
+});
+
+// ═══ Phase 0 #8 — filterByContentVisibility ═══════════════════════════════════
+
+describe('processTagging — content-visibility failure modes', () => {
+  const author = 'bbbb2222-0000-4000-8000-000000000021';
+  const alice  = 'aaaa2222-0000-4000-8000-000000000022';
+
+  it('(8a) suppresses notifications when the post row cannot be found', async () => {
+    // No `posts` row for this id at all. Visibility is therefore unknown, and an
+    // unknown visibility is not a permission.
+    const store: Record<string, Row[]> = {
+      profiles: [{ id: alice, handle: 'alice', tag_permission: 'anyone' }],
+      posts: [],
+      tags: [],
+      blocks: [],
+      user_follows: [],
+    };
+    const { processTagging } = await import('../services/tagging/TaggingService.js');
+    const ids = await processTagging({
+      db: makeClient(store, { userId: author }) as any,
+      authorId: author, sourceType: 'post', sourceId: 'ffff3333-0000-4000-8000-000000000099',
+      content: '@alice',
+    });
+    assert.deepEqual(ids, [],
+      'post not found → visibility unknown → must fail CLOSED, not notify everyone');
+  });
+
+  it('(8b) friends-only post does not notify a one-way follower', async () => {
+    // alice follows author. They are NOT friends (no user_friendships row).
+    const store: Record<string, Row[]> = {
+      profiles: [{ id: alice, handle: 'alice', tag_permission: 'anyone' }],
+      posts: [{ id: 'ffff4444-0000-4000-8000-000000000044', visibility: 'friends', author_id: author, trip_id: null }],
+      user_follows: [{ follower_id: alice, following_id: author }],
+      user_friendships: [],
+      tags: [],
+      blocks: [],
+    };
+    const { processTagging } = await import('../services/tagging/TaggingService.js');
+    const ids = await processTagging({
+      db: makeClient(store, { userId: author }) as any,
+      authorId: author, sourceType: 'post', sourceId: 'ffff4444-0000-4000-8000-000000000044',
+      content: '@alice',
+    });
+    assert.deepEqual(ids, [],
+      'friends-only visibility must require a mutual friendship, not a one-way follow');
+  });
+});
+
+// ═══ Phase 0 #3 — disable_tagging must fail to the STOPPED state ══════════════
+
+describe('POST /api/tags — disable_tagging is an emergency stop', () => {
+  const caller = 'aaaa5555-0000-4000-8000-000000000055';
+  const target = 'bbbb5555-0000-4000-8000-000000000056';
+  const own    = 'cccc5555-0000-4000-8000-000000000057';
+
+  it('refuses when the feature_flags lookup ERRORS (unknown ≠ permission to proceed)', async () => {
+    const store: Record<string, Row[]> = {
+      profiles: [
+        { id: caller, handle: 'caller', tag_permission: 'anyone' },
+        { id: target, handle: 'target', tag_permission: 'anyone' },
+      ],
+      posts: [{ id: own, author_id: caller, visibility: 'public' }],
+      tags: [], blocks: [], feature_flags: [],
+    };
+    const sc: any = makeClient(store, { userId: caller });
+    const realFrom = sc.from.bind(sc);
+    // Only feature_flags is unhealthy — everything else works, so a refusal can
+    // only come from the kill-switch read.
+    sc.from = (table: string) => {
+      if (table !== 'feature_flags') return realFrom(table);
+      const b: any = new Proxy({}, {
+        get: (_t, prop) => (prop === 'then'
+          ? (resolve: any) => resolve({ data: null, error: { message: 'connection reset' } })
+          : () => b),
+      });
+      return b;
+    };
+    _setTestClient(sc, true);
+    _setTestServiceClient(sc);
+    const server = createServer(makeAppWithLog()).listen(0);
+    try {
+      const res = await request(server, 'POST', '/api/tags', {
+        token: 'good',
+        body: { source_type: 'post', source_id: own, tagged_user_id: target },
+      });
+      // 404 = feature_disabled, the same code a deliberate stop returns. The
+      // property under test is that the request is REFUSED and nothing is
+      // written, not which code expresses it.
+      assert.equal(res.status, 404,
+        `an emergency stop must engage when its own state cannot be read, got ${res.status} ${JSON.stringify(res.body)}`);
+      assert.deepEqual(store.tags, [], 'no tag row may be written while the stop is engaged');
+    } finally {
+      server.close();
+    }
+  });
+});

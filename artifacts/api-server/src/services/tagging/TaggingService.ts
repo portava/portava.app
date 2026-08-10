@@ -14,6 +14,7 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Logger } from 'pino';
+import { normalizedFriendshipPair } from '../../lib/friendDecisions.js';
 import {
   MAX_MENTIONS,
   MAX_HASHTAGS,
@@ -135,7 +136,12 @@ async function filterByContentVisibility(
       .eq('id', postId)
       .maybeSingle();
 
-    if (!post) return taggedIds; // Post not found — pass through (can't determine visibility)
+    // FAIL CLOSED. This previously returned the full taggedIds list "because we
+    // can't determine visibility" — but an undetermined visibility is not a
+    // permission, and the catch at the bottom of this function already treats
+    // the same uncertainty as a reason to suppress. Two opposite defaults for
+    // one question is the defect; this is the half that was wrong.
+    if (!post) return [];
 
     const visibility = (post as any).visibility ?? 'public';
 
@@ -156,16 +162,44 @@ async function filterByContentVisibility(
       return taggedIds.filter(id => memberSet.has(id));
     }
 
-    // For followers/friends-only and any other restricted visibility:
-    // only notify tagged users who follow the author
-    const { data: followers } = await db
-      .from('user_follows')
-      .select('follower_id')
-      .eq('following_id', authorId)
-      .in('follower_id', taggedIds);
+    // FRIENDS-ONLY IS NOT FOLLOWERS-ONLY. Both used to fall through to a single
+    // one-way follow check, so a stranger who merely followed the author was
+    // notified about a friends-only post. The friendship predicate is not
+    // redefined here: it is a row in user_friendships keyed by the normalized
+    // pair, and normalizedFriendshipPair() from lib/friendDecisions.ts is the
+    // existing implementation of that key — reused on BOTH sides of the
+    // comparison below. Writing a second definition is how the tagging caps
+    // drifted apart from each other in the first place.
+    if (visibility === 'friends' || visibility === 'friends_only') {
+      const { data: friendRows } = await db
+        .from('user_friendships')
+        .select('user_a, user_b')
+        .or(`user_a.eq.${authorId},user_b.eq.${authorId}`);
+      const livePairs = new Set(
+        ((friendRows ?? []) as any[]).map((r: any) =>
+          normalizedFriendshipPair(r.user_a as string, r.user_b as string).join('|'),
+        ),
+      );
+      return taggedIds.filter((id) =>
+        livePairs.has(normalizedFriendshipPair(authorId, id).join('|')),
+      );
+    }
 
-    const followerSet = new Set((followers ?? []).map((r: any) => r.follower_id as string));
-    return taggedIds.filter(id => followerSet.has(id));
+    if (visibility === 'followers' || visibility === 'followers_only') {
+      const { data: followers } = await db
+        .from('user_follows')
+        .select('follower_id')
+        .eq('following_id', authorId)
+        .in('follower_id', taggedIds);
+      const followerSet = new Set((followers ?? []).map((r: any) => r.follower_id as string));
+      return taggedIds.filter(id => followerSet.has(id));
+    }
+
+    // Any OTHER visibility value is one this function does not understand, and
+    // an unrecognised visibility is not a permission — same rule as the missing
+    // post above. Fail closed rather than guessing which relationship gates it.
+    logger?.warn({ visibility, postId }, 'filterByContentVisibility: unrecognised visibility — suppressing');
+    return [];
   } catch (err) {
     logger?.warn({ err }, 'filterByContentVisibility failed — suppressing all notifications');
     return []; // Safe default on error
