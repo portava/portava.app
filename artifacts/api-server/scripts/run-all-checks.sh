@@ -106,6 +106,19 @@ run_gate() {
 }
 
 run_check "check:guard-coverage" pnpm run check:guard-coverage
+# check:flag-polarity — every feature flag is classified STOP/CAPABILITY/CONFIG
+# and read through the reader that classification demands. Wired 2026-08-10
+# after c89f09a7 converted eleven emergency stops that had been reading
+# through isFlagEnabled, where a DB error returned false — "do not stop" —
+# disengaging every one of them at the moment an operator would reach for it.
+# The check exists so the TWELFTH stop cannot be added the same way: a new
+# disable_* flag read through isFlagEnabled goes red, and so does any flag
+# whose name matches neither convention until a human classifies it.
+#
+# It enforces that a classification EXISTS and MATCHES its reader. It does
+# NOT enforce that the classification is RIGHT — that judgment stays human
+# and is recorded in the script. Read its header before adding an exemption.
+run_check "check:flag-polarity" pnpm run check:flag-polarity
 run_check "check:frozen-dir" pnpm run check:frozen-dir
 run_check "check:async-handlers" pnpm run check:async-handlers
 run_check "check:migration-prefixes" pnpm run check:migration-prefixes
