@@ -96,6 +96,46 @@ It parses every migration file for the objects it claims (tables and every colum
 
 Encoded gotchas: triggers are checked via `pg_trigger` (TRUNCATE triggers are invisible to `information_schema.triggers`); tables match views too (legacy `buddy_*` compat views); `0050` and `0105` are skipped (superseded/drifted); an allowlist (in the script, with per-entry comments) covers columns where the migration files are wrong vs live — renamed (`feature_flags.key`→`flag`, `highlights.user_id`→`owner_id`, `user_location_state.latitude`→`lat`, `passport_stamps.earned_at`→`awarded_at`, …) or dropped (`tags.tagged_at`, `highlights.trip_id`, …); all verified against live 2026-07-17. The legacy `artifacts/api-server/migrations/` chain diverges heavily from live and is only audited with the opt-in flag.
 
+## Replay-fidelity breaks — migrations that CANNOT be replayed as written
+
+Distinct from the allowlist above. An allowlist entry says "the file claims an
+object that live does not have, and that is explained." An entry here says
+something stronger: **the file's own SQL would fail or produce a different
+object if it were run against the current schema.** These are the concrete
+reason a fresh project must be restored from a production dump rather than
+rebuilt by replaying `src/migrations/*.sql` — see `docs/ci/BOOTSTRAP.md` §1.
+
+### `0026_highlights.sql` — references two columns the live table does not have
+
+Verified against production and portava-ci, 2026-08-10. Live `highlight_replies`
+is exactly:
+
+```
+id, highlight_id, replier_id, thread_id, created_at
+```
+
+The file declares and depends on `user_id` and `deleted_at`, neither of which
+exists:
+
+| File says | Live reality |
+|---|---|
+| `CREATE POLICY "users_view_highlight_replies" … USING (deleted_at IS NULL)` | no `deleted_at` column → statement fails |
+| `CREATE POLICY "users_delete_own_reply" … USING (auth.uid() = user_id)` | no `user_id`; live policy of that name reads `auth.uid() = replier_id` |
+| `CREATE POLICY "users_insert_highlight_reply" … WITH CHECK (auth.uid() = user_id)` | no `user_id` |
+
+So 0026 **was** applied — the table and two of its three policies exist live —
+but what was applied differs from what the file now says, and the file has since
+drifted from it. Replaying 0026 today errors on the first policy.
+
+**Do not "fix" 0026.** It is an applied migration; rewriting it would make the
+record less accurate, not more, and there is no `schema_migrations` table here to
+distinguish "applied" from "applied in an earlier form" (see *Prefix collisions*
+for the same reasoning). The live objects are correct as they stand:
+`users_view_highlight_replies` is superseded by `hreplies_select` (2033 creates
+it and then drops it again in the same file), and the two surviving policies key
+on `replier_id`. Recorded here so the next person to consider a replay knows it
+will not work and why.
+
 | Migration | Description | Applied |
 |-----------|-------------|---------|
 | `20260801_e2ee_devices.sql` | Creates `devices` table (id, user_id→profiles, platform, public_key nullable, key_package_count, device_fingerprint, created_at, last_seen_at); indexes on user_id and (user_id, public_key) WHERE non-null; RLS enabled. Tracks per-install cryptographic identity for E2EE (Phase E-0). Applied via Management API. | 2026-08-01 |

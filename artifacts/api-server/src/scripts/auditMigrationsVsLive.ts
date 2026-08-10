@@ -183,6 +183,57 @@ const ALLOWLIST = new Set([
   // legacy migrations dir — see docs/migrations.md):
   "policy:feature_flags.ff_select_all", // superseded by live feature_flags_public_read (same predicate)
   "policy:plan_geofences.pgf_select_member", // dropped by legacy 0038 RLS fix; replaced by pgf_select_accepted
+
+  // ── REVIEWED AND DELIBERATELY NOT APPLIED (2026-08-10) ──────────────────────
+  //
+  // Everything above this line is drift that was discovered and explained. The
+  // three below are different: they are declared policies that were reviewed
+  // object by object and a decision was taken NOT to create them. They are
+  // allowlisted so the audit reads zero unexplained objects, which is only
+  // honest if the explanation is written down — so it is written down here.
+  //
+  // AN ALLOWLIST ENTRY MEANS THE POLICY DOES NOT EXIST. It does not mean the
+  // table is unprotected: on media_assets and media_attachments RLS IS enabled
+  // and an owner-select policy DOES exist. What is absent is the additional
+  // public-read grant, and its absence is the restrictive direction.
+  //
+  // media_assets_public_select / media_attachments_public_select
+  // (20260811_media_rls.sql) — would let any `authenticated` JWT holder read
+  // every row where visibility='public' AND moderation_status='approved'
+  // directly, bypassing the API. Not applied, because nothing needs it and it
+  // is a pure widening:
+  //   * Every reader in this repo uses the service-role client, which bypasses
+  //     RLS entirely — lib/mediaAccess.ts, lib/mediaAssets.ts,
+  //     services/accountDeletion/AccountDeletionService.ts,
+  //     routes/sharedMoments.ts and scripts/backfill-media-assets.ts. There is
+  //     no user-scoped (RLS-bound) client path to either table.
+  //   * NEITHER mobile app references either table: zero hits for
+  //     `media_assets` / `media_attachments` across travel-buddy-standalone/src
+  //     and artifacts/travel-buddy/src.
+  //   * So the migration's stated motivation ("needed for the public feed,
+  //     profile cards, place cards") describes a direct-from-client read
+  //     pattern that does not exist here. Applying it would grant read access
+  //     no consumer requires — attack surface with no corresponding benefit.
+  // The migration itself is correctly written (visibility, moderation_status
+  // and owner_user_id all exist live; `TO authenticated` does exclude anon), so
+  // this is a decision about need, not a defect. If a client ever reads these
+  // tables directly, apply it and delete these two entries in the same change.
+  "policy:media_assets.media_assets_public_select",
+  "policy:media_attachments.media_attachments_public_select",
+  //
+  // users_view_highlight_replies — claimed by BOTH 0026_highlights.sql and
+  // 2033_rls_hardening.sql, and absent live because 2033 ITSELF retires it:
+  // 2033 creates the policy at its section 8 and then drops it again later in
+  // the same file ("our new users_view_highlight_replies was too permissive —
+  // NOT viewer_is_blocked only, no content gate"), replacing it with
+  // hreplies_select. Production and portava-ci both carry hreplies_select with
+  // exactly 2033's final predicate, and viewer_is_blocked() exists, so 2033's
+  // net effect is applied and correct. 0026's older declaration cannot be
+  // applied as written in any case: it reads USING (deleted_at IS NULL) and the
+  // live table has neither `deleted_at` nor `user_id` (see the two entries for
+  // those columns above, and docs/migrations.md "Replay-fidelity breaks").
+  // Nothing to create; the object is superseded, not missing.
+  "policy:highlight_replies.users_view_highlight_replies",
 ]);
 
 // ── Environment ───────────────────────────────────────────────────────────────

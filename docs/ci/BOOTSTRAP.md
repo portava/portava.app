@@ -66,6 +66,26 @@ This is not a stylistic preference. Migration replay makes the repo's two
 drift-detection checks **vacuous by construction**: they would compare the migration
 files to themselves and always pass.
 
+**And it would not even run.** The vacuity argument is the principled reason; this
+is the mechanical one, and it is worth knowing first because it is not a matter of
+judgement. At least one migration in the chain **cannot be replayed against the
+current schema at all**: `0026_highlights.sql` creates policies over
+`highlight_replies.deleted_at` and `highlight_replies.user_id`, and the live table
+has neither column — it is `id, highlight_id, replier_id, thread_id, created_at`
+(verified against production and portava-ci, 2026-08-10). A replay errors partway
+through 0026 and leaves the project half-built.
+
+0026 was applied, in an earlier form, before the file drifted from what was applied
+— and with no `schema_migrations` table in this project there is no record
+distinguishing the two. It is therefore not fixable by editing the file, and
+rewriting an applied migration would only make the record less accurate. The full
+detail is in `docs/migrations.md` under **Replay-fidelity breaks**. Expect others:
+0026 is the one that has been proven, not the only candidate, because nobody has
+replayed the chain end to end to find the rest.
+
+Restoring from a production dump sidesteps this entirely — the dump describes what
+the schema IS, not the sequence somebody believes produced it.
+
 `artifacts/api-server/src/scripts/auditMigrationsVsLive.ts` works like this:
 
 - **Left side (`auditMigrationsVsLive.ts:61`):** `MIGRATION_DIRS = [resolve(__dir,
@@ -169,15 +189,60 @@ Supabase-managed schema; a `public`-scoped schema dump contains neither, and no
 migration in this repo creates a bucket (verified: zero migrations reference
 `storage.buckets`).
 
-**CI needs buckets: yes, two of them.** `check-media-bucket-privacy.ts` names
-`post-media` and `profile-media`, and the storage policies in
-`0103_post_media.sql` are written against `bucket_id = 'post-media'`.
+**CI needs buckets: yes, three of them.** Production has these, and these are the
+values to reproduce:
+
+| bucket | `public` in production |
+|---|---|
+| `post-media` | `false` |
+| `profile-media` | `false` |
+| `stamp-artwork` | **`true`** |
+
+`stamp-artwork` is the one that is easy to miss and the one that matters most here,
+because it is the **only public bucket** — the sole bucket whose privacy posture
+differs from the others. It is written by `routes/stampCatalog.ts` (which uploads
+catalog artwork and calls `getPublicUrl` on it) and by `lib/stamps/generationWorker.ts`
+(`STORAGE_BUCKET = "stamp-artwork"`); no migration creates it, exactly as with the
+other two.
+
+**Reproduce the `public` flag exactly, and understand that it matters in BOTH
+directions.** The tempting shortcut is "when unsure, make it private in CI — private
+is the safe default". It is not safe here, it is the *dangerous* direction, because
+it is the one that fails silently:
+
+- **private in CI, public in production** — `check-media-bucket-privacy.ts` reports a
+  reassuring all-private result while the bucket that is actually exposed to the
+  internet is the one it just told you was locked. The check passes and the finding it
+  exists to surface never appears. This is the failure mode to design against.
+- **public in CI, private in production** — noisier and less dangerous: the check
+  reports a public bucket you do not have, so you go looking for a cutover that never
+  happened. Wrong, but wrong in the direction that gets investigated.
+
+A bucket whose flag does not match production makes the privacy check a statement
+about your CI project rather than about production, and the whole point of the check
+is that it is a statement about production's posture.
 
 **How they get there:** create them by hand in the CI project's dashboard
-(Storage → New bucket), named exactly `post-media` and `profile-media`. Match
-production's public/private setting, read from **production's dashboard**: Storage →
-Buckets, where the list shows Public/Private per bucket. Reproduce those two values
-in CI.
+(Storage → New bucket), named exactly `post-media`, `profile-media` and
+`stamp-artwork`, setting the Public toggle per the table above. Cross-check against
+**production's dashboard** (Storage → Buckets, which shows Public/Private per bucket)
+rather than trusting the table above to have stayed current — it is a snapshot, and
+the buckets are hand-managed in exactly the way that drifts.
+
+The storage policies in `0103_post_media.sql` are written against
+`bucket_id = 'post-media'` only; `profile-media` and `stamp-artwork` carry no policies
+from this repo (see §2.4).
+
+**`check-media-bucket-privacy.ts` does not know about `stamp-artwork`.** Its bucket
+list is hard-coded — `const BUCKETS = ["post-media", "profile-media"]` (`:15`) — so it
+enumerates two buckets and is silent about the third, and every verdict it prints
+(`pre-cutover`, `cutover complete`, `MIXED STATE`) is computed by `.some()` over that
+two-element list. Creating `stamp-artwork` in CI therefore does **not** bring it under
+that check; the check would report `cutover complete — safe` with the only public
+bucket in the project entirely outside its subject. An earlier revision of this section
+named two buckets because the script does; the script is the origin of the omission,
+not this document. Fixing the list is a change to the script's behaviour and is
+deliberately not made here.
 
 **Do not run `check-media-bucket-privacy.ts` against production to learn this.** It
 requires `SUPABASE_SERVICE_ROLE_KEY` (`:11`) — the most powerful credential the
@@ -248,6 +313,12 @@ verify passes either way** — it is why this defect survives a careful bootstra
 
 **How it gets there — read production first, then install to match.**
 
+**Production's answer, as measured: `postgis` is in schema `public`.** That is the
+value to reproduce, and it is *not* the value a new CI project gets by default —
+which is the entire hazard in this section. Run step A anyway rather than taking this
+sentence on faith; it is a snapshot, and a relocated extension would invalidate it
+without touching this file.
+
 Step A, in **production's** SQL editor (read-only):
 
 ```
@@ -257,15 +328,30 @@ select e.extname, n.nspname as extension_schema, e.extversion
  where e.extname = 'postgis';
 ```
 
-Note `extension_schema` character for character.
+Note `extension_schema` character for character. Expect `public`.
 
-Step B, in the **CI** project's SQL editor — not the Extensions toggle, which does
-not let you state this unambiguously:
+Step B, in the **CI** project's SQL editor. **Do not use the dashboard's Extensions
+toggle for this.** On newer Supabase projects that toggle installs postgis into the
+`extensions` schema, and it gives you no way to say otherwise — so on a project
+created today it puts the extension in the one place production does not have it:
 
 ```
-create schema if not exists <extension_schema>;
-create extension if not exists postgis with schema <extension_schema>;
+create extension if not exists postgis schema public;
 ```
+
+State `schema public` explicitly. A bare `create extension if not exists postgis;`
+is not equivalent — it lands wherever the session's `search_path` points, which is
+how production ended up with an unqualified answer in the first place.
+
+**Order matters, and getting it wrong is silent.** If you have already flipped the
+Extensions toggle — or otherwise installed postgis anywhere — the statement above
+does nothing at all: `IF NOT EXISTS` is satisfied by the extension existing in *any*
+schema, so it will not relocate it, will not error, and will report success. The same
+is true of whatever `CREATE EXTENSION` the dump itself carries, which is why the
+restore then fails on the spatial columns rather than at the extension step. If step C
+shows `extensions` where you need `public`, you must move it deliberately —
+`ALTER EXTENSION postgis SET SCHEMA public;`, or drop and recreate before anything
+depends on it — not re-run the create and assume the second attempt took.
 
 Step C, verify by comparison, not by existence — run the **same query from step A**
 in CI and require `extension_schema` to be the identical string:
@@ -336,7 +422,7 @@ In the CI project's dashboard, Settings → API. Confirm the project ref in the 
 
 You are about to use a service-role key. Note that `seed-portava-account.ts` imports
 **no guard at all**. Verified by grepping the tree for the imports — there are
-**two** guard front doors and **nine** importers between them:
+**two** guard front doors and **ten** importers between them:
 
 **`src/lib/ciSupabaseGuard.mjs` — strict: the sanctioned CI project, or exit 2.**
 
@@ -346,7 +432,6 @@ You are about to use a service-role key. Note that `seed-portava-account.ts` imp
 | `src/test/isOfficialPrivileged.test.ts` | mutates `profiles.is_official` |
 | `src/test/profileRoleNotSelfWritable.test.ts` | mutates `profiles.role` |
 | `src/scripts/checkRankEventsSurfaces.ts` | real `INSERT` probe, rolled back |
-| `src/scripts/checkDiscoveryCacheKeys.ts` | SELECT-only, but not one of the four sanctioned audits and not CI-wired; strict by default |
 
 **`src/lib/ciProdReadOnlyAuditGuard.mjs` — the same, plus a read-only audit of the
 declared production project, outside CI only, on a deliberate named request.**
@@ -357,6 +442,8 @@ declared production project, outside CI only, on a deliberate named request.**
 | `src/scripts/checkMissingLiveColumns.ts` | `information_schema` SELECTs |
 | `src/scripts/checkMediaObjects.ts` | `post_media` + `storage.objects` SELECTs |
 | `src/scripts/checkWritePathColumns.ts` | TypeScript AST + one SELECT on `profiles` |
+| `src/scripts/checkDiscoveryCacheKeys.ts` | `discovery_cache` SELECTs + two aggregating `rank_events` |
+| `src/scripts/auditStorageExif.ts` | Storage listings + ranged header GETs + two Management API SELECTs |
 
 Line numbers are deliberately not quoted here: they churn, and the grep is the
 answer. `scripts/check-guard-coverage.mjs` enforces both lists on every run —
@@ -367,7 +454,7 @@ here misleading you. Trust the check, not the prose, including this document's.
 **None of this helps you in steps 5 and 6.** The read-only door's production mode
 is for auditing production; bootstrapping is the opposite errand, and every command
 in this document points at the CI project. Do not export
-`PORTAVA_PROD_READ_ONLY_AUDIT` while doing any of it — the four scripts that honour
+`PORTAVA_PROD_READ_ONLY_AUDIT` while doing any of it — the six scripts that honour
 it would then be pointed at production while you believe you are looking at CI.
 
 Everything else — `seed-portava-account.ts`, `seed-test-media.ts`,
@@ -380,9 +467,12 @@ the guard for steps 5 and 6.
 ### Step 2 — Install extensions in the CI project, in production's schema
 
 Follow §2.5 A→B→C. Read production's `pg_extension` / `pg_namespace` row for
-`postgis` **first**, then `create extension … with schema <that schema>` in CI. Do
-not use the Extensions toggle: it does not let you state the schema unambiguously,
-and a bare `CREATE EXTENSION` inherits `search_path` instead.
+`postgis` **first** — it is `public` — then, in CI, `create extension if not exists
+postgis schema public;`. Do not use the Extensions toggle: on newer projects it
+installs into `extensions`, it does not let you state the schema, and a bare
+`CREATE EXTENSION` inherits `search_path` instead. Do this **before** anything else
+installs postgis, because `IF NOT EXISTS` will silently decline to relocate an
+extension that already exists in the wrong schema.
 
 **Verify:** run §2.5's step-A query in **both** projects and require the
 `extension_schema` values to be the identical string.
@@ -456,7 +546,8 @@ restore log means the extension landed in the wrong schema and every
 
 ### Step 5 — Apply the storage policies
 
-Create buckets `post-media` and `profile-media` (§2.3), then paste the storage-policy
+Create buckets `post-media`, `profile-media` and `stamp-artwork` — the last one
+**public**, the other two private, per the table in §2.3 — then paste the storage-policy
 block from `artifacts/api-server/src/migrations/0103_post_media.sql:117`–`:143` into
 the CI project's SQL editor.
 
@@ -873,8 +964,10 @@ Actions → *CI (live DB)* → Run workflow. Read the job summary, not the badge
    count must be 0.
 4. Restore into CI. Compare object counts against production, and confirm the
    `geography`/`geometry` column count is non-zero.
-5. Create `post-media` and `profile-media` buckets (privacy read from production's
-   **dashboard**, not with a service-role key); apply `0103`'s storage policies.
+5. Create `post-media`, `profile-media` **and `stamp-artwork`** buckets — the first two
+   private, `stamp-artwork` public, matching production in both directions (privacy
+   read from production's **dashboard**, not with a service-role key); apply `0103`'s
+   storage policies.
 6. Run `seed-portava-account.ts` against CI. Read its output — exit 0 is not proof.
 7. Set `CI_SUPABASE_PROJECT_REF` and the four `ci-nonprod-supabase` secrets. That
    configures Actions only, not your shell.
