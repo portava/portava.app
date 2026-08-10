@@ -328,7 +328,7 @@
 // This is deliberately independent of whether any workflow invokes this script
 // today — it is not wired into CI, and it still must not be runnable against an
 // unsanctioned project from a laptop.
-import "../lib/ciSupabaseGuard.mjs";
+import "../lib/ciProdReadOnlyAuditGuard.mjs";
 
 /**
  * Module marker. This script imports nothing FROM THE APPLICATION TREE —

@@ -23,10 +23,10 @@ import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
 import { AvatarImage } from './ui/DisplayMediaImage.tsx';
 import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
+import { resolveSuggestedTravelersDismissedKey } from '../services/suggestedTravelersDismissal.ts';
 
 const FOLLOWING_THRESHOLD = 10;
 const STRIP_LIMIT = 5;
-const DISMISSED_KEY = 'people_you_may_know_dismissed';
 const DISMISSED_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const UNDO_TIMEOUT_MS = 4000;
 
@@ -37,19 +37,22 @@ interface DismissedEntry {
 
 async function loadDismissed(): Promise<Map<string, number>> {
   try {
-    const raw = await AsyncStorage.getItem(DISMISSED_KEY);
+    const key = await resolveSuggestedTravelersDismissedKey(AsyncStorage);
+    if (key === null) return new Map(); // no account resolvable — treat as nothing dismissed
+
+    const raw = await AsyncStorage.getItem(key);
     if (!raw) return new Map();
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
     } catch {
-      await AsyncStorage.removeItem(DISMISSED_KEY);
+      await AsyncStorage.removeItem(key);
       return new Map();
     }
 
     if (!Array.isArray(parsed)) {
-      await AsyncStorage.removeItem(DISMISSED_KEY);
+      await AsyncStorage.removeItem(key);
       return new Map();
     }
 
@@ -71,7 +74,7 @@ async function loadDismissed(): Promise<Map<string, number>> {
     const active = entries.filter((e) => now - e.dismissedAt < DISMISSED_TTL_MS);
 
     if (migrated || active.length < entries.length) {
-      await AsyncStorage.setItem(DISMISSED_KEY, JSON.stringify(active));
+      await AsyncStorage.setItem(key, JSON.stringify(active));
     }
 
     return new Map(active.map((e) => [e.id, e.dismissedAt]));
@@ -82,11 +85,13 @@ async function loadDismissed(): Promise<Map<string, number>> {
 
 async function saveDismissed(map: Map<string, number>): Promise<void> {
   try {
+    const key = await resolveSuggestedTravelersDismissedKey(AsyncStorage);
+    if (key === null) return; // no account resolvable — skip the write
     const entries: DismissedEntry[] = [...map.entries()].map(([id, dismissedAt]) => ({
       id,
       dismissedAt,
     }));
-    await AsyncStorage.setItem(DISMISSED_KEY, JSON.stringify(entries));
+    await AsyncStorage.setItem(key, JSON.stringify(entries));
   } catch {
     // silently ignore storage errors
   }
@@ -303,7 +308,8 @@ export function PeopleYouMayKnow({ refreshKey }: PeopleYouMayKnowProps = {}) {
     // Clear locally-dismissed entries so previously-skipped people reappear.
     // Must happen before load() so loadDismissed() sees an empty store and the
     // filter in load() doesn't exclude anyone the user dismissed days ago.
-    await AsyncStorage.removeItem(DISMISSED_KEY);
+    const dismissedKey = await resolveSuggestedTravelersDismissedKey(AsyncStorage);
+    if (dismissedKey !== null) await AsyncStorage.removeItem(dismissedKey);
     setDismissed(new Map());
     await clearSuggestionsSeen();
     await load();

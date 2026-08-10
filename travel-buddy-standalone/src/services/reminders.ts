@@ -21,8 +21,97 @@
  * partial-update scheme.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isAccountScopedStorageEnabled } from '../config/accountScopedStorageFlag.ts';
+import { getCurrentAccountId } from './accountId.ts';
 
 export const REMINDERS_STORAGE_KEY = '@travel_buddy/reminders_v1';
+
+/**
+ * Per-account key, used only when isAccountScopedStorageEnabled() is true.
+ * The legacy REMINDERS_STORAGE_KEY above is untouched and remains the sole
+ * key in use while the flag is off, so flag-off behavior stays byte-identical.
+ */
+function scopedRemindersKey(accountId: string): string {
+  return `@travel_buddy/reminders_scoped_v1:${accountId}`;
+}
+
+// Tracks account ids that have already had a migration attempt this process,
+// so repeated calls don't re-check the legacy key on every read/write. Purely
+// a perf guard — migrateLegacyRemindersIfNeeded is itself idempotent (it
+// no-ops once the scoped key exists or the legacy key is gone).
+const migratedAccountIds = new Set<string>();
+
+/** Test seam — clear the migration-attempted cache between test cases. */
+export function _resetMigratedRemindersAccountIds(): void {
+  migratedAccountIds.clear();
+}
+
+/**
+ * One-time migration: attribute the existing unscoped reminders blob to
+ * whichever account is currently signed in, then delete the legacy key.
+ *
+ * THIS IS A ONE-TIME BEST GUESS. The legacy storage format has no field
+ * identifying which account created each reminder, so if two different
+ * accounts previously used this device, all of the legacy data is attributed
+ * to whichever one happens to be signed in the first time this code runs
+ * post-upgrade — there is no way to do better with the data available.
+ *
+ * Every notification scheduled by the legacy reminders is cancelled as part
+ * of migration, regardless of attribution correctness. Leaving live OS
+ * notifications scheduled after attribution is a strictly worse outcome than
+ * cancelling them: if the guess is wrong, the (possibly wrong) new owner
+ * would receive notifications for reminders they never created and cannot
+ * see any context for. The reminder records themselves are preserved
+ * (so the migrated account still sees its list) — only the previously
+ * scheduled OS notification is cleared; reminders keep notificationId: null
+ * until the user next edits/snoozes them, at which point a fresh notification
+ * is scheduled under the new owner.
+ */
+async function migrateLegacyRemindersIfNeeded(storage: StorageLike, accountId: string): Promise<void> {
+  if (migratedAccountIds.has(accountId)) return;
+  migratedAccountIds.add(accountId);
+
+  const scopedKey = scopedRemindersKey(accountId);
+  const existingScoped = await storage.getItem(scopedKey);
+  if (existingScoped !== null) return; // already migrated, or this account already has its own scoped data — never clobber
+
+  const legacyRaw = await storage.getItem(REMINDERS_STORAGE_KEY);
+  if (!legacyRaw) return; // nothing to migrate
+
+  let legacy: Reminder[];
+  try {
+    const parsed = JSON.parse(legacyRaw);
+    legacy = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    legacy = [];
+  }
+
+  if (legacy.length > 0) {
+    const notifier = await getNotifier();
+    await Promise.all(legacy.map((r) => notifier.cancel(r.notificationId)));
+  }
+  const migrated = legacy.map((r) => ({ ...r, notificationId: null }));
+  await storage.setItem(scopedKey, JSON.stringify(migrated));
+  await storage.removeItem(REMINDERS_STORAGE_KEY);
+}
+
+/**
+ * Resolves which key to read/write for this call.
+ *  - Flag off: always the legacy unscoped key (unchanged behavior).
+ *  - Flag on, account resolvable: the per-account scoped key (running the
+ *    one-time migration first if needed).
+ *  - Flag on, no account resolvable: null. Callers must treat this as "no
+ *    data available" for reads and refuse to write — never fall back to the
+ *    unscoped legacy key, which would leak this account's writes into (or
+ *    read another account's data from) the shared legacy slot.
+ */
+async function resolveKey(storage: StorageLike): Promise<string | null> {
+  if (!isAccountScopedStorageEnabled()) return REMINDERS_STORAGE_KEY;
+  const accountId = await getCurrentAccountId();
+  if (!accountId) return null;
+  await migrateLegacyRemindersIfNeeded(storage, accountId);
+  return scopedRemindersKey(accountId);
+}
 
 /** Minimal notification-scheduling surface this service needs. */
 export interface NotifierLike {
@@ -103,20 +192,22 @@ function genId(): string {
   return `rem_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+async function readFromKey(storage: StorageLike, key: string): Promise<Reminder[]> {
+  const raw = await storage.getItem(key);
+  if (!raw) return [];
+  const parsed = JSON.parse(raw);
+  return Array.isArray(parsed) ? parsed : [];
+}
+
 /** Reads the full reminder list. Corrupt/missing storage resolves to an empty list, never throws. */
 export async function loadReminders(storage: StorageLike = AsyncStorage): Promise<Reminder[]> {
   try {
-    const raw = await storage.getItem(REMINDERS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    const key = await resolveKey(storage);
+    if (key === null) return []; // flag on, no signed-in account — never fall back to the legacy key
+    return await readFromKey(storage, key);
   } catch {
     return [];
   }
-}
-
-async function persist(storage: StorageLike, reminders: Reminder[]): Promise<void> {
-  await storage.setItem(REMINDERS_STORAGE_KEY, JSON.stringify(reminders));
 }
 
 export async function getReminder(id: string, storage: StorageLike = AsyncStorage): Promise<Reminder | null> {
@@ -128,6 +219,11 @@ export async function getReminder(id: string, storage: StorageLike = AsyncStorag
  * Creates a reminder, schedules its local notification, and persists it.
  * Validates the non-negotiable data-model rule: plan_item attachments must
  * carry a tripId (TripPlanItem has no standalone lookup).
+ *
+ * Resolves and validates the storage key BEFORE scheduling the notification:
+ * if account-scoped storage is enabled and no account is signed in, this
+ * throws immediately rather than scheduling an OS notification for a
+ * reminder that then fails to persist anywhere.
  */
 export async function createReminder(
   input: CreateReminderInput,
@@ -135,6 +231,10 @@ export async function createReminder(
 ): Promise<Reminder> {
   if (input.targetType === 'plan_item' && !input.tripId) {
     throw new Error('Plan item reminders require a tripId — plan items have no standalone lookup.');
+  }
+  const key = await resolveKey(storage);
+  if (key === null) {
+    throw new Error('Cannot create reminder: account-scoped storage is enabled but no account is signed in.');
   }
   const now = new Date().toISOString();
   const id = genId();
@@ -158,9 +258,9 @@ export async function createReminder(
     createdAt: now,
     updatedAt: now,
   };
-  const all = await loadReminders(storage);
+  const all = await readFromKey(storage, key);
   all.push(reminder);
-  await persist(storage, all);
+  await storage.setItem(key, JSON.stringify(all));
   return reminder;
 }
 
@@ -174,7 +274,9 @@ export async function editReminder(
   patch: EditReminderPatch,
   storage: StorageLike = AsyncStorage,
 ): Promise<Reminder | null> {
-  const all = await loadReminders(storage);
+  const key = await resolveKey(storage);
+  if (key === null) return null;
+  const all = await readFromKey(storage, key);
   const idx = all.findIndex((r) => r.id === id);
   if (idx === -1) return null;
   const existing = all[idx];
@@ -200,7 +302,7 @@ export async function editReminder(
     updatedAt: new Date().toISOString(),
   };
   all[idx] = updated;
-  await persist(storage, all);
+  await storage.setItem(key, JSON.stringify(all));
   return updated;
 }
 
@@ -215,7 +317,9 @@ export async function snoozeReminder(
   newRemindAt: string,
   storage: StorageLike = AsyncStorage,
 ): Promise<Reminder | null> {
-  const all = await loadReminders(storage);
+  const key = await resolveKey(storage);
+  if (key === null) return null;
+  const all = await readFromKey(storage, key);
   const idx = all.findIndex((r) => r.id === id);
   if (idx === -1) return null;
   const existing = all[idx];
@@ -236,13 +340,15 @@ export async function snoozeReminder(
     updatedAt: new Date().toISOString(),
   };
   all[idx] = updated;
-  await persist(storage, all);
+  await storage.setItem(key, JSON.stringify(all));
   return updated;
 }
 
 /** Marks a reminder completed and cancels its scheduled notification, so a completed reminder never still fires. */
 export async function completeReminder(id: string, storage: StorageLike = AsyncStorage): Promise<Reminder | null> {
-  const all = await loadReminders(storage);
+  const key = await resolveKey(storage);
+  if (key === null) return null;
+  const all = await readFromKey(storage, key);
   const idx = all.findIndex((r) => r.id === id);
   if (idx === -1) return null;
   const existing = all[idx];
@@ -255,13 +361,15 @@ export async function completeReminder(id: string, storage: StorageLike = AsyncS
     updatedAt: new Date().toISOString(),
   };
   all[idx] = updated;
-  await persist(storage, all);
+  await storage.setItem(key, JSON.stringify(all));
   return updated;
 }
 
 /** Reopens a completed reminder as upcoming and reschedules its notification if the instant is still in the future. */
 export async function reopenReminder(id: string, storage: StorageLike = AsyncStorage): Promise<Reminder | null> {
-  const all = await loadReminders(storage);
+  const key = await resolveKey(storage);
+  if (key === null) return null;
+  const all = await readFromKey(storage, key);
   const idx = all.findIndex((r) => r.id === id);
   if (idx === -1) return null;
   const existing = all[idx];
@@ -278,17 +386,19 @@ export async function reopenReminder(id: string, storage: StorageLike = AsyncSto
     updatedAt: new Date().toISOString(),
   };
   all[idx] = updated;
-  await persist(storage, all);
+  await storage.setItem(key, JSON.stringify(all));
   return updated;
 }
 
 /** Deletes a reminder and cancels its scheduled notification, so no orphaned notification survives. */
 export async function deleteReminder(id: string, storage: StorageLike = AsyncStorage): Promise<void> {
-  const all = await loadReminders(storage);
+  const key = await resolveKey(storage);
+  if (key === null) return;
+  const all = await readFromKey(storage, key);
   const idx = all.findIndex((r) => r.id === id);
   if (idx === -1) return;
   const notifier = await getNotifier();
   await notifier.cancel(all[idx].notificationId);
   all.splice(idx, 1);
-  await persist(storage, all);
+  await storage.setItem(key, JSON.stringify(all));
 }

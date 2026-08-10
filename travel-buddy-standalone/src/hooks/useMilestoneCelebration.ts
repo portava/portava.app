@@ -14,11 +14,12 @@ import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
+import {
+  type MilestoneLevel,
+  resolveMilestoneStorageKey,
+} from '../services/milestoneCelebrationStorage.ts';
 
-export type MilestoneLevel = 100 | 1000 | 10000;
-
-const milestoneStorageKey = (level: MilestoneLevel) =>
-  `@portava/stamp_milestone_v1_${level}`;
+export type { MilestoneLevel };
 
 export interface MilestoneCelebrationResult {
   /** The milestone currently being celebrated, or null when idle. */
@@ -54,9 +55,10 @@ export function useMilestoneCelebration(
       for (const level of milestones) {
         if (stampsEarned < level) continue;
 
-        const alreadySeen = await AsyncStorage.getItem(milestoneStorageKey(level)).catch(
-          () => null,
-        );
+        const key = await resolveMilestoneStorageKey(AsyncStorage, level);
+        const alreadySeen = key === null
+          ? null // no account resolvable — treat as "not yet celebrated", skip the write below too
+          : await AsyncStorage.getItem(key).catch(() => null);
         if (alreadySeen) continue; // already celebrated locally
 
         // Found an uncelebrated milestone — play and stop.
@@ -114,9 +116,9 @@ export function useMilestoneCelebration(
 
   function onDismiss() {
     if (activeMilestone !== null) {
-      AsyncStorage.setItem(milestoneStorageKey(activeMilestone), 'true').catch(
-        () => {},
-      );
+      resolveMilestoneStorageKey(AsyncStorage, activeMilestone)
+        .then((key) => { if (key !== null) return AsyncStorage.setItem(key, 'true'); })
+        .catch(() => {});
     }
     setActiveMilestone(null);
     sparkle.setValue(0);

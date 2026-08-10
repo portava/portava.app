@@ -1,0 +1,30 @@
+// ── THE ALLOWLIST ASSERTION, IN THE EXECUTION PATH ───────────────────────────
+//
+// FIRST import, deliberately, and placed above `@supabase/supabase-js` on
+// purpose: ES modules evaluate their imports in source order, so when this
+// guard refuses, the Supabase client library is never even loaded — no client
+// is constructed, no auth user is created, no query is issued.
+//
+// It asserts that the project ref resolved from SUPABASE_URL is the one
+// sanctioned CI project and exits 2 if it cannot establish that (unset
+// allowlist, unparseable URL, and any non-sanctioned ref all refuse).
+// .github/scripts/run-live-suite.sh fails this step on any non-zero exit.
+//
+// It is not a workflow step, so no YAML edit can skip it. This suite is
+// reached from live-db.yml's live-db-security-suites job; deleting the
+// `Preflight — Supabase target must be the sanctioned CI project` step from
+// that job, disabling it with `if:`, moving it after the install step, or
+// adding a brand-new job in a brand-new workflow file all still land here,
+// because this process cannot start without it.
+//
+// NOTE ON THE HEADER ABOVE: "All tests are skipped when credentials are absent
+// so CI still passes without a live Supabase connection" describes this file's
+// behaviour, and that behaviour is a defect, not a feature — it is why
+// .github/scripts/run-live-suite.sh scores this suite on its OUTPUT (pass > 0,
+// skipped == 0) rather than its exit code. The guard below is a different
+// thing again: it refuses to let the process reach an UNSANCTIONED database at
+// all, whether or not credentials are complete.
+//
+// See src/lib/ciSupabaseGuard.mjs and docs/ci/README.md.
+import "../lib/ciSupabaseGuard.mjs";
+

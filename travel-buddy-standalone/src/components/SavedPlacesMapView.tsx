@@ -35,9 +35,9 @@ import {
   computeBounds,
 } from './savedPlacesMapHelpers.ts';
 import {
-  categoryStorageKey,
   readRawCategoryFilter,
   saveCategoryFilter,
+  resolveCategoryStorageKey,
 } from './savedPlacesMapFilterStorage.ts';
 
 // ── Map style ─────────────────────────────────────────────────────────────────
@@ -303,7 +303,11 @@ export function SavedPlacesMapView({ places, onPlanRoute, listId = 'global' }: S
     [activeCategory, categories],
   );
 
-  const storageKey = categoryStorageKey(listId);
+  // Resolved lazily (may involve the account-scoping migration) — see
+  // resolveCategoryStorageKey. null means "no key available" (flag on, no
+  // account signed in yet); reads/writes are skipped in that case rather
+  // than falling back to the legacy unscoped key.
+  const [storageKey, setStorageKey] = useState<string | null>(null);
 
   // Always-current ref so the async restore callback validates against the
   // latest categories, not the closure snapshot captured when the effect ran.
@@ -321,16 +325,21 @@ export function SavedPlacesMapView({ places, onPlanRoute, listId = 'global' }: S
   // causing a valid stored category to be silently discarded as stale.
   useEffect(() => {
     let cancelled = false;
-    readRawCategoryFilter(AsyncStorage, storageKey).then((raw) => {
+    resolveCategoryStorageKey(AsyncStorage, listId).then((key) => {
       if (cancelled) return;
-      if (raw && categoriesRef.current.includes(raw)) {
-        setActiveCategory(raw);
-      }
+      setStorageKey(key);
+      if (key === null) return;
+      readRawCategoryFilter(AsyncStorage, key).then((raw) => {
+        if (cancelled) return;
+        if (raw && categoriesRef.current.includes(raw)) {
+          setActiveCategory(raw);
+        }
+      });
     });
     return () => {
       cancelled = true;
     };
-  }, [storageKey]);
+  }, [listId]);
 
   const visible = useMemo(
     () => filterVisible(mappable, effectiveCategory),
@@ -360,7 +369,7 @@ export function SavedPlacesMapView({ places, onPlanRoute, listId = 'global' }: S
   const handleCategoryChange = useCallback((cat: string | null) => {
     setActiveCategory(cat);
     setSelectedId(null);
-    saveCategoryFilter(AsyncStorage, storageKey, cat);
+    if (storageKey !== null) saveCategoryFilter(AsyncStorage, storageKey, cat);
   }, [storageKey]);
 
   if (mappable.length === 0) {

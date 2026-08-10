@@ -20,6 +20,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   CHECKPOINT_ARRIVAL_TASK,
   PENDING_ARRIVALS_STORE_KEY,
+  resolveCheckpointQueueKey,
 } from '../tasks/checkpointArrivalTask.ts';
 
 const GPS_POLL_MS      = 30_000;  // foreground fallback: GPS check interval
@@ -173,14 +174,19 @@ export function useRouteCheckpointMonitor({
      */
     async function drainPendingArrivals() {
       try {
-        const raw = await AsyncStorage.getItem(PENDING_ARRIVALS_STORE_KEY);
+        // Reads whichever key the background task is currently writing to
+        // (legacy or per-account scoped, per the same flag/account
+        // resolution) — never guesses or falls back to the other one.
+        const key = await resolveCheckpointQueueKey(AsyncStorage);
+        if (key === null) return; // no resolvable account under the flag — nothing to drain yet
+        const raw = await AsyncStorage.getItem(key);
         if (!raw) return;
         const pending: string[] = JSON.parse(raw) as string[];
         if (pending.length === 0) return;
 
         const toProcess = pending.filter((id) => !notifiedStops.has(id));
         if (toProcess.length === 0) {
-          await AsyncStorage.removeItem(PENDING_ARRIVALS_STORE_KEY);
+          await AsyncStorage.removeItem(key);
           return;
         }
 
@@ -193,7 +199,7 @@ export function useRouteCheckpointMonitor({
             });
           }),
         );
-        await AsyncStorage.removeItem(PENDING_ARRIVALS_STORE_KEY);
+        await AsyncStorage.removeItem(key);
       } catch {
         /* non-fatal */
       }

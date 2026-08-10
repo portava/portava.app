@@ -24,6 +24,7 @@ import {
   startTimePoll,
   type TelegraphSuggestion,
 } from '../services/telegraphChat.ts';
+import { resolveTelegraphCacheKey } from '../services/telegraphSuggestionCache.ts';
 
 const MAX_CACHED = 10;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -57,27 +58,25 @@ interface CacheEntry {
   savedAt: number;
 }
 
-function cacheKey(threadId: string) {
-  return `telegraph_suggestions_${threadId}`;
-}
-
 async function readCache(
   threadId: string,
   tripEndDate?: string | null,
 ): Promise<TelegraphSuggestion[] | null> {
   try {
-    const raw = await AsyncStorage.getItem(cacheKey(threadId));
+    const key = await resolveTelegraphCacheKey(AsyncStorage, threadId);
+    if (key === null) return null;
+    const raw = await AsyncStorage.getItem(key);
     if (!raw) return null;
     const entry: CacheEntry = JSON.parse(raw);
     const age = Date.now() - entry.savedAt;
     if (age > CACHE_TTL_MS) {
-      AsyncStorage.removeItem(cacheKey(threadId)).catch(() => {});
+      AsyncStorage.removeItem(key).catch(() => {});
       return null;
     }
     if (tripEndDate) {
       const endMs = new Date(tripEndDate).getTime();
       if (!Number.isNaN(endMs) && Date.now() > endMs) {
-        AsyncStorage.removeItem(cacheKey(threadId)).catch(() => {});
+        AsyncStorage.removeItem(key).catch(() => {});
         return null;
       }
     }
@@ -92,11 +91,13 @@ async function writeCache(
   suggestions: TelegraphSuggestion[],
 ): Promise<void> {
   try {
+    const key = await resolveTelegraphCacheKey(AsyncStorage, threadId);
+    if (key === null) return; // flag on, no signed-in account — silently skip (matches this file's existing fail-silently contract)
     const entry: CacheEntry = {
       suggestions: suggestions.slice(0, MAX_CACHED),
       savedAt: Date.now(),
     };
-    await AsyncStorage.setItem(cacheKey(threadId), JSON.stringify(entry));
+    await AsyncStorage.setItem(key, JSON.stringify(entry));
   } catch {
     // silent
   }
@@ -104,7 +105,9 @@ async function writeCache(
 
 async function clearCache(threadId: string): Promise<void> {
   try {
-    await AsyncStorage.removeItem(cacheKey(threadId));
+    const key = await resolveTelegraphCacheKey(AsyncStorage, threadId);
+    if (key === null) return;
+    await AsyncStorage.removeItem(key);
   } catch {
     // silent
   }

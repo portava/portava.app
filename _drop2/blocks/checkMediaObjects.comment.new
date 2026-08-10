@@ -1,0 +1,7 @@
+// The import above already marks this file as a MODULE rather than a global
+// script. `export {}` is kept because that is what the guarantee is written
+// against and it must not depend on an import staying put: without module
+// scope, every top-level `const` here shares one scope with every other
+// import-less script under src/scripts/, and two of them declaring
+// `ACCESS_TOKEN` is a typecheck error in whichever landed second — a collision
+// this file caused on first write, against checkRankEventsSurfaces.ts.

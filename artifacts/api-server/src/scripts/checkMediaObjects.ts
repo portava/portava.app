@@ -43,14 +43,16 @@
 // process is pointed at the sanctioned non-production Supabase project
 // before any client is constructed. ES module imports are hoisted, so this
 // runs before the process.env reads below whatever its textual position.
-// See src/lib/ciSupabaseGuard.mjs and docs/ci/BOOTSTRAP.md.
-import "../lib/ciSupabaseGuard.mjs";
+// See src/lib/ciProdReadOnlyAuditGuard.mjs and docs/ci/BOOTSTRAP.md.
+import "../lib/ciProdReadOnlyAuditGuard.mjs";
 
-// Marks this file as a MODULE rather than a global script. Without it, every
-// top-level `const` here shares one scope with every other import-less script
-// under src/scripts/, and two of them declaring `ACCESS_TOKEN` is a typecheck
-// error in whichever landed second — a collision this file caused on first
-// write, against checkRankEventsSurfaces.ts.
+// The import above already marks this file as a MODULE rather than a global
+// script. `export {}` is kept because that is what the guarantee is written
+// against and it must not depend on an import staying put: without module
+// scope, every top-level `const` here shares one scope with every other
+// import-less script under src/scripts/, and two of them declaring
+// `ACCESS_TOKEN` is a typecheck error in whichever landed second — a collision
+// this file caused on first write, against checkRankEventsSurfaces.ts.
 export {};
 
 const SUPABASE_URL = process.env.SUPABASE_URL;

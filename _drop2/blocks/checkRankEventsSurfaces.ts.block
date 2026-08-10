@@ -1,0 +1,32 @@
+// ── THE ALLOWLIST ASSERTION, IN THE EXECUTION PATH ───────────────────────────
+//
+// FIRST import, deliberately: ES modules evaluate their imports in source
+// order, before the importing module's own body, so this runs before anything
+// else in this file — and this file attempts a REAL INSERT into
+// public.rank_events. It asserts that the project ref resolved from
+// SUPABASE_URL is the one sanctioned CI project and exits 2 if it cannot
+// establish that.
+//
+// 2 is deliberate and matches the EXIT CODE CONTRACT above: a refusal is
+// CANNOT-RUN, not the involuntary death that 1 denotes. run_gate() in
+// scripts/run-all-checks.sh therefore reports it as deploy-blocking rather
+// than as a crash.
+//
+// THIS DOES NOT VIOLATE "NOTHING THAT CAN THROW RUNS AT MODULE SCOPE" above.
+// The guard never throws: every failure path inside it — missing policy
+// script, unspawnable bash, killed child, non-zero status — ends in an
+// explicit process.exit(2). It therefore cannot reach Node's default exit 1,
+// which is the specific outcome that invariant exists to prevent. It prints no
+// `GATE live_pulse:` line either, which is correct and already covered: an
+// absent GATE line is a block whatever the exit code, and run_gate() fails on
+// both counts.
+//
+// It is not a workflow step, so no YAML edit can skip it. Deleting the
+// `Preflight — Supabase target must be the sanctioned CI project` step from
+// .github/workflows/live-db.yml, disabling it with `if:`, moving it after the
+// install step, or adding a brand-new job in a brand-new workflow file all
+// still land here, because this process cannot start without it.
+//
+// See src/lib/ciSupabaseGuard.mjs and docs/ci/README.md.
+import "../lib/ciSupabaseGuard.mjs";
+

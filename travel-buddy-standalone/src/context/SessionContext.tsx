@@ -9,6 +9,42 @@ import { clearForUser as clearSavedForUser, primeSaved } from '../services/saved
 import { fetchMySavedPostIds } from '../services/postEngagement.ts';
 import { clearCachedFeed } from '../services/compass.ts';
 import { SECURE_KEYS, deleteSecure } from '../lib/secureStore.ts';
+import { isAccountScopedStorageEnabled } from '../config/accountScopedStorageFlag.ts';
+
+// Prefixes of the per-account scoped keys introduced for reminders,
+// discoveryBookmarks, and the checkpoint-arrival queue (see each service's
+// scoped*Key() helper). Telegraph's suggestion cache is per-(thread,account)
+// and is swept by suffix instead, since thread ids aren't enumerable here.
+// Only relevant while isAccountScopedStorageEnabled() is true — no such keys
+// are ever created while the flag is off, so this sweep is a no-op then.
+const SCOPED_KEY_PREFIXES = [
+  '@travel_buddy/reminders_scoped_v1:',
+  'discovery_bookmarks_scoped_v1:',
+  '@travel_buddy/pending_checkpoint_arrivals_scoped_v1:',
+] as const;
+const TELEGRAPH_SCOPED_PREFIX = 'telegraph_suggestions_scoped_v1_';
+
+/**
+ * Removes every account-scoped storage key belonging to the outgoing user, so
+ * a different account signing in later on this device never inherits its
+ * reminders, bookmarks, checkpoint queue, or Telegraph suggestion cache.
+ * Only does anything while the flag is on (matches the pattern of
+ * PRIVATE_ASYNC_KEYS below, extended to the newer per-account key shapes).
+ */
+async function clearScopedStorageForUser(userId: string): Promise<void> {
+  if (!isAccountScopedStorageEnabled()) return;
+  try {
+    const AS = require('@react-native-async-storage/async-storage').default;
+    const allKeys: string[] = await AS.getAllKeys();
+    const toRemove = allKeys.filter((k) =>
+      SCOPED_KEY_PREFIXES.some((p) => k === `${p}${userId}`) ||
+      (k.startsWith(TELEGRAPH_SCOPED_PREFIX) && k.endsWith(`_${userId}`)),
+    );
+    if (toRemove.length > 0) await AS.multiRemove(toRemove);
+  } catch {
+    // Non-fatal — native module absent (e.g. web / test environment).
+  }
+}
 
 // AsyncStorage keys that may hold private entity data and must be wiped on logout.
 // Using lazy require to avoid circular-dependency issues and to preserve native-only import.
@@ -227,6 +263,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       // Remove the personalised Compass feed cache so it doesn't persist
       // private recommendation data (event addresses, place details) to disk.
       void clearCachedFeed(userId).catch(() => {});
+      // Remove this account's scoped reminders/bookmarks/checkpoint-queue/
+      // Telegraph-cache keys (no-op while the flag is off — see helper doc).
+      void clearScopedStorageForUser(userId).catch(() => {});
     }
     // Wipe other AsyncStorage keys that may hold private entity data.
     // Lazy-require keeps this from crashing on web (where AsyncStorage is

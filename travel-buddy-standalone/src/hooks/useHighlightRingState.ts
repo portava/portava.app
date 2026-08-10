@@ -6,10 +6,19 @@
  *
  * Pass an incrementing `refreshKey` to force a cache-bust and immediate re-fetch
  * (e.g. after the owner creates a new highlight so the ring activates instantly).
+ *
+ * The "which highlights has this account personally viewed" storage/account-
+ * scoping logic lives in services/highlightViewedStorage.ts (a pure module,
+ * unlike this file, which transitively imports 'react-native' via
+ * services/highlights.ts → lib/supabase.ts and so can't load under
+ * node:test). viewedHighlightIds/markViewed are re-exported here so every
+ * existing import site keeps working unchanged.
  */
 import { useState, useEffect, useRef } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchUserHighlights, type Highlight } from '../services/highlights.ts';
+import { viewedHighlightIds, markViewed, initViewedIds } from '../services/highlightViewedStorage.ts';
+
+export { viewedHighlightIds, markViewed };
 
 export interface HighlightRingState {
   hasActive: boolean;
@@ -25,69 +34,6 @@ interface CacheEntry {
 const CACHE_TTL_MS = 60_000;
 const cache = new Map<string, CacheEntry>();
 const inFlight = new Set<string>();
-
-const STORAGE_KEY = '@highlight_viewed_ids_v1';
-
-/**
- * In-memory set of viewed highlight IDs.
- * Populated on first import by `initViewedIds()` (which loads & prunes AsyncStorage).
- * Updated on every `markViewed()` call.
- */
-export const viewedHighlightIds = new Set<string>();
-
-/** Map persisted to AsyncStorage: id → ISO expiresAt string. */
-let _persistedMap: Record<string, string> = {};
-
-/** Promise that resolves once the persisted IDs have been loaded. */
-let _initPromise: Promise<void> | null = null;
-
-/** Initialise from AsyncStorage — called once at module load. */
-function initViewedIds(): Promise<void> {
-  if (_initPromise) return _initPromise;
-  _initPromise = (async () => {
-    try {
-      const raw = await AsyncStorage.getItem(STORAGE_KEY);
-      const stored: Record<string, string> = raw ? JSON.parse(raw) : {};
-      const now = Date.now();
-      const pruned: Record<string, string> = {};
-      for (const [id, expiresAt] of Object.entries(stored)) {
-        if (new Date(expiresAt).getTime() > now) {
-          pruned[id] = expiresAt;
-          viewedHighlightIds.add(id);
-        }
-      }
-      _persistedMap = pruned;
-      // Write back the pruned map only if we actually removed stale entries
-      if (Object.keys(pruned).length !== Object.keys(stored).length) {
-        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(pruned));
-      }
-    } catch {
-      // Storage unavailable — fall back to module-memory only
-    }
-  })();
-  return _initPromise;
-}
-
-// Kick off immediately so storage is ready before the first render.
-initViewedIds();
-
-/**
- * Mark a highlight as viewed.
- * Updates the in-memory set and persists id→expiresAt to AsyncStorage so
- * the ring stays muted across app restarts.
- *
- * @param id        Highlight ID.
- * @param expiresAt ISO-8601 expiry string from the Highlight object (optional;
- *                  if omitted the entry is still added in-memory but not persisted).
- */
-export function markViewed(id: string, expiresAt?: string): void {
-  viewedHighlightIds.add(id);
-  if (!expiresAt) return;
-  // Skip persistence if this id is already stored with the same expiry
-  if (_persistedMap[id] === expiresAt) return;
-  _persistedMap[id] = expiresAt;
-  AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(_persistedMap)).catch(() => {});
-}
 
 function getCached(userId: string): HighlightRingState | null {
   const entry = cache.get(userId);

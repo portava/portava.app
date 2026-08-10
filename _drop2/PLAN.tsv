@@ -1,0 +1,39 @@
+NEW	.agents/memory/account-identity-by-id.md	
+NEW	.agents/memory/api-server-live-db-suites.md	
+NEW	.agents/memory/live-db-vs-local-postgres.md	
+NEW	.agents/memory/migration-applied-vs-committed.md	
+NEW	.agents/memory/posts-media-urls-vs-post-media.md	
+NEW	.agents/memory/resolve-interaction-permissions-catch.md	
+NEW	artifacts/api-server/scripts/check-guard-coverage.mjs	
+NEW	artifacts/api-server/scripts/check-memory-citations.mjs	
+NEW	artifacts/api-server/src/lib/ciProdReadOnlyAuditGuard.mjs	
+NEW	artifacts/api-server/src/lib/ciProdReadOnlyAuditGuard.d.mts	
+NEW	artifacts/api-server/src/lib/supabaseTargetPolicy.mjs	
+REPLACE	.agents/memory/MEMORY.md	aabb860b9638fa5072f18c1febc54d9d546a92c72a1d558a54a2d554da4348f5
+REPLACE	.agents/memory/api-server-testing.md	7e3b52e668dd177042d3374b76f587aa8d62968ea797ec62d17102a27931fd22
+REPLACE	.agents/memory/discovery-perf-cache.md	8c1eb7665cef9de4da716a236bcaa543f48a21beb8b6b618f9dd6a46e8a5a2fe
+REPLACE	docs/security/admin-authz-audit.md	f284778eaaff2adbcc76c059d686ca23c2f3e0a073680ba38300d42c486961b0
+REPLACE	docs/testing/suite-exclusion-audit.md	3ae7c42907b442fb62a41dc8ee8528794b4219a968bdb940aca0a10f5f779348
+REPLACE	artifacts/api-server/src/lib/ciSupabaseGuard.mjs	bf6cfa5035e0142b13575bc2de0ff7762a926b03941510e52be91a840cd4ac4c
+REPLACE	.github/scripts/assert-ci-scripts.mjs	b88f48cadb11bdf9af698d652295f9d1b5572576407b6e1b89c4c5a5a3d74bc2
+REPLACE	.github/workflows/ci.yml	d523d63ada66d805e09037299d213c8bd47219ee2bde3bfb9a10f0b15dee0dd5
+REPLACE	docs/ci/BOOTSTRAP.md	ff0e4c47334488f193c0b2d5fb831092aa9ac3a7c2bfa64a32e57aada7d0a930
+REPLACE	docs/ci/README.md	b35fe2bba441512906d204fdf4032ab4df6173866be2d150a3cee288e002d6b8
+BLOCK	artifacts/api-server/src/scripts/auditMigrationsVsLive.ts	auditMigrationsVsLive.ts.block|readonly
+BLOCK	artifacts/api-server/src/scripts/checkMissingLiveColumns.ts	checkMissingLiveColumns.ts.block|readonly
+BLOCK	artifacts/api-server/src/scripts/checkMediaObjects.ts	checkMediaObjects.ts.block|readonly
+BLOCK	artifacts/api-server/src/scripts/checkWritePathColumns.ts	checkWritePathColumns.ts.block|readonly
+BLOCK	artifacts/api-server/src/scripts/checkRankEventsSurfaces.ts	checkRankEventsSurfaces.ts.block|strict
+BLOCK	artifacts/api-server/src/test/rlsHardening.test.ts	rlsHardening.test.ts.block|strict
+BLOCK	artifacts/api-server/src/test/profileRoleNotSelfWritable.test.ts	profileRoleNotSelfWritable.test.ts.block|strict
+BLOCK	artifacts/api-server/src/test/isOfficialPrivileged.test.ts	isOfficialPrivileged.test.ts.block|strict
+LINESWAP	artifacts/api-server/src/scripts/checkDiscoveryCacheKeys.ts	import "../lib/ciSupabaseGuard.mjs";|import "../lib/ciProdReadOnlyAuditGuard.mjs";
+INSERT_PKG	artifacts/api-server/package.json	package.json.insert
+REQUIRE	.github/scripts/assert-nonprod-supabase.sh	
+REQUIRE	.github/scripts/run-live-suite.sh	
+REQUIRE	.github/scripts/pnpm-run.sh	
+REQUIRE	.github/scripts/check-unrunnable-tests.mjs	
+REQUIRE	.github/workflows/live-db.yml	
+REQUIRE	.github/workflows/unwired-checks.yml	
+REQUIRE	artifacts/api-server/src/lib/ciSupabaseGuard.d.mts	
+REQUIRE	artifacts/api-server/src/scripts/checkDiscoveryCacheKeys.ts	

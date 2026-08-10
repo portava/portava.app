@@ -4,8 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { X } from 'lucide-react-native';
 import type { OwnProfile } from '../types/models.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
-
-const DISMISSED_KEY = '@passport_completion_dismissed';
+import { resolveProfileCompletionDismissedKey } from '../services/profileCompletionDismissal.ts';
 
 interface CheckItem { label: string; done: boolean; }
 
@@ -26,10 +25,18 @@ export function ProfileCompletionCard({
   onOpenSettings: () => void;
 }) {
   const [dismissed, setDismissed] = useState(true); // hidden until async check
+  // Resolved lazily (may involve the account-scoping migration). null means
+  // "no key available" (flag on, no account signed in yet) — dismiss() is a
+  // no-op in that case rather than falling back to the legacy unscoped key.
+  const dismissedKeyRef = React.useRef<string | null>(null);
 
   useEffect(() => {
-    AsyncStorage.getItem(DISMISSED_KEY).then((val) => {
-      if (!val) setDismissed(false);
+    resolveProfileCompletionDismissedKey(AsyncStorage).then((key) => {
+      dismissedKeyRef.current = key;
+      if (key === null) return;
+      AsyncStorage.getItem(key).then((val) => {
+        if (!val) setDismissed(false);
+      });
     });
   }, []);
 
@@ -39,7 +46,8 @@ export function ProfileCompletionCard({
 
   const dismiss = async () => {
     setDismissed(true);
-    await AsyncStorage.setItem(DISMISSED_KEY, '1');
+    const key = dismissedKeyRef.current;
+    if (key !== null) await AsyncStorage.setItem(key, '1');
   };
 
   if (dismissed || done === total) return null;

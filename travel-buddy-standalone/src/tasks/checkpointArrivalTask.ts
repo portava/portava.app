@@ -12,9 +12,17 @@
 import * as TaskManager from 'expo-task-manager';
 import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  PENDING_ARRIVALS_STORE_KEY,
+  resolveCheckpointQueueKey,
+} from './checkpointArrivalQueue.ts';
 
-export const CHECKPOINT_ARRIVAL_TASK    = 'checkpoint-arrival';
-export const PENDING_ARRIVALS_STORE_KEY = '@travel_buddy/pending_checkpoint_arrivals';
+export const CHECKPOINT_ARRIVAL_TASK = 'checkpoint-arrival';
+// Re-exported for existing importers (e.g. useRouteCheckpointMonitor.ts) —
+// the pure key-resolution/migration logic itself now lives in
+// checkpointArrivalQueue.ts so it can be unit-tested without loading
+// expo-task-manager's native runtime.
+export { PENDING_ARRIVALS_STORE_KEY, resolveCheckpointQueueKey };
 
 // TaskManager.defineTask must run at module load time (before startGeofencingAsync)
 TaskManager.defineTask(
@@ -33,11 +41,13 @@ TaskManager.defineTask(
     if (!stopId) return;
 
     try {
-      const raw = await AsyncStorage.getItem(PENDING_ARRIVALS_STORE_KEY);
+      const key = await resolveCheckpointQueueKey(AsyncStorage);
+      if (key === null) return; // defer — no resolvable account, never fall back to the legacy key
+      const raw = await AsyncStorage.getItem(key);
       const pending: string[] = raw ? (JSON.parse(raw) as string[]) : [];
       if (!pending.includes(stopId)) {
         pending.push(stopId);
-        await AsyncStorage.setItem(PENDING_ARRIVALS_STORE_KEY, JSON.stringify(pending));
+        await AsyncStorage.setItem(key, JSON.stringify(pending));
       }
     } catch {
       // Non-fatal: foreground fallback will still catch the arrival

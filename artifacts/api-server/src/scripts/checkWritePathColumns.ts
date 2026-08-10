@@ -59,11 +59,41 @@
  * Exit code 2 → environment / API error
  */
 
-// THE CHOKEPOINT. Side-effect import, deliberately FIRST: it asserts this
-// process is pointed at the sanctioned non-production Supabase project
-// before any client is constructed. Not skippable by editing workflow YAML.
-// See src/lib/ciSupabaseGuard.mjs and docs/ci/BOOTSTRAP.md.
-import "../lib/ciSupabaseGuard.mjs";
+// ── THE ALLOWLIST ASSERTION, IN THE EXECUTION PATH ───────────────────────────
+//
+// FIRST import, deliberately: ES modules evaluate their imports in source
+// order, before the importing module's own body, so this runs before anything
+// else in this file. It asserts the project this process is pointed at and
+// exits 2 — this script's own "environment / API error" code — if it cannot
+// establish it.
+//
+// It is not a workflow step, so no YAML edit can skip it. This script is
+// reached from live-db.yml's api-server-check-all job via check:all ->
+// scripts/run-all-checks.sh; deleting the `Preflight — Supabase target must be
+// the sanctioned CI project` step from that job, disabling it with `if:`,
+// moving it after the install step, or adding a brand-new job in a brand-new
+// workflow file all still land here, because this process cannot start
+// without it.
+//
+// This is the READ-ONLY front door, not src/lib/ciSupabaseGuard.mjs. In CI it
+// behaves identically — the sanctioned CI project, or exit 2. Outside CI, and
+// only outside CI, it additionally permits a read-only audit of the declared
+// production project when the operator asks for it by name:
+//
+//   PORTAVA_PROD_READ_ONLY_AUDIT='read-only-audit-against-production'
+//
+// This script qualifies despite its name. `WRITE_METHODS` and the "write
+// sites" it talks about are things it finds in the TYPESCRIPT AST of
+// src/routes and src/services — it reads insert/upsert/update call sites out
+// of source files on disk. It performs none of them. Its only contact with the
+// database is three SELECTs: information_schema.columns, pg_class, and the
+// one-row `select handle, is_official from profiles where handle = 'portava'`
+// smoke test. If it ever gains a write, move it back to
+// src/lib/ciSupabaseGuard.mjs and drop it from the read-only list in
+// scripts/check-guard-coverage.mjs, which enforces that list on every run.
+//
+// See src/lib/ciProdReadOnlyAuditGuard.mjs and docs/ci/README.md.
+import "../lib/ciProdReadOnlyAuditGuard.mjs";
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, dirname, resolve, relative } from "node:path";

@@ -1,0 +1,1169 @@
+# ci.yml — the credential-free tier.
+#
+# Everything in this file runs with NO secrets. It therefore runs identically
+# on same-repo pushes, same-repo PRs and fork PRs. Nothing here can be made to
+# pass by an absent secret, because nothing here reads one.
+#
+# Design rules for this file (see docs/ci/README.md for the reasoning):
+#   * no soft-fail constructs — the ci-self-check job below enforces this
+#     mechanically against every workflow in this directory
+#   * every step that captures an exit code re-raises it before the job ends
+#   * where a result is a COUNT, the count is printed to the job summary, and
+#     where the correct floor is knowable from source it is enforced
+#   * a step that cannot establish its result FAILS. An unestablished result is
+#     not a pass. This mirrors run_gate() in
+#     artifacts/api-server/scripts/run-all-checks.sh.
+#   * package scripts are NEVER invoked through pnpm's workspace-selector form.
+#     That form exits 0 when it matches nothing (pnpm 10.26.1: an unmatched
+#     selector prints "No projects matched the filters" and exits 0; a matched
+#     package with a missing script also exits 0), so a renamed package or a
+#     deleted script would report SUCCESS. Every invocation goes through
+#     .github/scripts/pnpm-run.sh, which asserts the directory, the package name
+#     and the script exist before running anything, and every such invocation is
+#     re-asserted up front by the `preflight` job below. The ci-self-check job
+#     fails the build if the selector form is reintroduced.
+#
+# Several steps below use `set -uo pipefail` WITHOUT `-e`, then capture an exit
+# code and re-raise it explicitly. That is deliberate and is the same technique
+# artifacts/api-server/scripts/run-all-checks.sh uses: it lets the step print
+# the counts and per-check attribution before failing, instead of aborting at
+# the first non-zero and telling a human nothing. Nothing is suppressed —
+# every captured code is re-raised.
+
+name: CI
+
+on:
+  # Deliberately '**', not a branch allowlist. A named allowlist is how a
+  # working branch silently loses CI — which is the entire class of failure
+  # this repo has been living with. Every branch, every PR target.
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
+  workflow_dispatch:
+
+# Least privilege. No job here writes anything, comments on anything, or
+# publishes anything. contents:read is all that checkout needs.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Superseded runs are cancelled. A cancelled run renders as "cancelled", not
+  # as success, so this cannot hide a failure.
+  cancel-in-progress: true
+
+env:
+  # Sourced from .replit (`modules = ["nodejs-24", ...]`) and
+  # docs/eas-runbook.md's required-tools table. The repo has NO `engines`
+  # field, NO .nvmrc and NO .tool-versions, so nothing in-repo enforces this.
+  # See docs/ci/README.md § "Node version is inferred, not enforced".
+  NODE_VERSION: '24'
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # preflight — every (package directory, package name, script) triple named
+  # anywhere under .github/ must exist on disk, checked before any job spends a
+  # minute installing anything.
+  #
+  # This closes the hole that pnpm's workspace-selector form left open: it exits
+  # 0 when it matches nothing, so a misspelt package or a renamed script used to
+  # produce a green step that ran no code at all. The per-invocation guard lives
+  # in .github/scripts/pnpm-run.sh; this job is the fail-fast duplicate, so the
+  # failure names the missing script in ~20 seconds instead of after an install.
+  #
+  # No install, no network, no node_modules — the script uses only node builtins.
+  # ───────────────────────────────────────────────────────────────────────────
+  preflight:
+    name: preflight · every CI-invoked package script exists
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Assert every CI-invoked (package, script) pair exists
+        shell: bash
+        run: node .github/scripts/assert-ci-scripts.mjs
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # api-server — typecheck + every check that does NOT need a live database.
+  #
+  # NOTE: `check:all` is NOT invoked here. Steps 5-7 of
+  # artifacts/api-server/scripts/run-all-checks.sh need live credentials and
+  # correctly exit 2 without them, so `check:all` cannot pass in a
+  # credential-free job. Those three run in live-db.yml. The four
+  # credential-free checks are invoked individually below, by the same script
+  # names run-all-checks.sh uses.
+  # ───────────────────────────────────────────────────────────────────────────
+  api-server-static:
+    name: api-server · typecheck + static checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # If a script this job names does not exist, that is established before any
+    # install runs. A failed preflight leaves this job unrun, and the run is red.
+    needs: preflight
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable corepack (pnpm version comes from root packageManager)
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          # Printed, not asserted: the authority is the root package.json
+          # "packageManager": "pnpm@10.26.1" field, which corepack honours.
+          # If this line ever disagrees with that field, corepack is not being
+          # used and the install is not reproducible.
+          echo "pnpm $(pnpm --version)"
+          node --version
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      # Two lockfiles, two workspace roots, two cache keys — the root and
+      # travel-buddy-standalone resolve peers differently (.npmrc
+      # auto-install-peers=false vs the standalone lockfile's
+      # autoInstallPeers: true), so their caches are kept apart.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-root-${{ runner.os }}-node${{ env.NODE_VERSION }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-root-${{ runner.os }}-node${{ env.NODE_VERSION }}-
+
+      - name: Install (root workspace, frozen lockfile)
+        id: install
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+
+      # From here on, every check step runs even if an earlier check failed —
+      # the GitHub-native equivalent of run-all-checks.sh's `set -uo pipefail`
+      # + FAILED=1 accumulator. Each failure gets its own red X against its own
+      # step name, so "CI failed" always names the check that failed.
+      # The guard on steps.install.outcome stops these from running (and
+      # producing confusing secondary failures) when the install itself broke.
+
+      - name: typecheck
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server typecheck
+
+      - name: 'check:frozen-dir'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:frozen-dir
+
+      - name: 'check:async-handlers'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:async-handlers
+
+      # This is the check that was correct, committed, and failing on a real
+      # migration-prefix collision for months while everyone saw green,
+      # because nothing invoked it. It is invoked now, on every push and PR.
+      - name: 'check:migration-prefixes'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:migration-prefixes
+
+      # Guards against a truncating flag (--test-force-exit, --test-shard,
+      # --test-name-pattern, ...) being reintroduced into the `test` script.
+      # One such flag silently dropped 54-133 tests per green run for months.
+      - name: 'check:test-runner-flags'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:test-runner-flags
+
+      # check:test-registration is NOT in any check:all. Its only invocation in
+      # the repo is a .replit workflow a human has to click. It is the guard
+      # that stops a new src/**/*.test.ts from being added and never running.
+      #
+      # Its own `ghosts` branch (registered paths with no file on disk) only
+      # console.warn()s and does NOT set a non-zero exit — a typo'd path in the
+      # curated list would run nothing and the check would stay green. Fixing
+      # that inside the script would mean editing the repo's source, so it is
+      # asserted here instead, from the output, exactly the way run_gate()
+      # asserts on the GATE line rather than on the exit code alone.
+      - name: 'check:test-registration (+ ghost-path assertion)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          LOG="$RUNNER_TEMP/test-registration.log"
+
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:test-registration 2>&1 | tee "$LOG"
+          rc=${PIPESTATUS[0]}
+
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::check:test-registration failed (exit $rc)"
+            exit "$rc"
+          fi
+
+          # Output contract, not exit contract.
+          if grep -qF 'do not exist on disk' "$LOG"; then
+            echo "::error::check:test-registration reported GHOST registered paths — entries in the curated test script that have no file on disk. Those paths run nothing. The script only warns about this; this job treats it as a failure."
+            exit 1
+          fi
+          echo "No ghost paths in the curated test list."
+
+      # A hard floor on the number of registered test files. Verified against
+      # source at the time this workflow was written: 392 unique .test.ts paths
+      # in the api-server `test` script, 395 files on disk, the 3 unregistered
+      # ones being exactly the credential-dependent suites that run in
+      # live-db.yml. A drop below the floor means suites left the run.
+      #
+      # RAISING this number as the suite grows is expected and encouraged.
+      # LOWERING it is a deliberate reduction in coverage and must be justified
+      # in the PR that does it. Do not lower it to make a red build green.
+      - name: 'Registered-test-file count (floor 392)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        env:
+          FLOOR: '392'
+        run: |
+          set -euo pipefail
+          COUNT="$(node -e '
+            const fs = require("node:fs");
+            const pkg = JSON.parse(fs.readFileSync("artifacts/api-server/package.json", "utf8"));
+            const paths = pkg.scripts.test.match(/src\/[^\s"'"'"']+\.test\.ts/g) || [];
+            process.stdout.write(String(new Set(paths).size));
+          ')"
+          echo "Registered test files in the curated test script: $COUNT (floor $FLOOR)"
+          {
+            echo "### api-server registered test files"
+            echo ""
+            echo "| metric | value |"
+            echo "| --- | --- |"
+            echo "| registered .test.ts paths | **$COUNT** |"
+            echo "| enforced floor | $FLOOR |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$COUNT" -lt "$FLOOR" ]; then
+            echo "::error::Registered test files dropped to $COUNT, below the floor of $FLOOR. Suites have been removed from the curated test script. If this is intentional, lower the floor in .github/workflows/ci.yml in the same PR and say why."
+            exit 1
+          fi
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # api-server — the curated ~392-file node:test suite.
+  #
+  # The `test` script pins SUPABASE_URL=http://127.0.0.1:9 and
+  # SUPABASE_SERVICE_ROLE_KEY=dummy INLINE. That pin is load-bearing: unstubbed
+  # suites calling getServiceClient() make real network calls if live secrets
+  # are present in the environment. This job therefore sets NO Supabase
+  # environment variables, and no secret is available to it. Do not add any.
+  # ───────────────────────────────────────────────────────────────────────────
+  api-server-tests:
+    name: api-server · node:test suite
+    runs-on: ubuntu-latest
+    # The repo contradicts itself on this suite's runtime: ~119s
+    # (.agents/memory/api-server-testing.md, at HEAD), "well over 5 minutes"
+    # (the git-superseded version of that same file) and ~7.5 min
+    # (WAVE3-APPLY-NOTES.md:37). None was measured on a GitHub runner. The
+    # timeout is set well above all three on purpose: a timeout kill is
+    # indistinguishable from a hang and would be exactly the "green by not
+    # running" failure this workflow exists to prevent. Let it fail on the real
+    # signal, not on the clock.
+    timeout-minutes: 30
+    needs: preflight
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable corepack
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          echo "pnpm $(pnpm --version)"
+          node --version
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-root-${{ runner.os }}-node${{ env.NODE_VERSION }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-root-${{ runner.os }}-node${{ env.NODE_VERSION }}-
+
+      - name: Install (root workspace, frozen lockfile)
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+
+      - name: Run suite and report totals
+        shell: bash
+        env:
+          # Mandatory. An unset value fails this step — see the block at the
+          # bottom of this script.
+          API_TEST_MIN_PASS: ${{ vars.API_TEST_MIN_PASS }}
+          # Optional, defaults to 0. Raise it only with a written reason.
+          API_TEST_MAX_SKIPPED: ${{ vars.API_TEST_MAX_SKIPPED }}
+        run: |
+          set -uo pipefail
+          # Byte-wise matching, so count parsing behaves identically whatever
+          # locale the runner has. See the count_of comment below.
+          export LC_ALL=C
+          LOG="$RUNNER_TEMP/api-test.log"
+
+          # PIPESTATUS, not a discarded exit code. The code is captured so the
+          # counts below can be printed even on failure, and it is re-raised
+          # further down. Nothing is suppressed.
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test 2>&1 | tee "$LOG"
+          rc=${PIPESTATUS[0]}
+
+          # node:test's summary is `# pass 123` under the TAP reporter and
+          # `ℹ pass 123` under the spec reporter. Which one is used depends on
+          # whether stdout is a TTY, so both are matched.
+          #
+          # The prefix is matched as `[^A-Za-z0-9]*`, NOT as a bracket class
+          # containing the literal marker characters: ℹ is three UTF-8 bytes,
+          # and a multibyte character inside a POSIX bracket expression is
+          # matched byte-wise in a C locale, so `[#ℹ]` would match one byte and
+          # then fail — silently, on every run. This form is byte-safe in every
+          # locale and still rejects TAP body lines like `ok 1 - pass 3`.
+          count_of() {
+            grep -E "^[^A-Za-z0-9]*$1[[:space:]]+[0-9]+[[:space:]]*$" "$LOG" \
+              | tail -n 1 | grep -oE '[0-9]+' | tail -n 1
+          }
+          # EVERY value used on either side of a `[ … -lt … ]` MUST go through
+          # this first.
+          #
+          # `[ "$PASS" -lt "$MIN_PASS" ]` with a non-integer MIN_PASS does not
+          # fail — `test` exits 2 with "integer expression expected", and `if`
+          # treats any non-zero status as FALSE. In this block (`set -uo
+          # pipefail`, deliberately no `-e`, see the file header) that means the
+          # assertion silently becomes a no-op and the step goes green having
+          # enforced nothing. A repository variable is operator-supplied text:
+          # API_TEST_MIN_PASS='6186 ' (trailing space, easy to paste),
+          # '6,186', '6186a' or 'TBD' all disable the floor that way, and the
+          # historical failure this floor exists to catch — a suite silently
+          # shrinking — would sail through.
+          #
+          # So a threshold that is not a bare non-negative integer is a hard
+          # FAILURE, not a fallback to "unenforced".
+          assert_int() {
+            local name="$1" value="$2"
+            case "$value" in
+              '' )
+                echo "::error::$name is empty, so the assertion that uses it cannot be evaluated. An assertion that cannot be evaluated has not passed."
+                exit 1
+                ;;
+              *[!0-9]* )
+                echo "::error::$name is '$value', which is not a bare non-negative integer. Left unchecked this is worse than useless: '[ x -lt $value ]' exits 2, 'if' reads that as false, and the assertion silently becomes a no-op that reports success. Fix the value (digits only, no spaces, no separators, no units)."
+                exit 1
+                ;;
+            esac
+          }
+
+          TESTS="$(count_of tests)"
+          PASS="$(count_of pass)"
+          FAIL="$(count_of fail)"
+          SKIPPED="$(count_of skipped)"
+          SUITES="$(count_of suites)"
+
+          {
+            echo "### api-server node --test totals"
+            echo ""
+            echo "| metric | value |"
+            echo "| --- | --- |"
+            echo "| suites | ${SUITES:-not reported} |"
+            echo "| tests | ${TESTS:-not reported} |"
+            echo "| pass | ${PASS:-not reported} |"
+            echo "| fail | ${FAIL:-not reported} |"
+            echo "| skipped | ${SKIPPED:-not reported} |"
+            echo "| exit code | $rc |"
+            echo ""
+            echo "These totals are printed on every run so a silent shrink is visible to"
+            echo "a human reading the run. A test-runner flag once dropped 54-133 tests"
+            echo "per green run here for months without anyone noticing."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "──────────────────────────────────────────"
+          echo "suites=${SUITES:-?} tests=${TESTS:-?} pass=${PASS:-?} fail=${FAIL:-?} skipped=${SKIPPED:-?} exit=$rc"
+          echo "──────────────────────────────────────────"
+
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::api-server suite failed (exit $rc)"
+            exit "$rc"
+          fi
+
+          # Exit 0 with no parseable totals means the run reported no verdict.
+          # An unestablished result is not a pass — the same rule run_gate()
+          # applies to a missing GATE line. SKIPPED is in this list because it
+          # is asserted below: an unreadable skipped count is an unestablished
+          # result too, and node --test always prints the line.
+          if [ -z "$TESTS" ] || [ -z "$PASS" ] || [ -z "$FAIL" ] || [ -z "$SKIPPED" ]; then
+            echo "::error::The suite exited 0 but its test-count summary could not be fully parsed (tests='${TESTS:-}' pass='${PASS:-}' fail='${FAIL:-}' skipped='${SKIPPED:-}'). A run whose totals cannot be read has not been verified. Check the reporter format before trusting this green."
+            exit 1
+          fi
+          # The counts come from a `[0-9]+` capture, so they are integers by
+          # construction — but they are run through the same gate anyway, so
+          # that a future change to count_of cannot turn these three assertions
+          # into no-ops the way an unvalidated threshold would.
+          assert_int "parsed test count 'tests'" "$TESTS"
+          assert_int "parsed test count 'pass'" "$PASS"
+          assert_int "parsed test count 'fail'" "$FAIL"
+          assert_int "parsed test count 'skipped'" "$SKIPPED"
+
+          if [ "$FAIL" -ne 0 ]; then
+            echo "::error::The suite exited 0 but reported $FAIL failing test(s)."
+            exit 1
+          fi
+          if [ "$PASS" -eq 0 ]; then
+            echo "::error::The suite exited 0 with 0 passing tests — it asserted nothing."
+            exit 1
+          fi
+
+          # ── Skipped tests. ENFORCED BY DEFAULT. ───────────────────────────
+          # A skipped test is a test that did not run, and this repo's whole
+          # history is tests that did not run reporting success. The default
+          # tolerance is 0. If some suite legitimately skips, RAISE the
+          # repository variable API_TEST_MAX_SKIPPED deliberately, in a PR that
+          # says which suite and why — do not delete the assertion.
+          MAX_SKIPPED="${API_TEST_MAX_SKIPPED:-0}"
+          # API_TEST_MAX_SKIPPED is an operator-supplied repository variable.
+          # A non-integer here used to disable the skipped assertion outright
+          # (test exits 2, `if` reads false) — a tolerance typo would have
+          # re-permitted unlimited skipped tests while the step stayed green.
+          assert_int 'API_TEST_MAX_SKIPPED' "$MAX_SKIPPED"
+          echo "Enforcing skipped <= $MAX_SKIPPED (default 0) against skipped=$SKIPPED"
+          if [ "$SKIPPED" -gt "$MAX_SKIPPED" ]; then
+            echo "::error::The suite skipped $SKIPPED test(s); the allowed maximum is $MAX_SKIPPED. Skipped tests asserted nothing. Un-skip them, or raise the API_TEST_MAX_SKIPPED repository variable in a PR that names the suites and the reason."
+            exit 1
+          fi
+
+          # ── The 'tests' total is now COMPARED, not just printed. ──────────
+          # It was parsed, integer-checked, put in the summary table, and never
+          # measured against anything. node:test's `tests` total is
+          # pass + fail + skipped + todo + cancelled — so with fail == 0 and
+          # skipped == 0 (both enforced above), the ENTIRE todo and cancelled
+          # population was invisible to every assertion in this job. A suite
+          # converted wholesale to `it.todo(...)`, or one whose process died
+          # mid-run leaving tests cancelled, keeps pass > 0, fail == 0 and
+          # skipped == 0 intact and sails through the floors below, because a
+          # todo test asserted nothing and is counted nowhere else.
+          #
+          # Every test node:test counted must therefore be accounted for by
+          # exactly one of pass / fail / skipped. Anything left over reached no
+          # outcome at all. Same assertion, same reasoning, as the one in
+          # .github/scripts/run-live-suite.sh.
+          UNACCOUNTED=$(( TESTS - PASS - FAIL - SKIPPED ))
+          echo "Accounting: tests=$TESTS = pass($PASS) + fail($FAIL) + skipped($SKIPPED) + unaccounted($UNACCOUNTED)"
+          if [ "$UNACCOUNTED" -ne 0 ]; then
+            echo "::error::The suite reported tests=$TESTS but pass=$PASS, fail=$FAIL, skipped=$SKIPPED, leaving $UNACCOUNTED test(s) unaccounted for. Those are 'todo' or 'cancelled' tests: they asserted nothing, and they appear in no other count, so no other assertion in this job can see them. Resolve them, or — if a todo is deliberate — revisit this assertion in the PR that adds it rather than relaxing it afterwards."
+            exit 1
+          fi
+
+          # ── Structural floor, derived from source on every run. ───────────
+          # Every path registered in the curated `test` script is a file the
+          # runner was told to execute; a file that contributes zero passing
+          # tests is either empty or was truncated out of the run. So `pass`
+          # must be at least the number of registered files. This floor needs
+          # no configuration, needs no historical figure, and moves with the
+          # suite — it is computed from artifacts/api-server/package.json here,
+          # not hardcoded.
+          #
+          # It is a FLOOR, not the real number: the recorded totals are in the
+          # thousands. It cannot catch a 2% shrink. API_TEST_MIN_PASS below is
+          # what catches that, which is why it is mandatory.
+          REGISTERED="$(node -e '
+            const fs = require("node:fs");
+            const pkg = JSON.parse(fs.readFileSync("artifacts/api-server/package.json", "utf8"));
+            const paths = pkg.scripts.test.match(/src\/[^\s"'"'"']+\.test\.ts/g) || [];
+            process.stdout.write(String(new Set(paths).size));
+          ')"
+          # If that node invocation fails or the regex stops matching,
+          # REGISTERED is empty — and in a block without `set -e` the floor
+          # below would silently stop being enforced. It is a threshold like any
+          # other.
+          assert_int 'REGISTERED (registered .test.ts paths in artifacts/api-server/package.json)' "$REGISTERED"
+          echo "Enforcing structural floor: pass >= registered test files ($REGISTERED)"
+          if [ "$PASS" -lt "$REGISTERED" ]; then
+            echo "::error::pass=$PASS is below the number of registered test files ($REGISTERED). At least one registered file contributed no passing test, which means files were registered but not executed — the exact shape of the truncating-flag bug that cost this repo 54-133 tests per green run."
+            exit 1
+          fi
+
+          # ── Ratchet floor. MANDATORY. ─────────────────────────────────────
+          # API_TEST_MIN_PASS used to be optional, and the documented default
+          # state was therefore a suite with no floor at all — the known failure
+          # mode, left switched off by default. It is now required: with no
+          # floor configured this step FAILS and prints the value to set.
+          #
+          # This means the FIRST run on a new repo is expected to be red HERE,
+          # after the suite itself has passed and printed its totals. That is
+          # the bootstrap, and it is deliberate: an unfloored suite must not be
+          # able to report success. Set the repository VARIABLE (not secret)
+          # API_TEST_MIN_PASS to the printed `pass` total and re-run.
+          # See docs/ci/README.md § "API_TEST_MIN_PASS is mandatory".
+          MIN_PASS="${API_TEST_MIN_PASS:-}"
+          if [ -z "$MIN_PASS" ]; then
+            echo "::error::API_TEST_MIN_PASS is not configured, so nothing enforces the passing-test total and a silent shrink would go unnoticed — which is precisely how this repo lost 54-133 tests per green run for months. This run passed $PASS tests. Set the repository variable API_TEST_MIN_PASS=$PASS (Settings -> Secrets and variables -> Actions -> Variables) and re-run. The suite itself PASSED; this step fails because the suite has no floor."
+            {
+              echo ""
+              echo "> **Action required:** set the repository variable"
+              echo "> \`API_TEST_MIN_PASS\` to **$PASS** (this run's passing total), then re-run."
+              echo "> Until it is set, the suite has no floor and this job fails by design."
+              echo "> See \`docs/ci/README.md\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          # THE ONE THAT MATTERED MOST. API_TEST_MIN_PASS is the only assertion
+          # that can catch a small shrink, and it is operator-supplied text.
+          # Before this line, API_TEST_MIN_PASS='6186 ' or '6,186' made the
+          # comparison below exit 2, which `if` scored as false — the ratchet
+          # was off and the step was green. The empty case is handled above with
+          # its own bootstrap message; anything else non-integer fails here.
+          assert_int 'API_TEST_MIN_PASS' "$MIN_PASS"
+          echo "Enforcing API_TEST_MIN_PASS=$MIN_PASS against pass=$PASS"
+          if [ "$PASS" -lt "$MIN_PASS" ]; then
+            echo "::error::Passing-test count shrank: $PASS < API_TEST_MIN_PASS ($MIN_PASS). Tests stopped running. Investigate before lowering or clearing the variable."
+            exit 1
+          fi
+          {
+            echo ""
+            echo "| assertion | enforced value | result |"
+            echo "| --- | --- | --- |"
+            echo "| fail == 0 | 0 | $FAIL |"
+            echo "| skipped <= max | $MAX_SKIPPED (\`API_TEST_MAX_SKIPPED\`, default 0) | $SKIPPED |"
+            echo "| tests == pass + fail + skipped | 0 unaccounted (no todo, no cancelled) | $UNACCOUNTED |"
+            echo "| pass >= registered files | $REGISTERED (from package.json) | $PASS |"
+            echo "| pass >= floor | $MIN_PASS (\`API_TEST_MIN_PASS\`, mandatory) | $PASS |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # travel-buddy-standalone — its own workspace root, its own lockfile.
+  #
+  # check:all here covers: run-node-tests.mjs (which itself runs four preflight
+  # guards first), the jest component + webrender suites, typecheck (which
+  # chains check-import-extensions), and the two lint guards plus the sizing
+  # guard's own meta-test. None of it needs credentials, a device, an emulator,
+  # the Android SDK or Xcode — every native module is stubbed in
+  # jest.config.js's moduleNameMapper.
+  # ───────────────────────────────────────────────────────────────────────────
+  standalone-checks:
+    name: standalone · check:all (guards + node:test + jest)
+    runs-on: ubuntu-latest
+    # jest.config.js pins maxWorkers: 1 (without it jest OOMs on this suite), so
+    # 324 component files + 2 webrender files run strictly serially. This is a
+    # long job by construction. Generous, for the same reason as api-server.
+    timeout-minutes: 60
+    needs: preflight
+    # NOTE: this job deliberately has NO job-level `defaults.working-directory`.
+    # The steps that install into the standalone workspace set it explicitly;
+    # the step that runs a package script runs from the repo root, because
+    # .github/scripts/pnpm-run.sh takes the package directory as an argument and
+    # is what verifies that directory exists.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable corepack
+        shell: bash
+        working-directory: travel-buddy-standalone
+        run: |
+          set -euo pipefail
+          corepack enable
+          # travel-buddy-standalone has no "packageManager" field of its own;
+          # corepack walks up and finds the repo root's pnpm@10.26.1.
+          echo "pnpm $(pnpm --version)"
+          node --version
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        shell: bash
+        working-directory: travel-buddy-standalone
+        run: |
+          set -euo pipefail
+          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-standalone-${{ runner.os }}-node${{ env.NODE_VERSION }}-${{ hashFiles('travel-buddy-standalone/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-standalone-${{ runner.os }}-node${{ env.NODE_VERSION }}-
+
+      - name: Install (standalone workspace, frozen lockfile)
+        shell: bash
+        working-directory: travel-buddy-standalone
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+
+      - name: 'check:all and report totals'
+        shell: bash
+        env:
+          # Verified against source: run-node-tests.mjs discovers 172 files
+          # under src/ and server/ and subtracts 30 unique KNOWN_BROKEN entries,
+          # leaving 142. Same rule as the api-server floor — raise it freely,
+          # lower it only with a written justification.
+          NODE_TEST_FLOOR: '142'
+          # Optional, defaults to 0 — the same contract, and the same default,
+          # as API_TEST_MAX_SKIPPED on the api-server suite.
+          STANDALONE_MAX_SKIPPED: ${{ vars.STANDALONE_MAX_SKIPPED }}
+        run: |
+          set -uo pipefail
+          export LC_ALL=C
+          LOG="$RUNNER_TEMP/standalone-checks.log"
+
+          # Same gate as the api-server job: this block has no `set -e`, so an
+          # empty or non-integer operand makes `[ … -lt … ]` exit 2, which `if`
+          # scores as false and the assertion becomes a silent no-op.
+          assert_int() {
+            local name="$1" value="$2"
+            case "$value" in
+              '' )
+                echo "::error::$name is empty, so the assertion that uses it cannot be evaluated. An assertion that cannot be evaluated has not passed."
+                exit 1
+                ;;
+              *[!0-9]* )
+                echo "::error::$name is '$value', which is not a bare non-negative integer. '[ x -lt $value ]' would exit 2, 'if' would read that as false, and the assertion would silently become a no-op that reports success."
+                exit 1
+                ;;
+            esac
+          }
+
+          bash .github/scripts/pnpm-run.sh travel-buddy-standalone travel-buddy-standalone check:all 2>&1 | tee "$LOG"
+          rc=${PIPESTATUS[0]}
+
+          # run-all-checks.sh labels each step PASSED / FAILED. Lifting those
+          # lines into the job summary keeps per-check attribution without
+          # re-implementing the runner.
+          {
+            echo "### standalone check:all per-step results"
+            echo ""
+            echo '```'
+            grep -E '(PASSED|FAILED):' "$LOG"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Counts. run-node-tests.mjs prints its own discovery total; jest
+          # prints "Tests:" / "Test Suites:" once per config (native, then web).
+          DISCOVERED="$(grep -oE 'Running [0-9]+ node:test files' "$LOG" | tail -n 1 | grep -oE '[0-9]+' | tail -n 1)"
+
+          # DISCOVERY IS NOT EXECUTION. run-node-tests.mjs's "Running N
+          # node:test files" line counts FILES it is about to hand to
+          # `node --test`; it is printed BEFORE the runner starts and says
+          # nothing about whether a single test in them passed. The floor below
+          # was, until now, the only numeric assertion this job made — so a run
+          # in which node:test discovered 172 files and then executed zero tests
+          # satisfied it.
+          #
+          # These are the same four assertions the api-server suite makes
+          # (parseable totals, fail == 0, pass > 0, skipped <= max), applied to
+          # the node:test half of check:all. The parsing is identical to the
+          # api-server job's — see the long comment there for why the marker
+          # prefix is `[^A-Za-z0-9]*` and not a bracket class.
+          #
+          # These lines cannot collide with jest's output: jest prints
+          # "Tests:       12 passed, 12 total", which starts with an
+          # alphanumeric character and does not end at the number, so it matches
+          # neither anchor.
+          count_of() {
+            grep -E "^[^A-Za-z0-9]*$1[[:space:]]+[0-9]+[[:space:]]*$" "$LOG" \
+              | tail -n 1 | grep -oE '[0-9]+' | tail -n 1
+          }
+          NT_TESTS="$(count_of tests)"
+          NT_PASS="$(count_of pass)"
+          NT_FAIL="$(count_of fail)"
+          NT_SKIPPED="$(count_of skipped)"
+
+          {
+            echo ""
+            echo "### standalone test totals"
+            echo ""
+            echo "| metric | value |"
+            echo "| --- | --- |"
+            echo "| node:test files discovered | ${DISCOVERED:-not reported} (floor $NODE_TEST_FLOOR) |"
+            echo "| node:test tests | ${NT_TESTS:-not reported} |"
+            echo "| node:test pass | ${NT_PASS:-not reported} |"
+            echo "| node:test fail | ${NT_FAIL:-not reported} |"
+            echo "| node:test skipped | ${NT_SKIPPED:-not reported} |"
+            echo ""
+            echo "jest summary lines, verbatim:"
+            echo ""
+            echo '```'
+            grep -E '^(Tests|Test Suites):' "$LOG"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "──────────────────────────────────────────"
+          echo "node:test files discovered: ${DISCOVERED:-?} (floor $NODE_TEST_FLOOR)"
+          echo "node:test totals: tests=${NT_TESTS:-?} pass=${NT_PASS:-?} fail=${NT_FAIL:-?} skipped=${NT_SKIPPED:-?}"
+          grep -E '^(Tests|Test Suites):' "$LOG"
+          echo "──────────────────────────────────────────"
+
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::standalone check:all failed (exit $rc) — see the FAILED lines above for the specific step."
+            exit "$rc"
+          fi
+
+          if [ -z "$DISCOVERED" ]; then
+            echo "::error::check:all exited 0 but run-node-tests.mjs never printed its discovery total. The node:test half of this suite cannot be shown to have run."
+            exit 1
+          fi
+          assert_int 'DISCOVERED (node:test files)' "$DISCOVERED"
+          assert_int 'NODE_TEST_FLOOR' "$NODE_TEST_FLOOR"
+          if [ "$DISCOVERED" -lt "$NODE_TEST_FLOOR" ]; then
+            echo "::error::node:test discovery dropped to $DISCOVERED, below the floor of $NODE_TEST_FLOOR. Files were added to KNOWN_BROKEN, deleted, or renamed out of discovery. If intentional, lower the floor in .github/workflows/ci.yml in the same PR and say why."
+            exit 1
+          fi
+
+          # ── (1) The node:test totals must be readable. ────────────────────
+          # Same rule as api-server and as run_gate(): a run whose result cannot
+          # be established is not a pass. run-node-tests.mjs exits with
+          # `node --test`'s status, so a check:all that reached this point with
+          # no summary means node:test printed no verdict — it crashed, was
+          # killed, or the reporter changed shape.
+          if [ -z "$NT_TESTS" ] || [ -z "$NT_PASS" ] || [ -z "$NT_FAIL" ] || [ -z "$NT_SKIPPED" ]; then
+            echo "::error::check:all exited 0 but the node:test summary could not be fully parsed (tests='${NT_TESTS:-}' pass='${NT_PASS:-}' fail='${NT_FAIL:-}' skipped='${NT_SKIPPED:-}'). $DISCOVERED files were handed to the runner and no verdict came back. A discovery count is not an execution result. Check the reporter format before trusting this green."
+            exit 1
+          fi
+          assert_int 'node:test tests' "$NT_TESTS"
+          assert_int 'node:test pass' "$NT_PASS"
+          assert_int 'node:test fail' "$NT_FAIL"
+          assert_int 'node:test skipped' "$NT_SKIPPED"
+
+          # ── (2) fail == 0. ───────────────────────────────────────────────
+          if [ "$NT_FAIL" -ne 0 ]; then
+            echo "::error::check:all exited 0 but the node:test run reported $NT_FAIL failing test(s). run-all-checks.sh accumulates failures rather than aborting; if this disagrees with the FAILED lines above, the exit code was lost between the runner and check:all."
+            exit 1
+          fi
+
+          # ── (3) pass > 0. ────────────────────────────────────────────────
+          # $DISCOVERED files ran and produced zero passing tests: the exact
+          # shape the old assertions could not see.
+          if [ "$NT_PASS" -eq 0 ]; then
+            echo "::error::check:all exited 0 with 0 passing node:test tests, having discovered $DISCOVERED file(s). The files were found and executed nothing. The discovery floor above passes in this state, which is why this assertion exists."
+            exit 1
+          fi
+
+          # ── (4) skipped <= max, default 0. ───────────────────────────────
+          # A skipped test is a test that did not run. Raise the repository
+          # variable STANDALONE_MAX_SKIPPED deliberately, in a PR naming the
+          # suites and the reason — do not delete the assertion.
+          NT_MAX_SKIPPED="${STANDALONE_MAX_SKIPPED:-0}"
+          assert_int 'STANDALONE_MAX_SKIPPED' "$NT_MAX_SKIPPED"
+          echo "Enforcing node:test skipped <= $NT_MAX_SKIPPED (default 0) against skipped=$NT_SKIPPED"
+          if [ "$NT_SKIPPED" -gt "$NT_MAX_SKIPPED" ]; then
+            echo "::error::The node:test half of check:all skipped $NT_SKIPPED test(s); the allowed maximum is $NT_MAX_SKIPPED. Skipped tests asserted nothing. Un-skip them, or raise the STANDALONE_MAX_SKIPPED repository variable in a PR that names the suites and the reason."
+            exit 1
+          fi
+
+          # ── (5) tests == pass + fail + skipped. ──────────────────────────
+          # Identical reasoning to the api-server job's: node:test's `tests`
+          # total is pass + fail + skipped + todo + cancelled, so with fail and
+          # skipped both 0 the whole todo/cancelled population is invisible to
+          # every assertion above. It was parsed, printed, and compared to
+          # nothing.
+          NT_UNACCOUNTED=$(( NT_TESTS - NT_PASS - NT_FAIL - NT_SKIPPED ))
+          echo "node:test accounting: tests=$NT_TESTS = pass($NT_PASS) + fail($NT_FAIL) + skipped($NT_SKIPPED) + unaccounted($NT_UNACCOUNTED)"
+          if [ "$NT_UNACCOUNTED" -ne 0 ]; then
+            echo "::error::The node:test half reported tests=$NT_TESTS but pass=$NT_PASS, fail=$NT_FAIL, skipped=$NT_SKIPPED, leaving $NT_UNACCOUNTED test(s) unaccounted for — 'todo' or 'cancelled'. They asserted nothing and are counted nowhere else, so no other assertion here can see them."
+            exit 1
+          fi
+
+          # A structural floor for the same reason as api-server's: every
+          # discovered file was handed to the runner, so each should contribute
+          # at least one passing test. Below this, files were executed but
+          # produced nothing.
+          if [ "$NT_PASS" -lt "$DISCOVERED" ]; then
+            echo "::error::node:test pass=$NT_PASS is below the number of discovered files ($DISCOVERED). At least one discovered file contributed no passing test — it was found, handed to the runner, and produced nothing."
+            exit 1
+          fi
+
+          # ── THE JEST HALF. Was asserted only by the PRESENCE of a line. ───
+          #
+          # Until now the entire jest side of check:all — 324 component files
+          # plus 2 webrender files, the larger half of this job by wall-clock —
+          # was checked by `grep -qE '^Tests:'` and nothing else. One matching
+          # line anywhere in the log satisfied it. That is the weakest possible
+          # form of the mistake this whole workflow exists to correct: a suite
+          # proved to have printed a summary, not to have run. `Tests: 0 total`,
+          # `Tests: 47 failed, 47 total`, and a run where the second jest
+          # invocation (jest.web.config.js) never happened at all, were all
+          # green.
+          #
+          # The node:test half already had: parseable totals, fail == 0,
+          # pass > 0, skipped <= max, a structural floor, and (above) full
+          # accounting. The jest half now has the same six.
+          #
+          # PARSING. jest prints, once per config:
+          #   Test Suites: 324 passed, 324 total
+          #   Tests:       1234 passed, 1234 total
+          # and inserts `N failed,` / `N skipped,` / `N todo,` segments when
+          # they are non-zero. `test:component` runs jest TWICE (native, then
+          # `-c jest.web.config.js`), so every figure is SUMMED across the
+          # summaries rather than read from the last one — reading only the last
+          # would silently drop the whole native run, which is 324 of the 326
+          # files.
+          jest_sum() {
+            grep -E "^$1:" "$LOG" \
+              | grep -oE "[0-9]+ $2" \
+              | grep -oE '^[0-9]+' \
+              | awk '{ s += $1 } END { print s + 0 }'
+          }
+
+          JEST_SUMMARIES="$(grep -cE '^Tests:' "$LOG")"
+          JEST_TESTS_TOTAL="$(jest_sum 'Tests' total)"
+          JEST_TESTS_PASSED="$(jest_sum 'Tests' passed)"
+          JEST_TESTS_FAILED="$(jest_sum 'Tests' failed)"
+          JEST_TESTS_SKIPPED="$(jest_sum 'Tests' skipped)"
+          JEST_TESTS_TODO="$(jest_sum 'Tests' todo)"
+          JEST_SUITES_TOTAL="$(jest_sum 'Test Suites' total)"
+          JEST_SUITES_FAILED="$(jest_sum 'Test Suites' failed)"
+
+          for V in JEST_SUMMARIES JEST_TESTS_TOTAL JEST_TESTS_PASSED JEST_TESTS_FAILED \
+                   JEST_TESTS_SKIPPED JEST_TESTS_TODO JEST_SUITES_TOTAL JEST_SUITES_FAILED; do
+            assert_int "$V (parsed from the jest summaries)" "${!V}"
+          done
+
+          # The structural floor, computed from the tree on every run — the same
+          # technique as api-server's `pass >= registered files`, and for the
+          # same reason: no hardcoded number to go stale, and it rises with the
+          # suite. Every file jest's two configs are configured to match is a
+          # file jest was told to run, so the number of suites it REPORTS must
+          # not be below the number on disk. Verified against the tree as this
+          # was written: 324 `.component.test.*` + 2 `.webrender.test.*` = 326.
+          JEST_EXPECTED_SUITES="$(node -e '
+            const { readdirSync, existsSync } = require("node:fs");
+            const roots = ["travel-buddy-standalone/src", "travel-buddy-standalone/app"];
+            let n = 0;
+            const walk = (d) => {
+              if (!existsSync(d)) return;
+              for (const e of readdirSync(d, { withFileTypes: true })) {
+                if (e.name === "node_modules") continue;
+                const full = d + "/" + e.name;
+                if (e.isDirectory()) { walk(full); continue; }
+                // jest.config.js ignores <rootDir>/src/test/ wholesale.
+                if (full.includes("/src/test/")) continue;
+                if (/\.(component|webrender)\.test\.tsx?$/.test(e.name)) n++;
+              }
+            };
+            roots.forEach(walk);
+            process.stdout.write(String(n));
+          ')"
+          assert_int 'JEST_EXPECTED_SUITES (jest-matched test files on disk)' "$JEST_EXPECTED_SUITES"
+
+          {
+            echo ""
+            echo "### standalone jest totals (both configs summed)"
+            echo ""
+            echo "| metric | value |"
+            echo "| --- | --- |"
+            echo "| jest summary blocks (\`Tests:\` lines) | $JEST_SUMMARIES |"
+            echo "| jest test suites reported | $JEST_SUITES_TOTAL (files on disk: $JEST_EXPECTED_SUITES) |"
+            echo "| jest test suites failed | $JEST_SUITES_FAILED |"
+            echo "| jest tests total | $JEST_TESTS_TOTAL |"
+            echo "| jest tests passed | $JEST_TESTS_PASSED |"
+            echo "| jest tests failed | $JEST_TESTS_FAILED |"
+            echo "| jest tests skipped | $JEST_TESTS_SKIPPED |"
+            echo "| jest tests todo | $JEST_TESTS_TODO |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "jest: summaries=$JEST_SUMMARIES suites=$JEST_SUITES_TOTAL (expected >= $JEST_EXPECTED_SUITES) tests=$JEST_TESTS_TOTAL pass=$JEST_TESTS_PASSED fail=$JEST_TESTS_FAILED skipped=$JEST_TESTS_SKIPPED todo=$JEST_TESTS_TODO"
+
+          # (1) Both jest invocations must have reported. `test:component` is
+          #     `jest --testPathPattern=… && jest -c jest.web.config.js`; one
+          #     summary means the second invocation never ran, and the `&&`
+          #     makes that indistinguishable from success if the first exits 0
+          #     and something swallows the second.
+          if [ "$JEST_SUMMARIES" -lt 2 ]; then
+            echo "::error::Only $JEST_SUMMARIES jest 'Tests:' summary block(s) were printed; both jest configs must report (native via --testPathPattern='\\.component\\.test\\.', then jest.web.config.js for the *.webrender.test.* files). A missing summary means one of the two invocations did not run, and its files were not executed."
+            exit 1
+          fi
+
+          # (2) Suites reported >= jest-matched files on disk.
+          if [ "$JEST_SUITES_TOTAL" -lt "$JEST_EXPECTED_SUITES" ]; then
+            echo "::error::jest reported $JEST_SUITES_TOTAL test suite(s) but $JEST_EXPECTED_SUITES file(s) under travel-buddy-standalone/src and /app match its two configs' patterns. Files that jest is configured to run did not run. If files were deliberately removed from the suite, this floor moves with the tree on its own; if they were excluded by a new testPathIgnorePatterns entry, say so in the PR."
+            exit 1
+          fi
+
+          # (3) No failing suite, and no failing test.
+          if [ "$JEST_SUITES_FAILED" -ne 0 ]; then
+            echo "::error::check:all exited 0 but jest reported $JEST_SUITES_FAILED failing test suite(s). A suite that fails to load reports no tests at all, so the per-test counts below can look clean while whole files never executed."
+            exit 1
+          fi
+          if [ "$JEST_TESTS_FAILED" -ne 0 ]; then
+            echo "::error::check:all exited 0 but jest reported $JEST_TESTS_FAILED failing test(s). run-all-checks.sh accumulates failures rather than aborting; if this disagrees with the FAILED lines above, the exit code was lost between jest and check:all."
+            exit 1
+          fi
+
+          # (4) pass > 0. The condition the bare `grep -qE '^Tests:'` could not
+          #     see: a summary line printed, zero tests behind it.
+          if [ "$JEST_TESTS_PASSED" -eq 0 ]; then
+            echo "::error::check:all exited 0 with 0 passing jest tests across $JEST_SUMMARIES summary block(s). The summaries were printed and nothing ran. This is exactly the state the previous 'a Tests: line exists' check scored as a pass."
+            exit 1
+          fi
+
+          # (5) skipped <= max. Same variable, same default, and applied
+          #     independently to each half of check:all.
+          echo "Enforcing jest skipped <= $NT_MAX_SKIPPED (default 0) against skipped=$JEST_TESTS_SKIPPED"
+          if [ "$JEST_TESTS_SKIPPED" -gt "$NT_MAX_SKIPPED" ]; then
+            echo "::error::jest skipped $JEST_TESTS_SKIPPED test(s); the allowed maximum is $NT_MAX_SKIPPED. A skipped test asserted nothing. Un-skip them, or raise the STANDALONE_MAX_SKIPPED repository variable in a PR that names the suites and the reason."
+            exit 1
+          fi
+
+          # (6) Full accounting: every test jest counted reached an outcome.
+          #     `todo` is jest's equivalent of the node:test hole closed above —
+          #     it contributes to `total`, asserts nothing, and appears in no
+          #     other count.
+          JEST_UNACCOUNTED=$(( JEST_TESTS_TOTAL - JEST_TESTS_PASSED - JEST_TESTS_FAILED - JEST_TESTS_SKIPPED - JEST_TESTS_TODO ))
+          if [ "$JEST_TESTS_TODO" -ne 0 ]; then
+            echo "::error::jest reported $JEST_TESTS_TODO todo test(s). A todo test is registered, counted in the total, and asserts nothing. Resolve them, or revisit this assertion deliberately in the PR that introduces one."
+            exit 1
+          fi
+          if [ "$JEST_UNACCOUNTED" -ne 0 ]; then
+            echo "::error::jest reported tests=$JEST_TESTS_TOTAL but passed=$JEST_TESTS_PASSED, failed=$JEST_TESTS_FAILED, skipped=$JEST_TESTS_SKIPPED, todo=$JEST_TESTS_TODO, leaving $JEST_UNACCOUNTED test(s) unaccounted for. A run whose totals do not add up has not been verified — check the jest reporter format before trusting this green."
+            exit 1
+          fi
+
+          {
+            echo ""
+            echo "| assertion | enforced value | result |"
+            echo "| --- | --- | --- |"
+            echo "| node:test files discovered >= floor | $NODE_TEST_FLOOR | $DISCOVERED |"
+            echo "| node:test fail == 0 | 0 | $NT_FAIL |"
+            echo "| node:test pass > 0 | > 0 | $NT_PASS |"
+            echo "| node:test skipped <= max | $NT_MAX_SKIPPED (\`STANDALONE_MAX_SKIPPED\`, default 0) | $NT_SKIPPED |"
+            echo "| node:test pass >= files discovered | $DISCOVERED | $NT_PASS |"
+            echo "| node:test tests == pass + fail + skipped | 0 unaccounted | $NT_UNACCOUNTED |"
+            echo "| jest summary blocks >= 2 (native + web) | 2 | $JEST_SUMMARIES |"
+            echo "| jest suites >= matching files on disk | $JEST_EXPECTED_SUITES | $JEST_SUITES_TOTAL |"
+            echo "| jest suites failed == 0 | 0 | $JEST_SUITES_FAILED |"
+            echo "| jest tests failed == 0 | 0 | $JEST_TESTS_FAILED |"
+            echo "| jest tests passed > 0 | > 0 | $JEST_TESTS_PASSED |"
+            echo "| jest skipped <= max | $NT_MAX_SKIPPED (\`STANDALONE_MAX_SKIPPED\`, default 0) | $JEST_TESTS_SKIPPED |"
+            echo "| jest todo == 0 | 0 | $JEST_TESTS_TODO |"
+            echo "| jest totals add up | 0 unaccounted | $JEST_UNACCOUNTED |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # CI's own integrity. Cheap, no install, no network.
+  #
+  # A CI system that can be defanged with one discarded exit code is not a CI
+  # system. This job makes that edit fail the build that contains it.
+  # ───────────────────────────────────────────────────────────────────────────
+  ci-self-check:
+    name: CI self-check · no soft-fails, no orphan tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # The unrunnable-test guard below is a node script (builtins only, no
+      # install), so the runtime is pinned here like everywhere else.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: No soft-fail constructs in any workflow
+        shell: bash
+        run: |
+          set -uo pipefail
+          export LC_ALL=C
+
+          # The patterns are written with bracket escapes ([-] etc.) so that
+          # this step's own source does not match them. Comment lines are
+          # stripped before matching, so prose in these workflows may name the
+          # forbidden constructs plainly without tripping the check.
+          #
+          #   1. a key that turns a red step green
+          #   2/3. a discarded exit code
+          #   4. a pnpm flag that makes a MISSING script a pass
+          #   5/6. pnpm's workspace-selector form, which EXITS 0 when it matches
+          #      nothing. Verified against pnpm 10.26.1: an unmatched selector
+          #      prints "No projects matched the filters" and exits 0, and a
+          #      matched package with a missing script also exits 0. A step
+          #      written that way reports success having run no code. Use
+          #      .github/scripts/pnpm-run.sh <dir> <package-name> <script>, which
+          #      asserts all three exist before running anything.
+          #
+          #      TWO patterns, and neither anchors the flag to the first
+          #      argument. The previous single pattern required the flag to be
+          #      the very next token after pnpm, so it matched exactly one
+          #      spelling and every documented equivalent walked past it:
+          #        * the short alias, which pnpm documents alongside the long
+          #          form and which the old pattern did not mention at all
+          #        * any form where the flag is not the first argument, e.g.
+          #          `pnpm -r <selector-flag> X run y` or
+          #          `pnpm run --recursive <selector-flag> X y`
+          #        * the `=`-joined spelling
+          #      Pattern 6 is scoped to lines that already contain `pnpm ` so an
+          #      unrelated `-F` on some other command is not flagged, and it is
+          #      deliberately not anchored to a following space or `=`, so the
+          #      value-attached spelling is caught too. Verified against the
+          #      current tree: zero matches.
+          #
+          #      These greps are the CHEAP duplicate. The authoritative check is
+          #      in .github/scripts/assert-ci-scripts.mjs, which enumerates
+          #      command-position pnpm invocations and permits only
+          #      `--version`, `store path` and `install --frozen-lockfile` —
+          #      so `cd x && pnpm run y`, which uses no selector flag at all and
+          #      which nothing here would have caught, fails there.
+          PATTERNS=(
+            '^[[:space:]]*continue[-]on[-]error[[:space:]]*:'
+            '[|][|][[:space:]]*true'
+            '[|][|][[:space:]]*:[[:space:]]*$'
+            '[-][-]if[-]present'
+            'pnpm[[:space:]].*[-][-]filter'
+            'pnpm[[:space:]].*[-]F'
+          )
+
+          BAD=0
+          while IFS= read -r f; do
+            for p in "${PATTERNS[@]}"; do
+              # grep -n gives LINE:content; drop lines whose content is a
+              # comment (YAML comments and bash comments inside run: blocks).
+              HITS="$(grep -nE "$p" "$f" | grep -vE '^[0-9]+:[[:space:]]*#')"
+              if [ -n "$HITS" ]; then
+                echo "::error file=$f::Forbidden soft-fail construct in $f"
+                echo "$HITS" | sed "s|^|  $f:|"
+                BAD=1
+              fi
+            done
+          done < <(find .github -type f \( -name '*.yml' -o -name '*.yaml' -o -name '*.sh' \) | sort)
+
+          if [ "$BAD" -ne 0 ]; then
+            echo ""
+            echo "Every check in this repo was advisory until these workflows existed."
+            echo "Reintroducing a soft-fail here puts it back the way it was."
+            exit 1
+          fi
+          echo "No soft-fail constructs found under .github."
+
+      # Test files that no runner CI invokes will ever execute. The guard
+      # itself lives in .github/scripts/check-unrunnable-tests.mjs so that its
+      # reasoning, its baseline and — importantly — the precise statement of
+      # what it does NOT cover live in one reviewable place.
+      #
+      # It covers TWO classes, not one:
+      #   A  a *.test.tsx under src/ or app/ that is neither .component.test.tsx
+      #      nor .webrender.test.tsx (run-node-tests.mjs takes only .test.ts,
+      #      test:component filters to .component.test., jest.web.config.js
+      #      matches only .webrender.test.) — matched by nothing.
+      #   B  anything under src/test/, which run-node-tests.mjs skips wholesale
+      #      ("if (full === 'src/test') continue;") and jest.config.js excludes
+      #      via testPathIgnorePatterns. B1 = no package.json script names it at
+      #      all; B2 = a script names it, but check:all never invokes that
+      #      script, so it runs only when a human types it.
+      #
+      # Class B was missed by the first version of this guard, which searched
+      # only for *.test.tsx under src and app and whose three findings were
+      # presented as the complete set. They were not: src/test/ holds two more.
+      # The guard now prints its own limits on every run, so a green result
+      # cannot be read as "every test in this tree runs" — it is not, and cannot
+      # be, that claim.
+      - name: No NEW unrunnable test files in travel-buddy-standalone
+        shell: bash
+        run: node .github/scripts/check-unrunnable-tests.mjs
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # THE VERDICT. A skipped, cancelled or failed job must not read as a pass.
+  #
+  # WHY THIS JOB EXISTS AT ALL — read before deleting it as redundant.
+  #
+  # Three of the jobs above declare `needs: preflight`. When `preflight` FAILS,
+  # GitHub does not fail those jobs: it SKIPS them. And GitHub scores a SKIPPED
+  # required status check as SUCCESSFUL. So with branch protection requiring
+  # 'api-server · typecheck + static checks', 'api-server · node:test suite' and
+  # 'standalone · check:all (guards + node:test + jest)', a broken preflight
+  # would leave all three grey-but-satisfied: three checks that ran no code at
+  # all, scored as green. That is precisely the "did not run reads as passed"
+  # failure this whole workflow exists to eliminate, reintroduced by the very
+  # dependency edge added to fail fast.
+  #
+  # live-db.yml has had `live-db-verdict` for exactly this reason since it was
+  # written. This is its counterpart, and it is the job to put in branch
+  # protection: it is the only one whose success implies every other job ran.
+  #
+  # `if: always()` makes it run even when an upstream job was skipped or
+  # cancelled. It then asserts every upstream job reported 'success' — anything
+  # else (skipped, cancelled, failure) is an explicit red that NAMES the job.
+  #
+  # Bracket notation is required for hyphenated job ids: `needs.api-server-static`
+  # parses as a subtraction in the expression language and would silently
+  # evaluate to something that is not the job result.
+  # ───────────────────────────────────────────────────────────────────────────
+  ci-verdict:
+    name: CI · verdict (skipped or cancelled is not a pass)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ always() }}
+    needs:
+      - preflight
+      - api-server-static
+      - api-server-tests
+      - standalone-checks
+      - ci-self-check
+    steps:
+      - name: Every CI job must have run and succeeded
+        shell: bash
+        env:
+          R_PREFLIGHT: ${{ needs.preflight.result }}
+          R_API_STATIC: ${{ needs['api-server-static'].result }}
+          R_API_TESTS: ${{ needs['api-server-tests'].result }}
+          R_STANDALONE: ${{ needs['standalone-checks'].result }}
+          R_SELF_CHECK: ${{ needs['ci-self-check'].result }}
+        run: |
+          set -uo pipefail
+          BAD=0
+          {
+            echo "### CI run verdict"
+            echo ""
+            echo "| job | result |"
+            echo "| --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for PAIR in \
+            "preflight:$R_PREFLIGHT" \
+            "api-server-static:$R_API_STATIC" \
+            "api-server-tests:$R_API_TESTS" \
+            "standalone-checks:$R_STANDALONE" \
+            "ci-self-check:$R_SELF_CHECK"
+          do
+            NAME="${PAIR%%:*}"
+            RESULT="${PAIR#*:}"
+            echo "| $NAME | ${RESULT:-unknown} |" >> "$GITHUB_STEP_SUMMARY"
+            echo "$NAME: ${RESULT:-unknown}"
+            if [ "$RESULT" != "success" ]; then
+              echo "::error::Job '$NAME' reported '${RESULT:-unknown}', not 'success'. A skipped job verified NOTHING — and GitHub scores a skipped required status check as successful, which is why this verdict job exists. If the result is 'skipped', look at 'preflight': when it fails, every job that needs it is skipped rather than failed."
+              BAD=1
+            fi
+          done
+
+          if [ "$BAD" -ne 0 ]; then
+            {
+              echo ""
+              echo "> **This run did not verify the repository.** At least one job did not"
+              echo "> reach a successful conclusion. See the annotations above."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "All CI jobs ran and succeeded."

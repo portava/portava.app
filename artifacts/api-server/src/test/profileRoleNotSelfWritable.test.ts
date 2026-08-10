@@ -34,10 +34,26 @@
  *   EXPO_PUBLIC_SUPABASE_ANON_KEY — anon key (to build real authenticated sessions)
  */
 
-// THE CHOKEPOINT. Side-effect import, deliberately FIRST: it asserts this
-// process is pointed at the sanctioned non-production Supabase project
-// before any client is constructed. Not skippable by editing workflow YAML.
-// See src/lib/ciSupabaseGuard.mjs and docs/ci/BOOTSTRAP.md.
+// ── THE ALLOWLIST ASSERTION, IN THE EXECUTION PATH ───────────────────────────
+//
+// FIRST import, deliberately, and placed above `@supabase/supabase-js` on
+// purpose: ES modules evaluate their imports in source order, so when this
+// guard refuses, the Supabase client library is never even loaded — no client
+// is constructed, no auth user is created, and profiles.role is never touched.
+//
+// It asserts that the project ref resolved from SUPABASE_URL is the one
+// sanctioned CI project and exits 2 if it cannot establish that (unset
+// allowlist, unparseable URL, and any non-sanctioned ref all refuse).
+// .github/scripts/run-live-suite.sh fails this step on any non-zero exit.
+//
+// It is not a workflow step, so no YAML edit can skip it. This suite is
+// reached from live-db.yml's live-db-security-suites job; deleting the
+// `Preflight — Supabase target must be the sanctioned CI project` step from
+// that job, disabling it with `if:`, moving it after the install step, or
+// adding a brand-new job in a brand-new workflow file all still land here,
+// because this process cannot start without it.
+//
+// See src/lib/ciSupabaseGuard.mjs and docs/ci/README.md.
 import "../lib/ciSupabaseGuard.mjs";
 
 import { describe, it, before, after } from "node:test";

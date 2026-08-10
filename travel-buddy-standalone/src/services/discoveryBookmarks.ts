@@ -20,11 +20,72 @@
  * to exercise the API path can call _setTestToken(token) to bypass supabase.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { categoryStorageKey, type StorageLike } from '../components/savedPlacesMapFilterStorage.ts';
+import { categoryStorageKey, resolveCategoryStorageKey, type StorageLike } from '../components/savedPlacesMapFilterStorage.ts';
+import { isAccountScopedStorageEnabled } from '../config/accountScopedStorageFlag.ts';
+import { getCurrentAccountId } from './accountId.ts';
 
 const STORAGE_KEY = 'discovery_bookmarks_v1';
 
 const GLOBAL_FILTER_KEY = categoryStorageKey('global');
+
+/**
+ * Per-account key, used only when isAccountScopedStorageEnabled() is true.
+ * STORAGE_KEY above stays the sole key while the flag is off, so flag-off
+ * behavior stays byte-identical.
+ */
+function scopedBookmarksKey(accountId: string): string {
+  return `discovery_bookmarks_scoped_v1:${accountId}`;
+}
+
+const migratedAccountIds = new Set<string>();
+
+/** Test seam — clear the migration-attempted cache between test cases. */
+export function _resetMigratedBookmarksAccountIds(): void {
+  migratedAccountIds.clear();
+}
+
+/**
+ * One-time migration: attribute the existing unscoped bookmarks blob to
+ * whichever account is currently signed in, then delete the legacy key.
+ *
+ * THIS IS A ONE-TIME BEST GUESS — the legacy storage format has no field
+ * identifying which account saved each place, so if two different accounts
+ * previously used this device the data is attributed to whichever one
+ * happens to be signed in the first time this runs post-upgrade. There is no
+ * field anywhere to do better. Unlike reminders, there is no OS-scheduled
+ * side effect to clean up here — bookmarks are inert data.
+ */
+async function migrateLegacyBookmarksIfNeeded(accountId: string): Promise<void> {
+  if (migratedAccountIds.has(accountId)) return;
+  migratedAccountIds.add(accountId);
+
+  const scopedKey = scopedBookmarksKey(accountId);
+  const existingScoped = await _storage.getItem(scopedKey);
+  if (existingScoped !== null) return; // already migrated, or already has its own scoped data
+
+  const legacyRaw = await _storage.getItem(STORAGE_KEY);
+  if (!legacyRaw) return; // nothing to migrate
+
+  await _storage.setItem(scopedKey, legacyRaw);
+  await _storage.removeItem(STORAGE_KEY);
+}
+
+/**
+ * Resolves which key to read/write for this call.
+ *  - Flag off: always the legacy unscoped key (unchanged behavior).
+ *  - Flag on, account resolvable: the per-account scoped key (running the
+ *    one-time migration first if needed).
+ *  - Flag on, no account resolvable: null. Callers must treat this as "no
+ *    data available" for reads and skip the write — never fall back to the
+ *    unscoped legacy key.
+ */
+async function resolveKey(): Promise<string | null> {
+  if (!isAccountScopedStorageEnabled()) return STORAGE_KEY;
+  const accountId = await getCurrentAccountId();
+  if (!accountId) return null;
+  await migrateLegacyBookmarksIfNeeded(accountId);
+  return scopedBookmarksKey(accountId);
+}
 
 export interface BookmarkedPlace {
   id: string;
@@ -81,7 +142,9 @@ function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
 
 async function readAll(): Promise<BookmarkedPlace[]> {
   try {
-    const raw = await _storage.getItem(STORAGE_KEY);
+    const key = await resolveKey();
+    if (key === null) return []; // flag on, no signed-in account — never fall back to the legacy key
+    const raw = await _storage.getItem(key);
     return raw ? (JSON.parse(raw) as BookmarkedPlace[]) : [];
   } catch {
     return [];
@@ -90,7 +153,9 @@ async function readAll(): Promise<BookmarkedPlace[]> {
 
 async function writeAll(items: BookmarkedPlace[]): Promise<void> {
   try {
-    await _storage.setItem(STORAGE_KEY, JSON.stringify(items));
+    const key = await resolveKey();
+    if (key === null) return; // flag on, no signed-in account — silently skip (matches this file's existing best-effort contract)
+    await _storage.setItem(key, JSON.stringify(items));
   } catch {
     // silently fail — non-critical
   }
@@ -170,7 +235,9 @@ export function toggleSave(place: BookmarkedPlace, listId = 'global'): Promise<T
       // becomes stale. Clear it as a fire-and-forget cleanup.
       const remaining = all.filter((b) => (b.listId ?? 'global') === listId);
       if (remaining.length === 0) {
-        _storage.removeItem(categoryStorageKey(listId)).catch(() => {});
+        resolveCategoryStorageKey(_storage, listId)
+          .then((filterKey) => { if (filterKey) return _storage.removeItem(filterKey); })
+          .catch(() => {});
       }
     } else {
       // add, tagging with listId so per-trip filtering works
@@ -262,8 +329,15 @@ export async function getSavedListIds(placeId: string): Promise<Set<string>> {
 
 export async function clearAllSaved(): Promise<void> {
   // Clear local storage
-  await _storage.removeItem(STORAGE_KEY);
-  await _storage.removeItem(GLOBAL_FILTER_KEY);
+  const key = await resolveKey();
+  if (key !== null) await _storage.removeItem(key);
+  const globalFilterKey = await resolveCategoryStorageKey(_storage, 'global');
+  if (globalFilterKey !== null) await _storage.removeItem(globalFilterKey);
+  // Also drop the legacy unscoped global filter key so it never lingers
+  // once every account has migrated away from it.
+  if (globalFilterKey !== GLOBAL_FILTER_KEY) {
+    await _storage.removeItem(GLOBAL_FILTER_KEY).catch(() => {});
+  }
 
   // Sync to Supabase (best-effort)
   const token = await getAuthToken();
@@ -293,18 +367,28 @@ export async function clearAllSaved(): Promise<void> {
  * (id, otherList) entries intact.
  */
 export async function removeSavedFromList(id: string, listId: string): Promise<void> {
-  const raw = await _storage.getItem(STORAGE_KEY);
+  const key = await resolveKey();
+  if (key === null) {
+    // Matches this function's existing "propagate failures to the caller"
+    // contract (see doc comment above) rather than the silent-catch used by
+    // readAll/writeAll — an optimistic-UI caller must know the write did not
+    // happen so it can roll back.
+    throw new Error('Cannot remove saved place: account-scoped storage is enabled but no account is signed in.');
+  }
+  const raw = await _storage.getItem(key);
   const all: BookmarkedPlace[] = raw ? (JSON.parse(raw) as BookmarkedPlace[]) : [];
   const remaining = all.filter(
     (b) => !(b.id === id && (b.listId ?? 'global') === listId),
   );
-  await _storage.setItem(STORAGE_KEY, JSON.stringify(remaining));
+  await _storage.setItem(key, JSON.stringify(remaining));
 
   // When the last place for this list is removed the category-filter key
   // becomes stale. Clear it as a fire-and-forget cleanup.
   const listRemaining = remaining.filter((b) => (b.listId ?? 'global') === listId);
   if (listRemaining.length === 0) {
-    _storage.removeItem(categoryStorageKey(listId)).catch(() => {});
+    resolveCategoryStorageKey(_storage, listId)
+      .then((filterKey) => { if (filterKey) return _storage.removeItem(filterKey); })
+      .catch(() => {});
   }
 
   // Sync to Supabase (best-effort — failure does not revert the local remove)
@@ -327,16 +411,22 @@ export async function removeSaved(id: string): Promise<void> {
   // any AsyncStorage failure propagates to the caller. The saved.tsx
   // handleRemove relies on a rejected promise to trigger its optimistic
   // rollback and error toast.
-  const raw = await _storage.getItem(STORAGE_KEY);
+  const key = await resolveKey();
+  if (key === null) {
+    throw new Error('Cannot remove saved place: account-scoped storage is enabled but no account is signed in.');
+  }
+  const raw = await _storage.getItem(key);
   const all: BookmarkedPlace[] = raw ? (JSON.parse(raw) as BookmarkedPlace[]) : [];
   const remaining = all.filter((b) => b.id !== id);
-  await _storage.setItem(STORAGE_KEY, JSON.stringify(remaining));
+  await _storage.setItem(key, JSON.stringify(remaining));
 
   // When the last place is removed, the category-filter key for the global
   // bookmark list becomes stale. Clear it as a fire-and-forget cleanup so
   // keys don't accumulate across place-by-place removals.
   if (remaining.length === 0) {
-    _storage.removeItem(GLOBAL_FILTER_KEY).catch(() => {});
+    resolveCategoryStorageKey(_storage, 'global')
+      .then((filterKey) => { if (filterKey) return _storage.removeItem(filterKey); })
+      .catch(() => {});
   }
 
   // Sync to Supabase (best-effort — failure does not revert the local remove)
