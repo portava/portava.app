@@ -55,16 +55,33 @@ const EXIT_OK = 0;
 const EXIT_CANNOT_RUN = 2;
 const EXIT_DRIFT = 3;
 
+/**
+ * Backfilled functions and the proconfig each is EXPECTED to carry live.
+ *
+ * `proconfig` is asserted positively but excluded from the byte comparison — see
+ * the header. `""` means "no setting expected", which is itself checked: a
+ * function that silently GAINS a search_path is drift too, in the other
+ * direction.
+ *
+ * Despite the filename this now covers two backfills. Kept as one script (and
+ * one `check:backfill-0200` entry point) because the discipline is identical and
+ * splitting it would duplicate every line of it.
+ */
 const FUNCTIONS = [
-  "is_accepted_trip_member",
-  "can_post_to_trip",
-  "can_see_post",
-  "can_see_postcard",
+  // migration 0200 (bodies) + 0201 (pin)
+  { name: "is_accepted_trip_member", proconfig: "search_path=public, pg_catalog", from: "0200+0201" },
+  { name: "can_post_to_trip",        proconfig: "search_path=public, pg_catalog", from: "0200+0201" },
+  { name: "can_see_post",            proconfig: "search_path=public, pg_catalog", from: "0200+0201" },
+  { name: "can_see_postcard",        proconfig: "search_path=public, pg_catalog", from: "0200+0201" },
+  // migration 0203
+  { name: "increment_counter",       proconfig: "search_path=public",             from: "0203" },
+  // Deliberately expected UNPINNED: 0203 reproduces live verbatim, and the
+  // missing pin is a known defect tracked for its own ALTER FUNCTION migration.
+  // If this ever starts failing because a pin appeared, that is the fix landing
+  // — update this entry, do not delete the assertion.
+  { name: "purge_old_ranking_debug_samples", proconfig: "",                       from: "0203" },
 ];
 const TRIGGERS = ["trg_posts_updated", "trg_postcards_updated"];
-
-/** Set on these four by migration 0201. Verified positively, just not byte-compared. */
-const EXPECTED_PROCONFIG = "search_path=public, pg_catalog";
 
 /** Remove the proconfig line pg_get_functiondef emits, so 0200 compares bodies only. */
 function stripSearchPath(text) {
@@ -72,13 +89,16 @@ function stripSearchPath(text) {
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MIGRATION = path.join(
-  __dirname,
-  "..",
-  "src",
-  "migrations",
+const MIGRATION_DIR = path.join(__dirname, "..", "src", "migrations");
+/**
+ * Both backfills are searched as one corpus. A definition may live in either
+ * file; what matters is that every backfilled object appears byte-for-byte in
+ * the chain, not which file happens to hold it.
+ */
+const MIGRATIONS = [
   "0200_backfill_unrecorded_live_objects.sql",
-);
+  "0203_backfill_counter_and_purge_functions.sql",
+].map((f) => path.join(MIGRATION_DIR, f));
 
 function fail(code, msg) {
   console.error(`  ✘  ${msg}`);
@@ -106,10 +126,10 @@ async function main() {
   }
   if (!projectRef) fail(EXIT_CANNOT_RUN, "no project ref derived from SUPABASE_URL");
 
-  if (!fs.existsSync(MIGRATION)) {
-    fail(EXIT_CANNOT_RUN, `migration not found: ${MIGRATION}`);
+  for (const m of MIGRATIONS) {
+    if (!fs.existsSync(m)) fail(EXIT_CANNOT_RUN, `migration not found: ${m}`);
   }
-  const sql = fs.readFileSync(MIGRATION, "utf8");
+  const sql = MIGRATIONS.map((m) => fs.readFileSync(m, "utf8")).join("\n");
 
   const endpoint = `https://api.supabase.com/v1/projects/${projectRef}/database/query`;
   async function query(q) {
@@ -135,7 +155,7 @@ async function main() {
      FROM pg_proc p
      JOIN pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = 'public'
-       AND p.proname IN (${FUNCTIONS.map((f) => `'${f}'`).join(",")})`,
+       AND p.proname IN (${FUNCTIONS.map((f) => `'${f.name}'`).join(",")})`,
   );
   const trgRows = await query(
     `SELECT t.tgname, pg_get_triggerdef(t.oid) AS def
@@ -148,7 +168,8 @@ async function main() {
 
   let bad = 0;
 
-  for (const name of FUNCTIONS) {
+  for (const fn of FUNCTIONS) {
+    const { name } = fn;
     const matches = fnRows.filter((r) => r.proname === name);
     if (matches.length === 0) {
       console.error(`  ✘  ${name}: NOT PRESENT in the live database`);
@@ -156,26 +177,33 @@ async function main() {
       continue;
     }
     if (matches.length > 1) {
-      console.error(`  ✘  ${name}: ${matches.length} overloads live — 0200 declares one`);
+      console.error(
+        `  ✘  ${name}: ${matches.length} overloads live — the backfill declares one`,
+      );
       bad++;
       continue;
     }
-    // Strip the SET search_path line before comparing: it is owned by 0201, not
-    // 0200. See the header for why 0200 is not rewritten to include it.
+    // Strip the SET search_path line before comparing: proconfig is owned by the
+    // pinning migration, not the backfill. See the header for why the backfills
+    // are not rewritten to include it.
     const liveBody = stripSearchPath(matches[0].def);
     if (stripSearchPath(sql).includes(liveBody)) {
-      console.log(`  ✔  ${name}: body byte-identical to live`);
+      console.log(`  ✔  ${name}: body byte-identical to live  [${fn.from}]`);
     } else {
-      console.error(`  ✘  ${name}: DRIFT — 0200 does not contain the live definition`);
+      console.error(
+        `  ✘  ${name}: DRIFT — no backfill migration contains the live definition`,
+      );
       console.error("     live definition (search_path line excluded) is:");
       console.error(liveBody.split("\n").map((l) => "       " + l).join("\n"));
       bad++;
     }
 
-    // The pin itself is still verified — reattributed to 0201, not dropped.
-    if (matches[0].proconfig !== EXPECTED_PROCONFIG) {
+    // proconfig verified positively, per function. Excluded from the byte
+    // comparison, NOT from checking — including the deliberate "" cases, where
+    // an unexpectedly PRESENT setting is drift just as much as a missing one.
+    if (matches[0].proconfig !== fn.proconfig) {
       console.error(
-        `  ✘  ${name}: expected proconfig '${EXPECTED_PROCONFIG}' (migration 0201), ` +
+        `  ✘  ${name}: expected proconfig '${fn.proconfig || "(none)"}', ` +
           `live is '${matches[0].proconfig || "(none)"}'`,
       );
       bad++;
@@ -217,7 +245,10 @@ async function main() {
     process.exit(EXIT_DRIFT);
   }
 
-  console.log("\nPASS — 0200 reproduces live exactly (4 functions, 2 triggers).");
+  console.log(
+    `\nPASS — the backfills reproduce live exactly ` +
+      `(${FUNCTIONS.length} functions, ${TRIGGERS.length} triggers).`,
+  );
   process.exit(EXIT_OK);
 }
 
