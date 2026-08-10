@@ -75,11 +75,11 @@ const FUNCTIONS = [
   { name: "can_see_postcard",        proconfig: "search_path=public, pg_catalog", from: "0200+0201" },
   // migration 0203
   { name: "increment_counter",       proconfig: "search_path=public",             from: "0203" },
-  // Deliberately expected UNPINNED: 0203 reproduces live verbatim, and the
-  // missing pin is a known defect tracked for its own ALTER FUNCTION migration.
-  // If this ever starts failing because a pin appeared, that is the fix landing
-  // — update this entry, do not delete the assertion.
-  { name: "purge_old_ranking_debug_samples", proconfig: "",                       from: "0203" },
+  // Was deliberately expected UNPINNED while 0203 reproduced the known defect
+  // verbatim. Migration 0204 pinned it, and this assertion is what caught that
+  // landing rather than absorbing it silently — which is exactly why the empty
+  // expectation was asserted instead of skipped. Updated, not deleted.
+  { name: "purge_old_ranking_debug_samples", proconfig: "search_path=public, pg_catalog", from: "0203+0204" },
 ];
 const TRIGGERS = ["trg_posts_updated", "trg_postcards_updated"];
 
