@@ -96,10 +96,29 @@
 -- rollback note. Nothing calls it once the trigger below is replaced.
 --
 -- ROLLBACK (restores the previous, misleading behaviour):
+--
+-- ⚠️  UPDATED 2026-08-10 — this rollback no longer works as written.
+-- Migration 0205 DROPPED public.enforce_is_official_service_role(), so the
+-- CREATE TRIGGER below would now fail with "function does not exist". The
+-- function was dropped only after being confirmed live to be bound to no
+-- trigger, referenced by no function, policy, default or pg_depend entry, and
+-- called by no application code.
+--
+-- To roll back now you must FIRST recreate the function from its original
+-- definition, which is preserved verbatim in
+-- supabase/migrations/0106_profiles_is_official.sql (lines 14-26), and only
+-- then re-point the trigger:
+--
+--   -- 1. re-run the CREATE OR REPLACE FUNCTION from 0106_profiles_is_official.sql
+--   -- 2. then:
 --   DROP TRIGGER IF EXISTS enforce_is_official_trigger ON public.profiles;
 --   CREATE TRIGGER enforce_is_official_trigger
 --     BEFORE INSERT OR UPDATE ON public.profiles
 --     FOR EACH ROW EXECUTE FUNCTION public.enforce_is_official_service_role();
+--
+-- Doing so reintroduces BOTH defects described above: direct-postgres
+-- administration is rejected, and TRUE->FALSE is unguarded. Prefer fixing
+-- forward.
 
 CREATE OR REPLACE FUNCTION public.enforce_is_official_privileged()
 RETURNS trigger
