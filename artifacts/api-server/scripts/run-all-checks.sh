@@ -105,6 +105,7 @@ run_gate() {
   fi
 }
 
+run_check "check:guard-coverage" pnpm run check:guard-coverage
 run_check "check:frozen-dir" pnpm run check:frozen-dir
 run_check "check:async-handlers" pnpm run check:async-handlers
 run_check "check:migration-prefixes" pnpm run check:migration-prefixes
