@@ -259,7 +259,7 @@ import { randomUUID } from "node:crypto";
  * Declared FIRST, above even the environment check, so that every exit path in
  * this file — including "no credentials" — can emit its GATE verdict.
  */
-const REQUIRED_SURFACES = ["live_pulse"] as const;
+const REQUIRED_SURFACES = ["live_pulse", "living_page", "watch_feed"] as const;
 
 /** Fail-closed exit code. See the EXIT CODE CONTRACT in the header. */
 const EXIT_BLOCKED = 3;
@@ -783,6 +783,7 @@ const WRITTEN_SURFACES = [
   "living_page",
   "compass",
   "live_pulse",
+  "watch_feed",
 ] as const;
 
 /** Outcome values the codebase writes. 'analytics' was added by 0197. */

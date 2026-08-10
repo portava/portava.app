@@ -148,26 +148,31 @@ const OUTCOME_VALUES   = new Set([
  * The live rank_events_surface_check vocabulary.
  *
  * The first eleven values are migration 0197's list, verbatim.  'live_pulse' is
- * added by 0199_rank_events_live_pulse_surface.sql and by NOTHING ELSE — this
+ * added by 0199_rank_events_live_pulse_surface.sql; 'living_page' and
+ * 'watch_feed' by 0202_rank_events_living_page_watch_feed_surfaces.sql.  This
  * set is a mirror of a live CHECK constraint, not a wish list.  It may only
  * grow when a migration widening the real constraint has been written AND
- * applied (verify with `pnpm run check:rank-events-surfaces`, which prints
- * `GATE live_pulse: PERMITTED` once the live constraint accepts it).
+ * applied (verify with `pnpm run check:rank-events-surfaces`, which prints one
+ * `GATE <surface>: PERMITTED` line per required surface once the live
+ * constraint accepts it).
+ *
+ * 'living_page' and 'watch_feed' were deliberately absent until 0202.  Both were
+ * being written by production code — routes/rankEvents.ts and routes/mediaFeed.ts
+ * respectively — and silently rejected, so every Living Page and Watch Feed
+ * impression was dropped on the floor.  0202 admitted them formally on the
+ * grounds that recording the signal beats continuing to lose it.  They are now
+ * asserted PRESENT below, and the gate probes them behaviourally.
  *
  * Deliberately still ABSENT, and asserted to be rejected below:
- *   'living_page'  — routes/rankEvents.ts writes it today and the live CHECK
- *                    rejects it, so every Living Page impression is silently
- *                    dropped in production.  Unblocking that is a separate
- *                    product decision with its own migration; adding it here
- *                    would assert a permission the database does not grant.
- *   'watch_feed'   — same state, written by routes/mediaFeed.ts.
  *   'pulse_live'   — never a real value; the transposition an author reaching
  *                    for 'live_pulse' from memory is most likely to write.
+ *   'livepulse' / 'Live_Pulse' — spelling and case variants of a real value.
  */
 const SURFACE_VALUES   = new Set([
   "pulse", "discovery", "events", "compass", "search",
   "nearby", "story", "event", "trip", "profile", "explore",
   "live_pulse",
+  "living_page", "watch_feed",
 ]);
 
 const SMALLINT_MIN = -32768;
@@ -624,28 +629,32 @@ describe("rank_events schema fake — the validator can actually reject", () => 
     // widened — otherwise the fake stops modelling a CHECK constraint at all
     // and the surface assertions everywhere else go vacuous.
     //
-    // 'living_page' is the sharpest negative available: routes/rankEvents.ts
-    // writes it TODAY and the live CHECK rejects it, which is why every Living
-    // Page impression is silently dropped in production. If this line ever
-    // starts passing, someone has widened the fake past what 0199 grants.
-    assert.match(validateRankEventRow({ ...VALID, surface: "living_page" })[0], /surface_check/);
-    assert.match(validateRankEventRow({ ...VALID, surface: "watch_feed" })[0],  /surface_check/);
-    // The transposition an author reaching for 'live_pulse' would write.
+    // The negatives below are now the near-miss spellings rather than
+    // 'living_page'/'watch_feed'. Those two were the sharpest negatives until
+    // migration 0202 admitted them; keeping them here after the constraint
+    // widened would assert a REJECTION the database no longer performs, which
+    // is the same class of lie in the opposite direction.
     assert.match(validateRankEventRow({ ...VALID, surface: "pulse_live" })[0],  /surface_check/);
     assert.match(validateRankEventRow({ ...VALID, surface: "livepulse" })[0],   /surface_check/);
     assert.match(validateRankEventRow({ ...VALID, surface: "Live_Pulse" })[0],  /surface_check/);
+    assert.match(validateRankEventRow({ ...VALID, surface: "watchfeed" })[0],   /surface_check/);
+    assert.match(validateRankEventRow({ ...VALID, surface: "livingpage" })[0],  /surface_check/);
 
-    // Permitted: the ranked surfaces, plus Live Pulse's own — the ONLY value
-    // 0199_rank_events_live_pulse_surface.sql adds.
-    assert.deepEqual(validateRankEventRow({ ...VALID, surface: "discovery" }),  []);
-    assert.deepEqual(validateRankEventRow({ ...VALID, surface: "pulse" }),      []);
-    assert.deepEqual(validateRankEventRow({ ...VALID, surface: "live_pulse" }), []);
+    // Permitted: the ranked surfaces, Live Pulse's own (0199), and the two
+    // surfaces 0202 admitted after they had been silently dropped in production.
+    assert.deepEqual(validateRankEventRow({ ...VALID, surface: "discovery" }),   []);
+    assert.deepEqual(validateRankEventRow({ ...VALID, surface: "pulse" }),       []);
+    assert.deepEqual(validateRankEventRow({ ...VALID, surface: "live_pulse" }),  []);
+    assert.deepEqual(validateRankEventRow({ ...VALID, surface: "living_page" }), []);
+    assert.deepEqual(validateRankEventRow({ ...VALID, surface: "watch_feed" }),  []);
 
-    // The fake's vocabulary must be exactly 0197's eleven values plus one. A
-    // stray addition here would grant a permission the database does not.
+    // The fake's vocabulary must be exactly 0197's eleven values, plus 0199's
+    // one, plus 0202's two. A stray addition here would grant a permission the
+    // database does not.
     assert.deepEqual([...SURFACE_VALUES].sort(), [
       "compass", "discovery", "event", "events", "explore", "live_pulse",
-      "nearby", "profile", "pulse", "search", "story", "trip",
+      "living_page", "nearby", "profile", "pulse", "search", "story", "trip",
+      "watch_feed",
     ]);
   });
 
@@ -683,8 +692,10 @@ describe("rank_events schema fake — the validator can actually reject", () => 
       // Two independent CHECK violations on one row. NOT surface:'live_pulse'
       // any more — 0199 makes that legal, and a row that violates on only one
       // count would silently weaken the `viol.length === 2` assertion below
-      // into something that passes for the wrong reason.
-      { ...VALID, surface: "living_page", item_kind: "safe_return" },
+      // into something that passes for the wrong reason. Nor 'living_page',
+      // which 0202 has since made legal for exactly the same reason; 'pulse_live'
+      // is a near-miss spelling no migration will ever grant.
+      { ...VALID, surface: "pulse_live", item_kind: "safe_return" },
     ]);
     assert.equal(cap.length, 2, "both rows are captured for inspection");
     assert.equal(viol.length, 2, "only the second row violates, and on two counts");
@@ -1004,7 +1015,7 @@ describe("Live Pulse serve telemetry — rank_events rows", () => {
     // migration 0199 is what makes it storable, and the validating fake models
     // that constraint (serve() already asserted zero violations).
     assert.ok(SURFACE_VALUES.has("live_pulse"));
-    assert.ok(!SURFACE_VALUES.has("living_page"),
+    assert.ok(!SURFACE_VALUES.has("pulse_live"),
       "the fake still rejects surfaces no migration has granted");
   });
 
@@ -1327,10 +1338,11 @@ describe("buildLivePulseServeRows — pure row builder", () => {
     }
     // …and 'live_pulse' is storable only because 0199 grants it. If someone
     // reverts the migration but not the code, this is the state production
-    // lands in — every row silently rejected, exactly like 'living_page'.
+    // lands in — every row silently rejected, which is exactly where
+    // 'living_page' and 'watch_feed' sat until 0202 admitted them.
     assert.deepEqual(validateRankEventRow({ ...rows[0] }), []);
     assert.match(
-      validateRankEventRow({ ...rows[0], surface: "living_page" })[0],
+      validateRankEventRow({ ...rows[0], surface: "pulse_live" })[0],
       /surface_check/,
     );
   });
@@ -1675,14 +1687,15 @@ describe("GET /admin/ranking/metrics — Live Pulse serves are excluded from ran
     // always counted. Dropping them is a behaviour change unrelated to this
     // work, and an invisible one: the number just gets smaller.
     //
-    // The row below uses surface 'discovery' rather than mediaFeed's real
-    // 'watch_feed' purely to stay inside the CHECK vocabulary this file models
-    // ('watch_feed' is absent from it — a separate, pre-existing question about
-    // whether those inserts land at all). The point under test is the filter's
-    // SCOPE, and 'discovery' exercises it identically.
+    // The row below now uses mediaFeed's REAL surface, 'watch_feed'. It used to
+    // substitute 'discovery' because 'watch_feed' was outside the CHECK
+    // vocabulary this file models; migration 0202 admitted it, so the test can
+    // finally exercise the actual value the writer emits instead of a stand-in.
+    // The filter is scoped to `surface !== 'live_pulse'`, so both exercise it
+    // identically — this is a fidelity improvement, not a behaviour change.
     const withTaggedNonLivePulse = [
       ...ROUTE_SELECTED_ROWS,
-      { outcome: "impression", item_kind: "post", position: 2, surface: "discovery",
+      { outcome: "impression", item_kind: "post", position: 2, surface: "watch_feed",
         user_id: RANKED_VIEWER, served_at: daysAgo(2), event_type: "watch_impression" },
     ];
     _setTestClient(makeAdminClient(withTaggedNonLivePulse), true);
@@ -1690,10 +1703,13 @@ describe("GET /admin/ranking/metrics — Live Pulse serves are excluded from ran
     assert.equal(body.impressions, 2,
       "an event_type-tagged row on a non-live_pulse surface is a real impression");
     assert.deepEqual(Object.keys(body.tap_through_by_kind).sort(), ["event", "post"]);
+    // by_surface is the one breakdown keyed by surface, so it is where the
+    // switch from the 'discovery' stand-in to mediaFeed's real 'watch_feed'
+    // (legal since 0202) is visible. The counts are unchanged; only the key is.
     assert.deepEqual(body.by_surface, {
       pulse:      { impressions: 1, taps: 1 },
       live_pulse: { impressions: 3, taps: 0 },
-      discovery:  { impressions: 1, taps: 0 },
+      watch_feed: { impressions: 1, taps: 0 },
     });
     // …and Live Pulse is STILL excluded from the surface-blind totals above
     // (impressions === 2, not 5), so this is a narrowing of that exclusion, not
@@ -1895,7 +1911,9 @@ describe("POST /rank-events/outcome — surface='live_pulse' is accepted, unknow
     // would make the accept test above pass while letting any string through to
     // the analytics insert, which echoes `surface` verbatim into a new row and
     // only warns when the CHECK constraint rejects it.
-    for (const surface of ["pulse_live", "living_page", "not_a_surface"]) {
+    // 'living_page' was in this list until 0202 made it a legal surface; keeping
+    // it would assert a rejection the database no longer performs.
+    for (const surface of ["pulse_live", "livingpage", "not_a_surface"]) {
       const cap: OutcomeCaptures = { updates: [], inserts: [] };
       _setTestClient(makeOutcomeClient([lpImpressionRow()], cap), true);
 

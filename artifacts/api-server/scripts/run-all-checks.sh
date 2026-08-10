@@ -51,15 +51,19 @@ run_check() {
 #      not be established); every fail-closed condition in the script exits 2
 #      or 3.
 #
-#   2. the line `GATE live_pulse: PERMITTED` present in the output. The
-#      documented contract is "proceed only when that line is present", and an
-#      exit code alone cannot express it: a process that dies before printing a
-#      verdict can still leave a passing-looking status behind. Absent line =
+#   2. a `GATE <surface>: PERMITTED` line present for EVERY required surface.
+#      The documented contract is "proceed only when that line is present", and
+#      an exit code alone cannot express it: a process that dies before printing
+#      a verdict can still leave a passing-looking status behind. Absent line =
 #      FAIL, whatever the exit code.
 #
-# If REQUIRED_SURFACES in the script ever gains an entry, add its GATE line to
-# the required set below.
+# GATE_REQUIRED_SURFACES below MUST mirror REQUIRED_SURFACES in
+# src/scripts/checkRankEventsSurfaces.ts. They are two lists in two languages;
+# if they drift, this gate silently stops checking a surface it believes it is
+# checking. Migration 0202 added living_page and watch_feed to both.
 # See the EXIT CODE CONTRACT in src/scripts/checkRankEventsSurfaces.ts.
+GATE_REQUIRED_SURFACES=("live_pulse" "living_page" "watch_feed")
+
 run_gate() {
   local label="$1"
   shift
@@ -74,13 +78,22 @@ run_gate() {
   "$@" 2>&1 | tee "$gate_log"
   local rc=${PIPESTATUS[0]}
   local verdict=1
-  grep -qxF 'GATE live_pulse: PERMITTED' "$gate_log" || verdict=0
+  local missing=""
+  local s
+  for s in "${GATE_REQUIRED_SURFACES[@]}"; do
+    if ! grep -qxF "GATE ${s}: PERMITTED" "$gate_log"; then
+      verdict=0
+      missing="${missing:+$missing, }$s"
+    fi
+  done
   rm -f "$gate_log"
+  local required_desc="${GATE_REQUIRED_SURFACES[*]}"
   if [ "$rc" -eq 0 ] && [ "$verdict" -eq 1 ]; then
-    echo "✔ PASSED: $label (exit 0, 'GATE live_pulse: PERMITTED' present)"
+    echo "✔ PASSED: $label (exit 0, GATE PERMITTED for: ${required_desc})"
   elif [ "$rc" -eq 0 ]; then
-    echo "✘ FAILED: $label (exit 0 but NO 'GATE live_pulse: PERMITTED' line —"
-    echo "          the gate never reached a verdict; an absent GATE line is a block)"
+    echo "✘ FAILED: $label (exit 0 but NO 'GATE <surface>: PERMITTED' line for:"
+    echo "          ${missing} — the gate never reached a verdict for those"
+    echo "          surfaces; an absent GATE line is a block)"
     FAILED=1
   elif [ "$rc" -eq 1 ]; then
     echo "✘ FAILED: $label (exit 1 — the script never chooses 1, so the process"
