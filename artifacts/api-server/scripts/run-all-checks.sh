@@ -111,6 +111,31 @@ run_check "check:migration-prefixes" pnpm run check:migration-prefixes
 run_check "check:test-runner-flags" pnpm run check:test-runner-flags
 run_check "check:write-path-columns" pnpm run check:write-path-columns
 run_check "check:missing-live-columns" pnpm run check:missing-live-columns
+# check:media-objects — WIRED 2026-08-10, and the delay was the point.
+#
+# It reconciles post_media rows against actual Storage objects, which is the one
+# thing processing_status structurally cannot do: that column records what the
+# pipeline BELIEVED happened and cannot see the bucket. On 2026-08-09 all 116
+# rows read 'ready' while 114 pointed at objects that did not exist, on
+# published public posts, rendering as broken images for three weeks with
+# nothing anywhere flagging it.
+#
+# It was deliberately left unwired while it failed BY DESIGN — the seeded rows
+# were real, so wiring it then would have meant a permanently-red check, and a
+# permanently-red check is one `|| true` away from being no check at all. That
+# is exactly how 'living_page' spent months silently dropping rows. 0206 removed
+# the 14 polluted post_media rows and 0207 removed the 21 seed posts; it has
+# passed since, so it is wired now with nothing suppressed.
+#
+# run_check, not run_gate: unlike check:rank-events-surfaces this script's exit
+# code IS the whole verdict, so there is no second condition to enforce.
+#   0 = every row has its object   1 = at least one dangling row (FAIL)
+#   2 = no live credentials (FAIL, never a skip — an unrunnable reconciliation
+#       must not read as a clean one)
+# Orphan objects are reported but do NOT move the exit code: they are wasted
+# storage rather than a broken image, and a sweep should be scheduled
+# deliberately instead of triggered by a red build.
+run_check "check:media-objects" pnpm run check:media-objects
 run_gate  "check:rank-events-surfaces" pnpm run check:rank-events-surfaces
 
 echo ""

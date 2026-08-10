@@ -667,14 +667,30 @@ the two directly and reports both directions:
   content believed deleted that is still fetchable. Reported as a count only,
   so a sweep is scheduled deliberately rather than forced by a red build.
 
-Current output: **114 dangling (all on published public posts), 33 orphans.**
+Current output: **0 dangling, 33 orphans.** (Was 114 dangling as of 2026-08-09;
+`0206` removed the 14 polluted `post_media` rows and `0207` removed the 21 seed
+posts.)
+
+Since `0208` it reconciles **both** stored objects per row — the original
+(`storage_path`) and the feed variant (`feed_storage_path`). A row advertising a
+variant whose object is missing is DANGLING for the same reason a missing
+original is: the client is told it exists and renders a broken image. A NULL
+`feed_storage_path` is not a fault — it is the documented "no variant, serve the
+original" case. Variant objects are excluded from the orphan count, or the
+feature working would manufacture orphans in proportion to its own success.
+Column presence is probed via `information_schema`, so the script still runs
+against a project without 0208.
 
 Exits 2 when live credentials are absent, deliberately: a check that could not
 run must not read as one that passed.
 
-> **Not wired into `run-all-checks.sh`.** It needs live credentials the offline
-> gate does not have, and it fails today by design — wiring it now would just
-> make the gate permanently red. Wire it once the seeded rows are cleaned up.
+> **Wired into `run-all-checks.sh` on 2026-08-10** (`run_check`, nothing
+> suppressed). It was held back while it failed *by design* — the seeded rows
+> were real, so wiring it then would have meant a permanently-red check, and a
+> permanently-red check is one `|| true` away from being no check at all. It has
+> passed since 0207, so the 114-dangling state can no longer return silently.
+> Note this makes `check:all` require live credentials: exit 2 (no credentials)
+> is a FAIL, not a skip.
 
 ---
 
