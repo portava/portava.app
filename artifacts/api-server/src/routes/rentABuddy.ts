@@ -18,7 +18,7 @@
 import { Router } from "express";
 import { requireUser, sendError, safeSecretEquals } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import { computeTrustScore } from "../lib/trustScore.js";
 import { adjustBuddyCounter, syncFavoritesCount } from "../services/rentBuddy/ReliabilityCounters.js";
@@ -1001,9 +1001,9 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
   if (!await requireBookingKyc(serviceClient, res)) return;
 
   // Emergency flags: honor BOTH admin kill-switch names (FL-06 — `disable_rab_bookings`
-  // was an orphan with no reader, so that admin toggle was a silent no-op). Fail-open on DB error.
-  if (await isFlagEnabled(serviceClient, 'disable_rent_buddy_booking')
-      || await isFlagEnabled(serviceClient, 'disable_rab_bookings')) {
+  // was an orphan with no reader, so that admin toggle was a silent no-op). Fail-CLOSED on DB error.
+  if (await isKillSwitchEngaged(serviceClient, 'disable_rent_buddy_booking')
+      || await isKillSwitchEngaged(serviceClient, 'disable_rab_bookings')) {
     return res.status(404).json({ error: 'feature_disabled', message: 'Rent-a-Buddy bookings are temporarily disabled' });
   }
 

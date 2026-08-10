@@ -5,7 +5,7 @@
  * returned to a viewer. Callers must pass the service-role Supabase client.
  *
  * Guard order (fail-fast):
- *   1. Admin kill switch (fail-open on DB error → do NOT block)
+ *   1. Admin kill switch (fail-CLOSED on DB error → an unreadable stop engages)
  *   2. Viewer is an accepted trip/event member (trip_members or event_rsvps)
  *   3. Target is an accepted trip/event member
  *   4. Target has global_enabled + valid consent
@@ -19,7 +19,7 @@
  * Follow relationship alone does NOT satisfy the check.
  */
 
-import { isFlagEnabled } from "./featureFlags.js";
+import { isKillSwitchEngaged } from "./featureFlags.js";
 
 export const CURRENT_CONSENT_VERSION = "v1";
 
@@ -91,8 +91,10 @@ export async function canViewCirclePresence(
   contextType: ContextType,
   contextId: string,
 ): Promise<CircleAccessResult> {
-  // 1. Admin kill switch — fail-open: if DB is down, do NOT block users.
-  const killSwitchActive = await isFlagEnabled(sc, "find_your_circle_disabled");
+  // 1. Admin kill switch — fail-CLOSED: an unreadable stop engages. Consistent
+  //    with the rest of this guard, whose membership checks already deny on a
+  //    DB error. A missing flag row is not an error and does not engage.
+  const killSwitchActive = await isKillSwitchEngaged(sc, "find_your_circle_disabled");
   if (killSwitchActive) {
     return { allowed: false, reason: "kill_switch" };
   }
@@ -291,8 +293,10 @@ export async function canBeSeenByViewersBatch(
     return out;
   };
 
-  // 1. Admin kill switch — fail-open: if DB is down, do NOT block users.
-  const killSwitchActive = await isFlagEnabled(sc, "find_your_circle_disabled");
+  // 1. Admin kill switch — fail-CLOSED: an unreadable stop engages. Consistent
+  //    with the rest of this guard, whose membership checks already deny on a
+  //    DB error. A missing flag row is not an error and does not engage.
+  const killSwitchActive = await isKillSwitchEngaged(sc, "find_your_circle_disabled");
   if (killSwitchActive) return denyAll("kill_switch");
 
   // 2. Viewer membership — one query per table (per-viewer gate).
@@ -505,8 +509,10 @@ export async function canViewCirclePresenceBatch(
     return out;
   };
 
-  // 1. Admin kill switch — fail-open: if DB is down, do NOT block users.
-  const killSwitchActive = await isFlagEnabled(sc, "find_your_circle_disabled");
+  // 1. Admin kill switch — fail-CLOSED: an unreadable stop engages. Consistent
+  //    with the rest of this guard, whose membership checks already deny on a
+  //    DB error. A missing flag row is not an error and does not engage.
+  const killSwitchActive = await isKillSwitchEngaged(sc, "find_your_circle_disabled");
   if (killSwitchActive) return denyAll("kill_switch");
 
   // 2. Viewer must be an accepted member (checked ONCE for the whole batch).

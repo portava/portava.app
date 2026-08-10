@@ -21,7 +21,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { enrichSpans } from "../lib/enrichSpans.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import {
@@ -128,9 +128,9 @@ router.post("/meetups", async (req, res) => {
   if (!ctx) return;
   const { client, user } = ctx;
 
-  // Emergency flag: disable_new_event_creation — fail-open on DB error
+  // Emergency stop: disable_new_event_creation — fail-CLOSED on DB error
   const flagSc = getServiceClient();
-  if (flagSc && await isFlagEnabled(flagSc, 'disable_new_event_creation')) {
+  if (flagSc && await isKillSwitchEngaged(flagSc, 'disable_new_event_creation')) {
     sendError(res, 'feature_disabled', 'New event creation is temporarily disabled');
     return;
   }

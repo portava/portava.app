@@ -188,7 +188,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
@@ -5282,7 +5282,8 @@ router.post("/events/:id/media", async (req, res) => {
   }
 
   // Emergency media kill switch (audit: this path previously ignored it).
-  if (await isFlagEnabled(sc, "disable_media_uploads")) {
+  // Fail-CLOSED: an unreadable stop engages.
+  if (await isKillSwitchEngaged(sc, "disable_media_uploads")) {
     sendError(res, "feature_disabled", "Media uploads are temporarily disabled");
     return;
   }

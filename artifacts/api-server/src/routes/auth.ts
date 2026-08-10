@@ -1,7 +1,7 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { getServiceClient } from "../lib/supabase";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { logger } from "../lib/logger";
 
 const router = Router();
@@ -110,8 +110,11 @@ router.post("/auth/lookup-username", lookupUsernameLimiter, async (req, res) => 
  * The mobile app MUST call this before initiating Supabase Auth sign-up and
  * show an appropriate message when either kill switch is active.
  * Response: { signupsEnabled: boolean, inviteOnly: boolean }
- * Both checks are fail-open — if the feature_flags table is unreachable,
- * the response defaults to signupsEnabled=true, inviteOnly=false.
+ * disable_signups is an emergency stop and is fail-CLOSED: if the flag query
+ * errors the state is unknown, the stop engages, and this reports
+ * signupsEnabled=false — matching what POST /auth/signup will actually do, so
+ * the app never shows a signup form that is about to 403. invite_only_beta is
+ * an ordinary capability flag and stays fail-open (defaults to false).
  */
 router.get("/auth/signup-status", async (_req, res) => {
   const client = getServiceClient();
@@ -121,7 +124,7 @@ router.get("/auth/signup-status", async (_req, res) => {
   }
 
   const [disabledFlag, inviteOnlyFlag] = await Promise.all([
-    isFlagEnabled(client, "disable_signups"),
+    isKillSwitchEngaged(client, "disable_signups"),
     isFlagEnabled(client, "invite_only_beta"),
   ]);
 
@@ -141,7 +144,7 @@ router.get("/auth/signup-status", async (_req, res) => {
  *
  * Behaviour:
  *  - disable_signups = true  → 403 { error: "feature_disabled" }
- *  - flag DB query errors    → fail-open, signup is allowed through
+ *  - flag DB query errors    → fail-CLOSED, the stop engages and signup is blocked
  *  - success                 → 201 { user: { id, email } }
  *    (client must then call supabase.auth.signInWithPassword to get a session)
  *
@@ -166,8 +169,8 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
     return;
   }
 
-  // Check kill switch — fail-open: if the flag query errors isFlagEnabled returns false
-  const signupsDisabled = await isFlagEnabled(client, "disable_signups");
+  // Check kill switch — fail-CLOSED: an unreadable stop engages (isKillSwitchEngaged).
+  const signupsDisabled = await isKillSwitchEngaged(client, "disable_signups");
   if (signupsDisabled) {
     res.status(403).json({ error: "feature_disabled" });
     return;

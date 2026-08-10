@@ -307,8 +307,8 @@ function makePostsFakeClient(opts: {
 
 // ── Auth / signup-status fake client ──────────────────────────────────────────
 
-function makeSignupStatusFakeClient(opts: { disableSignups?: boolean; inviteOnly?: boolean }) {
-  const { disableSignups = false, inviteOnly = false } = opts;
+function makeSignupStatusFakeClient(opts: { disableSignups?: boolean; inviteOnly?: boolean; flagQueryError?: boolean; flagRowMissing?: boolean }) {
+  const { disableSignups = false, inviteOnly = false, flagQueryError = false, flagRowMissing = false } = opts;
   return {
     from: (table: string) => {
       if (table === "feature_flags") {
@@ -316,6 +316,9 @@ function makeSignupStatusFakeClient(opts: { disableSignups?: boolean; inviteOnly
           select: () => ({
             eq: (_col: string, val: string) => ({
               maybeSingle: () => {
+                if (flagQueryError) return { data: null, error: { message: "db error" } };
+                // No such row: not an error, no stop configured.
+                if (flagRowMissing) return { data: null, error: null };
                 const enabled = val === "disable_signups" ? disableSignups
                   : val === "invite_only_beta" ? inviteOnly
                   : false;
@@ -339,9 +342,10 @@ const SIGNUP_USER_ID = "ffffffff-0000-0000-0000-000000000099";
 function makeSignupFakeClient(opts: {
   disableSignups?: boolean;
   flagQueryError?: boolean;
+  flagRowMissing?: boolean;
   createUserError?: { status?: number; message: string } | null;
 }) {
-  const { disableSignups = false, flagQueryError = false, createUserError = null } = opts;
+  const { disableSignups = false, flagQueryError = false, flagRowMissing = false, createUserError = null } = opts;
 
   return {
     from: (table: string) => {
@@ -351,6 +355,8 @@ function makeSignupFakeClient(opts: {
             eq: (_col: string, val: string) => ({
               maybeSingle: () => {
                 if (flagQueryError) return { data: null, error: { message: "db error" } };
+                // No such row: not an error, no stop configured.
+                if (flagRowMissing) return { data: null, error: null };
                 const enabled = val === "disable_signups" ? disableSignups : false;
                 return { data: { flag: val, enabled }, error: null };
               },
@@ -663,12 +669,30 @@ describe("Kill switch: disable_signups + invite_only_beta (GET /auth/signup-stat
     assert.equal(r.body?.signupsEnabled, false, "signupsEnabled must be false when kill switch is active");
   });
 
-  it("returns signupsEnabled=true when disable_signups = false (default/fail-open)", async () => {
+  it("returns signupsEnabled=true when disable_signups = false", async () => {
     const fc = makeSignupStatusFakeClient({ disableSignups: false });
     _setTestServiceClient(fc);
     const r = await req("GET", "/auth/signup-status");
     assert.equal(r.status, 200);
     assert.equal(r.body?.signupsEnabled, true, "signupsEnabled must be true when kill switch is off");
+  });
+
+  // The status endpoint must agree with what POST /auth/signup will actually
+  // do, or the app shows a signup form that is about to 403.
+  it("reports signupsEnabled=false when the flag query errors (matches enforcement)", async () => {
+    const fc = makeSignupStatusFakeClient({ flagQueryError: true });
+    _setTestServiceClient(fc);
+    const r = await req("GET", "/auth/signup-status");
+    assert.equal(r.status, 200);
+    assert.equal(r.body?.signupsEnabled, false, "an unreadable stop must report signups closed");
+  });
+
+  it("reports signupsEnabled=true when the flag row is missing (no stop configured)", async () => {
+    const fc = makeSignupStatusFakeClient({ flagRowMissing: true });
+    _setTestServiceClient(fc);
+    const r = await req("GET", "/auth/signup-status");
+    assert.equal(r.status, 200);
+    assert.equal(r.body?.signupsEnabled, true, "an unconfigured stop must not close signups");
   });
 
   it("returns inviteOnly=true when invite_only_beta = true", async () => {
@@ -703,13 +727,25 @@ describe("Kill switch: disable_signups (POST /auth/signup)", () => {
     assert.ok(r.body?.user?.email, "user.email present");
   });
 
-  it("is fail-open — signup succeeds when the flag DB query errors", async () => {
+  // INVERTED 2026-08-10 (Phase 0 #4). Previously asserted fail-OPEN: that a DB
+  // error on the flag query let signups through. disable_signups is an
+  // emergency stop, so false-on-error meant the stop disengaged exactly when
+  // the database was unhealthy. Now read through isKillSwitchEngaged.
+  it("is fail-CLOSED — a DB error on the flag query BLOCKS signup", async () => {
     const fc = makeSignupFakeClient({ flagQueryError: true });
     _setTestServiceClient(fc);
     const r = await req("POST", "/auth/signup", { email: "new@example.com", password: "password123" });
-    assert.notEqual(r.status, 403, "flag DB error must not block signup");
-    assert.notEqual(r.body?.error, "feature_disabled");
-    assert.equal(r.status, 201, `expected 201 (fail-open), got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.status, 403, `an unreadable emergency stop must engage, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body?.error, "feature_disabled");
+  });
+
+  // The other half: an absent row is not an error. Nobody configured a stop,
+  // so none engages. Without this, every unseeded flag would be an outage.
+  it("missing flag row (data=null, error=null) does NOT block signup", async () => {
+    const fc = makeSignupFakeClient({ flagRowMissing: true });
+    _setTestServiceClient(fc);
+    const r = await req("POST", "/auth/signup", { email: "new@example.com", password: "password123" });
+    assert.equal(r.status, 201, `an unconfigured stop must not engage, got ${r.status}: ${JSON.stringify(r.body)}`);
   });
 
   it("returns 400 for missing email", async () => {

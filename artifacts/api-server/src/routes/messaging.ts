@@ -29,7 +29,7 @@ import { canMessage } from '../lib/messagingPermissions';
 import { nameVisibilitySet, sanitizeIdentity, resolveHandle, presentedName } from '../lib/publicIdentity';
 import { getServiceClient } from '../lib/supabase';
 import { resolveInteractionPermissions } from '../services/interactionPermissions.js';
-import { isFlagEnabled } from '../lib/featureFlags.js';
+import { isKillSwitchEngaged } from '../lib/featureFlags.js';
 import { appStorageUrlInfo } from '../lib/mediaUrl.js';
 import { isUuid } from '../lib/followDecisions';
 import {
@@ -422,8 +422,8 @@ router.post('/users/:userId/message-request', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  // Emergency flag: disable_unknown_message_requests — fail-open on DB error
-  if (await isFlagEnabled(sc, 'disable_unknown_message_requests')) {
+  // Emergency stop: disable_unknown_message_requests — fail-CLOSED on DB error
+  if (await isKillSwitchEngaged(sc, 'disable_unknown_message_requests')) {
     sendError(res, 'feature_disabled', 'New message requests are temporarily disabled');
     return;
   }
@@ -1677,9 +1677,9 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   // body assignment deferred — E2EE threads force body=null (resolved after is_e2ee check below)
   let body = bodyRaw;
 
-  // Emergency kill switch: disable_messaging — fail-open on DB error
+  // Emergency kill switch: disable_messaging — fail-CLOSED on DB error
   const flagSc = getServiceClient();
-  if (flagSc && await isFlagEnabled(flagSc, 'disable_messaging')) {
+  if (flagSc && await isKillSwitchEngaged(flagSc, 'disable_messaging')) {
     sendError(res, 'feature_disabled', 'Messaging is temporarily disabled');
     return;
   }
@@ -1992,12 +1992,13 @@ router.post('/threads/:threadId/media', async (req, res) => {
   const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId.slice(0, 64) : null;
 
   // Emergency kill switches (media one previously ignored here — audit).
+  // Fail-CLOSED: an unreadable stop engages.
   const flagSc = getServiceClient();
-  if (flagSc && await isFlagEnabled(flagSc, 'disable_messaging')) {
+  if (flagSc && await isKillSwitchEngaged(flagSc, 'disable_messaging')) {
     sendError(res, 'feature_disabled', 'Messaging is temporarily disabled');
     return;
   }
-  if (flagSc && await isFlagEnabled(flagSc, 'disable_media_uploads')) {
+  if (flagSc && await isKillSwitchEngaged(flagSc, 'disable_media_uploads')) {
     sendError(res, 'feature_disabled', 'Media uploads are temporarily disabled');
     return;
   }

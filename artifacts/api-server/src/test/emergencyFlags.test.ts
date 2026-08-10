@@ -6,12 +6,17 @@
  *
  * Flags under test:
  *   disable_tagging              → POST /tags
- *   disable_new_event_creation   → POST /meetups
+ *   disable_new_event_creation   → POST /meetups            (write-path exemplar)
  *   disable_profile_search       → GET  /users/search  (returns empty array)
+ *   find_your_circle_disabled    → canViewCirclePresence    (read-path exemplar)
  *   disable_media_uploads        → checked via flag helper unit test
  *
- * Fail-open contract: when the flag DB query fails (error), the feature
- * is NOT blocked — the route continues normally.
+ * Fail-CLOSED contract (2026-08-10): these are emergency stops, read through
+ * isKillSwitchEngaged. When the flag query ERRORS the state is unknown and the
+ * stop ENGAGES. When the row is simply MISSING (data=null, error=null) no stop
+ * has been configured and it must NOT engage — that distinction is what keeps
+ * fail-closed from turning every unseeded flag into an outage, so each exemplar
+ * asserts both halves.
  *
  * Run: node --import tsx/esm --test src/test/emergencyFlags.test.ts
  */
@@ -24,6 +29,7 @@ import { _setTestServiceClient } from "../lib/supabase.js";
 import tagsRouter from "../routes/tags.js";
 import meetupsRouter from "../routes/meetups.js";
 import followsRouter from "../routes/follows.js";
+import { canViewCirclePresence } from "../lib/circleAccessGuard.js";
 
 // ── Server ─────────────────────────────────────────────────────────────────────
 
@@ -76,9 +82,14 @@ function req(
  *
  * @param flagEnabled   true  → flag row returns { enabled: true }
  *                      false → flag row returns { enabled: false }
- *                      "error" → flag query returns an error (fail-open test)
+ *                      "error" → flag query returns an error (state unknown)
+ *                      "missing" → no such row: data=null, error=null
+ *
+ * "missing" is the state every flag nobody has created is in, including all of
+ * them on a freshly restored project. It is NOT an error and must never engage
+ * a stop — conflating the two turns each unseeded flag into an outage.
  */
-function makeFakeClient(flagEnabled: boolean | "error") {
+function makeFakeClient(flagEnabled: boolean | "error" | "missing") {
   const flagRow = flagEnabled === true
     ? { flag: "any", enabled: true }
     : { flag: "any", enabled: false };
@@ -107,6 +118,9 @@ function makeFakeClient(flagEnabled: boolean | "error") {
         if (table === "feature_flags") {
           if (flagEnabled === "error") {
             return Promise.resolve({ data: null, error: { message: "DB unavailable", code: "503" } });
+          }
+          if (flagEnabled === "missing") {
+            return Promise.resolve({ data: null, error: null });
           }
           return Promise.resolve({ data: flagRow, error: null });
         }
@@ -141,7 +155,7 @@ function makeFakeClient(flagEnabled: boolean | "error") {
   } as any;
 }
 
-function setClients(flagEnabled: boolean | "error") {
+function setClients(flagEnabled: boolean | "error" | "missing") {
   const c = makeFakeClient(flagEnabled);
   _setTestClient(c, true);
   _setTestServiceClient(c);
@@ -242,14 +256,32 @@ describe("disable_new_event_creation flag gates POST /meetups", () => {
     assert.ok(status !== 404 || body.error !== "feature_disabled");
   });
 
-  it("fail-open: DB error on flag query allows meetup creation (does not block)", async () => {
+  // INVERTED 2026-08-10 (Phase 0 #4, WRITE-PATH exemplar). Previously asserted
+  // fail-OPEN: that a DB error let event creation through. Same defect as
+  // disable_tagging — an emergency stop that disengages when the database is
+  // unhealthy is not stopping anything at the moment you reach for it.
+  it("fail-CLOSED: DB error on the flag query STOPS meetup creation", async () => {
     setClients("error");
     const { body } = await req("POST", "/meetups", {
       title: "Test Meetup",
       timeBlock: "morning",
     });
+    assert.equal(body.error, "feature_disabled",
+      `an unreadable emergency stop must engage, got ${JSON.stringify(body)}`);
+  });
+
+  // The other half of the contract, and the one that makes fail-closed safe to
+  // ship: an ABSENT row is not an error. No stop has been configured, so no
+  // stop engages. If this ever goes red, every flag nobody has seeded has
+  // become an outage.
+  it("missing flag row (data=null, error=null) does NOT stop meetup creation", async () => {
+    setClients("missing");
+    const { body } = await req("POST", "/meetups", {
+      title: "Test Meetup",
+      timeBlock: "morning",
+    });
     assert.notEqual(body.error, "feature_disabled",
-      `DB error should fail-open but got feature_disabled: ${JSON.stringify(body)}`);
+      `an unconfigured stop must not engage, got ${JSON.stringify(body)}`);
   });
 });
 
@@ -272,5 +304,66 @@ describe("disable_profile_search flag gates GET /users/search", () => {
     // 200 or 500 from fake DB is OK — what matters is it's not blocked by the flag
     assert.ok(status === 200 || status === 500,
       `Expected 200 or 500, got ${status}`);
+  });
+
+  // NOTE: no fail-closed pair here, deliberately. disable_profile_search is a
+  // SOFT stop — it returns 200 { users: [] }, which this fake also returns when
+  // the stop is off (its one profile row is the caller, whom search excludes).
+  // Blocked and unblocked are therefore indistinguishable through this harness,
+  // so any assertion here would pass for the wrong reason. The read-path
+  // exemplar is find_your_circle_disabled below, whose denial carries a
+  // distinguishable reason. The conversion of this call site is covered by the
+  // mechanical no-isFlagEnabled-on-a-stop assertion.
+});
+
+// ── find_your_circle_disabled (READ-PATH exemplar) ────────────────────────────
+//
+// A different shape from the route stops above: this switch guards a library
+// read guard, not an HTTP write. canViewCirclePresence returns a structured
+// denial, so the assertions can key on WHICH rule denied — reason "kill_switch"
+// proves the stop engaged, and distinguishes it from the membership checks,
+// which already fail closed to "viewer_not_member" on a DB error. Without that
+// distinction a fail-closed test would pass for the wrong reason.
+
+describe("find_your_circle_disabled gates canViewCirclePresence", () => {
+  /** Minimal client: feature_flags in the given state, everything else empty. */
+  function guardClient(flagState: boolean | "error" | "missing") {
+    const flagResult = () => {
+      if (flagState === "error")   return Promise.resolve({ data: null, error: { message: "DB unavailable", code: "503" } });
+      if (flagState === "missing") return Promise.resolve({ data: null, error: null });
+      return Promise.resolve({ data: { flag: "find_your_circle_disabled", enabled: flagState }, error: null });
+    };
+    const builder = (table: string): any => {
+      const b: any = {
+        select: () => b, eq: () => b, in: () => b, is: () => b, neq: () => b,
+        maybeSingle: () => (table === "feature_flags" ? flagResult() : Promise.resolve({ data: null, error: null })),
+        then: (resolve: any) => Promise.resolve({ data: [], error: null }).then(resolve),
+      };
+      return b;
+    };
+    return { from: (table: string) => builder(table) } as any;
+  }
+
+  const VIEWER = "cccccccc-0000-0000-0000-000000000003";
+  const TARGET = "dddddddd-0000-0000-0000-000000000004";
+  const TRIP   = "eeeeeeee-0000-0000-0000-000000000005";
+
+  it("blocks circle presence when find_your_circle_disabled=true", async () => {
+    const r = await canViewCirclePresence(guardClient(true), VIEWER, TARGET, "trip", TRIP);
+    assert.equal(r.allowed, false);
+    assert.equal(r.reason, "kill_switch");
+  });
+
+  it("fail-CLOSED: DB error on the flag query engages the stop (reason=kill_switch)", async () => {
+    const r = await canViewCirclePresence(guardClient("error"), VIEWER, TARGET, "trip", TRIP);
+    assert.equal(r.allowed, false);
+    assert.equal(r.reason, "kill_switch",
+      `an unreadable emergency stop must engage; reason ${r.reason} means a later rule denied, not the stop`);
+  });
+
+  it("missing flag row (data=null, error=null) does NOT engage the stop", async () => {
+    const r = await canViewCirclePresence(guardClient("missing"), VIEWER, TARGET, "trip", TRIP);
+    assert.notEqual(r.reason, "kill_switch",
+      `an unconfigured stop must not engage, got reason ${r.reason}`);
   });
 });

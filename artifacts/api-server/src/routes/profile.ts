@@ -6,7 +6,7 @@ import { resolveStoragePath } from "../lib/storagePath.js";
 import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
 import { retranslateForUser } from "../services/messageTranslation";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
-import { isFlagEnabled } from "../lib/featureFlags";
+import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags";
 import { invalidateCompassHomeCache } from "./compassHome";
 import { sniffMedia, processImage, type ProcessedImage, type SniffResult } from "../lib/mediaProcessing";
 import { appMediaRef } from "../lib/postSchemas";
@@ -1015,8 +1015,8 @@ router.post(
     const sc = getServiceClient();
     if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
-    // Emergency flag: disable_media_uploads — fail-open on DB error
-    if (await isFlagEnabled(sc, 'disable_media_uploads')) {
+    // Emergency stop: disable_media_uploads — fail-CLOSED on DB error
+    if (await isKillSwitchEngaged(sc, 'disable_media_uploads')) {
       sendError(res, 'feature_disabled', 'Media uploads are temporarily disabled');
       return;
     }
@@ -1088,8 +1088,8 @@ router.post(
     const sc = getServiceClient();
     if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
-    // Emergency flag: disable_media_uploads — fail-open on DB error
-    if (await isFlagEnabled(sc, 'disable_media_uploads')) {
+    // Emergency stop: disable_media_uploads — fail-CLOSED on DB error
+    if (await isKillSwitchEngaged(sc, 'disable_media_uploads')) {
       sendError(res, 'feature_disabled', 'Media uploads are temporarily disabled');
       return;
     }

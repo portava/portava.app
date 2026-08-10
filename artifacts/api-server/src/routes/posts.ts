@@ -40,7 +40,7 @@ import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { sniffMedia, processImage, makeThumbnail, makeFeedVariant, computePHash } from "../lib/mediaProcessing.js";
 import { recordMediaAsset } from "../lib/mediaAssets.js";
 import { resolvePostPlace } from "../lib/places/placeResolve.js";
@@ -103,7 +103,8 @@ router.post(
     if (!sc) { sendError(res, "server_not_configured", "Storage not configured"); return; }
 
     // Emergency kill switch — this endpoint previously ignored it (audit).
-    if (await isFlagEnabled(sc, "disable_media_uploads")) {
+    // Fail-CLOSED: an unreadable stop engages.
+    if (await isKillSwitchEngaged(sc, "disable_media_uploads")) {
       sendError(res, "feature_disabled", "Media uploads are temporarily disabled");
       return;
     }
@@ -390,9 +391,9 @@ router.post("/posts", async (req, res) => {
   if (!auth) return;
   const { client, user } = auth;
 
-  // Emergency kill switch: disable_posting — fail-open on DB error
+  // Emergency kill switch: disable_posting — fail-CLOSED on DB error
   const flagSc = getServiceClient();
-  if (flagSc && await isFlagEnabled(flagSc, 'disable_posting')) {
+  if (flagSc && await isKillSwitchEngaged(flagSc, 'disable_posting')) {
     sendError(res, 'feature_disabled', 'Posting is temporarily disabled');
     return;
   }

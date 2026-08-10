@@ -19,7 +19,7 @@ import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http.js';
 import { getServiceClient } from '../lib/supabase.js';
 import { processTagging } from '../services/tagging/TaggingService.js';
-import { isFlagEnabled } from '../lib/featureFlags.js';
+import { isKillSwitchEngaged } from '../lib/featureFlags.js';
 import { sniffMedia, processImage, computePHash, makeFeedVariant } from '../lib/mediaProcessing.js';
 
 const router = Router();
@@ -378,7 +378,8 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
   // Emergency media kill switch (audit: this path previously ignored it).
-  if (await isFlagEnabled(sc, 'disable_media_uploads')) {
+  // Fail-CLOSED: an unreadable stop engages.
+  if (await isKillSwitchEngaged(sc, 'disable_media_uploads')) {
     sendError(res, 'feature_disabled', 'Media uploads are temporarily disabled');
     return;
   }

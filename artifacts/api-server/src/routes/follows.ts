@@ -5,7 +5,7 @@ import { decideUnfollow, isUuid } from "../lib/followDecisions";
 import { normalizedFriendshipPair } from "../lib/friendDecisions";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { getSeenIds, markAsSeen, clearSeen, dailySeed, seededShuffle } from "../lib/suggestionSeenCache";
-import { isFlagEnabled } from "../lib/featureFlags";
+import { isKillSwitchEngaged } from "../lib/featureFlags";
 
 const router = Router();
 
@@ -531,8 +531,8 @@ router.get("/users/search", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // Emergency flag: disable_profile_search — fail-open on DB error
-  if (await isFlagEnabled(sc, 'disable_profile_search')) {
+  // Emergency stop: disable_profile_search — fail-CLOSED on DB error
+  if (await isKillSwitchEngaged(sc, 'disable_profile_search')) {
     res.status(200).json({ users: [] });
     return;
   }
