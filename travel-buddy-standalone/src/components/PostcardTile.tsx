@@ -5,7 +5,7 @@ import { MapPin, PlayCircle } from 'lucide-react-native';
 import type { Post } from '../types/models.ts';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
 import { MediaStampOverlay } from './StampOverlayBadge.tsx';
-import { CachedImage, withStorageParams } from './CachedImage.tsx';
+import { CachedImage } from './CachedImage.tsx';
 
 /**
  * PostcardTile — postcard-styled tile (image-heavy, paper border, corner
@@ -29,7 +29,14 @@ export function PostcardTile({ post, variant = 'square', rotate = 0 }: { post: P
       <View style={pt.media}>
         {post.media[0] && !imgFailed ? (
           <CachedImage
-            source={{ uri: withStorageParams(post.media[0].url, 'width=500') }}
+            // `?width=500` used to be here and never did anything: appStorageUrlInfo()
+            // (lib/mediaUrl.ts) matches on url.pathname only — "Query strings are
+            // ignored" — and /api/media/sign runs every URL through it before signing,
+            // so the param was stripped before the signed URL existed. The tile was
+            // fetching the full-size original and scaling it on-device. It now uses the
+            // real server-side derivative, falling back to the original when the item
+            // has none (pre-0208 uploads, videos, failed derives).
+            source={{ uri: post.media[0].feedUrl ?? post.media[0].url }}
             style={StyleSheet.absoluteFill}
             resizeMode="cover"
             filterId={post.filterId}

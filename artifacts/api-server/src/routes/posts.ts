@@ -32,7 +32,7 @@ import { awardStamp } from "../services/passport/StampAwardEngine.js";
 import { evaluateAndAwardCriteria } from "../lib/stamps/criteria/index.js";
 import { getServiceClient } from "../lib/supabase";
 import { stampEntity, unstampEntity } from "../services/stamps/ContentStampService.js";
-import { stampOverlayCol } from "../lib/postMediaOverlay";
+import { stampOverlayCol, feedVariantCol } from "../lib/postMediaOverlay";
 import { checkRateLimit } from "../lib/rateLimit";
 import { writePulseGeoTag } from "../services/location/PulseGeoTagService";
 import { processTagging } from "../services/tagging/TaggingService.js";
@@ -41,7 +41,7 @@ import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEng
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
-import { sniffMedia, processImage, makeThumbnail, computePHash } from "../lib/mediaProcessing.js";
+import { sniffMedia, processImage, makeThumbnail, makeFeedVariant, computePHash } from "../lib/mediaProcessing.js";
 import { recordMediaAsset } from "../lib/mediaAssets.js";
 import { resolvePostPlace } from "../lib/places/placeResolve.js";
 import { classifyBuckets, incrementBucketCounts } from "../lib/places/bucketClassifier.js";
@@ -132,6 +132,7 @@ router.post(
     let width: number | null = null;
     let height: number | null = null;
     let thumb: { buffer: Buffer; mime: string } | null = null;
+    let feed: { buffer: Buffer; mime: string } | null = null;
     let processed = false;
     let phash: string | null = null;
 
@@ -147,6 +148,13 @@ router.post(
         height = img.height;
         const t = await makeThumbnail(img.buffer);
         thumb = { buffer: t.buffer, mime: t.mime };
+        // Feed-sized derivative. Built from the PROCESSED buffer, so it
+        // inherits the EXIF/GPS strip and auto-orient rather than re-deriving
+        // them from the raw upload. Fail-soft in the same way the thumbnail is:
+        // a missing variant means the client falls back to the original, which
+        // is exactly today's behaviour.
+        const f = await makeFeedVariant(img.buffer);
+        feed = { buffer: f.buffer, mime: f.mime };
         processed = true;
         // Perceptual hash for near-duplicate detection. Computed on the
         // processed (EXIF-stripped, re-encoded) buffer so the hash is stable
@@ -194,6 +202,23 @@ router.post(
       }
     }
 
+    // Feed variant — same fail-soft contract as the thumbnail. If generation or
+    // upload fails, feedUrl stays null and the client uses the original.
+    let feedUrl: string | null = null;
+    let feedPath: string | null = null;
+    if (feed) {
+      feedPath = `${basePath}.feed.jpg`;
+      const { error: fErr } = await sc.storage
+        .from(STORAGE_BUCKET)
+        .upload(feedPath, feed.buffer, { contentType: feed.mime, upsert: false });
+      if (fErr) {
+        req.log.warn({ err: fErr }, "Feed-variant upload failed — continuing without");
+        feedPath = null;
+      } else {
+        feedUrl = `${STORAGE_BUCKET}/${feedPath}`;
+      }
+    }
+
     const mediaRelayUrl = `${STORAGE_BUCKET}/${path}`;
 
     // Canonical dual-write (flag-gated OFF; fail-soft — legacy flow unaffected).
@@ -213,7 +238,14 @@ router.post(
 
     // Response stays backward-compatible ({url, path}); new fields are additive.
     // `phash` is included so the client can persist it on the post_media row.
-    res.status(201).json({ url: mediaRelayUrl, path, thumbnailUrl, width, height, processed, phash });
+    //
+    // `feedUrl` is NULL whenever no variant exists — video, HEIC that skipped
+    // processing, a failed derive, or any upload predating this feature. The
+    // client must treat null as "use `url`". It must never construct a variant
+    // path itself: for every pre-existing post that URL would 404.
+    res.status(201).json({
+      url: mediaRelayUrl, path, thumbnailUrl, feedUrl, width, height, processed, phash,
+    });
   },
 );
 
@@ -232,8 +264,17 @@ const POST_MEDIA_FEED_COLUMNS =
 
 /** Filter and shape post_media rows for public feed consumption.
  *  Excludes non-ready and rejected/flagged items; sorts by sort_order.
- *  Returns snake_case keys to match the post_media column names. */
-function filterPostMedia(items: any[]): Array<Record<string, unknown>> {
+ *  Returns snake_case keys to match the post_media column names.
+ *
+ *  `feed_url` is the 0208 feed-sized derivative and is NULL for every row that
+ *  predates 0208, for videos, and for any upload whose derive failed. NULL is
+ *  the contract, not a gap: the client renders `feed_url ?? url`. The server
+ *  reports existence; the client must never append `.feed.jpg` to `url` itself,
+ *  because for every pre-existing row that object does not exist and the
+ *  request would 404. `?? null` is load-bearing — when feedVariantCol() finds no
+ *  column the key is absent from the row, and this normalises it to explicit
+ *  null rather than leaving it `undefined` and dropped from the JSON. */
+export function filterPostMedia(items: any[]): Array<Record<string, unknown>> {
   if (!Array.isArray(items)) return [];
   return items
     .filter((m: any) => m.processing_status === "ready" && m.moderation_status !== "rejected" && m.moderation_status !== "flagged")
@@ -242,6 +283,7 @@ function filterPostMedia(items: any[]): Array<Record<string, unknown>> {
       id:                m.id,
       media_type:        m.media_type,
       url:               m.public_url,
+      feed_url:          m.feed_url ?? null,
       thumbnail_url:     m.thumbnail_url ?? null,
       duration_seconds:  m.duration_seconds ?? null,
       width:             m.width ?? null,
@@ -1051,7 +1093,7 @@ router.get("/posts", async (req, res) => {
       try {
         const { data: mediaRows } = await sc
           .from("post_media")
-          .select(POST_MEDIA_FEED_COLUMNS + (await stampOverlayCol(sc)))
+          .select(POST_MEDIA_FEED_COLUMNS + (await stampOverlayCol(sc)) + (await feedVariantCol(sc)))
           .in("post_id", postIds)
           .eq("processing_status", "ready")
           .neq("moderation_status", "rejected");
@@ -1207,7 +1249,7 @@ router.get("/posts", async (req, res) => {
     try {
       const { data: mediaRows } = await svc
         .from("post_media")
-        .select(POST_MEDIA_FEED_COLUMNS + (await stampOverlayCol(svc)))
+        .select(POST_MEDIA_FEED_COLUMNS + (await stampOverlayCol(svc)) + (await feedVariantCol(svc)))
         .in("post_id", globalPostIds)
         .eq("processing_status", "ready")
         .neq("moderation_status", "rejected");
@@ -1370,7 +1412,7 @@ router.get("/trips/:tripId/posts", async (req, res) => {
     try {
       const { data: mediaRows } = await tripSvc
         .from("post_media")
-        .select(POST_MEDIA_FEED_COLUMNS + (await stampOverlayCol(tripSvc)))
+        .select(POST_MEDIA_FEED_COLUMNS + (await stampOverlayCol(tripSvc)) + (await feedVariantCol(tripSvc)))
         .in("post_id", tripPostIds)
         .eq("processing_status", "ready")
         .neq("moderation_status", "rejected");
@@ -1561,7 +1603,7 @@ router.get("/posts/:postId", async (req, res) => {
   const [{ data: savedRow }, { data: rawMedia }, { count: postStampCount }, { count: liveCommentCount }, { data: myStampRow }, { data: featuredRow }, { data: authorProfile }, allowedNames] = await Promise.all([
     sc.from("post_saves").select("post_id").eq("post_id", postId).eq("user_id", user.id).maybeSingle(),
     sc.from("post_media")
-      .select("id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status" + (await stampOverlayCol(sc)))
+      .select("id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status" + (await stampOverlayCol(sc)) + (await feedVariantCol(sc)))
       .eq("post_id", postId)
       .eq("processing_status", "ready")
       .order("sort_order", { ascending: true }),
@@ -1580,12 +1622,16 @@ router.get("/posts/:postId", async (req, res) => {
   ]);
 
   // Filter out moderated items; preserve backward-compat mediaUrls field on the base object
+  // `feed_url` mirrors filterPostMedia() — see the contract note there. Detail
+  // views load the ORIGINAL, so this is projected for shape-consistency with the
+  // feed endpoints rather than because this surface should render it.
   const media = ((rawMedia ?? []) as any[])
     .filter((m: any) => m.moderation_status !== "rejected" && m.moderation_status !== "flagged")
     .map((m: any) => ({
       id:                m.id,
       media_type:        m.media_type,
       url:               m.public_url,
+      feed_url:          m.feed_url ?? null,
       thumbnail_url:     m.thumbnail_url ?? null,
       duration_seconds:  m.duration_seconds ?? null,
       width:             m.width ?? null,

@@ -20,7 +20,7 @@ import { requireUser, sendError } from '../lib/http.js';
 import { getServiceClient } from '../lib/supabase.js';
 import { processTagging } from '../services/tagging/TaggingService.js';
 import { isFlagEnabled } from '../lib/featureFlags.js';
-import { sniffMedia, processImage, computePHash } from '../lib/mediaProcessing.js';
+import { sniffMedia, processImage, computePHash, makeFeedVariant } from '../lib/mediaProcessing.js';
 
 const router = Router();
 
@@ -566,6 +566,8 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
   let measuredWidth: number | null = null;
   let measuredHeight: number | null = null;
   let computedPhash: string | null = null;
+  let feedStoragePath: string | null = null;
+  let feedUrl: string | null = null;
   if ((mediaRow as any).media_type === 'image') {
     try {
       const dl = await sc.storage.from(STORAGE_BUCKET).download(storagePath);
@@ -583,6 +585,33 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
       // Perceptual hash for near-duplicate detection. Fail-soft: null hash
       // never blocks completion — the dedup worker skips rows where phash IS NULL.
       computedPhash = await computePHash(img.buffer);
+
+      // Feed-sized derivative (migration 0208). THIS is the write that matters:
+      // post_media is what the Postcard Wall reads, and this handler — not
+      // POST /posts/media — is the production upload path for postcard media.
+      //
+      // Derived from `img.buffer`, the ALREADY-PROCESSED image, so it inherits
+      // the auto-orient and the full EXIF/GPS strip. Deriving it from `rawBuf`
+      // would silently reintroduce capture coordinates into a second stored
+      // object, which is the exact privacy defect this pipeline exists to fix.
+      //
+      // FAIL-SOFT, unlike the original processing above. A failure here leaves
+      // feed_url NULL, and NULL means "no variant — serve the original", which
+      // is precisely today's behaviour. Rejecting a completed upload because an
+      // optimisation could not be built would trade a working post for a faster
+      // one. upsert:true so a retried completion overwrites cleanly.
+      try {
+        const variant = await makeFeedVariant(img.buffer);
+        const candidatePath = `${storagePath}.feed.jpg`;
+        const { error: fErr } = await sc.storage
+          .from(STORAGE_BUCKET)
+          .upload(candidatePath, variant.buffer, { contentType: variant.mime, upsert: true });
+        if (fErr) throw new Error(fErr.message);
+        feedStoragePath = candidatePath;
+        feedUrl = `${STORAGE_BUCKET}/${candidatePath}`;
+      } catch (variantErr) {
+        req.log.warn({ err: variantErr, mediaId }, 'postcards: feed variant not built — serving original');
+      }
     } catch (err) {
       req.log.error({ err, mediaId }, 'postcards: image processing failed — completion rejected (retryable)');
       sendError(res, 'invalid_payload', 'Image could not be processed. Please re-upload.');
@@ -636,10 +665,45 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     phash:                  computedPhash,
   };
 
+  // Feed-variant columns (0208) are added only when a variant was actually
+  // built. Writing them unconditionally would set feed_url = NULL on videos and
+  // on failed derives, which is the same result but says it less clearly; more
+  // importantly, omitting them means an environment without 0208 only hits the
+  // degrade path when there is something real to lose.
+  if (feedUrl) {
+    baseUpdate.feed_storage_path = feedStoragePath;
+    baseUpdate.feed_url = feedUrl;
+  }
+
   let { error: updateErr } = await sc
     .from('post_media')
     .update(overlay ? { ...baseUpdate, stamp_overlay: overlay } : baseUpdate)
     .eq('id', mediaId);
+
+  // Graceful degrade: feed_url/feed_storage_path missing (migration 0208 not
+  // applied in this environment) — drop them and retry. The variant object is
+  // left in the bucket rather than deleted: it is addressable only through the
+  // column we just failed to write, so nothing can serve it, and applying 0208
+  // plus a backfill later can adopt it. Checked BEFORE the stamp_overlay branch
+  // because PostgREST reports only the first unknown column, so a row missing
+  // both would otherwise loop on the overlay message forever.
+  if (
+    updateErr && feedUrl &&
+    (updateErr as any).code === 'PGRST204' &&
+    typeof updateErr.message === 'string' &&
+    (updateErr.message.includes('feed_url') || updateErr.message.includes('feed_storage_path'))
+  ) {
+    req.log.warn({ err: updateErr, mediaId }, 'postcards: feed-variant columns missing — completing without them (apply migration 0208)');
+    delete baseUpdate.feed_storage_path;
+    delete baseUpdate.feed_url;
+    feedStoragePath = null;
+    feedUrl = null;
+    const retry = await sc
+      .from('post_media')
+      .update(overlay ? { ...baseUpdate, stamp_overlay: overlay } : baseUpdate)
+      .eq('id', mediaId);
+    updateErr = retry.error;
+  }
 
   // Graceful degrade: stamp_overlay column missing (migration 0129 not applied
   // in this environment) — retry without the overlay; never block the upload.
@@ -781,10 +845,18 @@ router.delete('/postcards/:id/media/:mediaId', async (req, res) => {
     return;
   }
 
-  // Remove from storage (best-effort — do not fail if storage removal fails)
+  // Remove from storage (best-effort — do not fail if storage removal fails).
+  // The 0208 feed variant goes with it: it is a derivative of this exact object
+  // and nothing else references it, so leaving it behind would be an ORPHAN
+  // OBJECT in check:media-objects' terms — wasted storage, and content believed
+  // deleted that is still fetchable. `remove` tolerates absent keys, so listing
+  // it unconditionally is safe for videos and pre-0208 rows alike.
   const storagePath = (mediaRow as any).storage_path as string;
   if (storagePath) {
-    await sc.storage.from(STORAGE_BUCKET).remove([storagePath]).then(undefined, () => {});
+    await sc.storage
+      .from(STORAGE_BUCKET)
+      .remove([storagePath, `${storagePath}.feed.jpg`])
+      .then(undefined, () => {});
   }
 
   // Re-derive parent media counts

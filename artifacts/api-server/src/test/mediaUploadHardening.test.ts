@@ -14,6 +14,7 @@ import { _setTestServiceClient } from "../lib/supabase.js";
 import postsRouter from "../routes/posts.js";
 import eventsRouter from "../routes/events.js";
 import { sweepExpiredStories } from "../routes/stories.js";
+import { FEED_DIM } from "../lib/mediaProcessing.js";
 
 let server: http.Server;
 let base: string;
@@ -161,14 +162,22 @@ describe("POST /api/media/upload — hardening", () => {
     assert.equal(r.body.processed, true);
     assert.equal(r.body.width, 900);
     assert.ok(r.body.thumbnailUrl, "server thumbnail URL expected");
-    // two storage writes: main + .thumb.jpg
-    assert.equal(client._uploads.length, 2);
-    const main = client._uploads.find((u: any) => !u.path.includes(".thumb."));
+    assert.ok(r.body.feedUrl, "server feed-variant URL expected (0208)");
+    // three storage writes: main + .thumb.jpg + .feed.jpg
+    assert.equal(client._uploads.length, 3);
+    const main = client._uploads.find((u: any) => !u.path.includes(".thumb.") && !u.path.includes(".feed."));
     const meta = await sharp(main.buf).metadata();
     assert.equal(meta.exif, undefined, "stored bytes must carry NO EXIF/GPS");
     const thumb = client._uploads.find((u: any) => u.path.includes(".thumb."));
     const tMeta = await sharp(thumb.buf).metadata();
     assert.ok(Math.max(tMeta.width!, tMeta.height!) <= 400);
+    // The feed variant is a SECOND stored copy of the user's photo, so it needs
+    // the same privacy guarantee as the original — assert it, do not assume it
+    // from the fact that it was derived from the processed buffer.
+    const feed = client._uploads.find((u: any) => u.path.includes(".feed."));
+    const fMeta = await sharp(feed.buf).metadata();
+    assert.equal(fMeta.exif, undefined, "feed variant must carry NO EXIF/GPS either");
+    assert.ok(Math.max(fMeta.width!, fMeta.height!) <= FEED_DIM);
   });
 
   it("rejects an oversized video without uploading", async () => {

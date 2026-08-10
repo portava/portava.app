@@ -88,6 +88,11 @@ export interface Destination {
 export interface PostMedia {
   id: ID;
   url: string;
+  /**
+   * Feed-sized derivative (~1500px longest edge), or NULL when none exists.
+   * See PostcardMediaItem.feed_url — same contract, camelCase surface.
+   */
+  feedUrl?: string | null;
   kind: 'image' | 'video';
   /** 0..1 estimated brightness; >0.62 triggers caption-below contrast fallback. */
   brightness?: number;
@@ -469,6 +474,15 @@ export interface PostcardMediaItem {
   id: string;
   media_type: 'image' | 'video';
   url: string;
+  /**
+   * Feed-sized derivative (~1500px longest edge), or NULL when none exists.
+   *
+   * NULL is normal, not an error: every media item uploaded before migration
+   * 0208, every video, and any item whose derive failed has none. Render
+   * `feed_url ?? url` — never construct this path from `url`, because for those
+   * items the object does not exist and the request 404s.
+   */
+  feed_url?: string | null;
   thumbnail_url: string | null;
   duration_seconds: number | null;
   width: number | null;

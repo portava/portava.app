@@ -68,6 +68,38 @@ export interface ProcessedImage {
 export const MAX_IMAGE_DIM = 2048;
 /** Thumbnail longest edge. */
 export const THUMBNAIL_DIM = 400;
+/**
+ * Feed-variant longest edge.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * PostcardTile requests `?width=500`, but that parameter never reaches Storage:
+ * `appStorageUrlInfo()` (lib/mediaUrl.ts) matches on `url.pathname` only and
+ * documents "Query strings are ignored", and `/api/media/sign` runs every URL
+ * through it before signing — so the param is stripped before the signed URL
+ * exists. Since the buckets went private the Postcard Wall has been fetching
+ * full 2048px originals and scaling them on-device.
+ *
+ * Fixed with a real derived asset rather than by forwarding the query param,
+ * because a stored variant does not depend on Supabase's image-transform
+ * feature being enabled, and it makes the contract an actual object that either
+ * exists or does not.
+ *
+ * WHY 1500
+ * --------
+ * The tile asks for ~500pt. Phones in use are 2x or 3x DPR, so the densest
+ * common case needs 500 × 3 = 1500 physical px. 1500 covers it exactly.
+ *   - 1024 (2x only) is visibly soft on every 3x device.
+ *   - 2048 is the status quo this replaces.
+ *   - 1500² / 2048² ≈ 0.54, so roughly 46% fewer pixels than the original at
+ *     the same quality setting.
+ * Quality is deliberately held at the same 82 the original uses, so the saving
+ * has exactly one axis (dimension) and this change cannot be confused with a
+ * compression regression.
+ *
+ * The original is kept and remains what detail and fullscreen views load.
+ */
+export const FEED_DIM = 1500;
 
 /**
  * Re-encode an image: auto-orient (bakes EXIF orientation into pixels), cap
@@ -108,6 +140,26 @@ export async function makeThumbnail(processed: Buffer): Promise<ProcessedImage> 
   const { data, info } = await sharp(processed)
     .resize({ width: THUMBNAIL_DIM, height: THUMBNAIL_DIM, fit: "inside", withoutEnlargement: true })
     .jpeg({ quality: 75, mozjpeg: true })
+    .toBuffer({ resolveWithObject: true });
+  return { buffer: data, width: info.width, height: info.height, mime: "image/jpeg", ext: "jpg" };
+}
+
+/**
+ * Feed-sized variant (longest edge FEED_DIM) from an already-processed image.
+ *
+ * Same shape as makeThumbnail: it takes the ALREADY-PROCESSED buffer, so it
+ * inherits the auto-orient and the full EXIF/GPS strip rather than re-deriving
+ * them from the raw upload. Never call this with the raw buffer — that would
+ * reintroduce the metadata this pipeline exists to remove.
+ *
+ * `withoutEnlargement` means a source smaller than FEED_DIM is re-encoded at its
+ * own size rather than upscaled, so a small original yields a small variant
+ * instead of a blurry large one.
+ */
+export async function makeFeedVariant(processed: Buffer): Promise<ProcessedImage> {
+  const { data, info } = await sharp(processed)
+    .resize({ width: FEED_DIM, height: FEED_DIM, fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 82, mozjpeg: true })
     .toBuffer({ resolveWithObject: true });
   return { buffer: data, width: info.width, height: info.height, mime: "image/jpeg", ext: "jpg" };
 }

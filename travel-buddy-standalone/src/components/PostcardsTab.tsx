@@ -198,7 +198,14 @@ function PostcardTile({
   const firstReady = allMedia.find((m) => m.processing_status === 'ready');
   const firstAny = allMedia[0];
   const displayItem = firstReady ?? firstAny;
-  const displayUri = firstReady?.thumbnail_url ?? firstReady?.url ?? firstAny?.thumbnail_url ?? firstAny?.url ?? card.mediaUrl;
+  // Preference order per item: thumbnail (400px, smallest that still reads at
+  // this size) → 0208 feed variant (~1500px) → original. feed_url is NULL for
+  // pre-0208 uploads, videos and failed derives, so it is skipped rather than
+  // requested-and-404'd; the chain below already degrades to the original.
+  const displayUri =
+    firstReady?.thumbnail_url ?? firstReady?.feed_url ?? firstReady?.url ??
+    firstAny?.thumbnail_url ?? firstAny?.feed_url ?? firstAny?.url ??
+    card.mediaUrl;
   const isVideo = (firstReady ?? firstAny)?.media_type === 'video' || card.hasVideo;
   const hasPending = allMedia.length > 0 && !firstReady && allMedia.some((m) => m.processing_status === 'pending');
   const hasFailed = allMedia.length > 0 && !firstReady && allMedia.every((m) => m.processing_status === 'failed');

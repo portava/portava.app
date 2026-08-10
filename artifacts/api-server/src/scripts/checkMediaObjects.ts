@@ -16,6 +16,10 @@
  *
  *   DANGLING ROW    a post_media row whose storage object is absent
  *                   → users see a broken image
+ *                   Covers BOTH stored objects: the original (storage_path) and
+ *                   the 0208 feed variant (feed_storage_path). A NULL
+ *                   feed_storage_path is not a fault — it is the documented
+ *                   "no variant, serve the original" case.
  *   ORPHAN OBJECT   a Storage object no row references
  *                   → wasted storage, and content believed deleted that is
  *                     still fetchable by URL
@@ -83,11 +87,28 @@ interface DanglingRow {
   processing_status: string | null;
   post_status: string | null;
   visibility: string | null;
+  /** Which stored object is missing: the original, or the 0208 feed variant. */
+  kind: string;
 }
+
+// Migration 0208 added post_media.feed_storage_path / feed_url. Probed rather
+// than assumed: this script runs against whatever project SUPABASE_URL names,
+// and referencing a column that does not exist would throw — which this script
+// would surface as a crash, not as a clean CANNOT-RUN. Absent column simply
+// means there are no variants to reconcile.
+const [feedColRow] = await liveQuery<{ present: boolean }>(`
+  select exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public'
+       and table_name   = 'post_media'
+       and column_name  = 'feed_storage_path'
+  ) as present
+`);
+const hasFeedVariants = feedColRow?.present === true;
 
 const dangling = await liveQuery<DanglingRow>(`
   select pm.id, pm.user_id, pm.post_id, pm.storage_bucket, pm.storage_path,
-         pm.processing_status, po.post_status, po.visibility
+         pm.processing_status, po.post_status, po.visibility, 'original' as kind
     from post_media pm
     left join posts po on po.id = pm.post_id
    where pm.storage_path is not null
@@ -99,6 +120,33 @@ const dangling = await liveQuery<DanglingRow>(`
    order by pm.created_at
 `);
 
+// A feed variant whose object is missing is the SAME user-visible defect as a
+// missing original: feed_url is non-null, so the client is told the variant
+// exists and renders it, and gets a broken image. NULL feed_url is the
+// documented "no variant, use the original" case and is correctly not matched
+// here — only a row that ADVERTISES a variant it does not have is a fault.
+const danglingFeed = hasFeedVariants
+  ? await liveQuery<DanglingRow>(`
+      select pm.id, pm.user_id, pm.post_id, pm.storage_bucket, pm.feed_storage_path as storage_path,
+             pm.processing_status, po.post_status, po.visibility, 'feed variant' as kind
+        from post_media pm
+        left join posts po on po.id = pm.post_id
+       where pm.feed_storage_path is not null
+         and not exists (
+           select 1 from storage.objects o
+            where o.bucket_id = coalesce(pm.storage_bucket, 'post-media')
+              and o.name = pm.feed_storage_path
+         )
+       order by pm.created_at
+    `)
+  : [];
+
+dangling.push(...danglingFeed);
+
+// Orphan detection must know about variants too, or every feed variant ever
+// written counts as an orphan — which would turn a real signal ("content
+// believed deleted is still fetchable") into permanent noise proportional to
+// how well the feature is working.
 const [orphanRow] = await liveQuery<{ orphans: string }>(`
   select count(*) as orphans
     from storage.objects o
@@ -107,6 +155,10 @@ const [orphanRow] = await liveQuery<{ orphans: string }>(`
        select 1 from post_media pm
         where pm.storage_path = o.name
      )
+     ${hasFeedVariants ? `and not exists (
+       select 1 from post_media pm
+        where pm.feed_storage_path = o.name
+     )` : ""}
 `);
 const orphanCount = Number(orphanRow?.orphans ?? 0);
 
@@ -136,7 +188,7 @@ const shown = dangling.slice(0, 20);
 for (const d of shown) {
   const live = d.post_status === "published" && d.visibility === "public" ? "VISIBLE" : "hidden ";
   console.error(
-    `   [${live}] media=${d.id} user=${d.user_id ?? "?"} status=${d.processing_status ?? "?"} path=${d.storage_bucket ?? "post-media"}/${d.storage_path}`,
+    `   [${live}] media=${d.id} (${d.kind}) user=${d.user_id ?? "?"} status=${d.processing_status ?? "?"} path=${d.storage_bucket ?? "post-media"}/${d.storage_path}`,
   );
 }
 if (dangling.length > shown.length) {
