@@ -57,7 +57,13 @@ describe("processImage — the EXIF/GPS strip", () => {
   });
 
   it("caps the longest edge at MAX_IMAGE_DIM without enlarging small images", async () => {
-    const big = await sharp({ create: { width: 4000, height: 2000, channels: 3, background: "#222" } }).jpeg().toBuffer();
+    // Source dimensions are DERIVED from MAX_IMAGE_DIM, not hardcoded. They used
+    // to be a literal 4000×2000, which was oversized against the old 2048 cap and
+    // is undersized against the current 4096 one — so raising the cap turned this
+    // from a cap test into a no-op that happened to fail loudly. Deriving it means
+    // the next cap change cannot quietly stop exercising the resize.
+    const bigW = MAX_IMAGE_DIM + 500;
+    const big = await sharp({ create: { width: bigW, height: Math.round(bigW / 2), channels: 3, background: "#222" } }).jpeg().toBuffer();
     const out = await processImage(big, sniffMedia(big)!);
     assert.equal(Math.max(out.width, out.height), MAX_IMAGE_DIM);
     const small = await sharp({ create: { width: 100, height: 80, channels: 3, background: "#222" } }).jpeg().toBuffer();

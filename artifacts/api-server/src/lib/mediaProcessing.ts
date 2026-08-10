@@ -64,8 +64,40 @@ export interface ProcessedImage {
   ext: string;
 }
 
-/** Longest-edge cap for stored originals. */
-export const MAX_IMAGE_DIM = 2048;
+/**
+ * Longest-edge cap for stored originals.
+ *
+ * WHY 4096 AND NOT 3840
+ * ---------------------
+ * 3840 is the 4K UHD display width and is the obvious-looking choice, but it is
+ * the wrong cap for a photo app, because it lands just BELOW the resolution
+ * almost every real source arrives at:
+ *
+ *   iPhone / Galaxy 12MP   4032 × 3024
+ *   Pixel 12.2MP           4080 × 3072
+ *
+ * Both exceed 3840 and both fit under 4096. A 3840 cap would therefore resample
+ * essentially every phone photo the app receives — paying a full resize pass and
+ * the softening that comes with it — to save 4.8% on the long edge. 4096 passes
+ * them through at native resolution: `fit: "inside"` + `withoutEnlargement` makes
+ * the resize a no-op, so the pixels are never resampled at all. The EXIF strip
+ * and auto-orient still happen, because those come from the re-encode, not the
+ * resize.
+ *
+ * 4096 also keeps the ladder on clean doublings — 4096 → 2048 was the old cap →
+ * 1500 feed → 400 thumb — and leaves genuine zoom headroom on a 4K display for
+ * the detail and fullscreen views, which load this asset.
+ *
+ * COST, STATED PLAINLY: stored originals grow up to 4096²/2048² = 4× in pixels.
+ * That is a storage and per-upload CPU cost, not a bandwidth cost for viewers —
+ * feeds read the 400px thumbnail and the 1500px variant, and only detail views
+ * fetch this. It is also NOT an upload-size cost: see MAX_UPLOAD_IMAGE_BYTES.
+ *
+ * Quality stays at 82 (below). Raising the cap and the quality together would
+ * multiply stored bytes twice over and make any regression — in perceived
+ * quality or in storage spend — impossible to attribute to one of them.
+ */
+export const MAX_IMAGE_DIM = 4096;
 /** Thumbnail longest edge. */
 export const THUMBNAIL_DIM = 400;
 /**

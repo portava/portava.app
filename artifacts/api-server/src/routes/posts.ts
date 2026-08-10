@@ -52,6 +52,20 @@ const router = Router();
 
 const STORAGE_BUCKET = "post-media";
 /** Pre-processing size caps for /media/upload (this path had NONE — audit). */
+// Cap on the INBOUND upload, which is a different thing from MAX_IMAGE_DIM
+// (mediaProcessing.ts) — that one caps what the server keeps after re-encoding.
+// Raising MAX_IMAGE_DIM 2048 → 4096 does NOT move this number: the client has
+// always uploaded the full-resolution source, and the old 2048 cap only decided
+// how much of it survived. Inbound bytes are unchanged.
+//
+// Still adequate at 4096. The dominant source is a 12MP phone photo, and the
+// pickers re-encode at CAPTURE_QUALITY = 0.92, which lands at roughly 4–8 MB.
+// The case that would not fit is a 48MP source (8064 × 6048) at that quality,
+// around 15–18 MB — reachable only with HEIF-Max / ProRAW deliberately enabled,
+// and it was equally unable to fit before this change. If that becomes common
+// the number to move to is 25 MB, chosen to clear 48MP-at-q92 with headroom;
+// not raised here, because nothing observed needs it and a larger cap is a
+// larger memory footprint per concurrent upload.
 const MAX_UPLOAD_IMAGE_BYTES = 15 * 1024 * 1024;   // 15 MB
 const MAX_UPLOAD_VIDEO_BYTES = 100 * 1024 * 1024;  // 100 MB
 const ALLOWED_MIME: Record<string, string> = {
