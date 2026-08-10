@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, writeFileSync, readdirSync, rmSync } from "fs";
 import path from "path";
 import glob from "fast-glob";
 import chokidar from "chokidar";
@@ -24,6 +24,31 @@ export function mockupPreviewPlugin(): Plugin {
 
   function getGeneratedModuleAbsPath(): string {
     return path.join(root, GENERATED_MODULE);
+  }
+
+  // Extensionless imports of the generated module (`from "./.generated/mockup-components"`)
+  // are resolved by Vite's default extension order, which tries .js/.mjs before .ts. If a
+  // stale sibling with a different extension is ever left on disk (e.g. from a prior
+  // plugin version that emitted CommonJS), it silently shadows the current .ts output and
+  // breaks every preview route with no build error. Delete any such sibling on every
+  // refresh so only the canonical .ts file can ever be resolved.
+  function removeStaleGeneratedSiblings(): void {
+    const generatedDir = path.dirname(getGeneratedModuleAbsPath());
+    const canonicalName = path.basename(GENERATED_MODULE);
+    const stem = canonicalName.slice(0, -path.extname(canonicalName).length);
+    let entries: string[];
+    try {
+      entries = readdirSync(generatedDir);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry === canonicalName) continue;
+      const entryStem = entry.slice(0, entry.indexOf("."));
+      if (entryStem === stem) {
+        rmSync(path.join(generatedDir, entry), { force: true });
+      }
+    }
   }
 
   function isMockupFile(absolutePath: string): boolean {
@@ -88,6 +113,7 @@ export function mockupPreviewPlugin(): Plugin {
     refreshInFlight = true;
     let changed = false;
     try {
+      removeStaleGeneratedSiblings();
       const components = await discoverComponents();
       const newSource = generateSource(components);
       if (newSource !== currentSource) {
