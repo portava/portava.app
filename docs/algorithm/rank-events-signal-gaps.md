@@ -311,3 +311,39 @@ select coalesce(item_kind, content_type) as kind,
        ) as orphaned_posts
   from rank_events re group by 1 order by rows desc;
 ```
+
+### 2026-08-10 — a second deletion added 18,404 more orphans
+
+Migration `0207` deleted the 21 `source='seed_script'` posts on account
+`92602b6c` (owner-approved; they rendered as broken images because their
+`media_urls` pointed at objects that were never uploaded). `rank_events` was
+deliberately **not** touched — no row was deleted or modified — but those 21
+posts were referenced by 18,404 rows, every one of which is now orphaned.
+
+Measured with the query above, immediately before and after:
+
+| | before | after | change |
+|---|---:|---:|---:|
+| post-referencing rows | 131,577 | 131,577 | 0 |
+| …orphaned (no such post) | 74,452 | **92,856** | **+18,404** |
+| …as share of post-referencing | 56.6% | **70.6%** | +14.0 pt |
+
+**Roughly seven in ten post-referencing ranking events now point at a post that
+does not exist.** The concentration noted above is now worse, not better: 38
+seed posts across two deletions (17 from 2026-08-09, 21 from 2026-08-10) account
+for essentially the entire orphan population, and both batches were
+machine-generated content served to a handful of viewers.
+
+What this means for the feed work, stated plainly:
+
+- **Training or evaluating on this corpus without filtering will over-weight
+  seed content.** The orphaned rows are not uniformly distributed; they come
+  from a tiny number of items that were served heavily.
+- **A join to `posts` now drops 70.6% of post-referencing rows.** Any pipeline
+  that inner-joins will silently lose most of its data and look like it is
+  working.
+- **The standing-orphan figure is still 0.** Every orphan here is traceable to
+  one of the two deliberate seed deletions. There is no mystery population.
+
+Still a ranking decision, not a cleanup one: sweep, tombstone, or leave. This
+note records the number so the decision is made against the real one.
