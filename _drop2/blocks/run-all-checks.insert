@@ -1,6 +1,0 @@
-# Reads only files on disk; reaches no database, so it needs no credentials and
-# deliberately does not import src/lib/ciSupabaseGuard.mjs. It is what makes the
-# guard's coverage a fact rather than a claim: the guard is OPT-IN, and this
-# asserts that every file under src/ that can reach Supabase either opted in or
-# is on an exempt list, in source, with a written reason per entry.
-run_check "check:guard-coverage" pnpm run check:guard-coverage

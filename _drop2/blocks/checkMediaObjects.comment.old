@@ -1,5 +1,0 @@
-// Marks this file as a MODULE rather than a global script. Without it, every
-// top-level `const` here shares one scope with every other import-less script
-// under src/scripts/, and two of them declaring `ACCESS_TOKEN` is a typecheck
-// error in whichever landed second — a collision this file caused on first
-// write, against checkRankEventsSurfaces.ts.

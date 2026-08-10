@@ -72,3 +72,10 @@ recovery-backups/
 # Run-local progress, never shared state — committing it would make another
 # machine skip rows it has not actually processed.
 .backfill-feed-variants.json
+
+# Drop scaffolding — apply scripts stage backups here; Replit publish commits the whole tree
+.ci-backup/
+.drop2-backup/
+_ci/
+_drop2/
+*.pre-fix
