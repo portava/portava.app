@@ -105,13 +105,14 @@ const ALLOWLIST_PATH = join(__dirname, 'check-avatar-icon-sizing.allowlist.json'
  * Raised from 0 → 4 on 2026-08-09 (same day, later pass) when the DOT_BAND
  * was added: the four intentional one-offs in the dot range (StampItBurst
  * burst particles at 5px/6px, AvailabilityCard 9px, TravelerMapLayer 11px)
- * are explicitly allowlisted as documented one-offs — not token candidates.
- *
- * Lowered from 7 → 4 on 2026-08-09 after migrating the three decorative ring
- * sizes (CrewMapSection 70/110px, PassportMarks 78px) to named constants so
- * the scanner no longer sees raw literals for those values.
+ * were temporarily allowlisted. All seven are now migrated:
+ *   - StampItBurst 5px/6px → inkDotSize() helper (no literal pair detected)
+ *   - AvailabilityCard 9px → dot.s8 (8px, nearest token)
+ *   - TravelerMapLayer 11px → dot.s12 (12px, nearest token)
+ *   - CrewMapSection 70/110px, PassportMarks 78px → named ring constants
+ * Allowlist is now empty. Lowered 7 → 0 on 2026-08-09 after full migration.
  */
-const ALLOWLIST_CEILING = 4;
+const ALLOWLIST_CEILING = 0;
 
 /** Files that ARE the token/component definitions — a literal here is the point. */
 const ALLOWED_FILES = new Set([
