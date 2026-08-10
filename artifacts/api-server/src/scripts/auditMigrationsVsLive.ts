@@ -286,10 +286,14 @@ interface LiveSchema {
   enums: Set<string>;
   enumValues: Set<string>; // "enum.value"
   triggers: Set<string>; // "table.trigger"
+  rlsEnabled: Set<string>; // tables with pg_class.relrowsecurity = true
+  tableGrants: Set<string>; // "table.grantee.privilege"
+  routineGrants: Set<string>; // "function.grantee" (EXECUTE only)
 }
 
 async function fetchLiveSchema(): Promise<LiveSchema> {
-  const [rels, cols, fns, idxs, pols, enums, trgs] = await Promise.all([
+  const [rels, cols, fns, idxs, pols, enums, trgs, rls, tgrants, rgrants] =
+    await Promise.all([
     liveQuery<{ name: string }>(
       `select c.relname as name from pg_class c
        join pg_namespace n on n.oid = c.relnamespace
@@ -326,6 +330,29 @@ async function fetchLiveSchema(): Promise<LiveSchema> {
        from pg_trigger tr join pg_class c on c.oid = tr.tgrelid
        where not tr.tgisinternal`,
     ),
+    // RLS is a table FLAG, not an object, which is why it was invisible here
+    // until now: a table can sit with RLS off and every object claim still
+    // resolve. relrowsecurity is the only thing that answers "did the ENABLE
+    // actually happen" — including when the ENABLE was inside a conditional
+    // block whose guard was false (see 2070 / post_event_links).
+    liveQuery<{ name: string }>(
+      `select c.relname as name from pg_class c
+       join pg_namespace n on n.oid = c.relnamespace
+       where n.nspname = 'public' and c.relkind in ('r','p') and c.relrowsecurity`,
+    ),
+    liveQuery<{ t: string; g: string; p: string }>(
+      `select table_name as t, grantee as g, privilege_type as p
+       from information_schema.role_table_grants where table_schema = 'public'`,
+    ),
+    // Table grants and ROUTINE grants are different catalogs. 18 of the 19
+    // GRANT statements in src/migrations/ are GRANT EXECUTE ON FUNCTION, which
+    // role_table_grants cannot see at all — modelling only table grants would
+    // have covered 1 of 19 while reporting "GRANT" as a covered claim type.
+    liveQuery<{ r: string; g: string }>(
+      `select routine_name as r, grantee as g
+       from information_schema.role_routine_grants
+       where routine_schema = 'public' and privilege_type = 'EXECUTE'`,
+    ),
   ]);
 
   // Everything is lower-cased for comparison: unquoted SQL identifiers fold to
@@ -341,6 +368,9 @@ async function fetchLiveSchema(): Promise<LiveSchema> {
     enums: new Set(enums.map((r) => lc(r.e))),
     enumValues: new Set(enums.map((r) => lc(`${r.e}.${r.v}`))),
     triggers: new Set(trgs.map((r) => lc(`${r.t}.${r.g}`))),
+    rlsEnabled: new Set(rls.map((r) => lc(r.name))),
+    tableGrants: new Set(tgrants.map((r) => lc(`${r.t}.${r.g}.${r.p}`))),
+    routineGrants: new Set(rgrants.map((r) => lc(`${r.r}.${r.g}`))),
   };
 }
 
@@ -356,7 +386,10 @@ interface Claim {
     | "enum"
     | "enumvalue"
     | "trigger"
-    | "view";
+    | "view"
+    | "rls"
+    | "grant"
+    | "grantfn";
   /** allowlist / report key, e.g. "column:feature_flags.key" */
   key: string;
   label: string;
@@ -592,6 +625,68 @@ function parseMigration(sql: string): Claim[] {
     },
   );
 
+  // ── ALTER TABLE … ENABLE ROW LEVEL SECURITY ─────────────────────────────────
+  //
+  // Deliberately matched in the RAW (comment-stripped) text, which means it also
+  // matches inside EXECUTE '…' strings. That is the point rather than an
+  // accident: 2070 enables RLS exclusively through
+  // `EXECUTE 'ALTER TABLE public.X ENABLE ROW LEVEL SECURITY'` inside
+  // to_regclass-guarded DO blocks, so a parser that only saw top-level
+  // statements would claim nothing for the twelve tables that migration exists
+  // to protect — including post_event_links, the case that motivated this.
+  //
+  // Claiming from inside a conditional is safe because the diff below refuses
+  // to report a claim whose table does not exist: "declared for a table nobody
+  // created" is not drift.
+  scan(
+    new RegExp(
+      String.raw`alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?${qualIdent}\s+enable\s+row\s+level\s+security`,
+      "gi",
+    ),
+    (m) => add("rls", name(m), `row level security on ${name(m)}`),
+  );
+
+  // ── GRANT <privs> ON [TABLE] <table> TO <role> ──────────────────────────────
+  // ON FUNCTION / SCHEMA / SEQUENCE / ALL TABLES are excluded here and the
+  // function form is handled separately below.
+  scan(
+    new RegExp(
+      String.raw`grant\s+([a-z, ]+?)\s+on\s+(?!function|schema|sequence|all)(?:table\s+)?${qualIdent}\s+to\s+([a-z_][a-z0-9_]*)`,
+      "gi",
+    ),
+    (m) => {
+      const privsRaw = m[1].toLowerCase();
+      const table = name(m, 2);
+      const grantee = m[4].toLowerCase();
+      const privs = /\ball\b/.test(privsRaw)
+        ? ["select", "insert", "update", "delete", "truncate", "references", "trigger"]
+        : privsRaw.split(",").map((x) => x.trim()).filter(Boolean);
+      for (const priv of privs) {
+        add(
+          "grant",
+          `${table}.${grantee}.${priv}`,
+          `grant ${priv} on ${table} to ${grantee}`,
+        );
+      }
+    },
+  );
+
+  // ── GRANT EXECUTE ON FUNCTION <fn>(<args>) TO <role> ────────────────────────
+  // Keyed by function NAME only, matching how the "function" claim kind is keyed
+  // (the live side reads pg_proc.proname). Overloads therefore collapse to one
+  // claim; that is a known imprecision, stated rather than hidden.
+  scan(
+    new RegExp(
+      String.raw`grant\s+execute\s+on\s+function\s+${qualIdent}\s*\([^)]*\)\s*to\s+([a-z_][a-z0-9_]*)`,
+      "gi",
+    ),
+    (m) => {
+      const fn = name(m, 1);
+      const grantee = m[3].toLowerCase();
+      add("grantfn", `${fn}.${grantee}`, `grant execute on ${fn}() to ${grantee}`);
+    },
+  );
+
   return claims;
 }
 
@@ -624,6 +719,27 @@ function isMissing(claim: Claim, live: LiveSchema): boolean {
       return !live.enumValues.has(key);
     case "trigger":
       return !live.triggers.has(key);
+    case "rls": {
+      // THE DISCRIMINATION THAT MAKES THIS CLAIM TYPE USABLE. A great many RLS
+      // claims come from conditional blocks (`IF to_regclass(...) IS NOT NULL`,
+      // `EXCEPTION WHEN undefined_table`) written to be safe on environments
+      // where the table does not exist. Reporting those as drift would flood
+      // the output with statements that were correctly skipped and drown the
+      // one case that matters. Absent table → not drift; the missing TABLE is
+      // reported separately by its own claim if a migration declares it.
+      if (!live.relations.has(key)) return false;
+      return !live.rlsEnabled.has(key);
+    }
+    case "grant": {
+      const [table] = key.split(".");
+      if (!live.relations.has(table)) return false;
+      return !live.tableGrants.has(key);
+    }
+    case "grantfn": {
+      const [fn] = key.split(".");
+      if (!live.functions.has(fn)) return false;
+      return !live.routineGrants.has(key);
+    }
   }
 }
 
