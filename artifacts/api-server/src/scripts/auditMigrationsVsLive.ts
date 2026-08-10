@@ -31,6 +31,12 @@
  *   vs the live schema (e.g. feature_flags.key → flag).
  */
 
+// THE CHOKEPOINT. Side-effect import, deliberately FIRST: it asserts this
+// process is pointed at the sanctioned non-production Supabase project
+// before any client is constructed. Not skippable by editing workflow YAML.
+// See src/lib/ciSupabaseGuard.mjs and docs/ci/BOOTSTRAP.md.
+import "../lib/ciSupabaseGuard.mjs";
+
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

@@ -240,6 +240,12 @@
  * exactly this: exit 0 AND the `GATE live_pulse: PERMITTED` line present.
  */
 
+// THE CHOKEPOINT. Side-effect import, deliberately FIRST: it asserts this
+// process is pointed at the sanctioned non-production Supabase project
+// before any client is constructed. Not skippable by editing workflow YAML.
+// See src/lib/ciSupabaseGuard.mjs and docs/ci/BOOTSTRAP.md.
+import "../lib/ciSupabaseGuard.mjs";
+
 import { randomUUID } from "node:crypto";
 
 /**

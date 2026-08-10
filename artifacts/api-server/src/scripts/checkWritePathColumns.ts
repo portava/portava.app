@@ -59,6 +59,12 @@
  * Exit code 2 → environment / API error
  */
 
+// THE CHOKEPOINT. Side-effect import, deliberately FIRST: it asserts this
+// process is pointed at the sanctioned non-production Supabase project
+// before any client is constructed. Not skippable by editing workflow YAML.
+// See src/lib/ciSupabaseGuard.mjs and docs/ci/BOOTSTRAP.md.
+import "../lib/ciSupabaseGuard.mjs";
+
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, dirname, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";

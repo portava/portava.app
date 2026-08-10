@@ -39,6 +39,13 @@
  * Exit 2 → credentials missing (cannot tell; deliberately not "pass")
  */
 
+// THE CHOKEPOINT. Side-effect import, deliberately first: it asserts this
+// process is pointed at the sanctioned non-production Supabase project
+// before any client is constructed. ES module imports are hoisted, so this
+// runs before the process.env reads below whatever its textual position.
+// See src/lib/ciSupabaseGuard.mjs and docs/ci/BOOTSTRAP.md.
+import "../lib/ciSupabaseGuard.mjs";
+
 // Marks this file as a MODULE rather than a global script. Without it, every
 // top-level `const` here shares one scope with every other import-less script
 // under src/scripts/, and two of them declaring `ACCESS_TOKEN` is a typecheck

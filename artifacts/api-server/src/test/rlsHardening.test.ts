@@ -16,6 +16,12 @@
  * Run: node --import tsx/esm --env-file-if-exists=.env --test src/test/rlsHardening.test.ts
  */
 
+// THE CHOKEPOINT. Side-effect import, deliberately FIRST: it asserts this
+// process is pointed at the sanctioned non-production Supabase project
+// before any client is constructed. Not skippable by editing workflow YAML.
+// See src/lib/ciSupabaseGuard.mjs and docs/ci/BOOTSTRAP.md.
+import "../lib/ciSupabaseGuard.mjs";
+
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
