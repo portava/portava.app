@@ -214,6 +214,25 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'the point: the cache-dominance figure it reports is meaningless against an empty CI project.',
   },
   {
+    file: 'src/scripts/auditMediaUrlShapes.ts',
+    reason:
+      'URL-SHAPE HISTOGRAM of the durable media URL columns, for the upload-consolidation question of whether ' +
+      'converting the two writers that still mint absolute public storage URLs is the whole job or only half ' +
+      'of it. Everything it sends, in full: FIVE Management API statements, all SELECTs, one per column — ' +
+      '`events.cover_url`, `trips.cover_url`, `post_media.public_url`, `post_media.feed_url`, and ' +
+      '`unnest(posts.media_urls)`. Each has the identical form `SELECT <literal> AS col, CASE … END AS ' +
+      'url_shape, count(*)::text AS n FROM (SELECT <column> AS v FROM <table>) t GROUP BY 1,2` — the column is ' +
+      'consumed by a CASE inside SQL and never appears in a select list, so the result set is (column, shape, ' +
+      'count) triples and NO URL VALUE CROSSES THE WIRE. That is deliberate and structural: these URLs carry ' +
+      'user ids, post ids and filenames, and a log line or CI artifact holding them is itself a disclosure — ' +
+      'the same rule auditStorageExif.ts applies to coordinates. No INSERT, UPDATE, DELETE or DDL; no ' +
+      '.insert/.update/.upsert/.delete/.rpc; no Storage call of any kind; no --apply flag and no code path ' +
+      'that could take one. Auditing PRODUCTION is the point — the legacy corpus IS the measurement, and a ' +
+      'census of the non-production project would say nothing about it, which is precisely the defect that ' +
+      'voided the EXIF census tag (fact layer §7.3, listed for re-run in §10.3). The script prints the project ' +
+      'ref it queried so the result can carry a valid [DB <date> · <project>] tag.',
+  },
+  {
     file: 'src/scripts/auditStorageExif.ts',
     reason:
       'EXIF/GPS census of the media buckets. Everything it sends, in full: (1) bucket ENUMERATION — GET ' +

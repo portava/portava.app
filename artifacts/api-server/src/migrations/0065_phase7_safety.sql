@@ -37,8 +37,32 @@ ALTER TABLE feature_flags ADD COLUMN IF NOT EXISTS metadata jsonb;
 
 -- ── Emergency feature flags ──────────────────────────────────────────────────
 -- These are kill-switches for safety incidents.
--- Routes gate on these flags and fail-open (feature stays ON) on DB errors
--- so a DB outage never silently locks users out of the app.
+--
+-- SUPERSEDED 2026-08-10 (commit c89f09a77). The two lines below describe
+-- behaviour the code NO LONGER HAS. They are kept, not deleted, because they
+-- record a deliberate trade-off and the reversal of it should be visible at the
+-- place a reader meets the original:
+--
+--   > Routes gate on these flags and fail-open (feature stays ON) on DB errors
+--   > so a DB outage never silently locks users out of the app.
+--
+-- That was a real choice — "users keep working during an outage" preferred over
+-- "the stop holds during an outage" — and it was reversed on purpose, not
+-- corrected as an oversight. A kill switch inverts the meaning of every value:
+-- `disable_x = true` means STOP, so false-on-error means "do not stop", and the
+-- switch disengaged exactly when an operator was reaching for it.
+--
+-- Current behaviour: the eleven converted stops are read through
+-- `isKillSwitchEngaged` (lib/featureFlags.ts), which ENGAGES on a query error
+-- and does NOT engage on a missing row — an absent flag means no stop is
+-- configured, so unseeded flags are not outages. `isFlagEnabled` is unchanged
+-- and still returns false on error, which remains correct for capability gates.
+--
+-- The four freeze_* rows below are NOT covered by any of this: nothing in the
+-- repository reads them, so they neither fail open nor fail closed. Either a
+-- reader is written or they are removed from this seed; until then they are
+-- operator-visible switches that do nothing. See scripts/check-flag-polarity.mjs
+-- (INERT_SEEDED_FLAGS) for the recorded decision.
 INSERT INTO feature_flags (flag, enabled, description) VALUES
   ('disable_unknown_message_requests', false, 'Emergency: block DMs/message-requests from users with no shared context'),
   ('disable_new_event_creation',       false, 'Emergency: prevent any new event/meetup creation'),
