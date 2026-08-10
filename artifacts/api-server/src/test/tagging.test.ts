@@ -79,6 +79,7 @@ function makeClient(store: Record<string, Row[]> = {}, opts: { userId?: string }
         filters.push((r) => String(r[col] ?? '').toLowerCase().startsWith(prefix));
         return b;
       },
+      is(col: string, val: unknown) { filters.push((r) => (r[col] ?? null) === val); return b; },
       gte(col: string, val: string) { filters.push((r) => String(r[col] ?? '') >= val); return b; },
       lt(col: string, val: string) { filters.push((r) => String(r[col] ?? '') < val); return b; },
       order() { return b; },
@@ -607,5 +608,109 @@ describe('processTagging enforcement', () => {
     });
     assert.deepEqual(secondIds, [], 'second call must return [] — tag already exists, no duplicate notification dispatched');
     store.tags = [];
+  });
+});
+
+// A router-only app that also provides the `req.log` pino stub the error paths
+// use. makeApp() above predates those paths; without this a route that logs an
+// error 500s on `req.log` being undefined and hides the status under test.
+function makeAppWithLog() {
+  const app = express();
+  app.use(express.json());
+  app.use((req: any, _res, next) => {
+    req.log = { error() {}, warn() {}, info() {}, debug() {} };
+    next();
+  });
+  app.use('/api', tagsRouter);
+  return app;
+}
+
+// ─── Phase 0 #1 — POST /api/tags authorization ────────────────────────────────
+//
+// The route validates that source_id is a UUID and nothing else: it never
+// establishes that the source exists or that the caller is the one who wrote
+// it. TaggingService only ever tags content its own author is composing, so
+// "the tagger authored the source" is the policy the inline path enforces
+// structurally. This asserts the REST path enforces it too.
+
+describe('POST /api/tags — source authorization', () => {
+  const caller   = 'aaaaaaaa-0001-4000-8000-000000000001';
+  const stranger = 'cccccccc-0003-4000-8000-000000000003';
+  const target   = 'bbbbbbbb-0002-4000-8000-000000000002';
+  const othersPost = '11111111-2222-4333-8444-555555555555';
+
+  it("refuses to tag anyone onto a post the caller did not author", async () => {
+    const store: Record<string, Row[]> = {
+      profiles: [
+        { id: caller,   handle: 'caller',   tag_permission: 'anyone' },
+        { id: stranger, handle: 'stranger', tag_permission: 'anyone' },
+        { id: target,   handle: 'target',   tag_permission: 'anyone' },
+      ],
+      // Authored by `stranger`. The caller has no relationship to it at all.
+      posts: [{ id: othersPost, author_id: stranger, visibility: 'public' }],
+      tags: [],
+      blocks: [],
+      feature_flags: [],
+    };
+    const sc = makeClient(store, { userId: caller });
+    _setTestClient(sc as any, true);
+    _setTestServiceClient(sc as any);
+    const server = createServer(makeAppWithLog()).listen(0);
+    try {
+      const res = await request(server, 'POST', '/api/tags', {
+        token: 'good',
+        body: { source_type: 'post', source_id: othersPost, tagged_user_id: target },
+      });
+      assert.equal(res.status, 403,
+        `tagging a stranger's post must be forbidden, got ${res.status} ${JSON.stringify(res.body)}`);
+      assert.deepEqual(store.tags, [],
+        'no tag row may be written for a source the caller does not own');
+    } finally {
+      server.close();
+    }
+  });
+});
+
+// ─── Phase 0 #4 — PostgREST filter injection in /api/tags/suggestions ─────────
+//
+// `q` is interpolated raw into .or(`handle.ilike.${q}%,name.ilike.%${q}%`).
+// A comma closes the first predicate and opens an attacker-chosen one, so the
+// filter stops being "handles starting with q" and becomes whatever the caller
+// writes. Here the injected predicate selects a profile by exact handle that
+// the real prefix search could never return.
+
+describe('GET /api/tags/suggestions — filter injection', () => {
+  const caller = 'aaaaaaaa-0001-4000-8000-000000000001';
+  const secret = 'dddddddd-0004-4000-8000-000000000004';
+
+  it('a comma in q must not inject an extra predicate against profiles', async () => {
+    const store: Record<string, Row[]> = {
+      profiles: [
+        { id: caller, handle: 'caller', name: 'Caller', tag_permission: 'anyone' },
+        // Handle shares no prefix with the query. Only an injected predicate reaches it.
+        { id: secret, handle: 'zzsecret', name: 'Zed', tag_permission: 'anyone' },
+      ],
+      // show_real_name=true so the hidden-name filter cannot mask the leak and
+      // make this test pass for a reason unrelated to the injection.
+      profile_privacy_settings: [{ user_id: secret, show_real_name: true }],
+      blocks: [],
+      user_follows: [],
+    };
+    const sc = makeClient(store, { userId: caller });
+    _setTestClient(sc as any, true);
+    _setTestServiceClient(sc as any);
+    const server = createServer(makeApp()).listen(0);
+    try {
+      // `handle.ilike.` + the '%' the route appends === match-everything, so a
+      // prefix search for "aa" returns the entire profiles table.
+      const q = encodeURIComponent('aa,handle.ilike.');
+      const res = await request(server, 'GET', `/api/tags/suggestions?q=${q}`, { token: 'good' });
+      assert.equal(res.status, 200, `expected 200, got ${res.status}`);
+      const handles = (res.body.suggestions ?? []).map((s: any) => s.handle);
+      assert.ok(!handles.includes('zzsecret'),
+        `injected predicate reached a profile the prefix search could not: ${JSON.stringify(handles)}`);
+    } finally {
+      server.close();
+    }
   });
 });

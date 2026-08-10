@@ -35,6 +35,7 @@ const CAROL_ID = "cccccccc-0000-0000-0000-000000000003";
 // tables that resolveInteractionPermissions queries plus the Phase 4 tables.
 
 interface FakeState {
+  posts?: any[];
   users?:                   Record<string, { id: string } | null>;
   profiles?:                Array<Record<string, any>>;
   blocks?:                  Array<Record<string, any>>;
@@ -80,6 +81,7 @@ function makeClient(state: FakeState = {}) {
     user_saves:                 state.user_saves ?? [],
     reports:                    state.reports ?? [],
     tags:                       state.tags ?? [],
+    posts:                      state.posts ?? [],
   };
 
   function from(table: string) {
@@ -863,7 +865,14 @@ describe("Tag action — approval_required tag_permission returns 202 pending", 
     const profiles = baseProfiles().map((p) =>
       p.id === CAROL_ID ? { ...p, tag_permission: "approval_required" } : p,
     );
-    const client = makeClient({ users: baseUsers(), profiles });
+    // SOURCE_UUID must be a real post AUTHORED BY THE CALLER: POST /api/tags now
+    // refuses to tag content the caller does not own (Phase 0 #1). Without this
+    // row the request 404s and the 202-pending path is never reached.
+    const client = makeClient({
+      users: baseUsers(),
+      profiles,
+      posts: [{ id: SOURCE_UUID, author_id: ALICE_ID, visibility: "public" }],
+    });
     _setTestClient(client, true);
     const srv = await startServer(makeApp(tagsRouter));
     url = srv.url; close = srv.close;

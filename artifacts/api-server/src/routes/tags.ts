@@ -14,6 +14,14 @@ import { nameVisibilitySet } from '../lib/publicIdentity.js';
 import { isUuid } from '../lib/followDecisions.js';
 import { resolveInteractionPermissions } from '../services/interactionPermissions.js';
 import { isFlagEnabled } from '../lib/featureFlags.js';
+import {
+  assertMayTagSource,
+  checkHourlyTagLimit,
+  checkPerSourceMentionCap,
+  MAX_MENTIONS,
+  MAX_TAGS_PER_HOUR,
+} from '../services/tagging/tagPolicy.js';
+import { safeOrIlikeValue, escapeLikePattern } from '../lib/postgrestFilter.js';
 
 import { requireAdmin } from "../lib/requireAdmin.js";
 
@@ -85,6 +93,38 @@ router.post('/tags', async (req, res) => {
     sendError(res, 'forbidden', perms.reasonCodes.includes('blocked')
       ? 'Cannot tag a user you have blocked or who has blocked you'
       : 'This user does not allow tags from you');
+    return;
+  }
+
+  // ── Source authorization ────────────────────────────────────────────────────
+  // Previously absent entirely: the route checked that source_id parsed as a
+  // UUID and never that the source existed or belonged to the caller. The
+  // service client bypasses RLS, and tags_insert's WITH CHECK constrains the
+  // TAGGER, never the source — so nothing anywhere stopped a tag being attached
+  // to a stranger's post. Shared with TaggingService via tagPolicy.
+  const authority = await assertMayTagSource(sc, user.id, source_type, source_id);
+  if (!authority.ok) {
+    sendError(res, authority.code === 'not_found' ? 'not_found' : 'forbidden', authority.message);
+    return;
+  }
+
+  // ── The caps TaggingService already enforced, now enforced here too ─────────
+  // Both fail closed: an uncountable budget is not an unlimited one.
+  const perSource = await checkPerSourceMentionCap(sc, source_type, source_id, req.log);
+  if (!perSource.ok) {
+    sendError(res, perSource.code === 'exceeded' ? 'rate_limited' : 'db_error',
+      perSource.code === 'exceeded'
+        ? `This item already has the maximum of ${MAX_MENTIONS} tags`
+        : 'Could not verify the per-item tag cap');
+    return;
+  }
+
+  const hourly = await checkHourlyTagLimit(sc, user.id, req.log);
+  if (!hourly.ok) {
+    sendError(res, hourly.code === 'exceeded' ? 'rate_limited' : 'db_error',
+      hourly.code === 'exceeded'
+        ? `Tag limit reached (${MAX_TAGS_PER_HOUR} per hour). Try again later.`
+        : 'Could not verify the hourly tag limit');
     return;
   }
 
@@ -176,10 +216,21 @@ router.get('/tags/suggestions', async (req, res) => {
   }
 
   // ── User candidates: match on handle prefix OR name substring ────────────────
+  // `qOr` is `q` with LIKE wildcards escaped and PostgREST's structural
+  // characters removed. Interpolating `q` raw here let a comma close the first
+  // predicate and open an attacker-chosen one, so the filter stopped being
+  // "handles starting with q" and became whatever the caller wrote — a query
+  // for `aa,handle.ilike.` returned every profile in the table.
+  // `qLike` is the wildcard-escaped form for the `.ilike()` calls below, which
+  // are structurally safe (the value is a bound argument) but still honour a
+  // caller-supplied `%`, turning a bounded search into a full scan.
+  const qOr = safeOrIlikeValue(q);
+  const qLike = escapeLikePattern(q);
+
   const { data: rows, error } = await sc
     .from('profiles')
     .select('id, handle, name, avatar_url, tag_permission')
-    .or(`handle.ilike.${q}%,name.ilike.%${q}%`)
+    .or(`handle.ilike.${qOr}%,name.ilike.%${qOr}%`)
     .neq('id', user.id)
     .order('handle', { ascending: true })
     .limit(limit * 5);
@@ -305,7 +356,7 @@ router.get('/tags/suggestions', async (req, res) => {
         .from('circles')
         .select('id, name')
         .eq('owner_id', user.id)
-        .ilike('name', `%${q}%`)
+        .ilike('name', `%${qLike}%`)
         .limit(20);
       for (const c of (circleRows ?? []) as any[]) {
         entitySuggestions.push({ id: c.id, type: 'circle', name: c.name });
@@ -317,7 +368,7 @@ router.get('/tags/suggestions', async (req, res) => {
       const { data: placeRows } = await sc
         .from('discovery_places')
         .select('id, name, city, place_type')
-        .ilike('name', `%${q}%`)
+        .ilike('name', `%${qLike}%`)
         .eq('status', 'approved')
         .limit(10);
       for (const p of (placeRows ?? []) as any[]) {
@@ -333,7 +384,7 @@ router.get('/tags/suggestions', async (req, res) => {
       const { data: eventRows } = await sc
         .from('events')
         .select('id, title, location_name, starts_at')
-        .ilike('title', `%${q}%`)
+        .ilike('title', `%${qLike}%`)
         .limit(10);
       for (const e of (eventRows ?? []) as any[]) {
         entitySuggestions.push({

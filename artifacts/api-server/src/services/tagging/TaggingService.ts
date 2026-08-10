@@ -14,6 +14,12 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Logger } from 'pino';
+import {
+  MAX_MENTIONS,
+  MAX_HASHTAGS,
+  MAX_TAGS_PER_HOUR,
+  checkHourlyTagLimit,
+} from './tagPolicy.js';
 
 // ─── Regex ────────────────────────────────────────────────────────────────────
 
@@ -41,10 +47,11 @@ export function extractHashtagSlugs(content: string): string[] {
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-
-const MAX_MENTIONS       = 5;
-const MAX_HASHTAGS       = 20;
-const MAX_TAGS_PER_HOUR  = 20; // per author, rolling 1-hour window
+//
+// Defined in tagPolicy so POST /api/tags enforces the same numbers. They used to
+// be local to this file, which is precisely why the route enforced neither: a
+// second caller could not reach them and no reader of the route could see they
+// existed.
 
 // ─── Context ──────────────────────────────────────────────────────────────────
 
@@ -203,24 +210,16 @@ async function processMentions(
   // Per-hour rate-limit check: count author's tags in rolling 1-hour window.
   // Live schema has no `tagged_at` column (0044's tagged_at columns/indexes were
   // never applied — see docs/migrations.md); use `created_at`, which does exist.
-  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  const { count: hourCount, error: hourCountErr } = await db
-    .from('tags')
-    .select('id', { count: 'exact', head: true })
-    .eq('tagger_id', authorId)
-    .gte('created_at', oneHourAgo);
-
-  if (hourCountErr) {
-    // Fail closed: if we can't verify the author is under the rate limit,
-    // do not silently allow unlimited tagging.
-    logger?.error({ err: hourCountErr, authorId }, 'processMentions: hourly rate-limit lookup failed');
+  const hourly = await checkHourlyTagLimit(db, authorId, logger);
+  if (!hourly.ok) {
+    // Fail closed on both branches: an uncountable budget is not an unlimited
+    // one, and an exhausted one is not a licence to write.
+    if (hourly.code === 'exceeded') {
+      logger?.warn({ authorId }, 'processMentions: hourly rate limit exceeded');
+    }
     return [];
   }
-
-  if ((hourCount ?? 0) >= MAX_TAGS_PER_HOUR) {
-    logger?.warn({ authorId }, 'processMentions: hourly rate limit exceeded');
-    return [];
-  }
+  const hourCount = hourly.used;
 
   const { data: profiles, error: pErr } = await db
     .from('profiles')
@@ -327,10 +326,20 @@ async function processMentions(
 
     if (existing) continue; // Already tagged — at-most-once notification guaranteed
 
+    // approval_required: write status='pending', matching POST /api/tags.
+    //
+    // This path used to omit `status` entirely and take 0064's DEFAULT
+    // 'approved', so the same user with the same setting got a pending tag from
+    // the REST route and an auto-approved one from an inline @mention. The
+    // route's behaviour is the correct one: 0064 exists specifically to support
+    // approval_required, and interactionPermissions implements it — silently
+    // approving here defeated a privacy setting the rest of the system honours.
+    const status = perm === 'approval_required' ? 'pending' : 'approved';
+
     const { error: insErr } = await db
       .from('tags')
       .upsert(
-        { source_type: sourceType, source_id: sourceId, tagger_id: authorId, tagged_user_id: profile.id },
+        { source_type: sourceType, source_id: sourceId, tagger_id: authorId, tagged_user_id: profile.id, status },
         { onConflict: 'source_type,source_id,tagged_user_id', ignoreDuplicates: true },
       );
 
