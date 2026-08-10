@@ -326,6 +326,54 @@ const EXEMPT = [
       'prevents that. Wiring it into a workflow requires adding the guard import in the same change.',
   })),
   {
+    file: 'src/scripts/auditStorageExif.ts',
+    reason:
+      'EXIF/GPS census of the media buckets, run by hand via `pnpm run audit:storage-exif`. It enumerates ' +
+      'every bucket through the Storage API, ranged-GETs the first 128KB of each image object, and sends two ' +
+      'statements through the Management API — a SELECT on information_schema.columns, then a UNION of ' +
+      '`select distinct <col> from public.<table>` over the path/url columns that SELECT returned — to decide ' +
+      'which objects are still referenced. It writes nothing. No workflow under .github/ invokes ' +
+      'audit:storage-exif and no CI-invoked package script reaches it (the CI surface is derived, not ' +
+      'assumed — see deriveCiSurface below). ' +
+      'HOW THIS SITS WITH THE FILE\'S OWN GUARD CALL — NEITHER SUPERSEDES THE OTHER, AND THEY ARE NOT THE ' +
+      'SAME MECHANISM: the script ends its preamble with `await import("../lib/ciSupabaseGuard.mjs")`, so a ' +
+      'plain run IS refused against production. But that is a DYNAMIC import inside an else branch, which is ' +
+      'not an import statement and is deliberately not what this check counts, and it is skipped outright ' +
+      'when AUDIT_READONLY_ACK_PRODUCTION is set to the ref resolved from SUPABASE_URL. That acknowledgement ' +
+      'is an operator bypass of the guard, not a second guard: on that path nothing consults the allowlist at ' +
+      'all. So there are three separate things here — this entry is why the coverage check accepts the file, ' +
+      'the dynamic import is what refuses an unacknowledged production run, and the ACK is the one hole in ' +
+      'that refusal. Reading any one of them as covering the others is the mistake. EXEMPTION MEANS ' +
+      'UNGUARDED, NOT SAFE: with the ACK set, or with the guard import removed, a human pointing this at ' +
+      'production pulls the header bytes of every user photograph in the bucket into a process, and nothing ' +
+      'here prevents that. Wiring it into a workflow means replacing all of the above with a static first ' +
+      'import in the same change; since every statement it sends is a read, that door is ' +
+      'src/lib/ciProdReadOnlyAuditGuard.mjs plus an entry in READ_ONLY_AUDIT_ENTRY_POINTS naming those ' +
+      'statements, and the AUDIT_READONLY_ACK_PRODUCTION branch must be DELETED rather than left beside it — ' +
+      'a bypass next to a front door is not a front door.',
+  },
+  {
+    file: 'src/scripts/backfillFeedVariants.ts',
+    reason:
+      'Backfill job for post_media.feed_url / feed_storage_path on rows that predate migration 0208, run by ' +
+      'hand via `pnpm run backfill:feed-variants`. IT WRITES, in two places: with --apply it uploads a ' +
+      're-encoded `<storage_path>.feed.jpg` object into the post-media bucket and then UPDATEs the ' +
+      'post_media row to point at it. Its own header says it is deliberately not wired into check:all ' +
+      'because a job a gate runs on every build is a job that will eventually run when nobody meant it to, ' +
+      'and that is still true: no workflow under .github/ invokes backfill:feed-variants and no CI-invoked ' +
+      'package script reaches this file. The near miss is worth naming — the CI-invoked `test` script runs ' +
+      'src/test/backfillFeedVariants.test.ts, a DIFFERENT file, which imports only the pure parseArgs / ' +
+      'variantPathFor / decideExitCode helpers; main() sits behind a RUN_DIRECTLY check that is false under ' +
+      'the test runner, so no row is selected and no object is uploaded. EXEMPTION MEANS UNGUARDED, NOT ' +
+      'SAFE: run by hand with a production .env and --apply it rewrites production rows and production ' +
+      'Storage objects, and nothing here prevents that. BECAUSE IT WRITES, THE READ-ONLY AUDIT DOOR IS NOT ' +
+      'AN OPTION FOR IT UNDER ANY CIRCUMSTANCE, and that holds for its --audit-exif mode too: the flag makes ' +
+      'a single run read-only, it does not make the FILE read-only, and the capability granted by an import ' +
+      'is a property of the file. If this is ever wired into a workflow the import to add is ' +
+      'src/lib/ciSupabaseGuard.mjs as the first import, and it must never appear in ' +
+      'READ_ONLY_AUDIT_ENTRY_POINTS.',
+  },
+  {
     file: 'src/test/smoke-live.ts',
     reason:
       'Hand-run live smoke script under src/test/. It is not a *.test.ts, so no test runner picks it up, and ' +
