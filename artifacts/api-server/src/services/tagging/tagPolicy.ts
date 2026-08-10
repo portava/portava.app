@@ -50,20 +50,6 @@ export const MAX_TAGS_PER_HOUR = 20;
 
 export type TagSourceType = 'post' | 'comment' | 'message';
 
-/**
- * Which column carries the author on each source table.
- *
- * Read off the LIVE schema (src/lib/database.types.ts), not the migrations:
- * `posts.author_id`, `posts_comments.user_id`, `messages.sender_id`. The three
- * differ, which is exactly the kind of detail that gets guessed wrong when it is
- * inlined at a call site.
- */
-const SOURCE_AUTHOR: Record<TagSourceType, { table: string; column: string }> = {
-  post:    { table: 'posts',          column: 'author_id' },
-  comment: { table: 'posts_comments', column: 'user_id' },
-  message: { table: 'messages',       column: 'sender_id' },
-};
-
 export type SourceAuthorityResult =
   | { ok: true }
   | { ok: false; code: 'unknown_source_type' | 'not_found' | 'not_author'; message: string };
@@ -84,30 +70,74 @@ export async function assertMayTagSource(
   sourceType: string,
   sourceId: string,
 ): Promise<SourceAuthorityResult> {
-  const spec = SOURCE_AUTHOR[sourceType as TagSourceType];
-  if (!spec) {
-    return {
-      ok: false,
-      code: 'unknown_source_type',
-      message: `Cannot verify ownership of source_type '${sourceType}'`,
-    };
+  const NOT_FOUND: SourceAuthorityResult = {
+    ok: false,
+    code: 'not_found',
+    message: 'Source content not found',
+  };
+
+  // ── THREE LITERAL SITES, NOT ONE DYNAMIC ONE ────────────────────────────────
+  //
+  // The author column differs per table — posts.author_id,
+  // posts_comments.user_id, messages.sender_id — all three read off the LIVE
+  // schema (src/lib/database.types.ts) rather than the migrations, which for
+  // this area disagree with production.
+  //
+  // The obvious spelling is a {sourceType → {table, column}} map and one
+  // `.from(spec.table).select(\`id, ${'${spec.column}'}\`)`. That is shorter and it is
+  // worse: check:write-path-columns resolves select lists statically, so a
+  // runtime table name and an interpolated column make the site opaque to it —
+  // it can no longer prove any of these three columns exists live. Before this
+  // function was added the checker could verify every site in src/services; one
+  // dynamic call would have been the first it could not, and the fix for
+  // "the checker cannot see this" is to make it visible, not to allowlist it.
+  //
+  // So: a switch, three literal `.from()` calls, three literal select lists.
+  // Same behaviour, three verifiable sites instead of one blind spot. Keep it
+  // this way — collapsing it back into a table-driven lookup silently removes
+  // the columns from the check's subject.
+  let authorId: unknown;
+
+  switch (sourceType) {
+    case 'post': {
+      const { data, error } = await db
+        .from('posts')
+        .select('id, author_id')
+        .eq('id', sourceId)
+        .maybeSingle();
+      if (error || !data) return NOT_FOUND;
+      authorId = data.author_id;
+      break;
+    }
+    case 'comment': {
+      const { data, error } = await db
+        .from('posts_comments')
+        .select('id, user_id')
+        .eq('id', sourceId)
+        .maybeSingle();
+      if (error || !data) return NOT_FOUND;
+      authorId = data.user_id;
+      break;
+    }
+    case 'message': {
+      const { data, error } = await db
+        .from('messages')
+        .select('id, sender_id')
+        .eq('id', sourceId)
+        .maybeSingle();
+      if (error || !data) return NOT_FOUND;
+      authorId = data.sender_id;
+      break;
+    }
+    default:
+      return {
+        ok: false,
+        code: 'unknown_source_type',
+        message: `Cannot verify ownership of source_type '${sourceType}'`,
+      };
   }
 
-  // The column name is chosen from SOURCE_AUTHOR above, never from caller input,
-  // but it is still a runtime value — so the generated table types cannot parse
-  // this select list and the row comes back untyped. Cast through unknown.
-  const { data, error } = await db
-    .from(spec.table)
-    .select(`id, ${spec.column}`)
-    .eq('id', sourceId)
-    .maybeSingle();
-
-  const row = data as unknown as Record<string, unknown> | null;
-
-  if (error || !row) {
-    return { ok: false, code: 'not_found', message: 'Source content not found' };
-  }
-  if (row[spec.column] !== userId) {
+  if (authorId !== userId) {
     return { ok: false, code: 'not_author', message: 'You can only tag your own content' };
   }
   return { ok: true };
