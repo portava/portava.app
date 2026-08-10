@@ -351,6 +351,8 @@ let unreachableWithGps = 0;
 const gpsIds: string[] = [];
 const exifIds: string[] = [];
 let unreachableWithExif = 0;
+let exifMinUp: string | null = null;
+let exifMaxUp: string | null = null;
 let exifMinTs: string | null = null;
 let exifMaxTs: string | null = null;
 /** Container census — makes a zero GPS count interpretable rather than merely reassuring. */
@@ -402,6 +404,13 @@ for (const bucket of buckets) {
       withExif++;
       if (obj.id) exifIds.push(obj.id);
       if (isUnreachable) unreachableWithExif++;
+      // Upload time, tracked separately from capture time: a photo taken in
+      // 2019 and uploaded today is a live leak, and a capture-date range would
+      // report it as ancient. Only created_at answers "did the strip hold?".
+      if (obj.created_at) {
+        if (exifMinUp === null || obj.created_at < exifMinUp) exifMinUp = obj.created_at;
+        if (exifMaxUp === null || obj.created_at > exifMaxUp) exifMaxUp = obj.created_at;
+      }
       const ets = facts.captureTs ?? obj.created_at;
       if (ets) {
         if (exifMinTs === null || ets < exifMinTs) exifMinTs = ets;
@@ -433,6 +442,7 @@ const summary = {
   containerBreakdown: byMime,
   carryingAnyExif: withExif,
   exifDateRange: { earliest: exifMinTs, latest: exifMaxTs },
+  exifUploadRange: { earliest: exifMinUp, latest: exifMaxUp },
   exifObjectIds: exifIds,
   unreachableAndCarryingExif: unreachableWithExif,
   carryingGpsIfd: withGps,
@@ -459,6 +469,7 @@ if (OPTS.json) {
   console.log(`  carrying any EXIF:             ${withExif}`);
   if (withExif > 0) {
     console.log(`    date range:                  ${exifMinTs ?? "?"} → ${exifMaxTs ?? "?"}`);
+    console.log(`    UPLOADED (created_at) range: ${exifMinUp ?? "?"} → ${exifMaxUp ?? "?"}`);
     console.log(`    of those, unreachable:       ${unreachableWithExif}`);
     console.log(`    object ids:                  ${exifIds.join(", ") || "(none with ids)"}`);
   }
