@@ -326,15 +326,32 @@ const INERT_SEEDED_FLAGS = [
   // ── Admin-writable and unread — worse than merely unread. ────────────────
   {
     flag: 'push_notifications_enabled', seededIn: '0117_beta_feature_flags.sql:29', kind: 'CAPABILITY',
-    disposition: 'owner-decision',
+    disposition: 'write-reader',
     reason:
       'Seeded by 0117 and EXPLICITLY EXPOSED FOR WRITING: routes/notifications.ts:642 maps it into the admin ' +
       'toggle map as `pushNotificationsEnabled: "push_notifications_enabled"`, so an admin request updates the ' +
-      'row. Nothing ever reads it. This is the worst shape in this list — the other entries are switches ' +
-      'nobody wired, this one is a switch someone deliberately surfaced in the admin API and still nobody ' +
-      'wired. Push delivery runs unconditionally through lib/push*. OWNER DECISION: gate the delivery path on ' +
-      'it, or remove it from the admin map AND the seed together — leaving the write path while the read path ' +
-      'does not exist is the state that produces "I turned push off and it kept sending".',
+      'row. Nothing reads it. Worst shape in this list — the others are switches nobody wired, this is a ' +
+      'switch someone deliberately surfaced in the admin API and still nobody wired. It produces "I turned ' +
+      'push off and it kept sending".\n' +
+      'DISPOSITION IS write-reader, NOT remove-from-seed, for one reason: THERE IS NO OTHER PUSH STOP. The ' +
+      'disable_* family covers messaging, media, posting, signups, location and search; none covers push. ' +
+      'Removing the toggle would make the gap honest but would still leave an operator with no way to stop a ' +
+      'notification storm.\n' +
+      'COST OF write-reader: small and bounded. lib/pushWithRetry.ts sendPushWithRetry already takes ' +
+      '`db: SupabaseClient | null` as its first parameter, so the gate is a few lines before the send at :53, ' +
+      'and it covers 29 of the 31 call sites. The other two bypass the wrapper and call sendPushNotification ' +
+      'directly — services/notifications/NotificationRouter.ts:212 and services/passport/StampAwardEngine.ts:545 ' +
+      '— and need either their own gate or a redirect through the wrapper. lib/push.ts itself should NOT be ' +
+      'the gate point: it takes no client and is seamed on fetch only, so putting a DB read there changes its ' +
+      'shape and adds a round trip per send.\n' +
+      'ONE DESIGN TRAP FOR WHOEVER IMPLEMENTS IT: read through isFlagEnabled and a transient DB error silences ' +
+      'ALL push, because false-on-error means "capability off". That is the correct convention for a ' +
+      'capability and the wrong outcome for this one. Either seed-and-cache it (lib/rankLog.ts has the TTL ' +
+      'precedent) or decide deliberately that push-off is the safe direction. Do not reach for ' +
+      'isKillSwitchEngaged — the flag reads "enabled", so its true-value means GO, and the stop reader would ' +
+      'invert it.\n' +
+      'COST OF remove-from-seed, for comparison: two deletions — routes/notifications.ts:642 and the 0117 seed ' +
+      'row — plus a note that push has no kill switch. Cheaper today, and it leaves the incident gap open.',
   },
 
   // ── The four that matter: seeded AS KILL SWITCHES, read by nothing. ───────
