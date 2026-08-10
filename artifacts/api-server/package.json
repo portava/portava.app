@@ -18,6 +18,7 @@
     "check:media-objects": "node --env-file-if-exists=.env --import tsx/esm src/scripts/checkMediaObjects.ts",
     "check:rank-events-surfaces": "node --env-file-if-exists=.env --import tsx/esm src/scripts/checkRankEventsSurfaces.ts",
     "check:backfill-0200": "node --env-file-if-exists=.env scripts/verify-backfill-0200.mjs",
+    "check:search-path-hazard": "node --env-file-if-exists=.env scripts/verify-search-path-hazard.mjs",
     "check:all": "bash scripts/run-all-checks.sh",
     "check:sentry-otel-deps": "node --import tsx/esm src/scripts/checkSentryOtelDeps.ts",
     "check:test-registration": "node scripts/check-test-registration.mjs",

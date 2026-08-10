@@ -14,6 +14,30 @@
  *
  * It is read-only (read_only: true on every query) and it never writes.
  *
+ * WHY search_path IS EXCLUDED FROM THE BYTE COMPARISON (migration 0201)
+ * ---------------------------------------------------------------------
+ * 0201 pinned `SET search_path TO 'public', 'pg_catalog'` on these four
+ * functions (and twelve more) to close a demonstrated shadowing hazard. That
+ * changes what pg_get_functiondef() returns — it now carries a SET line that
+ * 0200's text does not — so a naive byte comparison started failing on all four.
+ *
+ * There were two ways to resolve that, and the choice is deliberate:
+ *
+ *   (a) rewrite 0200 to include the SET line, or
+ *   (b) exclude search_path from 0200's comparison and let 0201 own it.
+ *
+ * This script does (b). 0200 is already committed and pushed, and the migration
+ * chain is CORRECT as it stands: a clean rebuild replays 0200 (bodies, unpinned)
+ * and then 0201 (adds the pin), arriving at exactly the live state. Editing a
+ * released migration to reflect a later one would break chain immutability and
+ * would make 0200 describe a state that never existed at 0200's point in the
+ * sequence. So 0200's contract is narrowed to what it actually owns — the
+ * BODIES — and the pin is verified separately below rather than dropped, so the
+ * coverage is not lost, only reattributed.
+ *
+ * Note this only relaxes proconfig. SECURITY DEFINER, volatility, language,
+ * argument list and body text are all still compared byte-for-byte.
+ *
  * Exit codes:
  *   0  every object in 0200 byte-matches live
  *   2  cannot run (no credentials / unparsable SUPABASE_URL / file missing)
@@ -38,6 +62,14 @@ const FUNCTIONS = [
   "can_see_postcard",
 ];
 const TRIGGERS = ["trg_posts_updated", "trg_postcards_updated"];
+
+/** Set on these four by migration 0201. Verified positively, just not byte-compared. */
+const EXPECTED_PROCONFIG = "search_path=public, pg_catalog";
+
+/** Remove the proconfig line pg_get_functiondef emits, so 0200 compares bodies only. */
+function stripSearchPath(text) {
+  return text.replace(/^[ \t]*SET search_path TO [^\n]*\n/gm, "");
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATION = path.join(
@@ -97,7 +129,9 @@ async function main() {
   console.log("── verifying 0200 backfill against live ──");
 
   const fnRows = await query(
-    `SELECT p.proname, pg_get_functiondef(p.oid) AS def
+    `SELECT p.proname,
+            pg_get_functiondef(p.oid) AS def,
+            COALESCE(array_to_string(p.proconfig, ','), '') AS proconfig
      FROM pg_proc p
      JOIN pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = 'public'
@@ -126,12 +160,24 @@ async function main() {
       bad++;
       continue;
     }
-    if (sql.includes(matches[0].def)) {
-      console.log(`  ✔  ${name}: byte-identical to live`);
+    // Strip the SET search_path line before comparing: it is owned by 0201, not
+    // 0200. See the header for why 0200 is not rewritten to include it.
+    const liveBody = stripSearchPath(matches[0].def);
+    if (stripSearchPath(sql).includes(liveBody)) {
+      console.log(`  ✔  ${name}: body byte-identical to live`);
     } else {
       console.error(`  ✘  ${name}: DRIFT — 0200 does not contain the live definition`);
-      console.error("     live definition is:");
-      console.error(matches[0].def.split("\n").map((l) => "       " + l).join("\n"));
+      console.error("     live definition (search_path line excluded) is:");
+      console.error(liveBody.split("\n").map((l) => "       " + l).join("\n"));
+      bad++;
+    }
+
+    // The pin itself is still verified — reattributed to 0201, not dropped.
+    if (matches[0].proconfig !== EXPECTED_PROCONFIG) {
+      console.error(
+        `  ✘  ${name}: expected proconfig '${EXPECTED_PROCONFIG}' (migration 0201), ` +
+          `live is '${matches[0].proconfig || "(none)"}'`,
+      );
       bad++;
     }
   }
