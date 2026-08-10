@@ -96,6 +96,60 @@ It parses every migration file for the objects it claims (tables and every colum
 
 Encoded gotchas: triggers are checked via `pg_trigger` (TRUNCATE triggers are invisible to `information_schema.triggers`); tables match views too (legacy `buddy_*` compat views); `0050` and `0105` are skipped (superseded/drifted); an allowlist (in the script, with per-entry comments) covers columns where the migration files are wrong vs live — renamed (`feature_flags.key`→`flag`, `highlights.user_id`→`owner_id`, `user_location_state.latitude`→`lat`, `passport_stamps.earned_at`→`awarded_at`, …) or dropped (`tags.tagged_at`, `highlights.trip_id`, …); all verified against live 2026-07-17. The legacy `artifacts/api-server/migrations/` chain diverges heavily from live and is only audited with the opt-in flag.
 
+## Conditional DDL blocks — a class `audit:schema` cannot see
+
+`auditMigrationsVsLive.ts` answers one question: *does every object named by the
+migration files exist live?* It parses `CREATE TABLE`/`VIEW`/`FUNCTION`/`INDEX`/
+`POLICY`/`TYPE`/`TRIGGER` and `ALTER TABLE … ADD COLUMN`. Two things follow, and
+both bit us:
+
+1. **`ENABLE ROW LEVEL SECURITY` and `GRANT` are not objects.** There are 269
+   `ENABLE ROW LEVEL SECURITY` and 19 `GRANT` statements in `src/migrations/`,
+   and the audit models none of them. A table can be missing RLS forever and the
+   audit stays green.
+2. **The audit does not model conditional execution.** A statement wrapped in
+   `IF <precondition> THEN …` that was skipped because the precondition was false
+   is indistinguishable, to this tool, from one that ran.
+
+Where the guard tests *the object being created* (`IF NOT EXISTS (SELECT 1 FROM
+pg_policies WHERE policyname='x') THEN CREATE POLICY x`) there is no blind spot —
+the object is declared and the audit checks it. Roughly 60 such blocks across 19
+files are fine and need no attention.
+
+The blind spot is guards that test a **precondition**, i.e. something other than
+the statement's own target:
+
+| Shape | Where | Count |
+|---|---|---|
+| `IF to_regclass('public.X') IS NOT NULL THEN` | `2070_rls_hardening.sql` (12), `2071_feature_flags_deny_anon.sql` (1) | 13 |
+| `EXCEPTION WHEN undefined_table/undefined_column THEN NULL` | `2033_rls_hardening.sql` (9), `2054_backfill_stamp_country_from_city.sql` (1) | 10 |
+| `IF EXISTS (SELECT … pg_tables/pg_class)` around a seed or view | `0062_notifications_schema.sql`, `0147_buddy_bookings_compat_view.sql` | 2 |
+| dynamic column probe → `format()` + `EXECUTE` | `2033_rls_hardening.sql` §9 | 1 |
+
+**A false guard is not a deferral. It is a statement that never ran and will
+never retry** — creating the object later does not re-trigger the block, because
+nothing re-runs the migration.
+
+Swept against production and portava-ci, 2026-08-10. Exactly one had actually
+misfired: `post_event_links`. See below.
+
+### `post_event_links` — RLS, and why it shipped as one change set
+
+`2070_rls_hardening.sql:89-95` enables RLS on `post_event_links` behind
+`IF to_regclass('public.post_event_links') IS NOT NULL`. The table did not exist
+when 2070 ran, so the block was a no-op — and creating the table on portava-ci
+left it with `relrowsecurity = false`, a table with no RLS in a project whose
+anon key ships in the mobile app.
+
+Re-running that one idempotent `DO` block fixed it (`relrowsecurity = true`,
+verified). It has **no policies**, which is 2070's deliberate deny-all posture
+for a server-only table: the service-role client bypasses RLS, every other role
+gets zero rows.
+
+**The production change set for `post_event_links` is therefore four objects, not
+three: the table, both indexes, and the RLS enable.** Applying the first three
+without the fourth reproduces the same gap on production.
+
 ## Replay-fidelity breaks — migrations that CANNOT be replayed as written
 
 Distinct from the allowlist above. An allowlist entry says "the file claims an
