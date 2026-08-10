@@ -19,7 +19,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, Stack } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Flag, MapPin, Globe, Phone, Tag, Bookmark, Navigation, Clock, Star, ListPlus } from 'lucide-react-native';
+import { Flag, MapPin, Globe, Phone, Tag, Bookmark, Navigation, Clock, Star, ListPlus, Bell } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar, dot } from '../../src/theme/tokens';
 import { getCanonicalPlace, getPlaceLiving } from '../../src/services/places';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';

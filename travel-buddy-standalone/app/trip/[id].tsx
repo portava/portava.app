@@ -4,7 +4,7 @@ import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert
 import { CachedImage } from '../../src/components/CachedImage';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users, BookImage, CalendarClock, MapPin, ShieldCheck, Radio, Link2 } from 'lucide-react-native';
+import { ChevronLeft, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users, BookImage, CalendarClock, MapPin, ShieldCheck, Radio, Link2, Bell } from 'lucide-react-native';
 import { PortavaShareIcon } from '../../src/components/icons/PortavaShareIcon';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
@@ -475,6 +475,17 @@ function TripDetailScreen() {
               onPress={() => router.push(`/trip/edit?id=${trip.id}` as any)}
             >
               <Pencil size={15} color={color.ink} /><Text style={styles.topBtnText}>Edit Trip</Text>
+            </Pressable>
+          )}
+          {isAuthed && (
+            <Pressable
+              style={styles.topBtn}
+              hitSlop={6}
+              onPress={() => router.push(
+                `/reminders/new?targetType=trip&targetId=${encodeURIComponent(trip.id)}&targetLabel=${encodeURIComponent(trip.title ?? 'Trip')}` as any,
+              )}
+            >
+              <Bell size={15} color={color.ink} /><Text style={styles.topBtnText}>Remind me</Text>
             </Pressable>
           )}
         </View>

@@ -9,7 +9,7 @@ import Svg, { Path } from 'react-native-svg';
 import {
   CalendarDays, User as UserIcon, Clock, MapPin, CheckCircle2, Circle as CircleIcon,
   CalendarPlus, UserPlus, Sparkles, Settings, Bookmark, Plus, ChevronRight, Plane,
-  MessageCircle, ShieldCheck, ImagePlus, Info, X,
+  MessageCircle, ShieldCheck, ImagePlus, Info, X, Bell,
 } from 'lucide-react-native';
 import { useTripSavedPlaces } from '../hooks/useTripSavedPlaces.ts';
 import { fetchCompassTripBrief, reportCompassViewed, type CompassRecommendation } from '../services/compass.ts';
@@ -370,6 +370,19 @@ export function TripSavedPlacesSection({ tripId }: { tripId: string }) {
                   <Text style={tsp.address} numberOfLines={1}>{place.address}</Text>
                 ) : null}
               </View>
+              <Pressable
+                testID={`saved-place-remind-${place.id}`}
+                style={tsp.removeBtn}
+                hitSlop={8}
+                onPress={() => {
+                  router.push(
+                    `/reminders/new?targetType=saved_place&targetId=${encodeURIComponent(place.id)}&targetLabel=${encodeURIComponent(place.name)}` as any,
+                  );
+                }}
+                accessibilityLabel={`Remind me about ${place.name}`}
+              >
+                <Bell size={13} color={color.mute} />
+              </Pressable>
               <Pressable
                 testID={`saved-place-remove-${place.id}`}
                 style={tsp.removeBtn}
