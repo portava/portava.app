@@ -269,6 +269,8 @@ export default function Settings() {
       router.push('/compass-settings' as any);
     } else if (label === 'My Appeals') {
       router.push('/appeals' as any);
+    } else if (label === 'Reminders') {
+      router.push('/reminders' as any);
     }
   }
 
@@ -283,7 +285,7 @@ export default function Settings() {
   }
 
   const SAFETY_ITEMS = ['Blocked accounts', 'Muted accounts', 'Restricted accounts', 'Safety & Privacy', 'Safe Return history', 'Emergency Contacts'];
-  const ACCOUNT_ITEMS = ['Edit profile', 'Change password', 'Notifications', 'Location settings', 'Compass Preferences', 'Compass Settings', 'My Appeals'];
+  const ACCOUNT_ITEMS = ['Edit profile', 'Change password', 'Notifications', 'Location settings', 'Reminders', 'Compass Preferences', 'Compass Settings', 'My Appeals'];
 
   const INTERESTS_OPTIONS = ['beach', 'food', 'nightlife', 'adventure', 'culture', 'wellness', 'photography', 'shopping', 'luxury', 'backpacking'];
   const FOOD_OPTIONS = ['street food', 'seafood', 'vegetarian', 'vegan', 'local cuisine', 'fine dining', 'coffee'];
