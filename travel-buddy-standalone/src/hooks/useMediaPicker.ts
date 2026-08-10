@@ -18,6 +18,7 @@
 import { useCallback } from 'react';
 import { Alert, Linking, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { CAPTURE_QUALITY } from '../constants/mediaLimits.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -32,7 +33,7 @@ export interface UseMediaPickerOptions {
   allowsEditing?: boolean;
   /** Aspect ratio [w, h] for the crop editor (only when allowsEditing=true). */
   aspect?: [number, number];
-  /** Output quality 0–1. Default: 0.85 */
+  /** Output quality 0–1. Default: CAPTURE_QUALITY (shared across all pickers). */
   quality?: number;
   /** Allow picking multiple items from the library. Default: false */
   allowsMultipleSelection?: boolean;
@@ -175,7 +176,7 @@ export function useMediaPicker(): UseMediaPickerReturn {
         mediaTypes = ['images'],
         allowsEditing = false,
         aspect,
-        quality = 0.85,
+        quality = CAPTURE_QUALITY,
         allowsMultipleSelection = false,
         selectionLimit,
         videoMaxDuration = 60,

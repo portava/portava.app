@@ -25,6 +25,7 @@ import { Platform, Alert, Linking } from 'react-native';
 import { uploadMedia } from '../services/media.ts';
 import type { PickedMedia } from '../services/media.ts';
 import { useMediaComposer } from './useMediaComposer.ts';
+import { CAPTURE_QUALITY } from '../constants/mediaLimits.ts';
 
 export type PickerUploadState = 'idle' | 'picking' | 'previewing' | 'uploading' | 'done' | 'failed';
 
@@ -168,7 +169,7 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: false,
-      quality: 0.9,
+      quality: CAPTURE_QUALITY,
     });
     setState((s) => (s === 'picking' ? 'idle' : s));
     if (!result.canceled && result.assets[0]) {
@@ -193,7 +194,7 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ['images'],
       allowsEditing: false,
-      quality: 0.9,
+      quality: CAPTURE_QUALITY,
     });
     setState((s) => (s === 'picking' ? 'idle' : s));
     if (!result.canceled && result.assets[0]) {
@@ -218,6 +219,10 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['videos'],
       allowsEditing: false,
+      // Deliberately NOT CAPTURE_QUALITY: for video, expo-image-picker's
+      // `quality` selects an export/re-encode preset (iOS), so anything below
+      // 1 forces a second lossy re-compression of an already-encoded library
+      // video. Keep at 1 to avoid compounding quality loss on top of capture.
       quality: 1,
       videoMaxDuration: 60,
     });

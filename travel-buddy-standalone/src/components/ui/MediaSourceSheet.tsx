@@ -33,6 +33,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Camera, ImageIcon, X } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import { VideoStoryTrimSheet } from './VideoStoryTrimSheet.tsx';
+import { CAPTURE_QUALITY } from '../../constants/mediaLimits.ts';
 
 export interface MediaSourceSheetProps {
   visible: boolean;
@@ -144,7 +145,7 @@ export function MediaSourceSheet({
         : ['images'];
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes,
-        quality: 0.92,
+        quality: CAPTURE_QUALITY,
         videoMaxDuration: allowsVideo ? videoMaxDuration : undefined,
         allowsEditing: effectiveAllowsEditing,
         aspect: effectiveAllowsEditing ? aspect : undefined,
@@ -196,7 +197,7 @@ export function MediaSourceSheet({
         mediaTypes,
         allowsEditing: effectiveAllowsEditing,
         aspect: effectiveAllowsEditing ? aspect : undefined,
-        quality: 0.92,
+        quality: CAPTURE_QUALITY,
         videoMaxDuration: allowsVideo ? videoMaxDuration : undefined,
       });
       setBusy(null);

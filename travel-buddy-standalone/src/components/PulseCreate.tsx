@@ -23,6 +23,7 @@ import type { PulseFilter, PostCategory } from '../types/models.ts';
 import { color, space, radius, type as t, shadow, layout, avatar, icon } from '../theme/tokens.ts';
 import { usePostActions } from '../hooks/usePosts.ts';
 import type { PostVisibility, LocationPrivacyMode } from '../services/posts.ts';
+import { CAPTURE_QUALITY } from '../constants/mediaLimits.ts';
 import { uploadMedia, validateMedia, type PickedMedia } from '../services/media.ts';
 import { useSession } from '../context/SessionContext.tsx';
 import type { Place } from '../lib/location/placeTypes.ts';
@@ -265,7 +266,7 @@ export function UnifiedPostComposer({
         if (!perm.granted) return;
         const result = await ImagePicker.launchCameraAsync({
           mediaTypes: ['images', 'videos'],
-          quality: 0.92,
+          quality: CAPTURE_QUALITY,
           videoMaxDuration: 60,
         });
         if (result.canceled || !result.assets?.[0]) return;
