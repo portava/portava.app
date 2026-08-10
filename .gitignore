@@ -67,3 +67,8 @@ attached_assets/
 # Recovery snapshots — contain real user data, never commit
 .recovery/
 recovery-backups/
+
+# Checkpoint written by artifacts/api-server backfill:feed-variants (--state).
+# Run-local progress, never shared state — committing it would make another
+# machine skip rows it has not actually processed.
+.backfill-feed-variants.json
