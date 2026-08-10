@@ -205,13 +205,23 @@ behave identically. It is deliberately not renamed despite the `_role` name:
 renaming would require rewriting both consumers and the test that calls it as an
 RPC.
 
-**Drift note — this one is real.** `profiles.is_official`,
-`enforce_is_official_trigger` and `enforce_is_official_service_role()` appear in
-no migration file; a tree-wide search returns only 2078's prose. 2079 is the
-first time any of it is captured in the chain. (2078's header cites
-"`enforce_is_official_trigger` (migration 0106)" — that citation is wrong;
-`0106_engagement_indexes.sql` creates like/reaction indexes and mentions
-neither.)
+**Drift note — RETRACTED 2026-08-10, there was no drift.** This previously
+claimed that `profiles.is_official`, `enforce_is_official_trigger` and
+`enforce_is_official_service_role()` appear in no migration file. That was
+wrong. `supabase/migrations/0106_profiles_is_official.sql` creates the function
+(line 14), the trigger (lines 28–30) and `idx_profiles_is_official`. The
+"tree-wide search" behind the original claim evidently did not cover the
+`supabase/migrations/` root — this repo has five migration roots
+(`artifacts/api-server/src/migrations`, `artifacts/api-server/migrations`,
+`migrations`, `db`, `supabase/migrations`), and searching only the first
+manufactures drift that does not exist. The follow-on claim that 2078's
+"`enforce_is_official_trigger` (migration 0106)" citation was bogus is wrong for
+the same reason: 2078 pointed at the right number in a different directory
+(`supabase/migrations/0106_profiles_is_official.sql`, not
+`0106_engagement_indexes.sql` — two unrelated files share the 0106 prefix across
+two roots). 2078's citation stands. What remains true: 2079 is the first time
+the **both-directions** guard is captured in the chain; the objects themselves
+were already recorded by 0106.
 
 **Tests — `src/test/isOfficialPrivileged.test.ts`, 8 tests, live DB.**
 

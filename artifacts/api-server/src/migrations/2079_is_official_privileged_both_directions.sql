@@ -62,17 +62,35 @@
 -- NOT renamed, because renaming would require rewriting both existing consumers
 -- and the test that calls it as an RPC.
 --
--- DRIFT NOTE — this one is real
--- -----------------------------
--- `profiles.is_official`, `enforce_is_official_trigger` and
--- `enforce_is_official_service_role()` appear in **no migration file** in this
--- repo. A tree-wide search returns only 2078's prose. They are genuine
--- live-vs-migration drift, and this migration is the first time any of it is
--- captured in the chain.
+-- DRIFT NOTE — CORRECTED 2026-08-10: THERE WAS NO DRIFT
+-- ------------------------------------------------------
+-- This section previously claimed that `profiles.is_official`,
+-- `enforce_is_official_trigger` and `enforce_is_official_service_role()` appear
+-- in **no migration file** in this repo, and labelled that "drift — this one is
+-- real". That claim was WRONG, and it is corrected here rather than deleted so
+-- that anyone who already read it sees the retraction.
 --
--- (2078's header cites "`enforce_is_official_trigger` (migration 0106)". That
--- citation is wrong: `0106_engagement_indexes.sql` creates like/reaction indexes
--- and mentions neither. Corrected here so the next reader does not go looking.)
+-- `supabase/migrations/0106_profiles_is_official.sql` creates all of it:
+-- `CREATE OR REPLACE FUNCTION enforce_is_official_service_role()` (line 14),
+-- `DROP TRIGGER IF EXISTS enforce_is_official_trigger ON profiles` (line 28)
+-- and `CREATE TRIGGER enforce_is_official_trigger` (line 30), plus
+-- `idx_profiles_is_official`. The original "tree-wide search" evidently did not
+-- cover the `supabase/migrations/` root — this repo has FIVE migration roots
+-- (artifacts/api-server/src/migrations, artifacts/api-server/migrations,
+-- migrations, db, supabase/migrations), and a search of only the first one
+-- reports drift that does not exist.
+--
+-- The second claim was wrong for the same reason. 2078's header cites
+-- "`enforce_is_official_trigger` (migration 0106)", and this file previously
+-- "corrected" that to say the citation was bogus because
+-- `0106_engagement_indexes.sql` creates like/reaction indexes and mentions
+-- neither. But 2078 pointed at the right NUMBER in a DIFFERENT DIRECTORY:
+-- `supabase/migrations/0106_profiles_is_official.sql`. Two unrelated files
+-- share the 0106 prefix across two roots. 2078's citation stands; the
+-- "correction" was the error.
+--
+-- What IS true: this migration is the first time the BOTH-DIRECTIONS guard is
+-- captured in the chain. The objects themselves were already recorded by 0106.
 --
 -- The old function is left in place, unreferenced, rather than dropped — see the
 -- rollback note. Nothing calls it once the trigger below is replaced.
