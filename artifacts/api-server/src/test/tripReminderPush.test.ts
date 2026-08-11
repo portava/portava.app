@@ -51,6 +51,16 @@ function makeFakeClient(state: FakeState, opts: FakeClientOpts = {}) {
     let pendingUpdate: any = null;
     const b: any = {
       select() { return b; },
+      // maybeSingle() is used by isFlagEnabled for feature_flags SELECT.
+      // Return enabled=true so the push kill-switch doesn't suppress push in
+      // trip-reminder tests that don't explicitly test the disabled state.
+      maybeSingle(): Promise<{ data: any; error: null }> {
+        if (table === "feature_flags") {
+          return Promise.resolve({ data: { enabled: true }, error: null });
+        }
+        const matched = rowsFor(table).filter((r) => filters.every((f) => f(r)));
+        return Promise.resolve({ data: matched[0] ?? null, error: null });
+      },
       // Intercept `.then` to throw for the configured table, simulating a hard
       // Supabase network/query error that propagates out of sendReminderForTrip.
       insert(row: any) {

@@ -16,6 +16,7 @@ import { resolveOrEnqueue, resolveOrEnqueueForDefinition } from "../../lib/stamp
 import { resolveCountry } from "../../lib/stamps/countryLookup.js";
 import { resolveCountryWithGeocoding } from "../../lib/stamps/countryGeocoder.js";
 import { criteriaGate } from "../../lib/stamps/criteria/index.js";
+import { isFlagEnabled } from "../../lib/featureFlags.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -539,6 +540,13 @@ async function _awardStampCore(
 
         const token = (profileRow as any)?.expo_push_token as string | null | undefined;
         if (token) {
+          // Honor the global push_notifications_enabled gate before dispatching
+          // the milestone push. isFlagEnabled returns false on DB error, which
+          // suppresses the push conservatively — consistent with the other two
+          // sendPushNotification call sites (pushWithRetry, NotificationRouter).
+          if (!(await isFlagEnabled(sc, "push_notifications_enabled"))) {
+            break;
+          }
           const milestoneLabel =
             level >= 10000 ? "10,000" : level >= 1000 ? "1,000" : "100";
           const { sendPushNotification } = await import("../../lib/push.js");

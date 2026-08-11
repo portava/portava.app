@@ -17,6 +17,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "./logger.js";
 import { sendPushNotification, type PushPayload } from "./push.js";
 import { clearDeadTokens } from "./pushTokenCleanup.js";
+import { isFlagEnabled } from "./featureFlags.js";
 
 // ── Test seams ─────────────────────────────────────────────────────────────────
 // Allows unit tests to replace sendPushNotification with a mock (e.g. one that
@@ -200,6 +201,14 @@ export class PushRetryQueue {
    * claims each due 'queued' row atomically by flipping status → 'processing'.
    */
   async processQueue(): Promise<void> {
+    // Honor the admin push kill switch BEFORE claiming any items from the queue.
+    // Items stay in 'queued' state while push is disabled so they are delivered
+    // when push is re-enabled, rather than being failed permanently.
+    if (!(await isFlagEnabled(this.db, "push_notifications_enabled"))) {
+      logger.info("push retry: push_notifications_enabled=false — queue processing skipped");
+      return;
+    }
+
     // Recover rows stranded by a previous crash/restart before claiming new ones
     await this.recoverStaleProcessing();
 

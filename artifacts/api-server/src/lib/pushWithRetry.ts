@@ -13,6 +13,7 @@ import { logger } from "./logger.js";
 import { sendPushNotification, type PushPayload, type PushResult } from "./push.js";
 import { PushRetryQueue } from "./pushRetryQueue.js";
 import { clearDeadTokens } from "./pushTokenCleanup.js";
+import { isFlagEnabled } from "./featureFlags.js";
 
 // ── Test seam ──────────────────────────────────────────────────────────────────
 // Allows unit tests to replace clearDeadTokens with a mock (e.g. one that
@@ -50,6 +51,16 @@ export async function sendPushWithRetry(
   recipients: PushRecipient | PushRecipient[],
   payload: PushPayload,
 ): Promise<PushResult> {
+  // Admin kill switch: push_notifications_enabled is a capability gate seeded
+  // true (push on) and admin-writable via PUT /admin/notification-defaults.
+  // False-on-DB-error silences push — the conservative direction for a
+  // notification storm, which is the primary reason an operator flips this.
+  // When db is null the check is skipped and push proceeds unconditionally.
+  if (db !== null && !(await isFlagEnabled(db, "push_notifications_enabled"))) {
+    logger.info("push: push_notifications_enabled=false — delivery suppressed by admin kill switch");
+    return { sent: 0, errors: [] };
+  }
+
   const list = (Array.isArray(recipients) ? recipients : [recipients])
     .map((r) => ({ userId: r.userId, tokens: validTokens(r.tokens) }))
     .filter((r) => r.tokens.length > 0);

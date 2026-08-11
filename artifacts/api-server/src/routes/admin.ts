@@ -543,10 +543,23 @@ async function resolveDisplayNames(
   return map;
 }
 
+// Flags that are seeded but have no code readers — hiding them prevents an
+// operator from toggling a switch that does nothing during an incident and
+// mistaking silence for the feature being stopped.
+// See scripts/check-flag-polarity.mjs INERT_SEEDED_FLAGS for the recorded intent.
+const HIDDEN_INERT_FLAGS = new Set([
+  "freeze_city",
+  "freeze_event",
+  "freeze_circle",
+  "freeze_booking",
+]);
+
 /**
  * GET /admin/feature-flags
  * Returns every row in feature_flags ordered by flag name, with the most
  * recent audit-log entry (changed_by display name + timestamp) merged in.
+ * Inert seeded flags (no readers) are excluded so they cannot be mistaken
+ * for working controls.
  */
 router.get("/admin/feature-flags", async (req, res) => {
   const admin = await requireAdmin(req, res, { withDisplayName: true });
@@ -580,7 +593,7 @@ router.get("/admin/feature-flags", async (req, res) => {
   )] as string[];
   const nameMap = await resolveDisplayNames(sc, actorIds);
 
-  const enriched = (flags ?? []).map((f: any) => {
+  const enriched = (flags ?? []).filter((f: any) => !HIDDEN_INERT_FLAGS.has(f.flag)).map((f: any) => {
     const lc = lastChangeMap[f.flag];
     if (!lc) return f;
     return {
@@ -611,6 +624,16 @@ router.patch("/admin/feature-flags/:flag", async (req, res) => {
   const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const { userId, displayName, sc } = admin;
+
+  // Block toggling of inert flags that have no code readers — toggling them
+  // would give an operator false confidence during an incident.
+  if (HIDDEN_INERT_FLAGS.has(req.params.flag)) {
+    res.status(400).json({
+      error: "not_operational",
+      message: `Flag '${req.params.flag}' has no implementation and is not exposed on the admin toggle surface. It cannot be toggled.`,
+    });
+    return;
+  }
 
   const parsed = toggleFlagSchema.safeParse(req.body);
   if (!parsed.success) {

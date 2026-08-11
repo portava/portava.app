@@ -185,6 +185,12 @@ function makeFakeDb(opts: FakeDbOpts = {}): FakeDb {
             if (table === "blocks") {
               return { data: null, error: null };
             }
+            // feature_flags: isFlagEnabled reads push_notifications_enabled here.
+            // Return enabled=true by default so the push kill-switch doesn't
+            // suppress push in tests that don't explicitly test the disabled state.
+            if (table === "feature_flags") {
+              return { data: { enabled: true }, error: null };
+            }
             return { data: null, error: null };
           };
 

@@ -61,7 +61,13 @@ interface DeleteCall {
   inFilters: Record<string, unknown[]>;
 }
 
-function makeFakeClient(queueRows: Record<string, unknown>[] = []) {
+interface FakeClientOpts {
+  /** push_notifications_enabled flag value returned by the feature_flags table (default: true) */
+  pushEnabled?: boolean;
+}
+
+function makeFakeClient(queueRows: Record<string, unknown>[] = [], opts: FakeClientOpts = {}) {
+  const { pushEnabled = true } = opts;
   const insertedRows: Record<string, Record<string, unknown>[]> = {};
   const updateCalls:  UpdateCall[] = [];
   const deleteCalls:  DeleteCall[] = [];
@@ -92,6 +98,8 @@ function makeFakeClient(queueRows: Record<string, unknown>[] = []) {
       neq()                           { return b; },
       lt(col: string, val: unknown)   { ltFilters[col]  = val; return b; },
       lte(col: string, val: unknown)  { lteFilters[col] = val; return b; },
+      // maybeSingle() is used by isFlagEnabled for the feature_flags SELECT.
+      maybeSingle() { return resolve(); },
       then(onF: (v: unknown) => unknown, onR: (e: unknown) => unknown) {
         return resolve().then(onF, onR);
       },
@@ -149,6 +157,10 @@ function makeFakeClient(queueRows: Record<string, unknown>[] = []) {
       if (tableName === "push_retry_queue") {
         const matched = queueRows.filter(matchesFilters);
         return { data: matched, error: null };
+      }
+      // feature_flags: isFlagEnabled reads push_notifications_enabled here.
+      if (tableName === "feature_flags") {
+        return { data: { enabled: pushEnabled }, error: null };
       }
       return { data: [], error: null };
     }
@@ -301,6 +313,50 @@ describe("PushRetryQueue.processQueue() — success on retry", () => {
       { retryAttempts: 2 },
       "metadata.retryAttempts must be 2 for a mid-sequence success on attempt 2 (not 1 from a pre-increment bug)",
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3b — processQueue() skips delivery when push_notifications_enabled is false
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("PushRetryQueue.processQueue() — push kill-switch", () => {
+  it("leaves queued rows untouched when push_notifications_enabled is false", async () => {
+    // A row sitting in the queue, ready to retry.
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    // Build a fake client where the feature_flags table says push is disabled.
+    const client = makeFakeClient([queueRow], { pushEnabled: false });
+    const queue  = new PushRetryQueue(client as never);
+
+    // Track whether Expo was called.
+    let sendPushCalled = false;
+    _setTestSendPush(async () => {
+      sendPushCalled = true;
+      return { sent: 1, errors: [], retryable: false };
+    });
+
+    await queue.processQueue();
+
+    // Expo must not be called — delivery is suppressed by the kill switch.
+    assert.equal(sendPushCalled, false, "Expo push must not be called when flag is false");
+
+    // The queue row must NOT have been claimed (status flipped to 'processing').
+    const claimUpdates = client.updateCalls.filter(
+      (c) => c.table === "push_retry_queue" && c.patch.status === "processing",
+    );
+    assert.equal(claimUpdates.length, 0, "queue row must not be claimed while push is disabled");
   });
 });
 

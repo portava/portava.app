@@ -27,9 +27,13 @@ router.get("/feature-flags", asyncHandler(async (req, res) => {
     return sendError(res, "db_error");
   }
 
+  // Inert seeded flags (seeded but no readers anywhere) are excluded so client
+  // bundles don't expose toggles that produce no observable effect.
+  const INERT_FLAGS = new Set(["freeze_city", "freeze_event", "freeze_circle", "freeze_booking"]);
+
   const flags: Record<string, boolean> = {};
   for (const row of data ?? []) {
-    flags[row.flag] = row.enabled ?? false;
+    if (!INERT_FLAGS.has(row.flag)) flags[row.flag] = row.enabled ?? false;
   }
 
   return res.json({ flags: resolveFeatureFlags(flags) });

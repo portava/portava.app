@@ -53,7 +53,15 @@ function fetch503(): typeof fetch {
   return (async () => ({ ok: false, status: 503, json: async () => ({}) })) as any;
 }
 
-function makeFakeDb() {
+interface FakeDbOpts {
+  /** push_notifications_enabled flag value (default: true — push enabled) */
+  pushEnabled?: boolean;
+  /** Simulate a DB error on the feature_flags query (default: false) */
+  flagError?: boolean;
+}
+
+function makeFakeDb(opts: FakeDbOpts = {}) {
+  const { pushEnabled = true, flagError = false } = opts;
   const inserted: Record<string, any[]> = {};
   const updates: Array<{ table: string; values: any; filter: { column: string; values: any[] } }> = [];
   const deletes: Array<{ table: string; filter: { column: string; values: any[] } }> = [];
@@ -63,6 +71,30 @@ function makeFakeDb() {
     __deletes: deletes,
     from(table: string) {
       return {
+        // ── SELECT path (used by isFlagEnabled for feature_flags) ──────────
+        select(_cols?: string) {
+          if (table === "feature_flags") {
+            return {
+              eq(_col: string, _val: string) {
+                return {
+                  maybeSingle() {
+                    if (flagError) {
+                      return Promise.resolve({ data: null, error: { message: "simulated db error" } });
+                    }
+                    return Promise.resolve({ data: { enabled: pushEnabled }, error: null });
+                  },
+                };
+              },
+            };
+          }
+          // Other tables: return a no-op chain for safety
+          return {
+            eq() {
+              return { maybeSingle() { return Promise.resolve({ data: null, error: null }); } };
+            },
+          };
+        },
+        // ── Mutation paths ─────────────────────────────────────────────────
         insert(row: any) {
           if (!inserted[table]) inserted[table] = [];
           inserted[table].push(row);
@@ -569,6 +601,40 @@ describe("sendPushWithRetry", () => {
    * This test injects a throwing mock and captures the warn call to
    * confirm neither field is silently dropped.
    */
+  // ── push_notifications_enabled gate ───────────────────────────────────────
+
+  it("suppresses push and returns 0 sent when push_notifications_enabled is false", async () => {
+    const db = makeFakeDb({ pushEnabled: false });
+    const result = await sendPushWithRetry(
+      db,
+      [{ userId: USER1, tokens: [TOKEN1] }, { userId: USER2, tokens: [TOKEN2] }],
+      PAYLOAD,
+    );
+    assert.equal(result.sent, 0, "sent must be 0 when push is disabled");
+    assert.equal(result.errors.length, 0, "no errors when suppressed by flag");
+    assert.equal(pushCalls.length, 0, "Expo push API must not be called when flag is false");
+    assert.equal((db.__inserted["push_retry_queue"] ?? []).length, 0, "nothing enqueued when flag is false");
+  });
+
+  it("suppresses push when the feature_flags DB query errors (fail-closed)", async () => {
+    const db = makeFakeDb({ flagError: true });
+    const result = await sendPushWithRetry(
+      db,
+      [{ userId: USER1, tokens: [TOKEN1] }],
+      PAYLOAD,
+    );
+    assert.equal(result.sent, 0, "sent must be 0 on flag DB error (fail-closed)");
+    assert.equal(pushCalls.length, 0, "Expo push API must not be called when flag DB errors");
+  });
+
+  it("sends push unconditionally when db is null — flag check is skipped", async () => {
+    // When the caller has no DB client the flag cannot be read; push proceeds
+    // unconditionally so DB-less callers are not silently broken.
+    const result = await sendPushWithRetry(null, { userId: USER1, tokens: [TOKEN1] }, PAYLOAD);
+    assert.equal(result.sent, 1, "push must be delivered when db is null (flag check skipped)");
+    assert.equal(pushCalls.length, 1, "Expo must be called once");
+  });
+
   it("emits a warn log with staleCount and err fields when clearDeadTokens throws on the initial send path", async () => {
     // TOKEN1 ok, TOKEN2 DeviceNotRegistered → staleTokens.length === 1
     ticketFor = (to: string) =>

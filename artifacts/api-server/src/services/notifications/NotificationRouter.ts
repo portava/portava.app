@@ -15,6 +15,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { sendPushNotification } from "../../lib/push.js";
 import { PushRetryQueue } from "../../lib/pushRetryQueue.js";
+import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { NotificationPreferenceService } from "./NotificationPreferenceService.js";
 import { TEMPLATES } from "./NotificationTemplateService.js";
 import type { NotificationRow } from "./NotificationService.js";
@@ -130,6 +131,22 @@ export class NotificationRouter {
 
   private async sendPush(notification: NotificationRow, userId: string): Promise<void> {
     try {
+      // ── Admin kill switch ──────────────────────────────────────────────────
+      // push_notifications_enabled is a CAPABILITY gate: true = push on.
+      // isFlagEnabled returns false on any DB error (fail-closed), which is the
+      // conservative direction — suppressing push on a DB error is preferable to
+      // sending during an incident after an operator toggled this off.
+      if (!(await isFlagEnabled(this.db, "push_notifications_enabled"))) {
+        logger.debug(
+          { notificationId: notification.id },
+          "NotificationRouter: push suppressed — push_notifications_enabled=false",
+        );
+        await this.logAttempt(
+          notification.id, userId, "push", "suppressed",
+          "push_notifications_enabled=false",
+        );
+        return;
+      }
       // ── Compass intelligence gate ──────────────────────────────────────────
       // Evaluate priority, quiet hours, category mute, safety filter, and
       // private-location redaction before dispatching the push.

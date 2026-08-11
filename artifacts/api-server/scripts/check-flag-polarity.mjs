@@ -323,79 +323,55 @@ const DISPOSITIONS = new Set([
 ]);
 
 const INERT_SEEDED_FLAGS = [
-  // ── Admin-writable and unread — worse than merely unread. ────────────────
-  {
-    flag: 'push_notifications_enabled', seededIn: '0117_beta_feature_flags.sql:29', kind: 'CAPABILITY',
-    disposition: 'write-reader',
-    reason:
-      'Seeded by 0117 and EXPLICITLY EXPOSED FOR WRITING: routes/notifications.ts:642 maps it into the admin ' +
-      'toggle map as `pushNotificationsEnabled: "push_notifications_enabled"`, so an admin request updates the ' +
-      'row. Nothing reads it. Worst shape in this list — the others are switches nobody wired, this is a ' +
-      'switch someone deliberately surfaced in the admin API and still nobody wired. It produces "I turned ' +
-      'push off and it kept sending".\n' +
-      'DISPOSITION IS write-reader, NOT remove-from-seed, for one reason: THERE IS NO OTHER PUSH STOP. The ' +
-      'disable_* family covers messaging, media, posting, signups, location and search; none covers push. ' +
-      'Removing the toggle would make the gap honest but would still leave an operator with no way to stop a ' +
-      'notification storm.\n' +
-      'COST OF write-reader: small and bounded. lib/pushWithRetry.ts sendPushWithRetry already takes ' +
-      '`db: SupabaseClient | null` as its first parameter, so the gate is a few lines before the send at :53, ' +
-      'and it covers 29 of the 31 call sites. The other two bypass the wrapper and call sendPushNotification ' +
-      'directly — services/notifications/NotificationRouter.ts:212 and services/passport/StampAwardEngine.ts:545 ' +
-      '— and need either their own gate or a redirect through the wrapper. lib/push.ts itself should NOT be ' +
-      'the gate point: it takes no client and is seamed on fetch only, so putting a DB read there changes its ' +
-      'shape and adds a round trip per send.\n' +
-      'ONE DESIGN TRAP FOR WHOEVER IMPLEMENTS IT: read through isFlagEnabled and a transient DB error silences ' +
-      'ALL push, because false-on-error means "capability off". That is the correct convention for a ' +
-      'capability and the wrong outcome for this one. Either seed-and-cache it (lib/rankLog.ts has the TTL ' +
-      'precedent) or decide deliberately that push-off is the safe direction. Do not reach for ' +
-      'isKillSwitchEngaged — the flag reads "enabled", so its true-value means GO, and the stop reader would ' +
-      'invert it.\n' +
-      'COST OF remove-from-seed, for comparison: two deletions — routes/notifications.ts:642 and the 0117 seed ' +
-      'row — plus a note that push has no kill switch. Cheaper today, and it leaves the incident gap open.',
-  },
-
   // ── The four that matter: seeded AS KILL SWITCHES, read by nothing. ───────
+  //
+  // NOTE: push_notifications_enabled was here with disposition write-reader.
+  // It has been wired: isFlagEnabled(db, 'push_notifications_enabled') is now
+  // called in lib/pushWithRetry.ts (covers 29/31 call sites),
+  // services/notifications/NotificationRouter.ts sendPush(), and
+  // services/passport/StampAwardEngine.ts milestone push. The flag is now a
+  // genuine admin kill switch for push delivery. Entry removed from this list.
   {
     flag: 'freeze_city', seededIn: '0065_phase7_safety.sql:74', kind: 'STOP',
-    disposition: 'owner-decision',
+    disposition: 'remove-from-seed',
     reason:
-      'Seeded as "Emergency: freeze city-scoped features (metadata.city required)" under a block header that ' +
-      'calls these kill-switches. No reader anywhere in the repo. The intended mechanism is documented at ' +
-      '0065:34-35 — the target city goes in feature_flags.metadata — and that mechanism is inert too: the only ' +
-      'function that selects the metadata column, lib/featureFlags.ts getFlagRow, has zero callers. So this is ' +
-      'not a missing `if`; the whole parameterised-stop design was seeded and never built. OWNER DECISION: ' +
-      'either build it (a reader plus a metadata-aware gate on the city-scoped surfaces, reading through ' +
-      'isKillSwitchEngaged since it is a stop), or drop the four rows and the metadata column with them. ' +
-      'Do not leave it toggleable-and-inert: an operator reaching for it during an incident gets silence.',
+      'Seeded as "Emergency: freeze city-scoped features (metadata.city required)". No reader. The whole ' +
+      'parameterised-stop design (target goes in feature_flags.metadata, read by getFlagRow which has zero ' +
+      'callers) was seeded and never built. REMEDIATED by hiding from admin toggle surface: excluded from ' +
+      'GET /admin/feature-flags and blocked in PATCH /admin/feature-flags/:flag (routes/admin.ts ' +
+      'HIDDEN_INERT_FLAGS), and excluded from the public GET /api/feature-flags (routes/featureFlags.ts). ' +
+      'An operator can no longer toggle a switch that does nothing. Pending: drop the seed row and the ' +
+      'metadata column when the per-city freeze design is either built or permanently abandoned.',
   },
   {
     flag: 'freeze_event', seededIn: '0065_phase7_safety.sql:75', kind: 'STOP',
-    disposition: 'owner-decision',
+    disposition: 'remove-from-seed',
     reason:
       'Seeded as "Emergency: freeze a specific event (metadata.event_id required)". No reader. Same inert ' +
-      'metadata mechanism as freeze_city. Note the adjacent capability already exists and is wired: events ' +
-      'carry visibility and state columns, and routes/events.ts gates on them — so a per-event freeze may be ' +
-      'better served by the existing moderation path than by a flag. OWNER DECISION: build the reader, or ' +
-      'remove the row and point operators at the event moderation surface instead.',
+      'metadata mechanism as freeze_city. Per-event moderation is already possible via the events visibility ' +
+      'and state columns in routes/events.ts. REMEDIATED by hiding from admin toggle surface: excluded from ' +
+      'GET /admin/feature-flags, blocked in PATCH /admin/feature-flags/:flag, and excluded from the public ' +
+      'GET /api/feature-flags. Pending: drop the seed row or build the reader against the existing moderation path.',
   },
   {
     flag: 'freeze_circle', seededIn: '0065_phase7_safety.sql:76', kind: 'STOP',
-    disposition: 'owner-decision',
+    disposition: 'remove-from-seed',
     reason:
-      'Seeded as "Emergency: freeze a specific circle (metadata.circle_id required)". No reader. Note that a ' +
-      'GLOBAL circle stop does exist and works — find_your_circle_disabled, read through isKillSwitchEngaged ' +
-      'at three sites in lib/circleAccessGuard.ts — so the per-circle case is the only gap. OWNER DECISION: ' +
-      'add the metadata-scoped branch to that existing guard, or remove the row, since the global stop already ' +
-      'covers the incident this was seeded for.',
+      'Seeded as "Emergency: freeze a specific circle (metadata.circle_id required)". No reader. The global ' +
+      'circle stop (find_your_circle_disabled) already covers the incident this was seeded for, read through ' +
+      'isKillSwitchEngaged at three sites in lib/circleAccessGuard.ts. REMEDIATED by hiding from admin ' +
+      'toggle surface: excluded from GET /admin/feature-flags, blocked in PATCH /admin/feature-flags/:flag, ' +
+      'and excluded from GET /api/feature-flags. Pending: drop the seed row.',
   },
   {
     flag: 'freeze_booking', seededIn: '0065_phase7_safety.sql:77', kind: 'STOP',
-    disposition: 'owner-decision',
+    disposition: 'remove-from-seed',
     reason:
-      'Seeded as "Emergency: freeze a specific booking (metadata.booking_id required)". No reader. As with ' +
-      'freeze_circle, the global stop exists and works: routes/rentABuddy.ts reads disable_rent_buddy_booking ' +
-      'and disable_rab_bookings through isKillSwitchEngaged in one guard. OWNER DECISION: extend that guard ' +
-      'with the metadata-scoped case, or remove the row.',
+      'Seeded as "Emergency: freeze a specific booking (metadata.booking_id required)". No reader. The global ' +
+      'booking stops (disable_rent_buddy_booking and disable_rab_bookings) already cover the incident, read ' +
+      'through isKillSwitchEngaged in routes/rentABuddy.ts. REMEDIATED by hiding from admin toggle surface: ' +
+      'excluded from GET /admin/feature-flags, blocked in PATCH /admin/feature-flags/:flag, and excluded from ' +
+      'GET /api/feature-flags. Pending: drop the seed row.',
   },
 
   // ── MEDIA_* suite: seeded wholesale by 2038, wired selectively. ──────────

@@ -54,7 +54,10 @@ function makeFakeClient(state: FakeState = {}) {
     if (table === "notification_preferences")          return state.notificationPreferences ?? [];
     if (table === "notification_category_preferences") return state.notificationCategoryPreferences ?? [];
     if (table === "feature_flags")
-      return Object.entries(state.featureFlags ?? {}).map(([flag, enabled]) => ({ flag, enabled }));
+      // Default push_notifications_enabled=true so tests that don't set featureFlags
+      // are not silently suppressed by the push kill-switch.
+      return Object.entries({ push_notifications_enabled: true, ...(state.featureFlags ?? {}) })
+        .map(([flag, enabled]) => ({ flag, enabled }));
     return [];
   }
 
