@@ -1,7 +1,6 @@
 /**
  * Stories service — wraps /api/stories and /api/users/me/close-friends endpoints.
  */
-import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 function apiBase(): string {
@@ -84,30 +83,38 @@ async function authHeader(): Promise<Record<string, string>> {
 }
 
 /**
- * Upload a local media URI to Supabase Storage and return a public URL.
+ * Upload a local media URI through the canonical server-side processing
+ * pipeline (POST /api/media/upload) and return the storage URL.
+ *
+ * Routing through the API server ensures EXIF/GPS metadata is stripped and
+ * images are re-encoded before storage, matching the privacy guarantees of
+ * the main post-media path. A direct client-to-bucket write bypasses this
+ * processing and leaves raw originals (potentially carrying capture
+ * coordinates) permanently retrievable at a guessable public URL.
+ *
  * Returns null on failure (caller shows error).
  */
 export async function uploadStoryMedia(localUri: string, mediaType: string): Promise<string | null> {
   try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const userId = sessionData.session?.user?.id;
-    if (!userId) return null;
+    const token = await freshApiToken();
+    if (!token) return null;
 
     // Fetch the local file as a blob
     const response = await fetch(localUri);
     const blob = await response.blob();
 
-    const ext = mediaType.startsWith('video') ? 'mp4' : 'jpg';
-    const path = `stories/${userId}/${Date.now()}.${ext}`;
+    const uploadRes = await fetch(`${apiBase()}/api/media/upload`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': mediaType,
+        Authorization: `Bearer ${token}`,
+      },
+      body: blob,
+    });
 
-    const { error } = await supabase.storage
-      .from('post-media')
-      .upload(path, blob, { contentType: mediaType, upsert: false });
-
-    if (error) return null;
-
-    const { data: urlData } = supabase.storage.from('post-media').getPublicUrl(path);
-    return urlData?.publicUrl ?? null;
+    if (!uploadRes.ok) return null;
+    const json = await uploadRes.json();
+    return typeof json?.url === 'string' ? json.url : null;
   } catch {
     return null;
   }

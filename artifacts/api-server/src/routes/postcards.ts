@@ -1082,4 +1082,125 @@ router.put('/postcards/:id/event-link', async (req, res) => {
   res.status(200).json({ ok: true });
 });
 
+/* ============================================================================
+ * POST /api/postcards/sweep-orphans — clean up abandoned pending uploads
+ * ============================================================================
+ * Postcards use a two-phase upload: the client PUTs the raw file to a signed
+ * Supabase Storage URL, then calls completeUpload() so the server can download,
+ * strip EXIF/GPS via Sharp, and re-upload the processed version in place.
+ *
+ * If the app crashes or the user backs out between the PUT and the completeUpload
+ * call, the raw original (potentially carrying EXIF/GPS metadata) is left in
+ * storage indefinitely. The post_media row exists (processing_status='pending')
+ * but completeUpload() is never called, so no EXIF strip ever runs.
+ *
+ * This endpoint cleans those orphaned uploads:
+ *   1. Find post_media rows with processing_status='pending' older than the
+ *      cutoff (default 1 hour — long enough for any real upload to complete).
+ *   2. Remove the storage objects (original + feed variant if present).
+ *   3. Delete the DB rows.
+ *
+ * Protected by INTERNAL_API_SECRET (same guard as other internal endpoints).
+ * Designed to be called on a schedule (e.g. hourly cron, deployment health job).
+ * Fail-safe: a sweep failure is logged but never blocks other operations.
+ *
+ * Returns { swept, errors } — swept = number of orphans removed.
+ */
+function requireInternalSecret(req: any, res: any): boolean {
+  const secret = process.env['INTERNAL_API_SECRET'];
+  if (!secret) {
+    res.status(503).json({
+      error: 'misconfigured',
+      message: 'INTERNAL_API_SECRET is not set; internal endpoints are disabled',
+    });
+    return false;
+  }
+  const provided = req.headers['x-internal-secret'];
+  if (provided !== secret) {
+    res.status(401).json({ error: 'unauthorized', message: 'Missing or invalid internal secret' });
+    return false;
+  }
+  return true;
+}
+
+/** How old a pending row must be before it is considered an orphan (ms). */
+const ORPHAN_CUTOFF_MS = 60 * 60 * 1000; // 1 hour
+
+router.post('/postcards/sweep-orphans', async (req, res) => {
+  if (!requireInternalSecret(req, res)) return;
+
+  const sc = getServiceClient();
+  if (!sc) {
+    res.status(503).json({ error: 'server_not_configured', message: 'Service client not ready' });
+    return;
+  }
+
+  const cutoff = new Date(Date.now() - ORPHAN_CUTOFF_MS).toISOString();
+
+  // Load orphaned pending rows (cap at 200 per sweep to bound latency).
+  const { data: orphans, error: fetchErr } = await sc
+    .from('post_media')
+    .select('id, storage_path, storage_bucket')
+    .eq('processing_status', 'pending')
+    .lt('created_at', cutoff)
+    .limit(200);
+
+  if (fetchErr) {
+    req.log?.error?.({ err: fetchErr }, 'sweep-orphans: failed to fetch pending rows');
+    res.status(500).json({ error: 'db_error', message: 'Failed to load orphaned rows' });
+    return;
+  }
+
+  const rows = (orphans ?? []) as Array<{ id: string; storage_path: string; storage_bucket: string }>;
+  if (rows.length === 0) {
+    res.status(200).json({ swept: 0, errors: 0 });
+    return;
+  }
+
+  let swept = 0;
+  let errors = 0;
+
+  for (const row of rows) {
+    try {
+      // Remove storage objects (original + any feed variant) BEFORE deleting
+      // the DB row. Order matters: if storage removal fails, we KEEP the DB row
+      // so a subsequent sweep can retry. Deleting the DB row first would orphan
+      // the storage object permanently — the sweep could never find it again.
+      //
+      // `remove` reports errors in the resolved `{ error }` field, not via
+      // rejection. A missing object is not an error (idempotent); a genuine
+      // bucket failure IS an error that must keep the row alive for retry.
+      if (row.storage_path) {
+        const { error: rmErr } = await sc.storage
+          .from(row.storage_bucket || STORAGE_BUCKET)
+          .remove([row.storage_path, `${row.storage_path}.feed.jpg`]);
+        if (rmErr) {
+          req.log?.warn?.({ err: rmErr, mediaId: row.id, storagePath: row.storage_path },
+            'sweep-orphans: storage removal failed — retaining DB row for retry');
+          errors++;
+          continue; // Leave the DB row so the next sweep can try again.
+        }
+      }
+
+      // Storage objects gone (or there was no path). Now safe to delete the row.
+      const { error: delErr } = await sc
+        .from('post_media')
+        .delete()
+        .eq('id', row.id);
+
+      if (delErr) {
+        req.log?.warn?.({ err: delErr, mediaId: row.id }, 'sweep-orphans: failed to delete row');
+        errors++;
+      } else {
+        swept++;
+      }
+    } catch (err) {
+      req.log?.warn?.({ err, mediaId: row.id }, 'sweep-orphans: unexpected error for row');
+      errors++;
+    }
+  }
+
+  res.status(200).json({ swept, errors });
+});
+
 export default router;

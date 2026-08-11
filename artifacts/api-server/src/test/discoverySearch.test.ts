@@ -539,7 +539,7 @@ describe("GET /api/discovery/search — normalized result shape (events)", () =>
           description: "Annual jazz in Paris",
           host_id: ALICE, cover_url: "https://cdn/evt.jpg",
           city: "Paris", country: "France",
-          starts_at: "2026-08-10T18:00:00Z",
+          starts_at: "2027-08-10T18:00:00Z",
           visibility: "public", status: "published",
           created_at: "2026-07-01T00:00:00Z",
         },
@@ -560,7 +560,7 @@ describe("GET /api/discovery/search — normalized result shape (events)", () =>
     assert.equal(evt.title,         "Paris Jazz Festival");
     assert.equal(evt.locationPreview, "Paris, France");
     assert.equal(evt.imageUrl,      "https://cdn/evt.jpg");
-    assert.equal(evt.startsAt,      "2026-08-10T18:00:00Z");
+    assert.equal(evt.startsAt,      "2027-08-10T18:00:00Z");
     assert.equal(evt.destinationRoute, `/event/${EVT_ID}`);
     assert.equal(evt.actionState?.isAttending, true);
   });
@@ -571,7 +571,7 @@ describe("GET /api/discovery/search — normalized result shape (events)", () =>
         { id: ALICE, handle: "alice", name: "Alice", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
       ],
       blocks: [],
-      events: [{ id: EVT_ID, title: "Paris Jazz Festival", description: "Jazz", host_id: ALICE, city: "Paris", country: "France", starts_at: "2026-08-10T18:00:00Z", visibility: "public", status: "published", created_at: "2026-07-01T00:00:00Z" }],
+      events: [{ id: EVT_ID, title: "Paris Jazz Festival", description: "Jazz", host_id: ALICE, city: "Paris", country: "France", starts_at: "2027-08-10T18:00:00Z", visibility: "public", status: "published", created_at: "2026-07-01T00:00:00Z" }],
       event_rsvps: [],
       profile_privacy_settings: [],
     });
@@ -815,7 +815,7 @@ describe("GET /api/discovery/search — type=all fan-out", () => {
       ],
       blocks: [],
       events: [
-        { id: "evt-1", title: "Travel Expo", description: "Expo", host_id: ALICE, city: null, country: null, starts_at: "2026-08-10T18:00:00Z", visibility: "public", status: "published", created_at: "2026-01-01T00:00:00Z" },
+        { id: "evt-1", title: "Travel Expo", description: "Expo", host_id: ALICE, city: null, country: null, starts_at: "2027-08-10T18:00:00Z", visibility: "public", status: "published", created_at: "2026-01-01T00:00:00Z" },
       ],
       hashtags: [
         { id: "ht-1", slug: "travellife", name: "travellife", usage_count: 100, is_blocked: false, created_at: "2026-01-01T00:00:00Z" },
