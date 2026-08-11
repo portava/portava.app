@@ -665,7 +665,16 @@ jobs:
 
           # Counts. run-node-tests.mjs prints its own discovery total; jest
           # prints "Tests:" / "Test Suites:" once per config (native, then web).
-          DISCOVERED="$(grep -oE 'Running [0-9]+ node:test files' "$LOG" | tail -n 1 | grep -oE '[0-9]+' | tail -n 1)"
+          # Same construct as the jest sums below, different reason. The marker
+          # is absent only when the runner did not get that far — which is a
+          # state this job wants to REPORT, not die on. Left bare, the missing
+          # marker exits 1 under `-e` and the step dies with no output at all,
+          # so the assert_int below (which would have named the problem) never
+          # runs. Empty here means the floor check fails loudly instead.
+          DISCOVERED=""
+          if DISCOVERED_RAW="$(grep -oE 'Running [0-9]+ node:test files' "$LOG" | tail -n 1 | grep -oE '[0-9]+' | tail -n 1)"; then
+            DISCOVERED="$DISCOVERED_RAW"
+          fi
 
           # DISCOVERY IS NOT EXECUTION. run-node-tests.mjs's "Running N
           # node:test files" line counts FILES it is about to hand to
@@ -823,14 +832,50 @@ jobs:
           # summaries rather than read from the last one — reading only the last
           # would silently drop the whole native run, which is 324 of the 326
           # files.
+          # JEST OMITS A SEGMENT ENTIRELY WHEN ITS COUNT IS ZERO. A clean run
+          # prints exactly:
+          #
+          #     Test Suites: 333 passed, 333 total
+          #     Tests:       1779 passed, 1779 total
+          #
+          # There is no "0 failed", no "0 skipped", no "0 todo". So
+          # `grep -oE "[0-9]+ failed"` matches NOTHING on a healthy run, exits
+          # 1, `pipefail` propagates it, the assignment inherits it, and the
+          # `-e` that `shell: bash` injects
+          # (`bash --noprofile --norc -e -o pipefail`) kills the step — before
+          # the `awk ... END { print s + 0 }` that exists precisely to yield 0
+          # for empty input ever runs. The empty-handling was written and then
+          # never reached.
+          #
+          # That is why this job reported red while its own output said
+          # "✔ ALL CHECKS PASSED" with 3855/3855 node:test and 333+2 jest
+          # suites green. It failed BECAUSE nothing failed.
+          #
+          # The comment above at the head of this block claims it "has no
+          # `set -e`". That is false: `set -uo pipefail` does not clear the
+          # `-e` the runner supplies. Verified in the run log — the step line
+          # reads `shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}`.
+          #
+          # A command in an `if` condition is exempt from `-e`, so the match is
+          # tested rather than assumed. `|| true` and `|| :` are both on this
+          # workflow's own forbidden-construct list and cannot be used here.
           jest_sum() {
-            grep -E "^$1:" "$LOG" \
-              | grep -oE "[0-9]+ $2" \
-              | grep -oE '^[0-9]+' \
-              | awk '{ s += $1 } END { print s + 0 }'
+            if MATCHED="$(grep -E "^$1:" "$LOG" | grep -oE "[0-9]+ $2")"; then
+              printf '%s\n' "$MATCHED" \
+                | grep -oE '^[0-9]+' \
+                | awk '{ s += $1 } END { print s + 0 }'
+            else
+              printf '0\n'
+            fi
           }
 
-          JEST_SUMMARIES="$(grep -cE '^Tests:' "$LOG")"
+          # `grep -c` prints 0 AND EXITS 1 when there are no matches, so this
+          # died on exactly the state the checks below exist to catch: jest
+          # producing no summary at all.
+          JEST_SUMMARIES=0
+          if SUMMARY_COUNT="$(grep -cE '^Tests:' "$LOG")"; then
+            JEST_SUMMARIES="$SUMMARY_COUNT"
+          fi
           JEST_TESTS_TOTAL="$(jest_sum 'Tests' total)"
           JEST_TESTS_PASSED="$(jest_sum 'Tests' passed)"
           JEST_TESTS_FAILED="$(jest_sum 'Tests' failed)"
