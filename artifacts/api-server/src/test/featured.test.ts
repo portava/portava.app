@@ -744,3 +744,208 @@ describe("I: creatorId filter also excludes private-profile posts from that crea
     );
   });
 });
+
+// ── J: media references are emitted as bare bucket/path, not unusable public URLs ──
+//
+// `post-media` is a private bucket. A stored `public_url` pointing into it does
+// not serve, so returning one gives the client a guaranteed-broken image. The
+// client hydrates a bare `<bucket>/<path>` reference through useHydratedMedia,
+// which signs it via POST /media/sign. Both selects in routes/featured.ts have
+// carried storage_path/storage_bucket since the bucket-privacy prep and never
+// read them; these tests hold the route to that shape.
+
+const FEAT_MEDIA_IMAGE  = "fa000000-0000-0000-0000-000000000001";
+const FEAT_MEDIA_VIDEO  = "fa000000-0000-0000-0000-000000000002";
+const FEAT_MEDIA_LEGACY = "fa000000-0000-0000-0000-000000000003";
+
+const POST_MEDIA_IMAGE  = "pa000000-0000-0000-0000-000000000001";
+const POST_MEDIA_VIDEO  = "pa000000-0000-0000-0000-000000000002";
+const POST_MEDIA_LEGACY = "pa000000-0000-0000-0000-000000000003";
+
+const LEGACY_PUBLIC_URL =
+  "https://proj.supabase.co/storage/v1/object/public/post-media/legacy/old.jpg";
+
+/** A featured row whose post carries exactly one post_media row. */
+function makeRowWithMedia(opts: { id: string; post_id: string; category: string; media: any }): any {
+  return {
+    id:          opts.id,
+    post_id:     opts.post_id,
+    category:    opts.category,
+    featured_at: "2025-07-25T12:00:00.000Z",
+    status:      "live",
+    posts: {
+      id:               opts.post_id,
+      content:          "media shape fixture",
+      location_city:    "Porto",
+      location_country: "PT",
+      author_id:        PORTAVA_USER_ID,
+      post_media:       [opts.media],
+      profiles:         BASE_PROFILE,
+    },
+  };
+}
+
+const MEDIA_IMAGE_ROW = {
+  id:               "m0000000-0000-0000-0000-000000000001",
+  media_type:       "image",
+  sort_order:       0,
+  processing_status: "ready",
+  // A public_url that cannot serve — the bucket is private.
+  public_url:       "https://proj.supabase.co/storage/v1/object/public/post-media/u1/photo.jpg",
+  thumbnail_url:    null,
+  storage_bucket:   "post-media",
+  storage_path:     "u1/photo.jpg",
+  thumbnail_storage_path: null,
+};
+
+const MEDIA_VIDEO_ROW = {
+  id:               "m0000000-0000-0000-0000-000000000002",
+  media_type:       "video",
+  sort_order:       0,
+  processing_status: "ready",
+  public_url:       "https://proj.supabase.co/storage/v1/object/public/post-media/u1/clip.mp4",
+  thumbnail_url:    null,
+  storage_bucket:   "post-media",
+  storage_path:     "u1/clip.mp4",
+  thumbnail_storage_path: "u1/clip_poster.jpg",
+};
+
+// Predates the storage columns: nothing but a public URL to fall back on.
+const MEDIA_LEGACY_ROW = {
+  id:               "m0000000-0000-0000-0000-000000000003",
+  media_type:       "image",
+  sort_order:       0,
+  processing_status: "ready",
+  public_url:       LEGACY_PUBLIC_URL,
+  thumbnail_url:    null,
+  storage_bucket:   null,
+  storage_path:     null,
+  thumbnail_storage_path: null,
+};
+
+const MEDIA_ROWS = [
+  makeRowWithMedia({ id: FEAT_MEDIA_IMAGE,  post_id: POST_MEDIA_IMAGE,  category: "best_photo",  media: MEDIA_IMAGE_ROW }),
+  makeRowWithMedia({ id: FEAT_MEDIA_VIDEO,  post_id: POST_MEDIA_VIDEO,  category: "best_video",  media: MEDIA_VIDEO_ROW }),
+  makeRowWithMedia({ id: FEAT_MEDIA_LEGACY, post_id: POST_MEDIA_LEGACY, category: "best_photo",  media: MEDIA_LEGACY_ROW }),
+];
+
+/** Flatten every post in the response and index it by postId. */
+function postsById(body: any): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const g of (body.groups ?? []) as any[]) {
+    for (const p of (g.posts ?? []) as any[]) out[p.postId] = p;
+  }
+  return out;
+}
+
+describe("J: GET /api/featured emits bare bucket/path media references", () => {
+  it("an image row yields '<bucket>/<storage_path>', not the non-serving public_url", async () => {
+    _setTestServiceClient(makeFakeSc(MEDIA_ROWS) as any);
+
+    const { status, body } = await getReq("/api/featured");
+    assert.equal(status, 200, `Expected 200, got ${status}: ${JSON.stringify(body)}`);
+
+    const post = postsById(body)[POST_MEDIA_IMAGE];
+    assert.ok(post, `Expected a post for ${POST_MEDIA_IMAGE}`);
+    assert.equal(
+      post.thumbnailUrl,
+      "post-media/u1/photo.jpg",
+      "image media must be emitted as a bare bucket/path reference the client can sign",
+    );
+  });
+
+  it("a video row yields the poster object, never the video file itself", async () => {
+    _setTestServiceClient(makeFakeSc(MEDIA_ROWS) as any);
+
+    const { status, body } = await getReq("/api/featured");
+    assert.equal(status, 200);
+
+    const post = postsById(body)[POST_MEDIA_VIDEO];
+    assert.ok(post, `Expected a post for ${POST_MEDIA_VIDEO}`);
+    assert.equal(
+      post.thumbnailUrl,
+      "post-media/u1/clip_poster.jpg",
+      "video posters live at thumbnail_storage_path — storage_path is the .mp4 and must never be sent as an image",
+    );
+    assert.ok(
+      !String(post.thumbnailUrl).endsWith(".mp4"),
+      `thumbnailUrl must not be the video file, got ${post.thumbnailUrl}`,
+    );
+  });
+
+  it("a legacy row with no storage columns still falls back to its public_url", async () => {
+    _setTestServiceClient(makeFakeSc(MEDIA_ROWS) as any);
+
+    const { status, body } = await getReq("/api/featured");
+    assert.equal(status, 200);
+
+    const post = postsById(body)[POST_MEDIA_LEGACY];
+    assert.ok(post, `Expected a post for ${POST_MEDIA_LEGACY}`);
+    assert.equal(
+      post.thumbnailUrl,
+      LEGACY_PUBLIC_URL,
+      "rows predating the storage columns must keep working, not go blank",
+    );
+  });
+
+  it("no returned thumbnailUrl is a raw /object/public/ URL into a private bucket", async () => {
+    _setTestServiceClient(makeFakeSc([MEDIA_ROWS[0], MEDIA_ROWS[1]]) as any);
+
+    const { status, body } = await getReq("/api/featured");
+    assert.equal(status, 200);
+
+    for (const post of Object.values(postsById(body))) {
+      assert.ok(
+        !String((post as any).thumbnailUrl ?? "").includes("/object/public/post-media/"),
+        `thumbnailUrl still points at the private bucket over a public URL: ${(post as any).thumbnailUrl}`,
+      );
+    }
+  });
+});
+
+// ── K: the @Portava fallback path emits the same shape ────────────────────────
+//
+// buildFallbackResponse has its own select and its own mapper. It carried the
+// same unread storage columns, so it needs the same guarantee — otherwise every
+// image silently breaks exactly when portava_featured is empty and the fallback
+// is the only thing on screen.
+
+describe("K: the fallback response emits bare bucket/path media references too", () => {
+  it("fallback posts carry '<bucket>/<storage_path>' rather than the public_url", async () => {
+    const fallbackPost = {
+      ...makePortavaPostRow("pf000001-0000-0000-0000-000000000001", 500),
+      post_media: [MEDIA_IMAGE_ROW],
+    };
+    _setTestServiceClient(makeFakeSc([], [fallbackPost]) as any);
+
+    const { status, body } = await getReq("/api/featured");
+    assert.equal(status, 200, `Expected 200, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.isFallback, true, "this fixture must exercise the fallback path");
+
+    const posts: any[] = (body.groups ?? []).flatMap((g: any) => g.posts as any[]);
+    assert.equal(posts.length, 1, `Expected exactly 1 fallback post, got ${posts.length}`);
+    assert.equal(
+      posts[0].thumbnailUrl,
+      "post-media/u1/photo.jpg",
+      "the fallback mapper must emit the same bare reference as the main mapper",
+    );
+  });
+
+  it("a fallback video post yields its poster, not the video file", async () => {
+    const fallbackPost = {
+      ...makePortavaPostRow("pf000002-0000-0000-0000-000000000002", 400),
+      post_media: [MEDIA_VIDEO_ROW],
+    };
+    _setTestServiceClient(makeFakeSc([], [fallbackPost]) as any);
+
+    const { status, body } = await getReq("/api/featured");
+    assert.equal(status, 200);
+
+    const posts: any[] = (body.groups ?? []).flatMap((g: any) => g.posts as any[]);
+    assert.equal(
+      posts[0].thumbnailUrl,
+      "post-media/u1/clip_poster.jpg",
+      "fallback video posters must come from thumbnail_storage_path",
+    );
+  });
+});
