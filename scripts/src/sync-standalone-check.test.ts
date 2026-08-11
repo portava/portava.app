@@ -16,7 +16,7 @@
 
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -490,10 +490,24 @@ describe('sync-standalone.sh --fix-lockfile', () => {
     return { root, srcDir, standaloneDir };
   }
 
+  /**
+   * Run --fix-lockfile against a throwaway repo with the legacy-sync opt-in set.
+   *
+   * Every writing mode of sync-standalone.sh is default-off since
+   * artifacts/travel-buddy was frozen; without PORTAVA_ENABLE_LEGACY_SYNC=1 the
+   * script prints its disabled banner and exits before any of this logic runs.
+   * The opt-in is safe HERE and only here, because repoRoot is a temp fixture —
+   * the guard test below covers the ungated behaviour, and nothing in this file
+   * may ever set the opt-in against the real repository.
+   */
   function runFixLockfile(repoRoot: string): { status: number; stdout: string; stderr: string } {
     const r = spawnSync('bash', [SYNC_SCRIPT, '--fix-lockfile'], {
       encoding: 'utf8',
-      env: { ...process.env, SYNC_STANDALONE_REPO_ROOT: repoRoot },
+      env: {
+        ...process.env,
+        SYNC_STANDALONE_REPO_ROOT: repoRoot,
+        PORTAVA_ENABLE_LEGACY_SYNC: '1',
+      },
       timeout: 60_000,
     });
     return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
@@ -510,24 +524,52 @@ describe('sync-standalone.sh --fix-lockfile', () => {
     writeFileSync(join(dir, 'pnpm-workspace.yaml'), 'packages: []\n');
   }
 
-  // Green path: run against the real already-synced repo (no SYNC_STANDALONE_REPO_ROOT override).
-  // pnpm install will be a no-op ("Already up to date") and --check-lockfile will pass.
-  test('exits 0 and prints completion message on the already-synced real repository', () => {
+  /**
+   * The default-off guard, which replaced the previous "green path" test.
+   *
+   * That test invoked --fix-lockfile against the REAL repository with no temp
+   * root, so it ran `pnpm install` in travel-buddy-standalone and rewrote the
+   * real lockfile as a side effect of running the suite. artifacts/travel-buddy
+   * is legacy-frozen and travel-buddy-standalone is the canonical mobile tree,
+   * so that write is precisely what the guard now exists to prevent — the test
+   * must assert the refusal, not re-enable the write to keep itself passing.
+   *
+   * Exit 0 is deliberate: hooks that still call this script must not fail. That
+   * is why "nothing was written" is asserted through the absence of the step
+   * labels rather than through the exit code, which cannot distinguish a
+   * refusal from a successful fix on its own.
+   */
+  test('is default-off: refuses to run without the legacy-sync opt-in and writes nothing', () => {
+    const { root, srcDir, standaloneDir } = makeCase('fl-default-off');
+    writeMinimalPkg(srcDir, 'test-app');
+    writeMinimalPkg(standaloneDir, 'test-standalone');
+    writePnpmWorkspace(standaloneDir);
+    writeFileSync(join(root, 'pnpm-lock.yaml'), buildLockfile('artifacts/travel-buddy', { expo: '54.0.35' }, {}));
+    const standaloneLock = join(standaloneDir, 'pnpm-lock.yaml');
+    writeFileSync(standaloneLock, buildLockfile('.', { expo: '54.0.10' }, {}));
+    const lockBefore = readFileSync(standaloneLock, 'utf8');
+
+    // Deliberately NO PORTAVA_ENABLE_LEGACY_SYNC — this is the ungated path.
     const r = spawnSync('bash', [SYNC_SCRIPT, '--fix-lockfile'], {
       encoding: 'utf8',
-      timeout: 120_000,
+      env: { ...process.env, SYNC_STANDALONE_REPO_ROOT: root },
+      timeout: 60_000,
     });
     const stdout = r.stdout ?? '';
-    const stderr = r.stderr ?? '';
+
+    assert.equal(r.status ?? 1, 0, `Guard must exit 0 so existing hooks do not fail.\nStdout:\n${stdout}`);
+    assert.ok(stdout.includes('SYNC IS DISABLED'), `Expected the disabled banner.\nStdout:\n${stdout}`);
+    assert.ok(stdout.includes('Nothing was written'), `Expected the "nothing written" notice.\nStdout:\n${stdout}`);
+
+    // Real proof it short-circuited: none of the three fix steps announced itself.
+    for (const label of ['Step 1', 'Step 2', 'Step 3']) {
+      assert.ok(!stdout.includes(label), `${label} ran despite the guard.\nStdout:\n${stdout}`);
+    }
 
     assert.equal(
-      r.status ?? 1,
-      0,
-      `Expected exit 0 (repo already in sync) but got ${r.status}.\nStdout:\n${stdout}\nStderr:\n${stderr}`,
-    );
-    assert.ok(
-      stdout.includes('Fix-lockfile complete'),
-      `Expected "Fix-lockfile complete" in stdout.\nStdout:\n${stdout}`,
+      readFileSync(standaloneLock, 'utf8'),
+      lockBefore,
+      'the standalone lockfile must be untouched when the sync is disabled',
     );
   });
 
