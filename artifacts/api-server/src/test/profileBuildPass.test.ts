@@ -142,6 +142,29 @@ function freshState(): FakeState {
   };
 }
 
+/**
+ * Poll until `probe` returns a value, or fail after `timeoutMs`.
+ *
+ * For assertions on writes the route fires WITHOUT awaiting. Sleeping a fixed
+ * amount would trade one race for a slower one; this settles on the event
+ * actually happening and still fails loudly if it never does.
+ */
+async function waitFor<T>(
+  probe: () => T | undefined,
+  what: string,
+  timeoutMs = 2000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const v = probe();
+    if (v !== undefined) return v;
+    if (Date.now() > deadline) {
+      throw new Error(`timed out after ${timeoutMs}ms waiting for ${what}`);
+    }
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 // ── HTTP helper ───────────────────────────────────────────────────────────────
 
 type ReqOpts = {
@@ -243,9 +266,60 @@ describe("PATCH /api/me/profile — allowed fields", () => {
       res.body && typeof res.body === "object",
       "body should be an object",
     );
-    assert.equal(state.updates.length, 1, "should record exactly one update");
-    const upd = state.updates[0].data as any;
-    assert.equal(upd.bio, "Explorer of hidden trails");
+    // Assert WHAT was written, not HOW MANY writes happened.
+    //
+    // This used to be `assert.equal(state.updates.length, 1)`, and it failed in
+    // CI with actual 2. The second write is real and deliberate: changing `bio`
+    // makes the route fire detectAndStoreLanguage() WITHOUT awaiting it
+    // (src/routes/profile.ts), and that writes profiles.bio_original_language.
+    // Whether it lands before or after this assertion is decided by event-loop
+    // scheduling — it won the race on CI runners and lost it on developer
+    // machines. The count was never a contract the route made.
+    //
+    // The count was, however, the only guard here against unintended writes, so
+    // it is not simply dropped: the write it was accidentally catching now has
+    // its own deterministic test below, which settles it instead of racing it.
+    const bioWrite = state.updates.find(
+      (u) => u.table === "profiles" && (u.data as any)?.bio !== undefined,
+    );
+    assert.ok(bioWrite, "expected a profiles update carrying the new bio");
+    assert.equal((bioWrite.data as any).bio, "Explorer of hidden trails");
+  });
+
+  it("bio change stores the detected language and leaves default_language alone", async () => {
+    const res = await req("PATCH", "/api/me/profile", {
+      body: { bio: "hola amigos — exploring Patagonia this winter" },
+    });
+    assert.equal(res.status, 200, `Expected 200: ${JSON.stringify(res.body)}`);
+
+    // The route does not await this write, so settle it explicitly rather than
+    // asserting into the same race the test above used to lose. Bounded: if it
+    // never lands, that is a failure, not a silent pass.
+    const langWrite = await waitFor(
+      () =>
+        state.updates.find(
+          (u) =>
+            u.table === "profiles" &&
+            (u.data as any)?.bio_original_language !== undefined,
+        ),
+      "a profiles update carrying bio_original_language",
+    );
+
+    // MockTranslationProvider maps 'hola' -> 'es' (src/lib/translation.ts).
+    // TRANSLATION_PROVIDER defaults to 'mock' and TRANSLATION_ENABLED defaults
+    // to true, so this path is live in tests without any env setup.
+    assert.equal((langWrite.data as any).bio_original_language, "es");
+
+    // A STATED INVARIANT, not an incidental one. contentTranslation.ts says:
+    // "Store in the dedicated bio_original_language column — never touch
+    // default_language, which is the user's own preference setting." Someone
+    // wrote that down; this asserts it across every write the flow makes.
+    for (const u of state.updates) {
+      assert.ok(
+        !Object.prototype.hasOwnProperty.call(u.data as object, "default_language"),
+        `no update in the bio flow may write default_language (saw ${JSON.stringify(u.data)})`,
+      );
+    }
   });
 
   it("accepts homeCity and homeCountry — returns 200", async () => {
