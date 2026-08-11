@@ -528,6 +528,11 @@ describe('sync-standalone.sh --fix-lockfile', () => {
         ...process.env,
         SYNC_STANDALONE_REPO_ROOT: repoRoot,
         PORTAVA_ENABLE_LEGACY_SYNC: '1',
+        // Belt and braces with the fixture's .npmrc (see writeNpmrc). The file
+        // alone demonstrably did not take effect on the runner even though it
+        // does locally; this env form was verified to work on its own. Both are
+        // scoped to a temp fixture and cannot affect a real install.
+        PNPM_CONFIG_FROZEN_LOCKFILE: 'false',
       },
       timeout: 60_000,
     });
