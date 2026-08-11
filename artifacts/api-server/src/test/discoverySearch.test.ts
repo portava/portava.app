@@ -41,6 +41,19 @@ const TRIP_PRI = "ff000000-0000-4000-a000-000000000011";
 
 const ME_TOK = "tok-me";
 
+// Event fixtures must be UPCOMING — discovery search filters out past events.
+//
+// A literal date here is ambient state: the wall clock, not the code, decides
+// whether the test passes. These fixtures were "2026-08-10T18:00:00Z" and began
+// failing the instant that moment passed — the event vanished from results, so
+// "should include events" failed and actionState was read off a missing element.
+// Bumping the year to 2027 fixed the symptom and re-armed the identical failure
+// for 2027-08-10.
+//
+// Derive from now instead, so what the fixture DECLARES is "30 days ahead"
+// rather than a literal that merely happens to be in the future today.
+const UPCOMING_EVENT_ISO = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
 // ── Fake Supabase client ──────────────────────────────────────────────────────
 
 interface FakeState {
@@ -539,7 +552,7 @@ describe("GET /api/discovery/search — normalized result shape (events)", () =>
           description: "Annual jazz in Paris",
           host_id: ALICE, cover_url: "https://cdn/evt.jpg",
           city: "Paris", country: "France",
-          starts_at: "2027-08-10T18:00:00Z",
+          starts_at: UPCOMING_EVENT_ISO,
           visibility: "public", status: "published",
           created_at: "2026-07-01T00:00:00Z",
         },
@@ -560,7 +573,7 @@ describe("GET /api/discovery/search — normalized result shape (events)", () =>
     assert.equal(evt.title,         "Paris Jazz Festival");
     assert.equal(evt.locationPreview, "Paris, France");
     assert.equal(evt.imageUrl,      "https://cdn/evt.jpg");
-    assert.equal(evt.startsAt,      "2027-08-10T18:00:00Z");
+    assert.equal(evt.startsAt,      UPCOMING_EVENT_ISO);
     assert.equal(evt.destinationRoute, `/event/${EVT_ID}`);
     assert.equal(evt.actionState?.isAttending, true);
   });
@@ -571,7 +584,7 @@ describe("GET /api/discovery/search — normalized result shape (events)", () =>
         { id: ALICE, handle: "alice", name: "Alice", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
       ],
       blocks: [],
-      events: [{ id: EVT_ID, title: "Paris Jazz Festival", description: "Jazz", host_id: ALICE, city: "Paris", country: "France", starts_at: "2027-08-10T18:00:00Z", visibility: "public", status: "published", created_at: "2026-07-01T00:00:00Z" }],
+      events: [{ id: EVT_ID, title: "Paris Jazz Festival", description: "Jazz", host_id: ALICE, city: "Paris", country: "France", starts_at: UPCOMING_EVENT_ISO, visibility: "public", status: "published", created_at: "2026-07-01T00:00:00Z" }],
       event_rsvps: [],
       profile_privacy_settings: [],
     });
@@ -815,7 +828,7 @@ describe("GET /api/discovery/search — type=all fan-out", () => {
       ],
       blocks: [],
       events: [
-        { id: "evt-1", title: "Travel Expo", description: "Expo", host_id: ALICE, city: null, country: null, starts_at: "2027-08-10T18:00:00Z", visibility: "public", status: "published", created_at: "2026-01-01T00:00:00Z" },
+        { id: "evt-1", title: "Travel Expo", description: "Expo", host_id: ALICE, city: null, country: null, starts_at: UPCOMING_EVENT_ISO, visibility: "public", status: "published", created_at: "2026-01-01T00:00:00Z" },
       ],
       hashtags: [
         { id: "ht-1", slug: "travellife", name: "travellife", usage_count: 100, is_blocked: false, created_at: "2026-01-01T00:00:00Z" },
@@ -868,7 +881,13 @@ describe("GET /api/discovery/search — type=all fan-out", () => {
   it("interleaves round-robin so no single type dominates the top results", async () => {
     const manyEvents = Array.from({ length: 8 }, (_, i) => ({
       id: `evt-${i}`, title: `Travel Event ${i}`, description: "desc",
-      host_id: ALICE, city: null, country: null, starts_at: "2026-08-10T18:00:00Z",
+      // Missed by the 2026->2027 bump, so these eight stayed expired. That
+      // silently defanged this test rather than failing it: past events are
+      // filtered out, leaving nothing for round-robin to interleave against,
+      // so `travelerIdx < 5` passed vacuously with travelers as the only
+      // bucket. A fixture that expires does not always go red — sometimes it
+      // just stops testing anything.
+      host_id: ALICE, city: null, country: null, starts_at: UPCOMING_EVENT_ISO,
       visibility: "public", status: "published",
       created_at: "2026-01-01T00:00:00Z",
     }));
@@ -970,12 +989,12 @@ describe("GET /api/discovery/search — age-restricted content exclusion", () =>
       events: [
         {
           id: EVT_AGE, title: "Night Travel Fest", host_id: AGE_DAVE,
-          city: "Manila", country: null, starts_at: "2026-09-01T18:00:00Z", cover_url: null,
+          city: "Manila", country: null, starts_at: UPCOMING_EVENT_ISO, cover_url: null,
           description: null, visibility: "public", status: "upcoming", created_at: "2026-09-01T00:00:00Z",
         },
         {
           id: "ee000000-0000-4000-a000-000000000022", title: "Day Travel Fair", host_id: ALICE,
-          city: "Cebu", country: null, starts_at: "2026-09-02T18:00:00Z", cover_url: null,
+          city: "Cebu", country: null, starts_at: UPCOMING_EVENT_ISO, cover_url: null,
           description: null, visibility: "public", status: "upcoming", created_at: "2026-09-02T00:00:00Z",
         },
       ],
