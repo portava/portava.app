@@ -335,6 +335,18 @@ STANDALONE_OWNED_FILES=(
   # from being deleted as "stale" by a (legacy, opt-in) sync.
   "app/media-viewer/__tests__/"
   "app/memory/__tests__/"
+
+  # ── Hydrated-media fix, standalone only (2026-08-11) ──────────────────────
+  # These three components were converted to use DisplayMediaImage (hydrated
+  # media) in travel-buddy-standalone. artifacts/travel-buddy is legacy-frozen
+  # and still has the pre-fix raw-URL <Image> versions; it is not being
+  # patched to match (slated for archival per replit.md's SOURCE OF TRUTH
+  # banner). Listed here purely as insurance: if PORTAVA_ENABLE_LEGACY_SYNC is
+  # ever set before archival happens, these entries stop the legacy-frozen
+  # (pre-fix) copies from silently overwriting the fixed standalone versions.
+  "src/components/passport/PassportHighlightsStrip.tsx"
+  "src/components/FollowingHighlightsStrip.tsx"
+  "src/components/search/SearchSuggestionsPanel.tsx"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.
