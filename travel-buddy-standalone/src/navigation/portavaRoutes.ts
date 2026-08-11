@@ -1693,6 +1693,93 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     icon: null,
     requiresAuth: false,
   },
+
+  // ── Reminders ─────────────────────────────────────────────────────────────
+
+  {
+    key: 'reminders-index',
+    path: 'reminders/index',
+    title: 'Reminders',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    ownerOnly: true,
+  },
+  {
+    key: 'reminders-new',
+    path: 'reminders/new',
+    title: 'New Reminder',
+    parent: 'reminders-index',
+    icon: null,
+    requiresAuth: true,
+    ownerOnly: true,
+  },
+  {
+    key: 'reminders-detail',
+    path: 'reminders/[id]',
+    title: 'Reminder',
+    parent: 'reminders-index',
+    icon: null,
+    requiresAuth: true,
+    ownerOnly: true,
+  },
+
+  // ── Settings ──────────────────────────────────────────────────────────────
+
+  {
+    key: 'settings-index',
+    path: 'settings/index',
+    title: 'Settings',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+  },
+  {
+    key: 'compass-settings',
+    path: 'compass-settings',
+    title: 'Compass Settings',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    ownerOnly: true,
+  },
+  {
+    key: 'profile-change-password',
+    path: 'profile/change-password',
+    title: 'Change Password',
+    parent: 'user-profile',
+    icon: null,
+    requiresAuth: true,
+    ownerOnly: true,
+  },
+
+  // ── Plan alias ────────────────────────────────────────────────────────────
+  //
+  // A "plan" is not an entity: plan items are keyed on trip_id and every server
+  // route is scoped /trips/:tripId/plan/... This path is an addressable alias
+  // that resolves to the owning trip, hence trip-detail as its parent.
+
+  {
+    key: 'plan-detail',
+    path: 'plan/[id]',
+    title: 'Plan',
+    parent: 'trip-detail',
+    icon: null,
+    requiresAuth: true,
+    deepLink: '/plan/[id]',
+  },
+
+  // ── Admin ─────────────────────────────────────────────────────────────────
+
+  {
+    key: 'admin-user-moderation',
+    path: 'admin/user-moderation',
+    title: 'User Moderation',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    adminOnly: true,
+  },
 ];
 
 // ── Layout registry ───────────────────────────────────────────────────────────

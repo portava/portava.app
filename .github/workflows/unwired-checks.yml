@@ -369,17 +369,16 @@ jobs:
       # "Cannot find module" if the path is wrong. The existence check is
       # explicit anyway, so a moved script fails with a message rather than a
       # module-resolution stack trace.
-      - name: 'standalone: check-route-registry.mjs (no script exists; invoked directly)'
+      # Was invoked by raw file path, with a hand-rolled existence check standing
+      # in for the coverage a package script gets for free. It now has one
+      # (`check:route-registry`), so it goes through pnpm-run.sh like every other
+      # check and preflight's assert-ci-scripts.mjs asserts the (package, script)
+      # pair exists — a moved or renamed file fails preflight loudly instead of
+      # this step silently pointing at nothing.
+      - name: 'standalone: check:route-registry'
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash
-        working-directory: travel-buddy-standalone
-        run: |
-          set -euo pipefail
-          if [ ! -f scripts/check-route-registry.mjs ]; then
-            echo "::error::travel-buddy-standalone/scripts/check-route-registry.mjs is missing. This guard is invoked by file path because the tree has no package.json script for it; if the file moved, this step must be updated rather than left pointing at nothing."
-            exit 1
-          fi
-          node scripts/check-route-registry.mjs
+        run: bash .github/scripts/pnpm-run.sh travel-buddy-standalone travel-buddy-standalone check:route-registry
 
   # ───────────────────────────────────────────────────────────────────────────
   # THE VERDICT. Same reasoning as ci.yml's `ci-verdict` and live-db.yml's
