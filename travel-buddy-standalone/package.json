@@ -15,6 +15,7 @@
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && node scripts/check-import-extensions.mjs",
+    "check:route-registry": "node scripts/check-route-registry.mjs",
     "test": "node scripts/run-node-tests.mjs",
     "test:event-rab-cta": "node --import tsx/esm --test src/services/__tests__/event.rabCta.test.ts",
     "test:stamps": "node --import tsx --test src/test/stampGracefulDegradation.test.ts",
