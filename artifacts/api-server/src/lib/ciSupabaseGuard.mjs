@@ -109,6 +109,37 @@
  * check:guard-coverage, is what makes the coverage of both front doors a fact
  * rather than a claim.
  *
+ * WHAT "BOTH FRONT DOORS" DOES NOT MEAN (2026-08-11)
+ * =================================================
+ *
+ * It means both import entry points into this policy. It does NOT mean every
+ * path from this repo to a Supabase database. There are FOUR, and this module
+ * is the first two:
+ *
+ *   1. @supabase/supabase-js behind this guard                — covered here
+ *   2. the read-only audit path behind ciProdReadOnlyAuditGuard — covered here
+ *   3. the Supabase CLI                                        — outside
+ *   4. direct libpq via TRIGGER_PSQL_URL / ENGAGEMENT_PSQL_URL — outside
+ *
+ * (3) is a separate binary. It reads supabase/.temp/linked-project.json, not
+ * this module — and that file was committed to this repo pinning the
+ * PRODUCTION ref until 2026-08-11.
+ *
+ * (4) is not merely unguarded, it is structurally outside this architecture.
+ * Every assertion downstream of here resolves a project ref and compares it. A
+ * libpq connection string carries no ref: there is no SUPABASE_URL to parse,
+ * so the allowlist has nothing to bind to and cannot be extended to cover it.
+ * scripts/check-db-triggers.sh:194-196 and
+ * scripts/check-engagement-indexes.sh:91-94 read those variables today.
+ *
+ * Both are refused in CI by .github/scripts/assert-nonprod-supabase.sh
+ * (runtime: CLI on PATH, committed link state, libpq variables set) and
+ * .github/scripts/assert-ci-scripts.mjs (static: CLI invocation in workflow
+ * YAML, which catches `npx supabase`). Neither refusal happens here, and
+ * neither defends a developer laptop. The coverage this file proves is real
+ * and it is coverage of an import surface — say that, rather than letting it
+ * be read as coverage of the database.
+ *
  * WHY THIS IS ONE POLICY AND NINE IMPORT SITES, NOT ONE CALL SITE
  * ==============================================================
  *

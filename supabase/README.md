@@ -46,6 +46,27 @@ workspace.
   `supabase init` would have made it authoritative again with no prompt and no
   gate.
 
+## The CLI is one of two paths the guards do not face
+
+There are four ways this repo can reach a Supabase database. Two are covered by
+the Node guards: `@supabase/supabase-js` behind `ciSupabaseGuard`, and the
+read-only audit path behind `ciProdReadOnlyAuditGuard`. The other two are not:
+
+- **The Supabase CLI** (above) — a separate binary that reads stored link state.
+- **Direct libpq**, via `TRIGGER_PSQL_URL` / `ENGAGEMENT_PSQL_URL` under
+  `TRIGGER_QUERY_MODE=psql` / `ENGAGEMENT_QUERY_MODE=psql`
+  (`scripts/check-db-triggers.sh:194-196`,
+  `scripts/check-engagement-indexes.sh:91-94`).
+
+The second is not merely unguarded — it is **structurally outside the
+architecture**. Every assertion in `assert-nonprod-supabase.sh` resolves a
+project ref and compares it. A libpq connection string carries no ref, so there
+is nothing for the allowlist to bind to and no way to extend it to cover this.
+It has to be a different check on a different key, and it is: both mechanisms
+are now refused in CI outright, rather than inspected.
+
+Neither refusal protects a developer laptop.
+
 Two Supabase projects share the display name `travel-buddy`
 (`ajrurzioarfkagpuxfnb`, production, and `zheztcvfhkwbouspesew`, paused). A name
 never identifies a project here. Whatever tool you use, put the **ref** or a

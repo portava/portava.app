@@ -697,6 +697,28 @@ const SUPABASE_CREDENTIAL_ENV_NAMES = [
   'SUPABASE_PROJECT_TOKEN',
   'SUPABASE_ACCESS_TOKEN',
   'SUPABASE_DB_PASSWORD',
+  // ── libpq connection strings. Added 2026-08-11. ────────────────────────────
+  // The list header says it covers names that "select the database being
+  // written to", and these are exactly that — yet they were absent, so the
+  // authority did not match its own stated contract.
+  //
+  // TRIGGER_PSQL_URL and ENGAGEMENT_PSQL_URL are real and live:
+  // scripts/check-db-triggers.sh:194-196 and
+  // scripts/check-engagement-indexes.sh:91-94 read them under
+  // TRIGGER_QUERY_MODE=psql / ENGAGEMENT_QUERY_MODE=psql, which skip the
+  // Management API entirely and connect straight to Postgres. Neither appears
+  // in a workflow today; both are one step away from doing so.
+  //
+  // DB_URL and SUPABASE_DB_URL have NO reader anywhere in this repo. They are
+  // listed anyway: replit.md documents a `DB_URL` repo secret for psql mode
+  // (the scripts actually read ENGAGEMENT_PSQL_URL — the doc is wrong, and is
+  // being corrected), and a name that appears in a runbook eventually appears
+  // in a workflow. Listing an unused name costs nothing; discovering it after
+  // someone wires it up costs a production write.
+  'TRIGGER_PSQL_URL',
+  'ENGAGEMENT_PSQL_URL',
+  'SUPABASE_DB_URL',
+  'DB_URL',
 ];
 
 /** Whole-word reference to `name` anywhere in `text`. */
@@ -1426,6 +1448,88 @@ if (process.env.GITHUB_STEP_SUMMARY) {
       '',
     ].join('\n'),
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NO SUPABASE CLI IN CI. Added 2026-08-11.
+//
+// Every guard in this repo faces Node. ciSupabaseGuard.mjs and
+// supabaseTargetPolicy.mjs run at ES-module evaluation time in front of
+// @supabase/supabase-js; assert-nonprod-supabase.sh compares environment
+// variables before a job runs. The Supabase CLI is a separate binary that reads
+// neither. It resolves its target from supabase/.temp/linked-project.json — a
+// file that was committed to this repo, pinning the PRODUCTION ref, until it
+// was removed on 2026-08-11.
+//
+// So a workflow step that installed and ran the CLI would reach production with
+// every guard reporting green, because none of them would have been consulted.
+// That is the failure this check exists to prevent: not a wrong verdict, but a
+// correct verdict about a path nobody was on.
+//
+// This is the STATIC half. It runs here because only a text scan can see
+// `npx supabase`, which installs on demand and so is invisible to a PATH check
+// on the runner. The RUNTIME half — CLI on PATH, committed link state in the
+// checked-out tree — is in .github/scripts/assert-nonprod-supabase.sh.
+const CLI_SUBCOMMANDS =
+  'link|db|migration|migrations|gen|projects|start|stop|status|login|logout|init|' +
+  'functions|secrets|inspect|branches|bootstrap|orgs|services|test|snippets|domains';
+
+// Written so this file's own source cannot match: pattern 1 escapes the slash,
+// and patterns 2/3 are built from strings in which `supabase` is never followed
+// by a literal space or slash. Comment lines are stripped before matching, so
+// the prose above may name the constructs plainly.
+const CLI_PATTERNS = [
+  { re: /supabase\/setup-cli/, what: 'the setup-cli action' },
+  {
+    re: new RegExp(
+      '(?:^|[^\\w./@-])(?:npx|pnpx|bunx|(?:pnpm|yarn) dlx)\\s+(?:-\\S+\\s+)*supabase(?=\\s|$)',
+    ),
+    what: 'an on-demand CLI invocation (npx/dlx)',
+  },
+  {
+    re: new RegExp(`(?:^|[^\\w./@-])supabase[ \\t]+(?:${CLI_SUBCOMMANDS})(?=[ \\t]|$)`),
+    what: 'a direct CLI invocation',
+  },
+];
+
+const THIS_SCRIPT = resolve(REPO_ROOT, '.github', 'scripts', 'assert-ci-scripts.mjs');
+
+function walkGithubForCliScan(dir, out = []) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = resolve(dir, entry.name);
+    if (entry.isDirectory()) walkGithubForCliScan(full, out);
+    else if (/\.(ya?ml|sh|mjs)$/.test(entry.name)) out.push(full);
+  }
+  return out;
+}
+
+const cliScanRoot = resolve(REPO_ROOT, '.github');
+if (existsSync(cliScanRoot)) {
+  for (const file of walkGithubForCliScan(cliScanRoot)) {
+    // The scanner cannot be its own subject: every pattern is spelled out here.
+    if (file === THIS_SCRIPT) continue;
+    const rel = file.slice(REPO_ROOT.length + 1);
+    const lines = readFileSync(file, 'utf8').split('\n');
+    for (let i = 0; i < lines.length; i += 1) {
+      if (isCommentLine(lines[i])) continue;
+      for (const { re, what } of CLI_PATTERNS) {
+        if (re.test(lines[i])) {
+          problem(
+            `${rel}:${i + 1} invokes the Supabase CLI (${what}). No guard in this repo ` +
+              'can see a CLI invocation: ciSupabaseGuard and supabaseTargetPolicy sit in front of ' +
+              '@supabase/supabase-js in Node, and assert-nonprod-supabase.sh compares environment ' +
+              'variables. The CLI reads supabase/.temp/linked-project.json instead, which pinned ' +
+              'the PRODUCTION ref while it was committed. If CI genuinely needs the CLI, that is a ' +
+              'deliberate architecture change: give it a target on the command line and extend the ' +
+              'guards to cover it FIRST. See supabase/README.md.',
+          );
+          // One finding per line. `npx supabase db push` matches both the
+          // on-demand and the direct pattern; it is one problem, not two.
+          break;
+        }
+      }
+    }
+  }
 }
 
 if (problems.length > 0) {
