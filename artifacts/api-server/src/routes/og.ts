@@ -6,6 +6,16 @@
  * Returns an HTML page whose <head> contains Open Graph and Twitter Card meta
  * tags used by link-preview scrapers (Slack, iMessage, WhatsApp, Twitter/X).
  *
+ * GET /api/og/:type/:id/image.png
+ *
+ * The image those tags point at, for events and trips. Scrapers cannot run our
+ * signed-URL hydration, so the server resolves the stored object itself and
+ * serves the bytes from this stable, unauthenticated URL — a raw storage
+ * reference never leaves the process. Profiles reuse the passport OG image
+ * (GET /api/users/:username/og-image.png), the same endpoint wellKnownShare.ts
+ * points at. Both routes gate on one shared resolveEntity() so the image and
+ * the card can never disagree about what is public. See lib/ogImage.ts.
+ *
  * iMessage / WhatsApp compatibility notes
  * ─────────────────────────────────────────
  * • iMessage requires og:image:width + og:image:height to render the preview
@@ -32,6 +42,12 @@ import { Router } from "express";
 import { getServiceClient } from "../lib/supabase.js";
 import { resolveProfileVisibility, extractBearerToken } from "../lib/profileVisibility.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import {
+  OG_IMAGE_WIDTH,
+  OG_IMAGE_HEIGHT,
+  resolveOgImageBytes,
+  renderOgImagePng,
+} from "../lib/ogImage.js";
 
 const router = Router();
 
@@ -196,7 +212,154 @@ const GENERIC: Record<string, { title: string; description: string }> = {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ---------------------------------------------------------------------------
-// Route
+// Entity resolution — shared by the HTML card and the OG image
+// ---------------------------------------------------------------------------
+
+/**
+ * What the two routes agree on about one entity.
+ *
+ * `publicCard` is null for private, blocked and missing entities alike. The
+ * HTML route and the image route BOTH derive their answer from this one
+ * function precisely so they cannot drift apart: an image that rendered a cover
+ * photo for an entity whose HTML card said "Private Event" would leak exactly
+ * what the generic card exists to hide.
+ */
+interface ResolvedEntity {
+  /** Canonical site path — used for og:url and for the fallback card. */
+  path: string;
+  publicCard: {
+    title: string;
+    description: string;
+    /**
+     * The STORED media reference (bare `<bucket>/<path>`, or a legacy URL).
+     * Never emitted to a client: it is resolved to bytes server-side by the
+     * image route. See lib/ogImage.ts for why a raw reference is useless to a
+     * scraper.
+     */
+    imageRef: string | null;
+    /** Profile handle, so the card can point at the passport OG image. */
+    handle: string | null;
+  } | null;
+}
+
+const PRIVATE_ENTITY: (path: string) => ResolvedEntity = (path) => ({ path, publicCard: null });
+
+async function resolveEntity(
+  sc: any,
+  type: string,
+  idSafe: string,
+  viewerId: string | null,
+): Promise<ResolvedEntity> {
+  // ── Profile ────────────────────────────────────────────────────────────────
+  if (type === "profile") {
+    const { data: profile } = await sc
+      .from("profiles")
+      .select("id, handle, display_name, name, bio, avatar_url, avatar_image_width, avatar_image_height, is_private, passport_visibility, account_status")
+      .or(`handle.eq.${idSafe},id.eq.${idSafe}`)
+      .maybeSingle();
+
+    if (!profile) return PRIVATE_ENTITY(`/u/${idSafe}`);
+
+    const path = `/u/${(profile as any).handle ?? idSafe}`;
+
+    const { visibility } = await resolveProfileVisibility(sc, viewerId, (profile as any).id, profile).catch(
+      () => ({ visibility: "unavailable" as const, privacySettings: null }),
+    );
+
+    if (visibility === "unavailable" || visibility === "blocked" || visibility === "limited_preview") {
+      return PRIVATE_ENTITY(path);
+    }
+
+    const handle = (profile as any).handle ? `@${(profile as any).handle}` : "Traveler";
+    const bio = ((profile as any).bio as string | null) ?? "";
+    return {
+      path,
+      publicCard: {
+        title: `${handle} on Portava`,
+        description: bio.slice(0, 200) || `Check out ${handle}'s travel passport on Portava.`,
+        imageRef: ((profile as any).avatar_url ?? null) as string | null,
+        handle: ((profile as any).handle ?? null) as string | null,
+      },
+    };
+  }
+
+  // ── Event ──────────────────────────────────────────────────────────────────
+  if (type === "event") {
+    const path = `/events/${idSafe}`;
+    if (!UUID_RE.test(idSafe)) return PRIVATE_ENTITY(path);
+
+    const { data: ev } = await sc
+      .from("events")
+      .select("id, title, description, city, country, visibility, host_id, state, cover_url, cover_image_width, cover_image_height")
+      .eq("id", idSafe)
+      .maybeSingle();
+
+    if (!ev) return PRIVATE_ENTITY(path);
+
+    // Only public events get real OG metadata; everything else gets the
+    // generic private card.  Block check: a blocked host → fallback.
+    const evVis = (ev as any).visibility as string ?? "invite_only";
+    const isPublic = evVis === "public";
+    const hostBlocked = viewerId ? await blocked(sc, viewerId, (ev as any).host_id) : false;
+
+    if (!isPublic || hostBlocked) return PRIVATE_ENTITY(path);
+
+    // Public event: safe fields only — no exact venue/address/coordinates.
+    const loc = [(ev as any).city, (ev as any).country].filter(Boolean).join(", ");
+    const rawDesc = ((ev as any).description as string | null) ?? "";
+    return {
+      path,
+      publicCard: {
+        title: `${(ev as any).title} · Portava`,
+        description: rawDesc.slice(0, 200) || `A public event${loc ? ` in ${loc}` : ""} on Portava.`,
+        imageRef: ((ev as any).cover_url ?? null) as string | null,
+        handle: null,
+      },
+    };
+  }
+
+  // ── Trip ───────────────────────────────────────────────────────────────────
+  if (type === "trip") {
+    const path = `/trips/${idSafe}`;
+    if (!UUID_RE.test(idSafe)) return PRIVATE_ENTITY(path);
+
+    const { data: trip } = await sc
+      .from("trips")
+      .select("id, title, destination_city, destination_country, visibility, owner_id, cover_url, cover_image_width, cover_image_height, show_destination_city")
+      .eq("id", idSafe)
+      .maybeSingle();
+
+    if (!trip) return PRIVATE_ENTITY(path);
+
+    // Only public trips get real OG metadata.
+    const tripVis = (trip as any).visibility as string ?? "private";
+    const isPublicTrip = tripVis === "public";
+    const ownerBlocked = viewerId ? await blocked(sc, viewerId, (trip as any).owner_id) : false;
+
+    if (!isPublicTrip || ownerBlocked) return PRIVATE_ENTITY(path);
+
+    // Public trip: safe fields — no exact dates, hotel names, addresses, or
+    // coordinates. Destination city only if the owner opted in.
+    const showCity = (trip as any).show_destination_city !== false;
+    const city = showCity ? ((trip as any).destination_city as string | null) : null;
+    const country = (trip as any).destination_country as string | null;
+    const loc = [city, country].filter(Boolean).join(", ");
+    return {
+      path,
+      publicCard: {
+        title: `${(trip as any).title} · Portava`,
+        description: loc ? `A trip to ${loc} on Portava.` : "A trip shared on Portava.",
+        imageRef: ((trip as any).cover_url ?? null) as string | null,
+        handle: null,
+      },
+    };
+  }
+
+  return PRIVATE_ENTITY("/");
+}
+
+// ---------------------------------------------------------------------------
+// Routes
 // ---------------------------------------------------------------------------
 
 router.get("/og/:type/:id", asyncHandler(async (req, res) => {
@@ -225,6 +388,8 @@ router.get("/og/:type/:id", asyncHandler(async (req, res) => {
   const viewerId = await getViewerId(sc, req);
   const { title: gTitle, description: gDesc } = GENERIC[type]!;
 
+  const resolved = await resolveEntity(sc, type, idSafe, viewerId);
+
   /**
    * Fallback (private/missing) card.
    *
@@ -234,141 +399,94 @@ router.get("/og/:type/:id", asyncHandler(async (req, res) => {
    * prevents the generic card from being stored against a URL that the entity
    * owner may later make public.
    */
-  const fallback = (path: string) => {
+  if (!resolved.publicCard) {
     res.setHeader("Cache-Control", "no-store");
-    return buildOgHtml({ title: gTitle, description: gDesc, url: `${origin}${path}`, noindex: true });
+    res.send(buildOgHtml({
+      title: gTitle,
+      description: gDesc,
+      url: `${origin}${resolved.path}`,
+      noindex: true,
+    }));
+    return;
+  }
+
+  // Public entity: brief cache so scrapers can share the same response, but
+  // short enough to pick up cover/avatar changes.
+  res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+
+  /**
+   * og:image never carries the stored reference itself — see lib/ogImage.ts.
+   *
+   * Profiles reuse the passport OG image, which already renders a 1200×630
+   * card under the same visibility rules; wellKnownShare.ts points at it for
+   * exactly this reason. Events and trips get the endpoint below. Both are
+   * 1200×630 landscape, so both are "banner" — a profile card is no longer a
+   * square avatar and must not claim to be one, or Slack and Telegram render
+   * the passport card as a cropped thumbnail.
+   */
+  const imageUrl = type === "profile"
+    ? `${origin}/api/users/${encodeURIComponent(resolved.publicCard.handle ?? idSafe)}/og-image.png`
+    : `${origin}/api/og/${type}/${encodeURIComponent(idSafe)}/image.png`;
+
+  res.send(buildOgHtml({
+    title: resolved.publicCard.title,
+    description: resolved.publicCard.description,
+    url: `${origin}${resolved.path}`,
+    imageUrl,
+    imageLayout: "banner",
+    imageWidth: OG_IMAGE_WIDTH,
+    imageHeight: OG_IMAGE_HEIGHT,
+    noindex: false,
+  }));
+}));
+
+/**
+ * GET /og/:type/:id/image.png — the server-rendered OG image for an entity.
+ *
+ * Stable and unauthenticated: a scraper fetches this one URL forever and the
+ * bytes stay valid, which a signed storage URL could never promise.
+ *
+ * Every non-public outcome — private, blocked, missing, unknown type, storage
+ * down, undecodable bytes — returns the SAME generic branded card at 200.
+ * Never a 404 and never a distinguishable error: a status code that varied by
+ * entity state would leak existence just as surely as the cover photo would.
+ */
+router.get("/og/:type/:id/image.png", asyncHandler(async (req, res) => {
+  const { type, id } = req.params;
+
+  const sendPng = async (bytes: Buffer | null) => {
+    const png = await renderOgImagePng(bytes);
+    res.status(200).set({
+      "Content-Type": "image/png",
+      // Personalised renders expire fast so a visibility flip to private stops
+      // showing the old cover quickly; the generic card carries no entity data
+      // and can be cached hard.
+      "Cache-Control": bytes
+        ? "no-store, no-cache, must-revalidate"
+        : "public, max-age=600",
+    }).send(png);
   };
 
-  // ── Profile ────────────────────────────────────────────────────────────────
-  if (type === "profile") {
-    const { data: profile } = await sc
-      .from("profiles")
-      .select("id, handle, display_name, name, bio, avatar_url, avatar_image_width, avatar_image_height, is_private, passport_visibility, account_status")
-      .or(`handle.eq.${idSafe},id.eq.${idSafe}`)
-      .maybeSingle();
+  // Profiles are served by the passport OG image endpoint, which owns the
+  // passport card render. Anything else here is an unknown type.
+  if (type !== "event" && type !== "trip") { await sendPng(null); return; }
 
-    if (!profile) {
-      res.send(fallback(`/u/${idSafe}`));
-      return;
-    }
+  const sc = getServiceClient();
+  if (!sc) { await sendPng(null); return; }
 
-    const { visibility } = await resolveProfileVisibility(sc, viewerId, (profile as any).id, profile).catch(
-      () => ({ visibility: "unavailable" as const, privacySettings: null }),
-    );
+  const idSafe = id.replace(/[^a-zA-Z0-9_\-]/g, "").slice(0, 100);
+  if (!idSafe) { await sendPng(null); return; }
 
-    if (visibility === "unavailable" || visibility === "blocked" || visibility === "limited_preview") {
-      res.send(fallback(`/u/${(profile as any).handle ?? idSafe}`));
-      return;
-    }
+  try {
+    const viewerId = await getViewerId(sc, req);
+    const resolved = await resolveEntity(sc, type, idSafe, viewerId);
+    if (!resolved.publicCard) { await sendPng(null); return; }
 
-    // Public profile: brief cache so scrapers can share the same response,
-    // but short enough to pick up avatar changes.
-    res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
-
-    const handle = (profile as any).handle ? `@${(profile as any).handle}` : "Traveler";
-    const bio = ((profile as any).bio as string | null) ?? "";
-    res.send(buildOgHtml({
-      title: `${handle} on Portava`,
-      description: bio.slice(0, 200) || `Check out ${handle}'s travel passport on Portava.`,
-      url: `${origin}/u/${(profile as any).handle ?? idSafe}`,
-      imageUrl: (profile as any).avatar_url ?? null,
-      imageLayout: "square",
-      imageWidth: (profile as any).avatar_image_width ?? null,
-      imageHeight: (profile as any).avatar_image_height ?? null,
-      noindex: false,
-    }));
-    return;
+    await sendPng(await resolveOgImageBytes(sc, resolved.publicCard.imageRef));
+  } catch (e: any) {
+    req.log?.warn?.({ err: e }, "og-image: lookup failed, serving generic card");
+    await sendPng(null);
   }
-
-  // ── Event ──────────────────────────────────────────────────────────────────
-  if (type === "event") {
-    if (!UUID_RE.test(idSafe)) { res.send(fallback(`/events/${idSafe}`)); return; }
-
-    const { data: ev } = await sc
-      .from("events")
-      .select("id, title, description, city, country, visibility, host_id, state, cover_url, cover_image_width, cover_image_height")
-      .eq("id", idSafe)
-      .maybeSingle();
-
-    if (!ev) { res.send(fallback(`/events/${idSafe}`)); return; }
-
-    // Only public events get real OG metadata; everything else gets the
-    // generic private card.  Block check: a blocked host → fallback.
-    const evVis = (ev as any).visibility as string ?? "invite_only";
-    const isPublic = evVis === "public";
-    const hostBlocked = viewerId ? await blocked(sc, viewerId, (ev as any).host_id) : false;
-
-    if (!isPublic || hostBlocked) {
-      res.send(fallback(`/events/${idSafe}`));
-      return;
-    }
-
-    res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
-
-    // Public event: safe fields only — no exact venue/address/coordinates.
-    const loc = [(ev as any).city, (ev as any).country].filter(Boolean).join(", ");
-    const rawDesc = ((ev as any).description as string | null) ?? "";
-    const desc = rawDesc.slice(0, 200) || `A public event${loc ? ` in ${loc}` : ""} on Portava.`;
-
-    res.send(buildOgHtml({
-      title: `${(ev as any).title} · Portava`,
-      description: desc,
-      url: `${origin}/events/${idSafe}`,
-      imageUrl: (ev as any).cover_url ?? null,
-      imageLayout: "banner",
-      imageWidth: (ev as any).cover_image_width ?? null,
-      imageHeight: (ev as any).cover_image_height ?? null,
-      noindex: false,
-    }));
-    return;
-  }
-
-  // ── Trip ───────────────────────────────────────────────────────────────────
-  if (type === "trip") {
-    if (!UUID_RE.test(idSafe)) { res.send(fallback(`/trips/${idSafe}`)); return; }
-
-    const { data: trip } = await sc
-      .from("trips")
-      .select("id, title, destination_city, destination_country, visibility, owner_id, cover_url, cover_image_width, cover_image_height, show_destination_city")
-      .eq("id", idSafe)
-      .maybeSingle();
-
-    if (!trip) { res.send(fallback(`/trips/${idSafe}`)); return; }
-
-    // Only public trips get real OG metadata.
-    const tripVis = (trip as any).visibility as string ?? "private";
-    const isPublicTrip = tripVis === "public";
-    const ownerBlocked = viewerId ? await blocked(sc, viewerId, (trip as any).owner_id) : false;
-
-    if (!isPublicTrip || ownerBlocked) {
-      res.send(fallback(`/trips/${idSafe}`));
-      return;
-    }
-
-    res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
-
-    // Public trip: safe fields — no exact dates, hotel names, addresses, or
-    // coordinates. Destination city only if the owner opted in.
-    const showCity = (trip as any).show_destination_city !== false;
-    const city = showCity ? ((trip as any).destination_city as string | null) : null;
-    const country = (trip as any).destination_country as string | null;
-    const loc = [city, country].filter(Boolean).join(", ");
-    const desc = loc ? `A trip to ${loc} on Portava.` : "A trip shared on Portava.";
-
-    res.send(buildOgHtml({
-      title: `${(trip as any).title} · Portava`,
-      description: desc,
-      url: `${origin}/trips/${idSafe}`,
-      imageUrl: (trip as any).cover_url ?? null,
-      imageLayout: "banner",
-      imageWidth: (trip as any).cover_image_width ?? null,
-      imageHeight: (trip as any).cover_image_height ?? null,
-      noindex: false,
-    }));
-    return;
-  }
-
-  res.status(404).type("text").send("Not found");
 }));
 
 export default router;

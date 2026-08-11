@@ -289,28 +289,28 @@ describe("GET /og/:type/:id — OG meta-tag correctness", () => {
       assert.ok(v && v.length > 0, "og:description should be non-empty");
     });
 
-    it("og:image is the avatar URL", () => {
+    it("og:image points at the passport OG image endpoint, never the stored avatar", () => {
       const v = getMeta(html, "og:image");
-      assert.equal(v, "https://cdn.example.com/avatars/alice.jpg");
+      assert.ok(
+        v && v.endsWith("/api/users/alice_pub/og-image.png"),
+        `og:image must be the server-rendered passport card, got: ${v}`,
+      );
+      assert.ok(
+        !String(v).includes("cdn.example.com"),
+        "the stored avatar reference must never reach a scraper — it is resolved server-side",
+      );
     });
 
-    it("og:image:secure_url matches og:image for HTTPS avatars", () => {
-      const v = getMeta(html, "og:image:secure_url");
-      assert.equal(v, "https://cdn.example.com/avatars/alice.jpg");
-    });
-
-    it("og:image:width and og:image:height are present (square avatar layout)", () => {
+    it("og:image:width/height are the 1200x630 card the passport endpoint renders", () => {
       const w = getMeta(html, "og:image:width");
       const h = getMeta(html, "og:image:height");
-      assert.ok(w && Number(w) > 0, `og:image:width should be positive, got: ${w}`);
-      assert.ok(h && Number(h) > 0, `og:image:height should be positive, got: ${h}`);
-      // Square layout for avatars
-      assert.equal(w, h, "avatar image should be square (width === height)");
+      assert.equal(w, "1200");
+      assert.equal(h, "630");
     });
 
-    it("twitter:card = 'summary' for square avatar", () => {
+    it("twitter:card = 'summary_large_image' — the passport card is landscape, not a square avatar", () => {
       const v = getMeta(html, "twitter:card");
-      assert.equal(v, "summary");
+      assert.equal(v, "summary_large_image");
     });
 
     it("robots = 'index, follow'", () => {
@@ -385,14 +385,16 @@ describe("GET /og/:type/:id — OG meta-tag correctness", () => {
       assert.ok(v && v.length > 0, "og:description should be set");
     });
 
-    it("og:image is the cover URL", () => {
+    it("og:image points at the server-rendered image endpoint, never the stored cover", () => {
       const v = getMeta(html, "og:image");
-      assert.equal(v, "https://cdn.example.com/events/festival.jpg");
-    });
-
-    it("og:image:secure_url present for HTTPS cover", () => {
-      const v = getMeta(html, "og:image:secure_url");
-      assert.equal(v, "https://cdn.example.com/events/festival.jpg");
+      assert.ok(
+        v && v.includes("/api/og/event/") && v.endsWith("/image.png"),
+        `og:image must be the server-rendered endpoint, got: ${v}`,
+      );
+      assert.ok(
+        !String(v).includes("cdn.example.com"),
+        "the stored cover reference must never reach a scraper — it is resolved server-side",
+      );
     });
 
     it("og:image:width = 1200 and og:image:height = 630 (banner layout)", () => {
@@ -465,9 +467,16 @@ describe("GET /og/:type/:id — OG meta-tag correctness", () => {
       assert.ok(v?.includes("Tokyo") || v?.includes("Japan"), `description: ${v}`);
     });
 
-    it("og:image is the cover URL", () => {
+    it("og:image points at the server-rendered image endpoint, never the stored cover", () => {
       const v = getMeta(html, "og:image");
-      assert.equal(v, "https://cdn.example.com/trips/japan.jpg");
+      assert.ok(
+        v && v.includes("/api/og/trip/") && v.endsWith("/image.png"),
+        `og:image must be the server-rendered endpoint, got: ${v}`,
+      );
+      assert.ok(
+        !String(v).includes("cdn.example.com"),
+        "the stored cover reference must never reach a scraper — it is resolved server-side",
+      );
     });
 
     it("og:image:width = 1200 and og:image:height = 630 (banner layout)", () => {
