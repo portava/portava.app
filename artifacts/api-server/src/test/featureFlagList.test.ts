@@ -422,4 +422,39 @@ describe("GET /admin/feature-flags — last_change merge", () => {
       assert.equal(r.status, 403);
     });
   });
+
+  // ── inert freeze_* flags are hidden from the admin list ────────────────────
+  //
+  // freeze_city/freeze_event/freeze_circle/freeze_booking are seeded rows with
+  // no code reader anywhere. Showing them lets an operator "turn off" a switch
+  // that does nothing and mistake silence for the feature actually stopping.
+  // They must never appear in the admin flag list, even if the row still
+  // exists live in feature_flags (the DB row itself is out of scope here —
+  // a separate migration retires it).
+
+  describe("HIDDEN_INERT_FLAGS — freeze_* flags excluded from the list", () => {
+    it("omits freeze_city/freeze_event/freeze_circle/freeze_booking even though the rows exist", async () => {
+      const client = makeFakeClient({
+        flagRows: [
+          { flag: "freeze_city",    enabled: false, description: "Freeze city",    updated_at: "2026-07-01T00:00:00Z" },
+          { flag: "freeze_event",   enabled: false, description: "Freeze event",   updated_at: "2026-07-01T00:00:00Z" },
+          { flag: "freeze_circle",  enabled: false, description: "Freeze circle",  updated_at: "2026-07-01T00:00:00Z" },
+          { flag: "freeze_booking", enabled: false, description: "Freeze booking", updated_at: "2026-07-01T00:00:00Z" },
+          { flag: "stamps_enabled", enabled: true,  description: "Stamp earning",  updated_at: "2026-07-01T00:00:00Z" },
+        ],
+      });
+      _setTestClient(client, true);
+      _setTestServiceClient(client);
+
+      const r = await req("GET", "/admin/feature-flags");
+      assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+
+      const names = (r.body?.flags ?? []).map((f: any) => f.flag);
+      assert.ok(!names.includes("freeze_city"),    "freeze_city must not appear in the admin list");
+      assert.ok(!names.includes("freeze_event"),   "freeze_event must not appear in the admin list");
+      assert.ok(!names.includes("freeze_circle"),  "freeze_circle must not appear in the admin list");
+      assert.ok(!names.includes("freeze_booking"), "freeze_booking must not appear in the admin list");
+      assert.deepEqual(names, ["stamps_enabled"], "only the operational flag remains");
+    });
+  });
 });

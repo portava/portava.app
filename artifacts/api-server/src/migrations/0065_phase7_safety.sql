@@ -58,11 +58,26 @@ ALTER TABLE feature_flags ADD COLUMN IF NOT EXISTS metadata jsonb;
 -- configured, so unseeded flags are not outages. `isFlagEnabled` is unchanged
 -- and still returns false on error, which remains correct for capability gates.
 --
--- The four freeze_* rows below are NOT covered by any of this: nothing in the
--- repository reads them, so they neither fail open nor fail closed. Either a
--- reader is written or they are removed from this seed; until then they are
--- operator-visible switches that do nothing. See scripts/check-flag-polarity.mjs
--- (INERT_SEEDED_FLAGS) for the recorded decision.
+-- RETIRED 2026-08-11: four freeze_* rows were seeded here and have been removed
+-- from this statement.
+--
+-- They were freeze_city / freeze_event / freeze_circle / freeze_booking, seeded
+-- as parameterised emergency stops whose target was to live in
+-- feature_flags.metadata and be read back through getFlagRow(). getFlagRow()
+-- has zero callers; the design was seeded and never built, so all four were
+-- operator-visible switches that gated nothing.
+--
+-- They are removed from the seed HERE so a fresh database never creates them,
+-- and deleted from existing databases by
+-- src/migrations/0209_retire_freeze_flags.sql. Editing this applied migration
+-- is deliberate and is the remedy scripts/check-flag-polarity.mjs names as the
+-- `remove-from-seed` disposition: leaving the INSERT in place would mean a new
+-- environment re-creates the exact rows 0209 exists to remove. Their
+-- INERT_SEEDED_FLAGS entries are removed in the same commit, as rule R7 of that
+-- script requires once a flag is no longer seeded.
+--
+-- The seven disable_* rows below are unaffected: those are read through
+-- isKillSwitchEngaged and are genuine stops.
 INSERT INTO feature_flags (flag, enabled, description) VALUES
   ('disable_unknown_message_requests', false, 'Emergency: block DMs/message-requests from users with no shared context'),
   ('disable_new_event_creation',       false, 'Emergency: prevent any new event/meetup creation'),
@@ -70,9 +85,5 @@ INSERT INTO feature_flags (flag, enabled, description) VALUES
   ('disable_tagging',                  false, 'Emergency: disable all @mention tagging globally'),
   ('disable_location_sharing',         false, 'Emergency: freeze location sharing and live-share updates'),
   ('disable_profile_search',           false, 'Emergency: hide profile search results'),
-  ('disable_media_uploads',            false, 'Emergency: block avatar, cover and media uploads'),
-  ('freeze_city',                      false, 'Emergency: freeze city-scoped features (metadata.city required)'),
-  ('freeze_event',                     false, 'Emergency: freeze a specific event (metadata.event_id required)'),
-  ('freeze_circle',                    false, 'Emergency: freeze a specific circle (metadata.circle_id required)'),
-  ('freeze_booking',                   false, 'Emergency: freeze a specific booking (metadata.booking_id required)')
+  ('disable_media_uploads',            false, 'Emergency: block avatar, cover and media uploads')
 ON CONFLICT (flag) DO NOTHING;

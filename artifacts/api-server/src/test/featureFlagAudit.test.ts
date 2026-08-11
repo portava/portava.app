@@ -380,6 +380,35 @@ describe("Feature flag audit log", () => {
     });
   });
 
+  // ── PATCH — inert freeze_* flags are blocked ────────────────────────────────
+  //
+  // freeze_city/freeze_event/freeze_circle/freeze_booking have no code reader.
+  // Toggling them must be rejected outright (400 not_operational) rather than
+  // silently "succeeding" and writing an audit row for a switch that does
+  // nothing — that would give an operator false confidence during an incident.
+
+  describe("PATCH /admin/feature-flags/:flag — inert freeze_* flags are blocked", () => {
+    for (const flag of ["freeze_city", "freeze_event", "freeze_circle", "freeze_booking"]) {
+      it(`returns 400 not_operational for ${flag} and writes no audit row`, async () => {
+        const auditRows: Record<string, unknown>[] = [];
+        // The row still exists in knownFlags (DB retirement is a separate,
+        // out-of-scope migration) — the route itself must still refuse it.
+        const { client } = makeFakeClient({
+          knownFlags: { [flag]: { enabled: false, description: "Inert freeze switch" } },
+          auditRows,
+        });
+        _setTestClient(client, true);
+        _setTestServiceClient(client);
+
+        const r = await req("PATCH", `/admin/feature-flags/${flag}`, { enabled: true });
+
+        assert.equal(r.status, 400, `expected 400, got ${r.status}: ${JSON.stringify(r.body)}`);
+        assert.equal(r.body?.error, "not_operational");
+        assert.equal(auditRows.length, 0, `no audit row written for ${flag}`);
+      });
+    }
+  });
+
   // ── GET /history ───────────────────────────────────────────────────────────
 
   describe("GET /admin/feature-flags/:flag/history", () => {

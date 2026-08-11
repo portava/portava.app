@@ -331,48 +331,29 @@ const INERT_SEEDED_FLAGS = [
   // services/notifications/NotificationRouter.ts sendPush(), and
   // services/passport/StampAwardEngine.ts milestone push. The flag is now a
   // genuine admin kill switch for push delivery. Entry removed from this list.
-  {
-    flag: 'freeze_city', seededIn: '0065_phase7_safety.sql:74', kind: 'STOP',
-    disposition: 'remove-from-seed',
-    reason:
-      'Seeded as "Emergency: freeze city-scoped features (metadata.city required)". No reader. The whole ' +
-      'parameterised-stop design (target goes in feature_flags.metadata, read by getFlagRow which has zero ' +
-      'callers) was seeded and never built. REMEDIATED by hiding from admin toggle surface: excluded from ' +
-      'GET /admin/feature-flags and blocked in PATCH /admin/feature-flags/:flag (routes/admin.ts ' +
-      'HIDDEN_INERT_FLAGS), and excluded from the public GET /api/feature-flags (routes/featureFlags.ts). ' +
-      'An operator can no longer toggle a switch that does nothing. Pending: drop the seed row and the ' +
-      'metadata column when the per-city freeze design is either built or permanently abandoned.',
-  },
-  {
-    flag: 'freeze_event', seededIn: '0065_phase7_safety.sql:75', kind: 'STOP',
-    disposition: 'remove-from-seed',
-    reason:
-      'Seeded as "Emergency: freeze a specific event (metadata.event_id required)". No reader. Same inert ' +
-      'metadata mechanism as freeze_city. Per-event moderation is already possible via the events visibility ' +
-      'and state columns in routes/events.ts. REMEDIATED by hiding from admin toggle surface: excluded from ' +
-      'GET /admin/feature-flags, blocked in PATCH /admin/feature-flags/:flag, and excluded from the public ' +
-      'GET /api/feature-flags. Pending: drop the seed row or build the reader against the existing moderation path.',
-  },
-  {
-    flag: 'freeze_circle', seededIn: '0065_phase7_safety.sql:76', kind: 'STOP',
-    disposition: 'remove-from-seed',
-    reason:
-      'Seeded as "Emergency: freeze a specific circle (metadata.circle_id required)". No reader. The global ' +
-      'circle stop (find_your_circle_disabled) already covers the incident this was seeded for, read through ' +
-      'isKillSwitchEngaged at three sites in lib/circleAccessGuard.ts. REMEDIATED by hiding from admin ' +
-      'toggle surface: excluded from GET /admin/feature-flags, blocked in PATCH /admin/feature-flags/:flag, ' +
-      'and excluded from GET /api/feature-flags. Pending: drop the seed row.',
-  },
-  {
-    flag: 'freeze_booking', seededIn: '0065_phase7_safety.sql:77', kind: 'STOP',
-    disposition: 'remove-from-seed',
-    reason:
-      'Seeded as "Emergency: freeze a specific booking (metadata.booking_id required)". No reader. The global ' +
-      'booking stops (disable_rent_buddy_booking and disable_rab_bookings) already cover the incident, read ' +
-      'through isKillSwitchEngaged in routes/rentABuddy.ts. REMEDIATED by hiding from admin toggle surface: ' +
-      'excluded from GET /admin/feature-flags, blocked in PATCH /admin/feature-flags/:flag, and excluded from ' +
-      'GET /api/feature-flags. Pending: drop the seed row.',
-  },
+  // NOTE: freeze_city / freeze_event / freeze_circle / freeze_booking were here,
+  // all four with disposition `remove-from-seed`. That remedy is now complete
+  // and their entries are removed, as rule R7 below requires — an inert
+  // declaration must still be TRUE, and a flag that is no longer seeded by any
+  // migration must not still be declared inert.
+  //
+  // Both halves shipped:
+  //   * 4d5cc1f4e hid them from the admin surface (routes/admin.ts
+  //     HIDDEN_INERT_FLAGS excludes them from GET /admin/feature-flags and
+  //     returns 400 not_operational from PATCH), and from the public
+  //     GET /api/feature-flags (routes/featureFlags.ts INERT_FLAGS);
+  //   * the seed rows are removed from 0065_phase7_safety.sql, and
+  //     0209_retire_freeze_flags.sql deletes them from existing databases.
+  //
+  // Those admin guards are deliberately KEPT rather than removed alongside the
+  // rows: they are what makes the behaviour identical on a database where 0209
+  // has not been applied yet, and the red-proof tests in 2c982aab8 assert
+  // exactly that GET excludes the four and PATCH returns 400 not_operational.
+  //
+  // The parameterised-stop design these four belonged to (target in
+  // feature_flags.metadata, read via getFlagRow, which still has zero callers)
+  // remains unbuilt. Nothing here revives it; if per-target freezing is ever
+  // wanted, it needs a reader first and a seed row second, in that order.
 
   // ── MEDIA_* suite: seeded wholesale by 2038, wired selectively. ──────────
   {
