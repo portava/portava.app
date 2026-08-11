@@ -13,7 +13,25 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const routeDir = path.resolve(__dirname, "../../artifacts/api-server/src/routes");
-const migDir   = path.resolve(__dirname, "../../artifacts/api-server/migrations");
+/**
+ * BOTH migration series are load-bearing, for different eras.
+ *
+ * src/migrations (265 files) is the live series. artifacts/api-server/migrations
+ * (71 files) is superseded and no longer extended — but it is where the
+ * rent-a-buddy BASE schema was declared and applied (0047_rent_buddy.sql,
+ * 0134_rent_buddy_schema_rebuild.sql). src/migrations only ever patches that
+ * base: a compat view (0147), drift columns (0163), the rollout tables (0090).
+ *
+ * Reading only the superseded dir was the original bug — enums were checked
+ * against the wrong tree, and tables only looked green because `inMig ||
+ * inRoutes` fell through to a route file mentioning the name. Reading only
+ * src/migrations would be the opposite error: it fails on base schema that
+ * genuinely exists in production. So read both.
+ */
+const migDirs = [
+  path.resolve(__dirname, "../../artifacts/api-server/src/migrations"),
+  path.resolve(__dirname, "../../artifacts/api-server/migrations"),
+];
 
 /**
  * [method, canonicalPath] pairs.
@@ -142,10 +160,13 @@ const routeContent = fs.readdirSync(routeDir)
   .map(f => fs.readFileSync(path.join(routeDir, f), "utf8"))
   .join("\n");
 
-// Read all migration files
-const migContent = fs.readdirSync(migDir)
-  .filter(f => f.endsWith(".sql"))
-  .map(f => fs.readFileSync(path.join(migDir, f), "utf8"))
+// Read all migration files from every series
+const migContent = migDirs
+  .flatMap(dir =>
+    fs.readdirSync(dir)
+      .filter(f => f.endsWith(".sql"))
+      .map(f => fs.readFileSync(path.join(dir, f), "utf8")),
+  )
   .join("\n");
 
 let passed = 0;
@@ -168,8 +189,14 @@ function check(label: string, ok: boolean) {
  * in any context (e.g. a comment).
  */
 function routeExists(method: string, routePath: string): boolean {
+  // REQUIRED_ROUTES lists public URLs, which include the /api prefix. That
+  // prefix is applied by the mount (`app.use("/api", router)`), so it never
+  // appears in the router.<method>() call — matching it here made every single
+  // entry fail, which is why this check has never validated a route.
+  const sourcePath = routePath.replace(/^\/api(?=\/|$)/, "");
+
   // Escape regex metacharacters except colon (for :param)
-  const escapedPath = routePath
+  const escapedPath = sourcePath
     .replace(/\./g, "\\.")
     .replace(/:[^/]+/g, "[^/\"\\']+");
 
@@ -188,14 +215,30 @@ for (const [method, routePath] of REQUIRED_ROUTES) {
   check(`${method.toUpperCase()} ${routePath}`, routeExists(method, routePath));
 }
 
-console.log("\nTables / Views (must appear in migrations/*.sql or src/routes/*.ts):");
+/**
+ * A table counts as existing only if a migration DECLARES it.
+ *
+ * Two weaker fallbacks were removed once the migration path was fixed, and
+ * both were verified redundant first — all 24 entries still pass without them:
+ *
+ *   - `|| inRoutes`: a route file mentioning `"buddy_favorites"` in a
+ *     `.from()` call proves the code expects the table, not that it exists.
+ *     That is exactly backwards for a check meant to catch code referencing
+ *     schema that was never shipped.
+ *   - `|| '<table>'`: a quoted occurrence anywhere in any .sql file, which
+ *     matches an INSERT value or a comment as readily as a declaration.
+ *
+ * CREATE VIEW stays: buddy_booking_checkins, buddy_change_requests,
+ * buddy_favorites, buddy_booking_requests and buddy_disputes are compat views
+ * over the rent_buddy_* tables, not base tables, and the list is "Tables / Views".
+ */
+console.log("\nTables / Views (must be declared by a CREATE TABLE or CREATE VIEW in migrations/*.sql):");
 for (const table of REQUIRED_TABLES) {
-  const inMig = new RegExp(
-    `(CREATE\\s+TABLE\\s+(IF\\s+NOT\\s+EXISTS\\s+)?${table}|CREATE\\s+(OR\\s+REPLACE\\s+)?VIEW\\s+(IF\\s+NOT\\s+EXISTS\\s+)?${table}|'${table}')`,
+  const declared = new RegExp(
+    `(CREATE\\s+TABLE\\s+(IF\\s+NOT\\s+EXISTS\\s+)?${table}\\b|CREATE\\s+(OR\\s+REPLACE\\s+)?VIEW\\s+(IF\\s+NOT\\s+EXISTS\\s+)?${table}\\b)`,
     "i",
   ).test(migContent);
-  const inRoutes = routeContent.includes(`"${table}"`);
-  check(table, inMig || inRoutes);
+  check(table, declared);
 }
 
 console.log("\nEnum types (must appear in migrations/*.sql):");
