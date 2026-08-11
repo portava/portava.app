@@ -487,9 +487,26 @@ Use a **read-only** dump. Scope it to `public`. Do not dump `auth` or `storage`.
 Run it from your own machine with the production connection string in your
 environment — never write the credential into a file in this repo.
 
-Whatever tool you use (`supabase db dump --schema public`, or `pg_dump --schema-only
---schema=public --no-owner --no-privileges` — drop `--no-privileges` if you want the
-grants from §2.6), the output is a `.sql` file you must inspect before restoring.
+Whatever tool you use, **put the target on the command line.** Either:
+
+```
+supabase db dump --db-url "$PROD_DB_URL" --schema public
+pg_dump --schema-only --schema=public --no-owner --no-privileges "$PROD_DB_URL"
+```
+
+(drop `--no-privileges` if you want the grants from §2.6). The output is a `.sql`
+file you must inspect before restoring.
+
+> **Do not run `supabase db dump` without `--db-url`.** The two tools do not resolve
+> their target the same way. `pg_dump` takes it from the connection string this
+> section told you to put in your environment; bare `supabase db dump` ignores that
+> and reads `supabase/.temp/linked-project.json`, which is committed to this repo and
+> pins the **production** ref `ajrurzioarfkagpuxfnb`. Here that happens to be the
+> project you want — but by accident of a file, not because you said so, and the same
+> reflex in step 4 would restore *into* production. The Node-side guards
+> (`ciSupabaseGuard`, `supabaseTargetPolicy`) sit in front of `@supabase/supabase-js`
+> and do not see the CLI at all. Nothing would stop it. State the target explicitly
+> every time.
 
 **Verify, on the file, before it touches anything:**
 

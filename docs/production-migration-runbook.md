@@ -121,7 +121,7 @@ These directories hold legacy, early-series, and supplementary migrations that w
 | Directory | Purpose | Notable files |
 |-----------|---------|---------------|
 | `migrations/` (root) | Pre-arc legacy series (0001–0051). Applied via combined `APPLY_THESE_IN_ORDER.sql`. | 0001_spine.sql, 0008_messaging.sql, 0013_availability_meetups.sql |
-| `supabase/migrations/` | Selected applied migrations kept for Supabase CLI reference (7 files). | 0015_blocks, 0025_media_filters, 0049_delayed_geotag_posts |
+| `supabase/migrations/` | Archival record of selected applied migrations (14 files). **Not for the Supabase CLI** — see `supabase/README.md`. Kept because other files cite them as evidence. | 0015_blocks, 0025_media_filters, 0049_delayed_geotag_posts |
 | `artifacts/api-server/migrations/` | Older canonical series (~50 files) before the `src/migrations/` split. Contains `0062_discovery_place_saves.sql` and `0089_decrement_discovery_place_saved_count.sql`. | 0062_discovery_place_saves, 0063_push_retry_queue, 0089_decrement |
 
 ### 1.3 Sequence gaps and duplicate numbers (discrepancy report)
