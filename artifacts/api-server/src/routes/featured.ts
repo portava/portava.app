@@ -68,6 +68,35 @@ function categoryLabel(cat: string): string {
   return CATEGORY_LABELS[cat] ?? cat.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/**
+ * Poster reference for a post_media row, as a bare `<bucket>/<path>` string.
+ *
+ * `post-media` is a private bucket, so the `public_url` stored on the row does
+ * not serve — handing one to the client yields a broken image, not a photo.
+ * The client resolves a bare reference through useHydratedMedia, which signs it
+ * via POST /media/sign; that is the only shape that survives the bucket-privacy
+ * cutover. Both joins in this file already selected storage_path/storage_bucket
+ * for exactly this purpose and then never read them.
+ *
+ * Video rows are the one case where storage_path is the wrong object: it is the
+ * video file itself. Their poster is a separate object at
+ * thumbnail_storage_path, so emitting storage_path would tell the client to
+ * render an .mp4 as an image. Fall back to the legacy columns when a row has
+ * neither storage column populated — those point at genuinely public objects.
+ */
+function mediaPosterRef(m: any): string | null {
+  if (!m) return null;
+  const bucket: string = m.storage_bucket ?? "post-media";
+
+  if (m.media_type === "video") {
+    if (m.thumbnail_storage_path) return `${bucket}/${m.thumbnail_storage_path}`;
+    return (m.thumbnail_url ?? null) as string | null;
+  }
+
+  if (m.storage_path) return `${bucket}/${m.storage_path}`;
+  return (m.thumbnail_url ?? m.public_url ?? null) as string | null;
+}
+
 // ── GET /featured ─────────────────────────────────────────────────────────────
 
 router.get("/featured", asyncHandler(async (req, res) => {
@@ -83,7 +112,7 @@ router.get("/featured", asyncHandler(async (req, res) => {
   // String must be a literal directly in .select() so the column-drift checker can parse it.
   let query = sc
     .from("portava_featured")
-    .select("id, post_id, category, featured_at, posts!post_id(id, content, location_city, location_country, author_id, post_media(id, media_type, public_url, thumbnail_url, sort_order, processing_status, storage_path, storage_bucket), profiles!author_id(id, username, display_name, name, full_name, avatar_url, verified, is_private))")
+    .select("id, post_id, category, featured_at, posts!post_id(id, content, location_city, location_country, author_id, post_media(id, media_type, public_url, thumbnail_url, sort_order, processing_status, storage_path, storage_bucket, thumbnail_storage_path), profiles!author_id(id, username, display_name, name, full_name, avatar_url, verified, is_private))")
     .eq("status", "live")
     .order("featured_at", { ascending: false })
     .limit(200);
@@ -142,8 +171,8 @@ router.get("/featured", asyncHandler(async (req, res) => {
       .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
     const primaryMedia = sortedMedia[0];
 
-    // Resolve thumbnail URL from columns that exist in the live post_media schema.
-    const thumbnailUrl: string | null = primaryMedia?.thumbnail_url ?? primaryMedia?.public_url ?? null;
+    // Bare bucket/path reference — the client signs it via useHydratedMedia.
+    const thumbnailUrl: string | null = mediaPosterRef(primaryMedia);
     const mediaType: "image" | "video" = (primaryMedia?.media_type as any) ?? "image";
 
     const username = profile.username ?? null;
@@ -226,7 +255,7 @@ async function buildFallbackResponse(sc: any, res: any, req: any): Promise<void>
 
   const { data: portavaPosts, error } = await sc
     .from("posts")
-    .select("id, content, location_city, location_country, author_id, like_count, post_media(id, media_type, public_url, thumbnail_url, sort_order, processing_status, storage_path, storage_bucket), profiles!author_id(id, username, display_name, name, full_name, avatar_url, verified, is_private)")
+    .select("id, content, location_city, location_country, author_id, like_count, post_media(id, media_type, public_url, thumbnail_url, sort_order, processing_status, storage_path, storage_bucket, thumbnail_storage_path), profiles!author_id(id, username, display_name, name, full_name, avatar_url, verified, is_private)")
     .eq("author_id", portavaProfile.id)
     .eq("status", "active")
     .eq("post_status", "published")
@@ -266,7 +295,7 @@ async function buildFallbackResponse(sc: any, res: any, req: any): Promise<void>
       .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
     const primaryMedia = sortedMedia[0];
 
-    const thumbnailUrl: string | null = primaryMedia?.thumbnail_url ?? primaryMedia?.public_url ?? null;
+    const thumbnailUrl: string | null = mediaPosterRef(primaryMedia);
     const mediaType: "image" | "video" = (primaryMedia?.media_type as any) ?? "image";
     const username = profile.username ?? null;
     const authorId = (profile.id ?? post.author_id ?? null) as string | null;
